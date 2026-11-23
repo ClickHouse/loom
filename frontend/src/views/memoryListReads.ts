@@ -17,6 +17,8 @@ import { KEYWORD_PAGE, keywordThenRanked } from "../lib/memoriesSearch";
 // The fields the page and its cards read. Field names are a quarter of a row, so a field
 // the page does not read costs on every row. `sensitivity`, which marks a high row sent
 // without its value, comes with every entry, so it is not named.
+// `status` is how the Conflicted status keeps a row by its own status, not by a key another
+// agent's or user's row shares.
 const MEMORIES_LIST_FIELDS = [
   "memory_key",
   "memory_type",
@@ -30,6 +32,7 @@ const MEMORIES_LIST_FIELDS = [
   "tombstoned_at",
   "verified_by",
   "verification",
+  "status",
 ];
 
 /** A tag and agent filter: what a search's keyword half reads with. */
@@ -84,6 +87,7 @@ function detailToEntry(key: string, d: MemoryDetail): MemoryListEntry {
     session_id: d.session_id,
     value: d.value,
     source_trace: d.source_trace,
+    status: d.status,
   };
 }
 
@@ -363,6 +367,9 @@ export function useMemoryListRead({
   // the rows read: the read was cut short (a viewer token reads fewer rows than asked) and
   // the server matched the tags as the page does. Otherwise the rows on screen are the count.
   const [serverMatches, setServerMatches] = useState<number | null>(null);
+  // The status filter was answered by the server over the whole namespace (Pinned or
+  // Conflicted), not kept among the newest rows read.
+  const [statusServed, setStatusServed] = useState(false);
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
   const knownKeysRef = useRef<Set<string>>(new Set());
   // Values the list response did not carry (a server predating the preview
@@ -439,6 +446,8 @@ export function useMemoryListRead({
             offset: off,
             tags: filter.tags,
             agent: filter.agent || undefined,
+            pinnedOnly: filter.status === "pinned" && !showDeleted,
+            conflictedOnly: filter.status === "conflicted" && !showDeleted,
             signal,
             known_version: isFirst ? undefined : knownVersion || undefined,
             fields: MEMORIES_LIST_FIELDS,
@@ -450,7 +459,14 @@ export function useMemoryListRead({
           setTruncated(filtered && r.truncated);
           if (filtered) {
             const ignored = r.ignored_args ?? [];
-            setServerMatches(r.truncated && !ignored.includes("tags_every") ? r.total : null);
+            // A replica a release behind names the field it does not know and lists every
+            // row: the page then keeps the matching ones among the newest it read.
+            const served =
+              (filter.status === "pinned" && !ignored.includes("pinned_only")) ||
+              (filter.status === "conflicted" && !ignored.includes("conflicted_only"));
+            setStatusServed(served);
+            const statusExact = filter.status === "live" || served;
+            setServerMatches(r.truncated && statusExact && !ignored.includes("tags_every") ? r.total : null);
           }
           // The namespace's total follows every browsed answer, the 8 s refresh included.
           if (!filtered && !showDeleted) setBrowsedTotal(r.total);
@@ -528,6 +544,7 @@ export function useMemoryListRead({
     loadError,
     truncated,
     serverMatches,
+    statusServed,
     newKeys,
     bulkValues,
     refreshing,

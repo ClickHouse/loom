@@ -721,12 +721,12 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `pattern` | `str` | required | Exact text to find, or an RE2 expression when regex is true. |
-| `regex` | `bool` | `False` | True reads `pattern` as RE2; an invalid expression is a 422. |
+| `pattern` | `str \| list[str]` | required | Literal text, a list of alternatives, or one RE2 expression with regex=true. |
+| `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `include_body` | `bool` | `False` | Include distinct enclosing bodies in matches mode; default false. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
-| `cursor` | `str` | `''` | Continuation (matches mode): the `next_cursor` of an earlier response to this pattern; the next page of matching lines is one point read of what the first call extracted. |
+| `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |
 | `mode` | `Literal['matches', 'files', 'presence', 'message']` | `'matches'` | matches: up to `limit` matching LINES with text + enclosing scope. files: up to `limit` matching FILES (path, matching chunk count, first line) and no line text — the coverage question ("which files mention X?") that a 20-line cap cannot… |
 | `limit` | `int \| None` | `None` | Default depends on mode: 20 lines, or the 500-file ceiling — a files answer capped at 20 reads like a complete coverage answer to a caller that did not know to send a limit. matches mode is clamped to 200 lines. |
@@ -741,7 +741,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
-| `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
+| `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
 | `matches` | `list[dict[str, Any]]` | {path, line, text, scope, scope_start_line, scope_end_line} per matching LINE, path/line ordered. scope_* is the span of the enclosing unit named by `scope` (0/0 when the line sits in no unit) — enough to decide whether to fetch the body… |
 | `definitions` | `list[dict[str, Any]]` | include_body: distinct enclosing units, in hit order; `lines` names the matching lines each definition covers. |
 | `definitions_partial` | `bool` |  |
@@ -1442,7 +1442,7 @@ Report the progress of a SCIP upload batch: parts received and apply status.
 
 ## `code.search`
 
-Start an issue investigation or implementation task here when repository context is missing.
+Find implementations by question, behavior or identifier using `query`.
 
 `POST /v1/code.search` · MCP `loom_code_search` · role `viewer` · read
 
@@ -1459,7 +1459,7 @@ Start an issue investigation or implementation task here when repository context
 | `top_k` | `int` | `5` | At most this many results per page (1-25). |
 | `token_budget` | `int \| None` | `None` | Response budget in tokens; 0 = unlimited, omitted = LOOM_CODE_SEARCH_TOKEN_BUDGET (default 0). |
 | `path_prefix` | `str` | `''` | Keep only units whose path starts with this prefix; "" = the whole namespace. |
-| `cursor` | `str` | `''` | Continuation: the `next_cursor` of an earlier response to this query. |
+| `cursor` | `str` | `''` | Pass `next_cursor` with the original search arguments and omit it to start a new search. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set: unit ids not to serve again. |
 | `rerank` | `str` | `''` | Reranker over the fused pool: "" = the deployment default (LOOM_CODE_SEARCH_RERANK_DEFAULT, for prose questions of its kinds), "none" = off for this request, "builtin:openai" / "builtin:cohere", or the name of an endpoint in… |
 | `expand` | `bool` | `False` | Vocabulary bridge: one LLM hop proposes codebase identifiers for the lexical leg (natural-language wording often misses the implementing subsystem's vocabulary). |
@@ -1488,7 +1488,7 @@ Start an issue investigation or implementation task here when repository context
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
-| `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
+| `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
 | `results` | `list[CodeUnit]` | The ranked units served on this page, cut to top_k and the token budget; empty on an abstain with no pool or a not-covered path. |
 | `route` | `str` | symbol_exact \| hybrid \| symbol_miss_hybrid |
 | `next_cursor` | `str` | Continuation: opaque cursor for the next page of the ranked pool, "" when nothing ranked remains past this page (symbol routes issue none). has_more mirrors it. |

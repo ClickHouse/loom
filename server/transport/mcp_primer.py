@@ -21,6 +21,7 @@ from typing import Any
 from server.auth.fanout import knowledge_search_reads_collections
 from server.code.domain.scope import current_code_scope
 from server.operations.registry import OPERATIONS_BY_NAME
+from server.operations.toolsets import resolve_toolset, toolset_parts
 from server.transport._common import begin_call, bind_request
 from server.transport.mcp_config import (
     _LOOM_PRIMER_RESOURCE_URI,
@@ -491,33 +492,38 @@ async def _emit_initialize_event(auth: Any, client_name: str | None) -> None:
 
 async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str:
     """Session-start instructions for the `initialize` result: the rules, the
-    code scope, the default workspace, the mentor hint, then the profile. The
-    server returns the complete text; clients control their own display and
+    code scope, the workspace, then the profile. Coding connections use fixed
+    wording for implicit scopes and read usage hints during the session. Other
+    connections also get their current mentor hint. Clients control display and
     context limits. The profile comes only with a verified
     bearer: an anonymous probe (discovery_only / open modes) must not read
     profile content.
     """
+    from server.settings import settings
+
+    toolset = resolve_toolset(toolset, settings.mcp_toolset)
     if assistant_connection(toolset):
         return _assistant_primer(await _caller_defaults(auth, assistant=True))
     defaults = await _caller_defaults(auth)
-    coding = _is_coding_toolset(toolset)
+    coding = "coding" in toolset_parts(toolset)
     rules = _coding_instructions(toolset, defaults) if coding else _loom_rules(toolset, defaults)
     scope = current_code_scope()
-    scope_line = (
-        f"\n\n**Code index scope for this connection:** `{scope[0]}/{scope[1]}` — "
-        "applied to every loom_code_* call that names no namespace."
-        if scope
-        else ""
-    )
-    # The compact coding form names the default namespace in one clause; the full primer
-    # carries the default-workspace paragraph.
+    scope_line = ""
+    if scope:
+        scope_line = (
+            "\n\nCode tools use the repository bound to this connection when namespace is omitted."
+            if coding
+            else f"\n\n**Code index scope for this connection:** `{scope[0]}/{scope[1]}` — "
+            "applied to every loom_code_* call that names no namespace."
+        )
+    # A coding client needs the workspace name only when it must pass one.
     workspace = (
         _coding_workspace_line(defaults)
         if coding
         else await _caller_default_context(auth, defaults)
     )
     profile = await _profile_section(auth, defaults) if auth is not None else ""
-    mentor = await _mentor_line(auth, defaults, toolset)
+    mentor = "" if coding else await _mentor_line(auth, defaults, toolset)
     # the rules and the mentor line are rendered apart: mark each op once across both
     return keep_first_marks(rules + scope_line + workspace + mentor) + profile
 
@@ -528,14 +534,7 @@ def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
         return ""
     if not defaults["namespace"]:
         return f" {no_default_namespace_line(defaults)} loom_code_* calls use the code scope."
-    return f" Default namespace `{defaults['namespace']}`, filled in when a call names none."
-
-
-def _is_coding_toolset(toolset: str | None) -> bool:
-    """A connection listing the `coding` roster, alone or in a union."""
-    from server.operations.toolsets import toolset_parts
-
-    return "coding" in toolset_parts(toolset)
+    return " The default memory namespace is filled in when a call names none."
 
 
 def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = None) -> str:

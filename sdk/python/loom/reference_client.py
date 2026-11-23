@@ -536,7 +536,7 @@ class ReferenceClient:
             "code.callers", {"name": name, "depth": depth, **fields}, required=("edges",)
         )
 
-    async def code_grep(self, pattern: str, **fields: Any) -> CallResult:
+    async def code_grep(self, pattern: str | list[str], **fields: Any) -> CallResult:
         return await self.call("code.grep", {"pattern": pattern, **fields})
 
     # -- outcome reporting ---------------------------------------------------------------
