@@ -40,7 +40,7 @@ def test_mirrored_remove_always_queues_without_counting(
     async def forbidden(*args: Any, **kw: Any) -> int:
         raise AssertionError("a mirrored remove must not count documents")
 
-    monkeypatch.setattr(sources, "_queue_retirement", enqueue, raising=False)
+    monkeypatch.setattr(sources, "_queue_retirement", enqueue)
     monkeypatch.setattr(store, "count_documents", forbidden)
     out = asyncio.run(
         sources.handle_knowledge_source_remove(
@@ -72,7 +72,7 @@ def test_namespace_retirement_queues_mirrors_before_inactivation(
         queued.append(src.source_id)
         return True
 
-    monkeypatch.setattr(sources, "_queue_retirement", enqueue, raising=False)
+    monkeypatch.setattr(sources, "_queue_retirement", enqueue)
     assert asyncio.run(sources.deactivate_namespace_sources(ORG, NS)) == ["design-decks"]
     assert queued == [fake.rows[key].source_id]
     assert fake.rows[key].pending_delete

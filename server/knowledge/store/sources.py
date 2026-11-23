@@ -36,10 +36,8 @@ from server.knowledge.domain.sources import (
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
     id_list_config,
-    items_from_config,
     json_object,
     opaque_payload,
-    options_in,
     state_key,
     stored_config,
 )
@@ -97,9 +95,8 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
         name=str(row.get("name") or ""),
         kind=kind,
         source_id=str(row.get("source_id") or ""),
-        config=options_in(kind, config),
-        # A row an older build wrote holds its items in `config` alone.
-        items=[] if generic else (_items(items_raw) or items_from_config(kind, config)),
+        config=config,
+        items=[] if generic else _items(items_raw),
         credential_enc=str(row.get("credential_enc") or ""),
         secret_enc=str(row.get("secret_enc") or ""),
         access=str(row.get("access") or NAMESPACE_ACCESS),
@@ -119,13 +116,14 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
 
 
 async def list_sources(
-    org: str, namespace: str, *, ch: _CHClient | None = None
+    org: str, namespace: str, *, include_mcp: bool = True, ch: _CHClient | None = None
 ) -> list[KnowledgeSource]:
     """The namespace's active sources, by name."""
     rows = await (ch or _default_client()).query_all(
         f"SELECT {_COLUMNS} FROM {TABLE} FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND active "
-        "ORDER BY name",
+        + ("AND source_kind != 'mcp' " if not include_mcp else "")
+        + "ORDER BY name",
         params={"org": org, "ns": namespace},
     )
     return [_source(r) for r in rows]
@@ -167,10 +165,11 @@ async def connected_sources(
 
 
 async def all_active_sources(*, ch: _CHClient | None = None) -> list[KnowledgeSource]:
-    """Every active source of every org, in (org, namespace, name) order: the sync
-    worker's work list."""
+    """Ordinary recording work; MCP discovery uses bounded metadata pages."""
     rows = await (ch or _default_client()).query_all(
-        f"SELECT {_COLUMNS} FROM {TABLE} FINAL WHERE active ORDER BY org, namespace, name"
+        f"SELECT {_COLUMNS} FROM {TABLE} FINAL WHERE active "
+        "AND source_kind = 'recording' AND credential_mode = 'shared' "
+        "AND source_contract_version = 0 ORDER BY org, namespace, name"
     )
     return [_source(r) for r in rows]
 

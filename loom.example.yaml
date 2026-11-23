@@ -2903,24 +2903,6 @@ settings:
   # [restart]
   # document_extractor_max_artifact_bytes: 67108864
 
-  # --- document sources ---
-
-  # OAuth client id for personal Drive connections; empty disables the provider.
-  # [restart]
-  # connect_gdrive_client_id: ""
-
-  # Public-integration client id for personal page-store connections; empty disables it.
-  # [restart]
-  # connect_notion_client_id: ""
-
-  # OAuth client id for personal project-tracker connections; empty disables it.
-  # [restart]
-  # connect_linear_client_id: ""
-
-  # The operator has restricted the public integration to read-content capability. Its
-  # token response cannot prove this registration setting; false disables it. [restart]
-  # connect_notion_read_content_only: false
-
   # Seconds for the whole optional live-search leg, including final membership checks.
   # At most five; provider credential deadlines may shorten it further. [restart]
   # knowledge_live_search_timeout_s: 5.0
@@ -2960,6 +2942,70 @@ settings:
   # Seconds a connection change waits for another holder's account-generation lease.
   # [restart]
   # knowledge_connected_lease_wait_s: 5.0
+
+  # Maximum sealed MCP plaintext bytes admitted by this deployment, up to the v1 wire
+  # ceiling. [restart]
+  # knowledge_mcp_envelope_max_bytes: 32768
+
+  # Maximum explicitly selected MCP identities per source, without implicit recursion.
+  # [restart]
+  # knowledge_mcp_selected_resources_max: 1000
+
+  # Maximum UTF-8 bytes in one selected MCP identity, up to the v1 wire ceiling.
+  # [restart]
+  # knowledge_mcp_resource_id_max_bytes: 2048
+
+  # Maximum trusted profile-catalog bytes admitted, up to the contract ceiling.
+  # [restart]
+  # knowledge_source_mcp_catalog_max_bytes: 8388608
+
+  # Maximum distinct approved profiles in one trusted catalog. [restart]
+  # knowledge_source_mcp_catalog_max_profiles: 10000
+
+  # Maximum canonical bytes in one approved profile. [restart]
+  # knowledge_source_mcp_profile_max_bytes: 65536
+
+  # Maximum canonical schema or schema-string bytes in one mapping. [restart]
+  # knowledge_source_mcp_schema_max_bytes: 16384
+
+  # Maximum JSON nodes visited while validating one approved profile. [restart]
+  # knowledge_source_mcp_profile_max_nodes: 4096
+
+  # Maximum JSON nesting depth in one approved profile. [restart]
+  # knowledge_source_mcp_profile_max_depth: 16
+
+  # MCP scheduling headers returned per bounded metadata query. [restart]
+  # knowledge_source_mcp_schedule_page_size: 100
+
+  # Maximum metadata pages scanned in one MCP scheduling pass. [restart]
+  # knowledge_source_mcp_schedule_scan_pages: 16
+
+  # Maximum eligible source headers waiting for an execution slot. [restart]
+  # knowledge_source_mcp_schedule_ready: 256
+
+  # Concurrent MCP source turns across this worker pass. [restart]
+  # knowledge_source_mcp_schedule_global: 16
+
+  # Concurrent MCP source turns for one organization. [restart]
+  # knowledge_source_mcp_schedule_per_org: 4
+
+  # Concurrent turns sharing one canonical approved MCP endpoint. [restart]
+  # knowledge_source_mcp_schedule_per_endpoint: 2
+
+  # Document credits reserved before admitting one MCP source turn. [restart]
+  # knowledge_source_mcp_schedule_documents: 8
+
+  # Outer deadline in seconds for one MCP source turn, including cleanup. [restart]
+  # knowledge_source_mcp_schedule_source_seconds: 20.0
+
+  # Physical rows one MCP metadata query may read before refusing. [restart]
+  # knowledge_source_mcp_schedule_query_rows: 1000000
+
+  # Physical bytes one MCP metadata query may read before refusing. [restart]
+  # knowledge_source_mcp_schedule_query_bytes: 67108864
+
+  # Maximum execution seconds for one MCP metadata or progress query. [restart]
+  # knowledge_source_mcp_schedule_query_seconds: 5.0
 
   # Maximum complete owner scan; exceeding it refuses instead of stopping a subset.
   # [restart]
@@ -3022,29 +3068,6 @@ settings:
   # Maximum team and member rows read for one project's complete permission list. A
   # larger list refuses publication rather than granting from a partial page. [restart]
   # knowledge_source_acl_max_entries: 10000
-
-  # Enable optional source push setup, callbacks and Drive renewal; false keeps polling
-  # only. [restart]
-  # knowledge_source_push_enabled: false
-
-  # Seconds between bounded channel-renewal pages; channels renew a day before expiry.
-  # [restart]
-  # knowledge_source_push_interval_seconds: 300
-
-  # Seconds one push setup or Drive renewal may spend on provider work, before cleanup.
-  # [restart]
-  # knowledge_source_push_provider_timeout_s: 40.0
-
-  # Seconds allowed to stop one superseded or unpublished Drive channel. [restart]
-  # knowledge_source_push_stop_timeout_s: 2.0
-
-  # Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait.
-  # [restart]
-  # knowledge_source_push_cleanup_timeout_s: 5.0
-
-  # Seconds a renewal pass may run; reserve one provider attempt and two cleanup
-  # windows. [restart]
-  # knowledge_source_push_max_pass_seconds: 120.0
 
   # Seconds between sync passes while there are sources. [restart]
   # knowledge_source_sync_interval_seconds: 900

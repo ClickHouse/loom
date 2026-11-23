@@ -988,18 +988,6 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_DOCUMENT_EXTRACTOR_TOKENS_JSON` | `str` | *(unset)* |  | JSON {base URL: bearer token}: each extractor service's own token, so none holds another's. Each URL must be one an extractor URL setting names. |
 | `LOOM_DOCUMENT_EXTRACTOR_TIMEOUT_S` | `float` | `180.0` |  | Seconds one call to an extractor may take as a whole: reading its capabilities, or sending the original and reading its artifact. |
 | `LOOM_DOCUMENT_EXTRACTOR_MAX_ARTIFACT_BYTES` | `int` | `67108864` |  | Bytes of an extractor's response the server reads; a larger artifact is refused. |
-
-### Document sources
-
-| Variable | Type | Default | Live | Meaning |
-| --- | --- | --- | --- | --- |
-| `LOOM_CONNECT_GDRIVE_CLIENT_ID` | `str` | `''` |  | OAuth client id for personal Drive connections; empty disables the provider. |
-| `LOOM_CONNECT_GDRIVE_CLIENT_SECRET` | `str` | *(unset)* |  | Secret of that Drive OAuth registration; kept outside source rows. |
-| `LOOM_CONNECT_NOTION_CLIENT_ID` | `str` | `''` |  | Public-integration client id for personal page-store connections; empty disables it. |
-| `LOOM_CONNECT_NOTION_CLIENT_SECRET` | `str` | *(unset)* |  | Secret of that page-store registration; kept outside source rows. |
-| `LOOM_CONNECT_LINEAR_CLIENT_ID` | `str` | `''` |  | OAuth client id for personal project-tracker connections; empty disables it. |
-| `LOOM_CONNECT_LINEAR_CLIENT_SECRET` | `str` | *(unset)* |  | Secret of that project-tracker registration; kept outside source rows. |
-| `LOOM_CONNECT_NOTION_READ_CONTENT_ONLY` | `bool` | `False` |  | The operator has restricted the public integration to read-content capability. Its token response cannot prove this registration setting; false disables it. |
 | `LOOM_KNOWLEDGE_LIVE_SEARCH_TIMEOUT_S` | `float` | `5.0` |  | Seconds for the whole optional live-search leg, including final membership checks. At most five; provider credential deadlines may shorten it further. |
 | `LOOM_KNOWLEDGE_LIVE_SEARCH_MAX_SOURCES` | `int` | `3` |  | Connected registrations searched per live-search request, from one to three. |
 | `LOOM_KNOWLEDGE_LIVE_SEARCH_MAX_HITS` | `int` | `10` |  | Live hits across all registrations, and the per-provider page bound, from one to ten. |
@@ -1010,6 +998,26 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_CONNECTED_REVOKE_TIMEOUT_S` | `float` | `5.0` |  | Seconds for best-effort provider revocation after every local stop has committed. |
 | `LOOM_KNOWLEDGE_CONNECTED_LEASE_TTL_S` | `float` | `60.0` |  | Seconds the renewed account-generation lease lives. Source leases follow it; provider requests hold neither. |
 | `LOOM_KNOWLEDGE_CONNECTED_LEASE_WAIT_S` | `float` | `5.0` |  | Seconds a connection change waits for another holder's account-generation lease. |
+| `LOOM_KNOWLEDGE_MCP_ENVELOPE_MAX_BYTES` | `int` | `32768` |  | Maximum sealed MCP plaintext bytes admitted by this deployment, up to the v1 wire ceiling. |
+| `LOOM_KNOWLEDGE_MCP_SELECTED_RESOURCES_MAX` | `int` | `1000` |  | Maximum explicitly selected MCP identities per source, without implicit recursion. |
+| `LOOM_KNOWLEDGE_MCP_RESOURCE_ID_MAX_BYTES` | `int` | `2048` |  | Maximum UTF-8 bytes in one selected MCP identity, up to the v1 wire ceiling. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_CATALOG_MAX_BYTES` | `int` | `8388608` |  | Maximum trusted profile-catalog bytes admitted, up to the contract ceiling. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_CATALOG_MAX_PROFILES` | `int` | `10000` |  | Maximum distinct approved profiles in one trusted catalog. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_PROFILE_MAX_BYTES` | `int` | `65536` |  | Maximum canonical bytes in one approved profile. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEMA_MAX_BYTES` | `int` | `16384` |  | Maximum canonical schema or schema-string bytes in one mapping. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_PROFILE_MAX_NODES` | `int` | `4096` |  | Maximum JSON nodes visited while validating one approved profile. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_PROFILE_MAX_DEPTH` | `int` | `16` |  | Maximum JSON nesting depth in one approved profile. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_PAGE_SIZE` | `int` | `100` |  | MCP scheduling headers returned per bounded metadata query. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_SCAN_PAGES` | `int` | `16` |  | Maximum metadata pages scanned in one MCP scheduling pass. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_READY` | `int` | `256` |  | Maximum eligible source headers waiting for an execution slot. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_GLOBAL` | `int` | `16` |  | Concurrent MCP source turns across this worker pass. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_PER_ORG` | `int` | `4` |  | Concurrent MCP source turns for one organization. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_PER_ENDPOINT` | `int` | `2` |  | Concurrent turns sharing one canonical approved MCP endpoint. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_DOCUMENTS` | `int` | `8` |  | Document credits reserved before admitting one MCP source turn. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_SOURCE_SECONDS` | `float` | `20.0` |  | Outer deadline in seconds for one MCP source turn, including cleanup. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_QUERY_ROWS` | `int` | `1000000` |  | Physical rows one MCP metadata query may read before refusing. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_QUERY_BYTES` | `int` | `67108864` |  | Physical bytes one MCP metadata query may read before refusing. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_QUERY_SECONDS` | `float` | `5.0` |  | Maximum execution seconds for one MCP metadata or progress query. |
 | `LOOM_KNOWLEDGE_CONNECTED_REGISTRY_SCAN_LIMIT` | `int` | `4096` |  | Maximum complete owner scan; exceeding it refuses instead of stopping a subset. |
 | `LOOM_KNOWLEDGE_CONNECTED_REGISTRY_PAGE_SIZE` | `int` | `256` |  | Registrations per page during root-secret resealing. |
 | `LOOM_KNOWLEDGE_CONNECTED_OAUTH_TIMEOUT_S` | `float` | `30.0` |  | Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound. |
@@ -1025,12 +1033,6 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` | `bool` | `False` |  | Require protected automatic session capture and persist deployment privacy state. Off does not lift protection while the deployment latch remains set. |
 | `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` | `int` | `3600` |  | Mirrored reads require a complete listing and group observation within this many seconds; missing or older evidence admits nobody. |
 | `LOOM_KNOWLEDGE_SOURCE_ACL_MAX_ENTRIES` | `int` | `10000` |  | Maximum team and member rows read for one project's complete permission list. A larger list refuses publication rather than granting from a partial page. |
-| `LOOM_KNOWLEDGE_SOURCE_PUSH_ENABLED` | `bool` | `False` |  | Enable optional source push setup, callbacks and Drive renewal; false keeps polling only. |
-| `LOOM_KNOWLEDGE_SOURCE_PUSH_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between bounded channel-renewal pages; channels renew a day before expiry. |
-| `LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S` | `float` | `40.0` |  | Seconds one push setup or Drive renewal may spend on provider work, before cleanup. |
-| `LOOM_KNOWLEDGE_SOURCE_PUSH_STOP_TIMEOUT_S` | `float` | `2.0` |  | Seconds allowed to stop one superseded or unpublished Drive channel. |
-| `LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S` | `float` | `5.0` |  | Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait. |
-| `LOOM_KNOWLEDGE_SOURCE_PUSH_MAX_PASS_SECONDS` | `float` | `120.0` |  | Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between sync passes while there are sources. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_IDLE_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between passes that found no source to sync; one idle sleep plus one pass stays under three intervals, so the worker never reads as stalled. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_PASS_SECONDS` | `int` | `600` |  | Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline. |

@@ -2410,22 +2410,6 @@ class KnowledgeSettings(BaseModel):
     # Bytes of an extractor's response the server reads; a larger artifact is refused.
     document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
 
-    # ---- document sources ----
-    # OAuth client id for personal Drive connections; empty disables the provider.
-    connect_gdrive_client_id: str = ""
-    # Secret of that Drive OAuth registration; kept outside source rows.
-    connect_gdrive_client_secret: str = ""
-    # Public-integration client id for personal page-store connections; empty disables it.
-    connect_notion_client_id: str = ""
-    # Secret of that page-store registration; kept outside source rows.
-    connect_notion_client_secret: str = ""
-    # OAuth client id for personal project-tracker connections; empty disables it.
-    connect_linear_client_id: str = ""
-    # Secret of that project-tracker registration; kept outside source rows.
-    connect_linear_client_secret: str = ""
-    # The operator has restricted the public integration to read-content capability.
-    # Its token response cannot prove this registration setting; false disables it.
-    connect_notion_read_content_only: bool = False
     # Seconds for the whole optional live-search leg, including final membership checks.
     # At most five; provider credential deadlines may shorten it further.
     knowledge_live_search_timeout_s: float = Field(default=5.0, gt=0, le=5.0)
@@ -2456,6 +2440,40 @@ class KnowledgeSettings(BaseModel):
     knowledge_mcp_selected_resources_max: int = Field(default=1000, ge=1, le=1000)
     # Maximum UTF-8 bytes in one selected MCP identity, up to the v1 wire ceiling.
     knowledge_mcp_resource_id_max_bytes: int = Field(default=2048, ge=1, le=2048)
+    # Maximum trusted profile-catalog bytes admitted, up to the contract ceiling.
+    knowledge_source_mcp_catalog_max_bytes: int = Field(default=8388608, ge=1024, le=8388608)
+    # Maximum distinct approved profiles in one trusted catalog.
+    knowledge_source_mcp_catalog_max_profiles: int = Field(default=10000, ge=1, le=10000)
+    # Maximum canonical bytes in one approved profile.
+    knowledge_source_mcp_profile_max_bytes: int = Field(default=65536, ge=1024, le=65536)
+    # Maximum canonical schema or schema-string bytes in one mapping.
+    knowledge_source_mcp_schema_max_bytes: int = Field(default=16384, ge=128, le=16384)
+    # Maximum JSON nodes visited while validating one approved profile.
+    knowledge_source_mcp_profile_max_nodes: int = Field(default=4096, ge=16, le=4096)
+    # Maximum JSON nesting depth in one approved profile.
+    knowledge_source_mcp_profile_max_depth: int = Field(default=16, ge=1, le=16)
+    # MCP scheduling headers returned per bounded metadata query.
+    knowledge_source_mcp_schedule_page_size: int = Field(default=100, ge=1, le=256)
+    # Maximum metadata pages scanned in one MCP scheduling pass.
+    knowledge_source_mcp_schedule_scan_pages: int = Field(default=16, ge=1, le=1000)
+    # Maximum eligible source headers waiting for an execution slot.
+    knowledge_source_mcp_schedule_ready: int = Field(default=256, ge=1, le=4096)
+    # Concurrent MCP source turns across this worker pass.
+    knowledge_source_mcp_schedule_global: int = Field(default=16, ge=1, le=256)
+    # Concurrent MCP source turns for one organization.
+    knowledge_source_mcp_schedule_per_org: int = Field(default=4, ge=1, le=256)
+    # Concurrent turns sharing one canonical approved MCP endpoint.
+    knowledge_source_mcp_schedule_per_endpoint: int = Field(default=2, ge=1, le=256)
+    # Document credits reserved before admitting one MCP source turn.
+    knowledge_source_mcp_schedule_documents: int = Field(default=8, ge=1, le=1000)
+    # Outer deadline in seconds for one MCP source turn, including cleanup.
+    knowledge_source_mcp_schedule_source_seconds: float = Field(default=20.0, gt=0, le=300)
+    # Physical rows one MCP metadata query may read before refusing.
+    knowledge_source_mcp_schedule_query_rows: int = Field(default=1000000, ge=1)
+    # Physical bytes one MCP metadata query may read before refusing.
+    knowledge_source_mcp_schedule_query_bytes: int = Field(default=67108864, ge=1)
+    # Maximum execution seconds for one MCP metadata or progress query.
+    knowledge_source_mcp_schedule_query_seconds: float = Field(default=5.0, gt=0, le=60)
     # Maximum complete owner scan; exceeding it refuses instead of stopping a subset.
     knowledge_connected_registry_scan_limit: int = Field(default=4096, ge=1)
     # Registrations per page during root-secret resealing.
@@ -2512,18 +2530,6 @@ class KnowledgeSettings(BaseModel):
     # Maximum team and member rows read for one project's complete permission list.
     # A larger list refuses publication rather than granting from a partial page.
     knowledge_source_acl_max_entries: int = Field(default=10000, ge=1)
-    # Enable optional source push setup, callbacks and Drive renewal; false keeps polling only.
-    knowledge_source_push_enabled: bool = False
-    # Seconds between bounded channel-renewal pages; channels renew a day before expiry.
-    knowledge_source_push_interval_seconds: int = Field(default=300, ge=60)
-    # Seconds one push setup or Drive renewal may spend on provider work, before cleanup.
-    knowledge_source_push_provider_timeout_s: float = Field(default=40.0, gt=0)
-    # Seconds allowed to stop one superseded or unpublished Drive channel.
-    knowledge_source_push_stop_timeout_s: float = Field(default=2.0, gt=0)
-    # Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait.
-    knowledge_source_push_cleanup_timeout_s: float = Field(default=5.0, gt=0)
-    # Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows.
-    knowledge_source_push_max_pass_seconds: float = Field(default=120.0, gt=0)
     # Seconds between sync passes while there are sources.
     knowledge_source_sync_interval_seconds: int = Field(default=900, ge=60)
     # Seconds between passes that found no source to sync; one idle sleep plus one
@@ -2573,31 +2579,6 @@ class KnowledgeSettings(BaseModel):
             return {}
         items = json_map_items(raw, "document_extractor_tokens_json", strings_only=True)
         return {url.rstrip("/"): token for url, token in items}
-
-    @model_validator(mode="after")
-    def _check_source_push_budgets(self) -> KnowledgeSettings:
-        provider = self.knowledge_source_push_provider_timeout_s
-        cleanup = self.knowledge_source_push_cleanup_timeout_s
-        if self.knowledge_source_push_stop_timeout_s > cleanup:
-            raise ValueError(
-                "LOOM_KNOWLEDGE_SOURCE_PUSH_STOP_TIMEOUT_S must not exceed "
-                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S"
-            )
-        # holding() permits work for 40% of renew_drive's 120-second lease.
-        # Keep this window in sync with leases.work_left; the regression checks both.
-        if provider + cleanup >= 48:
-            raise ValueError(
-                "LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S plus "
-                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S must stay below the "
-                "48-second renewal work window"
-            )
-        if provider + 2 * cleanup >= self.knowledge_source_push_max_pass_seconds:
-            raise ValueError(
-                "LOOM_KNOWLEDGE_SOURCE_PUSH_MAX_PASS_SECONDS must exceed "
-                "LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S plus twice "
-                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S"
-            )
-        return self
 
     @model_validator(mode="after")
     def _check_document_extractors(self) -> KnowledgeSettings:
@@ -6181,8 +6162,6 @@ class TrackerSettings(BaseModel):
 OP_BUDGETS_P99_MS: dict[str, int] = {
     # Own connection listing rechecks current identity and provider registration;
     # disconnect includes bounded local retirement followed by best-effort revocation.
-    "connection.list": 1000,
-    "connection.disconnect": 30000,
     "admin.users": 300,
     "agents.connected": 120,
     # One agent answer: a model turn per tool call (measured p95 10.7 s, at most 15 s
@@ -6448,14 +6427,19 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.connection.mcp_discover": 30000,
     "knowledge.connection.mcp_inspect": 5000,
     "knowledge.connection.mcp_list": 5000,
-    "knowledge.source.parse_links": 50,
+    "knowledge.connection.mcp_browse": 5000,
+    "knowledge.source.mcp_read": 5000,
+    "knowledge.source.mcp_add": 30000,
+    "knowledge.source.mcp_update": 5000,
+    "knowledge.source.mcp_list": 5000,
+    "knowledge.source.mcp_inspect": 5000,
+    "knowledge.source.mcp_pause": 5000,
+    "knowledge.source.mcp_resume": 5000,
+    "knowledge.source.mcp_refresh": 5000,
+    "knowledge.source.mcp_remove": 5000,
     "knowledge.source.remove": 400,
     "knowledge.source.rotate": 30000,
     "knowledge.source.sync_now": 300,
-    "knowledge.source.push_configure": 60000,
-    "knowledge.source.push_status": 1000,
-    "knowledge.source.push_confirm": 1000,
-    "knowledge.source.update": 60000,
     # One LLM call per window plus the reduce; bounded by max_windows.
     "knowledge.synthesize": 60000,
     # A read and an insert; an ingested document's edit also takes the source's claim

@@ -549,6 +549,7 @@ from server.transport.retirement import RetirementMiddleware  # noqa: E402
 
 app.add_middleware(RetirementMiddleware)
 
+from server.auth import account_lifecycle as _account_lifecycle  # noqa: E402
 from server.auth import login as _login  # noqa: E402
 from server.auth import oauth as _oauth  # noqa: E402
 from server.auth import scim_routes as _scim_routes  # noqa: E402
@@ -557,11 +558,11 @@ from server.identity.app import agent_claim as _agent_claim  # noqa: E402
 from server.identity.app import claim_release as _claim_release  # noqa: E402
 from server.identity.app import password_link as _password_link  # noqa: E402
 from server.identity.app import scim_groups as _scim_groups  # noqa: E402
-from server.knowledge.app import connection_routes as _connected_accounts  # noqa: E402
+from server.knowledge.app import connected_accounts as _connected_accounts  # noqa: E402
 
+_account_lifecycle.bind(_connected_accounts.stop_subjects)
 _self_signup.attach(app)
 _login.attach(app)
-_connected_accounts.attach(app)
 _claim_release.attach(app)
 # Sign-in (device grant, SSO) wherever auth is on; MCP connect only with LOOM_OAUTH_ENABLED.
 _oauth.attach(app)
@@ -600,7 +601,6 @@ from server import health as _health  # noqa: E402
 from server.assistant.app import routes as _assistant_routes  # noqa: E402
 from server.auth import routes as _auth_routes  # noqa: E402
 from server.knowledge.app import download_routes as _knowledge_download  # noqa: E402
-from server.knowledge.app import source_push_routes as _source_push  # noqa: E402
 from server.knowledge.app import upload_routes as _knowledge_upload  # noqa: E402
 
 _assistant_routes.attach(app)
@@ -608,7 +608,6 @@ _auth_routes.attach(app)
 _health.attach(app)
 _knowledge_download.attach(app)
 _knowledge_upload.attach(app)
-_source_push.attach(app)
 
 
 @app.get("/v1/api/openapi.json")

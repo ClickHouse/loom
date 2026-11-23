@@ -24,7 +24,8 @@ from server.knowledge.app import source_probes, source_sync, source_sync_recordi
 from server.knowledge.domain import sources as domain
 from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, KnowledgeSource
 from server.knowledge.domain.transcripts import Entry, parse_vtt, transcript_markdown
-from tests.unit.test_knowledge_source_sync import NS, ORG, _detail, _World, world  # noqa: F401
+from tests.unit.test_knowledge_source_sync import NS, ORG, _detail, _World
+from tests.unit.test_knowledge_source_sync import source_world as source_world
 
 MEET_KEY = json.dumps(
     {"type": "authorized_user", "client_id": "c", "client_secret": "s", "refresh_token": "r"}
@@ -124,7 +125,12 @@ def _zoom_recording(**file: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
-def stores(world: _World, monkeypatch: pytest.MonkeyPatch) -> _Stores:  # noqa: F811
+def world(source_world: _World) -> _World:
+    return source_world
+
+
+@pytest.fixture
+def stores(world: _World, monkeypatch: pytest.MonkeyPatch) -> _Stores:
     s = _Stores()
     client = httpx.AsyncClient(transport=httpx.MockTransport(s.answer))
     monkeypatch.setattr(recording, "get_client", lambda: client)
@@ -295,7 +301,7 @@ def test_a_rate_limit_reason_in_a_403_is_a_rate_limit(monkeypatch: pytest.Monkey
 
 
 def test_zoom_transcripts_keep_import_metadata_and_a_recent_one_is_checked_again(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]
@@ -354,15 +360,13 @@ def test_retired_or_unknown_provider_refuses_every_dispatch_before_transport(
         asyncio.run(source_sync_recording.transcript(session, {"id": "old-record"}, max_bytes=1000))
     with pytest.raises(source_probes.SourceUnreachable, match=expected):
         asyncio.run(
-            source_probes.probe(
-                "recording", {"provider": provider, "ids": [SPACE]}, MEET_KEY, items=[]
-            )
+            source_probes.probe("recording", {"provider": provider, "ids": [SPACE]}, MEET_KEY)
         )
     assert stores.requests == []
 
 
 def test_a_settled_recording_without_a_transcript_is_given_up_until_a_full_listing(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]
@@ -381,7 +385,7 @@ def test_a_settled_recording_without_a_transcript_is_given_up_until_a_full_listi
 
 @pytest.mark.parametrize("hours", [3, 50])
 def test_unrecorded_instances_ahead_of_a_recorded_one_do_not_hold_it_back(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
     monkeypatch: pytest.MonkeyPatch,
     hours: float,
@@ -400,7 +404,7 @@ def test_unrecorded_instances_ahead_of_a_recorded_one_do_not_hold_it_back(
 
 
 def test_a_recording_source_at_its_bound_holds_new_ones_and_unrecorded_take_no_room(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -415,7 +419,7 @@ def test_a_recording_source_at_its_bound_holds_new_ones_and_unrecorded_take_no_r
 
 
 def test_a_recording_the_store_no_longer_lists_is_kept(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]
@@ -430,7 +434,7 @@ def test_a_recording_the_store_no_longer_lists_is_kept(
 
 
 def test_a_meeting_the_account_lost_fails_the_turn_and_the_others_are_written(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     lost = "123456789"
@@ -446,7 +450,7 @@ def test_a_meeting_the_account_lost_fails_the_turn_and_the_others_are_written(
 
 
 def test_zoom_instances_with_a_transcript_are_written_and_the_rest_given_up(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]
@@ -481,7 +485,7 @@ def test_zoom_instances_with_a_transcript_are_written_and_the_rest_given_up(
 
 
 def test_a_refused_credential_a_wide_scope_or_a_rate_limit_is_the_turn_s(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]
@@ -508,7 +512,7 @@ def test_the_probe_counts_recordings_and_refuses_an_unseen_id_or_a_wide_scope(
         {"uuid": "rec2", "start_time": second},
     ]
     config = {"provider": "zoom", "ids": [MEETING]}
-    found = asyncio.run(source_probes.probe("recording", config, ZOOM_KEY, items=[]))
+    found = asyncio.run(source_probes.probe("recording", config, ZOOM_KEY))
     assert (found.documents, found.sample) == (
         2,
         [
@@ -518,12 +522,12 @@ def test_the_probe_counts_recordings_and_refuses_an_unseen_id_or_a_wide_scope(
     )
     stores.meeting_status = {MEETING: 404}
     with pytest.raises(source_probes.SourceUnreachable):
-        asyncio.run(source_probes.probe("recording", config, ZOOM_KEY, items=[]))
+        asyncio.run(source_probes.probe("recording", config, ZOOM_KEY))
     with pytest.raises(source_probes.CredentialRefused):
-        asyncio.run(source_probes.probe("recording", config, "{}", items=[]))
+        asyncio.run(source_probes.probe("recording", config, "{}"))
     stores.scopes["zoom.us"] = "meeting:write:admin"
     with pytest.raises(source_probes.CredentialRefused):
-        asyncio.run(source_probes.probe("recording", config, ZOOM_KEY, items=[]))
+        asyncio.run(source_probes.probe("recording", config, ZOOM_KEY))
 
 
 def test_a_session_never_shows_its_token() -> None:
@@ -531,7 +535,7 @@ def test_a_session_never_shows_its_token() -> None:
 
 
 def test_a_zoom_full_listing_reads_the_last_thirty_days_and_keeps_older_documents(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]
@@ -558,7 +562,7 @@ def test_a_vtt_speaker_name_reads_as_one_line(stores: _Stores) -> None:
 
 
 def test_a_meeting_the_account_may_not_read_is_lost_not_a_refused_credential(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     closed = "123456789"
@@ -574,11 +578,11 @@ def test_a_meeting_the_account_may_not_read_is_lost_not_a_refused_credential(
     assert world.audits == []
     config = {"provider": "zoom", "ids": [closed, MEETING]}
     with pytest.raises(source_probes.SourceUnreachable, match=f"meeting {closed}: http_403"):
-        asyncio.run(source_probes.probe("recording", config, ZOOM_KEY, items=[]))
+        asyncio.run(source_probes.probe("recording", config, ZOOM_KEY))
 
 
 def test_a_401_on_a_meeting_after_the_token_exchange_is_the_turn_s_credential(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]
@@ -595,7 +599,7 @@ def test_a_401_on_a_meeting_after_the_token_exchange_is_the_turn_s_credential(
 
 
 def test_a_401_on_recording_files_stops_the_turn(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]
@@ -636,7 +640,7 @@ def test_a_meeting_s_listing_error_names_the_configured_id(monkeypatch: pytest.M
 
 
 def test_two_meeting_ids_listing_one_instance_write_it_once(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", ["123456789", MEETING], ZOOM_KEY)]
@@ -649,7 +653,7 @@ def test_two_meeting_ids_listing_one_instance_write_it_once(
 
 
 def test_a_transcript_is_mined_for_decisions_by_the_same_leg(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]
@@ -666,7 +670,7 @@ def test_a_transcript_is_mined_for_decisions_by_the_same_leg(
 
 
 def test_a_transcript_whose_address_is_taken_during_the_fetch_is_counted_skipped(
-    world: _World,  # noqa: F811
+    world: _World,
     stores: _Stores,
 ) -> None:
     world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]

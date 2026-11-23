@@ -21,6 +21,11 @@ CONNECTION = "c" * 32 + "/1" + "d" * 31
 OWNER = ("org-one", "owner-one", SLOT)
 
 
+class _OpaqueCredential(str):
+    def __bool__(self) -> bool:
+        raise AssertionError("cleanup must not inspect credentials")
+
+
 def test_restore_keeps_owner_and_slot_identity_separate() -> None:
     groups: dict[Any, set[str]] = defaultdict(set)
     prefixes: dict[str, Any] = {}
@@ -246,32 +251,25 @@ async def test_restore_reuses_durable_inactive_fence_without_same_value_cas(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", [SLOT, "mcp", "unknown-source"])
-async def test_generic_credential_never_enters_native_revocation_factory(
-    monkeypatch: pytest.MonkeyPatch, kind: str
+@pytest.mark.parametrize("kind", [SLOT, "gdrive", "notion", "linear"])
+async def test_owner_erasure_uses_stored_keys_without_credential_execution(
+    owner_history: SimpleNamespace, kind: str
 ) -> None:
-    factory = Mock(
-        side_effect=AssertionError("native revocation factory must not receive this kind")
+    state = owner_history
+    owner = (*OWNER[:2], kind)
+    state.rows[owner] = restore.ConnectedAccount(
+        *owner, CONNECTION, active=True, credential_enc=_OpaqueCredential("retained-envelope")
     )
-    monkeypatch.setattr(restore.accounts, "client", factory)
-    account = restore.ConnectedAccount("org-one", "owner-one", kind, CONNECTION)
-    await restore.accounts._revoke(account, credential="nonempty-generic-envelope")
-    factory.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_native_revocation_control_still_uses_its_existing_client(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    revoke = AsyncMock()
-    factory = Mock(return_value=SimpleNamespace(revoke=revoke))
-    monkeypatch.setattr(restore.accounts, "client", factory)
-    account = restore.ConnectedAccount("org-one", "owner-one", "gdrive", CONNECTION)
-    await restore.accounts._revoke(account, credential="fixture-native-credential")
-    factory.assert_called_once_with("gdrive")
-    revoke.assert_awaited_once()
-    assert revoke.await_args.args == ("fixture-native-credential",)
-    assert revoke.await_args.kwargs["refresh"] is True
+    source = _owner_source(owner, "c")
+    if kind != SLOT:
+        source = replace(source, kind=kind, credential_mode="connected", connection_slot="")
+    state.history[owner] = [source]
+    await restore.accounts.stop_subjects([owner[1]], erase_owner=True)
+    assert not state.rows and not state.history and not state.held
+    assert state.fences[restore.accounts._fence_key(CONNECTION)].split("/")[1][0] == "0"
+    assert state.events == [(event, owner) for event in ("fence", "marker", "retire", "erase")]
+    state.unseal.assert_not_called()
+    state.http.assert_not_called()
 
 
 @pytest.fixture
@@ -331,11 +329,67 @@ def owner_history(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(
         accounts.revocation, "cutoffs", AsyncMock(side_effect=lambda *a, **k: state.cutoffs)
     )
-    monkeypatch.setattr(accounts, "unseal", Mock(side_effect=AssertionError("unseal not required")))
-    monkeypatch.setattr(restore, "unseal", Mock(side_effect=AssertionError("unseal not required")))
-    monkeypatch.setattr(accounts, "_revoke", AsyncMock())
+    state.unseal = Mock(side_effect=AssertionError("credential decryption forbidden"))
+    state.http = AsyncMock(side_effect=AssertionError("legacy HTTP execution forbidden"))
+    monkeypatch.setattr("server.core.secrets_at_rest.unseal", state.unseal)
+    monkeypatch.setattr("httpx.AsyncClient.send", state.http)
     _wire_owner_history_writes(monkeypatch, state)
     return state
+
+
+@pytest.mark.asyncio
+async def test_offline_restore_erases_legacy_history_without_remote_revocation(
+    owner_history: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = owner_history
+    owner = (*OWNER[:2], "gdrive")
+    state.rows[owner] = restore.ConnectedAccount(
+        *owner, CONNECTION, active=True, credential_enc=_OpaqueCredential("retained-envelope")
+    )
+    state.history[owner] = [
+        replace(
+            _owner_source(owner, "c"),
+            kind="gdrive",
+            credential_mode="connected",
+            connection_slot="",
+        )
+    ]
+    metadata = restore._metadata
+
+    async def inventory(ch: Any, selected: Any = None) -> Any:
+        return await metadata(ch, owner if selected is None else selected)
+
+    async def check_census(*, ch: Any) -> None:
+        assert ch is state
+        assert not state.rows and not state.history and not state.held
+
+    census = AsyncMock(side_effect=check_census)
+    monkeypatch.setattr(restore, "_metadata", inventory)
+    monkeypatch.setattr(restore.ch_module, "get_client", lambda: state)
+    monkeypatch.setattr(restore, "offline_refusal", AsyncMock(return_value=""))
+    monkeypatch.setattr(restore, "require_restore_erased", census)
+    await restore.restore_all(apply=True, ch=state)
+    assert not state.rows and not state.history and not state.held
+    census.assert_awaited_once_with(ch=state)
+    state.http.assert_not_called()
+    state.unseal.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_server_installs_generic_owner_erasure_lifecycle(
+    owner_history: SimpleNamespace,
+) -> None:
+    from server import main
+    from server.auth import account_lifecycle
+
+    assert main.app is not None
+    assert account_lifecycle._stopper is restore.accounts.stop_subjects
+    owner_history.history[OWNER] = [_owner_source(OWNER, "c")]
+    await account_lifecycle.stop_connections([OWNER[1]], erase_owner=True)
+    assert not owner_history.history and not owner_history.rows
+    assert ("erase", OWNER) in owner_history.events
+    owner_history.http.assert_not_called()
+    owner_history.unseal.assert_not_called()
 
 
 def _wire_owner_history_writes(monkeypatch: pytest.MonkeyPatch, state: SimpleNamespace) -> None:
@@ -419,8 +473,8 @@ async def test_owner_erasure_discovers_source_only_history_without_accounts(
     selected = set(owners) - set(retained)
     assert {owner for event, owner in state.events if event == "erase"} == selected
     assert not state.rows and len(state.fences) == len(selected)
-    restore.unseal.assert_not_called()
-    restore.accounts.unseal.assert_not_called()
+    state.unseal.assert_not_called()
+    state.http.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -522,8 +576,8 @@ async def test_owner_erasure_retries_marker_after_retirement_before_erase_failur
 
 
 @pytest.mark.asyncio
-async def test_owner_erasure_revokes_only_after_all_local_history_is_retired(
-    owner_history: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+async def test_owner_erasure_finishes_all_local_history_without_remote_revocation(
+    owner_history: SimpleNamespace,
 ) -> None:
     state = owner_history
     native = (OWNER[0], OWNER[1], "gdrive")
@@ -540,15 +594,11 @@ async def test_owner_erasure_revokes_only_after_all_local_history_is_retired(
             )
         ],
     }
-    revoked = []
-
-    async def revoke(account: Any, **kwargs: Any) -> None:
-        assert not state.history and not state.rows and not state.held
-        revoked.append((account.org, account.subject, account.kind))
-
-    monkeypatch.setattr(restore.accounts, "_revoke", revoke)
     await restore.accounts.stop_subjects([OWNER[1]], erase_owner=True, respect_cutoff=True)
-    assert set(revoked) == {OWNER, native}
+    assert not state.history and not state.rows and not state.held
+    assert {owner for event, owner in state.events if event == "erase"} == {OWNER, native}
+    state.http.assert_not_called()
+    state.unseal.assert_not_called()
     assert all(
         event != "erase" or ("retire", owner) in state.events for event, owner in state.events
     )
@@ -821,4 +871,6 @@ async def test_retry_budget_retains_admitted_registration_workset(
         assert (
             state.fences[restore.accounts._fence_key(marker.connection_id)] == proof.connection_id
         )
-        assert not await restore.accounts.available(marker)
+        assert not await restore.accounts._fence_current(marker)
+        with pytest.raises(restore.accounts.OwnerUnavailable):
+            await restore.accounts._require_source_fence(marker)

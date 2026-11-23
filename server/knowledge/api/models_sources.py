@@ -3,40 +3,22 @@ register for Loom to pull from. No output carries a credential."""
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from server.knowledge.domain.sources import (
-    MAX_DEPTH,
-    MAX_ITEMS,
-    MAX_PAGE_STORE_IDS,
-    MAX_PROJECTS,
-    MAX_WALK_FOLDERS,
-)
-
-# A pasted link is short; anything longer is no link to a folder or a page.
-MAX_LINK_CHARS = 2048  # not a setting: the wire's bound on one link
-_Link = Annotated[str, Field(max_length=MAX_LINK_CHARS)]
+from server.knowledge.api.models_private_sources import PrivateSourceInput
 
 
 class KnowledgeSourceProbe(BaseModel):
     """What a probe that succeeded found; a probe that fails refuses the call."""
 
-    # Documents the source lists now: the first page, 1000 at most, of the folders, of
-    # each shared drive and of each filter, and each file item (gdrive); at most 1000
-    # (recording); each project's first page (linear); the listed pages and the first
-    # 100 pages of each of up to three databases (notion).
+    # Selected recordings found, at most 1000; `more` marks a lower bound.
     documents: int = 0
     # True when more documents match than were listed, so `documents` is a lower bound.
     more: bool = False
     # Up to five document titles, most recently changed first.
     sample: list[str] = Field(default_factory=list)
-    # Items the probe checked: every item of the probed set while there are at most 20,
-    # else the 20 given or added last.
-    checked: int = 0
-    # True when the probed items were more than the 20 checked.
-    sampled: bool = False
 
 
 class KnowledgeSourceSync(BaseModel):
@@ -101,10 +83,7 @@ class KnowledgeSourceSync(BaseModel):
 class KnowledgeSourceEntry(BaseModel):
     # The source's name, unique in the namespace.
     name: str
-    # The source's kind (`gdrive`: a shared folder of docs, slides, PDFs, .pptx decks
-    # and .docx documents; `linear`: a project tracker's project documents; `notion`: a
-    # page store's pages and databases; `recording`: the transcripts of a meeting
-    # store's recordings).
+    # Recording, or an unavailable retained kind.
     kind: str
     # The registration's credential class; never the credential or account identity.
     credential_mode: str = "shared"
@@ -112,13 +91,7 @@ class KnowledgeSourceEntry(BaseModel):
     access: str = "namespace"
     # Canonical connected owner, only in the owner's permitted detail projection.
     owner_subject: str = ""
-    # The things the source reads (folders, files, shared drives, filters, pages,
-    # databases, projects); [] for a recording source.
-    items: list[dict[str, Any]] = Field(default_factory=list)
-    # The file kinds a gdrive source reads; [] for another kind.
-    include: list[str] = Field(default_factory=list)
-    # The source's config in the form that names ids per kind, or {} when an item
-    # has no place in it; never a credential.
+    # Recording provider and selected IDs; {} for an unavailable retained source.
     config: dict[str, Any] = Field(default_factory=dict)
     # Token subject of the admin who added it; '' with auth off.
     created_by: str = ""
@@ -147,85 +120,28 @@ class KnowledgeSourceListOutput(BaseModel):
     accepts_sources: bool = True
 
 
-_ITEMS_DESCRIPTION = (
-    f"The things the source reads, each an object with a `type`: "
-    f"1-{MAX_ITEMS} for gdrive, 1-{MAX_PROJECTS} for linear and 1-{MAX_PAGE_STORE_IDS} "
-    f"for notion; gdrive: "
-    f"{{type: folder, id, recursive (default false; subfolders to a depth of "
-    f"{MAX_DEPTH}, at most {MAX_WALK_FOLDERS} subfolders per source)}}, "
-    f"{{type: file, id}}, "
-    f"{{type: shared_drive, id}} (a folder of the same id given beside it adds nothing), "
-    f"{{type: filter, any of name_contains (the store matches it at the start of a word in "
-    f"the name), kinds (as include), modified_after (YYYY-MM-DD), in (a folder id)}}; "
-    f"notion: {{type: page | database, id}}; "
-    f"linear: {{type: project, id (a UUID) or slug_id (the 12 hex characters a project "
-    f"link ends with)}}."
-)
-_LINKS_DESCRIPTION = (
-    "Links to folders, files, documents, slides, pages, databases or projects, read as "
-    "items (`knowledge.source.parse_links`); an unreadable link refuses the call (BAD_LINK)."
-)
+class KnowledgeSourceAddInput(PrivateSourceInput):
+    """Register a shared recording source after checking its read-only credential."""
 
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
 
-class KnowledgeSourceAddInput(BaseModel):
-    """Register a document source on a namespace: a kind, what it reads (items
-    and links, or a config) and a read-only credential. A namespace admin may. The
-    credential is probed (a check of every item, or of the 20 given last, and a
-    listing) before anything is stored; a probe that fails stores nothing. A name is
-    refused while documents the sync worker wrote for an earlier source of that name
-    are live. The credential is stored encrypted and never returned."""
-
-    org: str = Field(..., description="The org.")
-    namespace: str = Field(
-        ...,
-        description=(
-            "The namespace or collection the documents live in; a person's own "
-            "(personal-…, single sign-on u-<name>-<hash>, col-me-…, or one claimed at "
-            "sign-up) is refused."
-        ),
-    )
+    namespace: str = Field(description="An ordinary destination namespace or collection.")
     name: str = Field(
-        ...,
-        description="Source name: 2-32 lower-case letters, digits, - or _, starting with a "
-        "letter; trimmed and lower-cased.",
+        description="Source name: 2-32 lower-case letters, digits, - or _, starting with a letter."
     )
-    kind: str = Field(
-        ...,
-        description="The source kind: `gdrive` (a shared-folder store), `linear` (a project "
-        "tracker's project documents), `notion` (a page store's pages and databases) or "
-        "`recording` (Zoom recording transcripts). Meet transcripts and notes use `gdrive`.",
-    )
-    items: list[dict[str, Any]] | None = Field(
-        None, max_length=MAX_ITEMS, description=_ITEMS_DESCRIPTION
-    )
-    links: list[_Link] | None = Field(None, max_length=MAX_ITEMS, description=_LINKS_DESCRIPTION)
-    config: dict[str, Any] | None = Field(
-        None,
-        description="What the source reads in the form that names ids per kind, instead of "
-        "items or links; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, "
-        "pptx, docx] (default all but docx)}; linear: {project_ids: [1-20 project ids, "
-        "UUIDs]}; notion: {page_ids: [...], database_ids: [...]} (1-20 ids in all); "
-        "recording (config only): {provider: zoom, ids: [1-20 meeting ids]}.",
-    )
-    include: list[str] | None = Field(
-        None,
-        description="gdrive with items or links: the file kinds read, of docs, slides, pdf, "
-        "pptx, docx (default all but docx).",
-    )
-    credential_mode: Literal["shared", "connected"] = Field(
-        "shared",
-        description="Use the supplied shared credential, or your own mirrored connected account.",
+    kind: Literal["recording"] = "recording"
+    config: dict[str, Any] = Field(
+        description="Recording provider and explicitly selected recording IDs."
     )
     credential: str = Field(
-        "",
-        description="The source's read-only credential (gdrive: a service account's JSON key, "
-        "with the folders shared to the account read-only; linear: a read-only API key of an "
-        "account that sees the projects; notion: an integration token with read content "
-        "access, the pages and databases shared to it; recording: a server-to-server app's "
-        "{account_id, client_id, client_secret} with read-only "
-        "scopes); stored encrypted, never returned.",
+        min_length=1,
+        repr=False,
+        exclude=True,
+        description="Read-only recording credential; sealed and never returned.",
     )
-    dry_run: bool = Field(False, description="Probe and write nothing.")
+    dry_run: bool = Field(
+        default=False, description="Check the credential and selection without saving."
+    )
 
 
 class KnowledgeSourceAddOutput(BaseModel):
@@ -235,11 +151,7 @@ class KnowledgeSourceAddOutput(BaseModel):
     kind: str
     # The namespace the source was registered on.
     namespace: str
-    # The items as stored; [] for a recording source.
-    items: list[dict[str, Any]] = Field(default_factory=list)
-    # The file kinds a gdrive source reads; [] for another kind.
-    include: list[str] = Field(default_factory=list)
-    # The config in the form that names ids per kind, or {} when an item has no place in it.
+    # Recording provider and selected IDs; {} for an unavailable retained source.
     config: dict[str, Any] = Field(default_factory=dict)
     # What the probe with the credential found.
     probe: KnowledgeSourceProbe = Field(default_factory=KnowledgeSourceProbe)
@@ -247,106 +159,8 @@ class KnowledgeSourceAddOutput(BaseModel):
     dry_run: bool = False
 
 
-class KnowledgeSourceUpdateInput(BaseModel):
-    """Add items to a registered document source or remove them, or change a gdrive
-    source's file kinds. A namespace admin may. The added items are probed with the
-    stored credential (every one, or the 20 given last) before anything is stored, and
-    a changed `include` probes the file items the source keeps; a probe that fails
-    stores nothing. Removing every item is refused: remove the source instead."""
-
-    org: str = Field(..., description="The org.")
-    namespace: str = Field(..., description="The namespace the source's documents live in.")
-    name: str = Field(..., description="The source name.")
-    add_items: list[dict[str, Any]] = Field(
-        default_factory=list,
-        max_length=MAX_ITEMS,
-        description="Items to add, of the forms add takes; one of the same type and id "
-        "replaces the stored one, and a folder of the id of a shared drive the source keeps "
-        "or is given adds nothing.",
-    )
-    add_links: list[_Link] = Field(
-        default_factory=list,
-        max_length=MAX_ITEMS,
-        description=(
-            "Links to add, read as items; a link to something the source holds names it as "
-            "held (a recursive folder, a drive at its root), and an add_items entry for the "
-            "same thing wins."
-        ),
-    )
-    remove_items: list[dict[str, Any]] = Field(
-        default_factory=list,
-        max_length=MAX_ITEMS,
-        description=(
-            "Items to remove, matched by type and id (a filter by its fields); a folder "
-            "entry also removes a shared drive of the same id the source holds. One the "
-            "source does not hold is refused (BAD_CONFIG), so a retry after a timeout "
-            "inspects the source first."
-        ),
-    )
-    remove_links: list[_Link] = Field(
-        default_factory=list,
-        max_length=MAX_ITEMS,
-        description=(
-            "Links to remove, read as items; a folder link also removes a shared drive of "
-            "the same id the source holds."
-        ),
-    )
-    include: list[str] | None = Field(
-        None,
-        description="gdrive only: the new file kinds read, of docs, slides, pdf, pptx, docx; "
-        "default unchanged.",
-    )
-
-
-class KnowledgeSourceUpdateOutput(BaseModel):
-    # The source updated.
-    name: str
-    # The source's items as now stored.
-    items: list[dict[str, Any]] = Field(default_factory=list)
-    # The file kinds a gdrive source reads; [] for another kind.
-    include: list[str] = Field(default_factory=list)
-    # The config in the form that names ids per kind, or {} when an item has no place in it.
-    config: dict[str, Any] = Field(default_factory=dict)
-    # The items this call added.
-    added: list[dict[str, Any]] = Field(default_factory=list)
-    # The items this call removed, as the source held them.
-    removed: list[dict[str, Any]] = Field(default_factory=list)
-    # What the probe of the added items found, or with none added, of the kept file items
-    # a changed `include` probes; nothing checked when neither ran.
-    probe: KnowledgeSourceProbe = Field(default_factory=KnowledgeSourceProbe)
-
-
-class KnowledgeSourceParseLinksInput(BaseModel):
-    """Read pasted links as a source's items, with no request to any store and
-    nothing written: each link answers its kind and item, or why it is unreadable.
-    Any reader of the namespace may."""
-
-    org: str = Field(..., description="The org.")
-    namespace: str = Field(..., description="The namespace the source would live in.")
-    links: list[_Link] = Field(
-        ..., min_length=1, max_length=MAX_ITEMS, description=f"1-{MAX_ITEMS} links."
-    )
-
-
-class KnowledgeSourceParsedLink(BaseModel):
-    # The link as given.
-    link: str
-    # The source kind that reads it (gdrive, notion, linear); '' when unreadable.
-    kind: str = ""
-    # The item it names; {} when unreadable.
-    item: dict[str, Any] = Field(default_factory=dict)
-    # Why the link names no item (another host, no id, a spreadsheet, a single
-    # issue); '' when it does.
-    unreadable: str = ""
-
-
-class KnowledgeSourceParseLinksOutput(BaseModel):
-    # Each link, in the order given.
-    links: list[KnowledgeSourceParsedLink] = Field(default_factory=list)
-
-
 class KnowledgeSourceInspectInput(BaseModel):
-    """One registered document source: its items, its sync state and the
+    """One registered document source: its config, its sync state and the
     documents it wrote (the 200 most recently ingested). Any reader of the
     namespace may; the credential is never returned."""
 
@@ -377,12 +191,7 @@ class KnowledgeSourceInspectOutput(BaseModel):
     access: str = "namespace"
     # Canonical connected owner, only in the owner's permitted detail projection.
     owner_subject: str = ""
-    # The things the source reads; [] for a recording source.
-    items: list[dict[str, Any]] = Field(default_factory=list)
-    # The file kinds a gdrive source reads; [] for another kind.
-    include: list[str] = Field(default_factory=list)
-    # The source's config in the form that names ids per kind, or {} when an item
-    # has no place in it; never a credential.
+    # Recording provider and selected IDs; {} for an unavailable retained source.
     config: dict[str, Any] = Field(default_factory=dict)
     # Token subject of the admin who added it; '' with auth off.
     created_by: str = ""
@@ -395,10 +204,10 @@ class KnowledgeSourceInspectOutput(BaseModel):
 
 
 class KnowledgeSourceCheckInput(BaseModel):
-    """Probe a registered document source with its stored credential now (a check of
-    every item, or of the 20 added last, and a listing), nothing written. A namespace
-    admin may; a connected owner may also check their own source. An administrator
-    checking another person's connection receives source-level standing only."""
+    """Probe a shared recording with its stored credential without writing.
+
+    A namespace admin may check; unavailable retained sources refuse the probe.
+    """
 
     org: str = Field(..., description="The org.")
     namespace: str = Field(..., description="The namespace the source's documents live in.")
@@ -410,27 +219,19 @@ class KnowledgeSourceCheckOutput(BaseModel):
     name: str
     # False when the probe failed; `summary` says why.
     reachable: bool = True
-    # Documents the source lists now: the first page, 1000 at most, of the folders, of
-    # each shared drive and of each filter, and each file item (gdrive); at most 1000
-    # (recording); each project's first page (linear); the listed pages and the first
-    # 100 pages of each of up to three databases (notion).
+    # Selected recordings found, at most 1000; `more` marks a lower bound.
     documents: int = 0
     # True when more documents match than were listed, so `documents` is a lower bound.
     more: bool = False
     # Up to five document titles, most recently changed first.
     sample: list[str] = Field(default_factory=list)
-    # Items the probe checked: every item while there are at most 20, else the 20
-    # added last.
-    checked: int = 0
-    # True when the source holds more items than were checked.
-    sampled: bool = False
     # One line: what was found, or why it failed.
     summary: str = ""
     # When the probe ran, ISO UTC.
     checked_at: str = ""
 
 
-class KnowledgeSourceRotateInput(BaseModel):
+class KnowledgeSourceRotateInput(PrivateSourceInput):
     """Replace a registered document source's credential. A namespace admin may;
     the new credential is probed first, and a probe that fails stores nothing."""
 

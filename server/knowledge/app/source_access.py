@@ -22,7 +22,7 @@ from server.knowledge.domain.access_list import UNREAD, AccessList, allows, from
 from server.knowledge.domain.document_access import fresh, source_id
 from server.knowledge.domain.mcp_read_evidence import ReadProof, ReadScope
 from server.knowledge.domain.serving import Serving
-from server.knowledge.domain.sources import KnowledgeSource, opaque_payload
+from server.knowledge.domain.sources import KnowledgeSource
 from server.knowledge.store import mirrors as mirrors_repo
 from server.knowledge.store import source_access as store
 from server.operations.base import Role
@@ -316,82 +316,53 @@ async def prepare(org: str, namespaces: list[str]) -> ReadPlan:
 
 
 async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) -> None:
-    from server.knowledge.app.connected_accounts import validate_indexed
     from server.knowledge.app.mcp_source_authority import validate_indexed_reader
     from server.knowledge.store import sources as source_store
 
     eligible = []
-    mcp_scopes: dict[tuple[str, str], ReadScope] = {}
+    scopes: dict[tuple[str, str], ReadScope] = {}
     for row in sources:
-        key = row["namespace"], row["source_id"]
-        mode = row.get("credential_mode", "shared")
-        if row.get("source_kind") != "mcp" and opaque_payload(
-            kind=str(row.get("source_kind") or ""),
-            mode=mode,
-            version=int(row.get("source_contract_version") or 0),
+        if (
+            row.get("source_kind") != "mcp"
+            or row.get("credential_mode") != "connected"
+            or row.get("source_contract_version") != 1
         ):
             continue
-        if row.get("source_kind") == "mcp" and mode != "connected":
-            continue
-        if mode == "shared":
-            if key not in plan._connected_pins:
-                eligible.append(row)
-            continue
-        if mode != "connected" or (plan._scope_frozen and key not in plan._connected_pins):
+        key = row["namespace"], row["source_id"]
+        if plan._scope_frozen and key not in plan._connected_pins:
             continue
         try:
             source = await source_store.latest_source(plan.org, row["namespace"], row["name"])
-            if (
-                source is None
-                or source.source_id != row["source_id"]
-                or (source.org, source.namespace, source.name)
-                != (plan.org, row["namespace"], row["name"])
-                or (
-                    source.kind != "mcp"
-                    and opaque_payload(
-                        kind=source.kind,
-                        mode=source.credential_mode,
-                        version=source.source_contract_version,
-                    )
-                )
-            ):
+            if source is None or (
+                source.org,
+                source.namespace,
+                source.name,
+                source.source_id,
+                source.kind,
+            ) != (plan.org, row["namespace"], row["name"], row["source_id"], "mcp"):
                 continue
             pinned = plan._connected_pins.get(key)
             if pinned is not None and source != pinned:
                 continue
-            if source.kind == "mcp":
-                bound = await validate_indexed_reader(source, plan._auth)
-                mcp_scopes[key] = ReadScope(bound.scope_sha256, bound.selected_uris)
-            else:
-                await validate_indexed(source, plan._auth)
+            bound = await validate_indexed_reader(source, plan._auth)
+            scopes[key] = ReadScope(bound.scope_sha256, bound.selected_uris)
             eligible.append(row)
             if not plan._scope_frozen:
                 plan._connected_pins[key] = copy.deepcopy(source)
-        except Exception:  # noqa: BLE001 — one unverifiable connection admits no private leg
+        except Exception:  # noqa: BLE001 — unverifiable source authority admits no private leg
             continue
-    sources = eligible
-    names = sorted({s["namespace"] for s in sources})
-    mirrors = await mirrors_repo.mirrors_of(plan.org, names, live_only=True)
+    mirrors = await mirrors_repo.mirrors_of(
+        plan.org, sorted({s["namespace"] for s in eligible}), live_only=True
+    )
     by_original: dict[str, list[str]] = {}
     for mirror, original in mirrors.items():
         if is_mirror_name(mirror):
             by_original.setdefault(original, []).append(mirror)
-    pairs = {
+    plan.sources = {
         (by_original[s["namespace"]][0], s["source_id"]): s["namespace"]
-        for s in sources
+        for s in eligible
         if len(by_original.get(s["namespace"], [])) == 1
     }
-    plan._mcp_scopes = {
-        key: mcp_scopes[(original, key[1])]
-        for key, original in pairs.items()
-        if (original, key[1]) in mcp_scopes
-    }
-    rows = await store.listings(plan.org, [key for key in pairs if key not in plan._mcp_scopes])
+    plan._mcp_scopes = {key: scopes[(original, key[1])] for key, original in plan.sources.items()}
+    plan.listing_starts = {}
     plan.reader = await resolve_reader(plan.org, subject) if subject else None
-    plan.listing_starts = {
-        (r["namespace"], r["source_id"]): r["started_at"]
-        for r in rows
-        if (r["namespace"], r["source_id"]) in pairs
-        and fresh(r["started_at"], now(), settings.knowledge_source_acl_stale_seconds)
-    }
-    plan.sources = {key: pairs[key] for key in plan.listing_starts | plan._mcp_scopes}

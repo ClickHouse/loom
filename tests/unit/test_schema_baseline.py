@@ -172,6 +172,7 @@ def test_the_journal_files() -> None:
         "114_memory_proposal_review.sql",
         "115_memory_refusals.sql",
         "116_mcp_source_lifecycle.sql",
+        "117_mcp_source_admission.sql",
     ]
 
 

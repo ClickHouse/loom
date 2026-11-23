@@ -90,3 +90,22 @@ OPERATIONS: list[Operation] = [
         maturity="experimental",
     ),
 ]
+
+
+def _browse_operation() -> Operation:
+    from server.knowledge.api.models_mcp_connections import MCPBrowseInput, MCPBrowseOutput
+    from server.knowledge.app.mcp_browse import handle_mcp_browse
+
+    return Operation(
+        name="knowledge.connection.mcp_browse",
+        input_model=MCPBrowseInput,
+        output_model=MCPBrowseOutput,
+        handler=handle_mcp_browse,
+        idempotent=True,
+        required_role=Role.VIEWER,
+        skip_namespace_authz=True,
+        maturity="experimental",
+    )
+
+
+OPERATIONS.append(_browse_operation())

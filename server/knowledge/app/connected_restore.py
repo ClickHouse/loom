@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import time
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
@@ -12,13 +11,11 @@ from typing import Any
 from server.auth import aliases, claims
 from server.core import ch as ch_module
 from server.core.ch import set_query_tag
-from server.core.secrets_at_rest import unseal
 from server.erasure.app.connected_accounts import require_restore_erased
 from server.knowledge.app import connected_accounts as accounts
 from server.knowledge.app import source_push
 from server.knowledge.app import sources as source_ops
 from server.knowledge.domain.connected_accounts import (
-    CREDENTIAL_PURPOSE,
     ConnectedAccount,
     known_account_kind,
     source_account_key,
@@ -158,31 +155,24 @@ async def _restore_owner(
     ch: Any,
     *,
     respect_cutoff: bool = False,
-    revoke: bool = True,
-) -> tuple[ConnectedAccount, str] | None:
+) -> None:
     async with accounts.account_lease(*owner, ch=ch):
         current = await account_store.get(*owner, ch=ch)
         if current is not None and (current.org, current.subject, current.kind) != owner:
             raise accounts.unavailable()
         if respect_cutoff and not await accounts._owner_cutoff_allows(owner, current):
-            return None
+            return
         keys, sources = await _metadata(ch, owner)
         if current is not None:
             keys.append((current.org, current.subject, current.kind, current.connection_id))
         _include(groups, prefixes, keys)
         if not keys:
-            return None
+            return
         stopped: dict[str, str] = {}
         for connection in sorted(groups[owner]):
             key = accounts._fence_key(connection)
             if key not in stopped:
                 stopped[key] = await _stop_key(connection, ch)
-        credential = ""
-        if revoke and current is not None and current.credential_enc:
-            try:
-                credential = unseal(CREDENTIAL_PURPOSE, current.credential_enc, warn=False) or ""
-            except Exception:  # noqa: BLE001 — local deletion never depends on recovering a remote secret
-                pass
         registration = current.connection_id if current is not None else min(row[3] for row in keys)
         marker = ConnectedAccount(*owner, registration, disconnected_at=datetime.now(UTC))
         # Retain an inventoried registration so recovery cannot expand its admitted workset.
@@ -192,7 +182,6 @@ async def _restore_owner(
         )
         await _retire_history(sources, ch)
         await accounts._erase_locked(ended, keep_marker=False)
-        return (current, credential) if current is not None else None
 
 
 async def _erasure_owners(
@@ -226,23 +215,18 @@ async def _erasure_owners(
 
 async def erase_subjects(
     subjects: list[str], *, org: str | None, respect_cutoff: bool, revoke: bool, ch: Any
-) -> list[tuple[ConnectedAccount, str]]:
-    """Owner-deletion callers authorize only their selected identities, never global restore."""
+) -> None:
+    """Erase selected identities locally; the lifecycle revoke flag permits no provider HTTP."""
     if not subjects:
-        return []
+        return
     owners = await _erasure_owners(subjects, org=org, respect_cutoff=respect_cutoff, ch=ch)
     groups: dict[Owner, set[str]] = defaultdict(set)
     prefixes: dict[str, Owner] = {}
     for owner in sorted(owners):
         keys, _sources = await _metadata(ch, owner)
         _include(groups, prefixes, keys)
-    ended = []
     for owner in sorted(owners):
-        if account := await _restore_owner(
-            owner, groups, prefixes, ch, respect_cutoff=respect_cutoff, revoke=revoke
-        ):
-            ended.append(account)
-    return ended
+        await _restore_owner(owner, groups, prefixes, ch, respect_cutoff=respect_cutoff)
 
 
 async def restore_all(*, apply: bool, ch: Any) -> None:
@@ -263,15 +247,10 @@ async def restore_all(*, apply: bool, ch: Any) -> None:
     _include(groups, prefixes, keys)
     if not apply:
         return
-    revocations = []
     async with asyncio.timeout(settings.knowledge_connected_stop_timeout_s):
         for owner in sorted(groups):
             why = await offline_refusal(ch)
             if why:
                 raise RuntimeError(why)
-            if ended := await _restore_owner(owner, groups, prefixes, ch):
-                revocations.append(ended)
+            await _restore_owner(owner, groups, prefixes, ch)
         await require_restore_erased(ch=ch)
-    deadline = time.monotonic() + settings.knowledge_connected_revoke_timeout_s
-    for account, credential in revocations:
-        await accounts._revoke(account, credential=credential, deadline=deadline)

@@ -15,7 +15,6 @@ import pytest
 from server.clients.mcp_source import MCPLimits, MCPSourceClient, MCPToolMapping
 from server.knowledge.app import mcp_profiles
 from server.knowledge.app.mcp_profiles import (
-    MAX_CATALOG_BYTES,
     MCPProfileCatalog,
     MCPProfileError,
     build_mcp_source_client,
@@ -201,7 +200,7 @@ def test_page_arguments_are_bounded(changes: dict[str, Any]) -> None:
         '{"version":1,"profiles":[],"x":NaN}',
         '{"version":1,"profiles":[{"id":"secret","id":"other"}]}',
         b"\xff",
-        b" " * (MAX_CATALOG_BYTES + 1),
+        b" " * (mcp_profiles.settings.knowledge_source_mcp_catalog_max_bytes + 1),
     ],
 )
 def test_invalid_catalog_errors_never_echo_payload(payload: str | bytes) -> None:
@@ -585,3 +584,40 @@ def test_oversized_selection_refuses_through_real_client_limits() -> None:
     )
     with pytest.raises(MCPProfileError, match="^MCP_PROFILE_INVALID$"):
         client(profile, contract=two)
+
+
+@pytest.mark.parametrize(
+    ("field", "limit"),
+    [
+        ("knowledge_source_mcp_catalog_max_bytes", 1024),
+        ("knowledge_source_mcp_catalog_max_profiles", 1),
+        ("knowledge_source_mcp_profile_max_bytes", 1024),
+        ("knowledge_source_mcp_schema_max_bytes", 128),
+        ("knowledge_source_mcp_profile_max_nodes", 16),
+        ("knowledge_source_mcp_profile_max_depth", 3),
+    ],
+)
+def test_actual_operator_bound_refuses_an_otherwise_valid_catalog(
+    monkeypatch: pytest.MonkeyPatch, field: str, limit: int
+) -> None:
+    mapping = tool_mapping()
+    mapping["input_schema"]["description"] = "x" * 1024
+    configured = row(
+        config={"endpoint": ENDPOINT, "approved_tools": ["read_document"], "read": mapping}
+    )
+    payload = json.dumps({"version": 1, "profiles": [configured, row("second")]})
+    assert MCPProfileCatalog.parse(payload).get("org-a", "approved")
+    monkeypatch.setattr(mcp_profiles.settings, field, limit)
+    with pytest.raises(MCPProfileError, match="^MCP_PROFILE_INVALID$"):
+        MCPProfileCatalog.parse(payload)
+
+
+def test_cached_approval_cannot_ignore_changed_operator_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.dumps({"version": 1, "profiles": [row("first"), row("second")]})
+    monkeypatch.setattr(mcp_profiles.settings, "knowledge_source_mcp_profiles_json", payload)
+    assert mcp_profiles.load_mcp_profile_catalog().get("org-a", "second")
+    monkeypatch.setattr(mcp_profiles.settings, "knowledge_source_mcp_catalog_max_profiles", 1)
+    with pytest.raises(MCPProfileError):
+        mcp_profiles.load_mcp_profile_catalog()

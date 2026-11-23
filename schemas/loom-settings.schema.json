@@ -2376,26 +2376,6 @@
           "type": "number",
           "description": "memory.set flags a write `conflicted` when an active peer in the same (org, namespace, memory_type) sits at cosine ≥ this. Tuned for text-embedding-3-*; 1.0 disables. Per-namespace override: loom.namespaces.conflict_threshold."
         },
-        "connect_gdrive_client_id": {
-          "default": "",
-          "type": "string",
-          "description": "OAuth client id for personal Drive connections; empty disables the provider."
-        },
-        "connect_linear_client_id": {
-          "default": "",
-          "type": "string",
-          "description": "OAuth client id for personal project-tracker connections; empty disables it."
-        },
-        "connect_notion_client_id": {
-          "default": "",
-          "type": "string",
-          "description": "Public-integration client id for personal page-store connections; empty disables it."
-        },
-        "connect_notion_read_content_only": {
-          "default": false,
-          "type": "boolean",
-          "description": "The operator has restricted the public integration to read-content capability. Its token response cannot prove this registration setting; false disables it."
-        },
         "consolidation_merge_concurrency": {
           "default": 4,
           "type": "integer",
@@ -3342,6 +3322,27 @@
           "type": "integer",
           "description": "Active MCP connection slots one canonical person may hold per organization."
         },
+        "knowledge_mcp_envelope_max_bytes": {
+          "default": 32768,
+          "maximum": 32768,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Maximum sealed MCP plaintext bytes admitted by this deployment, up to the v1 wire ceiling."
+        },
+        "knowledge_mcp_resource_id_max_bytes": {
+          "default": 2048,
+          "maximum": 2048,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum UTF-8 bytes in one selected MCP identity, up to the v1 wire ceiling."
+        },
+        "knowledge_mcp_selected_resources_max": {
+          "default": 1000,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum explicitly selected MCP identities per source, without implicit recursion."
+        },
         "knowledge_mirrored_sources_enabled": {
           "default": false,
           "type": "boolean",
@@ -3491,11 +3492,128 @@
           "type": "integer",
           "description": "Documents one source holds: its stored ones plus the new ones a turn writes. At it a turn tries no new file, notes how many as `too_many_documents`, and still updates and retires. At most 200,000: each read of the stored copies grows with its square."
         },
+        "knowledge_source_mcp_catalog_max_bytes": {
+          "default": 8388608,
+          "maximum": 8388608,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Maximum trusted profile-catalog bytes admitted, up to the contract ceiling."
+        },
+        "knowledge_source_mcp_catalog_max_profiles": {
+          "default": 10000,
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum distinct approved profiles in one trusted catalog."
+        },
+        "knowledge_source_mcp_profile_max_bytes": {
+          "default": 65536,
+          "maximum": 65536,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Maximum canonical bytes in one approved profile."
+        },
+        "knowledge_source_mcp_profile_max_depth": {
+          "default": 16,
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum JSON nesting depth in one approved profile."
+        },
+        "knowledge_source_mcp_profile_max_nodes": {
+          "default": 4096,
+          "maximum": 4096,
+          "minimum": 16,
+          "type": "integer",
+          "description": "Maximum JSON nodes visited while validating one approved profile."
+        },
         "knowledge_source_mcp_profiles_json": {
           "default": "",
           "maxLength": 8388608,
           "type": "string",
           "description": "Operator-approved MCP read profiles as version-1 JSON, at most 8 MiB UTF-8; empty approves none, and profile metadata grants no connection or publication access."
+        },
+        "knowledge_source_mcp_schedule_documents": {
+          "default": 8,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Document credits reserved before admitting one MCP source turn."
+        },
+        "knowledge_source_mcp_schedule_global": {
+          "default": 16,
+          "maximum": 256,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Concurrent MCP source turns across this worker pass."
+        },
+        "knowledge_source_mcp_schedule_page_size": {
+          "default": 100,
+          "maximum": 256,
+          "minimum": 1,
+          "type": "integer",
+          "description": "MCP scheduling headers returned per bounded metadata query."
+        },
+        "knowledge_source_mcp_schedule_per_endpoint": {
+          "default": 2,
+          "maximum": 256,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Concurrent turns sharing one canonical approved MCP endpoint."
+        },
+        "knowledge_source_mcp_schedule_per_org": {
+          "default": 4,
+          "maximum": 256,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Concurrent MCP source turns for one organization."
+        },
+        "knowledge_source_mcp_schedule_query_bytes": {
+          "default": 67108864,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Physical bytes one MCP metadata query may read before refusing."
+        },
+        "knowledge_source_mcp_schedule_query_rows": {
+          "default": 1000000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Physical rows one MCP metadata query may read before refusing."
+        },
+        "knowledge_source_mcp_schedule_query_seconds": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "maximum": 60,
+          "type": "number",
+          "description": "Maximum execution seconds for one MCP metadata or progress query."
+        },
+        "knowledge_source_mcp_schedule_ready": {
+          "default": 256,
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum eligible source headers waiting for an execution slot."
+        },
+        "knowledge_source_mcp_schedule_scan_pages": {
+          "default": 16,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum metadata pages scanned in one MCP scheduling pass."
+        },
+        "knowledge_source_mcp_schedule_source_seconds": {
+          "default": 20.0,
+          "exclusiveMinimum": 0,
+          "maximum": 300,
+          "type": "number",
+          "description": "Outer deadline in seconds for one MCP source turn, including cleanup."
+        },
+        "knowledge_source_mcp_schema_max_bytes": {
+          "default": 16384,
+          "maximum": 16384,
+          "minimum": 128,
+          "type": "integer",
+          "description": "Maximum canonical schema or schema-string bytes in one mapping."
         },
         "knowledge_source_mirror_documents_per_pass": {
           "default": 40,
@@ -3509,41 +3627,6 @@
           "maximum": 25.0,
           "type": "number",
           "description": "Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false."
-        },
-        "knowledge_source_push_cleanup_timeout_s": {
-          "default": 5.0,
-          "exclusiveMinimum": 0,
-          "type": "number",
-          "description": "Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait."
-        },
-        "knowledge_source_push_enabled": {
-          "default": false,
-          "type": "boolean",
-          "description": "Enable optional source push setup, callbacks and Drive renewal; false keeps polling only."
-        },
-        "knowledge_source_push_interval_seconds": {
-          "default": 300,
-          "minimum": 60,
-          "type": "integer",
-          "description": "Seconds between bounded channel-renewal pages; channels renew a day before expiry."
-        },
-        "knowledge_source_push_max_pass_seconds": {
-          "default": 120.0,
-          "exclusiveMinimum": 0,
-          "type": "number",
-          "description": "Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows."
-        },
-        "knowledge_source_push_provider_timeout_s": {
-          "default": 40.0,
-          "exclusiveMinimum": 0,
-          "type": "number",
-          "description": "Seconds one push setup or Drive renewal may spend on provider work, before cleanup."
-        },
-        "knowledge_source_push_stop_timeout_s": {
-          "default": 2.0,
-          "exclusiveMinimum": 0,
-          "type": "number",
-          "description": "Seconds allowed to stop one superseded or unpublished Drive channel."
         },
         "knowledge_source_retire_documents_per_pass": {
           "default": 40,

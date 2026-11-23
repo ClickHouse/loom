@@ -227,6 +227,12 @@ def harness(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> 
     monkeypatch.setattr(mcp_connections, "load_mcp_profile_catalog", lambda: catalog)
     monkeypatch.setattr(mcp_connections, "_ready", AsyncMock())
     monkeypatch.setattr(authority.account_store, "get", AsyncMock(side_effect=lambda *a: h.account))
+
+    async def put_account(changed: ConnectedAccount) -> None:
+        assert changed == replace(h.account, active=False)
+        h.account = changed
+
+    monkeypatch.setattr(authority.account_store, "put", put_account)
     monkeypatch.setattr(
         authority.source_store, "get_source", AsyncMock(side_effect=lambda *a: h.source)
     )

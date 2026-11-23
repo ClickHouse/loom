@@ -1,45 +1,13 @@
 """Owner-only MCP connection controls; credentials are input-only secrets."""
 
-from typing import Any, Literal, Self
+from typing import Literal
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    ModelWrapValidatorHandler,
-    SecretStr,
-    model_validator,
-)
-from pydantic import (
-    ValidationError as ModelValidationError,
-)
+from pydantic import BaseModel, Field, SecretStr
+
+from server.knowledge.api.models_private_sources import PrivateSourceInput
 
 
-class _Input(BaseModel):
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
-    org: str = Field(description="The authenticated caller's organization.")
-
-    @model_validator(mode="wrap")
-    @classmethod
-    def _redact_errors(cls, value: Any, handler: ModelWrapValidatorHandler[Self]) -> Self:
-        try:
-            return handler(value)
-        except ModelValidationError:
-            # HTTP serializes error inputs; hiding only their text repr is insufficient.
-            raise ModelValidationError.from_exception_data(
-                cls.__name__,
-                [
-                    {
-                        "type": "value_error",
-                        "loc": (),
-                        "input": "<redacted>",
-                        "ctx": {"error": ValueError("MCP_CONNECTION_INPUT_INVALID")},
-                    }
-                ],
-            ) from None
-
-
-class MCPConnectInput(_Input):
+class MCPConnectInput(PrivateSourceInput):
     profile_id: str = Field(
         min_length=1, max_length=128, description="The operator-approved profile ID."
     )
@@ -60,7 +28,7 @@ class MCPConnectInput(_Input):
     )
 
 
-class MCPListInput(_Input):
+class MCPListInput(PrivateSourceInput):
     cursor: str | None = Field(
         default=None,
         max_length=2048,
@@ -75,7 +43,7 @@ class MCPListInput(_Input):
     )
 
 
-class MCPInspectInput(_Input):
+class MCPInspectInput(PrivateSourceInput):
     slot: str = Field(
         default="",
         max_length=36,
@@ -88,7 +56,7 @@ class MCPInspectInput(_Input):
     )
 
 
-class MCPSlotInput(_Input):
+class MCPSlotInput(PrivateSourceInput):
     slot: str = Field(max_length=36, description="The exact owned MCP connection slot.")
 
 
@@ -134,3 +102,46 @@ class MCPDisconnectOutput(BaseModel):
     disconnected: bool
     upstream_revoked: Literal[False] = False
     upstream_action: Literal["revoke_credential_upstream"] = "revoke_credential_upstream"
+
+
+class MCPBrowseInput(MCPSlotInput):
+    mode: Literal["resources", "search"] = Field(description="The explicit metadata operation.")
+    query: str = Field(
+        default="",
+        max_length=1000,
+        repr=False,
+        description="The approved mapped-search query; empty for resources, default empty.",
+    )
+    limit: int = Field(
+        default=100,
+        ge=1,
+        le=100,
+        strict=True,
+        description="Maximum metadata items in the first window, from 1 to 100; default 100.",
+    )
+
+
+class MCPBrowseItem(BaseModel):
+    id: str = Field(repr=False)
+    title: str = Field(repr=False)
+    uri: str = Field(repr=False, description="A stable display hint that grants no read authority.")
+
+
+class MCPBrowseOutput(BaseModel):
+    slot: str
+    generation: str
+    mode: Literal["resources", "search"]
+    supported: bool = False
+    resources: bool | None
+    mapped_read: bool
+    mapped_search: bool
+    capabilities_checked: bool = False
+    items: list[MCPBrowseItem] = Field(default_factory=list)
+    complete: bool = Field(
+        default=False, description="The declared page fits this response window."
+    )
+    truncated: bool = False
+    reason: str | None = None
+    limitations: list[str]
+    manual_resource_ids_supported: Literal[True] = True
+    remote_identity_verified: Literal[False] = False

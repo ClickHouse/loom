@@ -12,6 +12,7 @@ from server.clients.mcp_source import MCPEvidence, MCPSourceClient, MCPSourceErr
 from server.core.ch import set_query_tag
 from server.knowledge.app import mcp_source_authority as authority
 from server.knowledge.app.mcp_read_receipt import require_read_receipt
+from server.knowledge.app.mcp_source_sessions import checked_session
 from server.knowledge.domain.mcp_identity import resource_uri
 from server.knowledge.domain.sources import KnowledgeSource
 
@@ -41,7 +42,9 @@ async def _client(src: KnowledgeSource, auth: AuthInfo) -> AsyncIterator[MCPSour
             raise authority.MCPAuthorityError()
 
     bound = await authority.validate_live_reader(src, auth)
-    async with bound.connection.client(validate) as client:
+    async with checked_session(
+        bound.connection.account, bound.connection.client(validate)
+    ) as client:
         yield client
 
 

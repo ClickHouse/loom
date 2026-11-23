@@ -141,6 +141,7 @@ async def test_live_result_loses_publication_when_the_resource_changes(live_tool
     live_tools.h.text = "Changed after retrieval"
     with pytest.raises(MCPSourceError):
         await result.check()
+    assert live_tools.h.account.active
 
 
 @pytest.mark.asyncio
@@ -149,6 +150,7 @@ async def test_live_revalidation_detects_schema_drift(live_tools):
     live_tools.schema = {**SEARCH_OUTPUT, "description": "Changed contract"}
     with pytest.raises(MCPSourceError):
         await result.check()
+    assert not live_tools.h.account.active
 
 
 @pytest.mark.asyncio

@@ -31,13 +31,6 @@ from server.knowledge.domain.mcp_sources import (
 )
 from server.settings import settings
 
-MAX_CATALOG_BYTES = 8 * 1024 * 1024
-MAX_PROFILES = 10_000
-MAX_PROFILE_BYTES = 65_536
-MAX_SCHEMA_BYTES = 16_384
-MAX_PROFILE_NODES = 4096
-MAX_PROFILE_DEPTH = 16
-
 
 class MCPProfileError(ValueError):
     """Configuration and binding failures reveal no supplied values."""
@@ -86,16 +79,16 @@ def _nonfinite(value: str) -> None:
 
 
 def _bounded_tree(value: Any) -> None:
-    remaining = MAX_PROFILE_NODES
+    remaining = settings.knowledge_source_mcp_profile_max_nodes
 
     def visit(node: Any, depth: int, *, schema_data: bool = False) -> None:
         nonlocal remaining
         remaining -= 1
-        if remaining < 0 or depth > MAX_PROFILE_DEPTH:
+        if remaining < 0 or depth > settings.knowledge_source_mcp_profile_max_depth:
             raise MCPProfileError()
         if isinstance(node, dict):
             for key, child in node.items():
-                _text(key, MAX_SCHEMA_BYTES, empty=True)
+                _text(key, settings.knowledge_source_mcp_schema_max_bytes, empty=True)
                 visit(
                     child,
                     depth + 1,
@@ -107,10 +100,10 @@ def _bounded_tree(value: Any) -> None:
                 visit(child, depth + 1, schema_data=schema_data)
         elif isinstance(node, str):
             if schema_data:
-                if len(node.encode()) > MAX_SCHEMA_BYTES:
+                if len(node.encode()) > settings.knowledge_source_mcp_schema_max_bytes:
                     raise MCPProfileError()
             else:
-                _text(node, MAX_SCHEMA_BYTES, empty=True)
+                _text(node, settings.knowledge_source_mcp_schema_max_bytes, empty=True)
         elif isinstance(node, float) and not math.isfinite(node):
             raise MCPProfileError()
 
@@ -143,7 +136,7 @@ def _mapping(value: Any, *, search: bool = False) -> MCPToolMapping | None:
         if name in data:
             if not isinstance(data[name], dict):
                 raise MCPProfileError()
-            _canonical(data[name], MAX_SCHEMA_BYTES)
+            _canonical(data[name], settings.knowledge_source_mcp_schema_max_bytes)
     for name in (
         "items_path",
         "id_path",
@@ -189,7 +182,7 @@ def _snapshot(config: MCPSourceConfig) -> str:
     data = asdict(config)
     # Selection has one authority: the source contract, never the operator prototype.
     del data["approved_resource_ids"]
-    return _canonical(data, MAX_PROFILE_BYTES)
+    return _canonical(data, settings.knowledge_source_mcp_profile_max_bytes)
 
 
 @dataclass(frozen=True)
@@ -217,7 +210,7 @@ class FrozenProfileDefinition:
 
 def _profile(value: Any) -> FrozenProfileDefinition:
     _bounded_tree(value)
-    _canonical(value, MAX_PROFILE_BYTES)
+    _canonical(value, settings.knowledge_source_mcp_profile_max_bytes)
     data = _object(
         value,
         {"id", "label", "auth", "allowed_orgs", "allow_collection_copy", "config"},
@@ -244,7 +237,7 @@ def _profile(value: Any) -> FrozenProfileDefinition:
         "allow_collection_copy": copy_allowed,
         "config": json.loads(snapshot),
     }
-    snapshot = _canonical(approval, MAX_PROFILE_BYTES)
+    snapshot = _canonical(approval, settings.knowledge_source_mcp_profile_max_bytes)
     digest = hashlib.sha256(snapshot.encode()).hexdigest()
     metadata = MCPProfileMetadata(
         identity,
@@ -271,16 +264,23 @@ class MCPProfileCatalog:
     _profiles: tuple[FrozenProfileDefinition, ...] = ()
     sha256: str = hashlib.sha256(b"[]").hexdigest()
 
+    @property
+    def empty(self) -> bool:
+        return not self._profiles
+
     @classmethod
     def parse(cls, payload: str | bytes | None = None) -> MCPProfileCatalog:
         try:
             if payload is None:
                 return cls()
             if isinstance(payload, bytes):
-                if len(payload) > MAX_CATALOG_BYTES:
+                if len(payload) > settings.knowledge_source_mcp_catalog_max_bytes:
                     raise MCPProfileError()
                 payload = payload.decode("utf-8")
-            if not isinstance(payload, str) or len(payload.encode()) > MAX_CATALOG_BYTES:
+            if (
+                not isinstance(payload, str)
+                or len(payload.encode()) > settings.knowledge_source_mcp_catalog_max_bytes
+            ):
                 raise MCPProfileError()
             data = _object(
                 json.loads(payload, object_pairs_hook=_pairs, parse_constant=_nonfinite),
@@ -290,16 +290,23 @@ class MCPProfileCatalog:
             if type(data["version"]) is not int or data["version"] != 1:
                 raise MCPProfileError()
             rows = data["profiles"]
-            if not isinstance(rows, list) or len(rows) > MAX_PROFILES:
+            if (
+                not isinstance(rows, list)
+                or len(rows) > settings.knowledge_source_mcp_catalog_max_profiles
+            ):
                 raise MCPProfileError()
             profiles = tuple(sorted((_profile(row) for row in rows), key=lambda p: p.metadata.id))
-            if sum(len(p.config_snapshot.encode()) for p in profiles) > MAX_CATALOG_BYTES:
+            if (
+                sum(len(p.config_snapshot.encode()) for p in profiles)
+                > settings.knowledge_source_mcp_catalog_max_bytes
+            ):
                 raise MCPProfileError()
             if len({p.metadata.id for p in profiles}) != len(profiles):
                 raise MCPProfileError()
             digest = hashlib.sha256(
                 _canonical(
-                    [p.metadata.profile_sha256 for p in profiles], MAX_CATALOG_BYTES
+                    [p.metadata.profile_sha256 for p in profiles],
+                    settings.knowledge_source_mcp_catalog_max_bytes,
                 ).encode()
             ).hexdigest()
             return cls(profiles, digest)
@@ -417,13 +424,24 @@ def build_mcp_source_client(
         raise MCPProfileError() from None
 
 
+def _bounds() -> tuple[int, ...]:
+    return (
+        settings.knowledge_source_mcp_catalog_max_bytes,
+        settings.knowledge_source_mcp_catalog_max_profiles,
+        settings.knowledge_source_mcp_profile_max_bytes,
+        settings.knowledge_source_mcp_schema_max_bytes,
+        settings.knowledge_source_mcp_profile_max_nodes,
+        settings.knowledge_source_mcp_profile_max_depth,
+    )
+
+
 @lru_cache(maxsize=1)
-def _catalog_from_setting(payload: str) -> MCPProfileCatalog:
-    if not isinstance(payload, str):
+def _catalog_from_setting(payload: str, bounds: tuple[int, ...]) -> MCPProfileCatalog:
+    if not isinstance(payload, str) or bounds != _bounds():
         raise MCPProfileError()
     return MCPProfileCatalog.parse(None if payload == "" else payload)
 
 
 def load_mcp_profile_catalog() -> MCPProfileCatalog:
     """Read trusted operator configuration; retain at most one immutable snapshot."""
-    return _catalog_from_setting(settings.knowledge_source_mcp_profiles_json)
+    return _catalog_from_setting(settings.knowledge_source_mcp_profiles_json, _bounds())

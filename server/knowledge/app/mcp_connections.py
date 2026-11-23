@@ -40,6 +40,7 @@ from server.knowledge.app.mcp_profiles import (
     build_mcp_source_client,
     load_mcp_profile_catalog,
 )
+from server.knowledge.app.mcp_source_sessions import checked_session
 from server.knowledge.domain.connected_accounts import CREDENTIAL_PURPOSE, ConnectedAccount
 from server.knowledge.domain.mcp_sources import (
     ConnectionEnvelope,
@@ -77,7 +78,7 @@ async def _owner(org: str, expected: str | None = None) -> str:
 
 
 async def _ready() -> None:
-    if not await machines.fleet_at(get_client(), 116):
+    if not await machines.fleet_at(get_client(), 117):
         raise _Refused("MCP_CONNECTION_FLEET_UNAVAILABLE")
 
 
@@ -383,7 +384,7 @@ async def handle_mcp_discover(input: MCPSlotInput) -> MCPDiscoverOutput:
         _row_scope(account, input.org, owner, input.slot)
         await _validate(account)
         client = _bound_client(account)
-        async with client:
+        async with checked_session(account, client):
             discovered = await client.discover()
             await _validate(account)
             config = client.config

@@ -65,12 +65,10 @@ def auth(subject: str = "person-a", org: str = "org-a", **changes: Any) -> AuthI
 
 @pytest.fixture
 def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNamespace]:
-    fake = SimpleNamespace(
-        knowledge_source_mcp_profiles_json="",
-        knowledge_source_self_service_enabled=True,
-        jwt_secret="unit-profile-cursor-key",
-        auth_actually_required=lambda: True,
-    )
+    fake = SimpleNamespace(**KnowledgeSettings().model_dump())
+    fake.knowledge_source_self_service_enabled = True
+    fake.jwt_secret = "unit-profile-cursor-key"
+    fake.auth_actually_required = lambda: True
     state = SimpleNamespace(settings=fake, active=True, managed_denial=False, revoked={}, seen=[])
 
     def refuse(*args: Any, **kwargs: Any) -> Any:

@@ -199,8 +199,8 @@ class Fixture:
 
         from server.core.secrets_at_rest import seal
         from server.knowledge.app import connected_accounts as accounts
-        from server.knowledge.domain.connected_accounts import ConnectedAccount
         from server.knowledge.app.mcp_contracts import encode_envelope
+        from server.knowledge.domain.connected_accounts import ConnectedAccount
         from server.knowledge.domain.mcp_sources import ConnectionEnvelope
 
         a, b = self.orgs
@@ -579,18 +579,17 @@ async def run_restore_phases(
     result: dict[str, Any],
 ) -> None:
     from server.erasure.app.connected_accounts import require_restore_erased
-    from server.knowledge.app import connected_accounts as accounts
     from server.knowledge.app import connected_restore as restore
     from server.settings import settings
 
     client_attempts: list[None] = []
 
-    def refuse_native_client(*args: Any, **kwargs: Any) -> Any:
-        # Fail-only sentinel: no client or provider result can be supplied by this seam.
+    async def refuse_native_http(*args: Any, **kwargs: Any) -> Any:
+        # Any attempted HTTP execution fails before a provider request can leave.
         client_attempts.append(None)
-        raise AssertionError("MCP_LIFECYCLE_NATIVE_CLIENT_FORBIDDEN")
+        raise AssertionError("MCP_LIFECYCLE_NATIVE_HTTP_FORBIDDEN")
 
-    with patch.object(accounts, "client", new=refuse_native_client):
+    with patch("httpx.AsyncClient.send", new=refuse_native_http):
         result["stage"] = "dry_run"
         await restore.restore_all(apply=False, ch=ch)
         require(await snapshot(ch) == before)

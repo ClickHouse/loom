@@ -1,8 +1,8 @@
-"""The document-source sync pass (server/knowledge/app/source_sync.py) over an
-in-memory registry and document store and a shared-folder store answered by a
-mock transport: what a first, an incremental and a full turn list, fetch, write
-and retire, the stamp and status each leaves, and the bounds. Every response is
-written here; none is a recording of real content."""
+"""Common source worker state, ownership and accounting over recording turns.
+
+Stores and recording inputs are local fixtures. The worker, recording turn,
+write ownership checks, retirement and extraction bookkeeping run unchanged.
+"""
 
 from __future__ import annotations
 
@@ -12,85 +12,48 @@ import dataclasses
 import json
 import re
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import httpx
 import pytest
 
-from server.clients import gdrive
 from server.code.app.index import repo_registry
 from server.core import leases
 from server.core.ch import sequential_reads_active
-from server.core.errors import ValidationError
 from server.core.hashing import sha256_text
 from server.core.secrets_at_rest import seal
-from server.knowledge.app import extractors, source_gdrive_items, source_sync, writes
+from server.knowledge.app import source_sync, source_sync_recording, writes
 from server.knowledge.app import sources as source_ops
-from server.knowledge.domain import access_list, convert
-from server.knowledge.domain.extract.artifact import Artifact, Block, Coverage
+from server.knowledge.domain import access_list
 from server.knowledge.domain.sources import (
     MIRRORED_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
-    items_from_config,
 )
 from server.knowledge.store import documents
-from server.memory.domain.corpus_synthesis import ground_citations
 from server.memory.domain.provenance import pipeline_actor_var
 from server.observability import audit
 from server.settings import settings
 
 ORG, NS = "acme", "code-acme-app"
-FOLDER = "1AbCdEfGhIjKlMnOp"
-OTHER = "2QrStUvWxYzAbCdEf"
-DOCS = "application/vnd.google-apps.document"
-SLIDES = "application/vnd.google-apps.presentation"
+DOCS = "text/plain"
 PDF = "application/pdf"
-PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-KEY = '{"type": "service_account", "client_email": "a@b", "private_key": "k"}'
+KEY = "recording-fixture-credential"
 
 
 def _file(file_id: str, mime: str, modified: str, **kw: Any) -> dict[str, Any]:
-    kind = {DOCS: "document", SLIDES: "presentation"}.get(mime, "file")
     return {
         "id": file_id,
         "name": f"{file_id} title",
-        "mimeType": mime,
         "modifiedTime": modified,
-        "webViewLink": f"https://docs.example.com/{kind}/d/{file_id}/edit?usp=drivesdk",
+        "uri": f"https://docs.example.com/document/d/{file_id}/edit",
         **kw,
     }
 
 
-DECK = {
-    "slides": [
-        {
-            "pageElements": [
-                {
-                    "shape": {
-                        "placeholder": {"type": "TITLE"},
-                        "text": {
-                            "textElements": [{"textRun": {"content": "Why a planner pass\n"}}]
-                        },
-                    }
-                },
-                {
-                    "shape": {
-                        "text": {"textElements": [{"textRun": {"content": "The rewrite moves.\n"}}]}
-                    }
-                },
-            ]
-        }
-    ]
-}
-
-
 class _World:
-    """The registry, sync state and documents, and what the folder store answers."""
+    """The registry, sync state and stored document boundaries."""
 
     def __init__(self) -> None:
         self.sources: list[KnowledgeSource] = []
@@ -99,23 +62,10 @@ class _World:
         # Live documents by source_uri: {actor, tags, metadata}.
         self.docs: dict[str, dict[str, Any]] = {}
         self.files: list[dict[str, Any]] = []
-        self.requests: list[httpx.Request] = []
+        self.recording_lists: list[list[str]] = []
         self.audits: list[dict[str, Any]] = []
         self.upserts: list[Any] = []
-        self.fail_listing: int = 0
-        # Formats an extractor is configured for, and those its service declares.
-        self.routes: set[str] = {"pdf", "pptx", "docx"}
-        self.declared: set[str] = {"pdf", "pptx", "docx"}
-        self.extractor_down = False
-        self.extract_error: Exception | None = None
-        # Per-file extraction failures, by file id.
-        self.extract_errors: dict[str, Exception] = {}
-        self.capability_calls = 0
-        self.incomplete_search = False
-        # Folders the account no longer sees; per-file answers that override the store's.
-        self.lost_folders: set[str] = set()
-        # A response, or a callable that answers (or raises) for that file.
-        self.file_answers: dict[str, Any] = {}
+        self.transcript_error: Exception | None = None
         # The extraction leg: each extract_document call (uri, actor, attribution), the
         # report it answers (or a callable that makes one, or an exception), the orgs
         # switched off (an exception: the switch unread), the namespaces over their cap
@@ -192,42 +142,9 @@ class _World:
     async def count_documents(self, org: str, ns: str, tag: str) -> int:
         return len(await self.source_documents(org, ns, tag))
 
-    # the folder store
-    def answer(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        path = request.url.path
-        file_id = path.rstrip("/").split("/")[-1 if not path.endswith("/export") else -2]
-        if file_id in self.file_answers:
-            answer = self.file_answers[file_id]
-            return answer(request) if callable(answer) else answer
-        if path in (f"/drive/v3/files/{FOLDER}", f"/drive/v3/files/{OTHER}"):
-            if file_id in self.lost_folders:
-                return httpx.Response(404)
-            return httpx.Response(200, json={"mimeType": "application/vnd.google-apps.folder"})
-        if path == "/drive/v3/files":
-            if self.fail_listing:
-                return httpx.Response(self.fail_listing, json={"error": {"status": "x"}})
-            q = request.url.params["q"]
-            after = q.split("modifiedTime > '")[1].rstrip("'") if "modifiedTime >" in q else ""
-            files = [
-                f
-                for f in self.files
-                if f["modifiedTime"] > after and f"mimeType = '{f['mimeType']}'" in q
-            ]
-            return httpx.Response(
-                200, json={"files": files, "incompleteSearch": self.incomplete_search}
-            )
-        if path.endswith("/export"):
-            return httpx.Response(200, text="# Design\n\nWe chose the planner.")
-        if request.url.host == "slides.googleapis.com":
-            return httpx.Response(200, json=DECK)
-        if request.url.params.get("alt") == "media":
-            return httpx.Response(200, content=b"%PDF-1.7 bytes")
-        return httpx.Response(404)
-
 
 @pytest.fixture
-def world(monkeypatch: pytest.MonkeyPatch) -> _World:
+def source_world(monkeypatch: pytest.MonkeyPatch) -> _World:
     w = _World()
     monkeypatch.setattr(settings, "jwt_secret", "unit-test-root-secret")
     monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 40)
@@ -265,13 +182,6 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
 
     monkeypatch.setattr(leases, "holding", _holding)
     monkeypatch.setattr(leases, "cluster_lease", _cluster)
-
-    async def _token(account: Any) -> str:
-        return "tok"
-
-    monkeypatch.setattr(gdrive, "access_token", _token)
-    client = httpx.AsyncClient(transport=httpx.MockTransport(w.answer))
-    monkeypatch.setattr(gdrive, "get_client", lambda: client)
 
     async def _get_one(org: str, ns: str, uri: str, **kw: Any) -> Any:
         d = w.docs.get(uri)
@@ -319,38 +229,33 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
 
     monkeypatch.setattr(audit, "emit", _emit)
 
-    def _endpoint(fmt: str, media_type: str = "") -> str:
-        return f"http://extractor-{fmt}" if fmt in w.routes else ""
-
-    async def _capabilities(url: str) -> extractors.Capabilities:
-        w.capability_calls += 1
-        if w.extractor_down:
-            raise extractors.ExtractorUnavailable("the extractor is unreachable")
-        return extractors.Capabilities(name="x", formats=frozenset(w.declared), max_bytes=10**9)
-
-    async def _extract(data: bytes, **kw: Any) -> Artifact:
-        if w.extract_error is not None:
-            raise w.extract_error
-        downloaded = next(r for r in reversed(w.requests) if r.url.params.get("alt") == "media")
-        file_id = downloaded.url.path.rsplit("/", 1)[-1]
-        if file_id in w.extract_errors:
-            raise w.extract_errors[file_id]
-        return Artifact(
-            format=kw["declared_format"],
-            parser="test",
-            parser_version="1",
-            blocks=(
-                Block(id="b0", type="heading", text="Decision", depth=1),
-                Block(id="b1", type="paragraph", text="Keep the hash join."),
-            ),
-            coverage=Coverage(unit="pages", total=1, extracted=1),
-        )
-
-    monkeypatch.setattr(extractors, "endpoint_for", _endpoint)
-    monkeypatch.setattr(extractors, "capabilities", _capabilities)
-    monkeypatch.setattr(extractors, "extract", _extract)
     _mock_mining(monkeypatch, w)
     w.sources.append(_source())
+    return w
+
+
+@pytest.fixture
+def world(source_world, monkeypatch):
+    w = source_world
+
+    async def session(provider, credential):
+        assert provider == "zoom" and credential == KEY
+        return source_sync_recording.Session("zoom", "fixture-token")
+
+    async def listing(selected, ids, *, stamp):
+        assert selected.provider == "zoom" and ids == ["123456789"]
+        w.recording_lists.append(ids)
+        return [dict(item) for item in w.files], []
+
+    async def transcript(selected, item, *, max_bytes):
+        assert selected.provider == "zoom" and max_bytes > 0
+        if w.transcript_error is not None:
+            raise w.transcript_error
+        return "# Decision\n\nKeep the hash join."
+
+    monkeypatch.setattr(source_sync_recording, "open_session", session)
+    monkeypatch.setattr(source_sync_recording, "list_recordings", listing)
+    monkeypatch.setattr(source_sync_recording, "transcript", transcript)
     return w
 
 
@@ -407,17 +312,14 @@ def _mock_mining(monkeypatch: pytest.MonkeyPatch, w: _World) -> None:
 
 
 def _source(name: str = "decks", **kw: Any) -> KnowledgeSource:
-    config = kw.pop(
-        "config", {"folder_ids": [FOLDER], "include": ["docs", "slides", "pdf", "pptx"]}
-    )
+    config = kw.pop("config", {"provider": "zoom", "ids": ["123456789"]})
     return KnowledgeSource(
         org=ORG,
         namespace=kw.pop("namespace", NS),
         name=name,
-        kind="gdrive",
+        kind="recording",
         source_id=kw.pop("source_id", f"id-{name}"),
         config=config,
-        items=kw.pop("items", None) or items_from_config("gdrive", config),
         credential_enc=kw.pop("credential_enc", seal("knowledge_sources.credential", KEY)),
         **kw,
     )
@@ -427,446 +329,7 @@ def _detail(world: _World, name: str = "decks") -> dict[str, Any]:
     return json.loads(world.states[name]["detail"])
 
 
-def _listings(world: _World) -> list[str]:
-    return [r.url.params["q"] for r in world.requests if r.url.path == "/drive/v3/files"]
-
-
-def _run_out_after(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
-    """The pass's time runs out once the turn's `gdrive.<name>` call returns."""
-    late = {"out": False}
-    real = getattr(source_sync.gdrive, name)
-
-    async def _then_out(*a: Any, **kw: Any) -> Any:
-        found = await real(*a, **kw)
-        late["out"] = True
-        return found
-
-    real_budget = source_sync._budget
-
-    def _budget() -> Any:
-        budget = real_budget()
-        return SimpleNamespace(
-            started=budget.started,
-            stop_after=budget.stop_after,
-            exhausted=lambda: late["out"] or budget.exhausted(),
-        )
-
-    monkeypatch.setattr(source_sync.gdrive, name, _then_out)
-    monkeypatch.setattr(source_sync, "_budget", _budget)
-
-
-def test_a_first_turn_lists_everything_and_writes_each_kind(world: _World) -> None:
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("deck1", SLIDES, "2026-01-02T00:00:00.000Z"),
-        _file("pdf1", PDF, "2026-01-03T00:00:00.000Z", size="14"),
-    ]
-    result = asyncio.run(source_sync.run_sync())
-    assert (result.synced, result.changed, result.failed) == (1, 3, 0)
-    assert "modifiedTime >" not in _listings(world)[0]
-    by_uri = {inp.source_uri: (inp, actor) for inp, actor in world.upserts}
-    deck, actor = by_uri["https://docs.example.com/presentation/d/deck1/edit"]
-    assert actor == SYNC_WORKER_ACTOR
-    assert deck.content.startswith("# Slide 1: Why a planner pass")
-    assert deck.tags == ["source-kind:design_doc", "repo:abc", "source:decks"]
-    assert deck.source_class == "imported"
-    assert deck.metadata["source_revision"] == "2026-01-02T00:00:00.000Z"
-    assert deck.original_bytes_b64 is None
-    pdf, _ = by_uri["https://docs.example.com/file/d/pdf1/edit"]
-    assert pdf.content == "# Decision\n\nKeep the hash join."
-    assert pdf.original_bytes_b64 and pdf.blob_content_type == PDF
-    assert world.states["decks"]["state_value"] == "2026-01-03T00:00:00.000Z"
-    detail = _detail(world)
-    assert (detail["status"], detail["documents_seen"], detail["changed"]) == ("ok", 3, 3)
-    assert detail["full_listed_at"]
-
-
-def test_a_later_turn_lists_only_changes_and_skips_unchanged_files(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    world.files.append(_file("doc2", DOCS, "2026-01-05T00:00:00.000Z"))
-    world.upserts.clear()
-    asyncio.run(source_sync.run_sync())
-    assert "modifiedTime > '2026-01-01T00:00:00.000Z'" in _listings(world)[-1]
-    assert [inp.source_uri for inp, _ in world.upserts] == [
-        "https://docs.example.com/document/d/doc2/edit"
-    ]
-    # A full listing that returns a stored file at its stored revision fetches nothing.
-    world.upserts.clear()
-    world.requests.clear()
-    asyncio.run(source_sync.run_sync(full=True))
-    assert world.upserts == []
-    assert [r.url.path for r in world.requests] == ["/drive/v3/files", f"/drive/v3/files/{FOLDER}"]
-
-
 OLD_EXPORT = "# Design\n\n![][image1]\n\n[image1]: <data:image/png;base64,AAAA>\n"
-
-
-def _stored(world: _World, file_id: str, mime: str, content: str) -> str:
-    """A copy of `file_id` the sync stored at REV1."""
-    uri = source_sync.source_uri_of(_file(file_id, mime, REV1))
-    world.docs[uri] = {
-        "actor": SYNC_WORKER_ACTOR,
-        "tags": ["source-kind:design_doc", "source:decks"],
-        "metadata": {"ingested_from": file_id, "source_revision": REV1},
-        "content": content,
-    }
-    return uri
-
-
-def test_a_document_stored_with_its_pictures_bytes_is_converted_and_mined_again(
-    world: _World,
-) -> None:
-    world.files = [_file("doc1", DOCS, REV1)]
-    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
-    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
-    asyncio.run(source_sync.run_sync())
-    assert [inp.source_uri for inp, _ in world.upserts] == [uri]
-    assert "data:" not in world.docs[uri]["content"]
-    assert [u for u, _, _ in world.mined] == [uri]
-    world.upserts.clear()
-    asyncio.run(source_sync.run_sync(full=True))
-    assert world.upserts == []
-
-
-def test_a_definition_shown_in_code_is_fetched_but_neither_written_nor_mined_again(
-    world: _World,
-) -> None:
-    sample = "# Export\n\n```md\n[image1]: <data:image/png;base64,AAAA>\n```\n"
-    world.files = [_file("doc1", DOCS, REV1)]
-    world.file_answers["doc1"] = httpx.Response(200, text=sample)
-    uri = _stored(world, "doc1", DOCS, sample)
-    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
-    for _ in range(2):
-        asyncio.run(source_sync.run_sync(full=True))
-    assert world.upserts == [] and world.mined == []
-    exports = [r for r in world.requests if r.url.path == "/drive/v3/files/doc1/export"]
-    assert len(exports) == 1
-    assert _detail(world)["mined"] == {uri: REV1}
-
-
-def test_a_given_up_flagged_copy_whose_address_moved_is_counted_unconverted(
-    world: _World,
-) -> None:
-    _stored(world, "doc1", DOCS, OLD_EXPORT)
-    moved = _file("doc1", DOCS, REV1, webViewLink="https://docs.example.com/document/d/doc1/v2")
-    world.files = [moved]
-    waits = {"doc1": [REV1, 3, "http_500"]}
-    listed = "2026-01-02T00:00:00+00:00"
-    detail = {"file_waits": waits, "full_listed_at": listed, "retry_granted_for": listed}
-    world.states["decks"] = {"state_value": REV1, "detail": json.dumps(detail)}
-    asyncio.run(source_sync.run_sync())
-    assert world.upserts == [] and _detail(world)["unconverted"] == 1
-
-
-def test_a_flagged_copy_whose_address_moved_is_written_at_the_new_one(world: _World) -> None:
-    old = _stored(world, "doc1", DOCS, OLD_EXPORT)
-    moved = _file("doc1", DOCS, REV1, webViewLink="https://docs.example.com/document/d/doc1/v2")
-    world.files = [moved]
-    asyncio.run(source_sync.run_sync(full=True))
-    new = source_sync.source_uri_of(moved)
-    assert new != old and old not in world.docs
-    assert "data:" not in world.docs[new]["content"]
-
-
-def test_unchanged_flagged_copies_do_not_hold_a_full_listing_at_the_pass_bound(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 2)
-    sample = "# Export\n\n```md\n[image1]: <data:image/png;base64,AAAA>\n```\n"
-    world.files = [_file(f"doc{i}", DOCS, REV1) for i in (1, 2)]
-    world.files.append(_file("doc3", DOCS, "2026-01-02T00:00:00.000Z"))
-    for i in (1, 2):
-        world.file_answers[f"doc{i}"] = httpx.Response(200, text=sample)
-        _stored(world, f"doc{i}", DOCS, sample)
-    for _ in range(3):
-        asyncio.run(source_sync.run_sync(full=True))
-    # The two were exported once each at their revision; the file after them was written.
-    exports = [r for r in world.requests if r.url.path.endswith("/export")]
-    assert sorted(r.url.path for r in exports if "doc3" not in r.url.path) == [
-        "/drive/v3/files/doc1/export",
-        "/drive/v3/files/doc2/export",
-    ]
-    assert _uri("doc3") in world.docs and _detail(world)["status"] == "ok"
-    # Once a file is listed at another revision, its record goes.
-    world.files[0] = _file("doc1", DOCS, "2026-03-01T00:00:00.000Z")
-    asyncio.run(source_sync.run_sync(full=True))
-    assert _detail(world)["pictures_checked"] == {"doc2": REV1}
-    # A file an incremental turn does not list keeps its record; a full listing without
-    # it drops the record.
-    world.files = [f for f in world.files if f["id"] != "doc2"]
-    asyncio.run(source_sync.run_sync())
-    assert _detail(world)["pictures_checked"] == {"doc2": REV1}
-    asyncio.run(source_sync.run_sync(full=True))
-    assert "doc2" not in _detail(world)["pictures_checked"]
-
-
-def test_a_document_stored_without_pictures_bytes_is_not_fetched_again(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, REV1)]
-    _stored(world, "doc1", DOCS, "# Design\n\nText only.\n")
-    asyncio.run(source_sync.run_sync(full=True))
-    assert world.upserts == []
-
-
-def test_a_turn_cut_after_a_reconverting_write_still_mines_the_new_text(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, REV1)]
-    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
-    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
-    real = source_sync._write_state
-
-    async def _cut(*a: Any, **kw: Any) -> None:
-        raise RuntimeError("cut before the turn's state")
-
-    monkeypatch.setattr(source_sync, "_write_state", _cut)
-    asyncio.run(source_sync.run_sync())
-    monkeypatch.setattr(source_sync, "_write_state", real)
-    asyncio.run(source_sync.run_sync())
-    assert uri in [u for u, _, _ in world.mined]
-
-
-def test_a_reconverting_write_cut_before_its_chunks_still_mines_the_new_text(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, REV1)]
-    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
-    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
-    real = writes.handle_knowledge_upsert
-
-    async def _cut_before_chunks(inp: Any, **_: Any) -> Any:
-        await real(inp)
-        world.docs[inp.source_uri]["chunks"] = False  # the document row, no live chunks
-        raise RuntimeError("cut before the chunks")
-
-    monkeypatch.setattr(writes, "handle_knowledge_upsert", _cut_before_chunks)
-    asyncio.run(source_sync.run_sync())
-    monkeypatch.setattr(writes, "handle_knowledge_upsert", real)
-    asyncio.run(source_sync.run_sync(full=True))
-    assert "data:" not in world.docs[uri]["content"]
-    assert uri in [u for u, _, _ in world.mined]
-
-
-def test_a_failed_reconverting_write_leaves_the_document_to_be_mined_again(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, REV1)]
-    uri = _stored(world, "doc1", DOCS, OLD_EXPORT)
-    world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
-    real = writes.handle_knowledge_upsert
-
-    async def _down(inp: Any, **_: Any) -> Any:
-        raise RuntimeError("store down")
-
-    monkeypatch.setattr(writes, "handle_knowledge_upsert", _down)
-    asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    assert detail["file_waits"]["doc1"][2] == "write_failed:RuntimeError"
-    assert "data:" in world.docs[uri]["content"]
-    monkeypatch.setattr(writes, "handle_knowledge_upsert", real)
-    asyncio.run(source_sync.run_sync(full=True))
-    assert "data:" not in world.docs[uri]["content"]
-    # The failed write left the old copy and its mined key: only the new text is mined.
-    assert [u for u, _, _ in world.mined] == [uri]
-
-
-def test_a_document_given_up_on_is_not_fetched_again_for_its_pictures(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, REV1)]
-    _stored(world, "doc1", DOCS, OLD_EXPORT)
-    waits = {"doc1": [REV1, 3, "http_500"]}
-    # A periodic full listing whose one more try was already granted.
-    listed = "2026-01-02T00:00:00+00:00"
-    detail = {"file_waits": waits, "full_listed_at": listed, "retry_granted_for": listed}
-    world.states["decks"] = {"state_value": REV1, "detail": json.dumps(detail)}
-    asyncio.run(source_sync.run_sync())
-    assert world.upserts == []
-    detail = _detail(world)
-    assert (detail["file_waits"], detail["unconverted"]) == (waits, 0)
-
-
-@pytest.mark.parametrize(("file_id", "mime"), [("deck1", SLIDES), ("pdf1", PDF)])
-def test_a_deck_or_uploaded_file_is_not_fetched_again_for_pictures_bytes(
-    world: _World, file_id: str, mime: str
-) -> None:
-    world.files = [_file(file_id, mime, REV1, size="14")]
-    _stored(world, file_id, mime, OLD_EXPORT)
-    asyncio.run(source_sync.run_sync(full=True))
-    assert world.upserts == []
-
-
-def test_a_document_export_keeps_its_text_and_marks_its_inlined_pictures() -> None:
-    data = "data:image/png;base64," + "iVBORw0KGgo" * 40
-    exported = (
-        "# Design\n\nThe planner runs first.\n\n![][image1]\n\n![][image2]\n\n"
-        "* ![][image3] the operator version shown\n* ![][image2]\n> ![Flow][image1]\n\n"
-        "![Flow][image4]*Figure 2: flow*\n\n```md\n![][image1]\n\n\n  indented\n```\n\n"
-        "See [the spec][spec].\n\n"
-        f"[image1]: <{data}>\n\n[image2]: <{data}>\n\n[image3]: <{data}>\n\n"
-        f"[image4]: <{data}>\n\n[spec]: https://example.com/spec\n"
-    )
-    assert convert.exported_markdown(exported) == (
-        "# Design\n\nThe planner runs first.\n\n"
-        "> [image-only: 2 pictures, rationale not extracted]\n\n"
-        "* the operator version shown\n"
-        "* [image-only: 1 picture, rationale not extracted]\n"
-        "> [image-only: 1 picture, rationale not extracted] Flow\n\n"
-        "Flow *Figure 2: flow*\n\n```md\n![][image1]\n\n\n  indented\n```\n\n"
-        "See [the spec][spec].\n\n[spec]: https://example.com/spec\n"
-    )
-    nested = "1. Step\n\n   ![][image1]\n\n2. Next\n\n[image1]: <data:image/png;base64,AAAA>\n"
-    assert convert.exported_markdown(nested) == (
-        "1. Step\n\n   > [image-only: 1 picture, rationale not extracted]\n\n2. Next\n"
-    )
-    heading = "# ![][image1]\n\nText.\n\n[image1]: <data:image/png;base64,AAAA>\n"
-    assert convert.exported_markdown(heading) == (
-        "# [image-only: 1 picture, rationale not extracted]\n\nText.\n"
-    )
-    joined = "one![][image1]two\n\n[image1]: <data:image/png;base64,AAAA>\n"
-    assert convert.exported_markdown(joined) == "one two\n"
-    inline = "![](data:image/png;base64,AAAA)\n\nA ![Graph](data:image/png;base64,AAAA) here.\n"
-    assert convert.exported_markdown(inline) == (
-        "> [image-only: 1 picture, rationale not extracted]\n\nA Graph here.\n"
-    )
-    tilde = "~~~\n![][image1]\n~~~\n``` x ` ```\n\n[image1]: <data:image/png;base64,AAAA>\n"
-    assert convert.exported_markdown(tilde) == "~~~\n![][image1]\n~~~\n``` x ` ```\n"
-    listed = "- Step\n\n    ```\n    ![][image1]\n    [image2]: <data:a>\n    ```\n"
-    assert convert.exported_markdown(listed) == listed
-    on_item = "- ```\n  ![][image1]\n  ```\n\nText ![][image2]\n\n[image1]: <data:a>\n[image2]: <data:b>\n"
-    assert convert.exported_markdown(on_item) == "- ```\n  ![][image1]\n  ```\n\nText\n"
-    quoted = "> ```\n> [image1]: <data:a>\n> ```\n\n![][image2]\n\n[image2]: <data:b>\n"
-    assert convert.exported_markdown(quoted) == (
-        "> ```\n> [image1]: <data:a>\n> ```\n\n> [image-only: 1 picture, rationale not extracted]\n"
-    )
-    crlf = "Text.\r\n[image1]: <data:a>\r\n"
-    assert convert.exported_markdown(crlf) == crlf
-    prose = "[Step 1]: data: the raw input\n\n[image1]: <data:a>\n"
-    assert convert.exported_markdown(prose) == "[Step 1]: data: the raw input\n"
-    emphasis = "*![][image1]*\n\nx **![Flow][image1]** y\n\n[image1]: <data:a>\n"
-    assert convert.exported_markdown(emphasis) == (
-        "> [image-only: 1 picture, rationale not extracted]\n\nx **Flow** y\n"
-    )
-    emptied = "x **![][image1]** y\n\n[image1]: <data:a>\n"
-    assert convert.exported_markdown(emptied) == "x y\n"
-    bracketed = "see (![Fig][image1]) here\n\n[image1]: <data:a>\n"
-    assert convert.exported_markdown(bracketed) == "see (Fig) here\n"
-    ended = "The flow is ![][image1]. Then ![Flow][image1], done.\n\n[image1]: <data:a>\n"
-    assert convert.exported_markdown(ended) == "The flow is. Then Flow, done.\n"
-    spaced = "see![][image1] next\n\n[image1]: <data:image/png;base64,AAAA>\n"
-    assert convert.exported_markdown(spaced) == "see next\n"
-    captioned = "see![Flow][image1] next\n\n[image1]: <data:image/png;base64,AAAA>\n"
-    assert convert.exported_markdown(captioned) == "see Flow next\n"
-    plain = "# Plain\n\nNo pictures.\n\n\n```\n  kept\n```"
-    assert convert.exported_markdown(plain) == plain
-
-
-def test_a_full_listing_retires_what_the_folder_no_longer_has(world: _World) -> None:
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    asyncio.run(source_sync.run_sync())
-    world.files = world.files[1:]
-    # An incremental turn sees no absence: nothing is retired.
-    asyncio.run(source_sync.run_sync())
-    assert len(world.docs) == 2
-    result = asyncio.run(source_sync.run_sync(full=True))
-    assert result.removed == 1
-    assert list(world.docs) == ["https://docs.example.com/document/d/doc2/edit"]
-    assert world.audits == [
-        {
-            "event": "knowledge.delete",
-            "org": ORG,
-            "namespace": NS,
-            "actor": SYNC_WORKER_ACTOR,
-            "subject": {
-                "source_uri": "https://docs.example.com/document/d/doc1/edit",
-                "source_name": "decks",
-            },
-        }
-    ]
-
-
-@pytest.mark.parametrize(
-    ("status", "body", "expected"),
-    [
-        (429, {}, "rate_limited"),
-        (403, {"error": {"errors": [{"reason": "userRateLimitExceeded"}]}}, "rate_limited"),
-        (403, {}, "credential_invalid"),
-        (500, {}, "failed"),
-    ],
-)
-def test_a_failed_listing_keeps_the_stamp_and_retires_nothing(
-    world: _World,
-    monkeypatch: pytest.MonkeyPatch,
-    status: int,
-    body: dict[str, Any],
-    expected: str,
-) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    world.requests.clear()
-
-    def _fail(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(status, json=body)
-
-    client = httpx.AsyncClient(transport=httpx.MockTransport(_fail))
-    monkeypatch.setattr(gdrive, "get_client", lambda: client)
-    result = asyncio.run(source_sync.run_sync(full=True))
-    assert result.failed == 1
-    detail = _detail(world)
-    assert detail["status"] == expected
-    # The state names the status, never the store's answer.
-    assert "Exceeded" not in detail["error"]
-    assert world.states["decks"]["state_value"] == "2026-01-01T00:00:00.000Z"
-    assert len(world.docs) == 1
-
-
-def test_a_credential_that_no_longer_opens_fetches_nothing(world: _World) -> None:
-    world.sources = [_source(credential_enc="not-a-sealed-value")]
-    asyncio.run(source_sync.run_sync())
-    assert world.requests == []
-    assert _detail(world)["status"] == "credential_invalid"
-
-
-def test_the_document_bound_cuts_the_turn_and_holds_the_stamp(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 2)
-    world.files = [_file(f"doc{i}", DOCS, f"2026-01-0{i}T00:00:00.000Z") for i in range(1, 6)]
-    world.states["decks"] = {
-        "state_value": "",
-        "detail": json.dumps({"requested_at": "2026-01-09T00:00:00+00:00", "full": True}),
-    }
-    first = asyncio.run(source_sync.run_sync())
-    assert first.changed == 2
-    assert world.states["decks"]["state_value"] == ""
-    # The request stays until a turn finishes it.
-    assert _detail(world)["requested_at"]
-    asyncio.run(source_sync.run_sync())
-    asyncio.run(source_sync.run_sync())
-    assert len(world.docs) == 5
-    assert world.states["decks"]["state_value"] == "2026-01-05T00:00:00.000Z"
-    assert "requested_at" not in _detail(world)
-
-
-def test_a_file_no_extractor_serves_is_unconverted(world: _World) -> None:
-    world.routes = set()
-    world.files = [_file("pdf1", PDF, "2026-01-03T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    assert world.docs == {}
-    assert _detail(world)["unconverted"] == 1
-    assert not [r for r in world.requests if r.url.params.get("alt") == "media"]
-
-
-def test_a_document_another_writer_holds_is_never_overwritten(world: _World) -> None:
-    uri = "https://docs.example.com/document/d/doc1/edit"
-    world.docs[uri] = {"actor": "human:ann", "tags": ["source:decks"], "metadata": {}}
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    assert world.upserts == []
-    assert _detail(world)["skipped"] == 1
-    # Nothing was fetched for it, and it cost none of the pass's bound.
-    assert not [r for r in world.requests if r.url.path.endswith("/export")]
 
 
 def test_sources_on_an_inactive_namespace_are_not_synced_and_requests_go_first(
@@ -886,7 +349,7 @@ def test_sources_on_an_inactive_namespace_are_not_synced_and_requests_go_first(
         order.append(src.name)
         return source_sync.TurnResult()
 
-    monkeypatch.setattr(source_sync, "_turn", _turn)
+    monkeypatch.setattr(source_sync_recording, "turn", _turn)
     asyncio.run(source_sync.run_sync())
     assert order == ["zzz", "aaa", "plain"]
 
@@ -976,88 +439,6 @@ def test_a_remove_during_the_turn_stops_it_before_the_next_write(
     assert "decks" not in world.states
 
 
-def test_a_synced_document_s_address_grounds_as_a_citation() -> None:
-    uri = source_sync.source_uri_of(_file("deck1", SLIDES, "2026-01-01T00:00:00.000Z"))
-    assert uri == "https://docs.example.com/presentation/d/deck1/edit"
-    answer, kept, removed = ground_citations(f"The pass moves [{uri}#2].", {(uri, 2)})
-    assert (answer, kept, removed) == (f"The pass moves [{uri}#2].", [f"{uri}#2"], [])
-    answer, kept, removed = ground_citations(f"The pass moves [{uri}#3].", {(uri, 2)})
-    assert kept == [] and removed == [f"{uri}#3"]
-
-
-def test_slides_become_one_section_each() -> None:
-    slide = {
-        "pageElements": [
-            {"shape": {"placeholder": {"type": "TITLE"}, "text": _text("Join order\n")}},
-            {"elementGroup": {"children": [{"shape": {"text": _text("Grouped text\n")}}]}},
-            {
-                "table": {
-                    "tableRows": [
-                        {"tableCells": [{"text": _text("a")}, {"text": _text("b")}]},
-                    ]
-                }
-            },
-            {"shape": {"text": _text(" ".join(str(n) for n in range(10)) + " end\n")}},
-        ],
-        "slideProperties": {
-            "notesPage": {
-                "notesProperties": {"speakerNotesObjectId": "n1"},
-                "pageElements": [{"objectId": "n1", "shape": {"text": _text("Say why.\n")}}],
-            }
-        },
-    }
-    assert convert.slide_markdown(2, slide) == (
-        "# Slide 2: Join order\n\nGrouped text\n\na | b\n\nend\n\n> Notes: Say why."
-    )
-
-
-def test_a_slide_that_is_a_picture_says_so() -> None:
-    slide = {"pageElements": [{"image": {}}, {"image": {}}, {"shape": {"text": _text("Fig\n")}}]}
-    assert convert.slide_markdown(1, slide).endswith(
-        "> [image-only: 2 pictures, rationale not extracted]"
-    )
-
-
-def test_short_number_runs_stay() -> None:
-    assert convert.drop_number_runs(["1 2 3", "4 5 6 7 8 x"]) == ["x"]
-    assert convert.drop_number_runs(["v1 2 3 4"]) == ["v1 2 3 4"]
-
-
-def _text(content: str) -> dict[str, Any]:
-    return {"textElements": [{"textRun": {"content": content}}, {"paragraphMarker": {}}]}
-
-
-def test_the_listing_pages_through_and_refuses_a_stamp_it_did_not_issue(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen: list[httpx.Request] = []
-
-    def _answer(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if "pageToken" in request.url.params:
-            return httpx.Response(200, json={"files": [{"id": "b"}]})
-        return httpx.Response(200, json={"files": [{"id": "a"}], "nextPageToken": "p2"})
-
-    client = httpx.AsyncClient(transport=httpx.MockTransport(_answer))
-    monkeypatch.setattr(gdrive, "get_client", lambda: client)
-    files, whole = asyncio.run(gdrive.list_all("tok", [FOLDER], [DOCS], pace_s=0))
-    assert [f["id"] for f in files] == ["a", "b"] and whole
-    assert all(r.headers["Authorization"] == "Bearer tok" for r in seen)
-    with pytest.raises(ValueError):
-        asyncio.run(gdrive.list_all("tok", [FOLDER], [DOCS], modified_after="x' or '1"))
-
-
-def test_a_download_past_the_bound_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"x" * 5000))
-    )
-    monkeypatch.setattr(gdrive, "get_client", lambda: client)
-    with pytest.raises(gdrive.TooLarge):
-        asyncio.run(gdrive.download("tok", "abc", max_bytes=1000))
-    with pytest.raises(ValueError):
-        asyncio.run(gdrive.download("tok", "../x", max_bytes=1000))
-
-
 def test_the_worker_row_reads_its_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.workers import registry
 
@@ -1070,198 +451,8 @@ def test_the_worker_row_reads_its_settings(monkeypatch: pytest.MonkeyPatch) -> N
     assert spec.deadline_seconds() == 300.0
 
 
-def test_a_turn_lists_everything_again_once_the_full_interval_passed(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    asyncio.run(source_sync.run_sync())
-    assert "modifiedTime >" in _listings(world)[-1]
-    monkeypatch.setattr(settings, "knowledge_source_sync_full_interval_seconds", 0)
-    asyncio.run(source_sync.run_sync())
-    assert "modifiedTime >" not in _listings(world)[-1]
-
-
-def test_a_file_over_the_size_bound_is_not_downloaded(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_max_file_bytes", 10)
-    world.files = [_file("pdf1", PDF, "2026-01-03T00:00:00.000Z", size="11")]
-    asyncio.run(source_sync.run_sync())
-    assert world.docs == {}
-    assert _detail(world)["unconverted"] == 1
-    assert not [r for r in world.requests if r.url.params.get("alt") == "media"]
-
-
 def _uri(file_id: str, kind: str = "document") -> str:
     return f"https://docs.example.com/{kind}/d/{file_id}/edit"
-
-
-def test_a_file_the_store_refuses_is_unconverted_and_the_turn_goes_on(world: _World) -> None:
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-        _file("doc3", DOCS, "2026-01-03T00:00:00.000Z"),
-    ]
-    world.file_answers["doc2"] = httpx.Response(403, json={"error": {"status": "denied"}})
-    asyncio.run(source_sync.run_sync())
-    assert sorted(world.docs) == [_uri("doc1"), _uri("doc3")]
-    detail = _detail(world)
-    assert (detail["status"], detail["unconverted"]) == ("ok", 1)
-    assert detail["unconverted_reasons"] == {"http_403": 1}
-    assert world.states["decks"]["state_value"] == "2026-01-03T00:00:00.000Z"
-
-
-def test_a_full_listing_of_a_folder_the_account_lost_retires_nothing(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    # Unshared: the store lists the folder empty, and the folder itself answers 404.
-    world.files = []
-    world.lost_folders = {FOLDER}
-    asyncio.run(source_sync.run_sync(full=True))
-    assert list(world.docs) == [_uri("doc1")]
-    assert world.audits == []
-    assert _detail(world)["status"] == "failed"
-
-
-def test_a_write_cut_before_its_chunks_is_done_again(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    real = writes.handle_knowledge_upsert
-
-    async def _cut(inp: Any, **_: Any) -> Any:
-        await real(inp)
-        world.docs[inp.source_uri]["chunks"] = False  # the document row landed, no chunk
-        raise RuntimeError("cut")
-
-    monkeypatch.setattr(writes, "handle_knowledge_upsert", _cut)
-    asyncio.run(source_sync.run_sync())
-    # The write failed in a way that may pass: the file waits and the turn ends
-    # failed, by the error's class only.
-    detail = _detail(world)
-    assert (detail["status"], detail["error"]) == ("failed", "RuntimeError")
-    monkeypatch.setattr(writes, "handle_knowledge_upsert", real)
-    world.upserts.clear()
-    asyncio.run(source_sync.run_sync())
-    assert [inp.source_uri for inp, _ in world.upserts] == [_uri("doc1")]
-    assert world.docs[_uri("doc1")].get("chunks", True)
-
-
-def test_an_extractor_whose_capabilities_cannot_be_read_holds_the_turn(world: _World) -> None:
-    world.extractor_down = True
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("pdf1", PDF, "2026-01-03T00:00:00.000Z", size="14"),
-    ]
-    for _ in range(4):
-        asyncio.run(source_sync.run_sync())
-        detail = _detail(world)
-        assert detail["status"] == "failed" and "extractor_unavailable" in detail["error"]
-        # The whole format is down, which is the turn's: no file is given up on.
-        assert world.states["decks"]["state_value"] == ""
-        assert detail["unconverted"] == 0
-    assert list(world.docs) == [_uri("doc1")]
-    assert not [r for r in world.requests if r.url.params.get("alt") == "media"]
-
-
-def test_one_file_s_extraction_outage_waits_for_that_file_alone(world: _World) -> None:
-    world.extract_errors["pdf1"] = extractors.ExtractorUnavailable("timed out")
-    world.files = [
-        _file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14"),
-        _file("pdf2", PDF, "2026-01-02T00:00:00.000Z", size="14"),
-    ]
-    asyncio.run(source_sync.run_sync())
-    # The format's other file is served the same pass.
-    assert list(world.docs) == [_uri("pdf2", "file")]
-    assert _detail(world)["status"] == "failed"
-    assert world.states["decks"]["state_value"] == ""
-    asyncio.run(source_sync.run_sync())
-    asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    assert detail["status"] == "ok"
-    assert detail["unconverted_reasons"] == {"extractor_unavailable": 1}
-    assert world.states["decks"]["state_value"] == "2026-01-02T00:00:00.000Z"
-    # Given up on its revision: an incremental turn does not try it again...
-    del world.extract_errors["pdf1"]
-    world.upserts.clear()
-    asyncio.run(source_sync.run_sync())
-    assert world.upserts == []
-    # ...and a new revision is tried again.
-    world.files[0] = _file("pdf1", PDF, "2026-01-05T00:00:00.000Z", size="14")
-    asyncio.run(source_sync.run_sync())
-    assert _uri("pdf1", "file") in world.docs
-
-
-def test_a_file_the_extractor_refuses_is_unconverted(world: _World) -> None:
-    world.extract_error = extractors.ExtractionFailed("corrupt", "the file is damaged")
-    world.files = [_file("pdf1", PDF, "2026-01-03T00:00:00.000Z", size="14")]
-    asyncio.run(source_sync.run_sync())
-    assert world.docs == {}
-    detail = _detail(world)
-    assert detail["unconverted_reasons"] == {"extraction_failed:corrupt": 1}
-    assert world.states["decks"]["state_value"] == "2026-01-03T00:00:00.000Z"
-
-
-@pytest.mark.parametrize(("mime", "fmt"), [(PPTX, "pptx"), (DOCX, "docx")])
-def test_an_uploaded_deck_or_document_goes_to_the_extractor_with_its_bytes_kept(
-    world: _World, mime: str, fmt: str
-) -> None:
-    world.sources = [_source(config={"folder_ids": [FOLDER], "include": [fmt]})]
-    world.files = [_file("file2", mime, "2026-01-03T00:00:00.000Z", size="14")]
-    asyncio.run(source_sync.run_sync())
-    [(inp, _)] = world.upserts
-    assert inp.metadata["ingested_format"] == fmt
-    assert inp.metadata["extraction_coverage"]["complete"] is True
-    assert inp.blob_content_type == mime and inp.original_bytes_b64
-
-
-def test_a_changed_address_retires_the_old_one(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    world.files = [
-        _file(
-            "doc1",
-            DOCS,
-            "2026-01-02T00:00:00.000Z",
-            webViewLink="https://docs.example.com/document/d/doc1/view",
-        )
-    ]
-    result = asyncio.run(source_sync.run_sync())
-    assert list(world.docs) == ["https://docs.example.com/document/d/doc1/view"]
-    assert result.removed == 1
-
-
-def test_two_sources_sharing_a_folder_do_not_take_each_other_s_documents(
-    world: _World,
-) -> None:
-    world.sources = [_source("aaa"), _source("bbb")]
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    asyncio.run(source_sync.run_sync(full=True))
-    assert world.docs[_uri("doc1")]["tags"][-1] == "source:aaa"
-    assert len(world.upserts) == 1
-    assert _detail(world, "bbb")["skipped"] == 1
-    assert world.audits == []
-
-
-def test_a_second_source_with_only_docx_adds_a_folder_s_docx_files_and_nothing_else(
-    world: _World,
-) -> None:
-    world.sources = [
-        _source("aaa"),
-        _source("bbb", config={"folder_ids": [FOLDER], "include": ["docx"]}),
-    ]
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("docx1", DOCX, "2026-01-02T00:00:00.000Z", size="14"),
-    ]
-    asyncio.run(source_sync.run_sync())
-    asyncio.run(source_sync.run_sync(full=True))
-    tags = {uri: d["tags"][-1] for uri, d in world.docs.items()}
-    assert tags == {_uri("doc1"): "source:aaa", _uri("docx1", "file"): "source:bbb"}
-    assert len(world.upserts) == 2
-    assert world.audits == []
 
 
 def test_a_source_another_copy_holds_is_skipped(
@@ -1298,7 +489,7 @@ def test_a_cut_pass_resumes_at_the_source_it_did_not_start(
         run.left -= 1
         return source_sync.TurnResult()
 
-    monkeypatch.setattr(source_sync, "_turn", _turn)
+    monkeypatch.setattr(source_sync_recording, "turn", _turn)
     monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 2)
     first = asyncio.run(source_sync.run_sync())
     assert first.cut and order == ["aaa", "bbb"]
@@ -1316,7 +507,7 @@ def test_a_pass_past_its_time_budget_starts_no_source(
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     result = asyncio.run(source_sync.run_sync())
     assert result.cut and result.synced == 0
-    assert world.requests == []
+    assert world.recording_lists == []
 
 
 def test_a_failed_retirement_of_a_removed_source_counts_as_a_failure(
@@ -1370,115 +561,12 @@ def test_a_committed_retirement_that_awaits_publication_counts_as_retired(
     assert result.failed == 0 and result.retired == 1
 
 
-def test_a_deck_over_the_size_bound_is_unconverted(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_max_file_bytes", 10)
-    world.files = [_file("deck1", SLIDES, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    assert world.docs == {}
-    assert _detail(world)["unconverted_reasons"] == {"too_large": 1}
-
-
-def test_an_artifact_fences_its_code_and_reports_its_coverage() -> None:
-    artifact = Artifact(
-        format="pdf",
-        parser="test",
-        parser_version="1",
-        blocks=(
-            Block(id="b0", type="heading", text="Query", depth=2),
-            Block(id="b1", type="sql_statement", text="SELECT 1"),
-            Block(id="b2", type="code", text="x = ```y```"),
-        ),
-        coverage=Coverage(unit="pages", total=4, extracted=3),
-    )
-    assert convert.artifact_markdown(artifact) == (
-        "## Query\n\n```sql\nSELECT 1\n```\n\n````\nx = ```y```\n````"
-    )
-    assert convert.coverage_of(artifact) == {
-        "complete": False,
-        "unit": "pages",
-        "total": 4,
-        "extracted": 3,
-        "lost": [],
-    }
-
-
-def _waits(world: _World) -> dict[str, Any]:
-    return dict(_detail(world).get("file_waits") or {})
-
-
-def test_two_files_that_start_waiting_on_different_passes_each_wait_their_own(
-    world: _World,
-) -> None:
-    world.extract_errors["pdf1"] = extractors.ExtractorUnavailable("timed out")
-    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
-    asyncio.run(source_sync.run_sync())
-    world.files.append(_file("pdf2", PDF, "2026-01-02T00:00:00.000Z", size="14"))
-    world.extract_errors["pdf2"] = extractors.ExtractorUnavailable("timed out")
-    asyncio.run(source_sync.run_sync())
-    assert {k: v[1] for k, v in _waits(world).items()} == {"pdf1": 2, "pdf2": 1}
-    asyncio.run(source_sync.run_sync())
-    # pdf1 gave up on its third pass; pdf2 still holds the turn.
-    detail = _detail(world)
-    assert detail["unconverted_reasons"] == {"extractor_unavailable": 1}
-    assert detail["status"] == "failed"
-    assert {k: v[1] for k, v in _waits(world).items()} == {"pdf1": 3, "pdf2": 2}
-    asyncio.run(source_sync.run_sync())
-    assert _detail(world)["status"] == "ok"
-    assert world.states["decks"]["state_value"] == "2026-01-02T00:00:00.000Z"
-
-
-@pytest.mark.parametrize("ending", ["rate_limited", "cut"])
-def test_a_turn_that_ends_early_keeps_the_stored_waits(
-    world: _World, monkeypatch: pytest.MonkeyPatch, ending: str
-) -> None:
-    world.extract_errors["pdf1"] = extractors.ExtractorUnavailable("timed out")
-    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
-    asyncio.run(source_sync.run_sync())
-    assert _waits(world)["pdf1"][1] == 1
-    if ending == "rate_limited":
-        world.fail_listing = 429
-    else:
-        # An older file, listed first, uses the whole bound.
-        monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
-        world.files.insert(0, _file("doc0", DOCS, "2025-12-01T00:00:00.000Z"))
-    asyncio.run(source_sync.run_sync())
-    assert _waits(world)["pdf1"][1] == 1
-
-
-def test_an_address_another_writer_holds_reads_no_extractor(world: _World) -> None:
-    uri = _uri("pdf1", "file")
-    world.docs[uri] = {"actor": "human:ann", "tags": [], "metadata": {}}
-    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
-    asyncio.run(source_sync.run_sync())
-    assert world.capability_calls == 0
-    assert _detail(world)["skipped"] == 1
-
-
-def test_an_address_a_writer_takes_during_the_fetch_is_not_overwritten(world: _World) -> None:
-    """The address is free when the file is listed; a person writes there while it is
-    downloaded and converted. The write step reads the address again and leaves theirs."""
-    uri = _uri("pdf1", "file")
-    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
-
-    def _download(request: httpx.Request) -> httpx.Response:
-        world.docs[uri] = {"actor": "human:ann", "tags": [], "metadata": {}}
-        return httpx.Response(200, content=b"%PDF-1.7 bytes")
-
-    world.file_answers["pdf1"] = _download
-    asyncio.run(source_sync.run_sync())
-    assert world.upserts == []
-    assert world.docs[uri]["actor"] == "human:ann"
-    assert _detail(world)["skipped"] == 1
-
-
 def test_the_write_time_owner_read_reads_with_sequential_consistency(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A replica that has not seen a person's write during the fetch would answer the
     address is free, so the read just before the write waits for every insert."""
-    uri = _uri("pdf1", "file")
+    uri = _file("pdf1", PDF, REV1)["uri"]
     world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
     fake = documents.get_one
     sequential: list[bool] = []
@@ -1503,7 +591,6 @@ def test_the_retire_owner_read_reads_with_sequential_consistency(
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     asyncio.run(source_sync.run_sync())
     (uri,) = world.docs
-    world.files = []
     fake = documents.get_one
     sequential: list[bool] = []
 
@@ -1513,288 +600,16 @@ def test_the_retire_owner_read_reads_with_sequential_consistency(
         return await fake(org, ns, at, **kw)
 
     monkeypatch.setattr(documents, "get_one", _get_one)
-    result = asyncio.run(source_sync.run_sync(full=True))
-    assert result.removed == 1 and world.docs == {}
+    assert asyncio.run(source_sync.retire(world.sources[0], uri))
+    assert world.docs == {}
     assert sequential == [True]
-
-
-def _timeout(request: httpx.Request) -> httpx.Response:
-    raise httpx.ReadTimeout("timed out", request=request)
-
-
-@pytest.mark.parametrize(
-    ("mime", "answer", "reason"),
-    [
-        (DOCS, httpx.Response(503), "http_503"),
-        (DOCS, _timeout, "unreachable"),
-        (SLIDES, httpx.Response(500), "http_500"),
-        (SLIDES, _timeout, "unreachable"),
-    ],
-)
-def test_one_file_s_store_failure_that_may_pass_waits_for_that_file(
-    world: _World, mime: str, answer: Any, reason: str
-) -> None:
-    world.files = [
-        _file("bad1", mime, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    world.file_answers["bad1"] = answer
-    asyncio.run(source_sync.run_sync())
-    assert list(world.docs) == [_uri("doc2")]
-    assert _detail(world)["status"] == "failed"
-    assert world.states["decks"]["state_value"] == ""
-    asyncio.run(source_sync.run_sync())
-    asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    assert (detail["status"], detail["unconverted_reasons"]) == ("ok", {reason: 1})
-    assert world.states["decks"]["state_value"] == "2026-01-02T00:00:00.000Z"
-
-
-def test_a_401_on_one_file_is_the_turn_s_credential(world: _World) -> None:
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    world.file_answers["doc1"] = httpx.Response(401)
-    asyncio.run(source_sync.run_sync())
-    assert world.docs == {}
-    assert _detail(world)["status"] == "credential_invalid"
-
-
-def test_the_stamp_never_passes_the_listing_s_start(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, "2999-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    stamp = world.states["decks"]["state_value"]
-    assert gdrive.valid_stamp(stamp) and stamp < "2999"
-    # So the file is listed again, and skipped by its revision.
-    world.upserts.clear()
-    asyncio.run(source_sync.run_sync())
-    assert world.upserts == []
-
-
-def test_a_lost_folder_writes_the_visible_ones_and_retires_nothing(world: _World) -> None:
-    config = {"folder_ids": [FOLDER, OTHER], "include": ["docs"]}
-    world.sources = [_source(config=config)]
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    world.lost_folders = {OTHER}
-    world.files = [_file("doc2", DOCS, "2026-01-02T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync(full=True))
-    assert sorted(world.docs) == [_uri("doc1"), _uri("doc2")]
-    assert world.audits == []
-    assert _detail(world)["status"] == "failed"
-
-
-def test_a_maintainer_s_delete_request_goes_before_the_changed_files(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.docs[_uri("old1")] = {
-        "actor": SYNC_WORKER_ACTOR,
-        "tags": ["source:gone"],
-        "metadata": {"ingested_from": "old1", "source_revision": "r"},
-    }
-    world.sources.append(_source("gone", active=False, pending_delete=True, credential_enc=""))
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
-    result = asyncio.run(source_sync.run_sync())
-    assert result.retired == 1 and result.changed == 0
-    assert list(world.docs) == []
-
-
-def test_a_write_the_store_refuses_is_unconverted_at_once(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def _refuse(inp: Any, **_: Any) -> Any:
-        raise ValidationError("the original is too large", code="TOO_LARGE")
-
-    monkeypatch.setattr(writes, "handle_knowledge_upsert", _refuse)
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    assert (detail["status"], detail["unconverted_reasons"]) == (
-        "ok",
-        {"write_refused:TOO_LARGE": 1},
-    )
-
-
-def test_a_full_sync_request_with_a_failing_file_completes_and_clears(world: _World) -> None:
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("bad1", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    world.file_answers["bad1"] = httpx.Response(503)
-    asyncio.run(source_sync.run_sync())
-    world.states["decks"]["detail"] = json.dumps(
-        {**_detail(world), "requested_at": "2026-11-01T00:00:00+00:00", "full": True}
-    )
-    for _ in range(3):
-        asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    # The request reset the waits once; the file then waited its passes and gave up.
-    assert "requested_at" not in detail and "full" not in detail
-    assert (detail["status"], detail["unconverted_reasons"]) == ("ok", {"http_503": 1})
-
-
-def test_a_periodic_full_listing_gives_a_given_up_file_one_more_try(world: _World) -> None:
-    world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.file_answers["bad1"] = httpx.Response(503)
-    for _ in range(3):
-        asyncio.run(source_sync.run_sync())
-    assert _waits(world)["bad1"][1] == 3
-    # One more failure on the next full listing gives it up again at once.
-    world.states["decks"]["detail"] = json.dumps(_listed_long_ago(world))
-    asyncio.run(source_sync.run_sync())
-    assert _detail(world)["status"] == "ok" and _waits(world)["bad1"][1] == 3
-    # Once the store answers, the next full listing writes it.
-    del world.file_answers["bad1"]
-    world.states["decks"]["detail"] = json.dumps(_listed_long_ago(world, days=3))
-    asyncio.run(source_sync.run_sync())
-    assert _uri("bad1") in world.docs and "bad1" not in _waits(world)
-
-
-def test_an_incomplete_listing_retires_nothing(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    world.files = []
-    world.incomplete_search = True
-    world.files = [_file("doc2", DOCS, "2026-01-02T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync(full=True))
-    # What it listed is written; nothing is retired and the stamp stays.
-    assert sorted(world.docs) == [_uri("doc1"), _uri("doc2")]
-    detail = _detail(world)
-    assert (detail["status"], detail["error"]) == ("ok", "listing: incomplete search")
-    assert world.states["decks"]["state_value"] == "2026-01-01T00:00:00.000Z"
-
-
-def test_a_file_missing_from_the_listing_but_still_in_the_folder_stays(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    world.files = []
-    world.file_answers["doc1"] = httpx.Response(200, json={"trashed": False, "parents": [FOLDER]})
-    asyncio.run(source_sync.run_sync(full=True))
-    assert list(world.docs) == [_uri("doc1")]
-    world.file_answers["doc1"] = httpx.Response(200, json={"trashed": True, "parents": [FOLDER]})
-    asyncio.run(source_sync.run_sync(full=True))
-    assert world.docs == {}
-
-
-def test_a_document_left_at_a_file_s_old_address_is_retired(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    moved = "https://docs.example.com/document/d/doc1/view"
-    # The new address is another writer's, so the file is not written there.
-    world.docs[moved] = {"actor": "human:ann", "tags": [], "metadata": {}}
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", webViewLink=moved)]
-    asyncio.run(source_sync.run_sync(full=True))
-    assert list(world.docs) == [moved]
-
-
-def test_a_401_on_the_folder_check_ends_the_turn(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.file_answers[FOLDER] = httpx.Response(401)
-    asyncio.run(source_sync.run_sync())
-    assert world.docs == {}
-    assert _detail(world)["status"] == "credential_invalid"
-
-
-def _folders(n: int) -> list[dict[str, Any]]:
-    return [{"type": "folder", "id": f"f{i}"} for i in range(n)]
-
-
-def test_folder_checks_run_ten_at_a_time_each_folder_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    checked: list[str] = []
-    flying, most = 0, 0
-
-    async def _require(token: str, folder: str) -> None:
-        nonlocal flying, most
-        checked.append(folder)
-        flying += 1
-        most = max(most, flying)
-        await asyncio.sleep(0)
-        flying -= 1
-
-    monkeypatch.setattr(gdrive, "require_folder", _require)
-    items = [*_folders(25), {"type": "filter", "in": "f0"}]
-    turn = source_sync.TurnResult()
-    assert asyncio.run(source_sync._items_visible("t", items, turn, lambda: False))
-    assert most == 10 and len(checked) == 25 and turn.complete
-
-
-def test_folder_checks_stop_at_the_pass_bound(monkeypatch: pytest.MonkeyPatch) -> None:
-    checked: list[str] = []
-    asked = 0
-
-    async def _require(token: str, folder: str) -> None:
-        checked.append(folder)
-
-    def _out_of_time() -> bool:
-        nonlocal asked
-        asked += 1
-        return asked > 1  # time for the first ten only
-
-    monkeypatch.setattr(gdrive, "require_folder", _require)
-    turn = source_sync.TurnResult()
-    assert not asyncio.run(source_sync._items_visible("t", _folders(25), turn, _out_of_time))
-    assert len(checked) == 10 and turn.cut
-
-
-@pytest.mark.parametrize(
-    ("worst", "status"),
-    [(401, "credential_invalid"), (429, "rate_limited")],
-)
-def test_the_worst_folder_check_in_a_batch_decides_the_turn(
-    monkeypatch: pytest.MonkeyPatch, worst: int, status: str
-) -> None:
-    async def _require(token: str, folder: str) -> None:
-        if folder == "f1":
-            raise gdrive.NotFound("folder f1: http_404", status=404)
-        if folder == "f2" and worst == 401:
-            raise gdrive.CredentialRefused("folder f2: http_401", status=401)
-        if folder == "f2":
-            raise gdrive.RateLimited("folder f2: rate_limited", status=429)
-        if folder == "f3":
-            raise gdrive.CredentialRefused("folder f3: http_401", status=401)
-
-    monkeypatch.setattr(gdrive, "require_folder", _require)
-    turn = source_sync.TurnResult()
-    assert not asyncio.run(source_sync._items_visible("t", _folders(4), turn, lambda: False))
-    assert turn.status == status
-
-
-def test_a_folder_check_s_own_bug_is_raised(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _require(token: str, folder: str) -> None:
-        raise KeyError(folder)
-
-    monkeypatch.setattr(gdrive, "require_folder", _require)
-    with pytest.raises(KeyError):
-        asyncio.run(
-            source_sync._items_visible("t", _folders(2), source_sync.TurnResult(), lambda: False)
-        )
-
-
-def test_any_other_conversion_failure_waits_for_that_file(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def _broken(deck: Any) -> str:
-        raise KeyError("pageElements")
-
-    monkeypatch.setattr(source_sync.convert, "presentation_markdown", _broken)
-    world.files = [
-        _file("deck1", SLIDES, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    asyncio.run(source_sync.run_sync())
-    assert list(world.docs) == [_uri("doc2")]
-    assert _waits(world)["deck1"][2] == "fetch_failed:KeyError"
 
 
 def test_a_turn_that_raises_records_a_failed_state_and_keeps_the_waits(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.file_answers["bad1"] = httpx.Response(503)
+    world.transcript_error = ConnectionError("transcript unavailable")
     asyncio.run(source_sync.run_sync())
 
     async def _down(*a: Any, **kw: Any) -> Any:
@@ -1804,255 +619,7 @@ def test_a_turn_that_raises_records_a_failed_state_and_keeps_the_waits(
     asyncio.run(source_sync.run_sync())
     detail = _detail(world)
     assert (detail["status"], detail["error"]) == ("failed", "ConnectionError")
-    assert _waits(world)["bad1"][1] == 1
-
-
-def _requests_for(world: _World, file_id: str) -> int:
-    """Requests the store got about one file: its export, deck read, download or
-    lookup (every path that names the file's id)."""
-    return sum(1 for r in world.requests if f"/{file_id}" in r.url.path)
-
-
-@pytest.mark.parametrize("held_by", ["waiting_file", "lost_folder", "cut"])
-def test_a_full_turn_that_stays_incomplete_retries_a_given_up_file_once(
-    world: _World, monkeypatch: pytest.MonkeyPatch, held_by: str
-) -> None:
-    world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.file_answers["bad1"] = httpx.Response(503)
-    for _ in range(3):
-        asyncio.run(source_sync.run_sync())
-    assert _waits(world)["bad1"][1] == 3
-    if held_by == "waiting_file":
-        world.files.append(_file("bad2", DOCS, "2026-01-02T00:00:00.000Z"))
-        world.file_answers["bad2"] = httpx.Response(503)
-    elif held_by == "lost_folder":
-        world.lost_folders = {FOLDER}
-    else:
-        monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
-        world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))
-        world.files.append(_file("doc3", DOCS, "2026-01-03T00:00:00.000Z"))
-    world.states["decks"]["detail"] = json.dumps(_listed_long_ago(world))
-    before = _requests_for(world, "bad1")
-    asyncio.run(source_sync.run_sync())
-    assert _requests_for(world, "bad1") == before + 1
-    # The full listing did not complete, so the next full turn grants no new retry.
-    asyncio.run(source_sync.run_sync())
-    assert _requests_for(world, "bad1") == before + 1
-
-
-@pytest.mark.parametrize(
-    ("answer", "status"),
-    [(httpx.Response(401), "credential_invalid"), (httpx.Response(429), "rate_limited")],
-)
-def test_a_lookup_refused_for_the_credential_or_rate_limited_stops_retiring(
-    world: _World, answer: httpx.Response, status: str
-) -> None:
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    asyncio.run(source_sync.run_sync())
-    world.files = []
-    world.file_answers["doc1"] = answer
-    world.file_answers["doc2"] = answer
-    asyncio.run(source_sync.run_sync(full=True))
-    assert sorted(world.docs) == [_uri("doc1"), _uri("doc2")]
-    assert _detail(world)["status"] == status
-    lookups = [r for r in world.requests if r.url.params.get("fields", "").startswith("trashed,")]
-    assert len(lookups) == 1
-
-
-def _listed_long_ago(world: _World, days: int = 2) -> dict[str, Any]:
-    """The state as days past its last complete full listing: the next turn is full.
-    Each call in one test passes its own `days`, as each real full listing has its
-    own time."""
-    detail = _detail(world)
-    stamp = datetime.fromisoformat(detail["full_listed_at"]) - timedelta(days=days)
-    return {**detail, "full_listed_at": stamp.isoformat()}
-
-
-def test_a_listed_file_with_no_usable_address_keeps_its_document(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", webViewLink="")]
-    # The lookup finds the file still in the folder.
-    world.file_answers["doc1"] = httpx.Response(200, json={"trashed": False, "parents": [FOLDER]})
-    asyncio.run(source_sync.run_sync(full=True))
-    assert list(world.docs) == [_uri("doc1")]
-    assert world.audits == []
-    assert _detail(world)["unconverted_reasons"] == {"no_address": 1}
-
-
-@pytest.mark.parametrize("why", ["incomplete_search", "lost_folder"])
-def test_waits_survive_a_full_listing_that_is_not_whole(world: _World, why: str) -> None:
-    config = {"folder_ids": [FOLDER, OTHER], "include": ["docs"]}
-    world.sources = [_source(config=config)]
-    world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.file_answers["bad1"] = httpx.Response(503)
-    asyncio.run(source_sync.run_sync())
-    assert _waits(world)["bad1"][1] == 1
-    # The file is not listed this time, but the listing cannot say it is gone.
-    world.files = []
-    if why == "incomplete_search":
-        world.incomplete_search = True
-    else:
-        world.lost_folders = {OTHER}
-    # A periodic full listing (an explicit full sync would reset the waits).
-    world.states["decks"]["detail"] = json.dumps(
-        {**_detail(world), "full_listed_at": "2026-01-01T00:00:00+00:00"}
-    )
-    asyncio.run(source_sync.run_sync())
-    assert _waits(world)["bad1"][1] == 1
-
-
-def test_a_folder_error_is_not_hidden_by_an_incomplete_listing(world: _World) -> None:
-    config = {"folder_ids": [FOLDER, OTHER], "include": ["docs"]}
-    world.sources = [_source(config=config)]
-    world.lost_folders = {OTHER}
-    world.incomplete_search = True
-    asyncio.run(source_sync.run_sync(full=True))
-    detail = _detail(world)
-    assert detail["status"] == "failed" and OTHER in detail["error"]
-
-
-def test_the_first_error_of_a_turn_is_the_one_it_reports(world: _World) -> None:
-    config = {"folder_ids": [FOLDER, OTHER], "include": ["docs"]}
-    world.sources = [_source(config=config)]
-    world.lost_folders = {OTHER}
-    world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.file_answers["bad1"] = httpx.Response(503)
-    asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    assert detail["status"] == "failed" and OTHER in detail["error"]
-
-
-def test_more_refused_files_than_the_bound_do_not_hold_the_stamp(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 2)
-    world.files = [_file(f"bad{i}", DOCS, f"2026-01-0{i}T00:00:00.000Z") for i in range(1, 6)]
-    for i in range(1, 6):
-        world.file_answers[f"bad{i}"] = httpx.Response(403)
-    asyncio.run(source_sync.run_sync())
-    # Cut by the bound: not a failure, but it says so.
-    detail = _detail(world)
-    assert (detail["status"], detail["error"]) == (
-        "ok",
-        "pass bound reached",
-    )
-    for _ in range(2):
-        asyncio.run(source_sync.run_sync())
-    assert world.states["decks"]["state_value"] == "2026-01-05T00:00:00.000Z"
-    # Each file was fetched once: a given-up file costs nothing on later passes.
-    assert all(_requests_for(world, f"bad{i}") == 1 for i in range(1, 6))
-    assert _detail(world)["unconverted_reasons"] == {"http_403": 5}
-
-
-def test_a_file_over_the_listed_size_is_given_up_without_any_of_the_bound(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
-    monkeypatch.setattr(settings, "knowledge_source_sync_max_file_bytes", 100)
-    world.files = [
-        _file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="101"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    asyncio.run(source_sync.run_sync())
-    assert list(world.docs) == [_uri("doc2")]
-    assert _waits(world)["pdf1"][2] == "too_large"
-
-
-def test_a_credential_refusal_after_a_waiting_file_is_the_turn_s_status(world: _World) -> None:
-    world.files = [
-        _file("bad1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    world.file_answers["bad1"] = httpx.Response(503)
-    world.file_answers["doc2"] = httpx.Response(401)
-    asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    assert detail["status"] == "credential_invalid" and "http_401" in detail["error"]
-
-
-def test_repeated_full_runs_get_past_more_refused_files_than_the_bound(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 2)
-    world.files = [_file(f"bad{i}", DOCS, f"2026-01-0{i}T00:00:00.000Z") for i in range(1, 6)]
-    for i in range(1, 6):
-        world.file_answers[f"bad{i}"] = httpx.Response(403)
-    first = asyncio.run(source_sync.run_sync(full=True))
-    assert first.cut
-    # Each run goes on with the request the first recorded, so the waits are reset once.
-    for _ in range(2):
-        asyncio.run(source_sync.run_sync(full=True))
-    assert world.states["decks"]["state_value"] == "2026-01-05T00:00:00.000Z"
-    assert "requested_at" not in _detail(world)
-    assert all(_requests_for(world, f"bad{i}") == 1 for i in range(1, 6))
-
-
-@pytest.mark.parametrize("refusal", ["http_403", "extraction_failed", "write_refused"])
-def test_a_file_refused_at_once_is_tried_again_when_it_changes_and_on_a_full_listing(
-    world: _World, monkeypatch: pytest.MonkeyPatch, refusal: str
-) -> None:
-    if refusal == "http_403":
-        world.files = [_file("f1", DOCS, "2026-01-01T00:00:00.000Z")]
-        world.file_answers["f1"] = httpx.Response(403)
-    elif refusal == "extraction_failed":
-        world.files = [_file("f1", PDF, "2026-01-01T00:00:00.000Z", size="14")]
-        world.extract_errors["f1"] = extractors.ExtractionFailed("corrupt", "damaged")
-    else:
-
-        async def _refuse(inp: Any, **_: Any) -> Any:
-            raise ValidationError("refused", code="TOO_LARGE")
-
-        monkeypatch.setattr(writes, "handle_knowledge_upsert", _refuse)
-        world.files = [_file("f1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    tried = _requests_for(world, "f1")
-    assert tried >= 1
-    asyncio.run(source_sync.run_sync())
-    # Given up on its revision (its entry exhausted), so the next turn does not fetch it.
-    assert _waits(world)["f1"][1] == 3
-    assert _requests_for(world, "f1") == tried
-    # A periodic full listing tries it exactly once more...
-    world.states["decks"]["detail"] = json.dumps(_listed_long_ago(world))
-    asyncio.run(source_sync.run_sync())
-    assert _requests_for(world, "f1") == tried * 2
-    assert _waits(world)["f1"][1] == 3
-    # ...a full listing that grants no new retry skips it without a fetch...
-    detail = _detail(world)
-    world.states["decks"]["detail"] = json.dumps(
-        {**detail, "full_listed_at": detail["retry_granted_for"]}
-    )
-    asyncio.run(source_sync.run_sync())
-    assert "modifiedTime >" not in _listings(world)[-1]
-    assert _requests_for(world, "f1") == tried * 2
-    # ...and a new revision is tried again.
-    world.files[0] = {**world.files[0], "modifiedTime": "2026-02-01T00:00:00.000Z"}
-    asyncio.run(source_sync.run_sync())
-    assert _requests_for(world, "f1") == tried * 3
-
-
-def test_a_turn_cut_by_the_bound_marks_the_pass_cut(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    result = asyncio.run(source_sync.run_sync())
-    assert result.cut and result.changed == 1
-    from server.knowledge.workers.source_sync import outcome
-
-    assert outcome(result)["cut"] is True
-
-
-def test_a_size_that_is_not_a_number_is_left_to_the_download_bound(world: _World) -> None:
-    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="big")]
-    asyncio.run(source_sync.run_sync())
-    assert _uri("pdf1", "file") in world.docs
+    assert _detail(world)["file_waits"]["bad1"][1] == 1
 
 
 def test_a_delete_request_cut_by_the_bound_marks_the_pass_cut(
@@ -2087,18 +654,6 @@ def test_a_delete_request_past_the_bound_waits_and_marks_the_pass_cut(
     result = asyncio.run(source_sync.run_sync())
     assert (result.retired, result.cut) == (1, True)
     assert list(world.docs) == [_uri("bbb")]
-
-
-def test_a_full_run_turns_a_waiting_plain_request_into_a_full_one(world: _World) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    asked = "2026-11-01T00:00:00+00:00"
-    world.states["decks"]["detail"] = json.dumps({**_detail(world), "requested_at": asked})
-    asyncio.run(source_sync.source_ops.request_full_sync(world.sources[0]))
-    detail = _detail(world)
-    assert detail["full"] is True and detail["requested_at"] != asked
-    # The stamp is kept.
-    assert world.states["decks"]["state_value"] == "2026-01-01T00:00:00.000Z"
 
 
 # The extraction leg.
@@ -2779,421 +1334,6 @@ def test_only_a_trunk_source_tags_its_documents_with_the_repository(
 # ---- items -------------------------------------------------------------------
 
 
-def test_the_folder_turn_ends_a_source_stored_without_a_kind_before_any_request(
-    world: _World,
-) -> None:
-    # What a build without items reads of such a row: kind '', no credential in
-    # `credential_enc`, a config with no folder.
-    assert source_sync._turn_of(dataclasses.replace(_source(), kind="")) is source_sync._turn
-    world.sources = [
-        dataclasses.replace(
-            _source(), kind="", config={"include": ["docs"]}, items=[], credential_enc=""
-        )
-    ]
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    assert world.requests == []
-    assert _detail(world)["status"] == "credential_invalid"
-    assert world.docs == {}
-
-
-def test_a_source_s_items_are_listed_and_a_file_item_keeps_its_document(world: _World) -> None:
-    kept = _file("doc1", DOCS, "2026-01-01T00:00:00.000Z")
-    world.files = [kept, _file("doc2", DOCS, "2026-01-02T00:00:00.000Z")]
-    items = [
-        {"type": "folder", "id": FOLDER, "recursive": False},
-        {"type": "file", "id": "doc1"},
-    ]
-    world.sources = [_source(items=items, secret_enc=seal("knowledge_sources.secret", KEY))]
-    world.sources[0] = dataclasses.replace(world.sources[0], credential_enc="")
-    world.file_answers["doc1"] = httpx.Response(200, json=kept)
-    asyncio.run(source_sync.run_sync())
-    assert sorted(world.docs) == [_uri("doc1"), _uri("doc2")]
-    # The folder no longer lists either, and the store places both outside it: only the
-    # file the source names on its own stays.
-    world.files = []
-    world.file_answers["doc2"] = httpx.Response(
-        200, json={"trashed": False, "parents": ["elsewhere"], "mimeType": DOCS}
-    )
-    asyncio.run(source_sync.run_sync(full=True))
-    assert list(world.docs) == [_uri("doc1")]
-
-
-def test_a_file_item_the_store_does_not_have_is_noted_and_the_rest_synced(world: _World) -> None:
-    items = [
-        {"type": "folder", "id": FOLDER, "recursive": False},
-        {"type": "file", "id": "missing1"},
-    ]
-    world.sources = [_source(items=items)]
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    assert list(world.docs) == [_uri("doc1")]
-    assert detail["status"] == "ok" and detail["error"] == "item 1: http_404"
-
-
-def test_a_walk_cut_at_its_bound_retires_only_what_the_store_reports_gone(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-01T00:00:00.000Z"),
-    ]
-    world.sources = [_source(items=[{"type": "folder", "id": FOLDER, "recursive": True}])]
-    asyncio.run(source_sync.run_sync())
-    assert sorted(world.docs) == [_uri("doc1"), _uri("doc2")]
-
-    async def _cut(token: str, roots: list[str], out: Any, **_: Any) -> None:
-        out.folders.update(roots)
-        out.walk_cut = "more subfolders than a walk reads"
-
-    monkeypatch.setattr(source_gdrive_items, "walk", _cut)
-    world.files = []
-    # doc1 sits in a folder the walk did not reach; doc2 was trashed.
-    world.file_answers["doc1"] = httpx.Response(200, json={"trashed": False, "parents": ["deep"]})
-    world.file_answers["doc2"] = httpx.Response(200, json={"trashed": True, "parents": ["deep"]})
-    asyncio.run(source_sync.run_sync(full=True))
-    assert list(world.docs) == [_uri("doc1")]
-    assert "more subfolders than a walk reads" in _detail(world)["error"]
-
-
-def test_an_incomplete_listing_keeps_its_item_notes_behind_its_marker(world: _World) -> None:
-    items = [
-        {"type": "folder", "id": FOLDER, "recursive": False},
-        {"type": "file", "id": "missing1"},
-    ]
-    world.sources = [_source(items=items)]
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.incomplete_search = True
-    asyncio.run(source_sync.run_sync())
-    # The marker first, so a long run of notes never cuts it off.
-    assert _detail(world)["error"] == "listing: incomplete search; item 1: http_404"
-
-
-def test_a_turn_whose_pass_runs_out_before_the_walk_keeps_its_stamp(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.sources = [_source(items=[{"type": "folder", "id": FOLDER, "recursive": True}])]
-    asyncio.run(source_sync.run_sync())
-    stamp = world.states["decks"]["state_value"]
-    # The pass's time runs out once the turn has its token, before the walk.
-    _run_out_after(monkeypatch, "access_token")
-    world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))
-    asyncio.run(source_sync.run_sync())
-    # Nothing is listed, so doc2 waits for the next pass and the stamp stays.
-    assert _uri("doc2") not in world.docs
-    assert world.states["decks"]["state_value"] == stamp
-    assert _detail(world)["error"] == "pass bound reached"
-
-
-def _three_docs(world: _World) -> None:
-    world.files = [_file(f"doc{n}", DOCS, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2, 3)]
-    asyncio.run(source_sync.run_sync())
-    assert len(world.docs) == 3
-
-
-def test_a_source_at_its_bound_writes_no_new_file_but_syncs_on(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _three_docs(world)
-    # Exactly at the bound: the read is whole, the turn goes on, a new file waits.
-    monkeypatch.setattr(settings, "knowledge_source_max_documents", 3)
-    world.files.append(_file("doc4", DOCS, "2026-01-04T00:00:00.000Z"))
-    asyncio.run(source_sync.run_sync(full=True))
-    detail = _detail(world)
-    assert _uri("doc4") not in world.docs and detail["status"] == "ok"
-    assert detail["error"].startswith("too_many_documents: 1 new files past 3")
-
-
-def test_a_source_over_a_lowered_bound_still_retires_and_writes_nothing_new(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _three_docs(world)
-    # More stored than the bound: every stored copy is still read and compared.
-    monkeypatch.setattr(settings, "knowledge_source_max_documents", 2)
-    world.files = [world.files[0], _file("doc4", DOCS, "2026-01-04T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync(full=True))
-    detail = _detail(world)
-    assert sorted(world.docs) == [_uri("doc1")] and detail["status"] == "ok"
-    assert detail["error"].startswith("too_many_documents: 1 new files past 2")
-
-
-def test_a_new_file_another_writer_holds_takes_no_room_under_the_bound(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
-    world.docs[_uri("doc1")] = {"actor": "human:ann", "tags": [], "metadata": {}}
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    asyncio.run(source_sync.run_sync())
-    assert _uri("doc2") in world.docs and _detail(world)["error"] == ""
-
-
-def test_a_held_file_costs_no_read_of_its_address(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
-    asked: list[str] = []
-    may_write = source_sync._may_write
-
-    async def _counted(src: Any, uri: str) -> bool:
-        asked.append(uri)
-        return await may_write(src, uri)
-
-    monkeypatch.setattr(source_sync, "_may_write", _counted)
-    world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))
-    asyncio.run(source_sync.run_sync(full=True))
-    assert _uri("doc2") not in asked and _uri("doc2") not in world.docs
-
-
-def test_a_new_file_the_store_refuses_takes_no_room_under_the_bound(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
-    world.files = [
-        _file("bad1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    world.file_answers["bad1"] = httpx.Response(403)
-    asyncio.run(source_sync.run_sync())
-    assert list(world.docs) == [_uri("doc2")] and "too_many" not in _detail(world)["error"]
-
-
-def test_a_new_file_past_the_room_is_counted_held_untried(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("bad2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    # It would be refused, but past the room it is not tried, so it counts as held.
-    world.file_answers["bad2"] = httpx.Response(403)
-    asyncio.run(source_sync.run_sync())
-    detail = _detail(world)
-    assert list(world.docs) == [_uri("doc1")] and detail["unconverted"] == 0
-    assert detail["error"] == "too_many_documents: 1 new files past 1"
-
-
-def test_a_moved_file_at_the_bound_takes_no_room(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
-    moved = "https://docs.example.com/document/d/doc1/view"
-    world.files = [_file("doc1", DOCS, "2026-01-02T00:00:00.000Z", webViewLink=moved)]
-    asyncio.run(source_sync.run_sync(full=True))
-    assert list(world.docs) == [moved] and _detail(world)["error"] == ""
-
-
-def test_a_source_at_its_bound_still_retires_and_shrinks_back(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _three_docs(world)
-    monkeypatch.setattr(settings, "knowledge_source_max_documents", 3)
-    # Two files leave the folder and one comes: the two are retired, the new one waits.
-    world.files = [world.files[0], _file("doc4", DOCS, "2026-01-04T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync(full=True))
-    assert sorted(world.docs) == [_uri("doc1")]
-    # Under the bound again, the next full listing writes it.
-    asyncio.run(source_sync.run_sync(full=True))
-    assert sorted(world.docs) == [_uri("doc1"), _uri("doc4")]
-
-
-def test_the_bound_s_note_survives_a_long_run_of_item_notes(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    items = [{"type": "folder", "id": FOLDER, "recursive": False}]
-    items += [{"type": "file", "id": f"missing{n:02d}"} for n in range(20)]
-    world.sources = [_source(items=items)]
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
-    world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))
-    asyncio.run(source_sync.run_sync())
-    assert _detail(world)["error"].startswith("too_many_documents: 1 new files past 1")
-
-
-def test_a_full_listing_fails_on_a_shared_drive_the_account_left(world: _World) -> None:
-    items = [
-        {"type": "folder", "id": FOLDER, "recursive": False},
-        {"type": "shared_drive", "id": "0AbCdEfGhIjKlMnOpQr"},
-    ]
-    world.sources = [_source(items=items)]
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    # The drive answers 404: a full listing cannot say what is absent, so it fails.
-    asyncio.run(source_sync.run_sync(full=True))
-    detail = _detail(world)
-    assert detail["status"] == "failed" and "http_404" in detail["error"]
-
-
-def test_a_shared_drive_the_account_left_holds_the_stamp_of_a_partial_turn(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.clients import gdrive
-
-    list_query = gdrive.list_query
-
-    async def _drive_left(token: str, query: str, **kw: Any) -> tuple[list[Any], bool]:
-        if kw.get("drive_id"):
-            raise gdrive.NotFound("drive")
-        return await list_query(token, query, **kw)
-
-    folder = {"type": "folder", "id": FOLDER, "recursive": False}
-    world.sources = [_source(items=[folder])]
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    monkeypatch.setattr(gdrive, "list_query", _drive_left)
-    world.sources = [_source(items=[folder, {"type": "shared_drive", "id": "0AbCdEfGhIjKlMnOpQr"}])]
-    world.files = [_file("doc2", DOCS, "2026-01-02T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    # What the folder lists is written; nothing is retired and the stamp stays.
-    assert sorted(world.docs) == [_uri("doc1"), _uri("doc2")]
-    detail = _detail(world)
-    assert (detail["status"], detail["error"]) == (
-        "ok",
-        "listing: an item listed nothing; item 1: http_404",
-    )
-    assert world.states["decks"]["state_value"] == "2026-01-01T00:00:00.000Z"
-
-
-def test_the_pass_bound_marker_leads_an_item_note(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
-    items = [
-        {"type": "folder", "id": FOLDER, "recursive": False},
-        {"type": "file", "id": "missing1"},
-    ]
-    world.sources = [_source(items=items)]
-    world.files = [
-        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
-        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
-    ]
-    asyncio.run(source_sync.run_sync())
-    assert _detail(world)["error"] == "pass bound reached; item 1: http_404"
-
-
-def test_a_file_item_the_account_lost_is_retired_by_the_next_full_listing(world: _World) -> None:
-    meta = _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", trashed=False)
-
-    def _seen(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/export"):
-            return httpx.Response(200, text="# Design\n\nWe chose the planner.")
-        return httpx.Response(200, json=meta)
-
-    world.sources = [_source(items=[{"type": "file", "id": "doc1"}])]
-    world.file_answers["doc1"] = _seen
-    asyncio.run(source_sync.run_sync())
-    assert list(world.docs) == [_uri("doc1")]
-    world.file_answers["doc1"] = httpx.Response(404)
-    asyncio.run(source_sync.run_sync(full=True))
-    assert world.docs == {}
-    assert _detail(world)["error"] == "item 0: http_404"
-
-
-def test_a_full_turn_whose_pass_runs_out_after_the_listing_says_so(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    stamp = world.states["decks"]["state_value"]
-    # The pass's time runs out once the folder is listed, before its check.
-    _run_out_after(monkeypatch, "list_all")
-    # doc1 is gone from the folder and doc2 is new.
-    world.files = [_file("doc2", DOCS, "2026-01-02T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync(full=True))
-    # Unchecked, so nothing is written or retired, the stamp stays, and the turn says why.
-    assert list(world.docs) == [_uri("doc1")]
-    assert world.states["decks"]["state_value"] == stamp
-    assert _detail(world)["error"] == "pass bound reached"
-
-
-def test_an_incomplete_search_the_pass_then_ran_out_on_names_both(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    items = [
-        {"type": "folder", "id": FOLDER, "recursive": False},
-        {"type": "file", "id": "missing1"},
-    ]
-    world.sources = [_source(items=items)]
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.incomplete_search = True
-    _run_out_after(monkeypatch, "list_all")
-    asyncio.run(source_sync.run_sync())
-    assert _detail(world)["error"] == ("pass bound reached; listing: incomplete search")
-
-
-@pytest.mark.parametrize(
-    ("mime", "note"),
-    [
-        (DOCS, "item 0: not a kind the source's include names; name its kind in include"),
-        ("image/png", "item 0: 'image/png' is a type the sync does not read"),
-        ("application/vnd.google-apps.folder", "item 0: a folder; add it as a folder item"),
-    ],
-)
-def test_a_file_item_the_sync_does_not_read_is_noted_by_why(
-    world: _World, mime: str, note: str
-) -> None:
-    world.sources = [_source(items=[{"type": "file", "id": "doc1"}], config={"include": ["pdf"]})]
-    world.file_answers["doc1"] = httpx.Response(
-        200, json=_file("doc1", mime, "2026-01-01T00:00:00.000Z")
-    )
-    asyncio.run(source_sync.run_sync())
-    assert world.docs == {} and _detail(world)["error"] == note
-
-
-def test_a_trashed_file_item_is_noted(world: _World) -> None:
-    world.sources = [_source(items=[{"type": "file", "id": "doc1"}])]
-    meta = _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", trashed=True)
-    world.file_answers["doc1"] = httpx.Response(200, json=meta)
-    asyncio.run(source_sync.run_sync())
-    assert world.docs == {} and _detail(world)["error"] == "item 0: in the trash"
-
-
-def test_a_cut_turn_s_marks_lead_the_held_back_files(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    asyncio.run(source_sync.run_sync())
-    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
-    world.incomplete_search = True
-    world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))
-    asyncio.run(source_sync.run_sync())
-    # The mark comes first, so the dashboard reads the turn as cut short.
-    assert _detail(world)["error"] == (
-        "listing: incomplete search; too_many_documents: 1 new files past 1"
-    )
-
-
-def test_a_cut_walk_still_retires_a_kind_the_source_dropped(
-    world: _World, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.sources = [_source(items=[{"type": "folder", "id": FOLDER, "recursive": True}])]
-    asyncio.run(source_sync.run_sync())
-
-    async def _cut(token: str, roots: list[str], out: Any, **_: Any) -> None:
-        out.folders.update(roots)
-        out.walk_cut = "more subfolders than a walk reads"
-
-    monkeypatch.setattr(source_gdrive_items, "walk", _cut)
-    folder = {"type": "folder", "id": FOLDER, "recursive": True}
-    world.sources = [_source(items=[folder], config={"include": ["pdf"]})]
-    world.files = []
-    state = {"trashed": False, "parents": [FOLDER], "mimeType": DOCS}
-    world.file_answers["doc1"] = httpx.Response(200, json=state)
-    asyncio.run(source_sync.run_sync(full=True))
-    # A kind the source no longer reads is not its own, cut walk or not.
-    assert world.docs == {}
-
-
 def test_every_stop_short_mark_reads_as_incomplete_on_the_dashboard() -> None:
     root = Path(__file__).resolve().parents[2]
     badge = (root / "frontend/src/lib/knowledgeSources.ts").read_text()
@@ -3202,29 +1342,6 @@ def test_every_stop_short_mark_reads_as_incomplete_on_the_dashboard() -> None:
 
 
 # Out of time before the walk, or after the listing during the item check.
-@pytest.mark.parametrize("after", ["access_token", "list_all"])
-def test_a_turn_out_of_pass_time_reads_no_stored_copies(
-    world: _World, monkeypatch: pytest.MonkeyPatch, after: str
-) -> None:
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.sources = [_source(items=[{"type": "folder", "id": FOLDER, "recursive": True}])]
-    reads: list[str] = []
-    real = world.source_revisions
-
-    async def _counted(*a: Any, **kw: Any) -> list[dict[str, str]]:
-        # The turn's own read asks for the pictures on a full listing; the retirement
-        # and the extraction leg read without them.
-        if kw.get("pictures"):
-            reads.append("turn")
-        return await real(*a, **kw)
-
-    monkeypatch.setattr(source_sync.store, "source_revisions", _counted)
-    asyncio.run(source_sync.run_sync(full=True))
-    assert reads == ["turn"]  # a full turn with time to spare reads them once
-    reads.clear()
-    _run_out_after(monkeypatch, after)
-    asyncio.run(source_sync.run_sync(full=True))
-    assert reads == [] and _detail(world)["error"].startswith("pass bound reached")
 
 
 def test_the_pass_bound_mark_leads_an_earlier_mark() -> None:
@@ -3253,7 +1370,7 @@ def test_a_source_out_of_time_before_any_file_starts_the_next_pass(
             run.left = 0
         return turn
 
-    monkeypatch.setattr(source_sync, "_turn", _turn)
+    monkeypatch.setattr(source_sync_recording, "turn", _turn)
     asyncio.run(source_sync.run_sync())
     # On leftover time it goes first next; first and still starved, it moves on.
     assert cursor["at"] == f"{ORG}/{NS}/{resumes}"
@@ -3283,7 +1400,7 @@ def test_a_requested_source_out_of_time_leaves_the_rest_their_place(
             run.left = 0
         return turn
 
-    monkeypatch.setattr(source_sync, "_turn", _turn)
+    monkeypatch.setattr(source_sync_recording, "turn", _turn)
     asyncio.run(source_sync.run_sync())
     # bbb's request puts it first again; ccc, where the rest resumed, keeps its place.
     assert cursor["at"] == f"{ORG}/{NS}/ccc"
@@ -3313,7 +1430,7 @@ def test_a_slow_first_of_the_rest_does_not_hold_back_the_others_behind_a_request
             run.left = 0
         return turn
 
-    monkeypatch.setattr(source_sync, "_turn", _turn)
+    monkeypatch.setattr(source_sync_recording, "turn", _turn)
     asyncio.run(source_sync.run_sync())
     asyncio.run(source_sync.run_sync())
     # Pass 1: bbb led the rest and ran out, so pass 2 starts the rest at ccc; there bbb,
@@ -3340,7 +1457,7 @@ def test_only_a_retired_meet_turn_is_not_a_pass_failure(
     status: str,
     expected_failures: int,
 ) -> None:
-    src = dataclasses.replace(_source(), kind=kind, config={"provider": provider}, items=[])
+    src = dataclasses.replace(_source(), kind=kind, config={"provider": provider})
     world.sources = [src]
     before = {
         "requested_at": "2026-01-01T00:00:00Z",
@@ -3354,7 +1471,7 @@ def test_only_a_retired_meet_turn_is_not_a_pass_failure(
         return source_sync.TurnResult(
             status=status,
             complete=False,
-            error="Meet transcripts use a gdrive shared-folder source",
+            error="retired provider",
         )
 
     monkeypatch.setattr(source_sync, "_turn_of", lambda source: _turn)
@@ -3371,38 +1488,4 @@ def test_only_a_retired_meet_turn_is_not_a_pass_failure(
     detail = _detail(world, src.name)
     assert detail["status"] == status
     assert {key: detail[key] for key in before} == before
-    assert not world.requests and not world.upserts and not world.audits
-
-
-@pytest.mark.parametrize(
-    ("body", "expected_format"),
-    [
-        (
-            "## **Planning**\n\n# **Attendees**\n\nSpeaker A, Speaker B\n\n"
-            "# **Transcript**\n\n### 00:05:00\n\nSpeaker A: Keep the proposal.\n\n"
-            "### 01:05:00\n\nSpeaker B: Check the revised figures.\n\n"
-            "### Meeting ended after 01:06:00 👋\n\n"
-            "*This editable transcript was computer generated and might contain errors. "
-            "People can also change the text after it was created.*\n",
-            "transcript",
-        ),
-        ("# Meeting notes\n\nKeep the proposal.\n", "markdown"),
-        ("# Transcript\n\nSpeaker A: No elapsed markers were supplied.\n", "markdown"),
-    ],
-)
-def test_drive_fetch_classifies_timed_transcripts_without_rewriting_the_export(
-    world: _World, monkeypatch: pytest.MonkeyPatch, body: str, expected_format: str
-) -> None:
-    calls: list[tuple[Any, str]] = []
-
-    async def _export(token: Any, file_id: str, **kwargs: Any) -> str:
-        calls.append((token, file_id))
-        return body
-
-    monkeypatch.setattr(gdrive, "export_markdown", _export)
-    fetched = asyncio.run(source_sync._fetch("tok", {"id": "doc1", "mimeType": DOCS}))
-    assert fetched.content == body
-    assert fetched.ingested_format == expected_format
-    assert fetched.original == b"" and fetched.coverage == {}
-    assert calls == [("tok", "doc1")]
-    assert not world.requests and not world.upserts and not world.audits
+    assert not world.recording_lists and not world.upserts and not world.audits

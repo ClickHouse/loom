@@ -185,7 +185,7 @@ class World:
         return self.fences.get(key)
 
     async def ready(self, ch: Any, migration: int) -> bool:
-        assert ch is self.ch and migration == 116
+        assert ch is self.ch and migration == 117
         return self.fleet
 
     async def canonical(self, org: str, owner: str) -> str:

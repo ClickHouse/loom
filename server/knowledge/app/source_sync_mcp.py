@@ -19,6 +19,7 @@ from server.knowledge.app import mcp_source_authority as authority
 from server.knowledge.app import mirrors, private_sync
 from server.knowledge.app import source_sync as sync
 from server.knowledge.app.mcp_read_receipt import require_read_receipt
+from server.knowledge.app.mcp_source_sessions import checked_session
 from server.knowledge.domain.access_list import UNREAD, AccessList, to_json
 from server.knowledge.domain.mcp_identity import resource_uri
 from server.knowledge.domain.sources import KnowledgeSource, mirror_uri_suffix
@@ -212,7 +213,7 @@ async def _read_selected(
     stored = await sync.stored_copies_with_room(bound.source, result)
     progress = result.kind_state
     client = bound.client()
-    async with client:
+    async with checked_session(bound.connection.account, client):
         await client.discover()
         for index in range(progress["mcp_next_index"], len(bound.contract.resources)):
             set_query_tag("worker." + sync.WORKER)
@@ -227,8 +228,9 @@ async def _read_selected(
             run.left -= 1
             try:
                 evidence = await client.read(selected)
-            except MCPSourceError:
-                await _invalidate(bound, selected)
+            except MCPSourceError as error:
+                if error.code != "schema":
+                    await _invalidate(bound, selected)
                 raise
             read_at = datetime.now(UTC)
             result.documents_seen += 1

@@ -28,15 +28,14 @@ from server.insights.api import ops_cost as cost
 from server.insights.api import ops_mentor as mentor
 from server.insights.api import ops_ops as ops
 from server.insights.api import ops_ui as ui
-from server.knowledge.api import ops_connections as connections
 from server.knowledge.api import ops_conversations as conversations
 from server.knowledge.api import ops_gaps as knowledge_gaps
 from server.knowledge.api import ops_knowledge as knowledge
 from server.knowledge.api import ops_mcp_connections as knowledge_mcp_connections
 from server.knowledge.api import ops_mcp_profiles as knowledge_mcp_profiles
+from server.knowledge.api import ops_mcp_reads as knowledge_mcp_reads
 from server.knowledge.api import ops_mcp_sources as knowledge_mcp_sources
 from server.knowledge.api import ops_query_history as query_history
-from server.knowledge.api import ops_source_push as knowledge_source_push
 from server.knowledge.api import ops_sources as knowledge_sources
 from server.memory.api import ops_blacklist as blacklist
 from server.memory.api import ops_brief as memory_brief
@@ -73,8 +72,7 @@ _OPERATION_MODULES = (
     knowledge_mcp_profiles,
     knowledge_mcp_connections,
     knowledge_mcp_sources,
-    connections,
-    knowledge_source_push,
+    knowledge_mcp_reads,
     knowledge_gaps,
     query_history,
     help_docs,

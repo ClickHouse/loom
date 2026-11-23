@@ -4,10 +4,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from server.knowledge.api.models_mcp_connections import _Input
+from server.knowledge.api.models_private_sources import PrivateSourceInput
 
 
-class MCPSourcePreviewInput(_Input):
+class MCPSourcePreviewInput(PrivateSourceInput):
     org: str = Field(description="The authenticated organization.")
     namespace: str = Field(description="The ordinary destination collection or namespace.")
     slot: str = Field(max_length=36, description="The signed-in owner's MCP connection slot.")
@@ -74,7 +74,7 @@ class MCPSourceAddInput(MCPSourcePreviewInput):
     )
 
 
-class MCPSourceScopeInput(_Input):
+class MCPSourceScopeInput(PrivateSourceInput):
     namespace: str = Field(description="The ordinary destination collection or namespace.")
 
 
