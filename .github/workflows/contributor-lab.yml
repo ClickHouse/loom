@@ -1,4 +1,4 @@
-name: Hypothesis worker schedules
+name: Targeted tooling verification
 
 on:
   workflow_dispatch:
@@ -51,3 +51,54 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           uv sync --locked --python 3.12 --extra dev
           uv run --no-sync pytest -q tests/unit/test_worker_pass_interleavings.py --hypothesis-show-statistics
+
+  twine:
+    if: github.ref == 'refs/heads/ci/validate-hypothesis-schedules'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ab6d8067b05f15a5e2d81bbb579016734cfb5fc5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+          sparse-checkout: |
+            sdk/python
+            scripts/release
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+      - name: Check both distributions with Twine
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          uv build sdk/python --out-dir dist
+          python -m venv "$RUNNER_TEMP/twine"
+          "$RUNNER_TEMP/twine/bin/python" -m pip install --require-hashes --only-binary=:all: \
+            -r scripts/release/twine-requirements.txt
+          "$RUNNER_TEMP/twine/bin/python" -m twine check --strict dist/*.whl dist/*.tar.gz
+
+  fast-check:
+    if: github.ref == 'refs/heads/ci/validate-hypothesis-schedules'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: 5909a7980889b8ee6a92a4f154c6b84f71e04f44
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+          sparse-checkout: sdk/typescript
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Run the fast-check scheduler test
+        working-directory: sdk/typescript
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run test -- src/machine.test.ts
