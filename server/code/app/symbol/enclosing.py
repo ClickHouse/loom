@@ -53,7 +53,9 @@ def _by_path(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     return paths
 
 
-async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutput:
+async def handle_code_enclosing(
+    input: CodeEnclosingInput, *, body_revisions: dict[str, str] | None = None
+) -> CodeEnclosingOutput:
     """Batched `path:line` -> enclosing function, one symbol-table read per 20
     distinct paths; a line inside no function falls back to the class or
     struct whose body holds it (`kind` says which). Fail-soft per location:
@@ -163,7 +165,7 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
     bodies_returned = bodies_elided = tokens = 0
     if input.include_body and resolved:
         bodies_returned, bodies_elided, tokens = await _attach_enclosing_bodies(
-            repo, org, ns, results, input.token_budget, widened
+            repo, org, ns, results, input.token_budget, widened, body_revisions
         )
     else:
         for row in results:
@@ -294,6 +296,7 @@ async def _attach_enclosing_bodies(
     results: list[dict[str, Any]],
     token_budget: int,
     widened: set[str],
+    body_revisions: dict[str, str] | None,
 ) -> tuple[int, int, int]:
     """Fetch each distinct enclosing function's body once and attach it to
     every hit inside it, filling by first appearance until the budget is
@@ -318,7 +321,11 @@ async def _attach_enclosing_bodies(
     async def one(r: dict[str, Any]) -> str:
         async with sem:
             try:
-                return await symbol_body(repo, org, ns, r)
+                if body_revisions is None:
+                    return await symbol_body(repo, org, ns, r)
+                if expected := body_revisions.get(r["path"]):
+                    return await symbol_body(repo, org, ns, r, expected_commit=expected)
+                return ""
             except Exception:  # noqa: BLE001 — fail-soft: the name still ships
                 logger.warning("code.enclosing body fetch failed for %s", r.get("symbol_id"))
                 return ""

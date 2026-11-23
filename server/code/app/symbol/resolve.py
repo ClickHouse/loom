@@ -143,7 +143,13 @@ async def near_misses(
 
 
 async def symbol_body(
-    repo: CodeRepo, org: str, ns: str, sym: dict[str, Any], *, model: str | None = None
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    sym: dict[str, Any],
+    *,
+    model: str | None = None,
+    expected_commit: str | None = None,
 ) -> str:
     """The whole retained definition, or no body when completeness is not established."""
     path = str(sym["path"])
@@ -156,9 +162,20 @@ async def symbol_body(
         if not settings.embedding_model:
             return ""
         model = served_model_label(settings.embedding_model)
-    rows = await repo.source_chunks_for_span(org, ns, path, start, end, model)
+    if expected_commit is None:
+        rows = await repo.source_chunks_for_span(org, ns, path, start, end, model)
+    else:
+        rows = await repo.source_chunks_for_span(
+            org, ns, path, start, end, model, with_revision=True
+        )
     if len(rows) > 400:
         return ""
+    if expected_commit is not None:
+        rows = [
+            row
+            for row in rows
+            if str(row.get("indexed_commit") or "").rstrip("\0") == expected_commit
+        ]
     # A one-line Python def may be the last line of its own decorated function
     # chunk. A mere compiler location inside a different unit still proves no body.
     own_declaration = (

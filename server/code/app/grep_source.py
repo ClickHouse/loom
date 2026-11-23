@@ -15,6 +15,20 @@ logger = logging.getLogger(__name__)
 
 
 ContextSource = dict[str, dict[str, str | None]]
+GREP_MATCH_TEXT_CHARS = 300
+
+
+def match_revisions(
+    matches: list[dict[str, Any]], commits: dict[tuple[str, int], str]
+) -> dict[str, str]:
+    """Use a path's revision only when every returned hit agrees."""
+    revisions: dict[str, str] = {}
+    for hit in matches:
+        path = str(hit["path"])
+        commit = commits.get((path, int(hit["line"])), "")
+        if revisions.setdefault(path, commit) != commit:
+            revisions[path] = ""
+    return {path: commit for path, commit in revisions.items() if commit}
 
 
 def _wanted_lines(matches: list[dict[str, Any]], radius: int) -> dict[str, set[int]]:
@@ -37,16 +51,11 @@ def collect_contexts(
 ) -> ContextSource:
     """Keep context at each path's verified match revision, with omissions marked."""
     wanted = _wanted_lines(matches, radius)
-    revisions: dict[str, str] = {}
-    for hit in matches:
-        path = str(hit["path"])
-        commit = match_commits.get((path, int(hit["line"])), "")
-        if revisions.setdefault(path, commit) != commit:
-            revisions[path] = ""
+    revisions = match_revisions(matches, match_commits)
     by_path: ContextSource = {
         path: {str(line): None for line in lines}
         for path, lines in wanted.items()
-        if not revisions[path]
+        if path not in revisions
     }
     other_revisions: dict[str, set[str]] = {}
     scanned = 0
@@ -55,7 +64,7 @@ def collect_contexts(
         scanned += len(str(chunk.get("content") or ""))
         if scanned > max_chars:
             break
-        if not revisions.get(path) or (lines := retained_source_lines(chunk)) is None:
+        if path not in revisions or (lines := retained_source_lines(chunk)) is None:
             continue
         commit = str(chunk.get("indexed_commit") or "").rstrip("\0")
         if commit != revisions[path]:

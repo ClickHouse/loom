@@ -8,7 +8,9 @@ from typing import Any
 
 from server.code.api.models_grep import CodeGrepInput
 from server.code.api.models_navigation import CodeEnclosingInput
+from server.code.app.grep_source import GREP_MATCH_TEXT_CHARS, match_revisions
 from server.code.app.spans import code_span
+from server.code.domain.anchor import local_name
 from server.code.domain.deadline import Budget
 from server.code.domain.units import estimate_tokens
 
@@ -16,7 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 async def definitions_for(
-    input: CodeGrepInput, matches: list[dict[str, Any]], budget: Budget | None
+    input: CodeGrepInput,
+    matches: list[dict[str, Any]],
+    budget: Budget | None,
+    *,
+    match_commits: dict[tuple[str, int], str],
 ) -> dict[str, Any]:
     if not input.include_body or not matches:
         return {}
@@ -25,7 +31,15 @@ async def definitions_for(
         handle_code_enclosing,
     )
 
-    locations = list(dict.fromkeys(f"{row['path']}:{row['line']}" for row in matches))
+    revisions = match_revisions(matches, match_commits)
+    hits = {(row["path"], row["line"]): row for row in matches}
+    locations = [f"{path}:{line}" for path, line in hits if path in revisions]
+    if not locations:
+        return {
+            "definitions": [],
+            "definitions_partial": True,
+            "definitions_note": "no verified match revision for enclosing bodies",
+        }
     rows: list[dict[str, Any]] = []
 
     async def read() -> None:
@@ -41,9 +55,15 @@ async def definitions_for(
                     consumer=input.consumer,
                     locations=locations[start : start + _ENCLOSING_BODY_MAX_SYMBOLS],
                     include_body=True,
-                )
+                ),
+                body_revisions=revisions,
             )
-            rows.extend(out.results)
+            rows.extend(
+                row
+                for row in out.results
+                if (hit := hits.get((row["path"], row["line"]))) is not None
+                and _agrees_with_hit(row, hit)
+            )
 
     incomplete, note = False, ""
     try:
@@ -61,7 +81,7 @@ async def definitions_for(
         logger.warning("code.grep enclosing body lookup failed", exc_info=True)
         incomplete, note = True, "some enclosing bodies could not be read"
     definitions = _distinct(rows)
-    if len(rows) != len(locations) or any(
+    if len(rows) != len(hits) or any(
         not row.get("body")
         or any(not row["start_line"] <= line <= row["end_line"] for line in row["lines"])
         for row in definitions
@@ -72,6 +92,21 @@ async def definitions_for(
             or "some hits have no retained enclosing body; inspect definitions or use code.symbol"
         )
     return {"definitions": definitions, "definitions_partial": incomplete, "definitions_note": note}
+
+
+def _agrees_with_hit(row: dict[str, Any], hit: dict[str, Any]) -> bool:
+    """A live structural answer must still own the retained match."""
+    path = hit["path"]
+    scope = local_name(str(hit.get("scope") or ""), path)
+    name = local_name(str(row.get("qualified_name") or ""), path)
+    if scope and name and name != scope and not name.startswith(scope + "."):
+        return False
+    body = str(row.get("body") or "")
+    if not body:
+        return True
+    index = int(hit["line"]) - int(row["start_line"])
+    lines = body.split("\n")
+    return 0 <= index < len(lines) and lines[index].strip()[:GREP_MATCH_TEXT_CHARS] == hit["text"]
 
 
 def _distinct(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -146,9 +146,9 @@ async def test_grep_can_return_distinct_retained_enclosing_bodies(ch_client, mon
     original = grep.definitions_for
     hydrated = []
 
-    async def bodies(input, matches, budget):
+    async def bodies(input, matches, budget, *, match_commits):
         hydrated.extend((row["path"], row["line"]) for row in matches)
-        return await original(input, matches, budget)
+        return await original(input, matches, budget, match_commits=match_commits)
 
     async def missing_pool(*args):
         return None

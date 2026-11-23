@@ -105,9 +105,10 @@ served page appear once. Conflicting lines and context with uncertain revision
 are left out and set `contexts_partial=true`. Windows stop at the edges of
 available source chunks. The option is available in matches mode.
 
-The default returns matching lines. Bodies are read only for the served page,
-and page reruns remove definitions belonging to earlier pages. If source cannot be
-read, matching lines remain available with `definitions_partial=true` and a
+The default returns matching lines. Bodies are read only for the served page
+and must contain the matching line at its retained revision. Page reruns remove
+definitions belonging to earlier pages. If source cannot be verified,
+matching lines remain available with `definitions_partial=true` and a
 `definitions_note`. Unresolved or elided definitions retain their structural
 disclosures and next lookup when available. Check those fields before treating a
 missing body as missing code. The flag is rejected outside matches mode.
