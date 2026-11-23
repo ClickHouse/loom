@@ -187,3 +187,16 @@ def test_setting_turns_it_on_and_path_prefix_skips(monkeypatch: Any) -> None:
     assert [u.path for u in scoped.units] == ["src/A.cpp"] * 3
     monkeypatch.setattr(settings, "code_search_file_saturation", 0.0)
     assert "saturation" not in _run().score_explanation, "0 = off"
+
+
+def test_cursor_pool_keeps_the_served_order_after_file_saturation(monkeypatch: Any) -> None:
+    monkeypatch.setattr(settings, "code_search_file_saturation", 0.5)
+    monkeypatch.setattr(settings, "code_fusion_signals", False)
+    result = _run()
+    served = [unit.unit_id for unit in result.units]
+    continuation = [unit.unit_id for unit in result.pool[len(served) :]]
+
+    assert served == ["a1", "b1", "a2"]
+    assert continuation == ["a3"]
+    assert set(served).isdisjoint(continuation)
+    assert set(served + continuation) == {"a1", "a2", "a3", "b1"}

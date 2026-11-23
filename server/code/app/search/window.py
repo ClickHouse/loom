@@ -33,8 +33,8 @@ async def _order_window(
     exclude_unit_ids: list[str] | None,
 ) -> list[CodeUnit]:
     """After relevance: history anchors, the caller's fan-in ordering and
-    floor, the seen-set, per-symbol diversity (sets `result.pool`) and the
-    per-file saturation; returns the ordered list the page is cut from."""
+    floor, the seen-set, per-symbol diversity and per-file saturation;
+    retains the final order in `result.pool` for continuation pages."""
     result, work, constrained = st.result, st.work, st.constrained
     history_units, history_section = st.history_units, st.history_section
     fan_in_explain = st.fan_in_explain
@@ -97,7 +97,6 @@ async def _order_window(
     if exclude_unit_ids:
         ranked = _exclude(ranked, exclude_unit_ids, work)
     ranked = _diversify(ranked, top_k)
-    result.pool = ranked[:_POOL_KEEP]
 
     # ---- per-file saturation (code_search_file_saturation; 0 = off): the 2nd, 3rd...
     # unit from one path decays by decay^excess so a single file cannot fill the window
@@ -117,6 +116,8 @@ async def _order_window(
             work["saturation_moved"] = moved
             saturation_explain = f"saturation={decay:g}"
 
+    # Cursor offsets must address the order used for the served page.
+    result.pool = ranked[:_POOL_KEEP]
     st.fan_in_explain, st.saturation_explain = fan_in_explain, saturation_explain
     return ranked
 
