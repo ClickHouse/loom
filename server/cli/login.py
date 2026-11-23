@@ -20,6 +20,14 @@ SDK_COMMANDS = {
 
 
 def run_sdk_command(argv: list[str]) -> int:
+    from server.cli import _session_context
+
+    if _session_context.configured():
+        try:
+            _session_context.require_sdk()
+        except _session_context.CLIContextError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     try:
         from loom.cli import main
     except ImportError:

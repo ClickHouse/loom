@@ -159,7 +159,7 @@ function MemoryCluster({
     }
     setWorking(true);
     try {
-      await resolveMemoryDuplicate(scope, cluster, duplicateId, decision);
+      await resolveMemoryDuplicate(scope, cluster, duplicateId, decision, "explicit");
       toast("Resolved", "ok");
       onDone();
     } catch (e) {
@@ -280,7 +280,7 @@ function DocumentCluster({
     if (!ok) return;
     setWorking(true);
     try {
-      await retireDocumentDuplicate(scope, keep.source_uri, uri);
+      await retireDocumentDuplicate(scope, keep.source_uri, uri, "explicit");
       toast("Copy retired", "ok");
       onDone();
     } catch (e) {
@@ -370,7 +370,7 @@ function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
   const restamp = () =>
     run(
       async () => {
-        const r = await collapseMemoryDuplicates(scope, true);
+        const r = await collapseMemoryDuplicates(scope, true, "explicit");
         // The op reads the same first pairs every call: past them, nothing is known.
         const among = r.truncated ? ` among the first ${COLLAPSE_PAIRS.toLocaleString()} duplicate pairs` : "";
         if (r.mirror_stale === 0)
@@ -382,21 +382,21 @@ function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
         };
       },
       async () => {
-        const r = await collapseMemoryDuplicates(scope, false);
+        const r = await collapseMemoryDuplicates(scope, false, "explicit");
         return `Marked ${r.restamped} search row${r.restamped === 1 ? "" : "s"}.`;
       },
     );
   const repair = () =>
     run(
       async () => {
-        const r = await repairOrphanDuplicates(scope, true);
+        const r = await repairOrphanDuplicates(scope, true, "explicit");
         if (r.candidates === 0) return nothingToDo("No duplicate has lost its canonical.");
         return {
           title: `Bring back ${r.candidates} duplicate${r.candidates === 1 ? "" : "s"} whose canonical is gone?`,
         };
       },
       async () => {
-        const n = (await repairOrphanDuplicates(scope, false)).reactivated;
+        const n = (await repairOrphanDuplicates(scope, false, "explicit")).reactivated;
         return `Brought back ${n} duplicate${n === 1 ? "" : "s"}.`;
       },
     );
@@ -411,7 +411,7 @@ function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
         danger: true,
       }),
       async () => {
-        const r = await consolidateMemories(scope, agent);
+        const r = await consolidateMemories(scope, agent, "explicit");
         if (r.clusters_found === 0) return `Read ${r.examined} of ${agent}'s memories: no near-duplicates.`;
         const kept = r.clusters_failed;
         const why = r.clusters_refused_lossy ? ` (${r.clusters_refused_lossy} because the merge lost a detail)` : "";

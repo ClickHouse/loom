@@ -110,8 +110,9 @@ export async function addCodeRepo(
     /** More branches chosen at add time, each its own index. */
     branches?: string[];
   },
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<CodeRepoAddResult> {
-  return post<CodeRepoAddResult>("/v1/code.repo.add", { org, ...body });
+  return post<CodeRepoAddResult>("/v1/code.repo.add", { org, ...body }, undefined, intent);
 }
 
 /** What a Git remote shows before anything is written — every branch, the
@@ -159,8 +160,8 @@ export interface CodeRepoRemoveResult {
   erasure_id: string;
   mirror_removed: boolean;
 }
-export async function removeCodeRepo(org: string, namespace: string): Promise<CodeRepoRemoveResult> {
-  return post<CodeRepoRemoveResult>("/v1/code.repo.remove", { org, namespace, confirm: namespace });
+export async function removeCodeRepo(org: string, namespace: string, intent: "automatic" | "explicit" = "automatic"): Promise<CodeRepoRemoveResult> {
+  return post<CodeRepoRemoveResult>("/v1/code.repo.remove", { org, namespace, confirm: namespace }, undefined, intent);
 }
 
 /** A maintainer sets a repository's access — classification and join policy. Opening a
@@ -183,6 +184,7 @@ export async function setCodeRepoAccess(
   classification: "standard" | "restricted",
   join_policy: "open" | "approval" | "closed",
   confirm = "",
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<CodeRepoSetAccessResult> {
   return post<CodeRepoSetAccessResult>("/v1/code.repo.set_access", {
     org,
@@ -190,7 +192,7 @@ export async function setCodeRepoAccess(
     classification,
     join_policy,
     confirm,
-  });
+  }, undefined, intent);
 }
 
 /** A maintainer binds the tracker record (issues, PRs, tests, incidents) a repository's
@@ -211,13 +213,14 @@ export async function setCodeRepoSource(
   org: string,
   namespace: string,
   tracker_namespaces: string[],
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<CodeRepoSetSourceResult> {
-  return post<CodeRepoSetSourceResult>("/v1/code.repo.set_source", { org, namespace, tracker_namespaces });
+  return post<CodeRepoSetSourceResult>("/v1/code.repo.set_source", { org, namespace, tracker_namespaces }, undefined, intent);
 }
 
 /** A maintainer indexes another branch of a repository they maintain. */
-export async function addCodeBranch(org: string, namespace: string, branch: string): Promise<CodeRepoAddResult> {
-  return post<CodeRepoAddResult>("/v1/code.repo.add_branch", { org, namespace, branch });
+export async function addCodeBranch(org: string, namespace: string, branch: string, intent: "automatic" | "explicit" = "automatic"): Promise<CodeRepoAddResult> {
+  return post<CodeRepoAddResult>("/v1/code.repo.add_branch", { org, namespace, branch }, undefined, intent);
 }
 
 export interface CodeWorkerStatus {
@@ -263,14 +266,15 @@ export interface CodeIndexStatus extends Omit<CodeRepoSummary, "indexed_at"> {
 
 export async function codeRefresh(
   id: CodeId,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ triggered: boolean; already_running: boolean; head_before: string; head_after: string }> {
-  return post("/v1/code.refresh", { ...id, agent: "loom-ui", wait: false });
+  return post("/v1/code.refresh", { ...id, agent: "loom-ui", wait: false }, undefined, intent);
 }
 
 /** POST /v1/code.reindex (ADMIN): move the index's git watermark to `gitHead`; the ingest
  *  worker indexes the commits after it again. */
-export async function codeReindex(id: CodeId, gitHead: string): Promise<{ previous_head: string; new_head: string }> {
-  return post("/v1/code.reindex", { ...id, agent: "loom-ui", git_head: gitHead });
+export async function codeReindex(id: CodeId, gitHead: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ previous_head: string; new_head: string }> {
+  return post("/v1/code.reindex", { ...id, agent: "loom-ui", git_head: gitHead }, undefined, intent);
 }
 
 export interface CodeUnit {

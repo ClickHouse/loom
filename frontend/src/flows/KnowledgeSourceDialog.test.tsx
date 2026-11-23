@@ -1,10 +1,3 @@
-/**
- * Adding a document source checks first — `knowledge.source.add(dry_run)`, nothing
- * stored — and Add sends exactly the form that passed, each kind with its own config.
- * A key is typed into a password field, and no toast, error or text on the page ever
- * carries it. Check probes on open and stops when the dialog closes; Sync now records a
- * request; Retire needs the typed name and keeps the documents unless asked.
- */
 import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +13,7 @@ import { ApiError } from "../lib/errors";
 import { sourceAddBody, type SourceForm } from "../lib/knowledgeSources";
 import { axeViolations, unlabeledControls } from "../test/axe";
 import {
-  AddSourceDialog,
+  AddRecordingSourceDialog,
   CheckSourceDialog,
   RetireSourceDialog,
   RotateSourceDialog,
@@ -44,9 +37,7 @@ vi.mock("../components/Toast", async (importOriginal) => {
 });
 
 const SECRET = "secret-value-7f3a";
-const KEY = `{"type": "service_account", "private_key": "${SECRET}"}`;
 const ZOOM_KEY = JSON.stringify({ account_id: "account", client_id: "client", client_secret: SECRET });
-const FOLDER = "1AbCdEfGhIjKlMnOp";
 const NS = { org: "o", namespace: "code-x" };
 
 afterEach(() => {
@@ -70,14 +61,14 @@ function expectKeyNowhere() {
 async function fill() {
   const user = userEvent.setup();
   fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "design-docs" } });
-  await user.click(screen.getByLabelText(/^Folders/));
-  await user.paste(FOLDER);
-  fireEvent.change(screen.getByLabelText(/^Service account key/), { target: { value: KEY } });
+  await user.click(screen.getByLabelText(/^Meetings/));
+  await user.paste("81234567890");
+  fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: ZOOM_KEY } });
 }
 
 const addResult = (dryRun: boolean) => ({
   name: "design-docs",
-  kind: "gdrive",
+  kind: "recording",
   namespace: "code-x",
   config: {},
   probe: { documents: 12, more: false, sample: ["Storage design"] },
@@ -85,11 +76,11 @@ const addResult = (dryRun: boolean) => ({
 });
 
 function renderAdd(onAdded = vi.fn()) {
-  render(<AddSourceDialog open onOpenChange={() => {}} {...NS} label="Acme/x" onAdded={onAdded} />);
+  render(<AddRecordingSourceDialog open onOpenChange={() => {}} {...NS} label="Acme/x" onAdded={onAdded} />);
   return onAdded;
 }
 
-describe("AddSourceDialog", () => {
+describe("AddRecordingSourceDialog", () => {
   it("checks before it adds, and adds only the form that passed", async () => {
     vi.mocked(addKnowledgeSource).mockImplementation(async (_id, _f, dryRun) => addResult(dryRun));
     const onAdded = renderAdd();
@@ -97,7 +88,7 @@ describe("AddSourceDialog", () => {
     expect(add).toBeDisabled();
     expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
     await fill();
-    expect(screen.getByLabelText(/^Service account key/)).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText(/^Read-only credential/)).toHaveAttribute("type", "password");
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByText(/lists 12 documents/)).toBeInTheDocument();
     expect(screen.getByText("Storage design")).toBeInTheDocument();
@@ -115,20 +106,6 @@ describe("AddSourceDialog", () => {
     expectKeyNowhere();
     expect(unlabeledControls(document.body)).toEqual([]);
     expect(await axeViolations(document.body)).toEqual([]);
-  });
-
-  it("unticking and ticking a file kind again leaves the checked form, so Add stays on", async () => {
-    vi.mocked(addKnowledgeSource).mockImplementation(async (_id, _f, dryRun) => addResult(dryRun));
-    renderAdd();
-    await fill();
-    fireEvent.click(screen.getByRole("button", { name: "Check" }));
-    await screen.findByText(/lists 12 documents/);
-    const add = screen.getByRole("button", { name: "Add source" });
-    const docs = screen.getByRole("checkbox", { name: "Documents" });
-    fireEvent.click(docs);
-    expect(add).toBeDisabled();
-    fireEvent.click(docs);
-    expect(add).toBeEnabled();
   });
 
   it("shows a refused check, keeps Add off, and the key appears nowhere", async () => {
@@ -166,11 +143,7 @@ function sentBody(n: number) {
   return sourceAddBody(call[0].org, call[0].namespace, call[1] as SourceForm, call[2]);
 }
 
-const PROJECT = "0f8b2c4e-1a2b-4c3d-8e9f-0123456789ab";
-const PAGE = "1a2b3c4d5e6f708192a3b4c5d6e7f809";
-const DATABASE = "abcdefabcdefabcdefabcdefabcdef01";
-
-describe("AddSourceDialog's kinds", () => {
+describe("recording source setup", () => {
   async function typeInto(name: RegExp, text: string) {
     const user = userEvent.setup();
     await user.click(screen.getByRole("textbox", { name }));
@@ -186,60 +159,8 @@ describe("AddSourceDialog's kinds", () => {
     expect(sentBody(1)).toEqual({ ...sentBody(0), dry_run: false });
   }
 
-  it("offers each kind, the shared folder first", () => {
-    renderAdd();
-    const kinds = screen.getAllByRole("radio").map((r) => r.getAttribute("aria-label"));
-    expect(kinds).toEqual(["Shared folder", "Project documents", "Pages", "Zoom transcripts"]);
-    expect(screen.getByRole("radio", { name: "Shared folder" })).toHaveAttribute("aria-checked", "true");
-  });
-
-  it("adds a project tracker's projects with a read-only API key", async () => {
-    renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Project documents" }));
-    expect(screen.queryByLabelText(/^Folders/)).toBeNull();
-    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "roadmap" } });
-    await typeInto(/^Projects/, PROJECT);
-    const key = screen.getByLabelText(/^Read-only API key/);
-    expect(key).toHaveAttribute("type", "password");
-    fireEvent.change(key, { target: { value: SECRET } });
-    await checkAndAdd(/The key reads the projects: roadmap lists 12 documents/);
-    expect(sentBody(0)).toEqual({
-      org: "o",
-      namespace: "code-x",
-      name: "roadmap",
-      kind: "linear",
-      config: { project_ids: [PROJECT] },
-      credential: SECRET,
-      dry_run: true,
-    });
-    expectKeyNowhere();
-    expect(unlabeledControls(document.body)).toEqual([]);
-    expect(await axeViolations(document.body)).toEqual([]);
-  });
-
-  it("adds a page store's pages and databases with an integration token", async () => {
-    renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Pages" }));
-    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "wiki" } });
-    await typeInto(/^Pages/, `https://pages.example/team/Home-${PAGE}`);
-    await typeInto(/^Databases/, DATABASE);
-    const token = screen.getByLabelText(/^Integration token/);
-    expect(token).toHaveAttribute("type", "password");
-    fireEvent.change(token, { target: { value: SECRET } });
-    await checkAndAdd(/The token reads the pages and databases: wiki lists 12 documents/);
-    expect(sentBody(0)).toMatchObject({
-      kind: "notion",
-      config: { page_ids: [PAGE], database_ids: [DATABASE] },
-      credential: SECRET,
-    });
-    expectKeyNowhere();
-    expect(unlabeledControls(document.body)).toEqual([]);
-    expect(await axeViolations(document.body)).toEqual([]);
-  });
-
   it("adds Zoom meetings without a provider choice", async () => {
     renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Zoom transcripts" }));
     expect(screen.queryByRole("radio", { name: "meet" })).toBeNull();
     expect(screen.queryByRole("radio", { name: "zoom" })).toBeNull();
     expect(screen.queryByLabelText(/^Meeting spaces/)).toBeNull();
@@ -264,93 +185,12 @@ describe("AddSourceDialog's kinds", () => {
     expect(await axeViolations(document.body)).toEqual([]);
   });
 
-  it("routes Meet notes and transcripts through the shared folder form", async () => {
+  it("offers only recording fields", () => {
     renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Zoom transcripts" }));
-    expect(screen.getByText(/For Meet notes and transcripts, choose Shared folder/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: ZOOM_KEY } });
-    fireEvent.click(screen.getByRole("radio", { name: "Shared folder" }));
-    expect(screen.getByText(/including Meet notes and transcripts saved as documents/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/^Service account key/)).toHaveValue("");
-    expect(screen.getByRole("checkbox", { name: "Documents" })).toBeChecked();
-    await fill();
-    await checkAndAdd(/The key reads the folders: design-docs lists 12 documents/);
-    expect(sentBody(0)).toMatchObject({
-      kind: "gdrive",
-      config: { folder_ids: [FOLDER], include: ["docs", "slides", "pdf", "pptx"] },
-      credential: KEY,
-    });
-    expectKeyNowhere();
-  });
-
-  it("a check of one kind does not pass the form once the kind changes", async () => {
-    vi.mocked(addKnowledgeSource).mockImplementation(async (_id, _f, dryRun) => addResult(dryRun));
-    renderAdd();
-    await fill();
-    fireEvent.click(screen.getByRole("button", { name: "Check" }));
-    await screen.findByText(/lists 12 documents/);
-    const add = screen.getByRole("button", { name: "Add source" });
-    expect(add).toBeEnabled();
-    fireEvent.click(screen.getByRole("radio", { name: "Project documents" }));
-    expect(add).toBeDisabled();
-    // The key was typed for the shared folder: another kind never sends it.
-    expect(screen.getByLabelText(/^Read-only API key/)).toHaveValue("");
-    // Back to the shared folder: the folders typed are still there; the key is asked
-    // for again, and the same key gives the form that passed.
-    fireEvent.click(screen.getByRole("radio", { name: "Shared folder" }));
-    expect(screen.getByLabelText(/^Folders/)).toHaveValue(FOLDER);
-    expect(screen.getByLabelText(/^Service account key/)).toHaveValue("");
-    fireEvent.change(screen.getByLabelText(/^Service account key/), { target: { value: KEY } });
-    expect(add).toBeEnabled();
-  });
-
-  it("locks the kind while a Zoom check runs", async () => {
-    let answer: (v: ReturnType<typeof addResult>) => void = () => {};
-    vi.mocked(addKnowledgeSource).mockImplementation(() => new Promise((resolve) => (answer = resolve)));
-    renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Zoom transcripts" }));
-    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
-    await typeInto(/^Meetings/, "81234567890");
-    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: ZOOM_KEY } });
-    fireEvent.click(screen.getByRole("button", { name: "Check" }));
-    expect(screen.getByRole("radio", { name: "Pages" })).toBeDisabled();
-    expect(screen.queryByRole("radio", { name: "meet" })).toBeNull();
-    await act(async () => answer(addResult(true)));
-    expect(screen.getByRole("radio", { name: "Pages" })).toBeEnabled();
-    expect(screen.queryByRole("radio", { name: "zoom" })).toBeNull();
-  });
-
-  it("shows the server's refusal of a config as it comes back", async () => {
-    const message = "config.project_ids: at most 20 projects";
-    vi.mocked(addKnowledgeSource).mockRejectedValue(new ApiError({ status: 400, code: "BAD_CONFIG", message }));
-    renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Project documents" }));
-    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "roadmap" } });
-    await typeInto(/^Projects/, PROJECT);
-    fireEvent.change(screen.getByLabelText(/^Read-only API key/), { target: { value: SECRET } });
-    fireEvent.click(screen.getByRole("button", { name: "Check" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(message);
-    expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
-    expectKeyNowhere();
-  });
-
-  it("shows the server's refusal as it comes back", async () => {
-    // What the server answers when the account cannot see the meeting.
-    const message =
-      "the source could not be listed: meeting 81234567890: http_404; check the id and that the account can see it";
-    vi.mocked(addKnowledgeSource).mockRejectedValue(new ApiError({ status: 400, code: "SOURCE_UNREACHABLE", message }));
-    renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Zoom transcripts" }));
-    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
-    await typeInto(/^Meetings/, "81234567890");
-    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: ZOOM_KEY } });
-    fireEvent.click(screen.getByRole("button", { name: "Check" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(message);
-    // The error was the meeting store's: another kind does not show it.
-    fireEvent.click(screen.getByRole("radio", { name: "Pages" }));
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
-    expectKeyNowhere();
+    expect(screen.queryAllByRole("radio")).toEqual([]);
+    expect(screen.queryByLabelText(/^Folders/)).toBeNull();
+    expect(screen.queryByLabelText(/^Pages/)).toBeNull();
+    expect(screen.getByLabelText(/^Meetings/)).toBeInTheDocument();
   });
 });
 
@@ -368,28 +208,28 @@ describe("RotateSourceDialog", () => {
         onOpenChange={() => {}}
         {...NS}
         name="design-docs"
-        kind="gdrive"
+        kind="recording"
         onRotated={onRotated}
       />,
     );
     const rotate = screen.getByRole("button", { name: "Rotate" });
     expect(rotate).toBeDisabled();
-    const field = screen.getByLabelText(/^Service account key/);
+    const field = screen.getByLabelText(/^Read-only credential/);
     expect(field).toHaveAttribute("type", "password");
-    fireEvent.change(field, { target: { value: KEY } });
+    fireEvent.change(field, { target: { value: ZOOM_KEY } });
     fireEvent.click(rotate);
     await waitFor(() => expect(onRotated).toHaveBeenCalled());
     expect(rotateKnowledgeSource).toHaveBeenCalledTimes(1);
-    expect(rotateKnowledgeSource).toHaveBeenCalledWith(NS, "design-docs", KEY);
+    expect(rotateKnowledgeSource).toHaveBeenCalledWith(NS, "design-docs", ZOOM_KEY, "explicit");
     expectKeyNowhere();
   });
 
   it("shows a refused key without echoing it", async () => {
     vi.mocked(rotateKnowledgeSource).mockRejectedValue(refused());
     render(
-      <RotateSourceDialog open onOpenChange={() => {}} {...NS} name="design-docs" kind="gdrive" onRotated={() => {}} />,
+      <RotateSourceDialog open onOpenChange={() => {}} {...NS} name="design-docs" kind="recording" onRotated={() => {}} />,
     );
-    fireEvent.change(screen.getByLabelText(/^Service account key/), { target: { value: KEY } });
+    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: ZOOM_KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Rotate" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("refused the credential");
     expectKeyNowhere();
@@ -449,7 +289,7 @@ describe("SyncNowDialog", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /List every document/ }));
     fireEvent.click(screen.getByRole("button", { name: "Request sync" }));
     await waitFor(() => expect(onRequested).toHaveBeenCalled());
-    expect(syncKnowledgeSourceNow).toHaveBeenCalledWith(NS, "design-docs", true);
+    expect(syncKnowledgeSourceNow).toHaveBeenCalledWith(NS, "design-docs", true, "explicit");
     expect(String(vi.mocked(toast).mock.calls[0]?.[0])).toContain("sync is off");
   });
 });
@@ -477,7 +317,7 @@ describe("RetireSourceDialog", () => {
     fireEvent.change(screen.getByLabelText(/to confirm/), { target: { value: "design-docs" } });
     fireEvent.click(retire);
     await waitFor(() => expect(onRetired).toHaveBeenCalled());
-    expect(removeKnowledgeSource).toHaveBeenCalledWith(NS, "design-docs", "design-docs", false);
+    expect(removeKnowledgeSource).toHaveBeenCalledWith(NS, "design-docs", "design-docs", false, "explicit");
     expect(vi.mocked(toast).mock.calls[0]?.[0]).toBe("Retired design-docs; its documents stay");
   });
 
@@ -488,7 +328,7 @@ describe("RetireSourceDialog", () => {
     fireEvent.change(screen.getByLabelText(/to confirm/), { target: { value: "design-docs" } });
     fireEvent.click(screen.getByRole("button", { name: "Retire source" }));
     await waitFor(() => expect(onRetired).toHaveBeenCalled());
-    expect(removeKnowledgeSource).toHaveBeenCalledWith(NS, "design-docs", "design-docs", true);
+    expect(removeKnowledgeSource).toHaveBeenCalledWith(NS, "design-docs", "design-docs", true, "explicit");
     expect(vi.mocked(toast).mock.calls[0]?.[0]).toBe(
       "Retired design-docs; its 1 document is retired once sync is on for this deployment",
     );

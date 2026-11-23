@@ -37,7 +37,6 @@ memory's tags for provenance, never forged.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import math
 import sys
 from collections import Counter
@@ -130,7 +129,16 @@ class _Client:
         import httpx
 
         try:
-            r = await self._c.post(f"/v1/{op}", json=body)
+            from server.cli import _session_context
+
+            auth = self._c.headers.get("Authorization", "")
+            r = await _session_context.post(
+                self._c,
+                str(self._c.base_url.join(f"/v1/{op}")),
+                auth[7:] if auth.startswith("Bearer ") else "",
+                body=body,
+                timeout_s=60.0,
+            )
         except httpx.HTTPError as e:
             raise RuntimeError(f"{op} → no answer ({type(e).__name__}: {e})") from e
         if r.status_code != 200:
@@ -640,7 +648,9 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
         print("  validate with: okf validate", out_dir, "--drift")
         return 0
 
-    return asyncio.run(_go())
+    from server.cli._session_context import run_async
+
+    return run_async(_go)
 
 
 # ------------------------------------------------------------------
@@ -1319,7 +1329,9 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
         failures = ("failed", "links_failed", "prune_failed", "evidence_failed", "verify_failed")
         return 1 if any(n[k] for k in failures) else 0
 
-    return asyncio.run(_go())
+    from server.cli._session_context import run_async
+
+    return run_async(_go)
 
 
 # ------------------------------------------------------------------

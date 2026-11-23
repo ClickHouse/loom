@@ -57,6 +57,7 @@ export async function createCollection(
   org: string,
   namespace: string,
   opts: { parent?: string; description?: string; title?: string; deriveName?: boolean } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<CollectionCreated> {
   return post("/v1/collection.create", {
     org,
@@ -65,7 +66,7 @@ export async function createCollection(
     description: opts.description ?? "",
     title: opts.title ?? "",
     derive_name: opts.deriveName ?? false,
-  });
+  }, undefined, intent);
 }
 
 export interface CollectionDeleteResult {
@@ -80,8 +81,8 @@ export interface CollectionDeleteResult {
 
 /** Delete a collection with what it holds: a purging erasure of its namespace, then it
  *  leaves the directory and the tree, and its children become top-level. */
-export async function deleteCollection(org: string, namespace: string): Promise<CollectionDeleteResult> {
-  return post("/v1/collection.delete", { org, namespace });
+export async function deleteCollection(org: string, namespace: string, intent: "automatic" | "explicit" = "automatic"): Promise<CollectionDeleteResult> {
+  return post("/v1/collection.delete", { org, namespace }, undefined, intent);
 }
 
 /** POST /v1/collection.move (ADMIN): put a collection under `parent`, or "" to make it
@@ -90,6 +91,7 @@ export async function moveCollection(
   org: string,
   namespace: string,
   parent: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ namespace: string; parent: string; moved: boolean }> {
-  return post("/v1/collection.move", { org, namespace, parent });
+  return post("/v1/collection.move", { org, namespace, parent }, undefined, intent);
 }

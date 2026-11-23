@@ -141,10 +141,23 @@ Explicit offload, fetch and note remain available and observe all retained handl
 For an explicit call outside Session, `observe: new SessionCapture(roots)` retains
 response observers without making the call automatic.
 
-This control covers JSON/SSE transport observation and Session buffer ownership.
-It does not qualify framework callbacks, restored host lineage or a concrete storage
-backend. Binding a handle does not send a session protection capability declaration
-or enable mirrored-source creation.
+The transport validates its retained handles before each dispatch and sends the
+server's session protection declaration only when response observation is installed.
+Caller-supplied declaration headers refuse, including duplicate names with different
+case. Unbound ordinary calls send no declaration. Missing or incompatible durable
+state refuses before sending. Redirects refuse rather than forwarding credentials.
+
+Browser applications can wrap their existing authenticated fetch with
+`protectedBrowserTransport({ baseUrl, sessionProtection, fetch })`. Its `fetch`
+observes explicit JSON and SSE responses, including HTTP errors; `automaticFetch`
+also guards automatic callbacks and writes to any namespace. Supply a durable
+`SessionProtectionStore` and restore the same authority in every relevant context.
+Missing state must reject rather than initialize a clean conversation. The adapter
+stores neither credentials nor private bodies. It is an alternative to using the
+SDK transport directly; do not nest two declaring transports.
+
+These facilities do not qualify framework callbacks, restored host lineage or a
+concrete storage backend, and do not enable mirrored-source creation.
 
 ## Errors
 
@@ -600,3 +613,11 @@ python ../../scripts/codegen/sdk_ts_gen.py     # regenerate the types after a se
 ```
 
 The package ships ESM (`dist/index.mjs`) and CommonJS (`dist/index.cjs`) with their own declaration files, has no side effects, and imports no Node built-in (it runs on `fetch`). `test/package/exports.test.ts` lists every runtime export; adding one is a deliberate API change. `src/types.test-d.ts` holds the type-level contract (what `call`, the group accessors and `Body<K>` infer and reject), checked by `vitest --typecheck` inside `npm test`. `prepublishOnly` runs both check scripts.
+
+`protectedBrowserTransport.downloadFetch` handles same-origin GET downloads as opaque
+content. It durably marks every contributing family before returning any bytes,
+including JSON and line-delimited exports. The response is buffered within
+`maxDownloadBytes` (64 MiB by default and at most) and 4096 chunks; callers can set a
+tighter byte bound. JSON operation responses retain their separate 4 MiB bound.
+Download cancellation joins the owned reader and retains protection. A download
+entry never sends a POST or grants a read beyond the server's authorization.

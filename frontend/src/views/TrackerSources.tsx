@@ -176,7 +176,7 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
       return;
     setBusy(ns.namespace);
     try {
-      if (await joinTarget(target(ns), "viewer")) await refresh();
+      if (await joinTarget(target(ns), "viewer", "explicit")) await refresh();
     } finally {
       setBusy(null);
     }
@@ -192,7 +192,7 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
       return;
     setBusy(ns.namespace);
     try {
-      if (await joinTarget(target(ns), "viewer")) await refresh();
+      if (await joinTarget(target(ns), "viewer", "explicit")) await refresh();
     } finally {
       setBusy(null);
     }
@@ -200,7 +200,7 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
   const cancel = async (ns: TrackerSourceNamespace) => {
     setBusy(ns.namespace);
     try {
-      if (await withdrawTarget(target(ns))) await refresh();
+      if (await withdrawTarget(target(ns), "explicit")) await refresh();
     } finally {
       setBusy(null);
     }
@@ -208,7 +208,7 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
   const leave = async (ns: TrackerSourceNamespace) => {
     setBusy(ns.namespace);
     try {
-      if (await leaveTarget(target(ns))) await refresh();
+      if (await leaveTarget(target(ns), "explicit")) await refresh();
     } finally {
       setBusy(null);
     }

@@ -127,7 +127,7 @@ export function ModelsSettings() {
                     if (resetting) return;
                     setResetting(true);
                     try {
-                      await resetModelConfiguration(status.version);
+                      await resetModelConfiguration(status.version, "explicit");
                       setConfirmReset(false);
                       setReload((value) => value + 1);
                     } catch (e) {
@@ -170,7 +170,7 @@ export function ModelsSettings() {
                     if (!status.pending || retrying) return;
                     setRetrying(true);
                     try {
-                      await retryModelConfiguration(status.pending.config_id);
+                      await retryModelConfiguration(status.pending.config_id, "explicit");
                       setReload((value) => value + 1);
                     } catch (e) {
                       setError(`Couldn't retry the rebuild: ${errorLine(e)}`);
@@ -195,10 +195,10 @@ export function ModelsSettings() {
             status={status}
             onValidate={(configuration) => {
               setSaved(false);
-              return validateModelConfiguration(configuration);
+              return validateModelConfiguration(configuration, "explicit");
             }}
             onSave={async (configuration) => {
-              await saveModelConfiguration(configuration);
+              await saveModelConfiguration(configuration, "explicit");
               setSaved(true);
               setReload((value) => value + 1);
             }}

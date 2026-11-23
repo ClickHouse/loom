@@ -46,7 +46,7 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
     });
     if (!ok) return;
     try {
-      const r = await registerCategory(scope, name, description);
+      const r = await registerCategory(scope, name, description, "explicit");
       toast(
         r.embedded ? `Registered ${name}` : `Registered ${name}; category search finds it once it is embedded`,
         "ok",

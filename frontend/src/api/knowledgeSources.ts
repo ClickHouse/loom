@@ -33,8 +33,8 @@ export async function inspectKnowledgeSource(
 }
 
 /** `dryRun` probes the credential and stores nothing. */
-export async function addKnowledgeSource(id: Ns, form: SourceForm, dryRun: boolean): Promise<KnowledgeSourceAddResult> {
-  return post<KnowledgeSourceAddResult>("/v1/knowledge.source.add", sourceAddBody(id.org, id.namespace, form, dryRun));
+export async function addKnowledgeSource(id: Ns, form: SourceForm, dryRun: boolean, intent: "automatic" | "explicit" = "automatic"): Promise<KnowledgeSourceAddResult> {
+  return post<KnowledgeSourceAddResult>("/v1/knowledge.source.add", sourceAddBody(id.org, id.namespace, form, dryRun), undefined, intent);
 }
 
 /** Closing the Check dialog aborts the probe through `opts.signal`. */
@@ -42,11 +42,13 @@ export async function checkKnowledgeSource(
   id: Ns,
   name: string,
   opts: RequestOpts = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<KnowledgeSourceCheckResult> {
   return post<KnowledgeSourceCheckResult>(
     "/v1/knowledge.source.check",
     { org: id.org, namespace: id.namespace, name },
     opts.signal,
+    intent,
   );
 }
 
@@ -54,13 +56,14 @@ export async function rotateKnowledgeSource(
   id: Ns,
   name: string,
   credential: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<KnowledgeSourceRotateResult> {
   return post<KnowledgeSourceRotateResult>("/v1/knowledge.source.rotate", {
     org: id.org,
     namespace: id.namespace,
     name,
     credential,
-  });
+  }, undefined, intent);
 }
 
 export async function removeKnowledgeSource(
@@ -68,6 +71,7 @@ export async function removeKnowledgeSource(
   name: string,
   confirm: string,
   deleteDocuments: boolean,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<KnowledgeSourceRemoveResult> {
   return post<KnowledgeSourceRemoveResult>("/v1/knowledge.source.remove", {
     org: id.org,
@@ -75,18 +79,19 @@ export async function removeKnowledgeSource(
     name,
     confirm,
     delete_documents: deleteDocuments,
-  });
+  }, undefined, intent);
 }
 
 export async function syncKnowledgeSourceNow(
   id: Ns,
   name: string,
   full: boolean,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<KnowledgeSourceSyncNowResult> {
   return post<KnowledgeSourceSyncNowResult>("/v1/knowledge.source.sync_now", {
     org: id.org,
     namespace: id.namespace,
     name,
     full,
-  });
+  }, undefined, intent);
 }

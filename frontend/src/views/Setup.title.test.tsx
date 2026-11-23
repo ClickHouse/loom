@@ -45,12 +45,10 @@ afterEach(() => {
 });
 
 describe("Settings", () => {
-  it("opens Connected accounts from its page action", async () => {
+  it("keeps native document account setup out of Settings", () => {
     seed("team");
     render(<Setup />);
-    await userEvent.click(screen.getByRole("button", { name: "Connected accounts" }));
-    expect(useStore.getState().view).toBe("connected-accounts");
-    expect(window.location.pathname).toBe("/settings/connected-accounts");
+    expect(screen.queryByRole("button", { name: "Connected accounts" })).toBeNull();
   });
 
   it("titles the document after the open tab", async () => {

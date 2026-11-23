@@ -115,7 +115,7 @@ function RecordSchemas({ registerReason, decideReason }: { registerReason: Reaso
   const decide = async (name: string, decision: "approve" | "reject") => {
     setDeciding(name);
     try {
-      await decideRecordSchema(identity, name, decision);
+      await decideRecordSchema(identity, name, decision, "explicit");
       toast(decision === "approve" ? `Approved ${name}` : `Rejected ${name}`, "ok");
       refresh();
     } catch (e) {
@@ -230,6 +230,7 @@ function NewSchemaDialog({ existing, onClose }: { existing: RecordSchema[]; onCl
         name.trim(),
         description.trim(),
         named.map((f) => ({ ...f, name: f.name.trim() })),
+        "explicit",
       );
       toast(`${replaces ? "Replaced" : "Registered"} ${name.trim()}`, "ok");
       onClose(true);
@@ -480,11 +481,11 @@ function ProfileSchemaPanel({ setReason, clearReason }: { setReason: Reason; cle
     try {
       if (clear) {
         // Clear answers the schema it removed, so the panel goes empty itself.
-        await clearProfileSchema(identity);
+        await clearProfileSchema(identity, "explicit");
         setData({ found: false, json_schema: {}, updated_by: "", updated_at: null });
       } else {
         // Set answers the schema as it now stands: shown at once.
-        setData(await setProfileSchema(identity, JSON.parse(shown)));
+        setData(await setProfileSchema(identity, JSON.parse(shown), "explicit"));
       }
       toast(clear ? "Profile schema removed" : "Profile schema saved", "ok");
       setDraft(null);
@@ -562,7 +563,7 @@ function Ontology({ registerReason }: { registerReason: Reason }) {
   const accept = async (e: OntologyEntry) => {
     setBusy(true);
     try {
-      await registerOntologyTerm(identity, e);
+      await registerOntologyTerm(identity, e, "explicit");
       toast(`Accepted ${e.name}`, "ok");
       refresh();
     } catch (err) {
@@ -574,7 +575,7 @@ function Ontology({ registerReason }: { registerReason: Reason }) {
   const add = async () => {
     setBusy(true);
     try {
-      await registerOntologyTerm(identity, { kind, name: name.trim(), description: "", cardinality: "" });
+      await registerOntologyTerm(identity, { kind, name: name.trim(), description: "", cardinality: "" }, "explicit");
       toast(`Added ${name.trim()}`, "ok");
       setName("");
       refresh();
@@ -676,7 +677,7 @@ function Categories({ addReason }: { addReason: Reason }) {
   const add = async () => {
     setBusy(true);
     try {
-      const r = await registerCategory(identity, name.trim(), description.trim());
+      const r = await registerCategory(identity, name.trim(), description.trim(), "explicit");
       if (r.embedded) toast(`Added ${name.trim()}`, "ok");
       else toast(`Added ${name.trim()}, but category search cannot find it: it could not be indexed`, "info");
       setName("");

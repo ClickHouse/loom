@@ -642,7 +642,7 @@ function NewCollectionForm({
     const version = claimCreateVersion();
     let r: CollectionCreated;
     try {
-      r = await createCollection(org, "", { parent, title: trimmed, deriveName: true });
+      r = await createCollection(org, "", { parent, title: trimmed, deriveName: true }, "explicit");
     } catch (err) {
       toastError(`Couldn't create ${trimmed}`, err);
       setBusy(false);

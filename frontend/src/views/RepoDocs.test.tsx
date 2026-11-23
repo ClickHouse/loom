@@ -284,6 +284,7 @@ describe("RepoDocsList", () => {
         description: "",
         upsert: false,
       },
+      "explicit",
     ]);
   });
 
@@ -327,6 +328,7 @@ describe("RepoDocsList", () => {
         expected_revision: 0,
         upload_id: "up-1",
       },
+      "explicit",
     ]);
     expect(addKnowledge).not.toHaveBeenCalled();
   });

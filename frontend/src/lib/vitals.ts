@@ -4,6 +4,7 @@
 // hiding), never inside the view's own measured window. Every observer is optional: a
 // browser without one reports what it has.
 import { authHeader, ownsToken, storedToken, UI_CONSUMER } from "../api";
+import { dashboardFetch } from "./dashboardTransport";
 import { readCalls, resetCalls } from "./vitalsCounter";
 
 type Identity = { org: string; namespace: string };
@@ -86,7 +87,7 @@ export function flushView(identity: Identity | null, build: string): void {
   // Nothing of this page goes out under another person's token (another tab's sign-in).
   if (!ownsToken(storedToken())) return;
   try {
-    void fetch("/v1/ui.vitals", {
+    void dashboardFetch("/v1/ui.vitals", {
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json", ...authHeader() },

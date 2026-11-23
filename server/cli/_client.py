@@ -198,6 +198,10 @@ def _read_error(e: urllib.error.HTTPError) -> dict[str, Any]:
 
 
 def _send(req: urllib.request.Request, timeout: float) -> tuple[int, dict[str, Any]]:
+    from server.cli import _session_context
+
+    if (protected := _session_context.send(req, timeout)) is not None:
+        return protected
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             status, raw = r.status, r.read()

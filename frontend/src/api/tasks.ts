@@ -202,8 +202,9 @@ export interface InboxRegisterInput {
 export async function registerInbox(
   id: Caller,
   input: InboxRegisterInput,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ inbox: Inbox; created: boolean }> {
-  return post("/v1/inbox.register", body(id, input));
+  return post("/v1/inbox.register", body(id, input), undefined, intent);
 }
 
 /** One identity loom already knows in the org — the poster picker's row.
@@ -258,8 +259,9 @@ export interface PolicySetInput {
 export async function setPolicy(
   id: Caller,
   input: PolicySetInput,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ policy: PosterPolicy | null; removed: boolean }> {
-  return post("/v1/inbox.policy_set", body(id, input));
+  return post("/v1/inbox.policy_set", body(id, input), undefined, intent);
 }
 
 // ---------------------------------------------------------------- reads
@@ -334,8 +336,9 @@ export interface TaskCreateInput {
 export async function createTask(
   id: Caller,
   input: TaskCreateInput,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ task: TaskRow; created: boolean; seq: number }> {
-  return post("/v1/task.create", body(id, input));
+  return post("/v1/task.create", body(id, input), undefined, intent);
 }
 
 export interface TaskUpdateInput {
@@ -354,16 +357,17 @@ export interface TaskUpdateInput {
 /** Edit the brief under optimistic concurrency. A stale `if_match_version`
  *  is a 409 PRECONDITION_FAILED whose `detail` carries `current_version` and
  *  `current` (the row as it is now) — see `conflictOf`. */
-export async function updateTask(id: Caller, input: TaskUpdateInput): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.update", body(id, input));
+export async function updateTask(id: Caller, input: TaskUpdateInput, intent: "automatic" | "explicit" = "automatic"): Promise<{ task: TaskRow; seq: number }> {
+  return post("/v1/task.update", body(id, input), undefined, intent);
 }
 
 export async function acceptTask(
   id: Caller,
   taskId: string,
   opts: { priority?: number; constraints?: string; note?: string } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.accept", body(id, { task_id: taskId, ...opts }));
+  return post("/v1/task.accept", body(id, { task_id: taskId, ...opts }), undefined, intent);
 }
 
 export async function deferTask(
@@ -372,8 +376,9 @@ export async function deferTask(
   reason: string,
   resumeAt: string | null,
   fence = 0,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.defer", (fence ? fenced : body)(id, { task_id: taskId, fence, reason, resume_at: resumeAt }));
+  return post("/v1/task.defer", (fence ? fenced : body)(id, { task_id: taskId, fence, reason, resume_at: resumeAt }), undefined, intent);
 }
 
 export async function blockTask(
@@ -382,14 +387,15 @@ export async function blockTask(
   reason: string,
   blockedOn: BlockedOn,
   fence = 0,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.block", (fence ? fenced : body)(id, { task_id: taskId, fence, reason, blocked_on: blockedOn }));
+  return post("/v1/task.block", (fence ? fenced : body)(id, { task_id: taskId, fence, reason, blocked_on: blockedOn }), undefined, intent);
 }
 
 /** To do → in progress, held by the dashboard (owner `loom-ui`); 409 TASK_NOT_YET while
  *  `not_before` is ahead, TASK_ALREADY_CLAIMED when an agent won the lease first. */
-export async function claimTask(id: Caller, taskId: string): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.claim", body(id, { task_id: taskId, lease_seconds: PERSON_LEASE_SECONDS }));
+export async function claimTask(id: Caller, taskId: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ task: TaskRow; seq: number }> {
+  return post("/v1/task.claim", body(id, { task_id: taskId, lease_seconds: PERSON_LEASE_SECONDS }), undefined, intent);
 }
 
 export async function completeTask(
@@ -397,8 +403,9 @@ export async function completeTask(
   taskId: string,
   fence: number,
   note = "",
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.complete", fenced(id, { task_id: taskId, fence, note }));
+  return post("/v1/task.complete", fenced(id, { task_id: taskId, fence, note }), undefined, intent);
 }
 
 export async function failTask(
@@ -406,30 +413,31 @@ export async function failTask(
   taskId: string,
   fence: number,
   reason: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.fail", fenced(id, { task_id: taskId, fence, reason }));
+  return post("/v1/task.fail", fenced(id, { task_id: taskId, fence, reason }), undefined, intent);
 }
 
-export async function unblockTask(id: Caller, taskId: string, note = ""): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.unblock", body(id, { task_id: taskId, note }));
+export async function unblockTask(id: Caller, taskId: string, note = "", intent: "automatic" | "explicit" = "automatic"): Promise<{ task: TaskRow; seq: number }> {
+  return post("/v1/task.unblock", body(id, { task_id: taskId, note }), undefined, intent);
 }
 
 /** A deferred task back to the queue now, ahead of its `resume_at`
  *  (409 TASK_NOT_DEFERRED for any other status). */
-export async function resumeTask(id: Caller, taskId: string, note = ""): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.resume", body(id, { task_id: taskId, note }));
+export async function resumeTask(id: Caller, taskId: string, note = "", intent: "automatic" | "explicit" = "automatic"): Promise<{ task: TaskRow; seq: number }> {
+  return post("/v1/task.resume", body(id, { task_id: taskId, note }), undefined, intent);
 }
 
-export async function wontDoTask(id: Caller, taskId: string, reason: string): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.wont_do", body(id, { task_id: taskId, reason }));
+export async function wontDoTask(id: Caller, taskId: string, reason: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ task: TaskRow; seq: number }> {
+  return post("/v1/task.wont_do", body(id, { task_id: taskId, reason }), undefined, intent);
 }
 
-export async function cancelTask(id: Caller, taskId: string, reason: string): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.cancel", body(id, { task_id: taskId, reason }));
+export async function cancelTask(id: Caller, taskId: string, reason: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ task: TaskRow; seq: number }> {
+  return post("/v1/task.cancel", body(id, { task_id: taskId, reason }), undefined, intent);
 }
 
-export async function reopenTask(id: Caller, taskId: string, reason: string): Promise<{ task: TaskRow; seq: number }> {
-  return post("/v1/task.reopen", body(id, { task_id: taskId, reason }));
+export async function reopenTask(id: Caller, taskId: string, reason: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ task: TaskRow; seq: number }> {
+  return post("/v1/task.reopen", body(id, { task_id: taskId, reason }), undefined, intent);
 }
 
 export async function reassignTask(
@@ -437,6 +445,7 @@ export async function reassignTask(
   taskId: string,
   toInbox: string,
   reason: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ task: TaskRow; replacement: TaskRow }> {
-  return post("/v1/task.reassign", body(id, { task_id: taskId, to_inbox: toInbox, reason }));
+  return post("/v1/task.reassign", body(id, { task_id: taskId, to_inbox: toInbox, reason }), undefined, intent);
 }

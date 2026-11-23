@@ -322,7 +322,7 @@ export function AddDocumentDialog({
           setStep(line);
           setBusy(phase);
         },
-        { signal: ctrl.signal, onQueued: setJobId },
+        { signal: ctrl.signal, onQueued: setJobId, intent: "explicit" },
       );
       if (status.state === "ready" || status.state === "partial") {
         const what = `${replaceMode ? "Replaced" : "Added"} ${sourceUri.trim()}: revision ${status.revision}`;
@@ -359,7 +359,7 @@ export function AddDocumentDialog({
         description: description.trim(),
         content,
         tags: tags(),
-      });
+      }, "explicit");
       // Heads-up when this text duplicates an existing doc under a different source_uri.
       if (r.duplicate_of_uri && r.duplicate_of_uri !== sourceUri.trim()) {
         toast(`Same content already in your library as "${r.duplicate_of_uri}" — keeping both`, "info");
@@ -404,7 +404,7 @@ export function AddDocumentDialog({
     following.current?.abort();
     setStopping(true);
     try {
-      const r = await cancelIngestion(identity, jobId);
+      const r = await cancelIngestion(identity, jobId, "explicit");
       if (published(r)) onAdded();
       toast(stopped(sourceUri.trim(), r), "info");
     } catch (e) {

@@ -129,14 +129,14 @@ export function CreateCollectionDialog({
     const into = parent === TOP_LEVEL ? "" : parent;
     try {
       const r = ownAddress
-        ? await createCollection(org, trimmed, { parent: into, description: description.trim(), title: trimmedTitle })
+        ? await createCollection(org, trimmed, { parent: into, description: description.trim(), title: trimmedTitle }, "explicit")
         : // The plain name rides along for a server a release behind, which creates it.
           await createCollection(org, derived || placeholderName(trimmedTitle), {
             parent: into,
             description: description.trim(),
             title: trimmedTitle,
             deriveName: true,
-          });
+          }, "explicit");
       announceCreated(r, trimmedTitle, org);
       if (!mounted.current) return;
       onCreated(r.namespace, version);

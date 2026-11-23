@@ -233,7 +233,6 @@ adding its row.
 | `knowledge_gaps` | Once a day, group each namespace's recent misses into the gaps `knowledge.gaps.list` serves. | `LOOM_KNOWLEDGE_GAPS_ENABLED` | False | `LOOM_KNOWLEDGE_GAPS_INTERVAL_SECONDS` | 86400 |
 | `knowledge_ingest` | Runs ingestion jobs (`server/knowledge/app/ingest_run.py`). | `LOOM_KNOWLEDGE_INGEST_ENABLED` | True | `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | 0 |
 | `knowledge_pg_delivery` | Knowledge delivery worker: publishes the knowledge documents a request committed to the Postgres authority but did not publish to ClickHouse (`server.knowledge.app.pg_delivery`), and sweeps expired… | `LOOM_PG_DELIVERY_ENABLED` | True | `LOOM_PG_DELIVERY_INTERVAL_SECONDS` | 2 |
-| `knowledge_source_push` | Renew bounded Drive channel sets; ordinary source polling remains independent. | `LOOM_KNOWLEDGE_SOURCE_PUSH_ENABLED` | False | `LOOM_KNOWLEDGE_SOURCE_PUSH_INTERVAL_SECONDS` | 300 |
 | `knowledge_source_retire` | Finish queued source deletions even when source syncing or authentication is off. | always on |  | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | 900 |
 | `knowledge_source_sync` | Pulls each registered document source's changed files into its namespace's documents (`server.knowledge.app.source_sync`). | `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | False | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | 900 |
 | `mcp_session_run_sweep` | MCP session run sweeper. | always on |  | `LOOM_MCP_SESSION_RUN_SWEEP_INTERVAL_SECONDS` | 60 |

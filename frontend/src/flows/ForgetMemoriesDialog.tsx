@@ -22,7 +22,7 @@ export function ForgetMemoriesDialog({ agent, onClose }: { agent: string; onClos
     setBusy(true);
     setError(null);
     try {
-      const r = await clearAgentMemories(identity, agent, AbortSignal.timeout(LONG_CALL_MS));
+      const r = await clearAgentMemories(identity, agent, AbortSignal.timeout(LONG_CALL_MS), "explicit");
       const locked = r.locked_skipped > 0 ? `; ${r.locked_skipped} locked kept` : "";
       const n = r.rows_affected["loom.memory"] ?? 0;
       toast(`Forgot ${n} memor${n === 1 ? "y" : "ies"} of ${agent}${locked}`, "ok");

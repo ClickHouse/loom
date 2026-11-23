@@ -49,7 +49,7 @@ export function ThreadActions({
       danger: true,
     });
     if (!ok) return;
-    const r = await deleteEveryAgent(identity, thread);
+    const r = await deleteEveryAgent(identity, thread, "explicit");
     if (r.error) {
       const why = humanizeError(r.error, { bare: true });
       // The error's words end the line: they may close with a full stop and a retry tail.
@@ -103,7 +103,7 @@ function RenameDialog({
     if (reason) return;
     setBusy(true);
     try {
-      const renamed = await retitle(identity, thread, title.trim());
+      const renamed = await retitle(identity, thread, title.trim(), "explicit");
       toast(renamed ? "Renamed" : "This conversation was deleted", renamed ? "ok" : "info");
       onClose(true);
     } catch (e) {
@@ -149,13 +149,14 @@ const MAX_AGENTS = 20;
 async function deleteEveryAgent(
   id: Pick<Identity, "org" | "namespace">,
   thread: Thread,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ parts: number; left: number; error?: unknown }> {
   let agent = thread.agent;
   let parts = 0;
   let left = 0;
   try {
     while (parts < MAX_AGENTS) {
-      await deleteThread(id, agent, thread.thread_id);
+      await deleteThread(id, agent, thread.thread_id, intent);
       parts++;
       // What was left before this delete is no longer known.
       left = 0;
@@ -176,17 +177,17 @@ async function deleteEveryAgent(
  *  writer), or write one for a thread built by appends, which has none. When the update
  *  finds the row changed or gone, the head is read and the rename tried once more.
  *  Answers false when the conversation is gone. */
-async function retitle(id: Pick<Identity, "org" | "namespace">, thread: Thread, title: string): Promise<boolean> {
+async function retitle(id: Pick<Identity, "org" | "namespace">, thread: Thread, title: string, intent: "automatic" | "explicit" = "automatic"): Promise<boolean> {
   for (let tries = 0; tries < 2; tries++) {
     const head = await readHead(id, thread.thread_id);
     if (!head.found) return false;
     if (!head.created_at) {
       // conversation.create replaces a row written since the read, metadata included;
       // it has no create-if-absent, so that window stays open.
-      await createThreadRow(id, thread.agent, thread.thread_id, title);
+      await createThreadRow(id, thread.agent, thread.thread_id, title, intent);
       return true;
     }
-    if ((await renameThread(id, head.agent, thread.thread_id, title)).updated) return true;
+    if ((await renameThread(id, head.agent, thread.thread_id, title, intent)).updated) return true;
   }
   throw new Error("The conversation changed during the rename; try again");
 }

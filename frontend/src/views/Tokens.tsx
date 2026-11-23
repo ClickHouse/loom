@@ -203,7 +203,7 @@ export function TokensSection({
     )
       return;
     try {
-      await revokeToken(tokenName);
+      await revokeToken(tokenName, "explicit");
       toast("Revoked", "ok");
       reloadTokens();
     } catch (e) {
@@ -676,6 +676,7 @@ function TokenForm({
       await registerNamespace(
         { org: identity.org, namespace: ns },
         { owner_email: owner, description: "Namespace for a token" },
+        "explicit",
       );
       // The new admin grant must reach every reader of list_mine at once: the store's
       // copy and the shared cache.
@@ -719,7 +720,7 @@ function TokenForm({
     const savesTo = reach === "listed" && listSaves ? { saves_to: listSaves } : {};
     setBusy(true);
     try {
-      onCreated(await createToken({ name: name.trim() || undefined, namespaces, ttl_days: ttl, ...savesTo }));
+      onCreated(await createToken({ name: name.trim() || undefined, namespaces, ttl_days: ttl, ...savesTo }, "explicit"));
       setName("");
     } catch (e) {
       toastError("Failed", e);

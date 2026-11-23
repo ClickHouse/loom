@@ -186,6 +186,8 @@ jobs:
         run: |
           uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Install the maintained Python SDK for its unit request contracts
+        run: uv pip install --no-deps -e sdk/python
       - name: Fetch origin/main for the migration-number check
         run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
       # The clickhouse binary (as clickhouse-local and clickhouse-format) for the
@@ -439,6 +441,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -458,6 +461,43 @@ jobs:
         run: npx --yes @taplo/cli@0.7.0 format --check
       - name: shfmt
         run: git ls-files '*.sh' ':!tests/fixtures' | xargs shfmt -d
+      - name: Render changed-source formatting candidate after failure
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          changed = subprocess.check_output([
+              "git", "diff", "-z", "--name-only", "--diff-filter=ACMR", "HEAD^1", "HEAD"
+          ], text=True).split("\0")
+          selected = [p for p in changed if p.endswith((".ts", ".tsx", ".md", ".yml", ".yaml"))]
+          if len(selected) > 512 or any(Path(p).is_symlink() for p in selected):
+              raise SystemExit("Formatting candidate scope refused")
+          for suffixes, command in (
+              ((".ts", ".tsx"), ["npx", "--yes", "@biomejs/biome@2.5.14", "format", "--write"]),
+              ((".md", ".yml", ".yaml"), ["npx", "--yes", "prettier@3.9.9", "--write", "--log-level", "warn"]),
+          ):
+              files = [p for p in selected if p.endswith(suffixes)]
+              for offset in range(0, len(files), 32):
+                  subprocess.run([
+                      *command, *[str(Path(p).resolve()) for p in files[offset:offset + 32]]
+                  ], check=True)
+          patch = subprocess.check_output([
+              "git", "diff", "--no-ext-diff", "--unified=3", "--", *selected
+          ]) if selected else b""
+          if len(patch) > 32 * 1024 * 1024:
+              raise SystemExit("Formatting candidate size refused")
+          Path(os.environ["RUNNER_TEMP"], "format-candidate.patch").write_bytes(patch)
+          PY
+      - name: Upload formatting candidate
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: changed-source-format-candidate
+          path: ${{ runner.temp }}/format-candidate.patch
+          if-no-files-found: error
 
   helm:
     needs: validate-ref
@@ -1315,7 +1355,20 @@ jobs:
       - name: Resolve dependencies for this toolchain
         run: cargo generate-lockfile
       - name: Rust formatting
+        id: rust-format
         run: cargo fmt --check
+      - name: Render Rust formatting candidate after failure
+        if: failure() && steps.rust-format.outcome == 'failure'
+        run: |
+          cargo fmt
+          git diff --no-ext-diff --unified=3 -- '*.rs' > "$RUNNER_TEMP/rust-format-candidate.patch"
+      - name: Upload Rust formatting candidate
+        if: failure() && steps.rust-format.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-format-${{ matrix.rust }}
+          path: ${{ runner.temp }}/rust-format-candidate.patch
+          if-no-files-found: error
       - name: Unit, HTTP contract and documentation tests
         run: cargo test --locked
       - name: Lint the library, tests and examples
@@ -1358,7 +1411,18 @@ jobs:
       # server's registry; a server change that alters a
       # request or response shape must regenerate them in the same PR.
       - name: generated ops.ts is current
+        id: generated-ts
         run: python scripts/codegen/sdk_ts_gen.py --check
+      - name: Render TypeScript contract candidate after failure
+        if: failure() && steps.generated-ts.outcome == 'failure'
+        run: python scripts/codegen/sdk_ts_gen.py
+      - name: Upload TypeScript contract candidate
+        if: failure() && steps.generated-ts.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-typescript-contract
+          path: sdk/typescript/src/generated/ops.ts
+          if-no-files-found: error
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}

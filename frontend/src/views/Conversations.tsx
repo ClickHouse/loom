@@ -332,7 +332,7 @@ export function Conversations() {
     const gen = scopeGen.current;
     setLoggingEnabled(next); // optimistic
     try {
-      await setConversationLogging(identity, next);
+      await setConversationLogging(identity, next, "explicit");
       toast(next ? "Conversation recording on" : "Recording off — new turns won't be stored", "ok");
     } catch (e) {
       if (gen === scopeGen.current) setLoggingEnabled(!next); // revert

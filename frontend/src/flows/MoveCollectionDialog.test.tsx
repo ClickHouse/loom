@@ -56,7 +56,7 @@ describe("MoveCollectionDialog", () => {
       screen.getByText("At the top, only its own members reach it. Whoever reached it only through finance loses it."),
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
-    await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "q3", ""));
+    await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "q3", "", "explicit"));
     expect(onClose).toHaveBeenCalled();
     expect(changed).toHaveBeenCalled();
   });

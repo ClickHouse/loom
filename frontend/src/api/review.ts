@@ -38,6 +38,7 @@ export async function resolveMemoryDuplicate(
   cluster: MemoryDuplicateCluster,
   duplicateId: string,
   decision: MemoryDuplicateDecision,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ canonical_tombstoned: boolean; duplicate_tombstoned: boolean }> {
   return post("/v1/memory.dedup_resolve", {
     org: id.org,
@@ -46,7 +47,7 @@ export async function resolveMemoryDuplicate(
     duplicate_id: duplicateId,
     decision,
     confirm_canonical_key: cluster.canonical_key,
-  });
+  }, undefined, intent);
 }
 
 /** The fields of `server/memory/api/models_graph.py::MemoryDedupCollapseOutput` the tab reads. */
@@ -63,21 +64,22 @@ export const COLLAPSE_PAIRS = 5000;
 
 /** POST /v1/memory.dedup_collapse: marks the search rows of duplicates `duplicate`, so search
  *  skips them; no model call, and no value, key or memory changes. `dryRun` counts them. */
-export async function collapseMemoryDuplicates(id: Scope, dryRun: boolean): Promise<DuplicateCollapse> {
+export async function collapseMemoryDuplicates(id: Scope, dryRun: boolean, intent: "automatic" | "explicit" = "automatic"): Promise<DuplicateCollapse> {
   return post("/v1/memory.dedup_collapse", {
     org: id.org,
     namespace: id.namespace,
     dry_run: dryRun,
     limit: COLLAPSE_PAIRS,
-  });
+  }, undefined, intent);
 }
 
 /** POST /v1/memory.resolve_orphan_duplicates: duplicates whose canonical is gone come back. */
 export async function repairOrphanDuplicates(
   id: Scope,
   dryRun: boolean,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ candidates: number; reactivated: number }> {
-  return post("/v1/memory.resolve_orphan_duplicates", { org: id.org, namespace: id.namespace, dry_run: dryRun });
+  return post("/v1/memory.resolve_orphan_duplicates", { org: id.org, namespace: id.namespace, dry_run: dryRun }, undefined, intent);
 }
 
 /** How many of the agent's newest eligible memories a merge reads, and how old one must be. */
@@ -90,6 +92,7 @@ export const CONSOLIDATE_MIN_AGE_SECONDS = 3600;
 export async function consolidateMemories(
   id: Scope,
   agent: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{
   /** One entry per cluster merged. */
   consolidated: unknown[];
@@ -110,6 +113,7 @@ export async function consolidateMemories(
       min_age_seconds: CONSOLIDATE_MIN_AGE_SECONDS,
     },
     AbortSignal.timeout(LONG_CALL_MS),
+    intent,
   );
 }
 
@@ -143,7 +147,7 @@ export async function listDocumentDuplicates(
 }
 
 /** POST /v1/knowledge.dedup_resolve: `duplicateUri` is superseded by `canonicalUri`. */
-export async function retireDocumentDuplicate(id: Scope, canonicalUri: string, duplicateUri: string): Promise<unknown> {
+export async function retireDocumentDuplicate(id: Scope, canonicalUri: string, duplicateUri: string, intent: "automatic" | "explicit" = "automatic"): Promise<unknown> {
   return post("/v1/knowledge.dedup_resolve", {
     org: id.org,
     namespace: id.namespace,
@@ -151,7 +155,7 @@ export async function retireDocumentDuplicate(id: Scope, canonicalUri: string, d
     duplicate_uri: duplicateUri,
     decision: "keep_canonical",
     confirm_duplicate_uri: duplicateUri,
-  });
+  }, undefined, intent);
 }
 
 // ===== Proposals (facts on trial) =====
@@ -191,6 +195,7 @@ export async function decideProposals(
   keys: string[],
   decision: "accept" | "reject",
   approvedSha256: Record<string, string> = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ decided: number; results: { memory_key: string; decided: boolean; status: string; reason: string }[] }> {
   return post("/v1/memory.proposal_decide", {
     org: id.org,
@@ -198,7 +203,7 @@ export async function decideProposals(
     memory_keys: keys,
     decision,
     ...(decision === "accept" ? { approved_sha256: approvedSha256 } : {}),
-  });
+  }, undefined, intent);
 }
 
 // ===== Revision suggestions for a conflict =====
@@ -213,6 +218,7 @@ export interface RevisionSuggestion {
 export async function proposeRevision(
   id: Scope,
   memoryId: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ found: boolean; suggestions: RevisionSuggestion[] }> {
-  return post("/v1/conflicts.propose_revision", { org: id.org, namespace: id.namespace, memory_id: memoryId });
+  return post("/v1/conflicts.propose_revision", { org: id.org, namespace: id.namespace, memory_id: memoryId }, undefined, intent);
 }

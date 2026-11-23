@@ -79,28 +79,29 @@ export interface ExpirySweep {
 export const SWEEP_LIMIT = 500;
 
 /** POST /v1/memory.sweep_expired: the expiry worker's pass, now, for this namespace. */
-export async function sweepExpired(id: Scope, dryRun: boolean): Promise<ExpirySweep> {
+export async function sweepExpired(id: Scope, dryRun: boolean, intent: "automatic" | "explicit" = "automatic"): Promise<ExpirySweep> {
   return post("/v1/memory.sweep_expired", {
     org: id.org,
     namespace: id.namespace,
     dry_run: dryRun,
     limit: SWEEP_LIMIT,
-  });
+  }, undefined, intent);
 }
 
 export const REEMBED_LIMIT = 200;
 
 /** POST /v1/memory.reindex: re-embed up to REEMBED_LIMIT memories another embedding model made. */
-export async function reembedMemories(id: Scope): Promise<{ processed: number; target_model: string }> {
-  return post("/v1/memory.reindex", { org: id.org, namespace: id.namespace, limit: REEMBED_LIMIT });
+export async function reembedMemories(id: Scope, intent: "automatic" | "explicit" = "automatic"): Promise<{ processed: number; target_model: string }> {
+  return post("/v1/memory.reindex", { org: id.org, namespace: id.namespace, limit: REEMBED_LIMIT }, undefined, intent);
 }
 
 /** POST /v1/facts.expire_by_adapter: tombstone the graph facts one extractor emitted. */
 export async function expireAdapterFacts(
   id: Scope,
   adapter: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ expired_triples: number; expired_triple_memories: number }> {
-  return post("/v1/facts.expire_by_adapter", { org: id.org, namespace: id.namespace, adapter_name: adapter });
+  return post("/v1/facts.expire_by_adapter", { org: id.org, namespace: id.namespace, adapter_name: adapter }, undefined, intent);
 }
 
 /** Mirrors `server/identity/api/models.py::NamespaceRollbackOutput` (the counts). */
@@ -111,13 +112,13 @@ export interface Rollback {
 }
 
 /** POST /v1/namespace.rollback: every memory head back to its version at `asOf` (ISO). */
-export async function rollbackNamespace(id: Scope, asOf: string, dryRun: boolean): Promise<Rollback> {
-  return post("/v1/namespace.rollback", { org: id.org, namespace: id.namespace, as_of: asOf, dry_run: dryRun });
+export async function rollbackNamespace(id: Scope, asOf: string, dryRun: boolean, intent: "automatic" | "explicit" = "automatic"): Promise<Rollback> {
+  return post("/v1/namespace.rollback", { org: id.org, namespace: id.namespace, as_of: asOf, dry_run: dryRun }, undefined, intent);
 }
 
 /** POST /v1/namespace.snapshot: the namespace's curated state as one JSON payload. */
-export async function snapshotNamespace(id: Scope): Promise<Record<string, unknown>> {
-  return post("/v1/namespace.snapshot", { org: id.org, namespace: id.namespace });
+export async function snapshotNamespace(id: Scope, intent: "automatic" | "explicit" = "automatic"): Promise<Record<string, unknown>> {
+  return post("/v1/namespace.snapshot", { org: id.org, namespace: id.namespace }, undefined, intent);
 }
 
 /** POST /v1/namespace.restore: a snapshot payload into `target`. A snapshot already
@@ -126,8 +127,9 @@ export async function restoreNamespace(
   org: string,
   target: string,
   payload: unknown,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ restored: boolean; counts: { memories: number; erased_skipped: number } }> {
-  return post("/v1/namespace.restore", { org, target_namespace: target, payload });
+  return post("/v1/namespace.restore", { org, target_namespace: target, payload }, undefined, intent);
 }
 
 // ===== Projection failures (org admin) =====
@@ -175,10 +177,11 @@ export const RETRY_LIMIT = 50;
 
 export async function retryProjectionFailures(
   id: Scope,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ results: ProjectionRetry[]; retried: number; resolved: number; abandoned: number }> {
-  return post("/v1/ops.projection_failures.retry", { org: id.org, namespace: id.namespace, limit: RETRY_LIMIT });
+  return post("/v1/ops.projection_failures.retry", { org: id.org, namespace: id.namespace, limit: RETRY_LIMIT }, undefined, intent);
 }
 
-export async function resolveProjectionFailures(org: string, ids: string[]): Promise<{ resolved: number }> {
-  return post("/v1/ops.projection_failures.resolve", { org, failure_ids: ids });
+export async function resolveProjectionFailures(org: string, ids: string[], intent: "automatic" | "explicit" = "automatic"): Promise<{ resolved: number }> {
+  return post("/v1/ops.projection_failures.resolve", { org, failure_ids: ids }, undefined, intent);
 }

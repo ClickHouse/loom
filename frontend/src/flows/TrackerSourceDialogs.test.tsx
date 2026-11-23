@@ -724,6 +724,6 @@ describe("Retire a tracker", () => {
     fireEvent.change(screen.getByLabelText(/to confirm/), { target: { value: "kj" } });
     fireEvent.click(go);
     await waitFor(() => expect(onRetired).toHaveBeenCalledWith(["tracker-kj"]));
-    expect(removeTrackerSource).toHaveBeenCalledWith("dev", "kj", "kj");
+    expect(removeTrackerSource).toHaveBeenCalledWith("dev", "kj", "kj", "explicit");
   });
 });

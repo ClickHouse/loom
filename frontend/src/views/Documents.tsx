@@ -708,7 +708,7 @@ export function Documents() {
       return;
     const place = placeOf(r);
     try {
-      await deleteKnowledge(place, source_uri);
+      await deleteKnowledge(place, source_uri, "explicit");
       toast(`Deleted ${source_uri}`, "ok", undoNotice(place, source_uri));
     } catch (e) {
       if (!isPublicationPending(e)) {
@@ -733,7 +733,7 @@ export function Documents() {
     // when the notice outlived the Library.
     (searchRef.current ?? document.getElementById("main"))?.focus();
     try {
-      const r = await restoreKnowledge(place, source_uri);
+      const r = await restoreKnowledge(place, source_uri, "explicit");
       if (r.restored) {
         toast(
           r.original === "gone"
@@ -1052,7 +1052,7 @@ export function Documents() {
         const uris = inPlace.map((r) => r.source_uri);
         const keys = inPlace.map((r) => rowKeyOf(r, across));
         try {
-          const r = await bulkDeleteKnowledge({ org: identity.org, namespace: ns }, uris);
+          const r = await bulkDeleteKnowledge({ org: identity.org, namespace: ns }, uris, "explicit");
           deleted += r.total_tombstoned;
           answered = true;
           gone.push(...keys);

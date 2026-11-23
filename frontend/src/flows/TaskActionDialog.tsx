@@ -142,34 +142,34 @@ export function TaskActionDialog({
           result = await acceptTask(identity, id, {
             ...(priority !== task.priority ? { priority } : {}),
             ...(note.trim() ? { note: note.trim() } : {}),
-          });
+          }, "explicit");
           break;
         case "complete":
-          result = await completeTask(identity, id, fence, note.trim());
+          result = await completeTask(identity, id, fence, note.trim(), "explicit");
           break;
         case "fail":
-          result = await failTask(identity, id, fence, r);
+          result = await failTask(identity, id, fence, r, "explicit");
           break;
         case "wont_do":
-          result = await wontDoTask(identity, id, r);
+          result = await wontDoTask(identity, id, r, "explicit");
           break;
         case "defer":
-          result = await deferTask(identity, id, r, isoFromLocal(resumeAt), fence);
+          result = await deferTask(identity, id, r, isoFromLocal(resumeAt), fence, "explicit");
           break;
         case "block":
-          result = await blockTask(identity, id, r, blockedOn, fence);
+          result = await blockTask(identity, id, r, blockedOn, fence, "explicit");
           break;
         case "unblock":
-          result = await unblockTask(identity, id, note.trim());
+          result = await unblockTask(identity, id, note.trim(), "explicit");
           break;
         case "cancel":
-          result = await cancelTask(identity, id, r);
+          result = await cancelTask(identity, id, r, "explicit");
           break;
         case "reopen":
-          result = await reopenTask(identity, id, r);
+          result = await reopenTask(identity, id, r, "explicit");
           break;
         case "reassign":
-          result = await reassignTask(identity, id, toInbox, r);
+          result = await reassignTask(identity, id, toInbox, r, "explicit");
           break;
       }
       toast(actionDone(action, task.title), "ok");

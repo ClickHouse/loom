@@ -28,7 +28,7 @@ export function RunGrade({
   const grade = async (g: "pass" | "fail") => {
     setBusy(true);
     try {
-      const r = await gradeRun(identity, run.run_id, g, reason.trim(), grader);
+      const r = await gradeRun(identity, run.run_id, g, reason.trim(), grader, "explicit");
       // Under an owner's auto policy any grade, an unchanged one too, may accept or reject proposals.
       const n = r.proposals_decided.length;
       const decided = n ? `, ${n} proposal${n === 1 ? "" : "s"} decided` : "";

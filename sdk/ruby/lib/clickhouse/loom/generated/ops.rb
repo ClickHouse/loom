@@ -8,7 +8,7 @@ module ClickHouse
     # Every served operation: its spec in OPS, and one method per op on the class
     # of its group (`client.memory.set(...)` is `memory.set`).
     module Generated
-      OP_COUNT = 383
+      OP_COUNT = 386
 
       # The declared spec of every served op, by name; the HTTP path is /v1/<name>.
       OPS = {
@@ -82,8 +82,6 @@ module ClickHouse
         "conflicts.list" => OpSpec.new("conflicts.list", "conflicts", "list", true, true, "viewer", "stable", %w[org namespace limit before_version count_only fresh keys_only fields].freeze, %w[org namespace].freeze),
         "conflicts.propose_revision" => OpSpec.new("conflicts.propose_revision", "conflicts", "propose_revision", true, true, "viewer", "experimental", %w[org namespace memory_id peer_id].freeze, %w[org namespace memory_id].freeze),
         "conflicts.resolve" => OpSpec.new("conflicts.resolve", "conflicts", "resolve", true, false, "admin", "stable", %w[org namespace memory_id decision peer_id reason resolved_by].freeze, %w[org namespace memory_id decision].freeze),
-        "connection.disconnect" => OpSpec.new("connection.disconnect", "connection", "disconnect", true, false, "viewer", "experimental", %w[org kind].freeze, %w[org kind].freeze),
-        "connection.list" => OpSpec.new("connection.list", "connection", "list", true, true, "viewer", "experimental", %w[org].freeze, %w[org].freeze),
         "consolidations.list" => OpSpec.new("consolidations.list", "consolidations", "list", true, true, "viewer", "experimental", %w[org namespace agent user_id session_id run_id limit].freeze, %w[org namespace].freeze),
         "context.fetch" => OpSpec.new("context.fetch", "context", "fetch", true, true, "viewer", "experimental", %w[org namespace agent user_id session_id run_id blob_key offset limit pattern context_lines].freeze, %w[org namespace agent blob_key].freeze),
         "context.offload" => OpSpec.new("context.offload", "context", "offload", true, false, "writer", "experimental", %w[org namespace agent user_id session_id run_id content blob_key content_type summary ttl_seconds].freeze, %w[org namespace agent content].freeze),
@@ -142,6 +140,7 @@ module ClickHouse
         "knowledge.add" => OpSpec.new("knowledge.add", "knowledge", "add", true, false, "writer", "stable", %w[org namespace source_uri content title description tags metadata original_bytes_b64 original_filename blob_content_type agent session_id source_class].freeze, %w[org namespace source_uri content].freeze),
         "knowledge.bulk_add" => OpSpec.new("knowledge.bulk_add", "knowledge", "bulk_add", true, false, "writer", "stable", %w[org namespace entries agent session_id source_class].freeze, %w[org namespace entries].freeze),
         "knowledge.bulk_delete" => OpSpec.new("knowledge.bulk_delete", "knowledge", "bulk_delete", true, false, "writer", "experimental", %w[org namespace source_uris].freeze, %w[org namespace source_uris].freeze),
+        "knowledge.connection.mcp_browse" => OpSpec.new("knowledge.connection.mcp_browse", "knowledge", "connection_mcp_browse", true, true, "viewer", "experimental", %w[org slot mode query limit].freeze, %w[org slot mode].freeze),
         "knowledge.connection.mcp_connect" => OpSpec.new("knowledge.connection.mcp_connect", "knowledge", "connection_mcp_connect", false, false, "viewer", "experimental", %w[org profile_id request_id label bearer].freeze, %w[org profile_id request_id].freeze),
         "knowledge.connection.mcp_disconnect" => OpSpec.new("knowledge.connection.mcp_disconnect", "knowledge", "connection_mcp_disconnect", false, false, "viewer", "experimental", %w[org slot].freeze, %w[org slot].freeze),
         "knowledge.connection.mcp_discover" => OpSpec.new("knowledge.connection.mcp_discover", "knowledge", "connection_mcp_discover", true, true, "viewer", "experimental", %w[org slot].freeze, %w[org slot].freeze),
@@ -170,20 +169,24 @@ module ClickHouse
         "knowledge.reads" => OpSpec.new("knowledge.reads", "knowledge", "reads", true, true, "viewer", "experimental", %w[org namespace days source_uris].freeze, %w[org namespace].freeze),
         "knowledge.restore" => OpSpec.new("knowledge.restore", "knowledge", "restore", true, false, "writer", "experimental", %w[org namespace source_uri if_revision].freeze, %w[org namespace source_uri].freeze),
         "knowledge.search" => OpSpec.new("knowledge.search", "knowledge", "search", true, true, "viewer", "stable", %w[org namespace query tags since_seconds top_k namespace_scope namespaces search_mode lexical_weight narrow_spans collapse_sections uri_prefix session_ids source_classes formats block_types rerank].freeze, %w[org namespace query].freeze),
-        "knowledge.source.add" => OpSpec.new("knowledge.source.add", "knowledge", "source_add", false, false, "writer", "experimental", %w[org namespace name kind items links config include credential_mode credential dry_run].freeze, %w[org namespace name kind].freeze),
+        "knowledge.source.add" => OpSpec.new("knowledge.source.add", "knowledge", "source_add", false, false, "writer", "experimental", %w[org namespace name kind config credential dry_run].freeze, %w[org namespace name config credential].freeze),
         "knowledge.source.check" => OpSpec.new("knowledge.source.check", "knowledge", "source_check", true, false, "writer", "experimental", %w[org namespace name].freeze, %w[org namespace name].freeze),
         "knowledge.source.inspect" => OpSpec.new("knowledge.source.inspect", "knowledge", "source_inspect", true, true, "viewer", "experimental", %w[org namespace name].freeze, %w[org namespace name].freeze),
         "knowledge.source.list" => OpSpec.new("knowledge.source.list", "knowledge", "source_list", true, true, "viewer", "experimental", %w[org namespace].freeze, %w[org namespace].freeze),
+        "knowledge.source.mcp_add" => OpSpec.new("knowledge.source.mcp_add", "knowledge", "source_mcp_add", false, false, "writer", "experimental", %w[org namespace slot mode reader_policy resource_ids request_id label confirm_copy_authority].freeze, %w[org namespace slot mode resource_ids request_id].freeze),
+        "knowledge.source.mcp_inspect" => OpSpec.new("knowledge.source.mcp_inspect", "knowledge", "source_mcp_inspect", true, false, "writer", "experimental", %w[org namespace name slot request_id].freeze, %w[org namespace].freeze),
+        "knowledge.source.mcp_list" => OpSpec.new("knowledge.source.mcp_list", "knowledge", "source_mcp_list", true, false, "writer", "experimental", %w[org namespace cursor limit include_retired].freeze, %w[org namespace].freeze),
+        "knowledge.source.mcp_pause" => OpSpec.new("knowledge.source.mcp_pause", "knowledge", "source_mcp_pause", false, false, "writer", "experimental", %w[org namespace name].freeze, %w[org namespace name].freeze),
         "knowledge.source.mcp_preview" => OpSpec.new("knowledge.source.mcp_preview", "knowledge", "source_mcp_preview", true, false, "writer", "experimental", %w[org namespace slot mode reader_policy resource_ids].freeze, %w[org namespace slot mode resource_ids].freeze),
         "knowledge.source.mcp_profiles" => OpSpec.new("knowledge.source.mcp_profiles", "knowledge", "source_mcp_profiles", true, true, "viewer", "experimental", %w[org query cursor limit].freeze, %w[org].freeze),
-        "knowledge.source.parse_links" => OpSpec.new("knowledge.source.parse_links", "knowledge", "source_parse_links", true, true, "viewer", "experimental", %w[org namespace links].freeze, %w[org namespace links].freeze),
-        "knowledge.source.push_configure" => OpSpec.new("knowledge.source.push_configure", "knowledge", "source_push_configure", false, false, "admin", "experimental", %w[org namespace name enabled agent user_id session_id].freeze, %w[org namespace name].freeze),
-        "knowledge.source.push_confirm" => OpSpec.new("knowledge.source.push_confirm", "knowledge", "source_push_confirm", false, false, "admin", "experimental", %w[org namespace name generation challenge_fingerprint signing_secret].freeze, %w[org namespace name generation].freeze),
-        "knowledge.source.push_status" => OpSpec.new("knowledge.source.push_status", "knowledge", "source_push_status", false, false, "admin", "experimental", %w[org namespace name reveal_challenge].freeze, %w[org namespace name].freeze),
+        "knowledge.source.mcp_read" => OpSpec.new("knowledge.source.mcp_read", "knowledge", "source_mcp_read", true, true, "viewer", "experimental", %w[org namespace name resource_id].freeze, %w[org namespace name resource_id].freeze),
+        "knowledge.source.mcp_refresh" => OpSpec.new("knowledge.source.mcp_refresh", "knowledge", "source_mcp_refresh", false, false, "writer", "experimental", %w[org namespace name].freeze, %w[org namespace name].freeze),
+        "knowledge.source.mcp_remove" => OpSpec.new("knowledge.source.mcp_remove", "knowledge", "source_mcp_remove", false, false, "writer", "experimental", %w[org namespace name confirm delete_documents].freeze, %w[org namespace name confirm].freeze),
+        "knowledge.source.mcp_resume" => OpSpec.new("knowledge.source.mcp_resume", "knowledge", "source_mcp_resume", false, false, "writer", "experimental", %w[org namespace name].freeze, %w[org namespace name].freeze),
+        "knowledge.source.mcp_update" => OpSpec.new("knowledge.source.mcp_update", "knowledge", "source_mcp_update", false, false, "writer", "experimental", %w[org namespace name if_scope_revision resource_ids mode label confirm_copy_authority].freeze, %w[org namespace name resource_ids mode].freeze),
         "knowledge.source.remove" => OpSpec.new("knowledge.source.remove", "knowledge", "source_remove", false, false, "writer", "experimental", %w[org namespace name confirm delete_documents].freeze, %w[org namespace name confirm].freeze),
         "knowledge.source.rotate" => OpSpec.new("knowledge.source.rotate", "knowledge", "source_rotate", false, false, "admin", "experimental", %w[org namespace name credential].freeze, %w[org namespace name credential].freeze),
         "knowledge.source.sync_now" => OpSpec.new("knowledge.source.sync_now", "knowledge", "source_sync_now", true, false, "writer", "experimental", %w[org namespace name full].freeze, %w[org namespace name].freeze),
-        "knowledge.source.update" => OpSpec.new("knowledge.source.update", "knowledge", "source_update", false, false, "writer", "experimental", %w[org namespace name add_items add_links remove_items remove_links include].freeze, %w[org namespace name].freeze),
         "knowledge.synthesize" => OpSpec.new("knowledge.synthesize", "knowledge", "synthesize", true, false, "viewer", "experimental", %w[org namespace user_id source_uris datasets task window_chars max_answer_chars max_windows].freeze, %w[org namespace task].freeze),
         "knowledge.update_metadata" => OpSpec.new("knowledge.update_metadata", "knowledge", "update_metadata", true, false, "writer", "experimental", %w[org namespace source_uri title description tags reindex].freeze, %w[org namespace source_uri].freeze),
         "knowledge.upsert" => OpSpec.new("knowledge.upsert", "knowledge", "upsert", true, false, "writer", "experimental", %w[org namespace source_uri content title description tags metadata original_bytes_b64 original_filename blob_content_type agent session_id source_class].freeze, %w[org namespace source_uri content].freeze),
@@ -853,23 +856,6 @@ module ClickHouse
         end
       end
 
-      # The `connection.*` operations.
-      class ConnectionOps < OpGroup
-        # `connection.disconnect` (viewer, writes, Idempotency-Key, experimental).
-        # Disconnect the caller's own provider account and stop its connected sources.
-        # Required: org, kind.
-        def disconnect(body = nil, request_options: nil, **fields)
-          call_op("connection.disconnect", body, fields, request_options)
-        end
-
-        # `connection.list` (viewer, read-only, experimental).
-        # List the signed-in caller's own connected provider accounts.
-        # Required: org.
-        def list(body = nil, request_options: nil, **fields)
-          call_op("connection.list", body, fields, request_options)
-        end
-      end
-
       # The `consolidations.*` operations.
       class ConsolidationsOps < OpGroup
         # `consolidations.list` (viewer, read-only, experimental).
@@ -1283,6 +1269,12 @@ module ClickHouse
           call_op("knowledge.bulk_delete", body, fields, request_options)
         end
 
+        # `knowledge.connection.mcp_browse` (viewer, read-only, experimental).
+        # Required: org, slot, mode.
+        def connection_mcp_browse(body = nil, request_options: nil, **fields)
+          call_op("knowledge.connection.mcp_browse", body, fields, request_options)
+        end
+
         # `knowledge.connection.mcp_connect` (viewer, writes, experimental).
         # Required: org, profile_id, request_id.
         def connection_mcp_connect(body = nil, request_options: nil, **fields)
@@ -1473,21 +1465,21 @@ module ClickHouse
         end
 
         # `knowledge.source.add` (writer, writes, experimental).
-        # Register a document source on a namespace: a kind, what it reads (items
-        # Required: org, namespace, name, kind.
+        # Register a shared recording source after checking its read-only credential.
+        # Required: org, namespace, name, config, credential.
         def source_add(body = nil, request_options: nil, **fields)
           call_op("knowledge.source.add", body, fields, request_options)
         end
 
         # `knowledge.source.check` (writer, writes, Idempotency-Key, experimental).
-        # Probe a registered document source with its stored credential now (a check of
+        # Probe a shared recording with its stored credential without writing.
         # Required: org, namespace, name.
         def source_check(body = nil, request_options: nil, **fields)
           call_op("knowledge.source.check", body, fields, request_options)
         end
 
         # `knowledge.source.inspect` (viewer, read-only, experimental).
-        # One registered document source: its items, its sync state and the
+        # One registered document source: its config, its sync state and the
         # Required: org, namespace, name.
         def source_inspect(body = nil, request_options: nil, **fields)
           call_op("knowledge.source.inspect", body, fields, request_options)
@@ -1498,6 +1490,30 @@ module ClickHouse
         # Required: org, namespace.
         def source_list(body = nil, request_options: nil, **fields)
           call_op("knowledge.source.list", body, fields, request_options)
+        end
+
+        # `knowledge.source.mcp_add` (writer, writes, experimental).
+        # Required: org, namespace, slot, mode, resource_ids, request_id.
+        def source_mcp_add(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_add", body, fields, request_options)
+        end
+
+        # `knowledge.source.mcp_inspect` (writer, writes, Idempotency-Key, experimental).
+        # Required: org, namespace.
+        def source_mcp_inspect(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_inspect", body, fields, request_options)
+        end
+
+        # `knowledge.source.mcp_list` (writer, writes, Idempotency-Key, experimental).
+        # Required: org, namespace.
+        def source_mcp_list(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_list", body, fields, request_options)
+        end
+
+        # `knowledge.source.mcp_pause` (writer, writes, experimental).
+        # Required: org, namespace, name.
+        def source_mcp_pause(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_pause", body, fields, request_options)
         end
 
         # `knowledge.source.mcp_preview` (writer, writes, Idempotency-Key, experimental).
@@ -1513,32 +1529,34 @@ module ClickHouse
           call_op("knowledge.source.mcp_profiles", body, fields, request_options)
         end
 
-        # `knowledge.source.parse_links` (viewer, read-only, experimental).
-        # Read pasted links as a source's items, with no request to any store and
-        # Required: org, namespace, links.
-        def source_parse_links(body = nil, request_options: nil, **fields)
-          call_op("knowledge.source.parse_links", body, fields, request_options)
+        # `knowledge.source.mcp_read` (viewer, read-only, experimental).
+        # Required: org, namespace, name, resource_id.
+        def source_mcp_read(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_read", body, fields, request_options)
         end
 
-        # `knowledge.source.push_configure` (admin, writes, experimental).
-        # Enable provider sync hints for an existing source, or disable its setup.
+        # `knowledge.source.mcp_refresh` (writer, writes, experimental).
         # Required: org, namespace, name.
-        def source_push_configure(body = nil, request_options: nil, **fields)
-          call_op("knowledge.source.push_configure", body, fields, request_options)
+        def source_mcp_refresh(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_refresh", body, fields, request_options)
         end
 
-        # `knowledge.source.push_confirm` (admin, writes, experimental).
-        # Activate the exact pending setup.
-        # Required: org, namespace, name, generation.
-        def source_push_confirm(body = nil, request_options: nil, **fields)
-          call_op("knowledge.source.push_confirm", body, fields, request_options)
+        # `knowledge.source.mcp_remove` (writer, writes, experimental).
+        # Required: org, namespace, name, confirm.
+        def source_mcp_remove(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_remove", body, fields, request_options)
         end
 
-        # `knowledge.source.push_status` (admin, writes, experimental).
-        # Read push setup as a namespace admin.
+        # `knowledge.source.mcp_resume` (writer, writes, experimental).
         # Required: org, namespace, name.
-        def source_push_status(body = nil, request_options: nil, **fields)
-          call_op("knowledge.source.push_status", body, fields, request_options)
+        def source_mcp_resume(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_resume", body, fields, request_options)
+        end
+
+        # `knowledge.source.mcp_update` (writer, writes, experimental).
+        # Required: org, namespace, name, resource_ids, mode.
+        def source_mcp_update(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_update", body, fields, request_options)
         end
 
         # `knowledge.source.remove` (writer, writes, experimental).
@@ -1560,13 +1578,6 @@ module ClickHouse
         # Required: org, namespace, name.
         def source_sync_now(body = nil, request_options: nil, **fields)
           call_op("knowledge.source.sync_now", body, fields, request_options)
-        end
-
-        # `knowledge.source.update` (writer, writes, experimental).
-        # Add items to a registered document source or remove them, or change a gdrive
-        # Required: org, namespace, name.
-        def source_update(body = nil, request_options: nil, **fields)
-          call_op("knowledge.source.update", body, fields, request_options)
         end
 
         # `knowledge.synthesize` (viewer, writes, Idempotency-Key, experimental).
@@ -3024,7 +3035,6 @@ module ClickHouse
         "code" => CodeOps,
         "collection" => CollectionOps,
         "conflicts" => ConflictsOps,
-        "connection" => ConnectionOps,
         "consolidations" => ConsolidationsOps,
         "context" => ContextOps,
         "conversation" => ConversationOps,
@@ -3096,10 +3106,6 @@ module ClickHouse
 
         def conflicts
           op_group("conflicts")
-        end
-
-        def connection
-          op_group("connection")
         end
 
         def consolidations

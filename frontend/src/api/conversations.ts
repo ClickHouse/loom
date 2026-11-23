@@ -206,6 +206,7 @@ export async function reviewLearning(
   candidate_id: string,
   decision: ReviewDecision,
   reason: string = "",
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{
   candidate_id: string;
   new_status: LearningStatus;
@@ -218,7 +219,7 @@ export async function reviewLearning(
     candidate_id,
     decision,
     reason,
-  });
+  }, undefined, intent);
 }
 
 /** POST /v1/conversation.create: a thread row for a thread built by appends only, which
@@ -228,8 +229,9 @@ export async function createThreadRow(
   agent: string,
   threadId: string,
   title: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ thread_id: string }> {
-  return post("/v1/conversation.create", { org: id.org, namespace: id.namespace, agent, thread_id: threadId, title });
+  return post("/v1/conversation.create", { org: id.org, namespace: id.namespace, agent, thread_id: threadId, title }, undefined, intent);
 }
 
 /** POST /v1/conversation.update: a thread's new title. */
@@ -238,8 +240,9 @@ export async function renameThread(
   agent: string,
   threadId: string,
   title: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ updated: boolean }> {
-  return post("/v1/conversation.update", { org: id.org, namespace: id.namespace, agent, thread_id: threadId, title });
+  return post("/v1/conversation.update", { org: id.org, namespace: id.namespace, agent, thread_id: threadId, title }, undefined, intent);
 }
 
 /** POST /v1/conversation.delete (ADMIN): tombstones the thread and its messages; the
@@ -248,6 +251,7 @@ export async function deleteThread(
   id: Pick<Identity, "org" | "namespace">,
   agent: string,
   threadId: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ total: number }> {
   return post("/v1/conversation.delete", {
     org: id.org,
@@ -255,5 +259,5 @@ export async function deleteThread(
     agent,
     thread_id: threadId,
     confirm_thread_id: threadId,
-  });
+  }, undefined, intent);
 }

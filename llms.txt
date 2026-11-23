@@ -94,6 +94,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Headless bots](docs/guides/headless-bots.md): A headless bot runs with no person to paste a token, notice a silent failure or say "remember this".
 - [Import ClickGap memory](docs/guides/importing-clickgap-memory.md): `loom import-clickgap` loads one SQLite export shape, a ClickGap `lessons` store, into a Loom namespace; skip this page unless you have such an export.
 - [Store an investigation agent's memory](docs/guides/investigation-agent-memory.md): An investigation agent produces several kinds of state, and Loom has a plane for each.
+- [Manage MCP sources from the CLI](docs/guides/mcp-source-cli.md): The Python SDK supplies source controls through `python -m loom.source_cli source`.
 - [Optimize a namespace from its audit](docs/guides/optimize-namespace.md): A writer that uses `memory.set` as an object store (JSON blobs under hash keys, leases as memories, documents as claims) leaves every table consistent and recall useless.
 - [Tune Loom's performance](docs/guides/performance-tuning.md): Every lever on this page is a setting or a request field.
 - [Query Loom from Postgres](docs/guides/query-from-postgres.md): This guide reads a tenant's memories, conversations and usage from the org's own Postgres, where they can be joined with the application's tables.
@@ -165,8 +166,11 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Knowledge gaps](docs/architecture/knowledge-gaps.md): Loom records the searches that found nothing a caller could use and groups them, once a day, into knowledge gaps: the questions several people asked that the namespace's memory and documents do not answer.
 - [Live connected-source search](docs/architecture/live-source-search.md): `search.query(live=true)` adds an ephemeral section from the asker's own connected Drive and Notion registrations.
 - [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into vectors, and an LLM client (`server/llm/`) that completes prompts.
+- [MCP document sources](docs/architecture/mcp-document-sources.md): Needs authentication and `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED=true`; enrollment also needs `LOOM_KNOWLEDGE_SOURCE_SELF_SERVICE_ENABLED=true`.
 - [Outbound MCP source client](docs/architecture/mcp-source-client.md): The outbound MCP source client reads resources through a configured remote HTTP endpoint.
+- [Selected MCP source execution](docs/architecture/mcp-source-execution.md): Selected MCP source execution copies explicitly registered text resources into a protected mirror.
 - [MCP source lifecycle format](docs/architecture/mcp-source-lifecycle.md): MCP source metadata uses the existing connected-account and document-source stores.
+- [MCP source setup](docs/architecture/mcp-source-setup.md): MCP source controls register a fixed selection against the signed-in owner's connection and an ordinary destination namespace or collection.
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
 - [Memory consent and derived text](docs/architecture/memory-consent.md): A deletion contracts memory and records content refusal before its tombstone commits.
 - [n8n adapter](docs/architecture/n8n-adapter.md): The n8n community package stores conversation history and durable facts in a Loom deployment through the TypeScript SDK.
@@ -177,6 +181,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Security](docs/architecture/security.md): Loom separates tenants by columns: every row carries the identity tuple, and every read filters on it.
 - [Server layout](docs/architecture/server-layout.md): `server/` is organised by domain.
 - [Sharing knowledge](docs/architecture/sharing.md): A collection is a namespace that only grants open.
+- [Source CLI execution](docs/architecture/source-cli.md): Source controls execute in the installed Python SDK so browse and read use the maintained session-protection transport.
 - [Document source push notifications](docs/architecture/source-push.md): Needs `LOOM_KNOWLEDGE_SOURCE_PUSH_ENABLED=true` to request document source syncs from provider notifications.
 - [Storage authority: Postgres for live memory, ClickHouse for search](docs/architecture/storage-authority.md): Loom runs with one of two memory authorities, chosen per deployment by `LOOM_STORAGE_AUTHORITY`.
 - [Storage layout: which store holds each table, and why](docs/architecture/storage-layout.md): Each Loom table belongs in Postgres or ClickHouse by how it is read and written; this page places every table, with the wave that moves it.

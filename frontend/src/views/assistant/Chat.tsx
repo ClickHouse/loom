@@ -183,7 +183,7 @@ export function AssistantChat({
   // The button pressed goes once the answer starts: the focus goes to the question field.
   const askAgain = (t: Turn, withSources?: boolean) => {
     if (blocked) return;
-    retry(t.id, namespace, { withSources });
+    retry(t.id, namespace, { withSources }, "explicit");
     field.current?.focus();
   };
   const edit = () => {
@@ -215,8 +215,8 @@ export function AssistantChat({
         replace: edited.id,
         fromField: true,
         ...(editing?.withSources ? { withSources: true } : {}),
-      });
-    else ask(question, namespace, asked);
+      }, "explicit");
+    else ask(question, namespace, asked, null, {}, "explicit");
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

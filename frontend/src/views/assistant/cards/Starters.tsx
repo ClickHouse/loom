@@ -88,7 +88,7 @@ export function Starters({
       gate: gate(s.op),
       namespace,
       unanswered,
-    });
+    }, "explicit");
   };
   // A starter is off only when it can do nothing: its read is not allowed and nothing is asked.
   const off = (s: Starter) => (answering ? "An answer is still coming in." : asks ? null : gate(s.op));

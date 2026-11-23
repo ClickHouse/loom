@@ -105,6 +105,7 @@ mod client;
 mod error;
 mod models;
 mod retry;
+mod session_protection;
 
 pub use client::{Client, ClientBuilder};
 pub use error::{ApiError, Error};
@@ -112,3 +113,4 @@ pub use models::{
     DeleteResponse, GetResponse, SearchHit, SearchRequest, SearchResponse, SetRequest, SetResponse,
 };
 pub use retry::{RetryPolicy, RetryTimeouts};
+pub use session_protection::{SessionCapture, SessionProtection, SessionProtectionPointer};

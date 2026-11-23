@@ -78,6 +78,119 @@ Soft-delete multiple documents by source_uri, in one commit.
 | `deleted` | `list[_KnowledgeBulkDeleteResult]` | One result per input URI, in input order, with its tombstoned chunk count (0 if none). |
 | `total_chunks_tombstoned` | `int` | Sum of each source's count, a source named twice counted once (`deleted` repeats it). |
 
+## `knowledge.connection.mcp_browse`
+
+`POST /v1/knowledge.connection.mcp_browse` · MCP `loom_knowledge_connection_mcp_browse` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `slot` | `str` | required | The exact owned MCP connection slot. |
+| `mode` | `Literal['resources', 'search']` | required | The explicit metadata operation. |
+| `query` | `str` | `''` | The approved mapped-search query; empty for resources, default empty. |
+| `limit` | `int` | `100` | Maximum metadata items in the first window, from 1 to 100; default 100. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `slot` | `str` |  |
+| `generation` | `str` |  |
+| `mode` | `Literal['resources', 'search']` |  |
+| `supported` | `bool` |  |
+| `resources` | `bool \| None` |  |
+| `mapped_read` | `bool` |  |
+| `mapped_search` | `bool` |  |
+| `capabilities_checked` | `bool` |  |
+| `items` | `list[MCPBrowseItem]` |  |
+| `complete` | `bool` | The declared page fits this response window. |
+| `truncated` | `bool` |  |
+| `reason` | `str \| None` |  |
+| `limitations` | `list[str]` |  |
+| `manual_resource_ids_supported` | `Literal[True]` |  |
+| `remote_identity_verified` | `Literal[False]` |  |
+
+## `knowledge.connection.mcp_connect`
+
+`POST /v1/knowledge.connection.mcp_connect` · MCP `loom_knowledge_connection_mcp_connect` · role `viewer` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `profile_id` | `str` | required | The operator-approved profile ID. |
+| `request_id` | `str` | required | A client-generated UUID retained across uncertain-save retries. |
+| `label` | `str \| None` | `None` | An optional display label; it verifies no remote identity. |
+| `bearer` | `SecretStr \| None` | `None` | The preissued upstream bearer for a bearer profile; default none. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `connection` | `MCPConnectionEntry` |  |
+
+## `knowledge.connection.mcp_disconnect`
+
+`POST /v1/knowledge.connection.mcp_disconnect` · MCP `loom_knowledge_connection_mcp_disconnect` · role `viewer` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `slot` | `str` | required | The exact owned MCP connection slot. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `disconnected` | `bool` |  |
+| `upstream_revoked` | `Literal[False]` |  |
+| `upstream_action` | `Literal['revoke_credential_upstream']` |  |
+
+## `knowledge.connection.mcp_discover`
+
+`POST /v1/knowledge.connection.mcp_discover` · MCP `loom_knowledge_connection_mcp_discover` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `slot` | `str` | required | The exact owned MCP connection slot. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `slot` | `str` |  |
+| `generation` | `str` |  |
+| `resources` | `bool` |  |
+| `mapped_read` | `bool` |  |
+| `mapped_search` | `bool` |  |
+| `supported_reads` | `bool` |  |
+| `limitations` | `list[str]` |  |
+| `remote_identity_verified` | `Literal[False]` |  |
+
+## `knowledge.connection.mcp_inspect`
+
+`POST /v1/knowledge.connection.mcp_inspect` · MCP `loom_knowledge_connection_mcp_inspect` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `slot` | `str` | `''` | An exact owned MCP slot, or empty when reconciling a request ID. |
+| `request_id` | `str` | `''` | The original connect UUID for save reconciliation; default empty. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` |  |
+| `slot` | `str` |  |
+| `connection` | `MCPConnectionEntry \| None` |  |
+| `reconciliation` | `Literal['absent', 'present', 'incomplete']` |  |
+
+## `knowledge.connection.mcp_list`
+
+`POST /v1/knowledge.connection.mcp_list` · MCP `loom_knowledge_connection_mcp_list` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `cursor` | `str \| None` | `None` | The signed continuation for the same listing arguments; default none. |
+| `limit` | `int` | `100` | Maximum connections per page, from 1 to 100; default 100. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `connections` | `list[MCPConnectionEntry]` |  |
+| `next_cursor` | `str \| None` |  |
+
 ## `knowledge.dataset_approve`
 
 Approve a dataset's schema, retyping the columns named: its rows are typed again from the stored extraction under a new snapshot.
@@ -610,38 +723,32 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 
 ## `knowledge.source.add`
 
-Register a document source on a namespace: a kind, what it reads (items and links, or a config) and a read-only credential.
+Register a shared recording source after checking its read-only credential.
 
 `POST /v1/knowledge.source.add` · MCP `loom_knowledge_source_add` · role `writer` · write · audited · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The namespace or collection the documents live in; a person's own (personal-…, single sign-on u-<name>-<hash>, col-me-…, or one claimed at sign-up) is refused. |
-| `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. |
-| `kind` | `str` | required | The source kind: `gdrive` (a shared-folder store), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (Zoom recording transcripts). |
-| `items` | `list[dict[str, Any]] \| None` | `None` | The things the source reads, each an object with a `type`: 1-300 for gdrive, 1-20 for linear and 1-20 for notion; gdrive: {type: folder, id, recursive (default false; subfolders to a depth of 8, at most 500 subfolders per source)}, {type… |
-| `links` | `list[str] \| None` | `None` | Links to folders, files, documents, slides, pages, databases or projects, read as items (`knowledge.source.parse_links`); an unreadable link refuses the call (BAD_LINK). |
-| `config` | `dict[str, Any] \| None` | `None` | What the source reads in the form that names ids per kind, instead of items or links; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; linear: {project_ids: [1-20 project ids… |
-| `include` | `list[str] \| None` | `None` | gdrive with items or links: the file kinds read, of docs, slides, pdf, pptx, docx (default all but docx). |
-| `credential_mode` | `Literal['shared', 'connected']` | `'shared'` | Use the supplied shared credential, or your own mirrored connected account. |
-| `credential` | `str` | `''` | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an account that sees the projects; notion: an integration token with read content… |
-| `dry_run` | `bool` | `False` | Probe and write nothing. |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `namespace` | `str` | required | An ordinary destination namespace or collection. |
+| `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter. |
+| `kind` | `Literal['recording']` | `'recording'` |  |
+| `config` | `dict[str, Any]` | required | Recording provider and explicitly selected recording IDs. |
+| `credential` | `str` | required | Read-only recording credential; sealed and never returned. |
+| `dry_run` | `bool` | `False` | Check the credential and selection without saving. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `name` | `str` | The registered source's name, normalised. |
 | `kind` | `str` | The source kind, normalised. |
 | `namespace` | `str` | The namespace the source was registered on. |
-| `items` | `list[dict[str, Any]]` | The items as stored; [] for a recording source. |
-| `include` | `list[str]` | The file kinds a gdrive source reads; [] for another kind. |
-| `config` | `dict[str, Any]` | The config in the form that names ids per kind, or {} when an item has no place in it. |
+| `config` | `dict[str, Any]` | Recording provider and selected IDs; {} for an unavailable retained source. |
 | `probe` | `KnowledgeSourceProbe` | What the probe with the credential found. |
 | `dry_run` | `bool` | True when the call only probed. |
 
 ## `knowledge.source.check`
 
-Probe a registered document source with its stored credential now (a check of every item, or of the 20 added last, and a listing), nothing written.
+Probe a shared recording with its stored credential without writing.
 
 `POST /v1/knowledge.source.check` · MCP `loom_knowledge_source_check` · role `writer` · idempotent · not listed under the MCP `all` toolset
 
@@ -655,17 +762,15 @@ Probe a registered document source with its stored credential now (a check of ev
 | --- | --- | --- |
 | `name` | `str` | The source checked. |
 | `reachable` | `bool` | False when the probe failed; `summary` says why. |
-| `documents` | `int` | Documents the source lists now: the first page, 1000 at most, of the folders, of each shared drive and of each filter, and each file item (gdrive); at most 1000 (recording); each project's first page (linear); the listed pages and the… |
+| `documents` | `int` | Selected recordings found, at most 1000; `more` marks a lower bound. |
 | `more` | `bool` | True when more documents match than were listed, so `documents` is a lower bound. |
 | `sample` | `list[str]` | Up to five document titles, most recently changed first. |
-| `checked` | `int` | Items the probe checked: every item while there are at most 20, else the 20 added last. |
-| `sampled` | `bool` | True when the source holds more items than were checked. |
 | `summary` | `str` | One line: what was found, or why it failed. |
 | `checked_at` | `str` | When the probe ran, ISO UTC. |
 
 ## `knowledge.source.inspect`
 
-One registered document source: its items, its sync state and the documents it wrote (the 200 most recently ingested).
+One registered document source: its config, its sync state and the documents it wrote (the 200 most recently ingested).
 
 `POST /v1/knowledge.source.inspect` · MCP `loom_knowledge_source_inspect` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -682,9 +787,7 @@ One registered document source: its items, its sync state and the documents it w
 | `credential_mode` | `str` | The registration's credential class; never the credential or account identity. |
 | `access` | `str` | Namespace-wide or checked mirrored document access. |
 | `owner_subject` | `str` | Canonical connected owner, only in the owner's permitted detail projection. |
-| `items` | `list[dict[str, Any]]` | The things the source reads; [] for a recording source. |
-| `include` | `list[str]` | The file kinds a gdrive source reads; [] for another kind. |
-| `config` | `dict[str, Any]` | The source's config in the form that names ids per kind, or {} when an item has no place in it; never a credential. |
+| `config` | `dict[str, Any]` | Recording provider and selected IDs; {} for an unavailable retained source. |
 | `created_by` | `str` | Token subject of the admin who added it; '' with auth off. |
 | `created_at` | `str` | When it was added, ISO UTC. |
 | `sync` | `KnowledgeSourceSync` | The source's sync state: a waiting request and the last pass. |
@@ -707,104 +810,219 @@ The document sources registered on a namespace, with each one's sync state.
 | `enabled` | `bool` | Whether this deployment runs the sync worker (LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED); false: sources are stored and probed, but nothing pulls from them. |
 | `accepts_sources` | `bool` | False where add would refuse the namespace (PERSONAL_NAMESPACE, NAMESPACE_INACTIVE). |
 
-## `knowledge.source.parse_links`
+## `knowledge.source.mcp_add`
 
-Read pasted links as a source's items, with no request to any store and nothing written: each link answers its kind and item, or why it is unreadable.
-
-`POST /v1/knowledge.source.parse_links` · MCP `loom_knowledge_source_parse_links` · role `viewer` · read · not listed under the MCP `all` toolset
+`POST /v1/knowledge.source.mcp_add` · MCP `loom_knowledge_source_mcp_add` · role `writer` · write · audited · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The namespace the source would live in. |
-| `links` | `list[str]` | required | 1-300 links. |
+| `org` | `str` | required | The authenticated organization. |
+| `namespace` | `str` | required | The ordinary destination collection or namespace. |
+| `slot` | `str` | required | The signed-in owner's MCP connection slot. |
+| `mode` | `Literal['live', 'snapshot', 'selected_refresh']` | required | Live lookup, a selected snapshot, or periodic refresh of the fixed selection. |
+| `reader_policy` | `Literal['owner_only', 'collection_copy']` | `'owner_only'` | Requested copy audience; default owner-only. |
+| `resource_ids` | `list[str]` | required | Between 1 and 1000 explicit resource identities, without recursion. |
+| `request_id` | `str` | required | A client UUID retained across uncertain registration retries. |
+| `label` | `str \| None` | `None` | Optional source display label; default none; conveys no remote identity. |
+| `confirm_copy_authority` | `bool` | `False` | Confirm authority to publish this selection through current and future collection grants; default false. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `links` | `list[KnowledgeSourceParsedLink]` | Each link, in the order given. |
+| `source` | `MCPSourceEntry` |  |
+| `copies` | `Literal['retained', 'erasure_requested']` | Disposition of any copies, including earlier source modes. |
+| `refresh_requested` | `bool` |  |
 
-## `knowledge.source.push_configure`
+## `knowledge.source.mcp_inspect`
 
-Enable provider sync hints for an existing source, or disable its setup.
-
-`POST /v1/knowledge.source.push_configure` · MCP `loom_knowledge_source_push_configure` · role `admin` · write · audited · not listed under the MCP `all` toolset
+`POST /v1/knowledge.source.mcp_inspect` · MCP `loom_knowledge_source_mcp_inspect` · role `writer` · idempotent · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The source's namespace. |
-| `name` | `str` | required | The registered source name. |
-| `enabled` | `bool` | `True` | Enable a fresh setup; false disables push. |
-| `agent` | `str` | `'-'` | The configuring agent, default '-'. |
-| `user_id` | `str` | `'-'` | The configuring user, default '-'. |
-| `session_id` | `str` | `'-'` | The configuring session, default '-'. |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `namespace` | `str` | required | The ordinary destination collection or namespace. |
+| `name` | `str` | `''` | The exact source name, or empty for request reconciliation. |
+| `slot` | `str` | `''` | The original owned connection slot for request reconciliation. |
+| `request_id` | `str` | `''` | The original add UUID, with slot instead of name. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `enabled` | `bool` |  |
-| `status` | `str` |  |
-| `provider` | `str` |  |
-| `generation` | `str` |  |
-| `callback_url` | `str` |  |
-| `provider_id` | `str` |  |
-| `challenge_fingerprint` | `str` |  |
-| `verification_token` | `str` |  |
-| `channels` | `int` |  |
-| `expires_at` | `float` |  |
+| `found` | `bool` |  |
+| `source` | `MCPSourceEntry \| None` |  |
 
-## `knowledge.source.push_confirm`
+## `knowledge.source.mcp_list`
 
-Activate the exact pending setup.
-
-`POST /v1/knowledge.source.push_confirm` · MCP `loom_knowledge_source_push_confirm` · role `admin` · write · audited · not listed under the MCP `all` toolset
+`POST /v1/knowledge.source.mcp_list` · MCP `loom_knowledge_source_mcp_list` · role `writer` · idempotent · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The source's namespace. |
-| `name` | `str` | required | The registered source name. |
-| `generation` | `str` | required | The pending setup generation. |
-| `challenge_fingerprint` | `str` | `''` | The inspected Notion challenge's SHA-256 fingerprint; empty for Linear. |
-| `signing_secret` | `str` | `''` | The Linear webhook signing secret; empty for Notion. |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `namespace` | `str` | required | The ordinary destination collection or namespace. |
+| `cursor` | `str \| None` | `None` | Continuation for this exact listing; default none. |
+| `limit` | `int` | `20` | Source summaries per page, from 1 to 20; default 20. |
+| `include_retired` | `bool` | `False` | Include this owner's retired registrations; default false. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `enabled` | `bool` |  |
-| `status` | `str` |  |
-| `provider` | `str` |  |
-| `generation` | `str` |  |
-| `callback_url` | `str` |  |
-| `provider_id` | `str` |  |
-| `challenge_fingerprint` | `str` |  |
-| `verification_token` | `str` |  |
-| `channels` | `int` |  |
-| `expires_at` | `float` |  |
+| `sources` | `list[MCPSourceSummary]` |  |
+| `next_cursor` | `str \| None` |  |
 
-## `knowledge.source.push_status`
+## `knowledge.source.mcp_pause`
 
-Read push setup as a namespace admin.
-
-`POST /v1/knowledge.source.push_status` · MCP `loom_knowledge_source_push_status` · role `admin` · write · not listed under the MCP `all` toolset
+`POST /v1/knowledge.source.mcp_pause` · MCP `loom_knowledge_source_mcp_pause` · role `writer` · write · audited · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The source's namespace. |
-| `name` | `str` | required | The registered source name. |
-| `reveal_challenge` | `bool` | `False` | Reveal a pending Notion challenge, default false. |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `namespace` | `str` | required | The ordinary destination collection or namespace. |
+| `name` | `str` | required | The opaque source registry name returned by add. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `enabled` | `bool` |  |
-| `status` | `str` |  |
-| `provider` | `str` |  |
-| `generation` | `str` |  |
-| `callback_url` | `str` |  |
-| `provider_id` | `str` |  |
-| `challenge_fingerprint` | `str` |  |
-| `verification_token` | `str` |  |
-| `channels` | `int` |  |
-| `expires_at` | `float` |  |
+| `source` | `MCPSourceEntry` |  |
+| `copies` | `Literal['retained', 'erasure_requested']` | Disposition of any copies, including earlier source modes. |
+| `refresh_requested` | `bool` |  |
+
+## `knowledge.source.mcp_preview`
+
+`POST /v1/knowledge.source.mcp_preview` · MCP `loom_knowledge_source_mcp_preview` · role `writer` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated organization. |
+| `namespace` | `str` | required | The ordinary destination collection or namespace. |
+| `slot` | `str` | required | The signed-in owner's MCP connection slot. |
+| `mode` | `Literal['live', 'snapshot', 'selected_refresh']` | required | Live lookup, a selected snapshot, or periodic refresh of the fixed selection. |
+| `reader_policy` | `Literal['owner_only', 'collection_copy']` | `'owner_only'` | Requested copy audience; default owner-only. |
+| `resource_ids` | `list[str]` | required | Between 1 and 1000 explicit resource identities, without recursion. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `namespace` | `str` | The namespace the op reads or writes. |
+| `mode` | `Literal['live', 'snapshot', 'selected_refresh']` |  |
+| `rule` | `MCPAccessRule` |  |
+| `connection_state` | `Literal['configured', 'stopped', 'unavailable', 'approval_drift']` |  |
+| `compatibility` | `Literal['unchecked']` |  |
+| `permission_evidence` | `Literal['unsupported']` |  |
+| `refresh_state` | `Literal['not_applicable', 'enabled', 'disabled']` |  |
+| `selected_count` | `int` |  |
+| `checked_at` | `str` |  |
+| `read_evidence_stale_seconds` | `int` |  |
+| `preview_grants_authority` | `Literal[False]` |  |
+| `limitations` | `list[str]` |  |
+
+## `knowledge.source.mcp_profiles`
+
+List approved profile declarations for the signed-in caller's organization.
+
+`POST /v1/knowledge.source.mcp_profiles` · MCP `loom_knowledge_source_mcp_profiles` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The caller's authenticated organization. |
+| `query` | `str` | `''` | Case-insensitive ID or label filter, at most 256 UTF-8 bytes; default empty. |
+| `cursor` | `str \| None` | `None` | Continuation from this listing with the same arguments; default none. |
+| `limit` | `int` | `100` | Maximum profile declarations per page, from 1 to 100; default 100. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `profiles` | `list[MCPProfileEntry]` |  |
+| `next_cursor` | `str \| None` |  |
+| `self_service_enabled` | `bool` | Whether the operator permits self-service source and credential registration. |
+
+## `knowledge.source.mcp_read`
+
+`POST /v1/knowledge.source.mcp_read` · MCP `loom_knowledge_source_mcp_read` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `namespace` | `str` | required | The source collection. |
+| `name` | `str` | required | The opaque saved source name. |
+| `resource_id` | `str` | required | An exact resource ID explicitly selected in the saved live source. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `source_id` | `str` |  |
+| `resource_id` | `str` |  |
+| `uri` | `str` |  |
+| `title` | `str` |  |
+| `text` | `str` |  |
+| `mime_type` | `str` |  |
+| `resource_identity_verified` | `bool` |  |
+| `remote_identity_verified` | `Literal[False]` |  |
+| `upstream_acl_verified` | `Literal[False]` |  |
+| `limitations` | `list[str]` |  |
+
+## `knowledge.source.mcp_refresh`
+
+`POST /v1/knowledge.source.mcp_refresh` · MCP `loom_knowledge_source_mcp_refresh` · role `writer` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `namespace` | `str` | required | The ordinary destination collection or namespace. |
+| `name` | `str` | required | The opaque source registry name returned by add. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `source` | `MCPSourceEntry` |  |
+| `copies` | `Literal['retained', 'erasure_requested']` | Disposition of any copies, including earlier source modes. |
+| `refresh_requested` | `bool` |  |
+
+## `knowledge.source.mcp_remove`
+
+`POST /v1/knowledge.source.mcp_remove` · MCP `loom_knowledge_source_mcp_remove` · role `writer` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `namespace` | `str` | required | The ordinary destination collection or namespace. |
+| `name` | `str` | required | The opaque source registry name returned by add. |
+| `confirm` | `str` | required | Repeat the exact opaque source name to retire. |
+| `delete_documents` | `bool` | `False` | Request asynchronous erasure of stored copies; default false retains them. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `source` | `MCPSourceEntry` |  |
+| `copies` | `Literal['retained', 'erasure_requested']` | Disposition of any copies, including earlier source modes. |
+| `refresh_requested` | `bool` |  |
+
+## `knowledge.source.mcp_resume`
+
+`POST /v1/knowledge.source.mcp_resume` · MCP `loom_knowledge_source_mcp_resume` · role `writer` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `namespace` | `str` | required | The ordinary destination collection or namespace. |
+| `name` | `str` | required | The opaque source registry name returned by add. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `source` | `MCPSourceEntry` |  |
+| `copies` | `Literal['retained', 'erasure_requested']` | Disposition of any copies, including earlier source modes. |
+| `refresh_requested` | `bool` |  |
+
+## `knowledge.source.mcp_update`
+
+`POST /v1/knowledge.source.mcp_update` · MCP `loom_knowledge_source_mcp_update` · role `writer` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The authenticated caller's organization. |
+| `namespace` | `str` | required | The ordinary destination collection or namespace. |
+| `name` | `str` | required | The opaque source registry name returned by add. |
+| `if_scope_revision` | `int \| None` | `None` | Require this current scope revision before changing selection; default unconditional. |
+| `resource_ids` | `list[str]` | required | The complete ordered fixed selection replacing the current selected IDs. |
+| `mode` | `Literal['live', 'snapshot', 'selected_refresh']` | required | Live lookup, a selected snapshot, or periodic refresh of this fixed selection. |
+| `label` | `str \| None` | `None` | Replacement display label, or none to clear it; default none. |
+| `confirm_copy_authority` | `bool` | `False` | Confirm publication authority for this replacement selection; default false. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `source` | `MCPSourceEntry` |  |
+| `copies` | `Literal['retained', 'erasure_requested']` | Disposition of any copies, including earlier source modes. |
+| `refresh_requested` | `bool` |  |
 
 ## `knowledge.source.remove`
 
@@ -861,33 +1079,6 @@ Record a request to sync one document source in its sync state: the sync worker 
 | --- | --- | --- |
 | `name` | `str` | The source the request was recorded for. |
 | `enabled` | `bool` | Whether this deployment runs the sync worker; false: the request waits until it does. |
-
-## `knowledge.source.update`
-
-Add items to a registered document source or remove them, or change a gdrive source's file kinds.
-
-`POST /v1/knowledge.source.update` · MCP `loom_knowledge_source_update` · role `writer` · write · audited · not listed under the MCP `all` toolset
-
-| Input field | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The namespace the source's documents live in. |
-| `name` | `str` | required | The source name. |
-| `add_items` | `list[dict[str, Any]]` | *(computed)* | Items to add, of the forms add takes; one of the same type and id replaces the stored one, and a folder of the id of a shared drive the source keeps or is given adds nothing. |
-| `add_links` | `list[str]` | *(computed)* | Links to add, read as items; a link to something the source holds names it as held (a recursive folder, a drive at its root), and an add_items entry for the same thing wins. |
-| `remove_items` | `list[dict[str, Any]]` | *(computed)* | Items to remove, matched by type and id (a filter by its fields); a folder entry also removes a shared drive of the same id the source holds. |
-| `remove_links` | `list[str]` | *(computed)* | Links to remove, read as items; a folder link also removes a shared drive of the same id the source holds. |
-| `include` | `list[str] \| None` | `None` | gdrive only: the new file kinds read, of docs, slides, pdf, pptx, docx; default unchanged. |
-
-| Output field | Type | Meaning |
-| --- | --- | --- |
-| `name` | `str` | The source updated. |
-| `items` | `list[dict[str, Any]]` | The source's items as now stored. |
-| `include` | `list[str]` | The file kinds a gdrive source reads; [] for another kind. |
-| `config` | `dict[str, Any]` | The config in the form that names ids per kind, or {} when an item has no place in it. |
-| `added` | `list[dict[str, Any]]` | The items this call added. |
-| `removed` | `list[dict[str, Any]]` | The items this call removed, as the source held them. |
-| `probe` | `KnowledgeSourceProbe` | What the probe of the added items found, or with none added, of the kept file items a changed `include` probes; nothing checked when neither ran. |
 
 ## `knowledge.synthesize`
 

@@ -391,6 +391,7 @@ export function ask(
   asked: Asked = { context: null, item: null },
   withCard: WithCard | null = null,
   opts: AskOptions = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): void {
   const s = useChat.getState();
   if (s.answering) return;
@@ -401,7 +402,7 @@ export function ask(
   // Answering from here on, so a second Ask waits; the turn shows once the lock is held.
   useChat.setState({ answering: true, notice: null });
   useDock.setState({ working: true });
-  const run = (held: boolean) => answer(id, ns, question, asked, mine, held, withCard, opts);
+  const run = (held: boolean) => answer(id, ns, question, asked, mine, held, withCard, opts, intent);
   const locks = webLocks();
   if (!locks?.request) {
     void run(false);
@@ -467,6 +468,7 @@ async function answer(
   held: boolean,
   withCard: WithCard | null,
   opts: AskOptions,
+  intent: "automatic" | "explicit",
 ): Promise<void> {
   const context = asked.context;
   // Stopped, or the chat reset, before the lock came: nothing is asked.
@@ -586,6 +588,7 @@ async function answer(
         },
       },
       mine.signal,
+      intent,
     );
   } catch (e: unknown) {
     failure = e;
@@ -742,7 +745,7 @@ const lastAsked = (): Turn | null => lastAskedOf(useChat.getState());
 /** Ask the last turn's question again in its place, with the context line it was asked
  *  with (Retry), or with CITE_SOURCES (`withSources`, "Ask again with sources"). A
  *  starter's turn reads its card again. */
-export function retry(turnId: string, namespace: string, { withSources }: { withSources?: boolean } = {}): void {
+export function retry(turnId: string, namespace: string, { withSources }: { withSources?: boolean } = {}, intent: "automatic" | "explicit" = "automatic"): void {
   const t = lastAsked();
   if (!t || t.id !== turnId) return;
   // A refused question was given back to the field: asked again, it leaves it.
@@ -751,7 +754,7 @@ export function retry(turnId: string, namespace: string, { withSources }: { with
     replace: t.id,
     withSources: withSources ?? t.withSources === true,
     fromField,
-  });
+  }, intent);
 }
 
 /** Put the last question in an empty field to be edited; Ask then answers that turn again,

@@ -322,7 +322,7 @@ export function RegisterTrackerSourceDialog({
     setBusy(dryRun ? "check" : "add");
     setRefusal(null);
     try {
-      const out = await addTrackerSource(sourceAddBody(org, form, dryRun, mode === "mapping" ? mapping : null));
+      const out = await addTrackerSource(sourceAddBody(org, form, dryRun, mode === "mapping" ? mapping : null), undefined, "explicit");
       if (dryRun) {
         setChecked({ fp, result: out });
       } else {
@@ -1291,7 +1291,7 @@ export function RotateCredentialDialog({
     setBusy(true);
     setError(null);
     try {
-      await rotateTrackerSource(org, name, user.trim(), password);
+      await rotateTrackerSource(org, name, user.trim(), password, "explicit");
       onRotated();
       onOpenChange(false);
     } catch (e) {
@@ -1351,7 +1351,7 @@ export function RetireSourceDialog({
     setBusy(true);
     setError(null);
     try {
-      const out = await removeTrackerSource(org, name, typed.trim());
+      const out = await removeTrackerSource(org, name, typed.trim(), "explicit");
       onRetired(out.namespaces_retired);
       onOpenChange(false);
     } catch (e) {
@@ -1447,7 +1447,7 @@ export function EditMappingDialog({
     setBusy(dryRun ? "check" : "save");
     setError(null);
     try {
-      const out = await setTrackerMapping(org, source.name, mapping, dryRun);
+      const out = await setTrackerMapping(org, source.name, mapping, dryRun, "explicit");
       if (dryRun) setChecked({ fp, contract: out.contract });
       else {
         onSaved();

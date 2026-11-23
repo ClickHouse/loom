@@ -5,6 +5,7 @@
 import { noteCallEnd, noteCallStart } from "./lib/vitalsCounter";
 import { claimsFromToken } from "./lib/boot";
 import { ApiError, apiErrorFromResponse } from "./lib/errors";
+import { dashboardFetch, type DashboardRequestIntent } from "./lib/dashboardTransport";
 export { ApiError } from "./lib/errors";
 // The two code-plane shapes the shell reads; the plane itself lives in api/code.ts and rides with the Repositories view.
 import type { CodeIndexStatus, CodeRepoSummary } from "./api/code";
@@ -321,11 +322,13 @@ async function request(
   body?: unknown,
   signal?: AbortSignal,
   headers: Record<string, string> = {},
+  intent: DashboardRequestIntent = "automatic",
+  download = false,
 ): Promise<Response> {
   _bump(+1);
   noteCallStart(); // the view's call count and span
   try {
-    return await send(method, path, body, signal, false, headers);
+    return await send(method, path, body, signal, false, headers, intent, download);
   } finally {
     _bump(-1);
     noteCallEnd();
@@ -339,6 +342,8 @@ async function send(
   signal: AbortSignal | undefined,
   retried: boolean,
   headers: Record<string, string>,
+  intent: DashboardRequestIntent,
+  download: boolean,
 ): Promise<Response> {
   const sent = token();
   // Another tab may have stored another person's token a moment ago, before this one heard
@@ -351,7 +356,7 @@ async function send(
   }
   // A file goes as its bytes (`knowledge.upload`); any other body is the op's JSON.
   const raw = body instanceof Blob;
-  const r = await fetch(
+  const r = await dashboardFetch(
     path,
     method === "POST"
       ? {
@@ -365,6 +370,8 @@ async function send(
           signal: boundedSignal(signal),
         }
       : { method, headers: { ...headers, ...authHeader() }, signal: boundedSignal(signal) },
+    intent,
+    download,
   );
   if (r.status === 401 && sent) {
     // The first refusal of the stored token ends the session, before any await, so
@@ -373,7 +380,7 @@ async function send(
     if (ending) signInRejected?.();
     // A single-user install has no sign-in: the stale token is gone (this refusal or a
     // concurrent one dropped it), so the call goes again without it.
-    if (isAuthDisabled() && !retried) return send(method, path, body, signal, true, headers);
+    if (isAuthDisabled() && !retried) return send(method, path, body, signal, true, headers, intent, download);
     // A call raced by another tab's sign-in is not sent again under a token this tab has
     // not checked: Retry sends it, and the error says so instead of "sign in again".
     if (!ending && token() && ownsToken(token())) throw new ApiError({ status: 401, code: "SIGNED_IN_ELSEWHERE" });
@@ -400,8 +407,14 @@ async function readJson<T>(r: Response): Promise<T> {
   }
 }
 
-export async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  return readJson(await request("POST", path, body, signal));
+/** Unclassified POSTs are automatic. A user write passes explicit intent for this call. */
+export async function post<T>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+  intent: DashboardRequestIntent = "automatic",
+): Promise<T> {
+  return readJson(await request("POST", path, body, signal, {}, intent));
 }
 
 /** POST JSON and answer the ok Response unread, for a body that streams (the assistant's
@@ -413,14 +426,20 @@ export async function postStreaming(
   body: unknown,
   headers: Record<string, string>,
   signal: AbortSignal,
+  intent: DashboardRequestIntent = "automatic",
 ): Promise<Response> {
-  return request("POST", path, body, signal, headers);
+  return request("POST", path, body, signal, headers, intent);
 }
 
 /** POST a file's bytes as the body (`/v1/knowledge.upload?...`), parsed as JSON. Pass a
  *  `signal` for a large file: without one the call is bounded like any other. */
-export async function postFile<T>(path: string, file: Blob, signal?: AbortSignal): Promise<T> {
-  return readJson(await request("POST", path, file, signal));
+export async function postFile<T>(
+  path: string,
+  file: Blob,
+  signal?: AbortSignal,
+  intent: DashboardRequestIntent = "automatic",
+): Promise<T> {
+  return readJson(await request("POST", path, file, signal, {}, intent));
 }
 
 /** A GET read on the shared request path, parsed as JSON. */
@@ -430,7 +449,7 @@ export async function getJson<T>(path: string, opts: RequestOpts = {}): Promise<
 
 /** A GET whose body is not JSON (a download): the ok Response, for the caller to read. */
 export async function getResponse(path: string, opts: RequestOpts = {}): Promise<Response> {
-  return request("GET", path, undefined, opts.signal);
+  return request("GET", path, undefined, opts.signal, {}, "automatic", true);
 }
 
 /** The namespace's memory total, and nothing else: `memory.list` with `count_only`, two
@@ -517,6 +536,7 @@ export async function restoreMemory(
     /** Restore only a row still retired, whatever it retired behind; never undo a delete. */
     only_if_superseded?: boolean;
   } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{
   restored: boolean;
   memory_id?: string | null;
@@ -531,7 +551,7 @@ export async function restoreMemory(
     memory_key: key,
     ...(opts.if_superseded_by ? { if_superseded_by: opts.if_superseded_by } : {}),
     ...(opts.only_if_superseded ? { only_if_superseded: true } : {}),
-  });
+  }, undefined, intent);
 }
 
 /** Wire shape returned by /v1/memory.get. `found=false` means the row
@@ -685,6 +705,7 @@ export async function setMemory(
      *  overflow. */
     charLimit?: number | null;
   } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ version: number; pinned: boolean }> {
   const body: Record<string, unknown> = {
     ...id,
@@ -705,7 +726,7 @@ export async function setMemory(
   if (opts.charLimit != null) {
     body.char_limit = opts.charLimit;
   }
-  return post<{ version: number; pinned: boolean }>("/v1/memory.set", body);
+  return post<{ version: number; pinned: boolean }>("/v1/memory.set", body, undefined, intent);
 }
 
 /** The source classes a write may declare (`server.memory.domain.provenance`); the
@@ -731,6 +752,7 @@ export async function pinMemory(
   id: Identity,
   key: string,
   row: MemoryDetail,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ version: number; pinned: boolean }> {
   const body: Record<string, unknown> = {
     ...rowIdentity(id, row),
@@ -752,15 +774,16 @@ export async function pinMemory(
   if (row.char_limit != null) body.char_limit = row.char_limit;
   // A change to the value since the read answers 409 instead of being reverted.
   if (row.content_sha256) body.if_match_sha256 = row.content_sha256;
-  return post<{ version: number; pinned: boolean }>("/v1/memory.pin", body);
+  return post<{ version: number; pinned: boolean }>("/v1/memory.pin", body, undefined, intent);
 }
 
 /** `id` may name the row's user and session (`rowIdentity`); they default to '-'. */
 export async function unpinMemory(
   id: Identity,
   key: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ unpinned: boolean; reason: string; memory_id: string; version: number | null }> {
-  return post("/v1/memory.unpin", { ...id, memory_key: key });
+  return post("/v1/memory.unpin", { ...id, memory_key: key }, undefined, intent);
 }
 
 export interface VerifyResult {
@@ -779,6 +802,7 @@ export async function verifyMemory(
   id: Identity,
   key: string,
   opts: { revoke?: boolean; userId?: string; sessionId?: string } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<VerifyResult> {
   return post<VerifyResult>("/v1/memory.verify", {
     org: id.org,
@@ -788,7 +812,7 @@ export async function verifyMemory(
     session_id: opts.sessionId || "-",
     memory_key: key,
     revoke: !!opts.revoke,
-  });
+  }, undefined, intent);
 }
 
 /** Tombstone one memory.
@@ -797,11 +821,11 @@ export async function verifyMemory(
  *  idempotent: deleting a row that does not match the full identity tuple is a
  *  200 with `tombstoned: false`, not an error: a caller that only catches
  *  exceptions reports "Deleted" for a delete that did nothing. Check `tombstoned`. */
-export async function deleteMemory(id: Identity, key: string): Promise<{ tombstoned: boolean; version: number }> {
+export async function deleteMemory(id: Identity, key: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ tombstoned: boolean; version: number }> {
   return post<{ tombstoned: boolean; version: number }>("/v1/memory.delete", {
     ...id,
     memory_key: key,
-  });
+  }, undefined, intent);
 }
 
 /** POST /v1/memory.move: rename `fromKey` to `toKey`. The destination is written through
@@ -831,6 +855,7 @@ export async function moveMemory(
   fromKey: string,
   toKey: string,
   opts: { keepRedirect?: boolean; dryRun?: boolean; user_id?: string; session_id?: string } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<MemoryMoveResult> {
   return post<MemoryMoveResult>("/v1/memory.move", {
     ...id,
@@ -840,7 +865,7 @@ export async function moveMemory(
     to_key: toKey,
     keep_redirect: opts.keepRedirect ?? true,
     dry_run: opts.dryRun ?? false,
-  });
+  }, undefined, intent);
 }
 
 // ===== Datapacks / Grants =====
@@ -916,6 +941,7 @@ export async function createGrant(
    *  control passes it; "add member" never does, so re-adding an existing admin as writer
    *  cannot demote them. */
   opts: { replace?: boolean } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<unknown> {
   return post("/v1/grants.create", {
     org: id.org,
@@ -924,18 +950,19 @@ export async function createGrant(
     role,
     granted_by: "dashboard",
     ...(opts.replace ? { replace: true } : {}),
-  });
+  }, undefined, intent);
 }
 
 export async function revokeGrant(
   id: Pick<Identity, "org" | "namespace">,
   subject: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ revoked: boolean }> {
   return post<{ revoked: boolean }>("/v1/grants.revoke", {
     org: id.org,
     namespace: id.namespace,
     subject,
-  });
+  }, undefined, intent);
 }
 
 export async function approveGrant(
@@ -944,10 +971,11 @@ export async function approveGrant(
   decision: "approve" | "reject" = "approve",
   /** Approve with a different role than was asked for (a maintainer request answered as reader). Omit = as asked. */
   role?: GrantRole,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ decision: string; role: GrantRole | null }> {
   const body: Record<string, unknown> = { org: id.org, namespace: id.namespace, subject, decision };
   if (role) body.role = role;
-  return post("/v1/grants.approve", body);
+  return post("/v1/grants.approve", body, undefined, intent);
 }
 
 // ===== Connected agents =====
@@ -1078,6 +1106,7 @@ export async function removeAllowlist(
   memory_key_a: string,
   memory_key_b: string,
   opts: { reason?: string; removed_by?: string } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ removed: boolean }> {
   return post("/v1/conflicts.allowlist_remove", {
     org: id.org,
@@ -1086,7 +1115,7 @@ export async function removeAllowlist(
     memory_key_b,
     reason: opts.reason ?? "",
     removed_by: opts.removed_by ?? "",
-  });
+  }, undefined, intent);
 }
 
 export async function resolveConflict(
@@ -1094,6 +1123,7 @@ export async function resolveConflict(
   memory_id: string,
   decision: ResolveDecision,
   opts: { peer_id?: string; reason?: string; resolved_by?: string } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{
   resolved: boolean;
   affected_memory_ids: string[];
@@ -1110,7 +1140,7 @@ export async function resolveConflict(
     resolved_by: opts.resolved_by ?? "",
   };
   if (opts.peer_id) body["peer_id"] = opts.peer_id;
-  return post("/v1/conflicts.resolve", body);
+  return post("/v1/conflicts.resolve", body, undefined, intent);
 }
 
 // ===== cost.budget_status =====
@@ -1188,8 +1218,8 @@ export interface ClaimReleaseResponse {
   grants_revoked: number;
 }
 
-export async function claimRelease(org: string, namespace: string, reason: string = ""): Promise<ClaimReleaseResponse> {
-  return post<ClaimReleaseResponse>("/v1/admin/claim_release", { org, namespace, reason });
+export async function claimRelease(org: string, namespace: string, reason: string = "", intent: "automatic" | "explicit" = "automatic"): Promise<ClaimReleaseResponse> {
+  return post<ClaimReleaseResponse>("/v1/admin/claim_release", { org, namespace, reason }, undefined, intent);
 }
 
 /** Mint a JWT for a chosen namespace. Returns 404 if LOOM_SELF_SIGNUP=off. */
@@ -1238,8 +1268,8 @@ export interface MyNamespaceEntry {
 
 /** POST /v1/namespace.mark_seen: the caller picked `namespace` in the picker, so list_mine
  *  stops calling it new. */
-export async function markNamespaceSeen(org: string, namespace: string): Promise<void> {
-  return post("/v1/namespace.mark_seen", { org, namespace });
+export async function markNamespaceSeen(org: string, namespace: string, intent: "automatic" | "explicit" = "automatic"): Promise<void> {
+  return post("/v1/namespace.mark_seen", { org, namespace }, undefined, intent);
 }
 
 export async function listMine(org: string, opts: RequestOpts = {}): Promise<MyNamespaceEntry[]> {
@@ -1290,6 +1320,7 @@ export async function copyMemoryTo(
   memoryKey: string,
   toNamespace: string,
   opts: { targetKey?: string; rationale?: string } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<CopyToResult> {
   return post<CopyToResult>("/v1/memory.copy_to", {
     from_org: source.org,
@@ -1303,7 +1334,7 @@ export async function copyMemoryTo(
     to_namespace: toNamespace,
     target_key: opts.targetKey ?? null,
     rationale: opts.rationale ?? "",
-  });
+  }, undefined, intent);
 }
 
 export interface SharingAgentRow {
@@ -1407,10 +1438,12 @@ export async function createToken(opts: {
   ttl_days: number | null;
   /** A list's save target, one of its memory namespaces it writes; not sent with `*`. */
   saves_to?: string;
-}): Promise<TokenCreated> {
+}, intent: "automatic" | "explicit" = "automatic"): Promise<TokenCreated> {
   const r = await post<Partial<TokenCreated> & Pick<TokenCreated, "token" | "name" | "namespaces">>(
     "/v1/me/service_accounts.create",
     opts,
+    undefined,
+    intent,
   );
   // A replica of the previous build answers a list mint without the fields it added
   // (docs/architecture/rolling-upgrades.md, rule 35): the token is still shown.
@@ -1428,8 +1461,8 @@ export async function createToken(opts: {
   };
 }
 
-export async function revokeToken(name: string): Promise<void> {
-  await post("/v1/me/service_accounts.revoke", { name });
+export async function revokeToken(name: string, intent: "automatic" | "explicit" = "automatic"): Promise<void> {
+  await post("/v1/me/service_accounts.revoke", { name }, undefined, intent);
 }
 
 export interface BrowseEntry {
@@ -1521,8 +1554,9 @@ export async function saveNamespaceGuide(
   org: string,
   namespace: string,
   edit: { content: string; summary?: string; note: string; expected_revision: number },
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<GuideSaveResult> {
-  return post<GuideSaveResult>("/v1/namespace.guide_set", { org, namespace, ...edit });
+  return post<GuideSaveResult>("/v1/namespace.guide_set", { org, namespace, ...edit }, undefined, intent);
 }
 
 export interface JoinResponse {
@@ -1541,10 +1575,11 @@ export async function joinNamespace(
   org: string,
   namespace: string,
   opts: { role?: "viewer" | "writer" | "admin" } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<JoinResponse> {
   const body: Record<string, unknown> = { org, namespace };
   if (opts.role) body.role = opts.role;
-  return post<JoinResponse>("/v1/namespace.join", body);
+  return post<JoinResponse>("/v1/namespace.join", body, undefined, intent);
 }
 
 /** Withdraw the caller's own pending elevation request. Keeps their
@@ -1552,14 +1587,15 @@ export async function joinNamespace(
 export async function cancelNamespaceRequest(
   org: string,
   namespace: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ cancelled: boolean; namespace: string; cleared_role: string | null; cancelled_at: string | null }> {
-  return post("/v1/namespace.cancel_request", { org, namespace });
+  return post("/v1/namespace.cancel_request", { org, namespace }, undefined, intent);
 }
 
 /** Give up the caller's own membership of a namespace (their grant is
  *  revoked; nothing else changes). Used by the Code view's Leave. */
-export async function leaveNamespace(org: string, namespace: string): Promise<{ left: boolean; namespace: string }> {
-  return post("/v1/namespace.leave", { org, namespace });
+export async function leaveNamespace(org: string, namespace: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ left: boolean; namespace: string }> {
+  return post("/v1/namespace.leave", { org, namespace }, undefined, intent);
 }
 
 export type CodeId = { org: string; namespace: string };

@@ -107,7 +107,7 @@ export function RepoDocsList({
       return;
     setRemoving(doc.source_uri);
     try {
-      await deleteKnowledge(id, doc.source_uri);
+      await deleteKnowledge(id, doc.source_uri, "explicit");
       toast(`Removed ${doc.title || doc.source_uri}`, "ok");
       setNonce((n) => n + 1);
     } catch (e) {

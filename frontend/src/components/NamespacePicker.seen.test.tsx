@@ -65,7 +65,7 @@ describe("NamespacePicker's New badge", () => {
     const billing = await rowButton("billing");
     expect(within(billing).getByText("New")).toBeInTheDocument();
     fireEvent.click(billing);
-    await waitFor(() => expect(markNamespaceSeen).toHaveBeenCalledWith("dev", "billing"));
+    await waitFor(() => expect(markNamespaceSeen).toHaveBeenCalledWith("dev", "billing", "explicit"));
     expect(useStore.getState().myNamespaces?.find((r) => r.namespace === "billing")?.is_new).toBe(false);
   });
 

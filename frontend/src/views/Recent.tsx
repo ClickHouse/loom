@@ -480,7 +480,7 @@ function MemoryList() {
         const readId = { ...rowId, user_id: entry.user_id || "-", session_id: entry.session_id || "-" };
         const got = await getMemory(readId, k);
         if (got && got.found) {
-          await pinMemory(rowId, k, got);
+          await pinMemory(rowId, k, got, "explicit");
           ok++;
         } else {
           fail++;
@@ -527,7 +527,7 @@ function MemoryList() {
         // `tombstoned: false` is a 200, not a throw — counting only the absence
         // of an exception is what made this report "Deleted N" and then show
         // every row again on refresh.
-        const r = await deleteMemory(identityForRow(entry?.agent), k);
+        const r = await deleteMemory(identityForRow(entry?.agent), k, "explicit");
         if (r.tombstoned) ok++;
         else fail++;
       } catch {
@@ -998,7 +998,7 @@ function MemoryList() {
                               const r = await restoreMemory({ ...identity, agent: e.agent || "-" }, e.memory_key, {
                                 user_id: e.user_id || "-",
                                 session_id: e.session_id || "-",
-                              });
+                              }, "explicit");
                               if (r.restored) {
                                 toast(`Restored ${e.memory_key}`, "ok");
                                 bumpMemoriesVersion();

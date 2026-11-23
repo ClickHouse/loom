@@ -1,14 +1,5 @@
-/**
- * A namespace's document sources: the shared folders, project document stores, page
- * stores' pages and meeting transcripts its documents are pulled from, each with its
- * last sync. Shown on a repository's card (for its docs namespace) and on the Library
- * (for the namespace in view): a reader sees them and an admin manages them: Add a
- * source, Check, Sync now, Rotate credential, Retire.
- * Read once when the card is opened (a folded card asks nothing) or the Library's place
- * view opens, the read deciding whether its button shows; the dialogs load on first
- * use. The counts are information only: nothing waits for a person to confirm a row.
- */
-import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
+/** Generic MCP setup, recording setup and retained source metadata. */
+import { type ComponentProps, lazy, Suspense, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -34,9 +25,7 @@ import { ListTime, LoadingSkeleton, TipTarget } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 
-const AddSourceDialog = lazy(() =>
-  import("../flows/KnowledgeSourceDialog").then((m) => ({ default: m.AddSourceDialog })),
-);
+const MCPSources = lazy(() => import("./MCPSources").then((m) => ({ default: m.MCPSources })));
 const CheckSourceDialog = lazy(() =>
   import("../flows/KnowledgeSourceDialog").then((m) => ({ default: m.CheckSourceDialog })),
 );
@@ -47,7 +36,7 @@ const RotateSourceDialog = lazy(() =>
 const SourceDetailsDialog = lazy(() =>
   import("../flows/SourceDetailsDialog").then((m) => ({ default: m.SourceDetailsDialog })),
 );
-const SourcePushDialog = lazy(() => import("../flows/SourcePushDialog").then((m) => ({ default: m.SourcePushDialog })));
+const AddRecordingSourceDialog = lazy(() => import("../flows/KnowledgeSourceDialog").then((m) => ({ default: m.AddRecordingSourceDialog })));
 const RetireSourceDialog = lazy(() =>
   import("../flows/KnowledgeSourceDialog").then((m) => ({ default: m.RetireSourceDialog })),
 );
@@ -61,12 +50,13 @@ type State =
   | { kind: "refused" }
   | { kind: "error"; error: unknown };
 
-type Verb = "check" | "sync" | "rotate" | "retire" | "push";
+type Verb = "check" | "sync" | "rotate" | "retire";
 
 function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuItem[]; onOpen: () => void }) {
-  const badge = syncBadge(s.sync);
-  const counts = syncCounts(s.sync);
-  const reasons = unconvertedDetail(s.sync.unconverted_reasons);
+  const supported = s.kind === "recording";
+  const badge = supported ? syncBadge(s.sync) : { text: "Unavailable", tone: "warn" as const, tip: "Retained source metadata and bytes do not grant current access. This source kind is unsupported." };
+  const counts = supported ? syncCounts(s.sync) : "";
+  const reasons = supported ? unconvertedDetail(s.sync.unconverted_reasons) : "";
   return (
     <li className="flex items-start gap-2 text-sm min-w-0">
       <div className="min-w-0 flex-1">
@@ -79,12 +69,12 @@ function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuIte
           <TipTarget tip={badge.tip}>
             <Badge text={badge.text} state={TONE_STATE[badge.tone]} size="sm" />
           </TipTarget>
-          {s.sync.last_synced_at && (
+          {supported && s.sync.last_synced_at && (
             <span className="text-xs text-text-muted">
               synced <ListTime time={s.sync.last_synced_at} quiet />
             </span>
           )}
-          {s.sync.requested_at && (
+          {supported && s.sync.requested_at && (
             <span className="text-xs text-text-muted">
               sync requested <ListTime time={s.sync.requested_at} quiet />
             </span>
@@ -101,7 +91,8 @@ function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuIte
             )}
           </div>
         )}
-        {s.sync.error && s.sync.status !== "ok" && (
+        {!supported && <p className="text-xs text-text-muted">Unavailable retained registration. Metadata and history remain; retained bytes do not grant read access. Runtime controls are unavailable.</p>}
+        {supported && s.sync.error && s.sync.status !== "ok" && (
           <div className="text-xs text-text-muted break-words">{s.sync.error}</div>
         )}
       </div>
@@ -113,7 +104,14 @@ function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuIte
 /** The place a list belongs to: what the add dialog's title names, and what the copy calls it. */
 export type SourcesPlace = { label: string; noun: "repository" | "namespace" | "collection" };
 
-export function SourcesList({
+export function SourcesList(props: ComponentProps<typeof NativeSourcesList>) {
+  return <>
+    <Suspense fallback={null}><MCPSources org={props.org} namespace={props.namespace} section={props.section} panel={props.panel} busy={props.busy} /></Suspense>
+    <NativeSourcesList {...props} />
+  </>;
+}
+
+function NativeSourcesList({
   org,
   namespace,
   place,
@@ -150,8 +148,8 @@ export function SourcesList({
     if (open) heading.current?.focus();
   }, [open]);
   const [nonce, setNonce] = useState(0);
-  const [adding, setAdding] = useState(false);
   const [acting, setActing] = useState<{ verb: Verb; source: KnowledgeSource } | null>(null);
+  const [addingRecording, setAddingRecording] = useState(false);
   // Details is a read: any reader may open it.
   const [details, setDetails] = useState<string | null>(null);
   const id = { org, namespace };
@@ -174,7 +172,7 @@ export function SourcesList({
   );
 
   const menu = (s: KnowledgeSource): RowMenuItem[] => {
-    if (!manageable) return [];
+    if (!manageable || s.kind !== "recording") return [];
     const act = (verb: Verb) => () => setActing({ verb, source: s });
     const check: RowMenuItem = { label: "Check", icon: "check", onSelect: act("check") };
     const sync: RowMenuItem = { label: "Sync now", icon: "refresh", onSelect: act("sync") };
@@ -183,9 +181,6 @@ export function SourcesList({
     // A place that takes no new source refuses a sync and a rotation: Check and Retire remain.
     const closed = state.kind === "ready" && !state.accepts;
     const items = closed ? [check, retire] : [check, sync, rotate, retire];
-    if (!closed && ["gdrive", "notion", "linear"].includes(s.kind)) {
-      items.splice(2, 0, { label: "Push notifications", icon: "refresh", onSelect: act("push") });
-    }
     return items.map((item) => ({ ...item, disabled: busy }));
   };
   const close = (v: boolean) => {
@@ -202,6 +197,8 @@ export function SourcesList({
   if (section && (closedAndEmpty || nothingForReader || loading || failedForReader)) return null;
   const list = (
     <div className="space-y-1.5">
+      {manageable && state.kind === "ready" && state.accepts && <Button type="secondary" htmlType="button" disabled={busy} onClick={() => setAddingRecording(true)}>Add recording source</Button>}
+      {addingRecording && <Suspense fallback={null}><AddRecordingSourceDialog key={`${org}/${namespace}`} open org={org} namespace={namespace} label={place.label} onOpenChange={setAddingRecording} onAdded={() => { setAddingRecording(false); reload(); }} /></Suspense>}
       {state.kind === "loading" && (
         <LoadingSkeleton label={`Loading the ${place.noun}'s document sources`}>
           <Skeleton className="h-4 w-1/2" />
@@ -216,19 +213,16 @@ export function SourcesList({
       {state.kind === "error" && (
         <ListState kind="error" things="document sources" error={state.error} onRetry={reload} />
       )}
-      {state.kind === "ready" && !state.enabled && <p className="text-xs text-text-muted">{SYNC_OFF}</p>}
+      {state.kind === "ready" && !state.enabled && state.sources.some((s) => s.kind === "recording") && <p className="text-xs text-text-muted">{SYNC_OFF}</p>}
       {state.kind === "ready" && !state.accepts && (
         <p className="text-xs text-text-muted">
-          This {place.noun} takes no new document sources
-          {manageable && state.sources.length > 0 ? "; retire these when they are no longer needed." : "."}
+          This {place.noun} takes no new recording sources. Retained source metadata remains available.
         </p>
       )}
       {state.kind === "ready" && state.accepts && state.sources.length === 0 && (
         <p className="text-xs text-text-muted">
           No document sources.{" "}
-          {manageable
-            ? `Add a source and Loom keeps the ${place.noun}'s documents in step with it.`
-            : `Anyone with admin on the ${place.noun} adds them.`}
+          Manage your remote MCP registrations through MCP sources.
         </p>
       )}
       {state.kind === "ready" && state.sources.length > 0 && (
@@ -238,44 +232,13 @@ export function SourcesList({
           ))}
         </ul>
       )}
-      {manageable && state.kind === "ready" && state.accepts && (
-        <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
-          Add a source
-        </Button>
-      )}
       {details && (
         <Suspense fallback={null}>
           <SourceDetailsDialog org={org} namespace={namespace} name={details} onClose={() => setDetails(null)} />
         </Suspense>
       )}
-      {adding && (
-        <Suspense fallback={null}>
-          <AddSourceDialog
-            open
-            org={org}
-            namespace={namespace}
-            label={place.label}
-            onOpenChange={(v) => {
-              if (!v) setAdding(false);
-            }}
-            onAdded={(name) => {
-              toast(`Added ${name}`, "ok");
-              reload();
-            }}
-          />
-        </Suspense>
-      )}
       {acting && (
         <Suspense fallback={null}>
-          {acting.verb === "push" && (
-            <SourcePushDialog
-              org={org}
-              namespace={namespace}
-              name={acting.source.name}
-              kind={acting.source.kind}
-              onClose={() => setActing(null)}
-            />
-          )}
           {acting.verb === "check" && (
             <CheckSourceDialog open org={org} namespace={namespace} name={acting.source.name} onOpenChange={close} />
           )}

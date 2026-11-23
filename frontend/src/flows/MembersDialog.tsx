@@ -307,7 +307,7 @@ export function MembersDialog({
     setBusy("__add__");
     setErr(null);
     try {
-      await createGrant({ org, namespace }, subj, newRole);
+      await createGrant({ org, namespace }, subj, newRole, undefined, "explicit");
       toast(`Added ${subjectLabel(subj, org)} as ${newRole}`, "ok");
       setNewSubject("");
       setNewRole(defaultRole);
@@ -326,7 +326,7 @@ export function MembersDialog({
     try {
       // The role Select is the one deliberate "lower this member" control;
       // it says so to the server. onAdd never does.
-      await createGrant({ org, namespace }, subject, role, { replace: true });
+      await createGrant({ org, namespace }, subject, role, { replace: true }, "explicit");
       toast(`${subjectLabel(subject, org)} → ${role}`, "ok");
       load();
       onChanged?.();
@@ -376,7 +376,7 @@ export function MembersDialog({
       return;
     setBusy(subject);
     try {
-      await revokeGrant({ org, namespace }, subject);
+      await revokeGrant({ org, namespace }, subject, "explicit");
       toast(toEveryone ? `Stopped sharing with everyone in ${org}` : `Removed ${who}`, "ok");
       load();
       onChanged?.();
@@ -401,7 +401,7 @@ export function MembersDialog({
     let firstError: unknown = null;
     for (const t of targets) {
       try {
-        await approveGrant({ org, namespace: t.namespace }, subject, decision);
+        await approveGrant({ org, namespace: t.namespace }, subject, decision, undefined, "explicit");
         ok++;
       } catch (e) {
         firstError ??= e;
@@ -559,7 +559,7 @@ export function MembersDialog({
                             return;
                           setBusy(r.subject);
                           try {
-                            await cancelNamespaceRequest(org, namespace);
+                            await cancelNamespaceRequest(org, namespace, "explicit");
                             toast(`Withdrew ${r.requested_role} request`, "ok");
                             load();
                           } catch (e) {

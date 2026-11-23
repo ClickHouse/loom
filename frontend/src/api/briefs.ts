@@ -75,11 +75,12 @@ export async function listBriefs(
 export async function deleteBrief(
   id: Pick<Identity, "org" | "namespace">,
   briefKey: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ deleted: boolean }> {
   return post("/v1/session.brief_delete", {
     org: id.org,
     namespace: id.namespace,
     agent: "loom-ui",
     brief_key: briefKey,
-  });
+  }, undefined, intent);
 }

@@ -9,8 +9,9 @@ type Scope = Pick<Identity, "org" | "namespace">;
 export async function sweepBlacklistPattern(
   id: Scope,
   patternId: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ matched: number; tombstoned: number; truncated: boolean; error: string }> {
-  return post("/v1/blacklist.sweep", { org: id.org, namespace: id.namespace, pattern_id: patternId });
+  return post("/v1/blacklist.sweep", { org: id.org, namespace: id.namespace, pattern_id: patternId }, undefined, intent);
 }
 
 // ===== Extraction policy (org admin) =====
@@ -37,12 +38,12 @@ export async function getExtractionPolicy(
   return post("/v1/extraction_policy.get", policyBody(id, scope), opts.signal);
 }
 
-export async function setExtractionPolicy(id: Scope, scope: PolicyScope, policy: string): Promise<ExtractionPolicy> {
-  return post("/v1/extraction_policy.set", { ...policyBody(id, scope), policy });
+export async function setExtractionPolicy(id: Scope, scope: PolicyScope, policy: string, intent: "automatic" | "explicit" = "automatic"): Promise<ExtractionPolicy> {
+  return post("/v1/extraction_policy.set", { ...policyBody(id, scope), policy }, undefined, intent);
 }
 
-export async function clearExtractionPolicy(id: Scope, scope: PolicyScope): Promise<ExtractionPolicy> {
-  return post("/v1/extraction_policy.clear", policyBody(id, scope));
+export async function clearExtractionPolicy(id: Scope, scope: PolicyScope, intent: "automatic" | "explicit" = "automatic"): Promise<ExtractionPolicy> {
+  return post("/v1/extraction_policy.clear", policyBody(id, scope), undefined, intent);
 }
 
 // ===== The org's model calls (org admin) =====
@@ -62,6 +63,6 @@ export async function getOrgModelCalls(org: string, opts: RequestOpts = {}): Pro
   return post("/v1/org.model_calls", { org }, opts.signal);
 }
 
-export async function setOrgModelCalls(org: string, enabled: boolean, reason: string): Promise<OrgModelCalls> {
-  return post("/v1/org.set_model_calls", { org, enabled, reason });
+export async function setOrgModelCalls(org: string, enabled: boolean, reason: string, intent: "automatic" | "explicit" = "automatic"): Promise<OrgModelCalls> {
+  return post("/v1/org.set_model_calls", { org, enabled, reason }, undefined, intent);
 }

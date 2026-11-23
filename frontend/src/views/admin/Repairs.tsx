@@ -45,7 +45,7 @@ export function RepairsPanel({ unavailable = null }: { unavailable?: string | nu
 
   const sweep = () =>
     run(async () => {
-      const preview = await sweepExpired(identity, true);
+      const preview = await sweepExpired(identity, true, "explicit");
       const due = preview.tombstoned + preview.demoted + preview.anonymized;
       if (due === 0) {
         const locked = preview.locked_skipped;
@@ -62,7 +62,7 @@ export function RepairsPanel({ unavailable = null }: { unavailable?: string | nu
         }))
       )
         return;
-      const r = await sweepExpired(identity, false);
+      const r = await sweepExpired(identity, false, "explicit");
       const done = r.tombstoned + r.demoted + r.anonymized;
       // The pass counts before it writes: a scan or insert failure wrote nothing; a mirror
       // failure means the memories expired but their search rows were not updated.
@@ -83,7 +83,7 @@ export function RepairsPanel({ unavailable = null }: { unavailable?: string | nu
         confirmLabel: "Re-embed",
       });
       if (!ok) return;
-      const r = await reembedMemories(identity);
+      const r = await reembedMemories(identity, "explicit");
       if (r.processed === 0) return toast(`No memory here needs re-embedding with ${r.target_model}.`, "info");
       const rest = r.processed === REEMBED_LIMIT ? "; run it again for the rest" : "";
       toast(`Re-embedded ${r.processed} with ${r.target_model}${rest}`, "ok");
@@ -99,7 +99,7 @@ export function RepairsPanel({ unavailable = null }: { unavailable?: string | nu
         danger: true,
       });
       if (!ok) return;
-      const r = await expireAdapterFacts(identity, name);
+      const r = await expireAdapterFacts(identity, name, "explicit");
       toast(`Removed ${r.expired_triples} facts and ${r.expired_triple_memories} memory links`, "ok");
       setAdapter("");
     });
@@ -107,7 +107,7 @@ export function RepairsPanel({ unavailable = null }: { unavailable?: string | nu
   const rollback = () =>
     run(async () => {
       const at = new Date(asOf).toISOString();
-      const preview = await rollbackNamespace(identity, at, true);
+      const preview = await rollbackNamespace(identity, at, true, "explicit");
       if (preview.reinstate + preview.remove === 0) return toast("Every memory already stands as it did then.", "info");
       const more = preview.truncated ? " (the first 5,000 keys)" : "";
       const ok = await confirmAction({
@@ -117,14 +117,14 @@ export function RepairsPanel({ unavailable = null }: { unavailable?: string | nu
         danger: true,
       });
       if (!ok) return;
-      const r = await rollbackNamespace(identity, at, false);
+      const r = await rollbackNamespace(identity, at, false, "explicit");
       const rest = r.truncated ? "; run it again for the rest" : "";
       toast(`Rolled back: ${r.reinstate} reinstated, ${r.remove} removed${rest}`, "ok");
     });
 
   const download = () =>
     run(async () => {
-      saveJson(await snapshotNamespace(identity), `${identity.namespace}-snapshot.json`);
+      saveJson(await snapshotNamespace(identity, "explicit"), `${identity.namespace}-snapshot.json`);
     });
 
   const restore = (file: File) =>
@@ -137,7 +137,7 @@ export function RepairsPanel({ unavailable = null }: { unavailable?: string | nu
         danger: true,
       });
       if (!ok) return;
-      const r = await restoreNamespace(identity.org, identity.namespace, payload);
+      const r = await restoreNamespace(identity.org, identity.namespace, payload, "explicit");
       if (!r.restored) return toast("This snapshot was already restored here", "info");
       const erased = r.counts.erased_skipped ? `, ${r.counts.erased_skipped} skipped as erased` : "";
       // `memories` is the file's count; the erased ones in it were not written.

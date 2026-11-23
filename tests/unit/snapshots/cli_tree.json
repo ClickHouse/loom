@@ -20,7 +20,8 @@
    "description": null,
    "dests": [
     "help",
-    "version"
+    "version",
+    "request_intent"
    ]
   }
  ],
@@ -57,6 +58,24 @@
    "help": "show program's version number and exit",
    "metavar": null,
    "version": "<masked>"
+  },
+  {
+   "option_strings": [
+    "--request-intent"
+   ],
+   "dest": "request_intent",
+   "action": "_StoreAction",
+   "default": "automatic",
+   "const": null,
+   "choices": [
+    "automatic",
+    "explicit"
+   ],
+   "nargs": null,
+   "type": null,
+   "required": false,
+   "help": "Explicit is one direct human request; automatic is the default.",
+   "metavar": null
   },
   {
    "option_strings": [],
@@ -3871,16 +3890,16 @@
            "help": null,
            "metavar": null,
            "subcommands": {
-            "list": {
-             "prog": "loom knowledge source list",
+            "preview": {
+             "prog": "loom knowledge source preview",
              "usage": null,
              "description": null,
              "epilog": null,
              "formatter_class": "argparse:HelpFormatter",
              "add_help": true,
-             "allow_abbrev": true,
+             "allow_abbrev": false,
              "defaults": {
-              "func": "server.cli.knowledge_source:_cmd_list"
+              "func": "server.cli.knowledge_source:_dispatch"
              },
              "groups": [
               {
@@ -3893,10 +3912,13 @@
                "description": null,
                "dests": [
                 "help",
-                "namespace",
-                "org",
                 "server_url",
-                "token"
+                "org",
+                "namespace",
+                "request_file",
+                "token_file",
+                "session_file",
+                "intent"
                ]
               }
              ],
@@ -3920,6 +3942,36 @@
               },
               {
                "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
                 "--namespace"
                ],
                "dest": "namespace",
@@ -3929,45 +3981,15 @@
                "choices": null,
                "nargs": null,
                "type": null,
-               "required": true,
-               "help": "The namespace the source's documents live in",
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--org"
-               ],
-               "dest": "org",
-               "action": "_StoreAction",
-               "default": "",
-               "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
                "required": false,
-               "help": "Default: the token's org",
+               "help": "Ordinary destination; must agree with the JSON field.",
                "metavar": null
               },
               {
                "option_strings": [
-                "--server-url"
+                "--request-file"
                ],
-               "dest": "server_url",
-               "action": "_StoreAction",
-               "default": "http://localhost:7777",
-               "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
-               "required": false,
-               "help": null,
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--token"
-               ],
-               "dest": "token",
+               "dest": "request_file",
                "action": "_StoreAction",
                "default": null,
                "const": null,
@@ -3975,7 +3997,55 @@
                "nargs": null,
                "type": null,
                "required": false,
-               "help": "JWT (default: $LOOM_API_KEY, ~/.loom/token)",
+               "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token-file"
+               ],
+               "dest": "token_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--session-file"
+               ],
+               "dest": "session_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "Existing application-owned private session pointer; never initialized by this command.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--intent"
+               ],
+               "dest": "intent",
+               "action": "_StoreAction",
+               "default": "automatic",
+               "const": null,
+               "choices": [
+                "automatic",
+                "explicit"
+               ],
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default automatic guards every call; explicit is a direct user action.",
                "metavar": null
               }
              ]
@@ -3987,9 +4057,9 @@
              "epilog": null,
              "formatter_class": "argparse:HelpFormatter",
              "add_help": true,
-             "allow_abbrev": true,
+             "allow_abbrev": false,
              "defaults": {
-              "func": "server.cli.knowledge_source:_cmd_add"
+              "func": "server.cli.knowledge_source:_dispatch"
              },
              "groups": [
               {
@@ -4002,17 +4072,13 @@
                "description": null,
                "dests": [
                 "help",
-                "namespace",
-                "org",
                 "server_url",
-                "token",
-                "name",
-                "kind",
-                "link",
-                "item_json",
-                "include",
-                "credential_file",
-                "dry_run"
+                "org",
+                "namespace",
+                "request_file",
+                "token_file",
+                "session_file",
+                "intent"
                ]
               }
              ],
@@ -4036,6 +4102,36 @@
               },
               {
                "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
                 "--namespace"
                ],
                "dest": "namespace",
@@ -4045,45 +4141,15 @@
                "choices": null,
                "nargs": null,
                "type": null,
-               "required": true,
-               "help": "The namespace the source's documents live in",
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--org"
-               ],
-               "dest": "org",
-               "action": "_StoreAction",
-               "default": "",
-               "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
                "required": false,
-               "help": "Default: the token's org",
+               "help": "Ordinary destination; must agree with the JSON field.",
                "metavar": null
               },
               {
                "option_strings": [
-                "--server-url"
+                "--request-file"
                ],
-               "dest": "server_url",
-               "action": "_StoreAction",
-               "default": "http://localhost:7777",
-               "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
-               "required": false,
-               "help": null,
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--token"
-               ],
-               "dest": "token",
+               "dest": "request_file",
                "action": "_StoreAction",
                "default": null,
                "const": null,
@@ -4091,14 +4157,29 @@
                "nargs": null,
                "type": null,
                "required": false,
-               "help": "JWT (default: $LOOM_API_KEY, ~/.loom/token)",
+               "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
                "metavar": null
               },
               {
                "option_strings": [
-                "--name"
+                "--token-file"
                ],
-               "dest": "name",
+               "dest": "token_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--session-file"
+               ],
+               "dest": "session_file",
                "action": "_StoreAction",
                "default": null,
                "const": null,
@@ -4106,97 +4187,25 @@
                "nargs": null,
                "type": null,
                "required": true,
-               "help": null,
+               "help": "Existing application-owned private session pointer; never initialized by this command.",
                "metavar": null
               },
               {
                "option_strings": [
-                "--kind"
+                "--intent"
                ],
-               "dest": "kind",
+               "dest": "intent",
                "action": "_StoreAction",
-               "default": null,
+               "default": "automatic",
                "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
-               "required": true,
-               "help": "gdrive, notion or linear",
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--link"
+               "choices": [
+                "automatic",
+                "explicit"
                ],
-               "dest": "link",
-               "action": "_AppendAction",
-               "default": [],
-               "const": null,
-               "choices": null,
                "nargs": null,
                "type": null,
                "required": false,
-               "help": "A link to read; repeatable",
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--item-json"
-               ],
-               "dest": "item_json",
-               "action": "_AppendAction",
-               "default": [],
-               "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
-               "required": false,
-               "help": "An item to read as JSON, such as {\"type\": \"folder\", \"id\": \"...\"}; repeatable",
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--include"
-               ],
-               "dest": "include",
-               "action": "_AppendAction",
-               "default": null,
-               "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
-               "required": false,
-               "help": "gdrive: a file kind to read (docs, slides, pdf, pptx, docx); repeatable",
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--credential-file"
-               ],
-               "dest": "credential_file",
-               "action": "_StoreAction",
-               "default": null,
-               "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
-               "required": true,
-               "help": "The file holding the source's read-only credential; - reads it from stdin",
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--dry-run"
-               ],
-               "dest": "dry_run",
-               "action": "_StoreTrueAction",
-               "default": false,
-               "const": true,
-               "choices": null,
-               "nargs": 0,
-               "type": null,
-               "required": false,
-               "help": "Probe and store nothing",
+               "help": "Default automatic guards every call; explicit is a direct user action.",
                "metavar": null
               }
              ]
@@ -4208,9 +4217,9 @@
              "epilog": null,
              "formatter_class": "argparse:HelpFormatter",
              "add_help": true,
-             "allow_abbrev": true,
+             "allow_abbrev": false,
              "defaults": {
-              "func": "server.cli.knowledge_source:_cmd_update"
+              "func": "server.cli.knowledge_source:_dispatch"
              },
              "groups": [
               {
@@ -4223,16 +4232,13 @@
                "description": null,
                "dests": [
                 "help",
-                "namespace",
-                "org",
                 "server_url",
-                "token",
-                "name",
-                "link",
-                "item_json",
-                "include",
-                "remove_link",
-                "remove_item_json"
+                "org",
+                "namespace",
+                "request_file",
+                "token_file",
+                "session_file",
+                "intent"
                ]
               }
              ],
@@ -4256,6 +4262,36 @@
               },
               {
                "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
                 "--namespace"
                ],
                "dest": "namespace",
@@ -4265,23 +4301,123 @@
                "choices": null,
                "nargs": null,
                "type": null,
-               "required": true,
-               "help": "The namespace the source's documents live in",
+               "required": false,
+               "help": "Ordinary destination; must agree with the JSON field.",
                "metavar": null
               },
               {
                "option_strings": [
-                "--org"
+                "--request-file"
                ],
-               "dest": "org",
+               "dest": "request_file",
                "action": "_StoreAction",
-               "default": "",
+               "default": null,
                "const": null,
                "choices": null,
                "nargs": null,
                "type": null,
                "required": false,
-               "help": "Default: the token's org",
+               "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token-file"
+               ],
+               "dest": "token_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--session-file"
+               ],
+               "dest": "session_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "Existing application-owned private session pointer; never initialized by this command.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--intent"
+               ],
+               "dest": "intent",
+               "action": "_StoreAction",
+               "default": "automatic",
+               "const": null,
+               "choices": [
+                "automatic",
+                "explicit"
+               ],
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default automatic guards every call; explicit is a direct user action.",
+               "metavar": null
+              }
+             ]
+            },
+            "list": {
+             "prog": "loom knowledge source list",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": false,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_dispatch"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "server_url",
+                "org",
+                "namespace",
+                "request_file",
+                "token_file",
+                "session_file",
+                "intent"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
                "metavar": null
               },
               {
@@ -4290,35 +4426,20 @@
                ],
                "dest": "server_url",
                "action": "_StoreAction",
-               "default": "http://localhost:7777",
-               "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
-               "required": false,
-               "help": null,
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--token"
-               ],
-               "dest": "token",
-               "action": "_StoreAction",
                "default": null,
                "const": null,
                "choices": null,
                "nargs": null,
                "type": null,
-               "required": false,
-               "help": "JWT (default: $LOOM_API_KEY, ~/.loom/token)",
+               "required": true,
+               "help": null,
                "metavar": null
               },
               {
                "option_strings": [
-                "--name"
+                "--org"
                ],
-               "dest": "name",
+               "dest": "org",
                "action": "_StoreAction",
                "default": null,
                "const": null,
@@ -4331,104 +4452,4116 @@
               },
               {
                "option_strings": [
-                "--link"
+                "--namespace"
                ],
-               "dest": "link",
-               "action": "_AppendAction",
-               "default": [],
-               "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
-               "required": false,
-               "help": "A link to read; repeatable",
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--item-json"
-               ],
-               "dest": "item_json",
-               "action": "_AppendAction",
-               "default": [],
-               "const": null,
-               "choices": null,
-               "nargs": null,
-               "type": null,
-               "required": false,
-               "help": "An item to read as JSON, such as {\"type\": \"folder\", \"id\": \"...\"}; repeatable",
-               "metavar": null
-              },
-              {
-               "option_strings": [
-                "--include"
-               ],
-               "dest": "include",
-               "action": "_AppendAction",
+               "dest": "namespace",
+               "action": "_StoreAction",
                "default": null,
                "const": null,
                "choices": null,
                "nargs": null,
                "type": null,
                "required": false,
-               "help": "gdrive: a file kind to read (docs, slides, pdf, pptx, docx); repeatable",
+               "help": "Ordinary destination; must agree with the JSON field.",
                "metavar": null
               },
               {
                "option_strings": [
-                "--remove-link"
+                "--request-file"
                ],
-               "dest": "remove_link",
-               "action": "_AppendAction",
-               "default": [],
+               "dest": "request_file",
+               "action": "_StoreAction",
+               "default": null,
                "const": null,
                "choices": null,
                "nargs": null,
                "type": null,
                "required": false,
-               "help": "A link to remove; repeatable",
+               "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
                "metavar": null
               },
               {
                "option_strings": [
-                "--remove-item-json"
+                "--token-file"
                ],
-               "dest": "remove_item_json",
-               "action": "_AppendAction",
-               "default": [],
+               "dest": "token_file",
+               "action": "_StoreAction",
+               "default": null,
                "const": null,
                "choices": null,
                "nargs": null,
                "type": null,
                "required": false,
-               "help": "An item to remove as JSON, such as {\"type\": \"folder\", \"id\": \"...\"}; repeatable",
+               "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
                "metavar": null
+              },
+              {
+               "option_strings": [
+                "--session-file"
+               ],
+               "dest": "session_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "Existing application-owned private session pointer; never initialized by this command.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--intent"
+               ],
+               "dest": "intent",
+               "action": "_StoreAction",
+               "default": "automatic",
+               "const": null,
+               "choices": [
+                "automatic",
+                "explicit"
+               ],
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default automatic guards every call; explicit is a direct user action.",
+               "metavar": null
+              }
+             ]
+            },
+            "inspect": {
+             "prog": "loom knowledge source inspect",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": false,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_dispatch"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "server_url",
+                "org",
+                "namespace",
+                "request_file",
+                "token_file",
+                "session_file",
+                "intent"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Ordinary destination; must agree with the JSON field.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--request-file"
+               ],
+               "dest": "request_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token-file"
+               ],
+               "dest": "token_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--session-file"
+               ],
+               "dest": "session_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "Existing application-owned private session pointer; never initialized by this command.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--intent"
+               ],
+               "dest": "intent",
+               "action": "_StoreAction",
+               "default": "automatic",
+               "const": null,
+               "choices": [
+                "automatic",
+                "explicit"
+               ],
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default automatic guards every call; explicit is a direct user action.",
+               "metavar": null
+              }
+             ]
+            },
+            "pause": {
+             "prog": "loom knowledge source pause",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": false,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_dispatch"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "server_url",
+                "org",
+                "namespace",
+                "request_file",
+                "token_file",
+                "session_file",
+                "intent"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Ordinary destination; must agree with the JSON field.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--request-file"
+               ],
+               "dest": "request_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token-file"
+               ],
+               "dest": "token_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--session-file"
+               ],
+               "dest": "session_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "Existing application-owned private session pointer; never initialized by this command.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--intent"
+               ],
+               "dest": "intent",
+               "action": "_StoreAction",
+               "default": "automatic",
+               "const": null,
+               "choices": [
+                "automatic",
+                "explicit"
+               ],
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default automatic guards every call; explicit is a direct user action.",
+               "metavar": null
+              }
+             ]
+            },
+            "resume": {
+             "prog": "loom knowledge source resume",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": false,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_dispatch"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "server_url",
+                "org",
+                "namespace",
+                "request_file",
+                "token_file",
+                "session_file",
+                "intent"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Ordinary destination; must agree with the JSON field.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--request-file"
+               ],
+               "dest": "request_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token-file"
+               ],
+               "dest": "token_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--session-file"
+               ],
+               "dest": "session_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "Existing application-owned private session pointer; never initialized by this command.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--intent"
+               ],
+               "dest": "intent",
+               "action": "_StoreAction",
+               "default": "automatic",
+               "const": null,
+               "choices": [
+                "automatic",
+                "explicit"
+               ],
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default automatic guards every call; explicit is a direct user action.",
+               "metavar": null
+              }
+             ]
+            },
+            "refresh": {
+             "prog": "loom knowledge source refresh",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": false,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_dispatch"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "server_url",
+                "org",
+                "namespace",
+                "request_file",
+                "token_file",
+                "session_file",
+                "intent"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Ordinary destination; must agree with the JSON field.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--request-file"
+               ],
+               "dest": "request_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token-file"
+               ],
+               "dest": "token_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--session-file"
+               ],
+               "dest": "session_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "Existing application-owned private session pointer; never initialized by this command.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--intent"
+               ],
+               "dest": "intent",
+               "action": "_StoreAction",
+               "default": "automatic",
+               "const": null,
+               "choices": [
+                "automatic",
+                "explicit"
+               ],
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default automatic guards every call; explicit is a direct user action.",
+               "metavar": null
+              }
+             ]
+            },
+            "read": {
+             "prog": "loom knowledge source read",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": false,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_dispatch"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "server_url",
+                "org",
+                "namespace",
+                "request_file",
+                "token_file",
+                "session_file",
+                "intent"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Ordinary destination; must agree with the JSON field.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--request-file"
+               ],
+               "dest": "request_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token-file"
+               ],
+               "dest": "token_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--session-file"
+               ],
+               "dest": "session_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "Existing application-owned private session pointer; never initialized by this command.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--intent"
+               ],
+               "dest": "intent",
+               "action": "_StoreAction",
+               "default": "automatic",
+               "const": null,
+               "choices": [
+                "automatic",
+                "explicit"
+               ],
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default automatic guards every call; explicit is a direct user action.",
+               "metavar": null
+              }
+             ]
+            },
+            "remove": {
+             "prog": "loom knowledge source remove",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": false,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_dispatch"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "server_url",
+                "org",
+                "namespace",
+                "request_file",
+                "token_file",
+                "session_file",
+                "intent"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Ordinary destination; must agree with the JSON field.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--request-file"
+               ],
+               "dest": "request_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token-file"
+               ],
+               "dest": "token_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--session-file"
+               ],
+               "dest": "session_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "Existing application-owned private session pointer; never initialized by this command.",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--intent"
+               ],
+               "dest": "intent",
+               "action": "_StoreAction",
+               "default": "automatic",
+               "const": null,
+               "choices": [
+                "automatic",
+                "explicit"
+               ],
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default automatic guards every call; explicit is a direct user action.",
+               "metavar": null
+              }
+             ]
+            },
+            "connection": {
+             "prog": "loom knowledge source connection",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {},
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": [
+                "source_action"
+               ]
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [],
+               "dest": "source_action",
+               "action": "_SubParsersAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": "A...",
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null,
+               "subcommands": {
+                "profiles": {
+                 "prog": "loom knowledge source connection profiles",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "connect": {
+                 "prog": "loom knowledge source connection connect",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent",
+                    "bearer_file"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--bearer-file"
+                   ],
+                   "dest": "bearer_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 credential file or - for stdin. Never an argv secret.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "list": {
+                 "prog": "loom knowledge source connection list",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "inspect": {
+                 "prog": "loom knowledge source connection inspect",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "discover": {
+                 "prog": "loom knowledge source connection discover",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "browse": {
+                 "prog": "loom knowledge source connection browse",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "disconnect": {
+                 "prog": "loom knowledge source connection disconnect",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                }
+               },
+               "aliases_of": {
+                "profiles": "loom knowledge source connection profiles",
+                "connect": "loom knowledge source connection connect",
+                "list": "loom knowledge source connection list",
+                "inspect": "loom knowledge source connection inspect",
+                "discover": "loom knowledge source connection discover",
+                "browse": "loom knowledge source connection browse",
+                "disconnect": "loom knowledge source connection disconnect"
+               },
+               "choices_help": []
+              }
+             ]
+            },
+            "destination": {
+             "prog": "loom knowledge source destination",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {},
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": [
+                "source_action"
+               ]
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [],
+               "dest": "source_action",
+               "action": "_SubParsersAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": "A...",
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null,
+               "subcommands": {
+                "list": {
+                 "prog": "loom knowledge source destination list",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "create": {
+                 "prog": "loom knowledge source destination create",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "namespace",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--namespace"
+                   ],
+                   "dest": "namespace",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Ordinary destination; must agree with the JSON field.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "grants": {
+                 "prog": "loom knowledge source destination grants",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "namespace",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--namespace"
+                   ],
+                   "dest": "namespace",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Ordinary destination; must agree with the JSON field.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "grant": {
+                 "prog": "loom knowledge source destination grant",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "namespace",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--namespace"
+                   ],
+                   "dest": "namespace",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Ordinary destination; must agree with the JSON field.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "preview": {
+                 "prog": "loom knowledge source destination preview",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "namespace",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--namespace"
+                   ],
+                   "dest": "namespace",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Ordinary destination; must agree with the JSON field.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                }
+               },
+               "aliases_of": {
+                "list": "loom knowledge source destination list",
+                "create": "loom knowledge source destination create",
+                "grants": "loom knowledge source destination grants",
+                "grant": "loom knowledge source destination grant",
+                "preview": "loom knowledge source destination preview"
+               },
+               "choices_help": []
+              }
+             ]
+            },
+            "recording": {
+             "prog": "loom knowledge source recording",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {},
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": [
+                "source_action"
+               ]
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [],
+               "dest": "source_action",
+               "action": "_SubParsersAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": "A...",
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null,
+               "subcommands": {
+                "add": {
+                 "prog": "loom knowledge source recording add",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "namespace",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent",
+                    "credential_file"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--namespace"
+                   ],
+                   "dest": "namespace",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Ordinary destination; must agree with the JSON field.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--credential-file"
+                   ],
+                   "dest": "credential_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Owned mode-0600 credential file or - for stdin. Never an argv secret.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "list": {
+                 "prog": "loom knowledge source recording list",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "namespace",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--namespace"
+                   ],
+                   "dest": "namespace",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Ordinary destination; must agree with the JSON field.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "sync-now": {
+                 "prog": "loom knowledge source recording sync-now",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "namespace",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--namespace"
+                   ],
+                   "dest": "namespace",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Ordinary destination; must agree with the JSON field.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                }
+               },
+               "aliases_of": {
+                "add": "loom knowledge source recording add",
+                "list": "loom knowledge source recording list",
+                "sync-now": "loom knowledge source recording sync-now"
+               },
+               "choices_help": []
+              }
+             ]
+            },
+            "retained": {
+             "prog": "loom knowledge source retained",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {},
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": [
+                "source_action"
+               ]
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [],
+               "dest": "source_action",
+               "action": "_SubParsersAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": "A...",
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null,
+               "subcommands": {
+                "list": {
+                 "prog": "loom knowledge source retained list",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "namespace",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--namespace"
+                   ],
+                   "dest": "namespace",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Ordinary destination; must agree with the JSON field.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "inspect": {
+                 "prog": "loom knowledge source retained inspect",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "namespace",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--namespace"
+                   ],
+                   "dest": "namespace",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Ordinary destination; must agree with the JSON field.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                },
+                "remove": {
+                 "prog": "loom knowledge source retained remove",
+                 "usage": null,
+                 "description": null,
+                 "epilog": null,
+                 "formatter_class": "argparse:HelpFormatter",
+                 "add_help": true,
+                 "allow_abbrev": false,
+                 "defaults": {
+                  "func": "server.cli.knowledge_source:_dispatch"
+                 },
+                 "groups": [
+                  {
+                   "title": "positional arguments",
+                   "description": null,
+                   "dests": []
+                  },
+                  {
+                   "title": "options",
+                   "description": null,
+                   "dests": [
+                    "help",
+                    "server_url",
+                    "org",
+                    "namespace",
+                    "request_file",
+                    "token_file",
+                    "session_file",
+                    "intent"
+                   ]
+                  }
+                 ],
+                 "mutually_exclusive": [],
+                 "arguments": [
+                  {
+                   "option_strings": [
+                    "-h",
+                    "--help"
+                   ],
+                   "dest": "help",
+                   "action": "_HelpAction",
+                   "default": "==SUPPRESS==",
+                   "const": null,
+                   "choices": null,
+                   "nargs": 0,
+                   "type": null,
+                   "required": false,
+                   "help": "show this help message and exit",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--server-url"
+                   ],
+                   "dest": "server_url",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--org"
+                   ],
+                   "dest": "org",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": null,
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--namespace"
+                   ],
+                   "dest": "namespace",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Ordinary destination; must agree with the JSON field.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--request-file"
+                   ],
+                   "dest": "request_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "UTF-8 JSON API fields, at most 1 MiB; - reads stdin. See the source CLI guide.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--token-file"
+                   ],
+                   "dest": "token_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Owned mode-0600 token file or - for stdin; otherwise LOOM_API_KEY.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--session-file"
+                   ],
+                   "dest": "session_file",
+                   "action": "_StoreAction",
+                   "default": null,
+                   "const": null,
+                   "choices": null,
+                   "nargs": null,
+                   "type": null,
+                   "required": true,
+                   "help": "Existing application-owned private session pointer; never initialized by this command.",
+                   "metavar": null
+                  },
+                  {
+                   "option_strings": [
+                    "--intent"
+                   ],
+                   "dest": "intent",
+                   "action": "_StoreAction",
+                   "default": "automatic",
+                   "const": null,
+                   "choices": [
+                    "automatic",
+                    "explicit"
+                   ],
+                   "nargs": null,
+                   "type": null,
+                   "required": false,
+                   "help": "Default automatic guards every call; explicit is a direct user action.",
+                   "metavar": null
+                  }
+                 ]
+                }
+               },
+               "aliases_of": {
+                "list": "loom knowledge source retained list",
+                "inspect": "loom knowledge source retained inspect",
+                "remove": "loom knowledge source retained remove"
+               },
+               "choices_help": []
               }
              ]
             }
            },
            "aliases_of": {
-            "list": "loom knowledge source list",
+            "preview": "loom knowledge source preview",
             "add": "loom knowledge source add",
-            "update": "loom knowledge source update"
+            "update": "loom knowledge source update",
+            "list": "loom knowledge source list",
+            "inspect": "loom knowledge source inspect",
+            "pause": "loom knowledge source pause",
+            "resume": "loom knowledge source resume",
+            "refresh": "loom knowledge source refresh",
+            "read": "loom knowledge source read",
+            "remove": "loom knowledge source remove",
+            "connection": "loom knowledge source connection",
+            "destination": "loom knowledge source destination",
+            "recording": "loom knowledge source recording",
+            "retained": "loom knowledge source retained"
            },
-           "choices_help": [
-            {
-             "dest": "list",
-             "help": "List the namespace's sources, items and sync state.",
-             "metavar": "list"
-            },
-            {
-             "dest": "add",
-             "help": "Register a source from links or items, probed with the credential before anything is stored (knowledge.source.add).",
-             "metavar": "add"
-            },
-            {
-             "dest": "update",
-             "help": "Add and remove a source's items or change its file kinds, the added items probed with the stored credential (knowledge.source.update).",
-             "metavar": "update"
-            }
-           ]
+           "choices_help": []
           }
          ]
         },
@@ -4539,7 +8672,7 @@
         },
         {
          "dest": "source",
-         "help": "A namespace's document sources, over a running server.",
+         "help": "MCP sources, connections, collection destinations and recordings.",
          "metavar": "source"
         },
         {

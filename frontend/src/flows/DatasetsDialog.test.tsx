@@ -45,7 +45,7 @@ describe("DatasetsDialog", () => {
     expect(within(dialog).getByText(/could be a date/)).toBeInTheDocument();
     expect(within(dialog).getByText("needs a decision")).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "Approve schema" }));
-    await waitFor(() => expect(api.approveDataset).toHaveBeenCalledWith(identity, "q3.xlsx", SET, {}));
+    await waitFor(() => expect(api.approveDataset).toHaveBeenCalledWith(identity, "q3.xlsx", SET, {}, "explicit"));
   });
 
   it("shows a reader the types, and Approve unavailable with the role it needs", async () => {
@@ -76,7 +76,7 @@ describe("DatasetsDialog", () => {
     fireEvent.click(within(options).getByText("string"));
     await userEvent.click(screen.getByRole("button", { name: "Retype and approve" }));
     await waitFor(() =>
-      expect(api.approveDataset).toHaveBeenCalledWith(identity, "q3.xlsx", SET, { amount: "string" }),
+      expect(api.approveDataset).toHaveBeenCalledWith(identity, "q3.xlsx", SET, { amount: "string" }, "explicit"),
     );
   });
 

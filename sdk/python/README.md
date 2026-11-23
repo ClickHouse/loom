@@ -218,3 +218,9 @@ The SDK logs through the stdlib logger `loom` (a `NullHandler` by default; your 
 ## License
 
 Apache-2.0. See [LICENSE](https://github.com/ClickHouse/loom/blob/main/LICENSE).
+
+## Protected source clients
+
+[Session protection](SESSION_PROTECTION.md) describes request readiness, durable
+conversation ownership and the automatic-capture interface for CLI and framework
+integrations.

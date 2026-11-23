@@ -481,6 +481,7 @@ describe("Memories list chrome", () => {
       { org: "dev", namespace: "team", agent: "claude-desktop" },
       "d/plain",
       detail,
+      "explicit",
     ]);
   });
 

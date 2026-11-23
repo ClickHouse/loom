@@ -283,6 +283,19 @@ def unreachable_error(
     return err
 
 
+async def _download_body(response: httpx.Response, maximum: int) -> bytes:
+    if response.headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}:
+        raise SessionProtectionUnavailable()
+    parts: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > maximum or len(parts) >= 4096:
+            raise SessionProtectionUnavailable()
+        parts.append(chunk)
+    return b"".join(parts)
+
+
 class Transport:
     """One Transport per Agent. Owns an httpx AsyncClient with HTTP/2 + pool.
 
@@ -370,6 +383,28 @@ class Transport:
     async def _before_dispatch(self, request: httpx.Request) -> None:
         # httpx invokes this after authentication and on each replay.
         require_automatic_allowed(self.session_protection)
+        roots = response_roots(self.session_protection)
+        declaration = "x-loom-session-protection"
+        previous = request.extensions.get("_loom_protection_roots")
+        values = request.headers.get_list(declaration)
+        if values and (previous is None or values != ["v1"]):
+            raise SessionProtectionUnavailable()
+        if roots:
+            target = httpx.URL(self._base_url)
+            if (request.url.scheme, request.url.host, request.url.port) != (
+                target.scheme,
+                target.host,
+                target.port,
+            ) or self._before_response not in self._client.event_hooks["response"]:
+                raise SessionProtectionUnavailable()
+            for root in roots:
+                if not isinstance(root, SessionProtection):
+                    raise SessionProtectionUnavailable()
+                root.require_ready()
+            request.extensions["_loom_protection_roots"] = roots
+            request.headers[declaration] = "v1"
+        elif values:
+            raise SessionProtectionUnavailable()
         if has_protection(self.session_protection) and (
             "text/event-stream" in request.headers.get("Accept", "").lower()
             or request.url.path == "/v1/assistant/chat/completions"
@@ -377,11 +412,29 @@ class Transport:
             request.headers["Accept-Encoding"] = "identity"
 
     async def _before_response(self, response: httpx.Response) -> None:
-        roots = response_roots(self.session_protection)
+        roots = tuple(
+            dict.fromkeys(
+                (
+                    *response.request.extensions.get("_loom_protection_roots", ()),
+                    *response_roots(self.session_protection),
+                )
+            )
+        )
         if not roots:
             return
+        for root in roots:
+            root.require_ready()
+        if response.request.extensions.get("_loom_opaque_download") is True:
+            # Downloads have no envelope contract, including JSON and line-delimited exports.
+            for root in roots:
+                root.mark()
+            return
         content_type = response.headers.get("content-type", "").lower()
-        if response.status_code >= 400 or "json" in content_type:
+        if (
+            response.status_code >= 400
+            or response.status_code in {204, 304}
+            or "json" in content_type
+        ):
             with observation_scope(roots):
                 try:
                     await response.aread()
@@ -393,6 +446,9 @@ class Transport:
                 self._observe_json(response)
         elif "text/event-stream" in content_type:
             protect_event_stream(response, roots)
+        else:
+            with observation_scope(roots):
+                refuse_response(self.session_protection)
 
     def _observe_json(self, response: httpx.Response) -> Any:
         if "_loom_observed_json" not in response.extensions:
@@ -579,6 +635,55 @@ class Transport:
                 raise error
             await asyncio.sleep(wait)
             waited_s += wait
+
+    async def download(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        max_bytes: int = 64 * 1024 * 1024,
+        timeout_s: float = 60.0,
+    ) -> httpx.Response:
+        """An observed GET with opaque bytes protected before release, without retries.
+
+        The application can lower the 64 MiB/60-second ceilings. Decoded response
+        bytes and chunk bookkeeping are bounded; the owned response always closes.
+        """
+        if type(max_bytes) is not int or not 0 < max_bytes <= 64 * 1024 * 1024:
+            raise ValueError("download byte bound is invalid")
+        if isinstance(timeout_s, bool) or not 0 < timeout_s <= 60:
+            raise ValueError("download time bound is invalid")
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError("download requires a path on this server")
+        require_automatic_allowed(self.session_protection)
+        roots = response_roots(self.session_protection)
+        automatic = automatic_roots(self.session_protection)
+        headers = {
+            **self._ident_headers,
+            "X-Request-Id": str(uuid.uuid4()),
+            "Accept-Encoding": "identity",
+        }
+        request = self._client.build_request("GET", path, params=params, headers=headers)
+        request.extensions["_loom_opaque_download"] = True
+        with automatic_for(automatic), observation_scope(roots):
+            async with asyncio.timeout(timeout_s):
+                response = await self._client.send(request, stream=True)
+                try:
+                    content = await _download_body(response, max_bytes)
+                    result_headers = httpx.Headers(response.headers)
+                    for name in ("Content-Encoding", "Content-Length", "Transfer-Encoding"):
+                        result_headers.pop(name, None)
+                    result = httpx.Response(
+                        response.status_code,
+                        headers=result_headers,
+                        content=content,
+                        request=response.request,
+                    )
+                    if result.status_code >= 400:
+                        raise self._error_for(path, result, headers["X-Request-Id"])
+                    return result
+                finally:
+                    await response.aclose()
 
     async def request_json(
         self,

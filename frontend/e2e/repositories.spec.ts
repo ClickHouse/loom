@@ -317,16 +317,18 @@ test.describe("document sources", () => {
     await expect(page.getByRole("alert")).toHaveCount(0);
   });
 
-  test("the namespace's admin gets Add a source, off until a check, and each verb's dialog", async ({ page }) => {
+  test("the namespace's admin gets recording setup, off until a check, and recording management", async ({ page }) => {
     const errors = collectErrors(page);
     await installApi(page, { codeRepos: reposWith("admin"), knowledgeSources: knowledgeSourcesFixture() });
     await page.goto("/repositories");
     await unfold(card(page), CODE_REPO);
     const sources = card(page).getByRole("group", { name: "Sources" });
-    await sources.getByRole("button", { name: "Add a source" }).click();
+    await sources.getByRole("button", { name: "Add recording source" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("button", { name: "Add source" })).toBeDisabled();
-    await expect(dialog.getByLabel(/^Service account key/)).toHaveAttribute("type", "password");
+    await expect(dialog.getByLabel(/^Read-only credential/)).toHaveAttribute("type", "password");
+    await expect(dialog.getByLabel(/^Meetings/)).toBeVisible();
+    await expect(dialog.getByLabel(/^Folders/)).toHaveCount(0);
     await dialog.getByRole("button", { name: "Cancel" }).click();
     for (const verb of ["Check", "Sync now", "Rotate credential", "Retire"]) {
       await sources.getByRole("button", { name: "Actions for design-docs" }).click();

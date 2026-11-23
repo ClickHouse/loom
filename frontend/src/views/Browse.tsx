@@ -159,7 +159,7 @@ export function Browse() {
   const onJoin = async (ns: string, role: JoinRole) => {
     setJoining(ns);
     try {
-      const r = await joinNamespace(identity.org, ns, { role });
+      const r = await joinNamespace(identity.org, ns, { role }, "explicit");
       const isPending = r.status === "pending";
       if (isPending) {
         const admins = (r.pending_admins || []).slice(0, 3).join(", ") || "an admin";
@@ -262,7 +262,7 @@ export function Browse() {
     )
       return;
     try {
-      await cancelNamespaceRequest(identity.org, ns);
+      await cancelNamespaceRequest(identity.org, ns, "explicit");
       toast(`Withdrew request on ${ns}`, "ok");
       load();
     } catch (e) {
@@ -280,7 +280,7 @@ export function Browse() {
     )
       return;
     try {
-      await leaveNamespace(identity.org, ns);
+      await leaveNamespace(identity.org, ns, "explicit");
       toast(`Left ${ns}`, "ok");
       load();
     } catch (e) {
@@ -950,7 +950,7 @@ function RequestAccessCard({
     setBusy(true);
     setError(null);
     try {
-      const r = await joinNamespace(org, typedName, { role });
+      const r = await joinNamespace(org, typedName, { role }, "explicit");
       if (r.status === "pending") {
         const admins =
           (r.pending_admins || []).slice(0, 3).join(", ") + ((r.pending_admins?.length || 0) > 3 ? ", …" : "");

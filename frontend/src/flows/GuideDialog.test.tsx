@@ -57,7 +57,7 @@ describe("GuideDialog", () => {
       content: "Keys: acct/<id>/plan\nTag stale",
       note: "",
       expected_revision: 3,
-    });
+    }, "explicit");
   });
 
   it("closes an open editor when a reason appears, and saves nothing", async () => {

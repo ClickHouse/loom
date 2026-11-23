@@ -157,8 +157,8 @@ describe("All documents", () => {
     expect(add).toHaveAccessibleDescription("Add to collection… takes documents from one place at a time.");
     await userEvent.click(within(bar).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(api.bulkDeleteKnowledge).toHaveBeenCalledTimes(2));
-    expect(api.bulkDeleteKnowledge).toHaveBeenCalledWith({ org: "acme", namespace: "team" }, ["notes/plan.md"]);
-    expect(api.bulkDeleteKnowledge).toHaveBeenCalledWith({ org: "acme", namespace: "col-eng" }, ["runbooks/drain.md"]);
+    expect(api.bulkDeleteKnowledge).toHaveBeenCalledWith({ org: "acme", namespace: "team" }, ["notes/plan.md"], "explicit");
+    expect(api.bulkDeleteKnowledge).toHaveBeenCalledWith({ org: "acme", namespace: "col-eng" }, ["runbooks/drain.md"], "explicit");
   });
 
   it("moves a selection from the place its rows are in, and a row from its own place", async () => {
@@ -245,6 +245,7 @@ describe("All documents", () => {
         ["runbooks/drain.md", "runbooks/fill.md"],
         expect.any(AbortSignal),
         expect.any(Function),
+        "explicit",
       ),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

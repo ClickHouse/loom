@@ -71,6 +71,7 @@ import { envVar, isBrowser, runtimeIdent } from "./runtime.js";
 import {
   boundProtection,
   observeJsonResponse,
+  protectionHeaders,
   refuseResponse,
   requireAutomaticAllowed,
   requireAutomaticLocallyAllowed,
@@ -86,7 +87,7 @@ export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export interface TransportOptions {
   baseUrl: string;
-  /** Application-owned durable control; binding alone does not declare protocol capability. */
+  /** Application-owned durable control, validated before declaring request protection. */
   sessionProtection?: SessionProtection;
   apiKey?: string;
   /** A credential fetched per request (a bot's `MachineLogin`, a `StoredLogin`); not with `apiKey`. */
@@ -361,10 +362,19 @@ export class Transport {
         if (bearer) headers.Authorization = `Bearer ${bearer}`;
       }
       if (automatic) await boundProtection(requireAutomaticAllowed(roots, true), roots, this.timeoutMs, opts.signal);
+      const admitted = roots.length
+        ? await boundProtection(protectionHeaders(headers, roots), roots, this.timeoutMs, opts.signal)
+        : await protectionHeaders(headers, roots);
       requireAutomaticLocallyAllowed(roots, automatic);
       let res: Response;
       try {
-        res = await this.fetchImpl(url, { method: "POST", headers, body: payload, signal: opts.signal });
+        res = await this.fetchImpl(url, {
+          method: "POST",
+          headers: admitted,
+          body: payload,
+          signal: opts.signal,
+          redirect: "error",
+        });
       } catch (e) {
         if (opts.signal?.aborted) throw aborted(e);
         const err = new BackendUnavailable(`${path}: cannot reach ${this.baseUrl}: ${describe(e)}`, {
@@ -508,15 +518,20 @@ export class Transport {
         await boundProtection(requireAutomaticAllowed(ctx.roots, true), ctx.roots, timeoutMs, ctrl.signal);
       }
       throwIfAborted(ctx);
+      const headers = ctx.roots.length
+        ? await boundProtection(protectionHeaders(ctx.headers, ctx.roots), ctx.roots, timeoutMs, ctrl.signal)
+        : await protectionHeaders(ctx.headers, ctx.roots);
+      throwIfAborted(ctx);
       requireAutomaticLocallyAllowed(ctx.roots, ctx.automatic);
       let res: Response;
       try {
         res = await this.fetchImpl(ctx.url, {
           method: ctx.method,
-          headers: ctx.headers,
+          headers,
           // A byte array is a fetch body; TypeScript's lib types narrow it to ArrayBuffer-backed views.
           body: ctx.payload as BodyInit | undefined,
           signal: ctrl.signal,
+          redirect: "error",
         });
       } catch (e) {
         return { failed: "connect", error: e };

@@ -662,7 +662,6 @@ def _cmd_import_recall(args: argparse.Namespace) -> int:
       --token T             JWT for --base-url mode
       --dry-run             introspect + plan, print the summary, no writes
     """
-    import asyncio
     import sqlite3
     import sys
 
@@ -741,7 +740,9 @@ def _cmd_import_recall(args: argparse.Namespace) -> int:
         print(f"✓ import complete: {ok} writes ok, {failed} failed")
         return 0 if failed == 0 else 1
 
-    return asyncio.run(_run())
+    from server.cli._session_context import run_async
+
+    return run_async(_run)
 
 
 _OpHandlers = dict[str, Callable[[dict[str, Any]], Awaitable[Any]]]
@@ -772,7 +773,11 @@ def _make_http_writer(
     base = base_url.rstrip("/")
 
     async def _http_writer(op: str, payload: dict[str, Any]) -> None:
-        r = await client.post(f"{base}/v1/{op}", json=_recall_jsonable(payload))
+        from server.cli import _session_context
+
+        r = await _session_context.post(
+            client, f"{base}/v1/{op}", token, body=_recall_jsonable(payload), timeout_s=timeout_s
+        )
         if _publication_pending(r):
             return  # committed; the server's delivery worker publishes it
         r.raise_for_status()

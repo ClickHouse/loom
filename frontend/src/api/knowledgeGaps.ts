@@ -39,6 +39,7 @@ export async function listKnowledgeGaps(
 export async function draftKnowledgeGap(
   id: Pick<Identity, "org" | "namespace">,
   gapId: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ candidate_id: string }> {
-  return post("/v1/knowledge.gaps.draft", { ...id, gap_id: gapId });
+  return post("/v1/knowledge.gaps.draft", { ...id, gap_id: gapId }, undefined, intent);
 }

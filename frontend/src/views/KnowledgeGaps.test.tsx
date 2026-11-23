@@ -81,6 +81,6 @@ it("queues one private draft and says where to review it", async () => {
   const action = await screen.findByRole("button", { name: "Draft definition for what is arr" });
   fireEvent.click(action);
   await screen.findByText(/Review the draft in Review queue/);
-  expect(draftKnowledgeGap).toHaveBeenCalledWith({ org: "o", namespace: "ns" }, "g1");
+  expect(draftKnowledgeGap).toHaveBeenCalledWith({ org: "o", namespace: "ns" }, "g1", "explicit");
   expect(action).toBeDisabled();
 });

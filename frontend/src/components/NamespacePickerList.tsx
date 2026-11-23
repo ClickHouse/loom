@@ -241,7 +241,7 @@ export function NamespacePickerList({
     )
       return;
     try {
-      await cancelNamespaceRequest(identity.org, ns);
+      await cancelNamespaceRequest(identity.org, ns, "explicit");
       toast(`Withdrew ${role} request`, "ok");
       invalidateShared("mine:");
       listMine(identity.org)

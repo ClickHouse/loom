@@ -316,10 +316,6 @@ Raised in `server/code/app/repo_admin.py`.
 
 Raised in `server/knowledge/app/sources.py`.
 
-#### `BAD_LINK`
-
-Raised in `server/knowledge/app/sources.py`.
-
 #### `BAD_MAPPING`
 
 Raised in `server/tracker/app/sources.py`.
@@ -450,7 +446,7 @@ Raised in `server/tracker/app/sources.py`.
 
 #### `CREDENTIAL_REFUSED`
 
-Raised in `server/knowledge/app/connected_sources.py`, `server/knowledge/app/sources.py`.
+Raised in `server/knowledge/app/sources.py`.
 
 #### `CROSS_SITE_REQUEST`
 
@@ -599,6 +595,10 @@ Raised in `server/memory/domain/lock.py`. What to do: [common errors](#common-er
 #### `MAPPING_FAILED`
 
 Raised in `server/tracker/app/sources.py`.
+
+#### `MCP_SOURCE_UNAVAILABLE`
+
+Raised in `server/knowledge/app/mcp_source_ops.py`.
 
 #### `MISDIRECTED_REQUEST`
 

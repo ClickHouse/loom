@@ -3,6 +3,11 @@ import { _resetVitals, flushView, installVitals, startView } from "./vitals";
 import { noteCallEnd, noteCallStart } from "./vitalsCounter";
 import { setPageOwner, setToken } from "../api";
 
+// Payload assertions observe dispatch input; the protection test exercises the real guard.
+vi.mock("./dashboardTransport", () => ({
+  dashboardFetch: (input: string, init: RequestInit) => globalThis.fetch(input, init),
+}));
+
 // One ui.vitals row per page view, posted when the view ends, carrying the route, the
 // view's call count and span, the DOM size and the build; LCP only on the first view of
 // the document.

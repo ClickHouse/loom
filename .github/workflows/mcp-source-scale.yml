@@ -1,0 +1,271 @@
+name: MCP source scale qualification
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/mcp-source-scale.yml
+      - .github/workflows/mcp-source-lifecycle.yml
+      - scripts/ops/qualify_mcp_source_scale.py
+      - tests/integration/mcp_source_scale*.py
+      - tests/integration/mcp_source_qualification*.py
+      - server/knowledge/**
+      - server/clients/mcp_source.py
+      - server/auth/**
+      - server/core/**
+      - server/identity/**
+      - server/memory/**
+      - server/embedding/**
+      - server/settings/**
+      - server/operations/**
+      - server/transport/**
+      - server/workers/**
+      - server/storage/**
+      - server/main.py
+      - sdk/python/**
+      - schemas/**
+      - dev/ci_start_clickhouse.sh
+      - dev/ci_start_postgres.sh
+      - dev/clickhouse_release.sh
+      - pyproject.toml
+      - uv.lock
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact commit SHA to qualify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.12.19"
+
+jobs:
+  clickhouse:
+    name: Resolve the ClickHouse release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      - name: Validate a dispatched commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: '[[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: /dev/clickhouse_release.sh
+          sparse-checkout-cone-mode: false
+      - id: resolve
+        run: |
+          image=$(bash dev/clickhouse_release.sh)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+  qualification:
+    name: Capacity and scheduling (${{ matrix.authority }})
+    needs: clickhouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        authority: [clickhouse, postgres]
+    env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
+      LOOM_CH_HOST: 127.0.0.1
+      LOOM_CH_PORT: "8123"
+      LOOM_CH_USER: loom
+      LOOM_CH_READER_USER: loom_reader
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_CH_SECURE: "false"
+      LOOM_PG_IMAGE: postgres:16
+      LOOM_PG_STANDBY: "1"
+      LOOM_STORAGE_AUTHORITY: ${{ matrix.authority }}
+      LOOM_AUTH_REQUIRED: "true"
+      LOOM_BIND_HOST: 127.0.0.1
+      LOOM_LLM_PROVIDER: fake
+      LOOM_LLM_FALLBACK_MODEL: ""
+      LOOM_EMBEDDING_MODEL: fake-ngram-1024
+      LOOM_BACKGROUND_WORKERS: "off"
+      LOOM_BOOT_MIGRATE: "true"
+      LOOM_ENV_FILE: ""
+      LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED: "true"
+      LOOM_KNOWLEDGE_SOURCE_SELF_SERVICE_ENABLED: "true"
+      LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED: "true"
+      LOOM_DOCUMENT_OBJECT_STORE: s3
+      LOOM_DOCUMENT_S3_ENDPOINT_URL: http://127.0.0.1:9000
+      LOOM_DOCUMENT_S3_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: "true"
+      LOOM_MCP_SOURCE_QUALIFICATION: github-owned
+      LOOM_MCP_SOURCE_SCALE: github-owned
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_PAGE_SIZE: "100"
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_SCAN_PAGES: "16"
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_READY: "256"
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_GLOBAL: "16"
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_PER_ORG: "4"
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_PER_ENDPOINT: "2"
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_DOCUMENTS: "1"
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_SOURCE_SECONDS: "5"
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_QUERY_ROWS: "1000000"
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_QUERY_BYTES: "67108864"
+      LOOM_KNOWLEDGE_SOURCE_MCP_SCHEDULE_QUERY_SECONDS: "5"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/*/
+            /server/
+            /scripts/
+            /schemas/
+            /dev/
+            /deploy/
+            /sdk/
+            /extractor/
+            /tests/__init__.py
+            /tests/conftest.py
+            /tests/integration/__init__.py
+            /tests/integration/conftest.py
+            /tests/integration/_resources.py
+            /tests/integration/_redact.py
+            /tests/integration/mcp_source_scale*.py
+            /tests/integration/mcp_source_qualification*.py
+            !/tests/unit/test_term_leg.py
+            !/tests/integration/test_term_leg.py
+            !/integrations/librechat/qualification/cases.json
+            !/integrations/librechat/qualification/fixture.json
+            !/integrations/librechat/qualification/qualify.py
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Install the locked dependencies
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code >/dev/null 2>&1
+          uv pip install --no-deps -e sdk/python >/dev/null 2>&1
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Initialize fresh synthetic secrets and exact ownership
+        id: ownership
+        env:
+          AUTHORITY: ${{ matrix.authority }}
+        run: |
+          python - <<'PY'
+          import os
+          import secrets
+          import subprocess
+
+          values = {
+              "QUALIFICATION_SHA": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "LOOM_JWT_SECRET": secrets.token_hex(32),
+              "AWS_ACCESS_KEY_ID": secrets.token_hex(16),
+              "AWS_SECRET_ACCESS_KEY": secrets.token_hex(32),
+              "LOOM_DOCUMENT_S3_BUCKET": "mcp-qualification-" + secrets.token_hex(12),
+              "LOOM_INSTANCE_LABEL": "mcp-source-scale",
+              "LOOM_CH_CONTAINER": "mcp-source-scale-ch",
+              "LOOM_PG_CONTAINER": "mcp-source-scale-pg",
+              "LOOM_PG_DSN": "postgres://loom:loomdev@127.0.0.1:5432/loom" if os.environ["AUTHORITY"] == "postgres" else "",
+          }
+          values["LOOM_BUILD_COMMIT"] = values["QUALIFICATION_SHA"]
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              for key, value in values.items():
+                  output.write(key + "=" + value + "\n")
+          PY
+      - name: Refuse preexisting fixture containers
+        id: fresh
+        run: |
+          for container in "$LOOM_CH_CONTAINER" "$LOOM_PG_CONTAINER" "$LOOM_PG_CONTAINER-standby" mcp-source-scale-objects; do
+            if docker container inspect "$container" >/dev/null 2>&1; then
+              echo "MCP source qualification: status=refused"
+              exit 1
+            fi
+          done
+          if docker network inspect "$LOOM_PG_CONTAINER-net" >/dev/null 2>&1; then
+            echo "MCP source qualification: status=refused"
+            exit 1
+          fi
+      - name: Start the owned ClickHouse with Keeper
+        id: ch
+        run: bash dev/ci_start_clickhouse.sh >/dev/null 2>&1
+      - name: Start the owned Postgres 16 authority and synchronous standby
+        id: pg
+        if: matrix.authority == 'postgres'
+        run: bash dev/ci_start_postgres.sh >/dev/null 2>&1
+      - name: Start the owned originals store
+        id: objects
+        run: |
+          docker run -d --name mcp-source-scale-objects -p 127.0.0.1:9000:9000 \
+            -e MINIO_ROOT_USER="$AWS_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$AWS_SECRET_ACCESS_KEY" \
+            minio/minio:RELEASE.2025-04-22T22-12-26Z server /data >/dev/null 2>&1
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://127.0.0.1:9000/minio/health/ready >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+      - name: Apply the normal schema journal
+        run: python -m server.core.schema.migrate >/dev/null 2>&1
+      - name: Qualify the frozen scale contract
+        run: python -m scripts.ops.qualify_mcp_source_scale --result "$RUNNER_TEMP/scale-report.json"
+      - name: Stop only this job's stores
+        id: cleanup
+        if: always() && steps.fresh.outcome == 'success'
+        env:
+          CH_STARTED: ${{ steps.ch.outcome }}
+          PG_STARTED: ${{ steps.pg.outcome }}
+          OBJECTS_STARTED: ${{ steps.objects.outcome }}
+        run: |
+          cleanup_status=0
+          stop_owned() {
+            if docker container inspect "$1" >/dev/null 2>&1; then
+              docker rm -f -v "$1" >/dev/null 2>&1 || cleanup_status=1
+            fi
+          }
+          if [ "$CH_STARTED" != '' ] && [ "$CH_STARTED" != 'skipped' ]; then
+            stop_owned "$LOOM_CH_CONTAINER"
+          fi
+          if [ "$PG_STARTED" != '' ] && [ "$PG_STARTED" != 'skipped' ]; then
+            stop_owned "$LOOM_PG_CONTAINER-standby"
+            stop_owned "$LOOM_PG_CONTAINER"
+            if docker network inspect "$LOOM_PG_CONTAINER-net" >/dev/null 2>&1; then
+              docker network rm "$LOOM_PG_CONTAINER-net" >/dev/null 2>&1 || cleanup_status=1
+            fi
+          fi
+          if [ "$OBJECTS_STARTED" != '' ] && [ "$OBJECTS_STARTED" != 'skipped' ]; then
+            stop_owned mcp-source-scale-objects
+          fi
+          echo "MCP source qualification: cleanup_status=$cleanup_status"
+          echo "status=$cleanup_status" >> "$GITHUB_OUTPUT"
+          exit "$cleanup_status"
+      - name: Finalize the result after store cleanup
+        if: always()
+        env:
+          CLEANUP_STATUS: ${{ steps.cleanup.outputs.status || '1' }}
+        run: >-
+          python -m scripts.ops.qualify_mcp_source_scale
+          --result "$RUNNER_TEMP/scale-report.json"
+          --cleanup-status "$CLEANUP_STATUS"
+      - name: Upload only the bounded qualification report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mcp-source-scale-${{ matrix.authority }}
+          path: ${{ runner.temp }}/scale-report.json
+          if-no-files-found: error
+          retention-days: 7

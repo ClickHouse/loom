@@ -39,7 +39,7 @@ export function LockMemoryDialog({
       confirm="Lock"
       onClose={onClose}
       onSubmit={async (reason) => {
-        const r = await lockMemory(row, memoryKey, mode, reason);
+        const r = await lockMemory(row, memoryKey, mode, reason, "explicit");
         if (!r.locked) throw new Error("This memory is no longer live.");
         toast("Locked", "ok");
         onDone();
@@ -75,7 +75,7 @@ export function RejectMemoryDialog({
       danger
       onClose={onClose}
       onSubmit={async (reason) => {
-        await rejectMemory(row, memoryKey, reason);
+        await rejectMemory(row, memoryKey, reason, "explicit");
         toast("Marked as wrong", "ok");
         onDone();
       }}

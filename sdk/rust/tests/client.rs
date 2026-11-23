@@ -22,6 +22,9 @@ const VERSION: u64 = 1_790_000_000_000_000_123;
 #[path = "network_cases/mod.rs"]
 mod network;
 
+#[path = "network_cases/session_protection_http.rs"]
+mod protection_http;
+
 struct Request {
     line: String,
     headers: HashMap<String, String>,

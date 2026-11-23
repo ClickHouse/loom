@@ -125,11 +125,6 @@ module ClickHouse
       CODE = "BAD_KIND"
     end
 
-    # `BAD_LINK`: Server code
-    class BadLink < Error
-      CODE = "BAD_LINK"
-    end
-
     # `BAD_MAPPING`: Server code
     class BadMapping < Error
       CODE = "BAD_MAPPING"
@@ -478,6 +473,11 @@ module ClickHouse
     # `MAPPING_FAILED`: Server code
     class MappingFailed < Error
       CODE = "MAPPING_FAILED"
+    end
+
+    # `MCP_SOURCE_UNAVAILABLE`: Server code
+    class McpSourceUnavailable < Error
+      CODE = "MCP_SOURCE_UNAVAILABLE"
     end
 
     # `MISDIRECTED_REQUEST`: Server code
@@ -997,7 +997,6 @@ module ClickHouse
       "BAD_INPUT" => BadInput,
       "BAD_JOIN_POLICY" => BadJoinPolicy,
       "BAD_KIND" => BadKind,
-      "BAD_LINK" => BadLink,
       "BAD_MAPPING" => BadMapping,
       "BAD_NAME" => BadName,
       "BAD_NAMESPACE" => BadNamespace,
@@ -1068,6 +1067,7 @@ module ClickHouse
       "KEY_HOLDS_FACT" => KeyHoldsFact,
       "LOCKED" => Locked,
       "MAPPING_FAILED" => MappingFailed,
+      "MCP_SOURCE_UNAVAILABLE" => McpSourceUnavailable,
       "MISDIRECTED_REQUEST" => MisdirectedRequest,
       "MISSING_IDENTITY_FIELD" => MissingIdentityField,
       "MISSING_REQUIRED_FIELD" => MissingRequiredField,

@@ -257,10 +257,39 @@ python scripts/codegen/docs_reference.py
 | `loom decisions extract` | Mine one knowledge document into decision records: the model reads the document whole (or in windows of whole sections past LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS; a heading over only an image and… | `--org`, `--namespace`, `--source-uri`, `--repo`, `--into`, `--max-per-section`, `--window-chars`, `--apply`, `--dry-run` |
 | `loom knowledge` | Knowledge documents and their sources. |  |
 | `loom knowledge sync` | Run one sync pass over a repository namespace's document sources now: list each source's changed files (every file with --full), write the changed ones as documents and retire those a full listing no… | `--org`, `--namespace`, `--source`, `--full` |
-| `loom knowledge source` | A namespace's document sources, over a running server. |  |
-| `loom knowledge source list` | List the namespace's sources, items and sync state. | `--namespace`, `--org`, `--server-url`, `--token` |
-| `loom knowledge source add` | Register a source from links or items, probed with the credential before anything is stored (knowledge.source.add). | `--namespace`, `--org`, `--server-url`, `--token`, `--name`, `--kind`, `--link`, `--item-json`, `--include`, `--credential-file`, `--dry-run` |
-| `loom knowledge source update` | Add and remove a source's items or change its file kinds, the added items probed with the stored credential (knowledge.source.update). | `--namespace`, `--org`, `--server-url`, `--token`, `--name`, `--link`, `--item-json`, `--include`, `--remove-link`, `--remove-item-json` |
+| `loom knowledge source` | MCP sources, connections, collection destinations and recordings. |  |
+| `loom knowledge source preview` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source add` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source update` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source list` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source inspect` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source pause` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source resume` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source refresh` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source read` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source remove` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source connection` |  |  |
+| `loom knowledge source connection profiles` |  | `--server-url`, `--org`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source connection connect` |  | `--server-url`, `--org`, `--request-file`, `--token-file`, `--session-file`, `--intent`, `--bearer-file` |
+| `loom knowledge source connection list` |  | `--server-url`, `--org`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source connection inspect` |  | `--server-url`, `--org`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source connection discover` |  | `--server-url`, `--org`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source connection browse` |  | `--server-url`, `--org`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source connection disconnect` |  | `--server-url`, `--org`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source destination` |  |  |
+| `loom knowledge source destination list` |  | `--server-url`, `--org`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source destination create` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source destination grants` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source destination grant` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source destination preview` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source recording` |  |  |
+| `loom knowledge source recording add` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent`, `--credential-file` |
+| `loom knowledge source recording list` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source recording sync-now` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source retained` |  |  |
+| `loom knowledge source retained list` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source retained inspect` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
+| `loom knowledge source retained remove` |  | `--server-url`, `--org`, `--namespace`, `--request-file`, `--token-file`, `--session-file`, `--intent` |
 | `loom knowledge migrate-originals` | Move the document originals still held in ClickHouse, that a document, upload or ingestion needs, to LOOM_DOCUMENT_S3_BUCKET: each is copied to its own object, hash-verified and switched, fenced by… | `--org`, `--namespace`, `--dry-run` |
 | `loom export-okf` | Render a namespace as an OKF v0.2 bundle (Markdown + frontmatter) — the git-reviewable projection of Loom memory. | `--server-url`, `--token`, `--org`, `--namespace`, `--out`, `--title`, `--include-tombstoned`, `--limit`, `--dry-run`, `--no-evidence`, `--no-links`, `--include-high` |
 | `loom import-okf` | Write the concepts of an OKF v0.2 bundle into a namespace via memory.set. | `<path>`, `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--user-id`, `--session-id`, `--keep-sessions`, `--verify`, `--dry-run`, `--no-evidence`, `--no-lint`, `--force-import`, `--no-links`, `--prune` |

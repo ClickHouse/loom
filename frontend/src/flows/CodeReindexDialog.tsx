@@ -44,7 +44,7 @@ export function CodeReindexDialog({
     setBusy(true);
     setError(null);
     try {
-      const r = await codeReindex(id, sha);
+      const r = await codeReindex(id, sha, "explicit");
       toast(`${branch.repo} @ ${branch.branch} indexes the commits after ${r.new_head.slice(0, 12)} again`, "ok");
       onDone();
       onClose();

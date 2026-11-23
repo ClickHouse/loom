@@ -255,7 +255,7 @@ function useJoinActions(onChanged: () => void) {
   const join = async (r: CodeRepoSummary, role: RepoRole = "viewer") => {
     setBusy(r.namespace);
     try {
-      if (await joinTarget(branchTarget(r), role)) onChanged();
+      if (await joinTarget(branchTarget(r), role, "explicit")) onChanged();
     } finally {
       setBusy(null);
     }
@@ -263,7 +263,7 @@ function useJoinActions(onChanged: () => void) {
   const cancel = async (r: CodeRepoSummary) => {
     setBusy(r.namespace);
     try {
-      if (await withdrawTarget(branchTarget(r))) onChanged();
+      if (await withdrawTarget(branchTarget(r), "explicit")) onChanged();
     } finally {
       setBusy(null);
     }
@@ -271,7 +271,7 @@ function useJoinActions(onChanged: () => void) {
   const leave = async (r: CodeRepoSummary) => {
     setBusy(r.namespace);
     try {
-      if (await leaveTarget(branchTarget(r))) onChanged();
+      if (await leaveTarget(branchTarget(r), "explicit")) onChanged();
     } finally {
       setBusy(null);
     }
@@ -293,7 +293,7 @@ function useJoinActions(onChanged: () => void) {
       failed = 0;
     for (const b of plan.join) {
       try {
-        const res = await joinNamespace(b.org, b.namespace, { role: "viewer" });
+        const res = await joinNamespace(b.org, b.namespace, { role: "viewer" }, "explicit");
         if (res.status === "pending") requested++;
         else joined++;
       } catch {
@@ -302,7 +302,7 @@ function useJoinActions(onChanged: () => void) {
     }
     for (const b of plan.leave) {
       try {
-        await leaveNamespace(b.org, b.namespace);
+        await leaveNamespace(b.org, b.namespace, "explicit");
         left++;
       } catch {
         failed++;
@@ -310,7 +310,7 @@ function useJoinActions(onChanged: () => void) {
     }
     for (const b of plan.withdraw) {
       try {
-        await cancelNamespaceRequest(b.org, b.namespace);
+        await cancelNamespaceRequest(b.org, b.namespace, "explicit");
         withdrawn++;
       } catch {
         failed++;
@@ -490,7 +490,7 @@ function RepositoriesHome({
 
   const bindSource = async (g: RepoGroup, tracker_namespaces: string[]) => {
     try {
-      const out = await setCodeRepoSource(g.primary.org, g.primary.namespace, tracker_namespaces);
+      const out = await setCodeRepoSource(g.primary.org, g.primary.namespace, tracker_namespaces, "explicit");
       toast(...linkedToast(g.primary.repo, out));
       onChanged();
     } catch (e) {
@@ -499,7 +499,7 @@ function RepositoriesHome({
   };
   const refreshBranch = async (b: CodeRepoSummary) => {
     try {
-      const r = await codeRefresh({ org: b.org, namespace: b.namespace });
+      const r = await codeRefresh({ org: b.org, namespace: b.namespace }, "explicit");
       toast(
         r.already_running
           ? `An ingest pass is already running on ${b.repo} @ ${b.branch}`
@@ -521,7 +521,7 @@ function RepositoriesHome({
     )
       return;
     try {
-      const out = await removeCodeRepo(b.org, b.namespace);
+      const out = await removeCodeRepo(b.org, b.namespace, "explicit");
       toast(`Retired ${out.repo} @ ${out.branch} · its rows are purging in the background`, "ok");
       onChanged();
     } catch (e) {
@@ -553,7 +553,7 @@ function RepositoriesHome({
     let done = 0;
     for (const b of mine) {
       try {
-        await setCodeRepoAccess(b.org, b.namespace, classification, join_policy, opening ? b.namespace : "");
+        await setCodeRepoAccess(b.org, b.namespace, classification, join_policy, opening ? b.namespace : "", "explicit");
         done += 1;
       } catch (e) {
         toastError(`Couldn't change access on ${b.namespace}`, e);
@@ -1259,7 +1259,7 @@ export function AddRepositoryDialog({
         exclude_generated: skipGenerated,
         scip_producer: producer,
         branches: others,
-      });
+      }, "explicit");
       const n = 1 + (out.also?.length ?? 0);
       const skipped = out.skipped?.length
         ? `; ${out.skipped.length} branch${out.skipped.length === 1 ? "" : "es"} refused: ${out.skipped.map((x) => x.branch).join(", ")}`
@@ -1626,7 +1626,7 @@ function AddBranchDialog({
     setBusy(true);
     setError(null);
     try {
-      const out = await addCodeBranch(src.org, src.namespace, branch.trim());
+      const out = await addCodeBranch(src.org, src.namespace, branch.trim(), "explicit");
       toast(`Added ${out.repo} @ ${out.branch} — it shares the mirror, indexing starts within two minutes`, "ok");
       onOpenChange(false);
       onAdded();
@@ -1996,7 +1996,7 @@ export function HealthTab({ id, repo }: { id: CodeId; repo: CodeRepoSummary }) {
     if (refreshReason) return;
     setRefreshing(true);
     try {
-      const r = await codeRefresh(id);
+      const r = await codeRefresh(id, "explicit");
       toast(r.already_running ? "An ingest pass is already running" : "Ingest pass triggered", "ok");
       setTimeout(load, 2500);
     } catch (e) {
@@ -3144,7 +3144,7 @@ export function AccessTab({
       return;
     setBusy("rule");
     try {
-      await reregisterNamespace(id, ns, { join_policy: next });
+      await reregisterNamespace(id, ns, { join_policy: next }, "explicit");
       toast(`${id.namespace} is now ${RULE_META[next].label.toLowerCase()}`, "ok");
       load();
     } catch (err) {
@@ -3157,7 +3157,7 @@ export function AccessTab({
   const decide = async (g: GrantEntry, decision: "approve" | "reject", as?: RepoRole) => {
     setBusy(g.subject);
     try {
-      await approveGrant(id, g.subject, decision, as);
+      await approveGrant(id, g.subject, decision, as, "explicit");
       const granted = as ?? askedFor(g);
       toast(
         decision === "approve"
@@ -3180,7 +3180,7 @@ export function AccessTab({
     let ok = 0;
     for (const g of waiting) {
       try {
-        await approveGrant(id, g.subject, "approve");
+        await approveGrant(id, g.subject, "approve", undefined, "explicit");
         ok++;
       } catch {
         /* keep going */
@@ -3197,7 +3197,7 @@ export function AccessTab({
     if (!s || !canManage) return;
     setBusy("add");
     try {
-      await createGrant(id, s, role);
+      await createGrant(id, s, role, undefined, "explicit");
       toast(`${s} is now a ${roleWord(role)}`, "ok");
       setSubject("");
       load();
@@ -3219,7 +3219,7 @@ export function AccessTab({
     )
       return;
     try {
-      await revokeGrant(id, g.subject);
+      await revokeGrant(id, g.subject, "explicit");
       toast(`Removed ${g.subject}`, "ok");
       load();
     } catch (err) {
@@ -3271,7 +3271,7 @@ export function AccessTab({
     let ok = 0;
     for (const t of targets) {
       try {
-        await approveGrant(t, g.subject, "approve");
+        await approveGrant(t, g.subject, "approve", undefined, "explicit");
         ok++;
       } catch {
         /* keep going */
@@ -3657,7 +3657,7 @@ export function AccessTab({
                   return;
                 setBusy("retire");
                 try {
-                  const out = await removeCodeRepo(id.org, id.namespace);
+                  const out = await removeCodeRepo(id.org, id.namespace, "explicit");
                   toast(
                     `Retired ${out.repo} @ ${out.branch} · ${out.purged_tables} tables purging as erasure ${out.erasure_id.slice(0, 8)}${out.mirror_removed ? " · mirror removed" : ""}`,
                     "ok",

@@ -113,7 +113,7 @@ export function Profile() {
     if (!ok) return;
     setBulkBusy(true);
     try {
-      await Promise.all(Array.from(selected).map((label) => deleteProfileSection(identity, label)));
+      await Promise.all(Array.from(selected).map((label) => deleteProfileSection(identity, label, "explicit")));
       toast(`Deleted ${selected.size} section${selected.size === 1 ? "" : "s"}`, "ok");
       selection.clear();
       refresh();
@@ -885,7 +885,7 @@ function SectionEditor({
     }
     setSaving(true);
     try {
-      await setProfileSection(identity, label.trim(), value, DEFAULT_CHAR_LIMIT);
+      await setProfileSection(identity, label.trim(), value, DEFAULT_CHAR_LIMIT, "explicit");
       toast(isNew ? "Section created" : "Section saved", "ok");
       onSaved();
     } catch (e) {
@@ -960,7 +960,7 @@ async function onDelete(identity: Identity, label: string, refresh: () => void) 
   });
   if (!ok) return;
   try {
-    await deleteProfileSection(identity, label);
+    await deleteProfileSection(identity, label, "explicit");
     toast("Section deleted", "ok");
     refresh();
   } catch (e) {

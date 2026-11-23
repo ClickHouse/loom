@@ -464,7 +464,7 @@ export function HeaderSearch({
         const sent = m.askFromSearch(question, (turnId) => {
           shown = turnId;
           setAsked((a) => (a && a.question === question ? { ...a, turnId } : a));
-        });
+        }, "explicit");
         setAsked({ question, turnId: shown, busy: !sent });
         // The card's Continue in chat is the first option now.
         setActiveIdx(0);

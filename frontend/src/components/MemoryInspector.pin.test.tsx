@@ -97,7 +97,7 @@ describe("MemoryInspector pin", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "Pin" }));
 
     await waitFor(() => expect(pinMemory).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(pinMemory).mock.calls[0]).toEqual([identity, "coffee_pref", LIVE]);
+    expect(vi.mocked(pinMemory).mock.calls[0]).toEqual([identity, "coffee_pref", LIVE, "explicit"]);
   });
 
   it("stays pinned when memory.pin committed with only search behind, and rolls back a failure", async () => {
@@ -141,6 +141,7 @@ describe("MemoryInspector pin", () => {
     expect(vi.mocked(unpinMemory).mock.calls[0]).toEqual([
       { ...identity, agent: "claude-desktop", user_id: "alice", session_id: "s1" },
       "coffee_pref",
+      "explicit",
     ]);
   });
 });

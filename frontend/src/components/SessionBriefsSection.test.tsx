@@ -85,7 +85,7 @@ describe("SessionBriefsSection", () => {
     deleteBrief.mockResolvedValue({ deleted: true });
     render(<SessionBriefsSection org="o" namespace="ns" />);
     fireEvent.click(await screen.findByRole("button", { name: "Forget brief Billing handoff" }));
-    await waitFor(() => expect(deleteBrief).toHaveBeenCalledWith({ org: "o", namespace: "ns" }, "handoff/billing"));
+    await waitFor(() => expect(deleteBrief).toHaveBeenCalledWith({ org: "o", namespace: "ns" }, "handoff/billing", "explicit"));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Forget brief Billing handoff" })).toBeNull());
   });
 

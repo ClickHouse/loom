@@ -568,7 +568,7 @@ function BudgetCapEditor({
         toast("Namespace not found", "error");
         return;
       }
-      await reregisterNamespace({ org, namespace }, ns, { daily_cost_cap_usd: v });
+      await reregisterNamespace({ org, namespace }, ns, { daily_cost_cap_usd: v }, "explicit");
       // The sidebar's badge and this page read budget status through one shared cache.
       invalidateShared(`budget:${org}/${namespace}`);
       toast(v > 0 ? `Cap set to $${v.toFixed(4)}/day` : "Cap removed (inherits global default)", "ok");

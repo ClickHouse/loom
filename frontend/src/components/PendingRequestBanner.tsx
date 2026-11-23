@@ -61,7 +61,7 @@ export function PendingRequestBanner() {
       return;
     setCancelling(true);
     try {
-      await cancelNamespaceRequest(identity.org, entry.namespace);
+      await cancelNamespaceRequest(identity.org, entry.namespace, "explicit");
       toast(`Withdrew ${requested} request on ${entry.namespace}`, "ok");
       setEntry(null);
     } catch (e) {

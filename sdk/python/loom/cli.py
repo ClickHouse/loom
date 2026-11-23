@@ -21,7 +21,6 @@ given: GET without a body, POST with one. `key=value` sends text as it is;
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import math
 import os
@@ -284,7 +283,23 @@ def _list_ops() -> None:
 
 
 def run(args: argparse.Namespace) -> int:
+    from loom.cli_context import ContextUnavailable, command_intent
+    from loom.session_protection import AutomaticCaptureSuppressed, SessionProtectionUnavailable
+
+    try:
+        with command_intent(args):
+            return _run(args)
+    except (ContextUnavailable, AutomaticCaptureSuppressed, SessionProtectionUnavailable):
+        print(
+            "Trusted CLI session protection refused; retain its context and proof.", file=sys.stderr
+        )
+        return 2
+
+
+def _run(args: argparse.Namespace) -> int:
     """Run one parsed command: prints the answer, returns the exit code."""
+    from loom.cli_context import guarded_command, run_sync
+
     try:
         if args.cmd == "login":
             credentials.login(
@@ -300,9 +315,11 @@ def run(args: argparse.Namespace) -> int:
         elif args.cmd == "whoami":
             print(json.dumps(credentials.whoami(args.profile), indent=2))
         elif args.cmd == "token":
-            print(json.dumps(asyncio.run(_token(args)), indent=2, default=str))
+            print(
+                json.dumps(run_sync(lambda: guarded_command(args, _token)), indent=2, default=str)
+            )
         elif args.cmd == "connect":
-            url = asyncio.run(_connect(args))
+            url = run_sync(lambda: guarded_command(args, _connect))
             print(f"To connect {args.provider}, open:\n{url}")
             print("Sign in as the intended account owner and choose Connect or Reconnect.")
         elif args.list:
@@ -314,7 +331,7 @@ def run(args: argparse.Namespace) -> int:
                 )
                 print(f"loom call: {what} (`loom call --list` lists the ops)", file=sys.stderr)
                 return 2
-            result = asyncio.run(_call(args))
+            result = run_sync(lambda: guarded_command(args, _call))
             if result is not None:
                 print(json.dumps(result, indent=2, default=str))
     except (LoomError, httpx.HTTPError, ValueError, OSError) as e:
@@ -335,6 +352,12 @@ def run(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
     parser = argparse.ArgumentParser(prog=prog, description="Use Loom from the command line.")
+    parser.add_argument(
+        "--request-intent",
+        choices=("automatic", "explicit"),
+        default="automatic",
+        help="Explicit is one direct human request; automatic is the default.",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
     for name, help_text in (
         ("login", "sign in on any browser with a one-time code"),
@@ -349,6 +372,12 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
         p.add_argument("--profile", help="credentials profile (default: LOOM_PROFILE or 'default')")
+        p.add_argument(
+            "--request-intent",
+            choices=("automatic", "explicit"),
+            default=argparse.SUPPRESS,
+            help="Explicit is one direct human request; automatic is the default.",
+        )
         if name in ("login", "call"):
             p.add_argument("--server", help="server URL (default: LOOM_BASE_URL or localhost)")
         if name == "login":

@@ -32,7 +32,7 @@ describe("RunGrade", () => {
     await userEvent.type(screen.getByLabelText("Why (optional)"), "CI went green");
     await userEvent.click(screen.getByRole("button", { name: "Held up" }));
     await waitFor(() =>
-      expect(api.gradeRun).toHaveBeenCalledWith(identity, "r1", "pass", "CI went green", "dashboard"),
+      expect(api.gradeRun).toHaveBeenCalledWith(identity, "r1", "pass", "CI went green", "dashboard", "explicit"),
     );
     expect(await screen.findByText("Graded as held up by dashboard: CI went green")).toBeInTheDocument();
   });
@@ -64,7 +64,7 @@ describe("RunGrade", () => {
     });
     render(<RunGrade identity={identity} run={run()} />);
     await userEvent.click(screen.getByRole("button", { name: "Did not hold" }));
-    await waitFor(() => expect(api.gradeRun).toHaveBeenCalledWith(identity, "r1", "fail", "", "alice"));
+    await waitFor(() => expect(api.gradeRun).toHaveBeenCalledWith(identity, "r1", "fail", "", "alice", "explicit"));
     expect(toast).toHaveBeenCalledWith("Graded: did not hold, 2 proposals decided", "ok");
     expect(await screen.findByText("Graded as did not hold by alice")).toBeInTheDocument();
   });

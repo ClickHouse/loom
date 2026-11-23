@@ -117,7 +117,7 @@ describe("Library download", () => {
     await settle();
     await pick("Handbook", "Delete");
     await settle();
-    expect(api.deleteKnowledge).toHaveBeenCalledWith({ org: ORG, namespace: NS }, "docs/handbook.pdf");
+    expect(api.deleteKnowledge).toHaveBeenCalledWith({ org: ORG, namespace: NS }, "docs/handbook.pdf", "explicit");
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain("Delete failed");
     expect(alert.textContent).toContain("request id rid-123");

@@ -162,6 +162,7 @@ describe("dragging documents onto the Library's tree", () => {
         ["runbooks/drain.md"],
         expect.anything(),
         expect.any(Function),
+        "explicit",
       ),
     );
     expect(toasts.toast).toHaveBeenCalledWith("Moved 1 document to My files", "ok");

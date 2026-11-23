@@ -273,7 +273,7 @@ export function Policies() {
     )
       return;
     try {
-      await deletePolicy({ org: identity.org, namespace: identity.namespace }, r.policy_id);
+      await deletePolicy({ org: identity.org, namespace: identity.namespace }, r.policy_id, "explicit");
       toast("Rule deleted", "ok");
       setReads((n) => n + 1);
     } catch (e) {
@@ -461,6 +461,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
       const out = await setPolicy(
         { org: identity.org, namespace: identity.namespace },
         { policy_id: id, effect, actions: acts, condition: cond, description: description.trim() || undefined },
+        "explicit",
       );
       toast(`Rule "${out.rule.policy_id}" saved (${out.leaf_count} leaf${out.leaf_count === 1 ? "" : "s"})`, "ok");
       reset();
@@ -591,6 +592,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
       const out = await checkPolicy(
         { org: identity.org, namespace: identity.namespace },
         { operation: op, agent: agent.trim() || undefined, args: parsed },
+        "explicit",
       );
       setResult(out);
       onRan();

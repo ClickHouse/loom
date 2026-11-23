@@ -23,7 +23,7 @@ import { pageContext } from "./pageContext";
  * an answer is still coming in, which nothing interrupts: the question then waits in the
  * panel's empty field.
  */
-export function askFromSearch(question: string, onTurn: (turnId: string) => void): boolean {
+export function askFromSearch(question: string, onTurn: (turnId: string) => void, intent: "automatic" | "explicit" = "automatic"): boolean {
   const st = useStore.getState();
   const header = st.identity?.namespace ?? "";
   if (useChat.getState().answering) {
@@ -39,7 +39,7 @@ export function askFromSearch(question: string, onTurn: (turnId: string) => void
   // leaves the field, so the panel does not ask it again.
   if (useDock.getState().draft === question) useDock.setState({ draft: "" });
   const context = pageContext(st.view, null, useDock.getState().pageOff);
-  ask(question, header, { context, item: null }, null, { fromField: false, keepChip: true, shown: onTurn });
+  ask(question, header, { context, item: null }, null, { fromField: false, keepChip: true, shown: onTurn }, intent);
   // Said as the panel's Ask about this says it (ask() clears the notice as it starts).
   if (line) {
     useChat.setState({ notice: line });

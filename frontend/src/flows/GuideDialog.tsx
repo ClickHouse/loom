@@ -134,7 +134,7 @@ export function GuideDialog({
         ...(summary !== base.summary ? { summary } : {}),
         note,
         expected_revision: base.revision,
-      });
+      }, "explicit");
       if (r.conflict && r.current) {
         if (summary === base.summary) setSummary(r.current.summary);
         setBase(r.current);

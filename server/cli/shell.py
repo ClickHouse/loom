@@ -29,7 +29,6 @@ def _cmd_memory_search(args: argparse.Namespace) -> int:
     {"command": "search", "query": ..., "results": [...]} envelope for
     line-oriented-JSON pipelines.
     """
-    import asyncio
     import json as _json
     import sys
 
@@ -56,11 +55,20 @@ def _cmd_memory_search(args: argparse.Namespace) -> int:
     async def _go() -> int:
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
-                r = await client.post(
-                    f"{args.server_url}/v1/memory.search",
-                    json=body,
-                    headers=headers,
-                )
+                from server.cli import _session_context
+
+                if _session_context.configured():
+                    r = await _session_context.post(
+                        client,
+                        f"{args.server_url}/v1/memory.search",
+                        token,
+                        body=body,
+                        timeout_s=30.0,
+                    )
+                else:
+                    r = await client.post(
+                        f"{args.server_url}/v1/memory.search", json=body, headers=headers
+                    )
             except httpx.HTTPError as e:  # refused, timed out, dropped
                 print(
                     f"  ✗ memory.search: no answer from {args.server_url} ({type(e).__name__})",
@@ -115,7 +123,9 @@ def _cmd_memory_search(args: argparse.Namespace) -> int:
                 print(f"      {excerpt}")
             return 0
 
-    return asyncio.run(_go())
+    from server.cli._session_context import run_async
+
+    return run_async(_go)
 
 
 def _default_thread_id(src: Path) -> str:
@@ -267,6 +277,16 @@ def _cmd_ingest_transcript(args: argparse.Namespace) -> int:
             headers=headers,
             method="POST",
         )
+        from server.cli import _session_context
+
+        protected = _session_context.send(req, 15.0)
+        if protected is not None:
+            status, _ = protected
+            if status != 200:
+                print(f"ERROR: turn {i} failed: HTTP {status}", file=sys.stderr)
+                return 6
+            written += 1
+            continue
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 resp.read()

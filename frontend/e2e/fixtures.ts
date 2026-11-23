@@ -455,8 +455,8 @@ export function knowledgeSourcesFixture(): Record<string, unknown>[] {
   return [
     {
       name: "design-docs",
-      kind: "gdrive",
-      config: { folder_ids: ["1AbCdEfGhIjKlMnOp"], include: ["docs", "slides", "pdf", "pptx"] },
+      kind: "recording",
+      config: { provider: "zoom", ids: ["81234567890"] },
       created_by: "maintainer@example.com",
       created_at: "2026-10-01T00:00:00Z",
       sync: {
@@ -1001,16 +1001,8 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
     switch (url.pathname) {
       case "/v1/whoami":
         return json(who);
-      case "/v1/connection.list":
-        return json({
-          connections: ["gdrive", "notion", "linear"].map((kind) => ({
-            kind,
-            connected: false,
-            account_email: null,
-            scopes: [],
-            connect_url: `/settings/connected-accounts?kind=${kind}`,
-          })),
-        });
+      case "/v1/knowledge.source.mcp_list":
+        return json({ sources: [], next_cursor: null });
       // Well-shaped empties for the two summaries the Sharing and Usage views read fields
       // of; the default answer's bare rows/entries would make them throw.
       case "/v1/me/sharing-summary":
@@ -1775,7 +1767,6 @@ export const ROUTES = [
   "/memories",
   "/recall",
   "/settings",
-  "/settings/connected-accounts",
   "/repositories",
   "/flow",
   "/library",

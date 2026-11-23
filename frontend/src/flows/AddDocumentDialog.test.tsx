@@ -224,7 +224,7 @@ describe("AddDocumentDialog", () => {
     const user = await pick("spec.pdf");
     await user.click(within(dialog).getByRole("button", { name: "Upload" }));
     await user.click(await within(dialog).findByRole("button", { name: "Stop ingestion" }));
-    await waitFor(() => expect(cancelIngestion).toHaveBeenCalledWith(identity, "job-1"));
+    await waitFor(() => expect(cancelIngestion).toHaveBeenCalledWith(identity, "job-1", "explicit"));
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(vi.mocked(toast).mock.calls.at(-1)?.[0]).toBe("Stopped spec.pdf");
   });
