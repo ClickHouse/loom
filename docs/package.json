@@ -15,6 +15,10 @@
   "dependencies": {
     "blume": "2.2.7"
   },
+  "overrides": {
+    "path-to-regexp@>=4.0.0 <6.3.0": "6.3.0",
+    "postcss-selector-parser@<6.1.5": "6.1.5"
+  },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@orama/orama": "^3.1.18",

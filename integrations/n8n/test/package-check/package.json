@@ -1,0 +1,8 @@
+{
+  "name": "loom-n8n-package-check",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "n8n-workflow": "2.47.2"
+  }
+}

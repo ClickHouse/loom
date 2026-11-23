@@ -273,13 +273,11 @@ def _codex_config_toml(*, name: str, mcp_url: str) -> str:
     return f'[mcp_servers.{name}]\nurl = "{mcp_url}"\nbearer_token_env_var = "{_CODEX_TOKEN_ENV}"\n'
 
 
-def _install_codex_mcp(
-    *, token: str, server_url: str, name: str, dry_run: bool, toolset: str
-) -> bool:
+def _install_codex_mcp(*, server_url: str, name: str, dry_run: bool, toolset: str) -> bool:
     """Wire Codex's MCP entry the way Codex itself does it: run `codex mcp add
     <name> --url … --bearer-token-env-var LOOM_API_KEY` when the `codex` binary
     is on PATH, else print that exact command; print the config.toml form
-    either way, and the `export LOOM_API_KEY=…` line Codex needs at launch.
+    either way, and an export placeholder for the token Codex needs at launch.
     Never edits config.toml directly — it is Codex's whole state file."""
     import shutil
     import subprocess
@@ -307,7 +305,8 @@ def _install_codex_mcp(
     print("  or put this in ~/.codex/config.toml:")
     print("    " + _codex_config_toml(name=name, mcp_url=mcp_url).replace("\n", "\n    ").rstrip())
     print(f"  Codex reads the token from ${_CODEX_TOKEN_ENV} at launch; add to your shell profile:")
-    print(f"    export {_CODEX_TOKEN_ENV}={_shell_words([token])}")
+    print(f'    export {_CODEX_TOKEN_ENV}="<token>"')
+    print("  Replace <token> with your Loom token before saving.")
     return ok
 
 
@@ -343,7 +342,7 @@ def _install_codex_capture(server_url: str, token: str, *, dry_run: bool) -> boo
     existing["token"] = token
     rendered = _json.dumps(existing, indent=2) + "\n"
     if dry_run:
-        _print_dry_run(path, {"url": existing["url"], "token": token}, token)
+        _print_dry_run(path, {"url": existing["url"], "token": "<token>"})
     else:
         write_private(path, rendered)
         try:
@@ -357,7 +356,7 @@ def _install_codex_capture(server_url: str, token: str, *, dry_run: bool) -> boo
     return True
 
 
-def _print_dry_run(path: Path, changes: dict[str, Any], token: str) -> None:
+def _print_dry_run(path: Path, changes: dict[str, Any]) -> None:
     """The preview of a config write: the keys this command sets, the token
     shown as `<token>`, never the whole merged file — it holds this token and
     whatever other credentials the file already carries (other servers'
@@ -365,11 +364,8 @@ def _print_dry_run(path: Path, changes: dict[str, Any], token: str) -> None:
     logs."""
     import json as _json
 
-    rendered = _json.dumps(changes, indent=2)
-    if token:
-        rendered = rendered.replace(token, "<token>")
     print(f"would write to: {path}")
-    print(rendered)
+    print(_json.dumps(changes, indent=2))
     print("  (every other key in the file is kept as it is)")
 
 
@@ -379,20 +375,17 @@ def _print_jsonc_manual(
     section: str,
     name: str,
     entry: dict[str, Any],
-    token: str,
     reason: str,
-    *,
-    dry_run: bool,
 ) -> None:
     """The file stays as it was. The entry is what the user pastes by hand."""
     import json as _json
 
-    rendered = _json.dumps({name: entry}, indent=2)
-    if dry_run and token:
-        rendered = rendered.replace(token, "<token>")
+    preview = mcp_entry(client, str(entry["url"]), "<token>")
+    rendered = _json.dumps({name: preview}, indent=2)
     print(
         f"ERROR ({client}): {path} could not be merged ({reason}). The file was not changed.\n"
-        f'Add this under "{section}" in that file:\n{rendered}',
+        f'Add this under "{section}" in that file:\n{rendered}\n'
+        "Replace <token> with your Loom token before saving.",
         file=sys.stderr,
     )
 
@@ -403,7 +396,6 @@ def _install_jsonc(
     sections: tuple[str, ...],
     name: str,
     entry: dict[str, Any],
-    token: str,
     *,
     dry_run: bool,
 ) -> bool:
@@ -412,14 +404,15 @@ def _install_jsonc(
     commas stay."""
     import json as _json
 
-    changes: dict[str, Any] = {name: entry}
+    preview = mcp_entry(client, str(entry["url"]), "<token>") if dry_run else entry
+    changes: dict[str, Any] = {name: preview}
     for key in reversed(sections):
         changes = {key: changes}
     section = ".".join(sections)
     if not cfg_path.exists():
         rendered = _json.dumps(changes, indent=2) + "\n"
         if dry_run:
-            _print_dry_run(cfg_path, changes, token)
+            _print_dry_run(cfg_path, changes)
             return True
         write_private(cfg_path, rendered, newline="")
         print(f"✓ {client}: wrote {name} → {cfg_path}")
@@ -427,27 +420,16 @@ def _install_jsonc(
     try:
         original = cfg_path.read_bytes().decode("utf-8")
     except (UnicodeDecodeError, OSError) as exc:
-        _print_jsonc_manual(
-            client,
-            cfg_path,
-            section,
-            name,
-            entry,
-            token,
-            f"could not read it ({exc})",
-            dry_run=dry_run,
-        )
+        _print_jsonc_manual(client, cfg_path, section, name, entry, f"could not read it ({exc})")
         return False
     try:
         rendered, changed = upsert_nested_key(original, sections, name, entry)
     except JsoncEditError as exc:
-        _print_jsonc_manual(
-            client, cfg_path, section, name, entry, token, exc.reason, dry_run=dry_run
-        )
+        _print_jsonc_manual(client, cfg_path, section, name, entry, exc.reason)
         return False
     if dry_run:
         if changed:
-            _print_dry_run(cfg_path, changes, token)
+            _print_dry_run(cfg_path, changes)
         else:
             print(f"unchanged: {cfg_path}")
         return True
@@ -507,7 +489,7 @@ def _install_one(
         )
     if client == "codex":
         return _install_codex_mcp(
-            token=token, server_url=server_url, name=name, dry_run=dry_run, toolset=toolset
+            server_url=server_url, name=name, dry_run=dry_run, toolset=toolset
         )
     section = config_key(client)
     cfg_path = _resolve_install_path(client)
@@ -515,7 +497,7 @@ def _install_one(
     entry = mcp_entry(client, mcp_url, token)
     if client in ("zed", "opencode"):
         return _install_jsonc(
-            client, cfg_path, config_path_keys(client), name, entry, token, dry_run=dry_run
+            client, cfg_path, config_path_keys(client), name, entry, dry_run=dry_run
         )
 
     existing: dict[str, Any] = {}
@@ -539,8 +521,8 @@ def _install_one(
                     f"under {section!r} yourself (replace <token> with your Loom token):",
                     file=sys.stderr,
                 )
-                snippet = _json.dumps({name: entry}, indent=2)
-                print(snippet.replace(token, "<token>") if token else snippet, file=sys.stderr)
+                snippet = _json.dumps({name: mcp_entry(client, mcp_url, "<token>")}, indent=2)
+                print(snippet, file=sys.stderr)
                 return False
             print(
                 f"ERROR ({client}): {cfg_path} is not valid JSON ({e}); "
@@ -557,7 +539,7 @@ def _install_one(
     rendered = _json.dumps(existing, indent=2) + "\n"
 
     if dry_run:
-        _print_dry_run(cfg_path, {section: {name: entry}}, token)
+        _print_dry_run(cfg_path, {section: {name: mcp_entry(client, mcp_url, "<token>")}})
         return True
 
     write_private(cfg_path, rendered)
@@ -604,7 +586,9 @@ def _install_claude_code_capture(server_url: str, token: str, *, dry_run: bool) 
     rendered = _json.dumps(existing, indent=2) + "\n"
 
     if dry_run:
-        _print_dry_run(path, {"env": {k: env[k] for k in ("LOOM_BASE_URL", "LOOM_API_KEY")}}, token)
+        _print_dry_run(
+            path, {"env": {"LOOM_BASE_URL": env["LOOM_BASE_URL"], "LOOM_API_KEY": "<token>"}}
+        )
     else:
         write_private(path, rendered)
         print(f"✓ claude-code capture: wrote LOOM_BASE_URL + LOOM_API_KEY → {path} (env)")
