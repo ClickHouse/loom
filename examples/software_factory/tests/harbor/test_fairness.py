@@ -10,12 +10,36 @@ from unittest.mock import patch
 from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.fairness import audit_fairness
 from examples.software_factory.harbor.index import TABLES
+from examples.software_factory.harbor.mcp_qualification import qualified_catalog
 from examples.software_factory.harbor.native_environment import agent_settings, mcp_settings
 from examples.software_factory.harbor.project_guidance import guidance, stage
 from examples.software_factory.harbor.runtime import write
 
 
 class NativeTreatment(TestCase):
+    def test_compact_qualification_requires_one_distinct_catalog_with_the_same_loading(self):
+        standard = {
+            "tools_sha256": "a" * 64,
+            "tool_names": ["loom_code_grep"],
+            "tool_loading_sha256": "b" * 64,
+        }
+        compact = {**standard, "tools_sha256": "c" * 64}
+        self.assertEqual(
+            qualified_catalog("compact", {"0": compact, "2": compact}, standard),
+            {
+                "schema_profile": "compact",
+                "tool_catalog_sha256": "c" * 64,
+                "standard_catalog_sha256": "a" * 64,
+            },
+        )
+        for attempts in (
+            {"0": standard},
+            {"0": compact, "2": standard},
+            {"0": {**compact, "tool_loading_sha256": "d" * 64}},
+        ):
+            with self.subTest(attempts=attempts), self.assertRaises(PermissionError):
+                qualified_catalog("compact", attempts, standard)
+
     def test_baseline_has_no_mcp_or_extra_prompt_and_loom_scope_is_connection_config(self):
         protocol = {"loom_url": "http://owned-loom:7777"}
         baseline = {"order": 0, "mode": "baseline"}
@@ -26,11 +50,18 @@ class NativeTreatment(TestCase):
         ):
             self.assertEqual(mcp_settings(protocol, baseline), "")
             config = tomllib.loads(mcp_settings(protocol, loom))
+            compact = {**protocol, "loom_mcp": {"schema_profile": "compact"}}
+            compact_config = tomllib.loads(mcp_settings(compact, loom))
+            self.assertEqual(mcp_settings(compact, baseline), "")
         server = config["environment"]["mcp_servers"][0]
         self.assertEqual(server["url"], "http://owned-loom:7777/mcp?toolset=coding")
         self.assertEqual(server["headers"]["X-Loom-Code-Scope"], "org/code")
         self.assertEqual(server["headers"]["Authorization"], "Bearer ${LOOM_ATTEMPT_TOKEN_1}")
         self.assertEqual(server["headers"]["Connection"], "close")
+        self.assertEqual(
+            compact_config["environment"]["mcp_servers"][0],
+            {**server, "url": server["url"] + "&schema_profile=compact"},
+        )
         for slot in (baseline, loom):
             settings = tomllib.loads(agent_settings(protocol, slot))["agent"]
             self.assertEqual(settings["user"], "agent")

@@ -22,6 +22,7 @@ from .arms import PRIMARY
 from .build_recipe import PYTHON_IMAGE, native_recipe
 from .catalog import load_evaluation
 from .host_tunnel import HostTunnel
+from .native_environment import MCP_SCHEMA_PROFILES
 from .project_guidance import guidance
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -119,7 +120,16 @@ def native_model(root):
     raise LaunchError("The native Anthropic model default is missing")
 
 
-def plan(root=ROOT, evaluation="flask", pilot_task=None, *, cache_pairs=False):
+def plan(
+    root=ROOT,
+    evaluation="flask",
+    pilot_task=None,
+    *,
+    cache_pairs=False,
+    loom_schema_profile="standard",
+):
+    if loom_schema_profile not in MCP_SCHEMA_PROFILES:
+        raise LaunchError("Choose the standard or compact Loom MCP schema profile")
     descriptor = load_evaluation(root, evaluation)
     locked, histories, memories = (
         read(descriptor["paths"][name])
@@ -148,6 +158,7 @@ def plan(root=ROOT, evaluation="flask", pilot_task=None, *, cache_pairs=False):
         "study_mode": "cache-pilot" if cache_pairs else "pilot" if pilot_task else "full",
         "pilot_task": pilot_task,
         "cache_pairs": cache_pairs,
+        "loom_schema_profile": loom_schema_profile,
         "evaluation": {
             key: descriptor[key] for key in ("id", "title", "adapter", "descriptor_sha256")
         },
@@ -530,6 +541,7 @@ def execute(
     evaluation="flask",
     pilot_task=None,
     cache_pairs=False,
+    loom_schema_profile="standard",
 ):
     if amount is not None:
         raise LaunchError("Native coding evaluations run without a spending cap")
@@ -540,8 +552,16 @@ def execute(
     output, root = requested.resolve(), Path(root).resolve()
     descriptor = load_evaluation(root, evaluation)
     if action == "run":
+        if loom_schema_profile not in MCP_SCHEMA_PROFILES:
+            raise LaunchError("Choose the standard or compact Loom MCP schema profile")
         if pilot_task is not None or cache_pairs:
-            plan(root=root, evaluation=evaluation, pilot_task=pilot_task, cache_pairs=cache_pairs)
+            plan(
+                root=root,
+                evaluation=evaluation,
+                pilot_task=pilot_task,
+                cache_pairs=cache_pairs,
+                loom_schema_profile=loom_schema_profile,
+            )
         if not docker.key or any(c.isspace() for c in docker.key):
             raise LaunchError("Run requires ANTHROPIC_API_KEY")
         if output.exists():
@@ -565,6 +585,7 @@ def execute(
                     descriptor=descriptor,
                     pilot_task=pilot_task,
                     cache_pairs=cache_pairs,
+                    loom_schema_profile=loom_schema_profile,
                 )
             finally:
                 if tunnel is not None:
@@ -572,7 +593,16 @@ def execute(
 
 
 def _execute(
-    action, output, amount, *, root, docker, descriptor, pilot_task=None, cache_pairs=False
+    action,
+    output,
+    amount,
+    *,
+    root,
+    docker,
+    descriptor,
+    pilot_task,
+    cache_pairs,
+    loom_schema_profile,
 ):
     path = output / "launch.json"
     if action == "run":
@@ -584,6 +614,7 @@ def _execute(
             evaluation=descriptor["id"],
             pilot_task=pilot_task,
             cache_pairs=cache_pairs,
+            loom_schema_profile=loom_schema_profile,
             source_root=str(root),
             output_root=str(output),
             source_sha256=source_hash(root, output),
@@ -687,10 +718,21 @@ def main(argv=None):
             child.add_argument(
                 "--cache-pairs", action="store_true", help="Use a quiet provider workspace"
             )
+            run = child
+    for command in (free, run):
+        command.add_argument(
+            "--loom-schema-profile",
+            choices=MCP_SCHEMA_PROFILES,
+            default="standard",
+            help="Freeze the Loom MCP catalog representation for all Loom arms",
+        )
     args = parser.parse_args(argv)
     if args.command == "plan":
         description = plan(
-            evaluation=args.evaluation, pilot_task=args.pilot_task, cache_pairs=args.cache_pairs
+            evaluation=args.evaluation,
+            pilot_task=args.pilot_task,
+            cache_pairs=args.cache_pairs,
+            loom_schema_profile=args.loom_schema_profile,
         )
         if args.json:
             print(json.dumps(description, indent=2))
@@ -717,6 +759,7 @@ def main(argv=None):
             evaluation=args.evaluation,
             pilot_task=getattr(args, "pilot_task", None),
             cache_pairs=getattr(args, "cache_pairs", False),
+            loom_schema_profile=getattr(args, "loom_schema_profile", "standard"),
         )
     except (LaunchError, OSError, ValueError) as error:
         print(f"Factory launcher refused ({type(error).__name__}): {error}", file=sys.stderr)

@@ -34,6 +34,7 @@ def public_reproduction_base(lock: dict, protocol: dict) -> dict:
             "provider": "anthropic-messages",
             "api_version": "2023-06-01",
         },
+        "loom_mcp": protocol["loom_mcp"],
         "pricing": {
             key: protocol["cost_basis"][key]
             for key in (
@@ -99,6 +100,7 @@ def freeze_plan(
         "server_container": runtime["server_container"],
         "runtime_network": runtime["network"],
         "loom_url": runtime["loom_url"],
+        "loom_mcp": setup["loom_mcp"],
         "server_commit": runtime["server_commit"],
         "server_source_identity": runtime["server_source_identity"],
         "controller_source_identity": controller_identity(),

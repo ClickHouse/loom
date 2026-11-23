@@ -155,6 +155,18 @@ def public_metadata(value):
             for row in value["tasks"]
         ],
     }
+    if "loom_mcp" in value:
+        mcp = value["loom_mcp"]
+        profile = mcp["schema_profile"]
+        if profile not in {"standard", "compact"}:
+            raise ValueError("Invalid public Loom MCP schema profile")
+        result["loom_mcp"] = {
+            "schema_profile": profile,
+            **{
+                key: hexdigest(mcp[key])
+                for key in ("tool_catalog_sha256", "standard_catalog_sha256")
+            },
+        }
     if "project_guidance" in value:
         expected = guidance(suite["source_roots"])
         if value["project_guidance"] != expected:

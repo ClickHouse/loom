@@ -7,9 +7,11 @@ import json
 
 from examples.software_factory.factory.model import digest
 
+from .native_environment import mcp_endpoint
 
-def qualify(client, url, token, binding):
-    endpoint = url.rstrip("/") + "/mcp?toolset=coding"
+
+def qualify(client, url, token, binding, *, schema_profile):
+    endpoint = mcp_endpoint(url, schema_profile)
     headers = {
         "Authorization": "Bearer " + token,
         "X-Loom-Code-Scope": binding["org"] + "/" + binding["code_namespace"],
@@ -80,6 +82,12 @@ def qualify(client, url, token, binding):
                 key: binding[key] for key in ("org", "code_namespace", "memory_namespace")
             },
             "tool_names": sorted(names),
+            "tool_loading_sha256": digest(
+                {
+                    tool["name"]: bool(tool.get("_meta", {}).get("anthropic/alwaysLoad"))
+                    for tool in tools
+                }
+            ),
             "tools_sha256": digest(tools),
             "provider_generation": False,
             "solver_credentials_used": False,
@@ -87,3 +95,25 @@ def qualify(client, url, token, binding):
     finally:
         if "Mcp-Session-Id" in headers:
             client.delete(endpoint, headers=headers).raise_for_status()
+
+
+def qualified_catalog(schema_profile, receipts, standard):
+    """Confirm one catalog across the Loom arms and a real compact projection."""
+    catalogs = {row["tools_sha256"] for row in receipts.values()}
+    if len(catalogs) != 1:
+        raise PermissionError("Loom arm catalogs differ")
+    (catalog,) = catalogs
+    if schema_profile == "compact":
+        sample = next(iter(receipts.values()))
+        if (
+            standard is None
+            or standard["tools_sha256"] == catalog
+            or standard["tool_names"] != sample["tool_names"]
+            or standard["tool_loading_sha256"] != sample["tool_loading_sha256"]
+        ):
+            raise PermissionError("Compact catalog must preserve the tools and loading policy")
+    return {
+        "schema_profile": schema_profile,
+        "tool_catalog_sha256": catalog,
+        "standard_catalog_sha256": standard["tools_sha256"] if standard else catalog,
+    }

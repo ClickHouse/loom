@@ -979,15 +979,23 @@ class Provisioner:
             ]
         )
 
-    def prepare(self, tasks: dict, schedule: list, fixtures: dict, compiler_receipt: dict):
+    def prepare(
+        self,
+        tasks: dict,
+        schedule: list,
+        fixtures: dict,
+        compiler_receipt: dict,
+        *,
+        loom_schema_profile: str,
+    ):
         require(self.runtime is not None, "Start the owned runtime before setup")
+        inputs_sha = digest([tasks, schedule, fixtures, compiler_receipt, loom_schema_profile])
         completed = self.output / "setup.json"
         marker = self.output / "prepare-started.json"
         if completed.exists():
             result = json.loads(completed.read_text())
             require(
-                json.loads(marker.read_text())["inputs_sha256"]
-                == digest([tasks, schedule, fixtures, compiler_receipt]),
+                json.loads(marker.read_text())["inputs_sha256"] == inputs_sha,
                 "Setup inputs changed on resume",
             )
             require(
@@ -1003,7 +1011,7 @@ class Provisioner:
             marker,
             {
                 "owner": self.owner,
-                "inputs_sha256": digest([tasks, schedule, fixtures, compiler_receipt]),
+                "inputs_sha256": inputs_sha,
             },
         )
         fixtures = self._fixtures(tasks, fixtures)
@@ -1084,9 +1092,9 @@ class Provisioner:
         for slot in schedule:
             if slot["memory_enabled"]:
                 validate_history_certificate(validation, slot, bindings[str(slot["order"])])
-        from .mcp_qualification import qualify
+        from .mcp_qualification import qualified_catalog, qualify
 
-        mcp_receipts = {}
+        mcp_receipts, standard_catalog = {}, None
         for slot in schedule:
             if slot["mode"] == "baseline":
                 continue
@@ -1095,13 +1103,31 @@ class Provisioner:
             if slot["memory_enabled"]:
                 roles[binding["memory_namespace"]] = "writer"
             token_file = self._mint(binding["org"], roles, "qualification-" + str(slot["order"]))
+            token = token_file.read_text().strip()
             mcp_receipts[str(slot["order"])] = qualify(
-                self.http, self.runtime["loom_url"], token_file.read_text().strip(), binding
+                self.http,
+                self.runtime["loom_url"],
+                token,
+                binding,
+                schema_profile=loom_schema_profile,
             )
-        save(self.output / "mcp-qualification.json", mcp_receipts)
+            if loom_schema_profile == "compact" and standard_catalog is None:
+                standard_catalog = qualify(
+                    self.http,
+                    self.runtime["loom_url"],
+                    token,
+                    binding,
+                    schema_profile="standard",
+                )
+        loom_mcp = qualified_catalog(loom_schema_profile, mcp_receipts, standard_catalog)
+        save(
+            self.output / "mcp-qualification.json",
+            {"attempts": mcp_receipts, "standard_control": standard_catalog},
+        )
         result = {
             "schema_version": 1,
             "runtime": self.runtime,
+            "loom_mcp": loom_mcp,
             "tasks": {
                 task_id: {**task, "indexes": indexes[task_id]} for task_id, task in tasks.items()
             },

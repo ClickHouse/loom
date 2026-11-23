@@ -12,6 +12,16 @@ from .scopes import binding_for
 PROXY_ENV = dict.fromkeys(
     ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"), ""
 )
+MCP_SCHEMA_PROFILES = ("standard", "compact")
+
+
+def mcp_endpoint(url: str, schema_profile: str | None) -> str:
+    endpoint = url.rstrip("/") + "/mcp?toolset=coding"
+    if schema_profile is None:
+        return endpoint
+    if schema_profile not in MCP_SCHEMA_PROFILES:
+        raise ValueError("Choose the standard or compact Loom MCP schema profile")
+    return endpoint + "&schema_profile=" + schema_profile
 
 
 def token_variable(order: int) -> str:
@@ -42,7 +52,9 @@ def mcp_settings(protocol: dict, slot: dict) -> str:
     }
     return (
         '\n[[environment.mcp_servers]]\nname = "loom"\ntransport = "streamable-http"\nurl = '
-        + json.dumps(protocol["loom_url"].rstrip("/") + "/mcp?toolset=coding")
+        + json.dumps(
+            mcp_endpoint(protocol["loom_url"], protocol.get("loom_mcp", {}).get("schema_profile"))
+        )
         + "\n[environment.mcp_servers.headers]\n"
         + "".join(
             json.dumps(name) + " = " + json.dumps(value) + "\n" for name, value in headers.items()

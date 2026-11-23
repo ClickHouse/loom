@@ -284,6 +284,7 @@ def execute(args):
                 prepared["schedule"],
                 prepared["memory_histories"],
                 compiled,
+                loom_schema_profile=launch["loom_schema_profile"],
             ),
         )
         plan = phases.run(

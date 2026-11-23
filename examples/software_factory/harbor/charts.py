@@ -168,6 +168,7 @@ def chart_data(protocol, entries, views_manifest):
         "name": output.parent.name if output.name == "study" else output.name,
         "model": protocol.get("model_id"),
         "study_role": protocol.get("public_reproduction", {}).get("study_role"),
+        "loom_schema_profile": protocol.get("loom_mcp", {}).get("schema_profile"),
         "memory_treatment": protocol.get("public_reproduction", {}).get("memory_treatment", {}),
         "reporting_implementation": reporting_identity(),
         "run_id": hashlib.sha256(str(output).encode()).hexdigest()[:16],

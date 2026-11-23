@@ -73,6 +73,12 @@ A missed cache state remains in the results and fails cache verification. The
 report displays the two start conditions separately and retains the observed
 cache counts for each attempt.
 
+Use `--loom-schema-profile compact` on `plan` and `run` to measure the compact
+MCP catalog against the default `standard` catalog. All Loom arms use the same
+profile. Setup verifies the catalog fingerprints and checks that the compact
+catalog preserves tool names and loading hints. The public export records the
+profile and both catalog fingerprints. No Loom has no MCP connection.
+
 Native Harbor duration is the recorded trial finish minus its start. Full study
 end-to-end duration also includes the post-trial index audit. Reports retain both.
 Generation cost comes from native Claude Code, with Harbor's marked estimate

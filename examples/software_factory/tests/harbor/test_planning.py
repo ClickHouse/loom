@@ -102,6 +102,11 @@ class SharedPlanning(unittest.TestCase):
         )
         identity = dict(commit=self.server, dirty=False, relative_files={}, files={})
         self.setup = dict(
+            loom_mcp={
+                "schema_profile": "compact",
+                "tool_catalog_sha256": "a" * 64,
+                "standard_catalog_sha256": "b" * 64,
+            },
             files={str(self.certificate): sha(self.certificate), str(content): sha(content)},
             runtime=dict(
                 server_container="owned",
@@ -164,6 +169,8 @@ class SharedPlanning(unittest.TestCase):
             all(row["provider_cost_ratio_max"] == 0.8 for row in plan["success_target"].values())
         )
         self.assertEqual(plan["public_reproduction"]["model"]["id"], self.lock["model_id"])
+        self.assertEqual(plan["loom_mcp"], self.setup["loom_mcp"])
+        self.assertEqual(plan["public_reproduction"]["loom_mcp"], self.setup["loom_mcp"])
         text = Path(planning.__file__).read_text()
         self.assertNotIn("evals.flask", text)
         self.assertNotIn("src/flask", text)

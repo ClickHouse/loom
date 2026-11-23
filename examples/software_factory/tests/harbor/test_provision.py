@@ -315,17 +315,19 @@ class ProvisioningContracts(unittest.TestCase):
         import hashlib
 
         (self.provision.output / "prepare-started.json").write_text(
-            json.dumps({"inputs_sha256": digest(inputs)})
+            json.dumps({"inputs_sha256": digest([*inputs, "standard"])})
         )
         (self.provision.output / "setup.json").write_text(
             json.dumps(
                 {"files": {str(artifact): hashlib.sha256(artifact.read_bytes()).hexdigest()}}
             )
         )
-        self.provision.prepare(*inputs)
+        self.provision.prepare(*inputs, loom_schema_profile="standard")
+        with self.assertRaisesRegex(PermissionError, "Setup inputs changed"):
+            self.provision.prepare(*inputs, loom_schema_profile="compact")
         artifact.write_text("changed")
         with self.assertRaises(PermissionError):
-            self.provision.prepare(*inputs)
+            self.provision.prepare(*inputs, loom_schema_profile="standard")
         self.run.assert_not_called()
 
     def test_current_native_chunk_body_span_context_and_embedding_all_must_match(self):

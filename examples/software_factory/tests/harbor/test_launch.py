@@ -204,6 +204,14 @@ class PublicLauncher(unittest.TestCase):
         with self.assertRaises(launch.LaunchError):
             launch.plan(pilot_task="unknown")
 
+    def test_pilot_can_freeze_the_compact_catalog(self):
+        result = launch.plan(
+            pilot_task="pallets__flask-4230", cache_pairs=True, loom_schema_profile="compact"
+        )
+        self.assertEqual(result["loom_schema_profile"], "compact")
+        self.assertEqual(result["total_attempts"], 10)
+        self.assertFalse(result["paid_requests"])
+
     def test_run_is_one_command_with_owned_images_and_identical_readonly_paths(self):
         docker = FakeDocker()
         self.assertEqual(launch.execute("run", self.output, "10", root=self.root, docker=docker), 0)

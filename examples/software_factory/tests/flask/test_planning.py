@@ -78,6 +78,11 @@ class ProjectMetadata(unittest.TestCase):
                 controller_source_identity=identity,
                 server_source_identity=identity,
                 server_commit="f" * 40,
+                loom_mcp={
+                    "schema_profile": "standard",
+                    "tool_catalog_sha256": "a" * 64,
+                    "standard_catalog_sha256": "a" * 64,
+                },
                 cost_basis={
                     key: 0.1
                     for key in (

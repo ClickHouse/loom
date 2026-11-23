@@ -430,6 +430,7 @@ function render() {
   const group = data.cohorts.groups[byId("cohort").value];
   byId("study-disclosure").textContent = [
     data.study_role ? `Study role: ${data.study_role}.` : "",
+    data.loom_schema_profile ? `All Loom arms use the ${data.loom_schema_profile} MCP catalog.` : "",
     ...Object.values(data.memory_treatment || {}),
     `${data.observed - data.attempts.filter((row) => row.state !== "pending").length} A/A control records are excluded from the primary tables. A/A controls repeat no Loom to measure variation.`,
     `${group.task_ids.length} distinct issues; repeats are not additional issues.`,
