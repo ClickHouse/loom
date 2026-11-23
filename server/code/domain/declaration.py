@@ -543,6 +543,33 @@ class Declarations:
         at = self._at(line)
         return at[0].start_point[0] + 1 if at else line
 
+    def decorator_start(self, line: int, end: int, name: str, hits: set[int]) -> int | None:
+        """Start of the Python decorator list that holds a hit and belongs to this function."""
+        if (
+            self.grammar != "python"
+            or self.root.has_error
+            or not (at := self._at(line, unnumbered(name)))
+        ):
+            return None
+        wrapper, _ = at
+        decl = wrapper.child_by_field_name("definition")
+        if (
+            wrapper.type != "decorated_definition"
+            or decl is None
+            or decl.type != "function_definition"
+            or decl.start_point[0] + 1 != line
+            or decl.end_point[0] + 1 != end
+        ):
+            return None
+        if any(
+            decorator.start_point[0] + 1 <= hit <= decorator.end_point[0] + 1
+            for decorator in wrapper.named_children
+            if decorator.type == "decorator"
+            for hit in hits
+        ):
+            return int(wrapper.start_point[0]) + 1
+        return None
+
     def member(self, line: int, name: str, *, shapes: bool = True) -> Member | None:
         """The declaration at `line` naming `name` (`LoomClient#2`: the index's second
         one), decorators and template head included; its rename shapes only with

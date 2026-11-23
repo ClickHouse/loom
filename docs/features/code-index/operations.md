@@ -94,7 +94,9 @@ or file appears once.
 In matches mode, `code.grep(include_body=true)` returns the enclosing definitions
 beside the hit lines. Each definition appears once; its `lines` lists the matching
 locations. The same retained-source reader backs `code.enclosing`, including type
-and document-section fallback. No token budget is imposed on these bodies.
+and document-section fallback. A hit inside a retained Python decorator can
+include the decorator list and its owning function in one definition. No
+token budget is imposed on these grep bodies.
 
 The default remains matching lines only. Bodies are read only for the served page,
 and page reruns remove definitions belonging to earlier pages. If source cannot be

@@ -18,6 +18,7 @@ from server.code.app.common import (
     resolve_code_identity,
 )
 from server.code.app.spans import code_span, set_code_span_attributes, span_attrs
+from server.code.app.symbol.enclosing_decorators import recover_decorated_bodies
 from server.code.app.symbol.neighbours import _attach_enclosing_neighbours
 from server.code.app.symbol.resolve import _innermost, symbol_body
 from server.code.store.index import CodeRepo
@@ -67,7 +68,20 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
         span_attrs(sp, rows=len(rows))
     by_path: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        by_path.setdefault(str(r["path"]), []).append(r)
+        by_path.setdefault(str(r["path"]), []).append(dict(r))
+    decorated = (
+        await recover_decorated_bodies(
+            repo,
+            org,
+            ns,
+            [p for p in parsed if p],
+            by_path,
+            limit=_ENCLOSING_BODY_MAX_SYMBOLS,
+            concurrency=_ENCLOSING_BODY_CONCURRENCY,
+        )
+        if input.include_body
+        else {}
+    )
 
     # Second pass, only for lines no function contains: the class / struct
     # whose body holds the line (a member declaration in a header). One
@@ -151,7 +165,7 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
     bodies_returned = bodies_elided = tokens = 0
     if input.include_body and resolved:
         bodies_returned, bodies_elided, tokens = await _attach_enclosing_bodies(
-            repo, org, ns, results, input.token_budget
+            repo, org, ns, results, input.token_budget, decorated
         )
 
     want_neighbours = bool(input.neighbours)  # unset = off
@@ -274,7 +288,12 @@ _ENCLOSING_BODY_CONCURRENCY = 8
 
 
 async def _attach_enclosing_bodies(
-    repo: CodeRepo, org: str, ns: str, results: list[dict[str, Any]], token_budget: int
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    results: list[dict[str, Any]],
+    token_budget: int,
+    decorated: dict[str, str],
 ) -> tuple[int, int, int]:
     """Fetch each distinct enclosing function's body once and attach it to
     every hit inside it, filling by first appearance until the budget is
@@ -297,6 +316,8 @@ async def _attach_enclosing_bodies(
     sem = asyncio.Semaphore(_ENCLOSING_BODY_CONCURRENCY)
 
     async def one(r: dict[str, Any]) -> str:
+        if cached := decorated.get(str(r["symbol_id"])):
+            return cached
         async with sem:
             try:
                 return await symbol_body(repo, org, ns, r)

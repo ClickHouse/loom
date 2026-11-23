@@ -203,6 +203,56 @@ def test_default_mode_has_no_body_fields(monkeypatch):
     assert "body" not in out.results[0] and out.bodies_returned == 0 and out.tokens_returned == 0
 
 
+def test_enclosing_decorator_and_def_share_one_retained_body(monkeypatch):
+    from server.code.api.models_navigation import CodeEnclosingInput
+    from server.code.app.symbol import enclosing as h
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", "fake-ngram-1024")
+    decorator = "@command()\n@option(\n    callback=verify,\n)\n"
+    definition = "def run():\n    return 42\n"
+    lookup = {
+        "kind": "function",
+        "path": "cli.py",
+        "name": "run",
+        "qualified_name": "cli::run",
+        "symbol_id": "run-id",
+        "start_line": 8,
+        "end_line": 9,
+    }
+
+    class Repo(_FakeRepo):
+        async def functions_for_paths(self, *args, **kwargs):
+            return [lookup]
+
+        async def source_chunks_for_span(self, org, ns, path, start, end, model):
+            assert (path, start, end) == ("cli.py", 3, 9)
+            return [
+                {
+                    "kind": "other",
+                    "start_line": 3,
+                    "end_line": 7,
+                    "content": "other = 1\n" + decorator,
+                },
+                {"kind": "function", "start_line": 8, "end_line": 9, "content": definition},
+            ]
+
+    locations = ["cli.py:9", "cli.py:6", "cli.py:3"]
+    with patch.object(h, "CodeRepo", Repo), patch.object(h, "index_as_of", new=_as_of):
+        result = asyncio.run(
+            h.handle_code_enclosing(
+                CodeEnclosingInput(org="o", namespace="n", locations=locations, include_body=True)
+            )
+        )
+
+    body_hit, decorator_hit, file_scope = result.results
+    assert result.bodies_returned == 1 and result.bodies_elided == 0
+    assert body_hit["start_line"] == decorator_hit["start_line"] == 4
+    assert body_hit["body"] == decorator_hit["body"] == decorator + definition
+    assert file_scope["symbol"] == ""
+    assert lookup["start_line"] == 8
+
+
 def test_line_in_a_class_body_falls_back_to_the_type(monkeypatch):
     """A member declaration in a header sits in no function; the class whose
     body holds it is the enclosing scope, with kind saying so. The type read
