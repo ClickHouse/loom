@@ -79,9 +79,10 @@ any tool has returned. Compare later responses with the tool trace to see where
 the context grows. A tool call ID relates records across the two sources. The
 provider does not report token charges for individual tool results.
 
-Body retrieval is opt-in. Compare the recorded request flag, body counts and the
-next model response before claiming that a combined lookup removed a local read
-or a model turn. A smaller tool count alone does not establish either saving.
+Use the serving revision and recorded request flag to determine whether grep
+requested enclosing bodies. Compare the returned body counts and the next model
+response to see whether a combined lookup removed a local read or a model turn.
+A smaller tool count alone does not establish either saving.
 
 Loom's ledger supplies request ids, latency, cost and response-size estimates.
 Its OpenTelemetry spans supply internal stages. The existing Langfuse integration
