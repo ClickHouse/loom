@@ -61,9 +61,8 @@ and its code links.
 
 All 24 Loom calls are direct tool calls. Two fail validation. SCIP sends an
 RE2 backreference and retries with a literal list. SCIP with memory changes
-its search while reusing the earlier cursor and retries without it. Three
-arms use the literal-list form of grep, including both SCIP configurations
-and Tree-sitter with memory.
+its search while reusing the earlier cursor and retries without it. Both
+SCIP configurations use the literal-list form of grep.
 
 | Arm                  | Model API seconds | Loom request sum (ms) | First-prompt cache writes | First-prompt cache reads |
 | -------------------- | ----------------: | --------------------: | ------------------------: | -----------------------: |
