@@ -1368,8 +1368,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "or logs to their source templates; code-shaped input falls back to literal. "
         "`mode: 'presence'` with `namespaces` (up to eight) returns each branch's "
         "present / absent / unknown verdict and a summary. Optional `deadline_ms` "
-        "returns hits found before expiry with `partial: true`. Coverage disclosures "
-        "distinguish absent matches from incomplete indexed source. For paths use "
+        "returns hits found before expiry with `partial: true`. Coverage distinguishes "
+        "absent matches from incomplete indexed source. For paths use "
         "code.files; this searches content. Use local tools for uncommitted source."
     ),
     "code.files": (
