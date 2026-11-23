@@ -382,13 +382,13 @@ class CodeCallersOutput(_LessonsOut):
     # Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`;
     # when it is on, "" or how many changed files it did not fully read.
     overlay_note: str = ""
-    # How an over-qualified name bound when the exact form missed —
+    # How a read-side name spelling bound —
     # `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a
     # namespace the definition does not carry dropped; one definition fit), or
     # `registration` when a SQL-level name (`sumMap`, `arrayFold::executeImpl`) bound to
     # the implementing class's methods through its registration statement, or
-    # `python_module` for an import spelling of a retained Python name. "" and
-    # off the wire for an exact hit.
+    # `python_module` for an import spelling of a retained Python name, or
+    # `file_symbol` for a name constrained by a filename. "" and off the wire for an exact hit.
     resolved_by: str = ""
     # A bare short name that resolves to many unrelated definitions (setColumns
     # on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the

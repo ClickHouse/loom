@@ -299,7 +299,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like c
 | `overlay_head_sha` | `str` | The PR head commit whose post-image was parsed; "" when there is no overlay. |
 | `overlay_added` | `int` | How many functions the PR adds in its parsed files. |
 | `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or how many changed files it did not fully read. |
-| `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
+| `resolved_by` | `str` | How a read-side name spelling bound — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a SQL-level name (`sumMap`… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
 | `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits"}. |
@@ -353,7 +353,7 @@ Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved
 | `overlay_head_sha` | `str` | The PR head commit whose post-image was parsed; "" when there is no overlay. |
 | `overlay_added` | `int` | How many functions the PR adds in its parsed files. |
 | `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or how many changed files it did not fully read. |
-| `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
+| `resolved_by` | `str` | How a read-side name spelling bound — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a SQL-level name (`sumMap`… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
 | `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits"}. |
