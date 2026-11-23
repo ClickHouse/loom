@@ -316,6 +316,13 @@ async def _point_readers(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     await repo.symbols_by_name(ORG, NS, "f")
     await repo.functions_for_paths(ORG, NS, ["src/a.py"], with_extent_only=tests_flag)
+    revisions = {"src/a.py": "a" * 40}
+    await repo.functions_for_paths(
+        ORG, NS, ["src/a.py"], with_extent_only=tests_flag, revisions=revisions
+    )
+    await repo.function_chunk_starts(
+        ORG, NS, MODEL, [("src/a.py", "symbol-id", 2)], revisions=revisions
+    )
     await repo.outline_for_path(ORG, NS, "src/a.py")
     await repo.class_skeleton_chunk(ORG, NS, "src/a.py", "Klass")
     await repo.scip_covered_paths(ORG, NS, ["src/a.py"])

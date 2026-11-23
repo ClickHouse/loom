@@ -80,7 +80,7 @@ class _FakeRepo:
         self.calls.append(list(paths))
         return [r for r in ROWS if r["path"] in paths]
 
-    async def types_for_paths(self, org, ns, paths, *, limit=400):
+    async def types_for_paths(self, org, ns, paths, *, limit=400, revisions=None):
         self.type_calls = getattr(self, "type_calls", []) + [list(paths)]
         return [r for r in TYPE_ROWS if r["path"] in paths]
 
@@ -228,7 +228,7 @@ def test_enclosing_decorator_and_def_share_one_retained_body(monkeypatch, token_
         async def functions_for_paths(self, *args, **kwargs):
             return [lookup]
 
-        async def function_chunk_starts(self, org, ns, model, keys):
+        async def function_chunk_starts(self, org, ns, model, keys, *, revisions=None):
             assert keys == [("cli.py", "run-id", 8)]
             return {("cli.py", "run-id", 2): 1, ("cli.py", "run-id", 8): 4}
 

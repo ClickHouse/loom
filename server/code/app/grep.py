@@ -628,10 +628,8 @@ def _issue_grep_cursor(
             "v": paging.CURSOR_VERSION,
             "kind": "g",
             "params": ph,
-            "matches": [
-                {**m, "_indexed_commit": match_commits.get((m["path"], m["line"]), "")}
-                for m in matches
-            ],
+            "matches": matches,
+            "match_commits": [match_commits.get((m["path"], m["line"]), "") for m in matches],
             "chunks_matched": chunks_matched,
             "truncated": truncated,
             "line_mapping": _GREP_LINE_MAPPING_VERSION,
@@ -666,6 +664,7 @@ async def _serve_grep_page(
     if payload.get("line_mapping") != _GREP_LINE_MAPPING_VERSION:
         return None, "source_line_mapping_changed", offset
     pool = [dict(m) for m in (payload.get("matches") or [])]
+    pool_commits = payload.get("match_commits") or []
     limit = input.effective_limit
     excluded = set(input.exclude_unit_ids)
     page: list[dict[str, Any]] = []
@@ -673,10 +672,11 @@ async def _serve_grep_page(
     i = offset
     while i < len(pool) and len(page) < limit:
         m = pool[i]
+        commit = pool_commits[i] if i < len(pool_commits) else ""
         i += 1
         if str(m.get("path") or "") in excluded:
             continue
-        match_commits[(m["path"], m["line"])] = str(m.pop("_indexed_commit", "") or "")
+        match_commits[(m["path"], m["line"])] = str(commit or "")
         page.append(m)
     has_more = i < len(pool)
     next_cursor = (

@@ -20,6 +20,8 @@ async def extend_decorated_spans(
     ns: str,
     locations: list[tuple[str, int]],
     by_path: dict[str, list[dict[str, Any]]],
+    *,
+    revisions: dict[str, str] | None = None,
 ) -> set[str]:
     """A function chunk may start at its first Python decorator, before the symbol's def."""
     if not settings.embedding_model:
@@ -49,7 +51,7 @@ async def extend_decorated_spans(
     try:
         with code_span("enclosing.decorators", candidates=len(candidates)) as span:
             starts = await repo.function_chunk_starts(
-                org, ns, served_model_label(settings.embedding_model), keys
+                org, ns, served_model_label(settings.embedding_model), keys, revisions=revisions
             )
             span_attrs(span, rows=len(starts))
     except Exception:  # Optional ownership evidence can be absent while exact matches still work.

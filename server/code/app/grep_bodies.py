@@ -10,7 +10,6 @@ from server.code.api.models_grep import CodeGrepInput
 from server.code.api.models_navigation import CodeEnclosingInput
 from server.code.app.grep_source import GREP_MATCH_TEXT_CHARS, match_revisions
 from server.code.app.spans import code_span
-from server.code.domain.anchor import local_name
 from server.code.domain.deadline import Budget
 from server.code.domain.units import estimate_tokens
 
@@ -95,12 +94,7 @@ async def definitions_for(
 
 
 def _agrees_with_hit(row: dict[str, Any], hit: dict[str, Any]) -> bool:
-    """A live structural answer must still own the retained match."""
-    path = hit["path"]
-    scope = local_name(str(hit.get("scope") or ""), path)
-    name = local_name(str(row.get("qualified_name") or ""), path)
-    if scope and name and name != scope and not name.startswith(scope + "."):
-        return False
+    """A returned body must contain the retained match at its exact line."""
     body = str(row.get("body") or "")
     if not body:
         return True

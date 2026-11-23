@@ -14,6 +14,32 @@ def _verified(matches):
     return {(m["path"], m["line"]): COMMIT for m in matches}
 
 
+def test_saved_match_rows_leave_revisions_for_the_page_reader(monkeypatch):
+    from server.code.app import grep, search_cursor
+
+    matches = [{"path": "a.py", "line": line, "text": "target()"} for line in (3, 8)]
+    captured = []
+    monkeypatch.setattr(search_cursor, "enabled", lambda: True)
+    monkeypatch.setattr(search_cursor, "encode", lambda **_kwargs: "cursor")
+    monkeypatch.setattr(
+        search_cursor, "put_pool", lambda *args, **_kwargs: captured.append(args[3])
+    )
+    cursor = grep._issue_grep_cursor(
+        CodeGrepInput(pattern="target"),
+        "org",
+        "repo",
+        matches,
+        served=1,
+        run_id="run",
+        chunks_matched=2,
+        truncated=True,
+        match_commits=_verified(matches),
+    )
+    assert cursor == "cursor"
+    assert captured[0]["matches"] == matches
+    assert captured[0]["match_commits"] == [COMMIT, COMMIT]
+
+
 @pytest.mark.asyncio
 async def test_hits_share_one_definition_and_pages_keep_only_their_lines(monkeypatch):
     from server.code.app.symbol import enclosing

@@ -72,14 +72,17 @@ async def handle_code_enclosing(
         m = _ENCLOSING_LOC.match(loc.strip())
         parsed.append((repo_relative(m.group("path")), int(m.group("line"))) if m else None)
     paths = list(dict.fromkeys(p for p, _ in (x for x in parsed if x)))
-
     with code_span("enclosing.symbols", paths=len(paths)) as sp:
         # a SQL test's line encloses a statement record
-        rows = await repo.functions_for_paths(org, ns, paths, limit=2000, kinds=ENCLOSING_KINDS)
+        rows = await repo.functions_for_paths(
+            org, ns, paths, limit=2000, kinds=ENCLOSING_KINDS, revisions=body_revisions
+        )
         span_attrs(sp, rows=len(rows))
     by_path = _by_path(rows)
     widened = (
-        await extend_decorated_spans(repo, org, ns, [p for p in parsed if p], by_path)
+        await extend_decorated_spans(
+            repo, org, ns, [p for p in parsed if p], by_path, revisions=body_revisions
+        )
         if input.include_body
         else set()
     )
@@ -97,7 +100,9 @@ async def handle_code_enclosing(
     types_by_path: dict[str, list[dict[str, Any]]] = {}
     if unresolved_paths:
         with code_span("enclosing.types", paths=len(unresolved_paths)) as sp:
-            trows = await repo.types_for_paths(org, ns, unresolved_paths, limit=2000)
+            trows = await repo.types_for_paths(
+                org, ns, unresolved_paths, limit=2000, revisions=body_revisions
+            )
             span_attrs(sp, rows=len(trows))
         types_by_path = _by_path(trows)
     # A line of a document or config file is enclosed by its heading's section (the chunk

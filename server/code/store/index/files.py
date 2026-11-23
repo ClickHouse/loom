@@ -224,9 +224,20 @@ class FilesMixin(CodeRepoBase):
         return [(str(r["kind"]), int(r["start_line"]), int(r["end_line"])) for r in rows]
 
     async def function_chunk_starts(
-        self, org: str, ns: str, model: str, keys: list[tuple[str, str, int]]
+        self,
+        org: str,
+        ns: str,
+        model: str,
+        keys: list[tuple[str, str, int]],
+        *,
+        revisions: dict[str, str] | None = None,
     ) -> dict[tuple[str, str, int], int]:
         """The start of the chunk holding each selected definition's line."""
+        revision_clause = (
+            "  AND (path, toString(indexed_commit)) IN {revisions:Array(Tuple(String, String))}\n"
+            if revisions is not None
+            else ""
+        )
         rows = await self._ch.query_all(
             """
             SELECT path, target.2 AS symbol_id, target.3 AS definition, min(start_line) AS start
@@ -240,6 +251,9 @@ class FilesMixin(CodeRepoBase):
               AND embedding_model = {model:String} AND path IN {paths:Array(String)}
               AND kind = 'function'
               AND tombstoned_at IS NULL
+            """
+            + revision_clause
+            + """
             GROUP BY path, symbol_id, definition
             LIMIT {limit:UInt32}
             """,
@@ -250,6 +264,7 @@ class FilesMixin(CodeRepoBase):
                 "paths": list(dict.fromkeys(path for path, _, _ in keys)),
                 "keys": keys,
                 "limit": len(keys),
+                **({"revisions": list(revisions.items())} if revisions is not None else {}),
             },
         )
         return {
