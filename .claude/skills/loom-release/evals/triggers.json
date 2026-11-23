@@ -16,6 +16,14 @@
     "should_trigger": true
   },
   {
+    "query": "prepare the next release announcement and carry the reviewed summary into its release page",
+    "should_trigger": true
+  },
+  {
+    "query": "announce the shipped release in our existing subscriber discussion with links to its notes and roadmap",
+    "should_trigger": true
+  },
+  {
     "query": "deploy the new build to the blue/green deployment",
     "should_trigger": false
   },
