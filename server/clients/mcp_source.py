@@ -621,6 +621,19 @@ class MCPSourceClient:
         await self.validate_access()
         self._check_state()
 
+    async def _transport_authorize(self) -> None:
+        try:
+            await self._authorize()
+        except MCPSourceError as error:
+            if (
+                error.code == "closed"
+                and self._closing
+                and asyncio.current_task() is not self._owner_task
+            ):
+                # Pending SDK notifications stop without poisoning expected shutdown.
+                raise asyncio.CancelledError from None
+            raise
+
     async def __aenter__(self) -> MCPSourceClient:
         if self._owner_task is not None or self._deadline:
             raise MCPSourceError("closed")
@@ -679,7 +692,7 @@ class MCPSourceClient:
             self._config,
             self.credential,
             self._deadline,
-            self._authorize,
+            self._transport_authorize,
             transport=self._test_transport,
         )
         self._transport = transport

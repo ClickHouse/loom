@@ -1222,3 +1222,19 @@ async def test_origin_pin_alias_refuses_before_credential_dispatch(
     assert pins == [str(httpx.URL(endpoint))]
     assert requests == []
     assert transport.failure == "denied"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actions_only", [False, True])
+async def test_discovery_without_an_approved_tool_rpc_closes_cleanly(
+    monkeypatch: pytest.MonkeyPatch, actions_only: bool
+) -> None:
+    async with synthetic_server(monkeypatch, tools=actions_only) as state:
+        opened = client()
+        async with opened:
+            discovered = await opened.discover()
+            assert discovered.resources is (not actions_only)
+            assert discovered.tools == ()
+            assert state["calls"] == []
+        assert opened._owner_task is not None and opened._owner_task.done()
+        assert opened._transport is not None and opened._transport.failure is None
