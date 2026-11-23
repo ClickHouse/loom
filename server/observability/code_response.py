@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 _LINK_STATES = ("fresh", "moved", "changed", "unresolved", "missing")
-_MAX_COUNT = 0xFFFFFFFF
 
 
 def code_response_counts(result: dict[str, Any]) -> dict[str, int]:
@@ -43,7 +42,7 @@ def code_response_counts(result: dict[str, Any]) -> dict[str, int]:
             lesson.get("code_state") not in _LINK_STATES for lesson in lessons
         ),
     }
-    return {key: min(value, _MAX_COUNT) for key, value in counts.items()}
+    return counts
 
 
 def record_response_counts(projected: dict[str, str]) -> None:
