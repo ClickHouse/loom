@@ -913,8 +913,19 @@ jobs:
       # with the builders. ~10 s; a rejection here is a statement that would
       # fail on a deployed server.
       - name: analyzer statement corpus
+        id: analyzer-corpus
         if: matrix.part == 'isolation' && steps.migrate.outcome == 'success' && !cancelled()
         run: pytest tests/analyzer -q
+      - name: Render analyzer manifest candidate after a failed corpus check
+        if: failure() && steps.analyzer-corpus.outcome == 'failure'
+        run: python -m tests.analyzer.corpus --write
+      - name: Upload analyzer manifest candidate
+        if: failure() && steps.analyzer-corpus.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-analyzer-shapes
+          path: tests/analyzer/shapes.txt
+          if-no-files-found: error
       - name: Upload server log on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
