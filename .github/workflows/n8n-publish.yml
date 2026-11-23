@@ -31,13 +31,20 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
-      - name: Read the package version for publication
+      - name: Validate the publication tag and package version
         id: package-version
         if: github.event_name == 'push' && (startsWith(github.ref_name, 'n8n-v') || !contains(github.ref_name, '-'))
         working-directory: integrations/n8n
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           version=$(node -p 'require("./package.json").version')
           [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          if [[ "$RELEASE_TAG" == n8n-v* ]]; then
+            [[ "$RELEASE_TAG" == "n8n-v$version" ]]
+          else
+            [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Install the locked package manager
         run: |
@@ -59,7 +66,7 @@ jobs:
 
   publish:
     name: Publish the n8n package
-    if: github.event_name == 'push' && (startsWith(github.ref_name, 'n8n-v') || !contains(github.ref_name, '-'))
+    if: needs.check.outputs.package_version != ''
     needs: check
     concurrency:
       group: n8n-package-${{ needs.check.outputs.package_version }}
@@ -79,19 +86,6 @@ jobs:
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
-      - name: Validate the publication tag
-        id: publication-tag
-        working-directory: integrations/n8n
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          VERSION=$(node -p 'require("./package.json").version')
-          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          if [[ "$RELEASE_TAG" == n8n-v* ]]; then
-            [[ "$RELEASE_TAG" == "n8n-v$VERSION" ]]
-          else
-            [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          fi
       - name: Install the locked package manager
         run: |
           npm ci --prefix .github/pnpm --ignore-scripts --no-fund --no-audit
