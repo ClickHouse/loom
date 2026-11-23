@@ -1,0 +1,71 @@
+name: Maven dependency graph
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdk/java/**"
+      - ".github/workflows/maven-dependency-graph.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/java/**"
+      - ".github/workflows/maven-dependency-graph.yml"
+  schedule:
+    - cron: "36 5 * * 2"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Resolve core and adapter graphs
+        run: |
+          mvn -B -ntp -f sdk/java/pom.xml install -DskipTests
+          for module in sdk/java sdk/java/langchain4j sdk/java/spring-ai; do
+            mvn -B -ntp -f "$module/pom.xml" com.github.ferstl:depgraph-maven-plugin:4.0.3:graph \
+              -DgraphFormat=json
+          done
+
+  submit:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Build the local dependencies of the adapters
+        run: mvn -B -ntp -f sdk/java/pom.xml install -DskipTests
+      - name: Submit the core dependencies
+        uses: advanced-security/maven-dependency-submission-action@a64327a7329c9939cf675e458452febe1894a70c # v6.0.1
+        with:
+          directory: sdk/java
+          correlator: loom-java-sdk
+      - name: Submit the LangChain4j dependencies
+        uses: advanced-security/maven-dependency-submission-action@a64327a7329c9939cf675e458452febe1894a70c # v6.0.1
+        with:
+          directory: sdk/java/langchain4j
+          correlator: loom-java-langchain4j
+      - name: Submit the Spring AI dependencies
+        uses: advanced-security/maven-dependency-submission-action@a64327a7329c9939cf675e458452febe1894a70c # v6.0.1
+        with:
+          directory: sdk/java/spring-ai
+          correlator: loom-java-spring-ai
