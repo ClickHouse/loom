@@ -140,12 +140,12 @@ export function ReviewQueue() {
   // The initial URL is read once, above; a navigation that lands while the queue is
   // already mounted (the sidebar's proposal-only `?tab=proposals` link) must switch
   // the tab too, so re-read `?tab=` on later in-app navigations and on history moves.
+  // A missing or invalid parameter is the default URL, whose tab is Conflicts: a Back
+  // onto it must land there, not keep the category the forward entry had.
   const followLink = () => {
     const t = urlParam("tab");
-    if (t && t in QUEUE_TABS) {
-      setTab(t as QueueTab);
-      setTabTouched(true);
-    }
+    setTab(t && t in QUEUE_TABS ? (t as QueueTab) : "conflicts");
+    setTabTouched(true);
   };
   useEffect(() => {
     if (navSeen.current === navSeq) return; // mount: initialQueueTab() already read it
@@ -236,8 +236,11 @@ export function ReviewQueue() {
   // not come back from the probe.
   const [seedsUsed, setSeedsUsed] = useState({ learnings: false, exceptions: false });
   // The scope effect runs on mount too; only an actual namespace switch resets the tab,
-  // so a `?tab=proposals` deep link keeps its category on first paint.
-  const scopeMounted = useRef(false);
+  // so a `?tab=proposals` deep link keeps its category on first paint. The reset compares
+  // the previous scope key rather than a mounted flag: a replayed mount effect (React
+  // StrictMode in development) runs the same scope twice and must not read the second
+  // run as a switch.
+  const prevTabScope = useRef<string | null>(null);
   useAbortableEffect(
     (signal, live) => {
       // A scope change hides the old scope's counts immediately.
@@ -248,11 +251,12 @@ export function ReviewQueue() {
       // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
       // they revealed) must not outlive it. The deep link's category applied to the
       // namespace it was opened on, so the touched flag resets with the tab.
-      if (scopeMounted.current) {
+      const tabScope = `${identity.org}/${identity.namespace}`;
+      if (prevTabScope.current !== null && prevTabScope.current !== tabScope) {
         setTab("conflicts");
         setTabTouched(false);
       }
-      scopeMounted.current = true;
+      prevTabScope.current = tabScope;
       setAutoOpened(false);
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", LEARNINGS_READ, { signal })
         .then((r) => {

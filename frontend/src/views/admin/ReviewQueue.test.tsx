@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { act, cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -11,7 +12,7 @@ import type {
   WhoAmI,
 } from "../../api";
 import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
-import { useStore } from "../../lib/state";
+import { urlParam, useStore } from "../../lib/state";
 import { invalidateShared } from "../../lib/sharedReads";
 import { axeViolations } from "../../test/axe";
 import { ReviewQueue } from "./ReviewQueue";
@@ -2085,6 +2086,56 @@ describe("ReviewQueue counts and the proposal-only route", () => {
       WAIT,
     );
     expect(await screen.findByText("Tuesdays", {}, WAIT)).toBeInTheDocument();
+  });
+
+  it("a ?tab=proposals deep link keeps its tab when StrictMode replays the mount effect", async () => {
+    window.history.replaceState(null, "", "/admin/review_queue?tab=proposals");
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [proposal], total: 1 });
+    seed("ns-a", "writer");
+    render(
+      <StrictMode>
+        <ReviewQueue />
+      </StrictMode>,
+    );
+    await waitFor(
+      () => expect(screen.getByRole("tab", { name: /Proposals/ })).toHaveAttribute("aria-selected", "true"),
+      WAIT,
+    );
+    expect(await screen.findByText("Tuesdays", {}, WAIT)).toBeInTheDocument();
+    // The replayed scope effect ran the same scope twice: no switch, no reset to Conflicts.
+    expect(screen.getByRole("tab", { name: /Proposals/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("Back onto the default URL restores the Conflicts tab", async () => {
+    window.history.replaceState(null, "", "/admin/review_queue");
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(countConflicts).mockResolvedValue(1);
+    vi.mocked(countPendingProposals).mockResolvedValue(2);
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [proposal], total: 1 });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await waitFor(
+      () => expect(screen.getByRole("tab", { name: /Conflicts \(1\)/ })).toHaveAttribute("aria-selected", "true"),
+      WAIT,
+    );
+    // The sidebar's proposal-only link lands while the queue is already mounted.
+    act(() => {
+      useStore.getState().navigate("admin:review_queue", { query: { tab: "proposals" } });
+    });
+    await waitFor(
+      () => expect(screen.getByRole("tab", { name: /Proposals/ })).toHaveAttribute("aria-selected", "true"),
+      WAIT,
+    );
+    // Back: the address is the default URL again, whose tab is Conflicts.
+    await act(async () => {
+      window.history.back();
+      await new Promise((r) => window.addEventListener("popstate", r, { once: true }));
+    });
+    expect(urlParam("tab")).toBeNull();
+    await waitFor(
+      () => expect(screen.getByRole("tab", { name: /Conflicts/ })).toHaveAttribute("aria-selected", "true"),
+      WAIT,
+    );
   });
 
   it("a decision re-reads the counts, and writes the new badge answer to the store", async () => {
