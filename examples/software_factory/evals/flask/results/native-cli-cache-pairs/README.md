@@ -21,7 +21,7 @@ $1.3563648. The two blind judge requests cost $0.686484 separately. The Loom
 request ledger attributes zero upstream provider cost. Infrastructure and
 index preparation are unpriced.
 
-[Observed metrics and verified input hashes](results.json)
+[Observed metrics and verified input hashes](results.json) · [Per-attempt cost and time analysis](DIAGNOSTICS.md)
 
 ## Cold provider cache
 
