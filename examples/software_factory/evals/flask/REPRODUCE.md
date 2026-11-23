@@ -53,7 +53,8 @@ fact and verify that its anchor becomes fresh again.
 
 The indexed text roots are `src/flask`, `tests` and `docs`, for every Loom arm.
 They contain only the original Git revision; evaluator patches are absent.
-Non-text fixtures remain in the local checkout. The compiler uses the same public
+Hidden paths and non-text fixtures remain in the local checkout. Native index
+exclusions match the exporter's hidden-path rule. The compiler uses the same public
 roots, and native receipts disclose files its parsers decline. Candidate grading
 continues to accept implementation changes under `src/flask` only. Expanding index
 coverage defines a separate cohort from implementation-only indexes.

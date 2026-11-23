@@ -146,9 +146,17 @@ async def audit_index(request):
                 (edge.edge_kind, edge.from_symbol_id, edge.to_symbol_id, edge.path, edge.line)
                 for edge in edges
             )
+    actual_paths = {row["path"] for row in tables["code_files"]}
+    expected_paths = set(files) - set(not_indexed)
     require(
-        {row["path"] for row in tables["code_files"]} == set(files) - set(not_indexed),
-        "Index has missing/extra files beyond explicitly declined source",
+        actual_paths == expected_paths,
+        "Index has missing/extra files beyond explicitly declined source: "
+        + json.dumps(
+            {
+                "missing": sorted(expected_paths - actual_paths),
+                "extra": sorted(actual_paths - expected_paths),
+            }
+        ),
     )
     for rows in tables.values():
         for row in rows:

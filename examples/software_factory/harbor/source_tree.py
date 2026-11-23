@@ -7,6 +7,9 @@ import re
 import subprocess
 from pathlib import PurePosixPath
 
+# Native repository indexing must exclude the hidden paths ordinary() refuses.
+SOURCE_EXCLUDE_GLOBS = (".*", "**/.*")
+
 
 def ordinary(path):
     return (

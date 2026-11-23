@@ -95,8 +95,9 @@ See the [example](../../examples/software_factory/README.md),
 and [report layout](../../examples/software_factory/harbor/README.md).
 
 The Python profile indexes the original implementation, tests and documentation
-for every Loom arm. Its compiler tree uses the same public text roots. Binary
-fixtures stay local, and the verifier accepts implementation changes only; index
+for every Loom arm. Its compiler tree uses the same public text roots. Hidden paths
+and binary fixtures stay local; native repository exclusions match the public text
+exporter's hidden-path rule. The verifier accepts implementation changes only; index
 coverage does not widen the candidate artifact boundary. Historical source hashes
 cover the indexed text at each revision. Expanded coverage is recorded separately
 from cohorts whose index held only implementation files.

@@ -107,3 +107,22 @@ class SourceIdentity(unittest.TestCase):
                 "docs/design.rst": "Public design\n",
             },
         )
+
+    def test_native_repository_exclusions_match_hidden_source_paths(self):
+        from examples.software_factory.harbor.source_tree import SOURCE_EXCLUDE_GLOBS, ordinary
+        from server.code.app.index.denylist import Denylist
+
+        rules = Denylist(patterns=SOURCE_EXCLUDE_GLOBS, builtin=False)
+        for path in (
+            ".env",
+            "tests/test_apps/.env",
+            "tests/test_apps/.flaskenv",
+            "docs/.private/page.rst",
+        ):
+            with self.subTest(path=path):
+                self.assertFalse(ordinary(path))
+                self.assertTrue(rules.reason(path))
+        for path in ("src/flask/app.py", "tests/test_cli.py", "docs/_static/style.css"):
+            with self.subTest(path=path):
+                self.assertTrue(ordinary(path))
+                self.assertFalse(rules.reason(path))

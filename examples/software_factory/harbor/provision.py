@@ -21,7 +21,7 @@ from .anchors import matches as anchor_matches
 from .arms import ALL, validate_schedule
 from .index import snapshot
 from .memory import treatment_fixture, validate_history_certificate
-from .source_tree import source_files
+from .source_tree import SOURCE_EXCLUDE_GLOBS, source_files
 
 
 def remote_identity(task):
@@ -1029,6 +1029,7 @@ class Provisioner:
                     "git_remote": remote_identity(task)[0],
                     "git_branch": "factory-frozen",
                     "path_prefixes": ",".join(task["source_roots"]),
+                    "exclude": list(SOURCE_EXCLUDE_GLOBS),
                     "org_readable": False,
                     "public": False,
                     "classification": "standard",
