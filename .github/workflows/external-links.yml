@@ -52,11 +52,38 @@ jobs:
           sparse-checkout: |
             docs
             sdk
+      - name: Verify VS Code install redirects
+        working-directory: ${{ github.event_name == 'pull_request' && 'link-baseline' || '.' }}
+        run: |
+          python3 - <<'PYTHON'
+          import re
+          import subprocess
+          from pathlib import Path
+          from urllib.parse import parse_qs, urlsplit
+
+          readme = Path("README.md").read_text()
+          for link in re.findall(r"https://(?:insiders\.)?vscode\.dev/redirect\?url=[^\s)>]+", readme):
+              parts = urlsplit(link)
+              target, = parse_qs(parts.query)["url"]
+              app = "vscode-insiders" if parts.hostname == "insiders.vscode.dev" else "vscode"
+              if not target.startswith(f"{app}:mcp/install?"):
+                  raise SystemExit(f"Install link has the wrong application target: {link}")
+              status, location = subprocess.check_output(
+                  ["curl", "--proto", "=https", "--tlsv1.2", "--silent", "--show-error",
+                   "--max-time", "10", "--output", "/dev/null",
+                   "--write-out", "%{http_code}\n%{redirect_url}", link],
+                  text=True,
+              ).split("\n", 1)
+              if status != "302" or location != target:
+                  raise SystemExit(f"Install redirect returned the wrong status or destination: {link}")
+          PYTHON
       - name: Check public documentation URLs
         working-directory: ${{ github.event_name == 'pull_request' && 'link-baseline' || '.' }}
         run: |
           "$RUNNER_TEMP/lychee" --scheme https --scheme http --exclude-all-private \
             --exclude '^https?://([^/]+\.)?example\.(com|org|net)([:/]|$)' \
+            --exclude '^https://(insiders\.)?vscode\.dev/redirect\?url=' \
+            --remap '^https://www[.]npmjs[.]com/package/@clickhouse/loom$ https://registry.npmjs.org/@clickhouse/loom/latest' \
             --exclude '^https?://localhost([:/]|$)' --max-concurrency 8 \
             --timeout 10 --max-retries 1 --no-progress --format markdown \
             --output "$RUNNER_TEMP/external-links.md" \
