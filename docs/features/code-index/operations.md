@@ -147,6 +147,10 @@ located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes
 `bodies: "none"` (spans and signatures only, the cheapest answer), `token_budget`,
 `expand` (one LLM hop to bridge wording to identifiers) and `cursor` for the next page.
 
+For `code.search` and `code.grep` in matches mode, pass the returned `next_cursor` as
+`cursor` with the original search arguments to get the next page. Omit `cursor`
+when starting a new search with a different query, pattern or filters.
+
 `code.search` has no response token cap by default. Set
 `LOOM_CODE_SEARCH_TOKEN_BUDGET` to a positive token count to set a deployment default;
 `0` means unlimited. A request's `token_budget` overrides that default, including
@@ -376,6 +380,11 @@ explicitly capped container lookups can return a skeleton and member outline.
 defaults to `0`. An explicit request value of `0` overrides a finite deployment cap.
 Attached file lessons use `code_result_lessons_tokens`, also unlimited by default.
 The internal code grounding reads for memory questions likewise default to no token cap.
+
+For search and grep matches, a file with a lesson linked to a returned definition
+can omit ordinary lessons linked only to other definitions in that file.
+File-level results keep their wider scope. Constraints, decisions, pins, file
+notes and uncertain links stay eligible. `lessons_left_out` includes omissions.
 
 Result counts, requested body modes, access checks, source completeness checks and
 execution deadlines still apply. Unlimited does not reconstruct source absent from the

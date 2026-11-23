@@ -502,6 +502,15 @@ def listed_ops(toolset: str | None) -> list[Operation]:
     return out
 
 
+def _upfront_tools(configured: str, toolset: str) -> set[str]:
+    if configured.strip().casefold() != "auto":
+        return {name.strip() for name in configured.split(",") if name.strip()}
+    names = {"search.query", "code.search", "code.symbol", "code.grep"}
+    if toolset != "coding":
+        names.add(LOOM_OP_TOOL_NAME)
+    return names
+
+
 def _with_loading_hints(descriptors: list[dict[str, Any]], requested: set[str]) -> None:
     """Apply one loading policy to registry and synthetic descriptors alike."""
     names = {op.mcp_tool_name for op in ALL_OPERATIONS if op.name in requested}
@@ -527,7 +536,7 @@ async def _tools_descriptor(
     from server.settings import settings
 
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
-    always_load = {n.strip() for n in settings.mcp_always_load_tools.split(",") if n.strip()}
+    always_load = _upfront_tools(settings.mcp_always_load_tools, toolset)
     descriptors: list[dict[str, Any]] = []
     ops = listed_ops(toolset)
     listed = _tool_names(ops, toolset)

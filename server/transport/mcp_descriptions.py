@@ -1361,7 +1361,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Find text in indexed source, with lines and enclosing symbols. "
         "`pattern` is a string or list of literal alternatives. `regex: true` uses one RE2 string. "
         "Scope with `path_prefix`, `path_globs` or `langs`. `include_body` adds definitions. "
-        "`neighbours` adds callers, callees, tests and docs. Page with `next_cursor`. "
+        "`neighbours` adds callers, callees, tests and docs. "
         "A regex-shaped string with no literal hit may be retried as regex and disclosed. "
         "`mode: 'message'` finds error or log templates, with a literal fallback. "
         "`mode: 'presence'` checks branches via `namespaces`. "
@@ -1401,17 +1401,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "reported, not flagged."
     ),
     "code.search": (
-        "Start an issue investigation or implementation task here when repository context "
-        "is missing. Give the problem, question or identifier as `query`: one response "
-        "combines relevant indexed source, file:line spans and any code-linked project "
-        "decisions or lessons. Saved project constraints can add context that a local "
-        "file read does not contain. Use returned evidence before opening more files. "
-        "For an exact definition use "
-        "code.symbol; callers, code.callers; indexed literals or errors, code.grep. "
-        "Use local tools for uncommitted or unindexed code, explicit local-tool requests, "
-        "or an unavailable or abstaining index. For a synthesized answer use code.ask. "
-        "`expand: true` adds a model hop to bridge vocabulary; `namespaces` searches "
-        "several indexes; `deadline_ms` returns a partial page when its budget expires."
+        "Find implementations by question, behavior or identifier using `query`. "
+        "Returns indexed source, file:line spans and linked project decisions and lessons. "
+        "Use returned evidence before reading more files. For a definition use "
+        "code.symbol, for callers use code.callers, and for exact text use code.grep. "
+        "Use local tools on request, for uncommitted or unindexed code, or if the index "
+        "is unavailable or abstains. For synthesized answers use code.ask. "
+        "`expand: true` adds a model call for vocabulary. `namespaces` searches indexes. "
+        "`deadline_ms` can return a partial page."
     ),
     "code.ask": (
         "Ask a QUESTION about this codebase and get a grounded answer with "
@@ -2207,7 +2204,7 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Find text in indexed source, with lines and enclosing symbols. "
         'Pass a `pattern` string or a list of literals like ["parse(", "load("]. '
         "`regex: true` uses one RE2 string. For behavior use code.search. "
-        "Scope with `path_prefix`, `path_globs` or `langs`. Page with `next_cursor`. "
+        "Scope with `path_prefix`, `path_globs` or `langs`. "
         "`include_body` returns distinct enclosing definitions. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
     ),

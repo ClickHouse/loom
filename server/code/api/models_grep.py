@@ -45,8 +45,10 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     pattern: GrepText | Annotated[list[GrepText], Field(min_length=1, max_length=255)] = Field(
         description="Literal text, a list of alternatives, or one RE2 expression with regex=true.",
     )
-    # True reads `pattern` as RE2; an invalid expression is a 422.
-    regex: bool = False
+    regex: bool = Field(
+        default=False,
+        description="Use RE2 syntax without lookaround or backreferences when true.",
+    )
     # False matches `pattern` regardless of letter case.
     case_sensitive: bool = True
     include_body: bool = Field(
@@ -59,7 +61,14 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     # Continuation (matches mode): the `next_cursor` of an earlier response to this
     # pattern; the next page of matching lines is one point read of what the first call
     # extracted.
-    cursor: str = Field(default="", max_length=1024)
+    cursor: str = Field(
+        default="",
+        max_length=1024,
+        description=(
+            "In matches mode, pass `next_cursor` with the original search arguments "
+            "and omit it to start a new search."
+        ),
+    )
     # The caller's seen-set. Grep serves no unit ids, so these are PATHS
     # (what its trace records as returned_ids): lines in them are skipped.
     exclude_unit_ids: list[str] = Field(
