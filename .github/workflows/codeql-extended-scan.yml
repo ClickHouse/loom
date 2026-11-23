@@ -55,15 +55,24 @@ jobs:
           SARIF_DIR: ${{ steps.scan.outputs.sarif-output }}
         run: |
           test -d "$SARIF_DIR"
-          jq -s -r -e '
-            if length == 0 or any(.[]; (.runs | type) != "array" or (.runs | length) == 0)
-            then error("Expected at least one SARIF run in each report")
-            else
-              [.[].runs[].results[]?] as $results
-              | "Findings: \($results | length)", "",
-                ($results | group_by(.ruleId)[] | "- \(.[0].ruleId): \(length)")
-            end
-          ' "$SARIF_DIR"/*.sarif | tee "$RUNNER_TEMP/codeql-rule-counts.txt" >> "$GITHUB_STEP_SUMMARY"
+          shopt -s nullglob
+          reports=("$SARIF_DIR"/*.sarif)
+          test "${#reports[@]}" -gt 0
+          for report in "${reports[@]}"; do
+            jq -s -e '
+              length == 1 and
+              (.[0].runs | type == "array" and length > 0 and all(.[];
+                type == "object" and
+                ((has("results") | not) or (.results | type == "array" and
+                  all(.[]; type == "object" and (.ruleId | type) == "string")))
+              ))
+            ' "$report" >/dev/null
+          done
+          jq -s -r '
+            [.[].runs[].results[]?] as $results
+            | "Findings: \($results | length)", "",
+              ($results | group_by(.ruleId)[] | "- \(.[0].ruleId): \(length)")
+          ' "${reports[@]}" | tee "$RUNNER_TEMP/codeql-rule-counts.txt" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: "!inputs.publish"
         with:
