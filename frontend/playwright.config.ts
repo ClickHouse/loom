@@ -8,6 +8,10 @@ import { defineConfig } from "@playwright/test";
 // `E2E_PORT` lets two checkouts on one host run the suite at once.
 const PORT = Number(process.env.E2E_PORT ?? 4199);
 const BASE = `http://127.0.0.1:${PORT}`;
+const smokeBrowser = process.env.LOOM_BROWSER_SMOKE;
+if (smokeBrowser && smokeBrowser !== "firefox" && smokeBrowser !== "webkit") {
+  throw new Error("LOOM_BROWSER_SMOKE must be firefox or webkit");
+}
 
 export default defineConfig({
   testDir: "./e2e",
@@ -30,10 +34,22 @@ export default defineConfig({
   },
   // The Explorer runs again at Playwright's default 1280 × 720, where its outline and
   // canvas are narrowest beside the facets and the inspector.
-  projects: [
-    { name: "desktop" },
-    { name: "explorer-1280", testMatch: /explorer-.*\.spec\.ts/, use: { viewport: { width: 1280, height: 720 } } },
-  ],
+  projects: smokeBrowser
+    ? [
+        {
+          name: smokeBrowser,
+          testMatch: /(?:navigation|keyboard)\.spec\.ts$/,
+          use: { browserName: smokeBrowser, launchOptions: {} },
+        },
+      ]
+    : [
+        { name: "desktop" },
+        {
+          name: "explorer-1280",
+          testMatch: /explorer-.*\.spec\.ts/,
+          use: { viewport: { width: 1280, height: 720 } },
+        },
+      ],
   // `--host 127.0.0.1` in e2e:serve, and the same address here: a runner
   // that resolves `localhost` to `::1` would otherwise serve on IPv6 while
   // the probe below waits on IPv4 until the timeout.
