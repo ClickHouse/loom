@@ -28,7 +28,9 @@ from typing import Any, Literal, NamedTuple
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
+from server.knowledge.domain.connected_accounts import known_account_kind
 from server.knowledge.domain.live_chunks import has_live_chunks_sql
+from server.knowledge.domain.mcp_sources import is_mcp_slot
 from server.knowledge.domain.sources import (
     NAMESPACE_ACCESS,
     SYNC_WORKER_ACTOR,
@@ -36,6 +38,7 @@ from server.knowledge.domain.sources import (
     id_list_config,
     items_from_config,
     json_object,
+    opaque_payload,
     options_in,
     state_key,
     stored_config,
@@ -53,9 +56,20 @@ REVISIONS_PAGE = 10_000  # not a setting: a bound on one statement
 _COLUMNS = (
     "org, namespace, name, source_id, kind, source_kind, config_json, items_json, "
     "credential_enc, secret_enc, access, credential_mode, owner_subject, connection_id, "
+    "source_contract_version, connection_slot, "
     "created_by, active, pending_delete, created_at, "
     "updated_at"
 )
+
+
+def _account_predicate(kind: str) -> str:
+    if not known_account_kind(kind):
+        raise RuntimeError("connected_source_kind_unavailable")
+    if is_mcp_slot(kind):
+        return (
+            "(credential_mode = 'mcp' OR source_kind = 'mcp') AND connection_slot = {kind:String}"
+        )
+    return "credential_mode = 'connected' AND source_kind = {kind:String}"
 
 
 def _items(raw: str) -> list[dict[str, Any]]:
@@ -71,7 +85,12 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
     created = row.get("created_at")
     updated = row.get("updated_at")
     kind = str(row.get("source_kind") or row.get("kind") or "")
-    config = json_object(str(row.get("config_json") or ""))
+    mode = str(row.get("credential_mode") or "shared")
+    version = int(row.get("source_contract_version") or 0)
+    generic = opaque_payload(kind=kind, mode=mode, version=version)
+    config_raw = str(row.get("config_json") or "")
+    items_raw = str(row.get("items_json") or "")
+    config = {} if generic else json_object(config_raw)
     return KnowledgeSource(
         org=str(row.get("org") or ""),
         namespace=str(row.get("namespace") or ""),
@@ -80,11 +99,11 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
         source_id=str(row.get("source_id") or ""),
         config=options_in(kind, config),
         # A row an older build wrote holds its items in `config` alone.
-        items=_items(str(row.get("items_json") or "")) or items_from_config(kind, config),
+        items=[] if generic else (_items(items_raw) or items_from_config(kind, config)),
         credential_enc=str(row.get("credential_enc") or ""),
         secret_enc=str(row.get("secret_enc") or ""),
         access=str(row.get("access") or NAMESPACE_ACCESS),
-        credential_mode=str(row.get("credential_mode") or "shared"),
+        credential_mode=mode,
         owner_subject=str(row.get("owner_subject") or ""),
         connection_id=str(row.get("connection_id") or ""),
         created_by=str(row.get("created_by") or ""),
@@ -92,6 +111,10 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
         pending_delete=bool(row.get("pending_delete")),
         created_at=created if isinstance(created, datetime) else None,
         updated_at=updated if isinstance(updated, datetime) else None,
+        source_contract_version=version,
+        connection_slot=str(row.get("connection_slot") or ""),
+        generic_config_json=config_raw if generic else "",
+        generic_items_json=items_raw if generic else "",
     )
 
 
@@ -129,7 +152,8 @@ async def connected_sources(
     """Every owned source, including inactive rows whose cleanup may still be owed."""
     rows = await (ch or _default_client()).query_all(
         f"SELECT {_COLUMNS} FROM {TABLE} FINAL WHERE org = {{org:String}} "
-        "AND credential_mode = 'connected' AND owner_subject = {subject:String} "
+        "AND (credential_mode IN ('connected', 'mcp') OR source_kind = 'mcp') "
+        "AND owner_subject = {subject:String} "
         "ORDER BY namespace, name LIMIT {limit:UInt64}",
         params={
             "org": org,
@@ -247,7 +271,7 @@ async def connected_owner_namespaces(
     rows = await (ch or _default_client()).query_all(
         f"SELECT DISTINCT namespace FROM {TABLE} "
         "WHERE org = {org:String} AND owner_subject = {owner:String} "
-        "AND credential_mode = 'connected' AND source_kind = {kind:String} "
+        f"AND {_account_predicate(kind)} "
         "ORDER BY namespace LIMIT {limit:UInt64}",
         params={"org": org, "owner": subject, "kind": kind, "limit": maximum + 1},
     )
@@ -262,8 +286,8 @@ async def erase_connected_owner(
     """The caller holds the stopped account and this namespace's source lease."""
     await (ch or _default_client()).execute(
         f"DELETE FROM {TABLE} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
-        "AND owner_subject = {owner:String} AND credential_mode = 'connected' "
-        "AND source_kind = {kind:String}",
+        "AND owner_subject = {owner:String} "
+        f"AND {_account_predicate(kind)}",
         params={"org": org, "ns": namespace, "owner": subject, "kind": kind},
         settings={"lightweight_deletes_sync": 2},
     )
@@ -275,6 +299,9 @@ async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) ->
     writing replica's: the lease-serialized writes stay ordered while those clocks
     differ by less than the lease's handoff between writes."""
     now = naive_utc_now_seconds()
+    generic = opaque_payload(
+        kind=src.kind, mode=src.credential_mode, version=src.source_contract_version
+    )
     row = {
         "org": src.org,
         "namespace": src.namespace,
@@ -282,14 +309,18 @@ async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) ->
         "source_id": src.source_id,
         "kind": src.kind if id_list_config(src) is not None else "",
         "source_kind": src.kind,
-        "config_json": json.dumps(stored_config(src), sort_keys=True),
-        "items_json": json.dumps(src.items, sort_keys=True),
+        "config_json": src.generic_config_json
+        if generic
+        else json.dumps(stored_config(src), sort_keys=True),
+        "items_json": src.generic_items_json if generic else json.dumps(src.items, sort_keys=True),
         "credential_enc": src.credential_enc,
         "secret_enc": src.secret_enc,
         "access": src.access,
         "credential_mode": src.credential_mode,
         "owner_subject": src.owner_subject,
         "connection_id": src.connection_id,
+        "source_contract_version": src.source_contract_version,
+        "connection_slot": src.connection_slot,
         "created_by": src.created_by,
         "active": src.active,
         "pending_delete": src.pending_delete,
@@ -520,17 +551,59 @@ __all__ = [
 ]
 
 
+async def connected_owners(
+    subjects: list[str] | None = None,
+    *,
+    org: str | None = None,
+    ch: _CHClient | None = None,
+) -> list[tuple[str, str, str]]:
+    """Discover raw-history identities without selecting source payloads or credentials."""
+    if subjects == []:
+        return []
+    where = "(credential_mode IN ('connected', 'mcp') OR source_kind = 'mcp')"
+    params: dict[str, Any] = {}
+    if org is not None:
+        where += " AND org = {org:String}"
+        params["org"] = org
+    if subjects is not None:
+        where += " AND owner_subject IN {subjects:Array(String)}"
+        params["subjects"] = subjects
+    maximum = settings.knowledge_connected_registry_scan_limit
+    rows = await (ch or _default_client()).query_all(
+        "SELECT DISTINCT org, owner_subject, "
+        "if(credential_mode = 'mcp' OR source_kind = 'mcp', connection_slot, source_kind) AS slot "
+        f"FROM {TABLE} WHERE {where} "
+        "ORDER BY org, owner_subject, slot LIMIT {limit:UInt64}",
+        params={**params, "limit": maximum + 1},
+    )
+    if len(rows) > maximum:
+        raise RuntimeError("connected_source_owner_bound")
+    return [(row["org"], row["owner_subject"], row["slot"]) for row in rows]
+
+
 async def connected_history(
     *, owner: tuple[str, str, str] | None = None, ch: _CHClient | None = None
 ) -> list[KnowledgeSource]:
     """Metadata of every historical connected source id, including replaced names."""
-    where = "credential_mode = 'connected'"
+    where = "(credential_mode IN ('connected', 'mcp') OR source_kind = 'mcp')"
     if owner:
-        where += " AND (org, owner_subject, source_kind) = {owner:Tuple(String, String, String)}"
+        if not known_account_kind(owner[2]):
+            raise RuntimeError("connected_source_kind_unavailable")
+        if is_mcp_slot(owner[2]):
+            where = (
+                "(credential_mode = 'mcp' OR source_kind = 'mcp') "
+                "AND (org, owner_subject, connection_slot) = {owner:Tuple(String, String, String)}"
+            )
+        else:
+            where = (
+                "credential_mode = 'connected' AND "
+                "(org, owner_subject, source_kind) = {owner:Tuple(String, String, String)}"
+            )
     maximum = settings.knowledge_connected_registry_scan_limit
     rows = await (ch or _default_client()).query_all(
         "SELECT DISTINCT org, namespace, name, source_id, source_kind, owner_subject, "
-        f"connection_id FROM {TABLE} WHERE {where} "
+        f"connection_id, credential_mode, connection_slot, source_contract_version "
+        f"FROM {TABLE} WHERE {where} "
         "ORDER BY org, owner_subject, source_kind, namespace, name, source_id, connection_id "
         "LIMIT {limit:UInt64}",
         params={"owner": owner or ("", "", ""), "limit": maximum + 1},
@@ -546,7 +619,9 @@ async def connected_history(
             source_id=row["source_id"],
             owner_subject=row["owner_subject"],
             connection_id=row["connection_id"],
-            credential_mode="connected",
+            credential_mode=str(row.get("credential_mode") or "connected"),
+            connection_slot=str(row.get("connection_slot") or ""),
+            source_contract_version=int(row.get("source_contract_version") or 0),
             access="mirrored",
         )
         for row in rows

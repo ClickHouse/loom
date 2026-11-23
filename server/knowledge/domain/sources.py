@@ -139,6 +139,16 @@ class KnowledgeSource:
     # The namespace's mirror, which the sync sets before a mirrored source's turn; never
     # stored.
     mirror: str = ""
+    source_contract_version: int = 0
+    connection_slot: str = ""
+    # Lifecycle writes preserve unknown payloads without interpreting or exposing them.
+    generic_config_json: str = field(default="", repr=False)
+    generic_items_json: str = field(default="", repr=False)
+
+
+def opaque_payload(*, kind: str, mode: str, version: int) -> bool:
+    """Preserve new formats without interpreting them through a native source codec."""
+    return version != 0 or kind == "mcp" or mode == "mcp"
 
 
 def shown(value: Any) -> str:
@@ -565,15 +575,27 @@ def options_in(kind: str, config: dict[str, Any]) -> dict[str, Any]:
 def served(src: KnowledgeSource) -> bool:
     """Whether this build serves `src`: one shown to every reader of its namespace. A
     mirrored one, or any `access` a later build writes, is that build's."""
-    return src.credential_mode == "shared" and src.access == NAMESPACE_ACCESS
+    return (
+        not opaque_payload(
+            kind=src.kind, mode=src.credential_mode, version=src.source_contract_version
+        )
+        and src.credential_mode == "shared"
+        and src.access == NAMESPACE_ACCESS
+    )
 
 
 def mirror_synced(src: KnowledgeSource) -> bool:
     """Whether the sync worker writes `src` into its namespace's mirror: a mirrored
     folder-store source or a person's connected page/project source."""
-    return src.access == MIRRORED_ACCESS and (
-        src.kind == "gdrive"
-        or (src.credential_mode == "connected" and src.kind in {"notion", "linear"})
+    return (
+        not opaque_payload(
+            kind=src.kind, mode=src.credential_mode, version=src.source_contract_version
+        )
+        and src.access == MIRRORED_ACCESS
+        and (
+            src.kind == "gdrive"
+            or (src.credential_mode == "connected" and src.kind in {"notion", "linear"})
+        )
     )
 
 
