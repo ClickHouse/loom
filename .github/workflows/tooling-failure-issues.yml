@@ -1,0 +1,79 @@
+name: Report tooling failures
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/scripts/tooling_failure_issues.py"
+      - ".github/scripts/test_tooling_failure_issues.py"
+      - ".github/workflows/tooling-failure-issues.yml"
+  workflow_run:
+    workflows:
+      - "ci"
+      - "docker-smoke"
+      - "codeql"
+      - "CodeQL extended security"
+      - "Dashboard browser smoke"
+      - "External documentation links"
+      - "Go SDK API compatibility"
+      - "Maven dependency graph"
+      - "Rust dependency advisories"
+      - "Rust SDK API compatibility"
+      - "Rust dependency graph"
+      - "Synthetic memory load"
+      - "TypeScript API report"
+      - "workflow lint"
+      - "native SDK packages"
+      - "scorecard"
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "19 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Verify the main-only policy and issue reconciliation
+        run: python3 -m unittest discover -s .github/scripts -p test_tooling_failure_issues.py
+
+  issues:
+    if: >-
+      github.repository == 'ClickHouse/loom' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_run' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
+          (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'schedule' ||
+            github.event.workflow_run.event == 'workflow_dispatch') &&
+          (github.event.workflow_run.conclusion == 'failure' ||
+            github.event.workflow_run.conclusion == 'timed_out')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    concurrency:
+      group: tooling-failure-issues-main
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Report failed checks without copying their logs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/tooling_failure_issues.py
