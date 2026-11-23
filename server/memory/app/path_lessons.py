@@ -19,6 +19,7 @@ import json
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
+from server.code.domain.anchor import local_name
 from server.memory.api.models_for_file import MemoryForFileInput
 from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
@@ -102,6 +103,34 @@ def _ordered_candidates(
     return sorted(candidates, key=rank)
 
 
+def _excludes_other_symbol(hit: dict[str, Any], path: str, symbols: set[str]) -> bool:
+    tags = hit.get("tags") or []
+    if (
+        hit.get("pinned")
+        or hit.get("memory_type") == "decision"
+        or (CONSTRAINT_TAG in tags or "decision" in tags)
+    ):
+        return False
+    anchors = hit.get("code_symbols") or []
+    return bool(anchors) and all(name and local_name(name, path) not in symbols for name in anchors)
+
+
+def _focused_paths(
+    candidates: list[tuple[str, dict[str, Any]]],
+    matched_symbols: dict[str, set[str]],
+    superseded: set[str],
+) -> set[str]:
+    """Focus a file only where the read found a whole lesson for a matched symbol."""
+    return {
+        path
+        for path, hit in candidates
+        if (symbols := matched_symbols.get(path))
+        and str(hit.get("memory_id")) not in superseded
+        and not hit.get("value_truncated")
+        and any(name and local_name(name, path) in symbols for name in hit.get("code_symbols", []))
+    }
+
+
 async def lessons_for_paths(
     org: str,
     namespaces: Sequence[str],
@@ -111,6 +140,7 @@ async def lessons_for_paths(
     token_budget: int,
     timeout_s: float | None = None,
     query: str = "",
+    matched_symbols: dict[str, set[str]] | None = None,
 ) -> Lessons:
     """The live memories of `namespaces` (each already checked readable) that name or are
     linked to code in `paths`, in path order, then each file's memory.for_file order (past
@@ -126,7 +156,9 @@ async def lessons_for_paths(
     when the conflict check linked one. `timeout_s` bounds the file reads together;
     failed or unfinished reads leave the completed files' rows intact. A nonempty `query`
     ranks matching excerpts after constraints and pins across the selected paths,
-    preserving path and listing order on ties."""
+    preserving path and listing order on ties. `matched_symbols` focuses inline lessons
+    on the matched definitions when an uncapped answer finds a complete lesson
+    there. File-wide or uncertain links, decisions, constraints and pins remain eligible."""
     if not namespaces or not paths:
         return Lessons([])
     # memory.for_file takes two extra namespaces and follows code links only into the
@@ -157,9 +189,14 @@ async def lessons_for_paths(
         for hit in hits
         if _names_this_file(hit, inp.path)
     ]
+    symbols = (matched_symbols or {}) if not token_budget else {}
+    focused = _focused_paths(candidates, symbols, superseded)
     for path, hit in _ordered_candidates(candidates, query):
         key = (str(hit["namespace"]), str(hit["memory_key"]))
         if key in seen:
+            continue
+        if path in focused and _excludes_other_symbol(hit, path, symbols[path]):
+            left.add(key)
             continue
         stale = str(hit.get("memory_id")) in superseded
         lesson = None if stale else _lesson(hit, path)

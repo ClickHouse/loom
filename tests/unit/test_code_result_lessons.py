@@ -93,6 +93,32 @@ async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("symbols", [{"a.py": {"Thing.run"}}, {}])
+async def test_grep_lesson_scope_preserves_constraints_and_uncertain_anchors(
+    monkeypatch: pytest.MonkeyPatch, symbols: dict[str, set[str]]
+) -> None:
+    exact = _hit("exact", state="changed") | {"code_symbols": ["a::Thing::run"]}
+    other = _hit("other", state="fresh") | {"code_symbols": ["a::Other::run"]}
+    uncertain = _hit("uncertain", state="unresolved") | {"code_symbols": [""]}
+    constraint = _hit("constraint", state="fresh", tags=("constraint",)) | {
+        "code_symbols": ["a::Other::run"]
+    }
+    rows = [exact, other, uncertain, constraint, _hit("file")]
+    monkeypatch.setattr(path_lessons, "listing_rows", _listing({"a.py": rows}, []))
+    answer = await path_lessons.lessons_for_paths(
+        "acme", ["mem-home"], "code-repo", ["a.py"], token_budget=0, matched_symbols=symbols
+    )
+    expected = {"exact", "uncertain", "constraint", "file"}
+    assert {row["memory_key"] for row in answer.rows} == (
+        expected if symbols else expected | {"other"}
+    )
+    assert answer.left_out == int(bool(symbols))
+    assert (
+        next(row for row in answer.rows if row["memory_key"] == "exact")["code_state"] == "changed"
+    )
+
+
+@pytest.mark.asyncio
 async def test_query_matching_preserves_constraints_pins_and_tie_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
