@@ -334,6 +334,91 @@ class WorkflowAuditIssues(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "trusted default-branch"):
                 AUDIT.main()
 
+    def graphql_page(self, *, body=None, comments=(), author=None):
+        key = next(iter(self.groups))
+        return {
+            "data": {
+                "repository": {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "number": 7,
+                                "title": f"Review workflow [workflow-audit:{key}]",
+                                "body": body or AUDIT.status_body(key, self.groups[key], URL),
+                                "state": "OPEN",
+                                "author": author
+                                or {"__typename": "Bot", "login": "github-actions"},
+                                "comments": {"totalCount": len(comments), "nodes": list(comments)},
+                            }
+                        ],
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    }
+                }
+            }
+        }
+
+    def test_graphql_bot_issue_is_reused_without_publication(self):
+        client = AUDIT.GitHub("synthetic-token")
+        with patch.object(client, "request", return_value=self.graphql_page()) as request:
+            self.assertEqual(AUDIT.publish(client, self.groups, URL)["unchanged"], 1)
+            self.assertEqual(request.call_count, 1)
+            self.assertEqual(request.call_args.args[:2], ("POST", "/graphql"))
+
+    def test_graphql_bot_latest_state_ignores_a_human_comment(self):
+        key = next(iter(self.groups))
+        old = AUDIT.status_body(key, None, URL)
+        current = AUDIT.status_body(key, self.groups[key], URL)
+        comments = [
+            {
+                "fullDatabaseId": "101",
+                "createdAt": "2000-01-01T00:00:01Z",
+                "body": current,
+                "author": {"__typename": "Bot", "login": "github-actions"},
+            },
+            {
+                "fullDatabaseId": "102",
+                "createdAt": "2000-01-01T00:00:02Z",
+                "body": old,
+                "author": {"__typename": "User", "login": "github-actions"},
+            },
+        ]
+        client = AUDIT.GitHub("synthetic-token")
+        page = self.graphql_page(body=old, comments=comments)
+        with patch.object(client, "request", return_value=page) as request:
+            self.assertEqual(AUDIT.publish(client, self.groups, URL)["unchanged"], 1)
+            self.assertEqual(request.call_count, 1)
+
+    def test_graphql_reappearing_state_updates_once(self):
+        key = next(iter(self.groups))
+        before = self.graphql_page(body=AUDIT.status_body(key, None, URL))
+        after = self.graphql_page(
+            body=AUDIT.status_body(key, None, URL),
+            comments=[
+                {
+                    "fullDatabaseId": "101",
+                    "createdAt": "2000-01-01T00:00:01Z",
+                    "body": AUDIT.status_body(key, self.groups[key], URL),
+                    "author": {"__typename": "Bot", "login": "github-actions"},
+                }
+            ],
+        )
+        client = AUDIT.GitHub("synthetic-token")
+        with patch.object(
+            client, "request", side_effect=[before, {"state": "open"}, {"id": 101}, after]
+        ) as request:
+            self.assertEqual(AUDIT.publish(client, self.groups, URL)["updated"], 1)
+            self.assertEqual(AUDIT.publish(client, self.groups, URL)["unchanged"], 1)
+            writes = [call for call in request.call_args_list if call.args[1].endswith("/comments")]
+            self.assertEqual(len(writes), 1)
+
+    def test_graphql_human_marker_is_not_bot_owned(self):
+        client = AUDIT.GitHub("synthetic-token")
+        page = self.graphql_page(author={"__typename": "User", "login": "github-actions"})
+        with patch.object(client, "request", return_value=page) as request:
+            result = AUDIT.publish(client, {}, URL)
+            self.assertTrue(all(count == 0 for count in result.values()))
+            self.assertEqual(request.call_count, 1)
+
     def test_snapshot_batches_latest_comment_and_validates_cursor(self):
         client = AUDIT.GitHub("synthetic-token")
         node = {
@@ -341,7 +426,7 @@ class WorkflowAuditIssues(unittest.TestCase):
             "title": "Existing task",
             "body": "Human notes",
             "state": "OPEN",
-            "author": {"login": AUDIT._BOT},
+            "author": {"__typename": "Bot", "login": "github-actions"},
             "comments": {
                 "totalCount": 2,
                 "nodes": [
@@ -349,7 +434,7 @@ class WorkflowAuditIssues(unittest.TestCase):
                         "fullDatabaseId": "7081717711",
                         "createdAt": "2026-01-01T00:00:01Z",
                         "body": "Latest state",
-                        "author": {"login": AUDIT._BOT},
+                        "author": {"__typename": "Bot", "login": "github-actions"},
                     }
                 ],
             },
@@ -373,6 +458,8 @@ class WorkflowAuditIssues(unittest.TestCase):
             rows = client.issue_snapshot()
             self.assertEqual(len(rows), 2)
             self.assertEqual(rows[0]["state"], "open")
+            self.assertEqual(rows[0]["user"]["login"], "github-actions[bot]")
+            self.assertEqual(rows[0]["recent_comments"][-1]["user"]["login"], "github-actions[bot]")
             self.assertEqual(rows[0]["recent_comments"][-1]["body"], "Latest state")
             self.assertEqual(request.call_count, 2)
             self.assertEqual(request.call_args.args[2]["variables"]["cursor"], "cursor-a")

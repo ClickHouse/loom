@@ -94,6 +94,13 @@ def status_body(key: str, group: dict[str, Any] | None, run_url: str) -> str:
     )
 
 
+def snapshot_user(author: dict[str, Any] | None) -> dict[str, Any]:
+    user = dict(author or {})
+    if user.get("__typename") == "Bot" and user.get("login") == "github-actions":
+        user["login"] = _BOT
+    return user
+
+
 class GitHub:
     """Fixed-host client with bounded calls, responses and wall time; no redirects or retries."""
 
@@ -138,10 +145,10 @@ class GitHub:
         query = """query($cursor:String) { repository(owner:"ClickHouse",name:"loom") {
           issues(first:100,after:$cursor,filterBy:{createdBy:"github-actions[bot]"},
                  states:[OPEN,CLOSED],orderBy:{field:CREATED_AT,direction:ASC}) {
-            nodes { number title body state author {login}
+            nodes { number title body state author {__typename login}
                     comments:timelineItems(last:100,itemTypes:[ISSUE_COMMENT]) {
                       totalCount nodes { ... on IssueComment {
-                        fullDatabaseId createdAt body author {login}
+                        fullDatabaseId createdAt body author {__typename login}
                       } }
                     } }
             pageInfo {hasNextPage endCursor}
@@ -171,14 +178,14 @@ class GitHub:
                         "title": issue["title"],
                         "body": issue["body"],
                         "state": issue["state"].lower(),
-                        "user": issue["author"] or {},
+                        "user": snapshot_user(issue["author"]),
                         "comment_count": comments["totalCount"],
                         "recent_comments": [
                             {
                                 "id": int(comment["fullDatabaseId"]),
                                 "created_at": comment["createdAt"],
                                 "body": comment["body"],
-                                "user": comment["author"] or {},
+                                "user": snapshot_user(comment["author"]),
                             }
                             for comment in latest
                         ],
