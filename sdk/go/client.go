@@ -39,6 +39,10 @@ type Config struct {
 	// uses a copy that answers a redirect with an *Error instead of following
 	// it, unless this client sets its own CheckRedirect.
 	HTTPClient *http.Client
+
+	// SessionProtection binds the application's durable conversation family.
+	// Bound calls are automatic unless made through CallHuman.
+	SessionProtection *SessionProtection
 }
 
 // Client calls the memory operations as one org, namespace and agent.
@@ -48,6 +52,7 @@ type Client struct {
 	apiKey   string
 	identity identity
 	http     *http.Client
+	protection *SessionProtection
 }
 
 type identity struct {
@@ -75,6 +80,7 @@ func New(cfg Config) *Client {
 		apiKey:   firstNonBlank(cfg.APIKey, os.Getenv("LOOM_API_KEY")),
 		identity: identity{Org: cfg.Org, Namespace: cfg.Namespace, Agent: cfg.Agent},
 		http:     &client,
+		protection: cfg.SessionProtection,
 	}
 }
 
@@ -89,9 +95,33 @@ func firstNonBlank(values ...string) string {
 
 // call posts in to /v1/<op> and decodes a 2xx answer into out.
 func (c *Client) call(ctx context.Context, op string, in, out any) error {
+	return c.dispatch(ctx, op, in, out, false)
+}
+
+func (c *Client) dispatch(ctx context.Context, op string, in, out any, human bool) error {
+	if !validOperation(op) {
+		return fmt.Errorf("invalid operation name")
+	}
+	families, err := requestFamilies(ctx, c.protection)
+	if err != nil {
+		return err
+	}
+	httpClient := c.http
+	if len(families) != 0 {
+		httpClient, err = protectedHTTPClient(c.http)
+		if err != nil || validateProtectedInput(in) != nil {
+			return ErrSessionProtectionUnavailable
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = protectedDeadline(ctx)
+		defer cancel()
+	}
 	body, err := json.Marshal(in)
 	if err != nil {
 		return fmt.Errorf("%s: encode request: %w", op, err)
+	}
+	if len(families) != 0 && len(body) > maxProtectedBody {
+		return ErrSessionProtectionUnavailable
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/"+op, bytes.NewReader(body))
 	if err != nil {
@@ -105,12 +135,30 @@ func (c *Client) call(ctx context.Context, op string, in, out any) error {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
-	resp, err := c.http.Do(req)
+	observation, err := beginObservation(ctx, families, human)
 	if err != nil {
+		return err
+	}
+	defer observation.abort()
+	if observation != nil {
+		req.Header.Set("X-Loom-Session-Protection", "v1")
+		// A replay inside net/http would bypass durable admission.
+		req.GetBody = nil
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
 		return fmt.Errorf("%s: %w", op, err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	var raw []byte
+	if observation != nil {
+		raw, err = observation.readResponse(resp)
+	} else {
+		raw, err = io.ReadAll(resp.Body)
+	}
 	if err != nil {
 		return fmt.Errorf("%s: read response: %w", op, err)
 	}
