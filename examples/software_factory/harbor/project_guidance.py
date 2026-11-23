@@ -1,4 +1,4 @@
-"""Freeze the same conditional retrieval instructions into every agent image."""
+"""Freeze the same optional retrieval guidance into every agent image."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ def guidance(source_roots):
     text = TEMPLATE.read_text() + "\nIndexed source roots, when Loom is configured: "
     text += ", ".join(source_roots) + ". Other paths may require local reads.\n"
     return {
-        "cohort": "shared-conditional-project-instructions",
+        "cohort": "shared-optional-project-instructions",
         "path": "/workspace/CLAUDE.md",
         "text": text,
         "sha256": hashlib.sha256(text.encode()).hexdigest(),

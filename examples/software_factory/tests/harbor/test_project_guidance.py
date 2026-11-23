@@ -26,4 +26,5 @@ class ProjectInstructions(TestCase):
             actual = (workspace / "CLAUDE.md").read_bytes()
         self.assertEqual(hashlib.sha256(actual).hexdigest(), instructions["sha256"])
         self.assertIn("services, crates", actual.decode())
-        self.assertIn("If no Loom server is configured", actual.decode())
+        self.assertEqual(instructions["cohort"], "shared-optional-project-instructions")
+        self.assertIn("Local source reads are available in every arm.", actual.decode())
