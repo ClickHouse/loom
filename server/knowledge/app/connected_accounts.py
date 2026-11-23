@@ -37,10 +37,11 @@ from server.knowledge.domain.connected_accounts import (
     accepts_callback,
     refreshing,
     rotated,
+    source_account_key,
     source_matches,
     stopped,
 )
-from server.knowledge.domain.sources import MIRRORED_ACCESS, KnowledgeSource
+from server.knowledge.domain.sources import MIRRORED_ACCESS, KnowledgeSource, opaque_payload
 from server.knowledge.store import connected_accounts as store
 from server.knowledge.store import sources as source_store
 from server.observability import audit
@@ -368,21 +369,37 @@ async def _stop_locked(account: ConnectedAccount, *, strict: bool = False) -> Co
         ended = dataclasses.replace(ended, connection_id=previous)
     elif strict and previous != account.connection_id:
         raise unavailable()
-    landed = await claims.swap(get_client(), key, previous, ended.connection_id, _FENCE_EXPIRY)
+    # A validated stopped fence already records this stop under the account lease.
+    landed = previous
+    if previous != ended.connection_id:
+        landed = await claims.swap(get_client(), key, previous, ended.connection_id, _FENCE_EXPIRY)
     if landed != ended.connection_id:
         raise unavailable()
     await store.put(ended)
+    account_key = account.org, account.subject, account.kind
     for source in await source_store.connected_sources(account.org, account.subject):
-        if source.kind != account.kind:
+        binding = source_account_key(
+            org=source.org,
+            owner=source.owner_subject,
+            kind=source.kind,
+            mode=source.credential_mode,
+            slot=source.connection_slot,
+        )
+        if binding != account_key:
             continue
         async with source_ops.sources_lease(source.org, source.namespace):
             current = await source_store.latest_source(source.org, source.namespace, source.name)
             if (
                 current is None
                 or current.source_id != source.source_id
-                or current.credential_mode != "connected"
-                or current.owner_subject != account.subject
-                or current.kind != account.kind
+                or source_account_key(
+                    org=current.org,
+                    owner=current.owner_subject,
+                    kind=current.kind,
+                    mode=current.credential_mode,
+                    slot=current.connection_slot,
+                )
+                != account_key
             ):
                 continue
             pending = await source_ops._queue_retirement(current)
@@ -438,7 +455,7 @@ async def _erase_locked(account: ConnectedAccount, *, keep_marker: bool) -> None
 async def _revoke(
     account: ConnectedAccount, *, credential: str, deadline: float | None = None
 ) -> None:
-    if not credential:
+    if not credential or account.kind not in KINDS:
         return
     try:
         provider = client(account.kind)
@@ -480,6 +497,22 @@ async def disconnect(org: str, subject: str, kind: str) -> None:
     )
 
 
+async def _owner_cutoff_allows(
+    owner: tuple[str, str, str], current: ConnectedAccount | None
+) -> bool:
+    spellings = await aliases.verified_spellings(owner[0], owner[1])
+    cutoffs = await revocation.cutoffs(spellings, permanent=current is None)
+    if current is not None:
+        since = int(current.connected_at.timestamp()) if current.connected_at else 0
+        return any(revocation.kills(row, since) for row in cutoffs.values())
+    if not cutoffs:
+        return False
+    if any(row is None for row in cutoffs.values()):
+        return True
+    # A source-only generation has no trusted birth time to compare with a dated cutoff.
+    raise unavailable()
+
+
 async def stop_subjects(
     subjects: list[str],
     *,
@@ -492,37 +525,46 @@ async def stop_subjects(
     set_query_tag("knowledge.connected_accounts.stop_subjects")
     ended = []
     async with asyncio.timeout(settings.knowledge_connected_stop_timeout_s):
-        found = await store.owned(subjects, org=org)
-        if respect_cutoff:
-            wanted = set(subjects)
-            known = {(account.org, account.subject) for account in found}
-            for owner_org, owner in await store.owner_identities(org=org):
-                if (owner_org, owner) in known:
-                    continue
-                spellings = await aliases.verified_spellings(owner_org, owner)
-                if wanted.intersection(spellings):
-                    # Verified ties are org-specific. Never canonicalize in one org
-                    # and then use that identity to stop rows in another org.
-                    found.extend(await store.owned([owner], org=owner_org))
-        for account in found:
-            async with account_lease(account.org, account.subject, account.kind):
-                current = await store.get(account.org, account.subject, account.kind)
-                if current is not None:
-                    if respect_cutoff:
-                        spellings = await aliases.verified_spellings(current.org, current.subject)
-                        cutoffs = await revocation.cutoffs(spellings)
-                        since = int(current.connected_at.timestamp()) if current.connected_at else 0
-                        if not any(revocation.kills(row, since) for row in cutoffs.values()):
-                            continue
-                    credential = (
-                        unseal(CREDENTIAL_PURPOSE, current.credential_enc, warn=False) or ""
-                        if revoke
-                        else ""
-                    )
-                    stopped_account = await _stop_locked(current)
-                    if erase_owner:
-                        await _erase_locked(stopped_account, keep_marker=False)
-                    ended.append((current, credential))
+        if erase_owner:
+            from server.knowledge.app.connected_restore import erase_subjects
+
+            ended = await erase_subjects(
+                subjects, org=org, respect_cutoff=respect_cutoff, revoke=revoke, ch=get_client()
+            )
+        else:
+            found = await store.owned(subjects, org=org)
+            if respect_cutoff:
+                wanted = set(subjects)
+                known = {(account.org, account.subject) for account in found}
+                for owner_org, owner in await store.owner_identities(org=org):
+                    if (owner_org, owner) in known:
+                        continue
+                    spellings = await aliases.verified_spellings(owner_org, owner)
+                    if wanted.intersection(spellings):
+                        # Verified ties are org-specific. Never canonicalize in one org
+                        # and then use that identity to stop rows in another org.
+                        found.extend(await store.owned([owner], org=owner_org))
+            for account in found:
+                async with account_lease(account.org, account.subject, account.kind):
+                    current = await store.get(account.org, account.subject, account.kind)
+                    if current is not None:
+                        if respect_cutoff:
+                            spellings = await aliases.verified_spellings(
+                                current.org, current.subject
+                            )
+                            cutoffs = await revocation.cutoffs(spellings)
+                            since = (
+                                int(current.connected_at.timestamp()) if current.connected_at else 0
+                            )
+                            if not any(revocation.kills(row, since) for row in cutoffs.values()):
+                                continue
+                        credential = (
+                            unseal(CREDENTIAL_PURPOSE, current.credential_enc, warn=False) or ""
+                            if revoke
+                            else ""
+                        )
+                        await _stop_locked(current)
+                        ended.append((current, credential))
     if not revoke:
         return
     # All local owners and sources are fenced before the first slow provider call.
@@ -534,6 +576,10 @@ async def stop_subjects(
 async def _source_standing(source: KnowledgeSource, account: ConnectedAccount) -> None:
     from server.knowledge.app import sources as source_ops
 
+    if opaque_payload(
+        kind=source.kind, mode=source.credential_mode, version=source.source_contract_version
+    ):
+        raise unavailable()
     if (
         account.org != source.org
         or account.subject != source.owner_subject
@@ -581,6 +627,11 @@ async def _source_standing(source: KnowledgeSource, account: ConnectedAccount) -
         or current.access != MIRRORED_ACCESS
         or current.items != source.items
         or current.config != source.config
+        or opaque_payload(
+            kind=current.kind,
+            mode=current.credential_mode,
+            version=current.source_contract_version,
+        )
     ):
         raise unavailable()
     await source_ops._require_source_namespace(source.org, source.namespace)

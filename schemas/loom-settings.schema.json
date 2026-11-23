@@ -3335,6 +3335,27 @@
           "type": "number",
           "description": "Seconds for the whole optional live-search leg, including final membership checks. At most five; provider credential deadlines may shorten it further."
         },
+        "knowledge_mcp_envelope_max_bytes": {
+          "default": 32768,
+          "maximum": 32768,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Maximum sealed MCP plaintext bytes admitted by this deployment, up to the v1 wire ceiling."
+        },
+        "knowledge_mcp_resource_id_max_bytes": {
+          "default": 2048,
+          "maximum": 2048,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum UTF-8 bytes in one selected MCP identity, up to the v1 wire ceiling."
+        },
+        "knowledge_mcp_selected_resources_max": {
+          "default": 1000,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum explicitly selected MCP identities per source, without implicit recursion."
+        },
         "knowledge_mirrored_sources_enabled": {
           "default": false,
           "type": "boolean",

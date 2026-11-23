@@ -2450,6 +2450,12 @@ class KnowledgeSettings(BaseModel):
     knowledge_connected_lease_ttl_s: float = Field(default=60.0, gt=0)
     # Seconds a connection change waits for another holder's account-generation lease.
     knowledge_connected_lease_wait_s: float = Field(default=5.0, ge=0)
+    # Maximum sealed MCP plaintext bytes admitted by this deployment, up to the v1 wire ceiling.
+    knowledge_mcp_envelope_max_bytes: int = Field(default=32768, ge=1024, le=32768)
+    # Maximum explicitly selected MCP identities per source, without implicit recursion.
+    knowledge_mcp_selected_resources_max: int = Field(default=1000, ge=1, le=1000)
+    # Maximum UTF-8 bytes in one selected MCP identity, up to the v1 wire ceiling.
+    knowledge_mcp_resource_id_max_bytes: int = Field(default=2048, ge=1, le=2048)
     # Maximum complete owner scan; exceeding it refuses instead of stopping a subset.
     knowledge_connected_registry_scan_limit: int = Field(default=4096, ge=1)
     # Registrations per page during root-secret resealing.

@@ -21,7 +21,7 @@ from server.core.naming import is_mirror_name
 from server.knowledge.domain.access_list import UNREAD, AccessList, allows, from_json
 from server.knowledge.domain.document_access import fresh, source_id
 from server.knowledge.domain.serving import Serving
-from server.knowledge.domain.sources import KnowledgeSource
+from server.knowledge.domain.sources import KnowledgeSource, opaque_payload
 from server.knowledge.store import mirrors as mirrors_repo
 from server.knowledge.store import source_access as store
 from server.operations.base import Role
@@ -311,6 +311,12 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
     for row in sources:
         key = row["namespace"], row["source_id"]
         mode = row.get("credential_mode", "shared")
+        if opaque_payload(
+            kind=str(row.get("source_kind") or ""),
+            mode=mode,
+            version=int(row.get("source_contract_version") or 0),
+        ):
+            continue
         if mode == "shared":
             if key not in plan._connected_pins:
                 eligible.append(row)
@@ -319,7 +325,15 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
             continue
         try:
             source = await source_store.latest_source(plan.org, row["namespace"], row["name"])
-            if source is None or source.source_id != row["source_id"]:
+            if (
+                source is None
+                or source.source_id != row["source_id"]
+                or opaque_payload(
+                    kind=source.kind,
+                    mode=source.credential_mode,
+                    version=source.source_contract_version,
+                )
+            ):
                 continue
             pinned = plan._connected_pins.get(key)
             if pinned is not None and (

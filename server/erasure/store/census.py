@@ -45,7 +45,9 @@ from server.erasure.store.predicates import (
 from server.erasure.store.provider_copies import copy_residue
 from server.erasure.store.steps_memory import SESSION_OUTCOME_TABLES, TERM_AGGREGATE_TABLES
 from server.erasure.store.steps_pg import PG_CENSUS, pg_residue
+from server.knowledge.domain.connected_accounts import known_account_kind
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.knowledge.domain.mcp_sources import is_mcp_slot
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -842,11 +844,18 @@ async def connected_source_residue(
     ch: _CHClient | None = None,
 ) -> int:
     """Canonical-owner deletion includes historical bindings, without matching user_id."""
+    if not known_account_kind(kind):
+        raise RuntimeError("connected_source_census_kind_unavailable")
+    predicate = (
+        "(credential_mode = 'mcp' OR source_kind = 'mcp') AND connection_slot = {kind:String}"
+        if is_mcp_slot(kind)
+        else "credential_mode = 'connected' AND source_kind = {kind:String}"
+    )
     row = await (ch or _default_client()).query_one(
         "SELECT count() AS n FROM loom.knowledge_sources "
         "WHERE org = {org:String} AND namespace = {ns:String} "
-        "AND owner_subject = {owner:String} AND credential_mode = 'connected' "
-        "AND source_kind = {kind:String}",
+        "AND owner_subject = {owner:String} "
+        f"AND {predicate}",
         params={"org": org, "ns": namespace, "owner": subject, "kind": kind},
     )
     if row is None or "n" not in row:
@@ -1065,7 +1074,10 @@ async def connected_restore_residue(*, ch: _CHClient | None = None) -> int:
     total = 0
     for table, predicate in (
         ("loom.connected_accounts", "1"),
-        ("loom.knowledge_sources", "credential_mode = 'connected'"),
+        (
+            "loom.knowledge_sources",
+            "credential_mode IN ('connected', 'mcp') OR source_kind = 'mcp'",
+        ),
     ):
         row = await client.query_one(f"SELECT count() AS n FROM {table} WHERE {predicate}")
         if row is None or "n" not in row:
