@@ -721,6 +721,15 @@ def project_result(result: Any, *, op_name: str = "") -> dict[str, str]:
         out.update(_retrieval_work_columns(result.get("retrieval_work")))
         out.update(_read_outcome_columns(result))
         out.update(_hits_column(op_name, result))
+        if op_name.startswith("code."):
+            from server.observability.code_response import code_response_counts
+
+            out.update(
+                {
+                    RESULT_PREFIX + key: str(value)
+                    for key, value in code_response_counts(result).items()
+                }
+            )
         for key in sorted(result):
             if key in IDENTITY_KEYS or key not in IDENTIFIER_KEYS:
                 continue
