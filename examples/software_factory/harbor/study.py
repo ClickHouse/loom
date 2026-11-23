@@ -37,7 +37,7 @@ from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp
 from .native_metrics import measurements
 from .pricing import first_prompt_cost_sensitivity
 from .profiles import load_profile
-from .project_guidance import guidance
+from .project_guidance import agent_image, guidance
 from .project_guidance import stage as stage_guidance
 from .public_export import export_public
 from .scopes import selected_scopes
@@ -124,24 +124,53 @@ def stage_sandbox_policy(
     return target
 
 
-def build_image(folder: Path, dependency: str, *, project_instructions: dict) -> str:
-    inspected = json.loads(
+def _inspect_image(reference: str) -> dict:
+    return json.loads(
         subprocess.run(
-            ["docker", "image", "inspect", dependency],
+            ["docker", "image", "inspect", reference],
             capture_output=True,
             text=True,
             check=True,
         ).stdout
     )[0]
+
+
+def _build_runtime(folder: Path, *, network: str, target: str = "") -> str:
+    suffix = f"-{target}" if target else ""
+    receipt = folder / f"image{suffix}.id"
+    with (folder / f"build{suffix}.log").open("wb") as log:
+        subprocess.run(
+            [
+                "docker",
+                "build",
+                f"--network={network}",
+                "--iidfile",
+                str(receipt),
+                "--label",
+                "loom.factory.harbor=task-runtime",
+                *(["--target", target] if target else []),
+                str(folder),
+            ],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=True,
+        )
+    return receipt.read_text().strip()
+
+
+def build_image(
+    folder: Path, dependency: str, *, project_instructions: dict
+) -> str | dict[str, str]:
+    inspected = _inspect_image(dependency)
     if inspected["Id"] != dependency or not inspected.get("RepoTags"):
         raise PermissionError("Dependency image has no verified local build reference")
     reference = inspected["RepoTags"][0]
     native = (folder / "workspace").is_dir()
     if native:
-        stage_guidance(folder / "workspace", project_instructions)
+        stage_guidance(folder / "workspace", folder / "loom-guidance", project_instructions)
         version = read(HERE / "agent.json")["version"]
         recipe = (
-            "FROM " + reference + "\nUSER root\n"
+            "FROM " + reference + " AS baseline\nUSER root\n"
             "RUN git --version && curl --version && bash --version && ps --version\n"
             "RUN useradd --create-home --uid 1000 agent "
             "&& mkdir -p /workspace && chown 1000:1000 /workspace\nUSER agent\n"
@@ -151,6 +180,8 @@ def build_image(folder: Path, dependency: str, *, project_instructions: dict) ->
             "COPY --chown=1000:1000 workspace /workspace\n"
             "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/workspace/src\n"
             "WORKDIR /workspace\nRUN test -w /workspace\n"
+            "FROM baseline AS loom\n"
+            "COPY --chown=1000:1000 loom-guidance/CLAUDE.md /workspace/CLAUDE.md\n"
         )
     else:
         recipe = (
@@ -161,32 +192,23 @@ def build_image(folder: Path, dependency: str, *, project_instructions: dict) ->
             "run_name='grader_import_check')\"\nWORKDIR /workspace\n"
         )
     (folder / "Dockerfile").write_text(recipe)
-    receipt = folder / "image.id"
-    with (folder / "build.log").open("wb") as log:
-        subprocess.run(
-            [
-                "docker",
-                "build",
-                "--network=default" if native else "--network=none",
-                "--iidfile",
-                str(receipt),
-                "--label",
-                "loom.factory.harbor=task-runtime",
-                str(folder),
-            ],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            check=True,
-        )
-    actual = subprocess.run(
-        ["docker", "image", "inspect", "--format", "{{.Id}}", reference],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    if actual != dependency:
+    image: str | dict[str, str]
+    if native:
+        image = {
+            target: _build_runtime(folder, network="default", target=target)
+            for target in ("baseline", "loom")
+        }
+        baseline, loom = (_inspect_image(image[target]) for target in ("baseline", "loom"))
+        if (
+            loom["RootFS"]["Layers"][:-1] != baseline["RootFS"]["Layers"]
+            or loom["Config"] != baseline["Config"]
+        ):
+            raise PermissionError("Loom agent image must add only the project instructions layer")
+    else:
+        image = _build_runtime(folder, network="none")
+    if _inspect_image(reference)["Id"] != dependency:
         raise PermissionError("Dependency image changed during the build")
-    return receipt.read_text().strip()
+    return image
 
 
 def prepare(previous: Path, output: Path) -> Path:
@@ -274,7 +296,7 @@ def prepare(previous: Path, output: Path) -> Path:
             'exclude = ["__pycache__", "*.pyc"]\n'
             + agent_settings(plan, slot)
             + "[environment]\ndocker_image = "
-            + json.dumps(image["agent"])
+            + json.dumps(agent_image(images, slot))
             + '\ncpus = 1\nmemory_mb = 2048\nnetwork_mode = "public"\nbuild_timeout_sec = inf\n'
             + mcp_settings(plan, slot)
             + '[verifier]\ntimeout_sec = inf\nenvironment_mode = "separate"\n'
@@ -361,7 +383,7 @@ def prepare(previous: Path, output: Path) -> Path:
     paths += [output / (n + "-job.json") for n in ("live", "base", "reference")]
     paths += [output / "index-content.json", output / "images.json"]
     paths += list((output / "builds").rglob("Dockerfile"))
-    paths += list((output / "builds").glob("*/agent/workspace/CLAUDE.md"))
+    paths += list((output / "builds").glob("*/agent/loom-guidance/CLAUDE.md"))
     plan["files"] = {str(p): file_hash(p) for p in sorted(set(paths))}
     plan.pop("source_archive", None)
     write(protocol_path, plan)

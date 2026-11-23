@@ -105,7 +105,7 @@ class PublicPromptBytes(TestCase):
             instructions = guidance(["src"])
             workspace = root / "builds/task/agent/workspace"
             workspace.mkdir(parents=True)
-            stage(workspace, instructions)
+            stage(workspace, workspace.parent / "loom-guidance", instructions)
             slot = {
                 "order": 0,
                 "task_id": "task",
@@ -132,7 +132,9 @@ class PublicPromptBytes(TestCase):
                 "index_content_file": str(root / "index-content.json"),
                 "index_content_sha256": digest(snapshot),
                 "tasks": {"task": {"base_commit": "a" * 40}},
-                "harbor_images": {"task": {"agent": "pinned-image"}},
+                "harbor_images": {
+                    "task": {"agent": {"baseline": "pinned-image", "loom": "loom-image"}}
+                },
                 "attempt_scopes": {
                     "0": {
                         "task_id": "task",

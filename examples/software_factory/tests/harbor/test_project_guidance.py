@@ -1,11 +1,11 @@
-"""Project instructions stay identical across treatments and preserve repository files."""
+"""Loom guidance is staged outside the baseline checkout."""
 
 import hashlib
 import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from examples.software_factory.harbor.project_guidance import guidance, stage
+from examples.software_factory.harbor.project_guidance import agent_image, guidance, stage
 
 
 class ProjectInstructions(TestCase):
@@ -15,17 +15,22 @@ class ProjectInstructions(TestCase):
             existing = workspace / "CLAUDE.md"
             existing.write_text("Repository-specific instructions\n")
             with self.assertRaises(PermissionError):
-                stage(workspace, guidance(["src"]))
+                stage(workspace, workspace / "loom-guidance", guidance(["src"]))
             self.assertEqual(existing.read_text(), "Repository-specific instructions\n")
 
     def test_source_coverage_is_frozen_without_task_hints(self):
         instructions = guidance(["services", "crates"])
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
-            stage(workspace, instructions)
-            actual = (workspace / "CLAUDE.md").read_bytes()
+            actual = stage(workspace, workspace / "loom-guidance", instructions).read_bytes()
+            self.assertFalse((workspace / "CLAUDE.md").exists())
         self.assertEqual(hashlib.sha256(actual).hexdigest(), instructions["sha256"])
         self.assertIn("services, crates", actual.decode())
-        self.assertEqual(instructions["cohort"], "shared-coverage-based-project-instructions")
-        self.assertIn("When Loom is configured, use it", actual.decode())
+        self.assertEqual(instructions["applies_to"], "loom-enabled")
+        self.assertIn("Use Loom to discover and read unchanged source", actual.decode())
         self.assertIn("Use local tools for edits, tests, Git", actual.decode())
+
+    def test_baseline_and_loom_use_their_frozen_images(self):
+        images = {"task": {"agent": {"baseline": "base-image", "loom": "loom-image"}}}
+        self.assertEqual(agent_image(images, {"task_id": "task", "mode": "baseline"}), "base-image")
+        self.assertEqual(agent_image(images, {"task_id": "task", "mode": "loom"}), "loom-image")

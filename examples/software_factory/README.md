@@ -29,12 +29,13 @@ linked to code. Facts come from public sources before the issue's base revision;
 none are inserted into the issue prompt. The memory contrast measures both access
 to historical knowledge and native memory capability, rather than linking alone.
 
-Every arm receives identical [project instructions](harbor/project-guidance.md)
-in `/workspace/CLAUDE.md`. Claude uses Loom for unchanged source within its
-coverage and for linked history when Loom is configured. Local tools handle
-edits, tests, Git, working-copy reads and source outside Loom's coverage. The
-baseline uses local tools throughout. The protocol freezes the instructions
-and their hash. Published runs retain the guidance from their serving revision.
+All arms start from the same agent image. The four Loom arms add one image
+layer with [project instructions](harbor/project-guidance.md) in
+`/workspace/CLAUDE.md`. Claude uses Loom for covered unchanged source and
+linked project history. Local tools handle edits, tests, Git, working-copy reads
+and uncovered source. The baseline uses the common image and local tools. The
+protocol freezes the instruction text and hash. Published runs retain the
+guidance from their serving revision.
 
 This example uses MCP directly; it does not install the Loom plugin or its hooks.
 The server supplies initialization guidance. Reports record startup connection

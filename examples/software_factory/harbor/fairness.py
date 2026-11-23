@@ -12,6 +12,7 @@ from .cache_start import pair_usage, verified_start
 from .index import select_snapshot
 from .memory import validate_history_certificate
 from .native_environment import mcp_settings
+from .project_guidance import agent_image
 from .runtime import read, verify, write
 from .scopes import selected_scopes
 
@@ -70,6 +71,8 @@ def audit_fairness(protocol, entries, *, billing=None):
         raw = read(trial / "result.json")
         agent = raw["config"]["agent"]
         servers = config["environment"].get("mcp_servers", [])
+        build = root / "builds" / slot["task_id"] / "agent"
+        baseline_guidance = build / "workspace/CLAUDE.md"
         row = {
             "order": order,
             "unique_attempt": order not in seen,
@@ -78,12 +81,14 @@ def audit_fairness(protocol, entries, *, billing=None):
             "native_solver": agent.get("name") == "claude-code" and not agent.get("import_path"),
             "same_model": agent.get("model_name") == protocol["model_id"],
             "same_version": agent.get("kwargs") == {"version": protocol["solver"]["version"]},
-            "same_image": config["environment"]["docker_image"]
-            == protocol["harbor_images"][slot["task_id"]]["agent"],
-            "same_project_guidance": hashlib.sha256(
-                (root / "builds" / slot["task_id"] / "agent/workspace/CLAUDE.md").read_bytes()
-            ).hexdigest()
-            == protocol["project_guidance"]["sha256"],
+            "expected_agent_image": config["environment"]["docker_image"]
+            == agent_image(protocol["harbor_images"], slot),
+            "project_guidance_scope": (
+                not baseline_guidance.exists()
+                and not baseline_guidance.is_symlink()
+                and hashlib.sha256((build / "loom-guidance/CLAUDE.md").read_bytes()).hexdigest()
+                == protocol["project_guidance"]["sha256"]
+            ),
             "mcp_treatment": servers
             == tomllib.loads(mcp_settings(protocol, slot))
             .get("environment", {})
