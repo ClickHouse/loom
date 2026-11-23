@@ -20,6 +20,7 @@ from server.clients.mcp_source import (
     MCPToolMapping,
     validate_mcp_tool_mapping,
 )
+from server.knowledge.app.mcp_contracts import validate_source_contract
 from server.knowledge.domain.mcp_sources import (
     ConnectionEnvelope,
     MCPSourceContractError,
@@ -376,6 +377,7 @@ def build_mcp_source_client(
             if not isinstance(contract, SourceContract):
                 raise MCPProfileError()
             contract = SourceContract.model_validate(contract)
+            validate_source_contract(contract)
             if (
                 contract.slot,
                 contract.generation,

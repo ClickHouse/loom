@@ -2976,6 +2976,20 @@ settings:
   # replies are refused before parsing. [restart]
   # knowledge_connected_oauth_response_max_bytes: 65536
 
+  # Operator-approved MCP read profiles as version-1 JSON, at most 8 MiB UTF-8; empty
+  # approves none, and profile metadata grants no connection or publication access.
+  # [restart]
+  # knowledge_source_mcp_profiles_json: ""
+
+  # Allow self-service source registration and credential storage or replacement. False
+  # refuses those mutations before a probe; existing reads and removal remain available.
+  # [restart]
+  # knowledge_source_self_service_enabled: true
+
+  # Active MCP connection slots one canonical person may hold per organization.
+  # [restart]
+  # knowledge_mcp_connections_max_per_person: 32
+
   # Active document sources (knowledge.source.add) one namespace may register; an add
   # past it is refused with SOURCE_QUOTA. [live]
   # knowledge_sources_max_per_namespace: 8

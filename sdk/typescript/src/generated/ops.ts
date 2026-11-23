@@ -4522,6 +4522,49 @@ export interface KnowledgeSourceListOutput {
   accepts_sources?: boolean;
 }
 
+export interface KnowledgeSourceMcpPreviewInput {
+  /** The authenticated organization. */
+  org: string;
+  /** The ordinary destination collection or namespace. */
+  namespace: string;
+  /** The signed-in owner's MCP connection slot. */
+  slot: string;
+  /** Live lookup, a selected snapshot, or periodic refresh of the fixed selection. */
+  mode: "live" | "snapshot" | "selected_refresh";
+  /** Requested copy audience; default owner-only. */
+  reader_policy?: "owner_only" | "collection_copy";
+  /** Between 1 and 1000 explicit resource identities, without recursion. */
+  resource_ids: string[];
+}
+
+export interface MCPAccessRule {
+  access: "owner_only" | "collection_wide" | "unavailable";
+  reason?: string;
+  stores_copy: boolean;
+  future_items_included?: false;
+  upstream_permissions?: "unsupported";
+  reader_list_complete?: false;
+  collection_readers_receive_copy?: boolean;
+  inherited_grants_apply?: true;
+  membership_changes_affect_copy?: boolean;
+  publication_confirmation_required?: boolean;
+  explanation: string;
+}
+
+export interface KnowledgeSourceMcpPreviewOutput {
+  namespace: string;
+  mode: "live" | "snapshot" | "selected_refresh";
+  rule: MCPAccessRule;
+  connection_state: "configured" | "stopped" | "unavailable" | "approval_drift";
+  compatibility?: "unchecked";
+  permission_evidence?: "unsupported";
+  refresh_state: "not_applicable" | "enabled" | "disabled";
+  selected_count: number;
+  checked_at: string;
+  preview_grants_authority?: false;
+  limitations: string[];
+}
+
 export interface KnowledgeSourceMcpProfilesInput {
   /** The caller's authenticated organization. */
   org: string;
@@ -10784,6 +10827,7 @@ export type OpName =
   | "knowledge.source.check"
   | "knowledge.source.inspect"
   | "knowledge.source.list"
+  | "knowledge.source.mcp_preview"
   | "knowledge.source.mcp_profiles"
   | "knowledge.source.parse_links"
   | "knowledge.source.push_configure"
@@ -11169,6 +11213,7 @@ export interface OpMap {
   "knowledge.source.check": { input: KnowledgeSourceCheckInput; output: KnowledgeSourceCheckOutput };
   "knowledge.source.inspect": { input: KnowledgeSourceInspectInput; output: KnowledgeSourceInspectOutput };
   "knowledge.source.list": { input: KnowledgeSourceListInput; output: KnowledgeSourceListOutput };
+  "knowledge.source.mcp_preview": { input: KnowledgeSourceMcpPreviewInput; output: KnowledgeSourceMcpPreviewOutput };
   "knowledge.source.mcp_profiles": { input: KnowledgeSourceMcpProfilesInput; output: KnowledgeSourceMcpProfilesOutput };
   "knowledge.source.parse_links": { input: KnowledgeSourceParseLinksInput; output: KnowledgeSourceParseLinksOutput };
   "knowledge.source.push_configure": { input: KnowledgeSourcePushConfigureInput; output: PushStatusOutput };
@@ -11554,6 +11599,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
   { name: "knowledge.source.inspect", group: "knowledge", method: "sourceInspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "knowledge.source.list", group: "knowledge", method: "sourceList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
+  { name: "knowledge.source.mcp_preview", group: "knowledge", method: "sourceMcpPreview", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 5000, audit: false, readOnly: false },
   { name: "knowledge.source.mcp_profiles", group: "knowledge", method: "sourceMcpProfiles", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5000, audit: false, readOnly: true },
   { name: "knowledge.source.parse_links", group: "knowledge", method: "sourceParseLinks", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
   { name: "knowledge.source.push_configure", group: "knowledge", method: "sourcePushConfigure", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
@@ -11780,4 +11826,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 382;
+export const GENERATED_OP_COUNT = 383;

@@ -396,21 +396,19 @@ def test_tampered_models_are_revalidated() -> None:
             client(profile, sealed, contract=contract)
 
 
-def test_real_constructor_checks_schema_semantics_only_when_building() -> None:
+def test_catalog_rejects_unsafe_schema_before_building() -> None:
     mapping = tool_mapping()
     mapping["input_schema"]["$ref"] = "https://unapproved.example/schema"
-    profiles = catalog(
-        row(
-            config={
-                "endpoint": ENDPOINT,
-                "approved_tools": ["read_document"],
-                "read": mapping,
-            }
-        )
-    )
-    assert profiles.page("org-a").items[0].id == "approved"
     with pytest.raises(MCPProfileError, match="^MCP_PROFILE_INVALID$"):
-        client(profiles.get("org-a", "approved"))
+        catalog(
+            row(
+                config={
+                    "endpoint": ENDPOINT,
+                    "approved_tools": ["read_document"],
+                    "read": mapping,
+                }
+            )
+        )
 
 
 def test_offline_catalog_does_not_instantiate_clients(monkeypatch: pytest.MonkeyPatch) -> None:

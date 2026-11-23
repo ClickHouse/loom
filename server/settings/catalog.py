@@ -6441,6 +6441,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.source.list": 300,
     # Verified owner lookup and a cold bounded operator catalog parse; no source request.
     "knowledge.source.mcp_profiles": 5000,
+    "knowledge.source.mcp_preview": 5000,
     # Local owner enrollment/retirement is bounded; discovery also waits for the MCP server.
     "knowledge.connection.mcp_connect": 30000,
     "knowledge.connection.mcp_disconnect": 30000,

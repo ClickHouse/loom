@@ -32,6 +32,7 @@ from server.knowledge.api.models_mcp_connections import (
     MCPSlotInput,
 )
 from server.knowledge.app import connected_accounts as accounts
+from server.knowledge.app.mcp_contracts import decode_envelope, encode_envelope
 from server.knowledge.app.mcp_profiles import (
     FrozenProfileDefinition,
     MCPProfileError,
@@ -43,8 +44,6 @@ from server.knowledge.domain.mcp_sources import (
     ConnectionEnvelope,
     MCPSourceContractError,
     bind_envelope,
-    decode_envelope,
-    encode_envelope,
     is_mcp_slot,
 )
 from server.knowledge.store import connected_accounts as store

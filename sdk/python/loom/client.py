@@ -1601,6 +1601,15 @@ class KnowledgeOps:
             await self._agent.call("knowledge.source.list", body, **options),
         )
 
+    async def source_mcp_preview(
+        self, body: _ops.KnowledgeSourceMcpPreviewBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceMcpPreviewOutput:
+        """`knowledge.source.mcp_preview`."""
+        return cast(
+            "_ops.KnowledgeSourceMcpPreviewOutput",
+            await self._agent.call("knowledge.source.mcp_preview", body, **options),
+        )
+
     async def source_mcp_profiles(
         self, body: _ops.KnowledgeSourceMcpProfilesBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeSourceMcpProfilesOutput:

@@ -8,7 +8,7 @@ module ClickHouse
     # Every served operation: its spec in OPS, and one method per op on the class
     # of its group (`client.memory.set(...)` is `memory.set`).
     module Generated
-      OP_COUNT = 376
+      OP_COUNT = 383
 
       # The declared spec of every served op, by name; the HTTP path is /v1/<name>.
       OPS = {
@@ -142,6 +142,11 @@ module ClickHouse
         "knowledge.add" => OpSpec.new("knowledge.add", "knowledge", "add", true, false, "writer", "stable", %w[org namespace source_uri content title description tags metadata original_bytes_b64 original_filename blob_content_type agent session_id source_class].freeze, %w[org namespace source_uri content].freeze),
         "knowledge.bulk_add" => OpSpec.new("knowledge.bulk_add", "knowledge", "bulk_add", true, false, "writer", "stable", %w[org namespace entries agent session_id source_class].freeze, %w[org namespace entries].freeze),
         "knowledge.bulk_delete" => OpSpec.new("knowledge.bulk_delete", "knowledge", "bulk_delete", true, false, "writer", "experimental", %w[org namespace source_uris].freeze, %w[org namespace source_uris].freeze),
+        "knowledge.connection.mcp_connect" => OpSpec.new("knowledge.connection.mcp_connect", "knowledge", "connection_mcp_connect", false, false, "viewer", "experimental", %w[org profile_id request_id label bearer].freeze, %w[org profile_id request_id].freeze),
+        "knowledge.connection.mcp_disconnect" => OpSpec.new("knowledge.connection.mcp_disconnect", "knowledge", "connection_mcp_disconnect", false, false, "viewer", "experimental", %w[org slot].freeze, %w[org slot].freeze),
+        "knowledge.connection.mcp_discover" => OpSpec.new("knowledge.connection.mcp_discover", "knowledge", "connection_mcp_discover", true, true, "viewer", "experimental", %w[org slot].freeze, %w[org slot].freeze),
+        "knowledge.connection.mcp_inspect" => OpSpec.new("knowledge.connection.mcp_inspect", "knowledge", "connection_mcp_inspect", true, true, "viewer", "experimental", %w[org slot request_id].freeze, %w[org].freeze),
+        "knowledge.connection.mcp_list" => OpSpec.new("knowledge.connection.mcp_list", "knowledge", "connection_mcp_list", true, true, "viewer", "experimental", %w[org cursor limit].freeze, %w[org].freeze),
         "knowledge.dataset_approve" => OpSpec.new("knowledge.dataset_approve", "knowledge", "dataset_approve", false, false, "writer", "experimental", %w[org namespace source_uri dataset_id snapshot_id columns].freeze, %w[org namespace source_uri dataset_id snapshot_id].freeze),
         "knowledge.dataset_get" => OpSpec.new("knowledge.dataset_get", "knowledge", "dataset_get", true, true, "viewer", "experimental", %w[org namespace source_uri dataset_id sample_rows].freeze, %w[org namespace source_uri].freeze),
         "knowledge.dedup_list" => OpSpec.new("knowledge.dedup_list", "knowledge", "dedup_list", true, false, "admin", "experimental", %w[org namespace limit include_chunk_clusters].freeze, %w[org namespace].freeze),
@@ -169,6 +174,8 @@ module ClickHouse
         "knowledge.source.check" => OpSpec.new("knowledge.source.check", "knowledge", "source_check", true, false, "writer", "experimental", %w[org namespace name].freeze, %w[org namespace name].freeze),
         "knowledge.source.inspect" => OpSpec.new("knowledge.source.inspect", "knowledge", "source_inspect", true, true, "viewer", "experimental", %w[org namespace name].freeze, %w[org namespace name].freeze),
         "knowledge.source.list" => OpSpec.new("knowledge.source.list", "knowledge", "source_list", true, true, "viewer", "experimental", %w[org namespace].freeze, %w[org namespace].freeze),
+        "knowledge.source.mcp_preview" => OpSpec.new("knowledge.source.mcp_preview", "knowledge", "source_mcp_preview", true, false, "writer", "experimental", %w[org namespace slot mode reader_policy resource_ids].freeze, %w[org namespace slot mode resource_ids].freeze),
+        "knowledge.source.mcp_profiles" => OpSpec.new("knowledge.source.mcp_profiles", "knowledge", "source_mcp_profiles", true, true, "viewer", "experimental", %w[org query cursor limit].freeze, %w[org].freeze),
         "knowledge.source.parse_links" => OpSpec.new("knowledge.source.parse_links", "knowledge", "source_parse_links", true, true, "viewer", "experimental", %w[org namespace links].freeze, %w[org namespace links].freeze),
         "knowledge.source.push_configure" => OpSpec.new("knowledge.source.push_configure", "knowledge", "source_push_configure", false, false, "admin", "experimental", %w[org namespace name enabled agent user_id session_id].freeze, %w[org namespace name].freeze),
         "knowledge.source.push_confirm" => OpSpec.new("knowledge.source.push_confirm", "knowledge", "source_push_confirm", false, false, "admin", "experimental", %w[org namespace name generation challenge_fingerprint signing_secret].freeze, %w[org namespace name generation].freeze),
@@ -1276,6 +1283,36 @@ module ClickHouse
           call_op("knowledge.bulk_delete", body, fields, request_options)
         end
 
+        # `knowledge.connection.mcp_connect` (viewer, writes, experimental).
+        # Required: org, profile_id, request_id.
+        def connection_mcp_connect(body = nil, request_options: nil, **fields)
+          call_op("knowledge.connection.mcp_connect", body, fields, request_options)
+        end
+
+        # `knowledge.connection.mcp_disconnect` (viewer, writes, experimental).
+        # Required: org, slot.
+        def connection_mcp_disconnect(body = nil, request_options: nil, **fields)
+          call_op("knowledge.connection.mcp_disconnect", body, fields, request_options)
+        end
+
+        # `knowledge.connection.mcp_discover` (viewer, read-only, experimental).
+        # Required: org, slot.
+        def connection_mcp_discover(body = nil, request_options: nil, **fields)
+          call_op("knowledge.connection.mcp_discover", body, fields, request_options)
+        end
+
+        # `knowledge.connection.mcp_inspect` (viewer, read-only, experimental).
+        # Required: org.
+        def connection_mcp_inspect(body = nil, request_options: nil, **fields)
+          call_op("knowledge.connection.mcp_inspect", body, fields, request_options)
+        end
+
+        # `knowledge.connection.mcp_list` (viewer, read-only, experimental).
+        # Required: org.
+        def connection_mcp_list(body = nil, request_options: nil, **fields)
+          call_op("knowledge.connection.mcp_list", body, fields, request_options)
+        end
+
         # `knowledge.dataset_approve` (writer, writes, experimental).
         # Approve a dataset's schema, retyping the columns named: its rows are
         # Required: org, namespace, source_uri, dataset_id, snapshot_id.
@@ -1461,6 +1498,19 @@ module ClickHouse
         # Required: org, namespace.
         def source_list(body = nil, request_options: nil, **fields)
           call_op("knowledge.source.list", body, fields, request_options)
+        end
+
+        # `knowledge.source.mcp_preview` (writer, writes, Idempotency-Key, experimental).
+        # Required: org, namespace, slot, mode, resource_ids.
+        def source_mcp_preview(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_preview", body, fields, request_options)
+        end
+
+        # `knowledge.source.mcp_profiles` (viewer, read-only, experimental).
+        # List approved profile declarations for the signed-in caller's organization.
+        # Required: org.
+        def source_mcp_profiles(body = nil, request_options: nil, **fields)
+          call_op("knowledge.source.mcp_profiles", body, fields, request_options)
         end
 
         # `knowledge.source.parse_links` (viewer, read-only, experimental).

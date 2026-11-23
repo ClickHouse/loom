@@ -1014,6 +1014,9 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_CONNECTED_REGISTRY_PAGE_SIZE` | `int` | `256` |  | Registrations per page during root-secret resealing. |
 | `LOOM_KNOWLEDGE_CONNECTED_OAUTH_TIMEOUT_S` | `float` | `30.0` |  | Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound. |
 | `LOOM_KNOWLEDGE_CONNECTED_OAUTH_RESPONSE_MAX_BYTES` | `int` | `65536` |  | Bytes read from a connected-account token or identity response; larger metadata replies are refused before parsing. |
+| `LOOM_KNOWLEDGE_SOURCE_MCP_PROFILES_JSON` | `str` | `''` |  | Operator-approved MCP read profiles as version-1 JSON, at most 8 MiB UTF-8; empty approves none, and profile metadata grants no connection or publication access. |
+| `LOOM_KNOWLEDGE_SOURCE_SELF_SERVICE_ENABLED` | `bool` | `True` |  | Allow self-service source registration and credential storage or replacement. False refuses those mutations before a probe; existing reads and removal remain available. |
+| `LOOM_KNOWLEDGE_MCP_CONNECTIONS_MAX_PER_PERSON` | `int` | `32` |  | Active MCP connection slots one canonical person may hold per organization. |
 | `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one namespace may register; an add past it is refused with SOURCE_QUOTA. |
 | `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_NAMESPACE` | `int` | `64` | live | Active connected sources per namespace, separate from the shared/crawl quota. |
 | `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_PERSON` | `int` | `8` | live | Active connected sources one canonical person may register in one namespace. |

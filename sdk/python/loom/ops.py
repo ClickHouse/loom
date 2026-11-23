@@ -201,6 +201,7 @@ OpName = Literal[
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
+    "knowledge.source.mcp_preview",
     "knowledge.source.mcp_profiles",
     "knowledge.source.parse_links",
     "knowledge.source.push_configure",
@@ -586,6 +587,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
+    "knowledge.source.mcp_preview",
     "knowledge.source.mcp_profiles",
     "knowledge.source.parse_links",
     "knowledge.source.push_configure",
@@ -2752,6 +2754,18 @@ OPS: dict[str, OpSpec] = {
         300,
         False,
         True,
+    ),
+    "knowledge.source.mcp_preview": OpSpec(
+        "knowledge.source.mcp_preview",
+        "KnowledgeSourceMcpPreviewInput",
+        "KnowledgeSourceMcpPreviewBody",
+        "KnowledgeSourceMcpPreviewOutput",
+        True,
+        "writer",
+        "experimental",
+        5000,
+        False,
+        False,
     ),
     "knowledge.source.mcp_profiles": OpSpec(
         "knowledge.source.mcp_profiles",
@@ -12082,6 +12096,52 @@ class KnowledgeSourceEntry(TypedDict, total=False):
     created_by: NotRequired[str]
     created_at: NotRequired[str]
     sync: NotRequired["KnowledgeSourceSync"]
+
+
+class KnowledgeSourceMcpPreviewInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    slot: Required[str]
+    mode: Required[Literal["live", "snapshot", "selected_refresh"]]
+    reader_policy: NotRequired[Literal["owner_only", "collection_copy"]]
+    resource_ids: Required[list[str]]
+
+
+class KnowledgeSourceMcpPreviewBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    slot: Required[str]
+    mode: Required[Literal["live", "snapshot", "selected_refresh"]]
+    reader_policy: NotRequired[Literal["owner_only", "collection_copy"]]
+    resource_ids: Required[list[str]]
+
+
+class KnowledgeSourceMcpPreviewOutput(TypedDict, total=False):
+    namespace: Required[str]
+    mode: Required[Literal["live", "snapshot", "selected_refresh"]]
+    rule: Required["MCPAccessRule"]
+    connection_state: Required[Literal["configured", "stopped", "unavailable", "approval_drift"]]
+    compatibility: NotRequired[Literal["unchecked"]]
+    permission_evidence: NotRequired[Literal["unsupported"]]
+    refresh_state: Required[Literal["not_applicable", "enabled", "disabled"]]
+    selected_count: Required[int]
+    checked_at: Required[str]
+    preview_grants_authority: NotRequired[Literal[False]]
+    limitations: Required[list[str]]
+
+
+class MCPAccessRule(TypedDict, total=False):
+    access: Required[Literal["owner_only", "collection_wide", "unavailable"]]
+    reason: NotRequired[str]
+    stores_copy: Required[bool]
+    future_items_included: NotRequired[Literal[False]]
+    upstream_permissions: NotRequired[Literal["unsupported"]]
+    reader_list_complete: NotRequired[Literal[False]]
+    collection_readers_receive_copy: NotRequired[bool]
+    inherited_grants_apply: NotRequired[Literal[True]]
+    membership_changes_affect_copy: NotRequired[bool]
+    publication_confirmation_required: NotRequired[bool]
+    explanation: Required[str]
 
 
 class KnowledgeSourceMcpProfilesInput(TypedDict, total=False):
