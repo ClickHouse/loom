@@ -42,12 +42,35 @@ jobs:
             --dump README.md CONTRIBUTING.md 'docs/getting-started/**/*.md' 'sdk/*/README.md' \
             > "$RUNNER_TEMP/links.txt"
           test -s "$RUNNER_TEMP/links.txt"
+      - name: Read the trusted documentation on workflow pull requests
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: link-baseline
+          persist-credentials: false
+          sparse-checkout: |
+            docs
+            sdk
       - name: Check public documentation URLs
-        if: github.ref == 'refs/heads/main'
+        working-directory: ${{ github.event_name == 'pull_request' && 'link-baseline' || '.' }}
         run: |
           "$RUNNER_TEMP/lychee" --scheme https --scheme http --exclude-all-private \
             --exclude '^https?://([^/]+\.)?example\.(com|org|net)([:/]|$)' \
             --exclude '^https?://localhost([:/]|$)' --max-concurrency 8 \
             --timeout 10 --max-retries 1 --no-progress --format markdown \
-            --output "$GITHUB_STEP_SUMMARY" \
+            --output "$RUNNER_TEMP/external-links.md" \
             README.md CONTRIBUTING.md 'docs/getting-started/**/*.md' 'sdk/*/README.md'
+      - name: Report the checked links
+        if: "!cancelled()"
+        run: |
+          if [ -f "$RUNNER_TEMP/external-links.md" ]; then
+            cat "$RUNNER_TEMP/external-links.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: "!cancelled()"
+        with:
+          name: external-link-report
+          path: ${{ runner.temp }}/external-links.md
+          if-no-files-found: ignore
+          retention-days: 7
