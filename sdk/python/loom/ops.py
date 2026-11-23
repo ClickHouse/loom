@@ -7838,6 +7838,7 @@ class CodeSymbolBody(TypedDict, total=False):
 
 class CodeSymbolOutput(TypedDict, total=False):
     definitions: Required[list["CodeUnit"]]
+    lessons_left_out: NotRequired[int]
     ambiguous: NotRequired[bool]
     hierarchy: NotRequired[dict[str, list[dict[str, Any]]]]
     candidates: NotRequired[list[dict[str, Any]]]

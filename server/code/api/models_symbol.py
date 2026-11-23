@@ -150,13 +150,19 @@ class CodeSymbolOutput(BaseModel):
     def _drop_empty_presence(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # presence / summary (and the other optional blocks) ride only when
         # their mode fired, so a plain lookup's payload carries none of them
-        return _drop_unfired_symbol_blocks(
+        data = _drop_unfired_symbol_blocks(
             _drop_unset_symbol_context(_drop_empty_presence_keys(handler(self)))
         )
+        if not data.get("lessons_left_out"):
+            data.pop("lessons_left_out", None)
+        return data
 
     # The resolved definitions (at most 10), fitted to `token_budget`; empty when
     # nothing resolved (see `candidates`) or on a presence answer.
     definitions: list[CodeUnit]
+    # Whole linked lessons omitted to preserve definitions within an explicit request budget.
+    # Absent when none were omitted; the deployment lesson budget is applied separately.
+    lessons_left_out: int = 0
     # True when the served definitions carry more than one distinct name/signature pair.
     ambiguous: bool = False
     # For a class / interface / enum definition, its type hierarchy from the `inherits`

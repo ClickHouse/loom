@@ -371,7 +371,8 @@ File and symbol lessons carry complete memory text, including source references.
 The internal file listing reads complete values; the pre-edit block keeps its own
 read and render limits. A configured `code_result_lessons_tokens` budget leaves out
 whole lessons rather than cutting their conditions. Its default of zero is
-unlimited. Symbol definition budgeting accounts for its attached lessons.
+unlimited. With an explicit symbol request budget, source definitions take precedence;
+whole linked lessons fit in the remainder and `lessons_left_out` counts omissions.
 
 `bench/replay_code_lessons.py` compares recorded lesson order with query-aware order
 from an evaluation's native memory certificates and grep answers. It retains every
