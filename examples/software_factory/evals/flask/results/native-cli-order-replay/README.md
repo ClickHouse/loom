@@ -40,6 +40,11 @@ and usage use the recorded values. Every Loom arm costs more than baseline
 in the equal-cold estimate. The largest equal-warm cost reduction is 13.1%.
 The observed cost comparison reflects provider cache reuse.
 
+SCIP's first model turn costs $0.11345, or $0.02077 more than No Loom.
+Its remaining turns cost $0.07014, or $0.00654 less. Tree-sitter with
+memory has the lowest combined cost for later turns at $0.06776, 11.6%
+below No Loom. These are the recorded costs of each phase.
+
 Both CLI cohorts run the arms in the same order. SCIP is first in both and
 records zero first-prompt cache reads. The repeated order leaves position
 and treatment confounded. The full schedule rotates treatment positions
@@ -48,6 +53,10 @@ across task blocks.
 ## End-to-end timing
 
 Tree-sitter with memory spends 11.63 fewer seconds in the agent than No Loom.
+Harbor's native trial takes 37.07 versus 47.14 seconds, a 21.4% reduction.
+The full evaluation timer includes the harness checks around the trial. The
+time outside the native trial is 1.62 seconds with memory and 0.02 seconds
+for No Loom, leaving an 18.0% reduction on the full timer.
 Environment setup, agent setup and verification together differ by 0.07 seconds.
 Time outside those three phases and agent execution is 7.60 seconds with
 Tree-sitter and memory and 4.51 seconds with No Loom. That residual accounts
@@ -59,8 +68,11 @@ The two memory connections have identical startup instruction fingerprints.
 All four Loom connections advertise the same tool catalog. In the Tree-sitter
 memory attempt, grep assigns the previously unscoped option declaration to
 the owning function. The same query returns one linked note, down from three
-in the first pilot. The callback-order note still repeats the note read by
-the earlier symbol call.
+in the first pilot. Both memory arms receive the 282-character callback note
+from `code.symbol` and again from `code.grep`. The frozen observer counts zero
+repeated characters because the responses differ in whitespace and path metadata.
+Replaying the same traces with the current observer counts the second excerpt
+in both arms.
 
 ## Reproduction
 
