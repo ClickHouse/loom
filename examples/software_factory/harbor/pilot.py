@@ -1,22 +1,34 @@
-"""Freeze one complete five-arm block without changing its task or grader."""
+"""Freeze a single-scenario pilot without changing its task or grader."""
 
-from .arms import validate_schedule
+from .arms import CACHE_STARTS, validate_schedule
 from .runtime import read, write
 from .source import sha
 
 
-def select(prepared, task_id, output):
+def select(prepared, task_id, output, *, cache_pairs=False):
     if task_id is None:
         return prepared
     validate_schedule(prepared["schedule"])
     if task_id not in prepared["tasks"]:
         raise ValueError("The pilot task must name a frozen evaluation scenario")
-    rows = [
-        {**row, "order": order, "pilot": True}
-        for order, row in enumerate(
-            row for row in prepared["schedule"] if row["task_id"] == task_id and row["repeat"] == 0
-        )
-    ]
+    rows = []
+    for row in prepared["schedule"]:
+        if row["task_id"] != task_id or row["repeat"] != 0:
+            continue
+        order = len(rows)
+        if cache_pairs:
+            rows.extend(
+                {
+                    **row,
+                    "order": order + repeat,
+                    "pilot": True,
+                    "repeat": repeat,
+                    "cache_start": cache,
+                }
+                for repeat, cache in enumerate(CACHE_STARTS)
+            )
+        else:
+            rows.append({**row, "order": order, "pilot": True})
     validate_schedule(rows)
     output.mkdir(parents=True, exist_ok=False)
     manifest = read(prepared["historical_manifest"])

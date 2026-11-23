@@ -269,7 +269,12 @@ def execute(args):
 
             prepared = phases.run(
                 "pilot-selection",
-                lambda: select(prepared, launch["pilot_task"], output / "pilot-inputs"),
+                lambda: select(
+                    prepared,
+                    launch["pilot_task"],
+                    output / "pilot-inputs",
+                    cache_pairs=launch.get("cache_pairs", False),
+                ),
             )
         meter.set_phase("native-setup")
         setup = phases.run(

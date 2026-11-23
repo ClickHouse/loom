@@ -38,6 +38,7 @@ TOKEN_FIELDS = (
     "model_cache_read_tokens",
     "model_cache_write_tokens",
     "first_prompt_input_tokens",
+    "first_uncached_input_tokens",
     "first_cache_read_tokens",
     "first_cache_write_tokens",
     "model_total_tokens",
@@ -332,6 +333,9 @@ def export_public(protocol, output: Path, *, public_config=None, require_complet
                 for key in ("order", "task_id", "arm", "repeat", "memory_enabled", "index_tier")
             }
             row.update({key: number(result.get(key)) for key in NUMERIC})
+            if "cache_start" in slot:
+                row["cache_start"] = slot["cache_start"]
+                row["cache_start_verified"] = result["cache_start_verified"]
             row.update(
                 resolved=result["resolved"],
                 judge_fixed=result.get("judge_fixed"),

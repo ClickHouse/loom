@@ -37,6 +37,7 @@ PRIMARY = {
 }
 CONTROLS = {name: PRIMARY["baseline"] for name in ("baseline-a", "baseline-b")}
 ALL = {**PRIMARY, **CONTROLS}
+CACHE_STARTS = ("cold", "warm")
 
 
 def validate_schedule(rows):
@@ -47,13 +48,16 @@ def validate_schedule(rows):
     pilot = any("pilot" in row for row in rows)
     if pilot and (len(tasks) != 1 or any(row.get("pilot") is not True for row in rows)):
         raise ValueError("A pilot requires one scenario and an explicit marker on every arm")
-    repeats = range(1 if pilot else 3)
+    cache_pilot = any("cache_start" in row for row in rows)
+    if cache_pilot and not pilot:
+        raise ValueError("A paired cache run requires a one-scenario pilot")
+    repeats = range(len(CACHE_STARTS) if cache_pilot else 1 if pilot else 3)
     expected = {(task, repeat, arm) for task in tasks for repeat in repeats for arm in PRIMARY}
     if not pilot:
         expected |= {(task, "aa", arm) for task in tasks for arm in CONTROLS}
     actual = [(row["task_id"], row["repeat"], row["arm"]) for row in rows]
     if len(actual) != len(expected) or set(actual) != expected:
-        raise ValueError("Keep every scenario, three repeats, five arms and A/A pair")
+        raise ValueError("Keep every scenario, repeat and arm in the evaluation design")
     for order, row in enumerate(rows):
         if (
             type(row["order"]) is not int
@@ -64,6 +68,14 @@ def validate_schedule(rows):
         ):
             raise ValueError("Scheduled treatment identity or order differs")
     if pilot:
+        if cache_pilot:
+            for cold, warm in zip(rows[::2], rows[1::2], strict=True):
+                if (
+                    cold["arm"] != warm["arm"]
+                    or (cold["repeat"], warm["repeat"]) != (0, 1)
+                    or (cold.get("cache_start"), warm.get("cache_start")) != CACHE_STARTS
+                ):
+                    raise ValueError("Schedule a consecutive cold and warm attempt for every arm")
         return tasks
     global_positions = {arm: Counter() for arm in PRIMARY}
     for task in tasks:

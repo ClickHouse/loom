@@ -90,6 +90,12 @@ def number(value):
     return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
 
 
+def uncached_input(total, cache_reads, cache_writes):
+    if all(type(value) is int and value >= 0 for value in (total, cache_reads, cache_writes)):
+        return number(total - cache_reads - cache_writes)
+    return None
+
+
 def elapsed(value):
     if not isinstance(value, dict) or not value.get("started_at") or not value.get("finished_at"):
         return None
@@ -110,18 +116,22 @@ def capture_turn_usage(trial: Path, target: Path) -> None:
             metrics = step.get("metrics")
             if not metrics or step.get("is_copied_context"):
                 continue
+            input_tokens = number(metrics.get("prompt_tokens"))
+            cache_reads = number(metrics.get("cached_tokens"))
+            cache_writes = number((metrics.get("extra") or {}).get("cache_creation_input_tokens"))
             turns.append(
                 {
                     "step_id": step["step_id"],
                     "tool_call_ids": [
                         call["tool_call_id"] for call in step.get("tool_calls") or []
                     ],
-                    "input_tokens": number(metrics.get("prompt_tokens")),
-                    "output_tokens": number(metrics.get("completion_tokens")),
-                    "cache_read_tokens": number(metrics.get("cached_tokens")),
-                    "cache_write_tokens": number(
-                        (metrics.get("extra") or {}).get("cache_creation_input_tokens")
+                    "input_tokens": input_tokens,
+                    "uncached_input_tokens": uncached_input(
+                        input_tokens, cache_reads, cache_writes
                     ),
+                    "output_tokens": number(metrics.get("completion_tokens")),
+                    "cache_read_tokens": cache_reads,
+                    "cache_write_tokens": cache_writes,
                     "estimated_cost_usd": number(metrics.get("cost_usd")),
                 }
             )
@@ -168,6 +178,8 @@ def measurements(raw: dict, trial: Path) -> dict:
         number(metrics.get("total_completion_tokens")),
     )
     extra = metrics.get("extra") or {}
+    cache_reads = number(metrics.get("total_cached_tokens"))
+    cache_writes = number(extra.get("total_cache_creation_input_tokens"))
     first_step = next(
         (
             step
@@ -180,6 +192,7 @@ def measurements(raw: dict, trial: Path) -> dict:
     )
     first = first_step.get("metrics") or {}
     first_extra = first.get("extra") or {}
+    first_input = number(first.get("prompt_tokens"))
     first_read = number(first.get("cached_tokens"))
     first_write = number(first_extra.get("cache_creation_input_tokens"))
     first_prices = {}
@@ -189,7 +202,7 @@ def measurements(raw: dict, trial: Path) -> dict:
     ):
         first_prices = first_prompt_input_prices(
             first_step.get("model_name"),
-            prompt_tokens=first.get("prompt_tokens"),
+            prompt_tokens=first_input,
             output_tokens=first.get("completion_tokens"),
             cached_tokens=first_read,
             written_tokens=first_write,
@@ -211,11 +224,13 @@ def measurements(raw: dict, trial: Path) -> dict:
         "model_total_tokens": incoming + outgoing
         if incoming is not None and outgoing is not None
         else None,
-        "model_cache_read_tokens": number(metrics.get("total_cached_tokens")),
-        "model_cache_write_tokens": number(extra.get("total_cache_creation_input_tokens")),
+        "model_cache_read_tokens": cache_reads,
+        "model_cache_write_tokens": cache_writes,
+        "model_uncached_input_tokens": uncached_input(incoming, cache_reads, cache_writes),
         "first_cache_read_tokens": first_read,
         "first_cache_write_tokens": first_write,
-        "first_prompt_input_tokens": number(first.get("prompt_tokens")),
+        "first_prompt_input_tokens": first_input,
+        "first_uncached_input_tokens": uncached_input(first_input, first_read, first_write),
         **first_prices,
         "tool_total_requests": len(calls) if calls is not None else None,
         "loom_tool_calls": sum(count for name, count in counts.items() if is_loom_tool(name))

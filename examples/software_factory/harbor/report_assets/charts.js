@@ -16,6 +16,7 @@ const names = {
 const arms = Object.keys(data.arms);
 const labelFor = (arm) => names[arm] || data.arms[arm] || arm;
 const byId = (id) => document.getElementById(id);
+const cacheStarts = [...new Set(data.attempts.map((row) => row.cache_start).filter(Boolean))];
 function reportLink(value) {
   if (typeof value !== "string" || !value) return null;
   try {
@@ -36,6 +37,7 @@ const finite = (value) => typeof value === "number" && Number.isFinite(value);
 const tokenParts = [
   ["model_cache_read_tokens", "cache reads"],
   ["model_cache_write_tokens", "cache writes"],
+  ["model_uncached_input_tokens", "uncached input"],
   ["model_output_tokens", "output"],
 ];
 const cacheCosts = [
@@ -66,8 +68,13 @@ function tokenCell(label, partValue) {
 function changeFromBaseline(value, baseline) {
   return finite(value) && baseline > 0 ? signedPercent.format(value / baseline - 1) : null;
 }
-function firstPromptCache(read, write) {
-  return `First prompt cache: ${format(read, "count")} read · ${format(write, "count")} written`;
+function addFirstPrompt(cell, valueFor) {
+  const total = valueFor("first_prompt_input_tokens");
+  const read = format(valueFor("first_cache_read_tokens"), "count");
+  const write = format(valueFor("first_cache_write_tokens"), "count");
+  const uncached = format(valueFor("first_uncached_input_tokens"), "count");
+  cell.append(node("small", finite(total) ? `First prompt ${format(total, "count")} input tokens` : "First prompt input"));
+  cell.append(node("small", `${read} read · ${write} written · ${uncached} uncached`));
 }
 function addCacheCosts(cell, valueFor, baselineFor = () => null) {
   for (const metric of cacheCosts) {
@@ -105,6 +112,7 @@ function selected() {
     (row) =>
       tasks.includes(row.task) &&
       (!byId("issue").value || row.task === byId("issue").value) &&
+      (!cacheStarts.length || row.cache_start === byId("cache-start").value) &&
       (!byId("repeat").value || String(row.repeat) === byId("repeat").value),
   );
 }
@@ -171,7 +179,7 @@ function summary(rows, plannedRows) {
       if (delta !== null) cell.append(node("small", `${delta} vs No Loom`));
       if (value.known < value.n) cell.append(node("small", `${value.known} of ${value.n} measured`));
       if (metric === cost && observed.length) {
-        cell.append(node("small", firstPromptCache(tokens("first_cache_read_tokens"), tokens("first_cache_write_tokens"))));
+        addFirstPrompt(cell, tokens);
         addCacheCosts(
           cell,
           (variant) => aggregate(rows, arm, variant).value,
@@ -190,11 +198,14 @@ function summary(rows, plannedRows) {
   const blocks = new Set(rows.map((row) => `${row.task}:${row.repeat}`)).size;
   const plannedBlocks = new Set(plannedRows.map((row) => `${row.task}:${row.repeat}`)).size;
   const waiting = plannedRows.filter((row) => row.state === "complete" && !row.comparison_included).length;
+  const graded = plannedRows.filter((row) => row.state === "complete");
+  const verified = graded.filter((row) => row.cache_start_verified === true).length;
   byId("comparison-note").textContent =
     (partial
       ? `${blocks} of ${plannedBlocks} planned blocks matched across all five arms. `
       : `${blocks} matched ${blocks === 1 ? "attempt" : "attempts"} per arm. `) +
     (waiting ? `${waiting} completed attempts await matching arms. ` : "") +
+    (cacheStarts.length ? `Provider cache evidence matches the planned start in ${verified} of ${graded.length} graded attempts. ` : "") +
     "Hidden test failures are included. " +
     (cost.key === "generation_cost"
       ? "Observed costs use solver charges. Equal-cache estimates require a known combined provider cost."
@@ -245,6 +256,7 @@ function chart(rows, plannedRows) {
       : data.complete &&
           rows.length === plannedRows.length &&
           matched(rows) &&
+          (!cacheStarts.length || rows.every((row) => row.cache_start_verified === true)) &&
           data.run_status !== "interrupted" &&
           data.run_status !== "failed" &&
           sums.baseline.value !== null
@@ -283,9 +295,9 @@ function extraMetrics(rows) {
   headings("metrics-heading", ["Measurement", ...arms.map(labelFor)]);
   const metrics = [
     ...data.metrics.filter((m) => !["resolved", "cost", "agent_seconds"].includes(m.key)),
-    ...["model_input_tokens", "model_output_tokens", "model_cache_read_tokens", "model_cache_write_tokens"].map(
-      (key) => ({ key, title: key.replaceAll("_", " "), kind: "count" }),
-    ),
+    ...tokenParts.map(([key, title]) => ({ key, title: `Solver ${title}`, kind: "count" })),
+    { key: "loom_provider_input_tokens", title: "Loom provider input", kind: "count" },
+    { key: "loom_provider_output_tokens", title: "Loom provider output", kind: "count" },
     { key: "seconds", title: "End-to-end time", kind: "time" },
     { key: "native_seconds", title: "Native Harbor time", kind: "time" },
     { key: "generation_cost", title: "Solver cost / attempt", kind: "cost" },
@@ -336,7 +348,15 @@ function attemptsTable(rows) {
       item.append(node("td", text));
     const costCell = node("td", format(row[cost.key], "cost"), "numeric");
     if (row.state !== "pending") {
-      costCell.append(node("small", firstPromptCache(row.first_cache_read_tokens, row.first_cache_write_tokens)));
+      const costSource = {
+        "claude-code-reported": "Solver cost reported by Claude Code",
+        litellm_estimate: "Solver cost estimated by Harbor",
+      }[row.generation_cost_source];
+      if (costSource) costCell.append(node("small", costSource));
+      addFirstPrompt(costCell, (key) => row[key]);
+      if (row.cache_start && row.cache_start_verified !== true) {
+        costCell.append(node("small", "Planned cache state unverified"));
+      }
       addCacheCosts(costCell, (metric) => row[metric.key]);
     }
     item.append(
@@ -415,6 +435,13 @@ for (const [key, group] of Object.entries(data.cohorts.groups).filter(([, group]
   byId("cohort").append(option);
 }
 byId("cohort").value = data.cohorts.default;
+byId("cache-filter").hidden = !cacheStarts.length;
+byId("repeat-label").hidden = Boolean(cacheStarts.length);
+for (const start of cacheStarts) {
+  const option = node("option", start === "cold" ? "Cold start" : "Warm start");
+  option.value = start;
+  byId("cache-start").append(option);
+}
 byId("cohort-label").hidden = Object.values(data.cohorts.groups).filter((group) => group.task_ids.length).length === 1;
 for (const task of [...new Set(data.attempts.map((row) => row.task))].sort()) {
   const option = node("option", data.titles[task] || task);
@@ -432,6 +459,6 @@ byId("cohort").addEventListener("change", () => {
   for (const option of byId("issue").options) option.hidden = Boolean(option.value) && !tasks.includes(option.value);
   render();
 });
-for (const id of ["issue", "repeat", "timing", "chart-metric", "attempt-filter"])
+for (const id of ["issue", "repeat", "cache-start", "timing", "chart-metric", "attempt-filter"])
   byId(id).addEventListener("change", render);
 render();

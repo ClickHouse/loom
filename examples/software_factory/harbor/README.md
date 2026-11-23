@@ -34,10 +34,13 @@ counts; several tools can share a model response. Native trajectories remain
 authoritative for global counts including subagents.
 
 `diagnostics/attempt-NN-model-usage.json` records input and output tokens, cache
-reads and writes, and estimated cost for each measured model step in the native
+reads and writes, uncached input, and estimated cost for each measured model step in the native
 trajectory. Tool-call IDs join the step to the recorded tool responses. The source
 hash names the trajectory, and missing usage fields stay unknown. Attempt totals
 remain authoritative for cost. This optional capture runs after billing collection.
+Attempt reports link this usage to the corresponding tool-response summary and
+Loom's retrieval stages. Claude Code supplies solver usage. Loom supplies its
+request traces and provider ledger.
 
 `diagnostics/attempt-NN-code-traces.json` preserves the existing code-search trace
 rows named by that attempt's returned trace ids, scoped to its source namespace.
@@ -58,6 +61,16 @@ A/A attempts. Its paired deltas are descriptive; confidence intervals remain
 unknown because a single scenario cannot measure variation across scenarios.
 Hidden tests, full regression checks and blind fixed judgments use the same
 contracts as the full matrix.
+
+Add `--cache-pairs` to a pilot to schedule a cold and warm attempt for each arm.
+Use a dedicated Claude API workspace with no other traffic. Each warm attempt
+uses the same provider cache after its paired cold attempt, with a fresh solver
+session and checkout. The runner waits for cache expiry before moving to the next
+arm. Quiet periods are recorded separately from trial times. The first prompt
+must report writes without reads for the cold start, and reads for the warm start.
+A missed cache state remains in the results and fails cache verification. The
+report displays the two start conditions separately and retains the observed
+cache counts for each attempt.
 
 Native Harbor duration is the recorded trial finish minus its start. Full study
 end-to-end duration also includes the post-trial index audit. Reports retain both.
