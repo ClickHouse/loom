@@ -230,7 +230,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.scip_status`](operations/code.md#codescip_status) | Report the progress of a SCIP upload batch: parts received and apply status. | viewer | read | no |  |
 | [`code.search`](operations/code.md#codesearch) | Find implementations by question, behavior or identifier using `query`. | viewer | read | yes |  |
 | [`code.setting_facts`](operations/code.md#codesetting_facts) | One ClickHouse setting, the four places that define it: its declaration and tier (production / important / beta / experimental / obsolete), every default change with the release it shipped in… | viewer | read | no |  |
-| [`code.symbol`](operations/code.md#codesymbol) | Exact symbol lookup: definition, signature, doc comment, and body of a function/class/enum by (qualified) name — compiler-grade where available (tier='scip'), resolved across C++ overloads… | viewer | read | yes |  |
+| [`code.symbol`](operations/code.md#codesymbol) | Find an exact definition by name or path:line. | viewer | read | yes |  |
 | [`code.symbol_history`](operations/code.md#codesymbol_history) | The regression history of one function: the merged PRs that touched it (with linked issues, reverts, inline review comments inside its span), and — through the tracker namespace bound to this code… | viewer | read | no |  |
 | [`code.test_gate`](operations/code.md#codetest_gate) | The pre-PR question in one call: for THIS change, which tests must run, and which touched code no test reaches. | viewer | read | no |  |
 | [`code.test_home`](operations/code.md#codetest_home) | Where does a new test case belong? | viewer | read | no |  |

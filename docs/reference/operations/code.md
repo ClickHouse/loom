@@ -1551,7 +1551,7 @@ One ClickHouse setting, the four places that define it: its declaration and tier
 
 ## `code.symbol`
 
-Exact symbol lookup: definition, signature, doc comment, and body of a function/class/enum by (qualified) name — compiler-grade where available (tier='scip'), resolved across C++ overloads…
+Find an exact definition by name or path:line.
 
 `POST /v1/code.symbol` · MCP `loom_code_symbol` · role `viewer` · read
 
@@ -1567,6 +1567,7 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | `include_body` | `bool` | `True` | Include retained implementation source when available; false returns metadata. |
 | `include_history` | `bool` | `True` | Attach `recent_prs` (merged PRs over the definitions' paths) to the first definition. |
 | `include_examples` | `bool` | `True` | Attach `examples` (call sites that use the symbol) to the first definition. |
+| `example_context_lines` | `int` | `0` | Retained source lines on each side of a usage example. |
 | `include_lessons` | `bool` | `True` | Attach `lessons` to the first definition: the memories linked to the symbol from `lesson_namespaces` (over MCP the caller's memory home by default) and the repository's team namespace, each with its `code_state` (`fresh`, `moved`, or… |
 | `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces whose linked memories `lessons` reads besides the repository's team rules (over MCP the caller's memory home by default); one the caller cannot read is skipped. |
 | `token_budget` | `int` | `0` | Estimated-token cap for definitions and `uses_brief`; 0 (default) is unlimited. |

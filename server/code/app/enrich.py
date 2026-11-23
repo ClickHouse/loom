@@ -15,7 +15,10 @@ import logging
 from collections.abc import Awaitable
 from typing import Any
 
+from server.code.app.spans import code_span
+from server.code.domain.symbol_body import retained_source_window
 from server.code.store.index import CodeRepo
+from server.embedding.embedder import served_model_label
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -51,11 +54,20 @@ async def recent_prs(
 
 
 async def usage_examples(
-    repo: CodeRepo, org: str, ns: str, symbol_ids: list[str], *, limit: int = 3
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    symbol_ids: list[str],
+    *,
+    limit: int = 3,
+    context_lines: int = 0,
 ) -> list[dict[str, Any]]:
     """Call sites of the symbol, test-covered callers first, newest first."""
+    with_context = bool(context_lines and settings.embedding_model)
     edges = await bounded(
-        repo.edges_for_symbols(org, ns, symbol_ids, direction="callers", limit=50),
+        repo.edges_for_symbols(
+            org, ns, symbol_ids, direction="callers", limit=50, with_revision=with_context
+        ),
         [],
     )
     if not edges:
@@ -68,6 +80,7 @@ async def usage_examples(
         key=lambda e: (str(e["path"]) not in tested_paths, str(e["path"])),
     )
     out = []
+    revisions: list[str] = []
     seen: set[tuple[str, int]] = set()
     for e in ranked:
         site = (str(e["path"]), int(e["line"]))
@@ -83,9 +96,53 @@ async def usage_examples(
                 "test_covered": str(e["path"]) in tested_paths,
             }
         )
+        if with_context:
+            revisions.append(str(e.get("indexed_commit") or "").rstrip("\0"))
         if len(out) >= limit:
             break
+    if with_context:
+        model = served_model_label(settings.embedding_model)
+        return list(
+            await asyncio.gather(
+                *(
+                    _example_context(repo, org, ns, site, context_lines, model, revision)
+                    for site, revision in zip(out, revisions, strict=True)
+                )
+            )
+        )
     return out
+
+
+async def _example_context(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    site: dict[str, Any],
+    radius: int,
+    model: str,
+    revision: str,
+) -> dict[str, Any]:
+    line = site["line"]
+    if line <= 0 or not revision:
+        return site
+    start, end = max(1, line - radius), line + radius
+    with code_span("enrich.example_context"):
+        rows = await bounded(
+            repo.source_chunks_for_span(
+                org, ns, site["path"], start, end, model, with_revision=True
+            ),
+            [],
+        )
+    if len(rows) > 400:
+        return site
+    window = retained_source_window(rows, start, end, anchor=line, revision=revision)
+    if window is None:
+        return site
+    start, end, text = window
+    return {
+        **site,
+        "context": {"commit": revision, "start_line": start, "end_line": end, "text": text},
+    }
 
 
 async def lessons_for_symbol(

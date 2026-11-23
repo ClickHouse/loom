@@ -60,6 +60,12 @@ class CodeSymbolInput(_CodeIdentity):
     include_history: bool = True
     # Attach `examples` (call sites that use the symbol) to the first definition.
     include_examples: bool = True
+    example_context_lines: int = Field(
+        default=0,
+        ge=0,
+        le=20,
+        description="Retained source lines on each side of a usage example. Default 0 omits text.",
+    )
     # Attach `lessons` to the first definition: the memories linked to the symbol from
     # `lesson_namespaces` (over MCP the caller's memory home by default) and the
     # repository's team namespace, each with its `code_state` (`fresh`, `moved`, or

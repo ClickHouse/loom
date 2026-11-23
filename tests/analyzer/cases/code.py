@@ -68,6 +68,7 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
     regex = c["scope"] == "regex"
     await repo.grep_chunks(ORG, NS, "needle", regex=regex, path_prefix=prefix, scope=scope)
     await repo.grep_source_chunks_for_span(ORG, NS, "src/a.py", 1, 20, MODEL)
+    await repo.source_chunks_for_span(ORG, NS, "src/a.py", 1, 20, MODEL, with_revision=True)
     if regex:
         # An alternation gets the needle guard in front of match()
         await repo.grep_chunks(ORG, NS, "needle|other", regex=True, path_prefix=prefix, scope=scope)
@@ -148,6 +149,7 @@ async def _edges(ch: RecordingCH, c: dict[str, Any]) -> None:
         min_confidence=c["min_confidence"],
         per_match=c["per_match"],
     )
+    await repo.edges_for_symbols(ORG, NS, ["s1", "s2"], direction="callers", with_revision=True)
     await repo.live_edges_to_symbols(
         ORG,
         NS,
