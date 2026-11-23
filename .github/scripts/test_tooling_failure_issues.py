@@ -146,6 +146,21 @@ class ToolingIssuesTests(unittest.TestCase):
             self.assertNotIn("private", issue["body"])
         self.assertIn("codeql-alerts 3 -->", issues[0]["body"])
 
+    def test_closed_scanner_issue_stays_closed_when_only_older_alerts_remain(self) -> None:
+        issues = [
+            {
+                "body": "<!-- loom-tooling-failure:v1 codeql-alerts 3 -->",
+                "state": "closed",
+                "user": {"login": BOT},
+            }
+        ]
+        alerts = [{"number": 2, "state": "open", "tool": {"name": "CodeQL"}}]
+        api = fake_api([], issues, alerts)
+        self.assertEqual(report(api, collect_scanning_findings(api)), 0)
+        alerts.append({"number": 4, "state": "open", "tool": {"name": "CodeQL"}})
+        self.assertEqual(report(api, collect_scanning_findings(api)), 1)
+        self.assertEqual(issues[0]["state"], "closed")
+
     def test_contributor_and_contract_workflows_can_report_failures(self) -> None:
         workflows = select_workflows("schedule", {})
         for path in ("contributor-lab", "http-contract", "identity-testing", "zizmor"):

@@ -229,7 +229,7 @@ def existing_issues(api: Api, findings: dict[str, Finding]) -> set[str]:
         body = issue.get("body") or ""
         for key, source_id in MARKER.findall(body):
             if key in findings and (
-                issue["state"] == "open" or int(source_id) == findings[key].source_id
+                issue["state"] == "open" or int(source_id) >= findings[key].source_id
             ):
                 matched.add(key)
         title = TITLE.match(issue.get("title") or "")
