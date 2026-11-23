@@ -115,9 +115,16 @@ A marked response durably protects every known family before returning. A failed
 withholds the response. `with family.automatic():` classifies an application's callback;
 the final request hook checks protection after authentication and on every replay.
 Explicit actions outside automatic callbacks remain available after protection and still
-observe responses. This option does not declare protocol capability. The serving build,
-other consumers, launchers and framework callbacks require their separate qualification
-before mirrored reads are enabled.
+observe responses. The transport declares the session-protection protocol only when
+the durable guard and raw-response observer are installed and ready. Supplied
+capability headers are refused. The serving build, other consumers, launchers and
+framework callbacks require their separate qualification before mirrored reads are
+enabled.
+
+`Transport.download()` retains and protects all contributing families before returning
+opaque bytes. It uses the same-origin request path, refuses compressed protected
+responses and bounds body size, chunks and cleanup. Its 64 MiB ceiling can be lowered
+per request. This method does not expand the supported remote MCP import media.
 
 `Session.resume()` and `history()` are automatic reads. The first marked recall can
 return after durable observation; a marked pack skips the optional history request.

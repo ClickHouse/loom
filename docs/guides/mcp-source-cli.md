@@ -204,8 +204,8 @@ original request file and session proof after cancellation or interruption.
 selected recording IDs. `recording list` calls `knowledge.source.list` with
 `namespace`; `recording sync-now` accepts `namespace`, `name` and optional `full`.
 
-`retained list`, `retained inspect` and `retained remove` expose ordinary source
-listing, inspection and retirement. Inspection takes `namespace` and `name`;
-removal also requires `confirm` and accepts `delete_documents`. Retained native
-document sources remain unavailable for execution. Document setup and updates use
-the MCP controls above.
+`retained list` exposes ordinary source metadata, and `retained remove` requests
+explicit retirement with `namespace`, `name` and `confirm`; `delete_documents`
+separately requests copy erasure. Inspection can refuse unsupported retained source
+kinds. Retained native document sources remain unavailable for execution. Document
+setup, updates and MCP inspection use the MCP controls above.

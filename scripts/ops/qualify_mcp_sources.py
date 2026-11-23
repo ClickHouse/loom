@@ -29,6 +29,7 @@ CASE_NAMES = (
     "partial_listing",
     "cancellation",
     "live",
+    "cli_context",
 )
 EXPECTED = {f"test_{name}[{kind}]" for name in CASE_NAMES for kind in ("resources", "tools")}
 
@@ -98,6 +99,7 @@ class Results:
             "cases": self.cases,
             "seams": [
                 "fixture_asgi_https_routing",
+                "cli_owned_loopback_http",
                 "operator_catalog_input",
                 "local_ngram_embedding",
                 "text_requires_no_extractor",

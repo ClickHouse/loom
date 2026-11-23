@@ -1,4 +1,4 @@
-"""`loom login | logout | whoami | call | token | connect`: use the dashboard's API
+"""`loom login | logout | whoami | call | token`: use the dashboard's API
 from a terminal or an agent's shell. `python -m loom …` runs it with only the SDK
 installed; the server's `loom` command hands these commands to it.
 
@@ -26,17 +26,14 @@ import math
 import os
 import sys
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 
 from loom import credentials
-from loom.errors import BackendUnavailable, LoomError
+from loom.errors import LoomError
 from loom.ops import OPS
 
-COMMANDS = ("login", "logout", "whoami", "call", "token", "connect")
-
-_CONNECT_KINDS = {"google": "gdrive", "notion": "notion", "linear": "linear"}
+COMMANDS = ("login", "logout", "whoami", "call", "token")
 
 
 def _field(pair: str) -> tuple[str, Any]:
@@ -124,66 +121,6 @@ async def _token(args: argparse.Namespace) -> Any:
         )
     finally:
         await agent.close()
-
-
-async def _connect(args: argparse.Namespace) -> str:
-    """Read the server's dashboard link; consent starts in the browser so its
-    callback receives the binding cookie set by the authenticated start route."""
-    from loom.agent import Agent
-
-    agent = Agent("", "", "loom-cli", base_url=_server(args), profile=args.profile)
-    try:
-        answer = await agent.client.connection.list()
-        kind = _CONNECT_KINDS[args.provider]
-        if not isinstance(answer, dict):
-            raise BackendUnavailable("invalid connected-account response")
-        entries = answer.get("connections")
-        if not isinstance(entries, list):
-            raise BackendUnavailable("invalid connected-account response")
-        matches = [
-            entry for entry in entries if isinstance(entry, dict) and entry.get("kind") == kind
-        ]
-        if len(matches) != 1:
-            raise BackendUnavailable("invalid connected-account response")
-        return _connect_url(matches[0].get("connect_url"), kind)
-    finally:
-        await agent.close()
-
-
-def _connect_url(value: Any, kind: str) -> str:
-    """Only print a provider dashboard link, never consent or credential material."""
-    refused = BackendUnavailable("invalid connected-account dashboard link")
-    if not isinstance(value, str) or any(ord(c) <= 32 or ord(c) == 127 for c in value):
-        raise refused
-    try:
-        url = urlsplit(value)
-        if (
-            url.scheme not in {"http", "https"}
-            or not url.hostname
-            or url.username is not None
-            or url.password is not None
-            or url.fragment
-            or "\\" in value
-            or not url.path.endswith("/settings/connected-accounts")
-            or parse_qsl(url.query, keep_blank_values=True) != [("kind", kind)]
-        ):
-            raise refused
-        _ = url.port
-    except ValueError:
-        raise refused from None
-    return value
-
-
-def _connect_parser(sub: Any) -> None:
-    p = sub.add_parser(
-        "connect",
-        help="print the dashboard link to connect your own provider account",
-        description="Open the printed link, sign in to the dashboard as the intended account "
-        "owner, and choose Connect or Reconnect. Consent completes in that browser.",
-    )
-    p.add_argument("provider", choices=tuple(_CONNECT_KINDS))
-    p.add_argument("--profile", help="credentials profile (default: LOOM_PROFILE or 'default')")
-    p.add_argument("--server", help="server URL (default: the one `loom login` signed in to)")
 
 
 def _token_target(entries: list[Any], saves_to: str | None) -> tuple[Any, str | None]:
@@ -318,10 +255,6 @@ def _run(args: argparse.Namespace) -> int:
             print(
                 json.dumps(run_sync(lambda: guarded_command(args, _token)), indent=2, default=str)
             )
-        elif args.cmd == "connect":
-            url = run_sync(lambda: guarded_command(args, _connect))
-            print(f"To connect {args.provider}, open:\n{url}")
-            print("Sign in as the intended account owner and choose Connect or Reconnect.")
         elif args.list:
             _list_ops()
         else:
@@ -335,13 +268,6 @@ def _run(args: argparse.Namespace) -> int:
             if result is not None:
                 print(json.dumps(result, indent=2, default=str))
     except (LoomError, httpx.HTTPError, ValueError, OSError) as e:
-        if args.cmd == "connect":
-            print(
-                "loom connect: could not read your provider dashboard link. "
-                "Check your server and sign-in with `loom login`.",
-                file=sys.stderr,
-            )
-            return 1
         print(f"loom {args.cmd}: {e}", file=sys.stderr)
         for err in getattr(e, "detail", {}).get("errors") or []:
             where = ".".join(str(part) for part in err.get("loc", []))
@@ -400,7 +326,6 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             p.add_argument("--method", choices=("GET", "POST"), help="for a /path")
             p.add_argument("--list", action="store_true", help="list every op and its role")
     _token_parser(sub)
-    _connect_parser(sub)
     # Fields may follow options (`--namespace x query=…`), which argparse
     # leaves over; anything else left over is a mistake.
     args, extra = parser.parse_known_args(argv)

@@ -1,4 +1,4 @@
-"""`loom login | logout | whoami | call | token | connect`: use a Loom server from the terminal
+"""`loom login | logout | whoami | call | token`: use a Loom server from the terminal
 with the session `loom login` stores. They are the Python SDK's commands
 (`loom.cli`), so the CLI and `loom.login()` share one implementation and one
 credentials file; `main` hands their arguments straight to the SDK's parser.
@@ -15,7 +15,6 @@ SDK_COMMANDS = {
     "whoami": "Show who the stored session signs you in as.",
     "call": "Call any operation or API route with the stored session (`loom call --help`).",
     "token": "Make, list and revoke your own tokens for CI and agents (`loom token --help`).",
-    "connect": "Print the dashboard link to connect your own Google, Notion or Linear account.",
 }
 
 

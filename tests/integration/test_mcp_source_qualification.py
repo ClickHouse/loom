@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import socket
+import sys
 from dataclasses import replace
 from typing import Any
 from uuid import uuid4
 
 import pytest
+import uvicorn
 from loom.errors import LoomError
 from loom.session_protection import AutomaticCaptureSuppressed
 
+from server.auth.jwt import mint_token
 from server.core.ch import get_client, set_query_tag
 from server.knowledge.app import mcp_profiles, mcp_source_authority
 from tests.integration.mcp_source_qualification_fixtures import (
@@ -540,3 +545,95 @@ async def test_live(world: World) -> None:
             params={"org": world.owner.org},
         ) == {"count": 0}
     require_clean_selection(world)
+
+
+async def test_cli_context(world: World, qualification_app: Any) -> None:
+    """A real private response protects subsequent installed-CLI subprocesses."""
+    await world.add(mode="live")
+    tokens = [
+        mint_token(
+            subject,
+            world.owner.org,
+            ["*"],
+            ["admin"],
+            ttl_seconds=1800,
+            is_service_account=False,
+            session_id=str(uuid4()),
+        )
+        for subject in (world.owner.subject, world.other.subject)
+    ]
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(32)
+    listener.setblocking(False)
+    server = uvicorn.Server(
+        uvicorn.Config(
+            qualification_app,
+            host="127.0.0.1",
+            port=listener.getsockname()[1],
+            lifespan="off",  # qualification_app owns the actual startup and shutdown.
+            access_log=False,
+            log_config=None,
+            log_level="critical",
+        )
+    )
+    serving = asyncio.create_task(server.serve(sockets=[listener]), name="mcp-cli-owned-http")
+    child: asyncio.subprocess.Process | None = None
+    try:
+        async with asyncio.timeout(10):
+            while not server.started:
+                if serving.done():
+                    await serving
+                    pytest.fail("Owned CLI HTTP fixture did not start")
+                await asyncio.sleep(0.01)
+        env = {
+            **os.environ,
+            "LOOM_CLI_QUAL_BASE_URL": f"http://127.0.0.1:{listener.getsockname()[1]}",
+            "LOOM_CLI_QUAL_ORG": world.owner.org,
+            "LOOM_CLI_QUAL_TOKEN": tokens[0],
+            "LOOM_CLI_QUAL_OTHER_TOKEN": tokens[1],
+            "LOOM_CLI_QUAL_WRITE_NAMESPACE": world.team,
+            "LOOM_CLI_QUAL_PRIVATE_READ_REQUEST": json.dumps(
+                {"namespace": world.namespace, "name": world.entry["name"], "resource_id": SELECTED}
+            ),
+            "LOOM_CLI_QUAL_PRIVATE_MARKER": world.source.marker,
+        }
+        target = "sdk/python/tests/qualify_cli_source_context.py"
+        child = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "pytest",
+            str(target),
+            "-q",
+            "--tb=no",
+            "--show-capture=no",
+            env=env,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        async with asyncio.timeout(180):
+            assert await child.wait() == 0
+        assert world.source.reads == [SELECTED]
+    finally:
+        if child is not None and child.returncode is None:
+            # This process group contains only the explicitly owned CLI qualification.
+            import signal
+
+            os.killpg(child.pid, signal.SIGTERM)
+            try:
+                async with asyncio.timeout(5):
+                    await child.wait()
+            except TimeoutError:
+                os.killpg(child.pid, signal.SIGKILL)
+                await child.wait()
+        server.should_exit = True
+        try:
+            async with asyncio.timeout(5):
+                await asyncio.shield(serving)
+        except TimeoutError:
+            serving.cancel()
+            await asyncio.gather(serving, return_exceptions=True)
+        finally:
+            listener.close()
+        assert serving.done()

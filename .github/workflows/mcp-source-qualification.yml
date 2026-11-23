@@ -171,7 +171,8 @@ jobs:
       - name: Install the locked dependencies
         run: |
           uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code >/dev/null 2>&1
-          uv pip install --no-deps -e sdk/python >/dev/null 2>&1
+          uv build --wheel sdk/python --out-dir "$RUNNER_TEMP/mcp-sdk-wheel" >/dev/null 2>&1
+          uv pip install --no-deps "$RUNNER_TEMP"/mcp-sdk-wheel/*.whl >/dev/null 2>&1
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Initialize fresh synthetic secrets and exact ownership
         id: ownership

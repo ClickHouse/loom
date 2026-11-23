@@ -10,8 +10,8 @@ service differences; tool descriptions and models do not decide permissions.
 
 ## Transport and operation approval
 
-The client uses the official MCP SDK over remote HTTPS Streamable HTTP. Qualified
-profiles support anonymous access or a preissued bearer bound to the exact approved
+The client uses the official MCP SDK over remote HTTPS Streamable HTTP. Supported
+profiles use anonymous access or a preissued bearer bound to the exact approved
 origin and audience. Loom credentials never authenticate to the remote server.
 OAuth enrollment and refresh, local commands or stdio, legacy SSE, binary resources
 and unstructured tool-result inference are outside this contract. Protocol support
@@ -181,7 +181,9 @@ Deterministic servers exercise resource-based and mapped-tool reads through the
 same official SDK engine. Functional qualification uses owned stores and synthetic
 identities, real knowledge writes and protected readbacks. Scale qualification
 uses a frozen synthetic registry and measures query work, bounded scheduling and
-latency. In-process ASGI transport does not qualify TCP, TLS, DNS, proxy behavior,
+latency. The CLI qualification also uses an owned loopback HTTP listener for
+installed-client subprocesses. In-process remote ASGI transport does not qualify
+external TCP, TLS, DNS, proxy behavior,
 external vendor capacity or every server marketed as MCP. No provider or model
 calls are needed for these tests. Only actual exact-head hosted receipts establish
 a qualification result; authored tests and protocol compatibility are not provider

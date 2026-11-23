@@ -95,6 +95,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Import ClickGap memory](docs/guides/importing-clickgap-memory.md): `loom import-clickgap` loads one SQLite export shape, a ClickGap `lessons` store, into a Loom namespace; skip this page unless you have such an export.
 - [Store an investigation agent's memory](docs/guides/investigation-agent-memory.md): An investigation agent produces several kinds of state, and Loom has a plane for each.
 - [Manage MCP sources from the CLI](docs/guides/mcp-source-cli.md): The Python SDK supplies source controls through `python -m loom.source_cli source`.
+- [Connect selected documents through MCP](docs/guides/mcp-sources.md): An MCP source reads selected resources from an operator-approved remote server.
 - [Optimize a namespace from its audit](docs/guides/optimize-namespace.md): A writer that uses `memory.set` as an object store (JSON blobs under hash keys, leases as memories, documents as claims) leaves every table consistent and recall useless.
 - [Tune Loom's performance](docs/guides/performance-tuning.md): Every lever on this page is a setting or a request field.
 - [Query Loom from Postgres](docs/guides/query-from-postgres.md): This guide reads a tenant's memories, conversations and usage from the org's own Postgres, where they can be joined with the application's tables.
