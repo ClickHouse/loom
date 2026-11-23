@@ -10,3 +10,5 @@ __pycache__/
 .gitignore
 *.difypkg
 pyproject.toml
+requirements-test.in
+requirements-test.txt

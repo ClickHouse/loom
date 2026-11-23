@@ -36,11 +36,9 @@ jobs:
         working-directory: integrations/n8n
       - name: Load the packaged nodes without development dependencies
         run: |
-          mkdir "$RUNNER_TEMP/n8n-package-check"
-          cp integrations/n8n/test/package-check/package{,-lock}.json "$RUNNER_TEMP/n8n-package-check/"
+          mkdir -p "$RUNNER_TEMP/n8n-package-check/node_modules/@clickhouse/n8n-nodes-loom"
+          ln -s "$GITHUB_WORKSPACE/integrations/n8n/node_modules/n8n-workflow" "$RUNNER_TEMP/n8n-package-check/node_modules/n8n-workflow"
           cd "$RUNNER_TEMP/n8n-package-check"
-          npm ci --ignore-scripts --no-audit --no-fund
-          mkdir -p node_modules/@clickhouse/n8n-nodes-loom
           tar -xzf "$GITHUB_WORKSPACE/integrations/n8n/package.tgz" --strip-components=1 -C node_modules/@clickhouse/n8n-nodes-loom
           node -e 'for (const path of ["Loom/Loom.node", "LoomMemory/LoomMemory.node"]) require("@clickhouse/n8n-nodes-loom/dist/nodes/" + path + ".js")'
 
