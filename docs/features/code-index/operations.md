@@ -377,6 +377,11 @@ defaults to `0`. An explicit request value of `0` overrides a finite deployment 
 Attached file lessons use `code_result_lessons_tokens`, also unlimited by default.
 The internal code grounding reads for memory questions likewise default to no token cap.
 
+For search and grep matches, a file with a lesson linked to a returned definition
+can omit ordinary lessons linked only to other definitions in that file.
+File-level results keep their wider scope. Constraints, decisions, pins, file
+notes and uncertain links stay eligible. `lessons_left_out` includes omissions.
+
 Result counts, requested body modes, access checks, source completeness checks and
 execution deadlines still apply. Unlimited does not reconstruct source absent from the
 index. Model generation limits are separate from retrieval context limits.

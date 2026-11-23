@@ -165,7 +165,7 @@ async def _confirmed_omissions(
         async with asyncio.timeout(timeout_s):
             links = await code_links.for_memories(org, sorted({mid for _, mid in omitted}))
     except Exception as error:  # noqa: BLE001 — without confirmation, keep the lessons
-        logger.debug("Scope check unavailable for grep lessons: %s", type(error).__name__)
+        logger.debug("Scope check unavailable for code lessons: %s", type(error).__name__)
         return set()
     resolved: dict[tuple[str, str], list[str]] = defaultdict(list)
     uncertain: set[str] = set()
