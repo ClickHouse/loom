@@ -132,6 +132,8 @@ def factory_defaults() -> dict[tuple[str, str], object]:
 
 def schema_for(model: type[BaseModel]) -> dict[str, Any]:
     """Describe factory defaults without executing arbitrary Python code."""
+    from server.operations.read_projection import ProjectedRow
+
     schema = model.model_json_schema()
     seen: set[type[BaseModel]] = set()
     known = factory_defaults()
@@ -140,8 +142,12 @@ def schema_for(model: type[BaseModel]) -> dict[str, Any]:
         if current in seen:
             return
         seen.add(current)
+        if issubclass(current, ProjectedRow):
+            target["_rust_projected"] = True
         for name, field in current.model_fields.items():
             prop = target["properties"][field.alias or name]
+            if not field.repr:
+                prop["_rust_secret"] = True
 
             def nested(annotation: Any) -> None:
                 if isinstance(annotation, type) and issubclass(annotation, BaseModel):
@@ -411,6 +417,20 @@ class Emitter:
             attrs += ['deserialize_with = "required_nullable"']
         return WireField(field, raw, ty, nullable, required, attrs)
 
+    @staticmethod
+    def debug_impl(name: str, fields: list[str], secrets: set[str]) -> str:
+        visible = "".join(
+            f".field({rust_string(field.removeprefix('r#'))}, &self.{field})"
+            for field in fields
+            if field not in secrets
+        )
+        return (
+            f"\nimpl std::fmt::Debug for {name} {{"
+            "fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {"
+            f"f.debug_struct({rust_string(name)}){visible}.finish_non_exhaustive()"
+            "} }"
+        )
+
     def default_attr(self, prop: dict[str, Any], ty: str) -> str:
         if "default" not in prop:
             return "default"
@@ -475,11 +495,25 @@ class Emitter:
         methods: list[str] = []
         names: set[str] = {"new", "send"} if request else set()
         wire_fields: list[WireField] = []
+        debug_fields: list[str] = []
+        secrets: set[str] = set()
         for wire, prop in schema.get("properties", {}).items():
             is_required = wire in required and not (
-                operation is not None and wire in {"org", "namespace", "agent"}
+                operation is not None
+                and wire in {"org", "namespace", "agent"}
+                and not (operation[0] == "collection.delete" and wire == "namespace")
             )
-            field = self.field(name, wire, prop, required=is_required, request=request)
+            projected = not request and schema.get("_rust_projected")
+            field = self.field(
+                name,
+                wire,
+                prop,
+                required=False if projected else is_required,
+                request=True if projected else request,
+            )
+            debug_fields.append(field.name)
+            if prop.get("_rust_secret"):
+                secrets.add(field.name)
             if field.name in names:
                 raise ValueError(f"{name}: field collision {field.name}")
             names.add(field.name)
@@ -489,10 +523,13 @@ class Emitter:
             if request:
                 self.request_field(field, names, args, initial, methods)
                 wire_fields.append(field)
+        debug = "Debug, " if not secrets else ""
         decl = (
-            "#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]\n"
+            f"#[derive({debug}Clone, PartialEq, Serialize, Deserialize)]\n"
             f"#[non_exhaustive]\npub struct {name} {{\n" + "\n".join(fields) + "\n}"
         )
+        if secrets:
+            decl += self.debug_impl(name, debug_fields, secrets)
         if request:
             if len(args) > 7:
                 group = name + "Required"
@@ -501,11 +538,15 @@ class Emitter:
                     raise ValueError(f"{name}: required field group collision")
                 self.declarations[group] = (
                     "/// Required fields for the request constructor.\n"
-                    "#[derive(Debug, Clone, PartialEq)]\n"
+                    f"#[derive({'Debug, ' if not secrets else ''}Clone, PartialEq)]\n"
                     f"pub struct {group} {{\n"
                     + "\n".join(f"pub {f.name}: {f.ty}," for f in required_fields)
                     + "\n}"
                 )
+                if secrets:
+                    self.declarations[group] += self.debug_impl(
+                        group, [f.name for f in required_fields], secrets
+                    )
                 args = [f"required: {group}"]
                 initial = [
                     f"{field.name}: required.{field.name},"
@@ -631,6 +672,11 @@ def operation_facts() -> str:
         if op.name == "memory.digests":
             identity.discard("session_id")
         defaults = set()
+        if op.name == "collection.delete":
+            identity.discard("namespace")
+        if op.name == "memory.list":
+            identity -= {"agent", "user_id", "session_id"}
+            defaults = keys & {"agent", "user_id", "session_id"}
         if op.name.startswith("conversation.") and fact.read_only:
             identity -= {"agent", "user_id", "session_id"}
             defaults = {
@@ -792,7 +838,7 @@ def build_contract_tests(selected: tuple[str, ...] | None = None) -> str:
                 "let encoded = serde_json::to_value(value).unwrap();\n"
                 "assert!(encoded.is_object());"
             )
-            if not request:
+            if not request and not schema.get("_rust_projected"):
                 for key, prop in schema["properties"].items():
                     if key not in schema.get("required", []) and "default" in prop:
                         value = prop["default"]

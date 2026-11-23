@@ -54,13 +54,16 @@ async fn run() -> Result<()> {
         ),
     ];
     let mut owned = Vec::new();
+    let mut receipts = std::collections::HashMap::new();
     let result: Result<()> = async {
         for (name, value) in facts {
-            common::write_owned(
+            let key = format!("{prefix}/{name}");
+            let written = common::write_owned(
                 &bot,
-                MemorySetInput::new(format!("{prefix}/{name}"), value).tags(["travel"]),
+                MemorySetInput::new(&key, value).tags(["travel"]),
                 &mut owned,
             ).await?;
+            receipts.insert(key, written.memory_id);
         }
         let recall = bot.search(
             SearchRequest::new("what seat should I book for a long flight?")
@@ -77,11 +80,13 @@ async fn run() -> Result<()> {
                 .user_id("u-42"),
         ).await?;
         println!("ask: abstain={} answer={}", answer.abstain, answer.answer);
-        for key in &answer.memory_keys {
-            require(owned.iter().any(|owned| owned == key), "The answer cited a memory outside this example")?;
-            bot.memory_outcome(
-                MemoryOutcomeInput::new(MemoryOutcomeInputOutcome::Used).memory_key(key),
-            ).await?;
+        if !answer.abstain && !answer.answer.trim().is_empty() {
+            for key in &answer.memory_keys {
+                let id = receipts.get(key).ok_or("The answer cited a memory outside this example")?;
+                bot.memory_outcome(
+                    MemoryOutcomeInput::new(MemoryOutcomeInputOutcome::Used).memory_id(id),
+                ).await?;
+            }
         }
         let miss = bot.get(&format!("{prefix}/never_written")).await?;
         require(!miss.found, "The missing key was found")?;

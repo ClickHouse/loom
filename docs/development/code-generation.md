@@ -105,6 +105,13 @@ Bound identity fields are optional in constructors and are merged by the client.
 Responses enforce required fields and apply declared defaults, including empty
 collection and nested model factories that JSON Schema omits. The generator
 describes known factory values without executing arbitrary factories.
+Rows derived from `ProjectedRow` instead preserve omitted fields as `None`;
+nullable fields distinguish omission from explicit null. Server fields with
+`repr=False` are excluded from generated `Debug` implementations, including
+nested models and required constructor groups.
+`collection.delete` requires an explicit namespace target and preserves it.
+`memory.list` defaults omitted identity filters from the client while preserving
+explicit filters and wildcards.
 Unknown response fields are ignored. Registry contract tests decode every
 request and response and compare response defaults with the schema.
 Default functions decode the schema's JSON literal as the emitted Rust type:

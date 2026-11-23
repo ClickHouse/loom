@@ -228,7 +228,8 @@ cargo run --manifest-path sdk/rust/Cargo.toml --example agent_memory
 Prints a `Client::probe` report for the required operations and continues even
 when the report lists missing capabilities. Writes three travel facts under unique keys,
 recalls by meaning, asks for a grounded seat-and-meal answer and records `used`
-outcomes only for its own cited keys. It checks a missing key and HTTP 404 for an
+outcomes only when it uses a nonempty answer that does not abstain, addressing
+its own cited rows by their write receipt IDs. It checks a missing key and HTTP 404 for an
 unknown operation. It attempts deletion of its own keys even after failure.
 An abstaining answer is a valid response; this example prints it.
 

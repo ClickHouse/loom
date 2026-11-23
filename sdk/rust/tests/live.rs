@@ -61,13 +61,13 @@ async fn authenticated_memory_and_namespace_contracts() {
         .memory_get(MemoryGetInput::new("legacy"))
         .await
         .unwrap();
-    assert_eq!(stored.tags, ["orchid"]);
-    assert_eq!(stored.agent, "rust-live");
-    assert_eq!(stored.user_id, "reader");
-    assert_eq!(stored.session_id, "conversation");
-    assert_eq!(stored.actor, "process:rust-writer");
-    assert_eq!(stored.source_class, "asserted");
-    assert_eq!(stored.content_sha256, saved.content_sha256);
+    assert_eq!(stored.tags, Some(vec!["orchid".into()]));
+    assert_eq!(stored.agent.as_deref(), Some("rust-live"));
+    assert_eq!(stored.user_id.as_deref(), Some("reader"));
+    assert_eq!(stored.session_id.as_deref(), Some("conversation"));
+    assert_eq!(stored.actor.as_deref(), Some("process:rust-writer"));
+    assert_eq!(stored.source_class.as_deref(), Some("asserted"));
+    assert_eq!(stored.content_sha256, Some(saved.content_sha256));
 
     let search = writer
         .search(
@@ -112,24 +112,30 @@ async fn authenticated_memory_and_namespace_contracts() {
         .memory_get(MemoryGetInput::new("full"))
         .await
         .unwrap();
-    assert!(full.found);
-    assert_eq!(full.value, json!({"flag": false}));
-    assert_eq!(full.version, Some(first.data.version));
-    assert_eq!(full.memory_id, first.data.memory_id);
-    assert_eq!(full.content_sha256, first.data.content_sha256);
-    assert_eq!(full.memory_type.as_deref(), Some("semantic"));
-    assert_eq!(full.confidence, Some(0.5));
-    assert_eq!(full.tags, ["full"]);
-    assert_eq!(full.agent, "rust-live");
-    assert_eq!(full.user_id, "reader");
-    assert_eq!(full.session_id, "conversation");
-    assert_eq!(full.source_class, "asserted");
-    assert_eq!(full.actor, "process:rust-writer");
-    assert!(!full.pinned);
+    assert_eq!(full.found, Some(true));
+    assert_eq!(full.value, Some(json!({"flag": false})));
+    assert_eq!(full.version, Some(Some(first.data.version)));
+    assert_eq!(
+        full.memory_id.as_deref(),
+        Some(first.data.memory_id.as_str())
+    );
+    assert_eq!(full.content_sha256, Some(first.data.content_sha256));
+    assert_eq!(
+        full.memory_type.as_ref().and_then(|v| v.as_deref()),
+        Some("semantic")
+    );
+    assert_eq!(full.confidence, Some(Some(0.5)));
+    assert_eq!(full.tags, Some(vec!["full".into()]));
+    assert_eq!(full.agent.as_deref(), Some("rust-live"));
+    assert_eq!(full.user_id.as_deref(), Some("reader"));
+    assert_eq!(full.session_id.as_deref(), Some("conversation"));
+    assert_eq!(full.source_class.as_deref(), Some("asserted"));
+    assert_eq!(full.actor.as_deref(), Some("process:rust-writer"));
+    assert_eq!(full.pinned, Some(false));
 
     let other = client(&base_url, &org, "other", &other_token);
     let hidden = other
-        .memory_get_by_id(MemoryGetByIdInput::new(&full.memory_id))
+        .memory_get_by_id(MemoryGetByIdInput::new(full.memory_id.as_ref().unwrap()))
         .await
         .unwrap();
     let missing = other

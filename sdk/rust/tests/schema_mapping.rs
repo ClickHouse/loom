@@ -59,6 +59,87 @@ where
 {
     T::deserialize(deserializer).map(Some)
 }
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SecretChild {
+    pub token: String,
+}
+impl std::fmt::Debug for SecretChild {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretChild").finish_non_exhaustive()
+    }
+}
+impl SecretChild {
+    pub fn new(token: impl Into<String>) -> Self {
+        Self {
+            token: token.into(),
+        }
+    }
+}
+/// Required fields for the request constructor.
+#[derive(Clone, PartialEq)]
+pub struct SecretRequestRequired {
+    pub secret: String,
+    pub child: SecretChild,
+    pub a: String,
+    pub b: String,
+    pub c: String,
+    pub d: String,
+    pub e: String,
+    pub f: String,
+}
+impl std::fmt::Debug for SecretRequestRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretRequestRequired")
+            .field("child", &self.child)
+            .field("a", &self.a)
+            .field("b", &self.b)
+            .field("c", &self.c)
+            .field("d", &self.d)
+            .field("e", &self.e)
+            .field("f", &self.f)
+            .finish_non_exhaustive()
+    }
+}
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SecretRequest {
+    pub secret: String,
+    pub child: SecretChild,
+    pub a: String,
+    pub b: String,
+    pub c: String,
+    pub d: String,
+    pub e: String,
+    pub f: String,
+}
+impl std::fmt::Debug for SecretRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretRequest")
+            .field("child", &self.child)
+            .field("a", &self.a)
+            .field("b", &self.b)
+            .field("c", &self.c)
+            .field("d", &self.d)
+            .field("e", &self.e)
+            .field("f", &self.f)
+            .finish_non_exhaustive()
+    }
+}
+impl SecretRequest {
+    pub fn new(required: SecretRequestRequired) -> Self {
+        Self {
+            secret: required.secret,
+            child: required.child,
+            a: required.a,
+            b: required.b,
+            c: required.c,
+            d: required.d,
+            e: required.e,
+            f: required.f,
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum RequestLabel {
@@ -194,6 +275,32 @@ fn default_5() -> Option<std::collections::HashMap<String, String>> {
 fn default_6() -> DefaultsLabel {
     serde_json::from_str("\"\"").expect("schema default")
 }
+#[test]
+fn secret_debug_excludes_nested_and_required_group_credentials() {
+    let child = SecretChild::new("child-marker");
+    assert!(!format!("{child:?}").contains("child-marker"));
+    let required = SecretRequestRequired {
+        secret: "root-marker".into(),
+        child,
+        a: "a".into(),
+        b: "b".into(),
+        c: "c".into(),
+        d: "d".into(),
+        e: "e".into(),
+        f: "f".into(),
+    };
+    let debug = format!("{required:?}");
+    assert!(!debug.contains("root-marker"));
+    assert!(!debug.contains("child-marker"));
+    let request = SecretRequest::new(required);
+    let debug = format!("{request:?}");
+    assert!(!debug.contains("root-marker"));
+    assert!(!debug.contains("child-marker"));
+    let wire = serde_json::to_value(request).unwrap();
+    assert_eq!(wire["secret"], "root-marker");
+    assert_eq!(wire["child"]["token"], "child-marker");
+}
+
 #[test]
 fn nullable_zero_and_empty_enum_defaults_match_schema() {
     let response: Defaults = serde_json::from_str("{}").unwrap();

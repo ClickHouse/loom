@@ -38,9 +38,11 @@ async fn run() -> Result<()> {
     let fact = bot
         .memory_get(MemoryGetInput::new(args.required("memory-key")?).fields(fields))
         .await?;
-    if fact.found {
+    if fact.found == Some(true) {
         require(
-            fact.agent == agent && fact.user_id == user && fact.session_id == session,
+            fact.agent.as_deref() == Some(agent)
+                && fact.user_id.as_deref() == Some(user)
+                && fact.session_id.as_deref() == Some(session),
             "The fact differs from the selected identity",
         )?;
     }

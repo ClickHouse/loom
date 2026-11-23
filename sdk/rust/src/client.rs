@@ -236,6 +236,16 @@ impl Client {
         if op == "memory.set" && fields.get("value").is_some_and(Value::is_null) {
             return Err(Error::Input("memory.set value cannot be null".into()).into());
         }
+        if op == "collection.delete"
+            && !fields
+                .get("namespace")
+                .and_then(Value::as_str)
+                .is_some_and(|target| !target.trim().is_empty())
+        {
+            return Err(
+                Error::Input("collection.delete requires a target namespace".into()).into(),
+            );
+        }
         if op == "memory.search" {
             // Search identity fields are filters; write authorship must not narrow recall.
             fields.entry("agent").or_insert_with(|| json!("*"));

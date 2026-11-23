@@ -14,20 +14,21 @@ feature provides the same operations through a synchronous client.
 
 ## Install
 
-From your Rust application's directory, add the SDK from
-[crates.io](https://crates.io/crates/clickhouse-loom):
+Clone this repository and add its Rust SDK from your application's directory:
 
 ```bash
-cargo add clickhouse-loom@0.1.1
+cargo add clickhouse-loom --path ../loom/sdk/rust
 ```
 
 The equivalent `Cargo.toml` dependency is:
 
 ```toml
 [dependencies]
-clickhouse-loom = "0.1.1"
+clickhouse-loom = { path = "../loom/sdk/rust" }
 ```
 
+Adjust the path to your checkout. The generated operation client is version
+`0.1.1` in this checkout; its crates.io publication is a separate step.
 Cargo resolves the SDK's dependencies automatically.
 
 Use the current stable Rust and Cargo toolchain for installation from crates.io.
@@ -141,6 +142,9 @@ also non-exhaustive: include a fallback arm when matching it. Match
 Response decoding ignores unknown JSON fields. Optional fields use `Option<T>`
 or documented defaults. Missing required response fields produce
 `Error::Protocol`.
+Rows that support field projection use optional fields throughout: omitted
+fields remain `None`, and nullable fields retain omission, null and value.
+Fields marked `repr=False` by the server are excluded from Rust `Debug` output.
 
 ## Generated contracts
 
@@ -185,7 +189,7 @@ let memory = MemoryGetInput::new("preference")
     .follow(true)
     .send(&client, CallOptions::default())
     .await?;
-println!("{}", memory.data.found);
+println!("{:?}", memory.data.found);
 # Ok(())
 # }
 ```
@@ -196,8 +200,14 @@ their plain argument types; `<field>_null()` sends null explicitly.
 For example, `.ttl_seconds(60)` sends a number and `.ttl_seconds_null()` sends null.
 Nonnullable options reject null during decoding.
 
-Generated responses follow server defaults: `MemoryGetOutput.pinned` is `bool`,
-and `MemorySearchHit.version` and `namespace` default to zero and an empty string.
+`CollectionDeleteInput::new("target-collection")` requires the namespace to
+purge. The client preserves this target regardless of its bound namespace.
+`memory.list` uses bound agent, user and session values only for omitted
+filters; explicit values and wildcards survive.
+
+Projected responses preserve field presence: `MemoryGetOutput.pinned` is
+`Option<bool>`. Unprojected responses follow server defaults:
+`MemorySearchHit.version` and `namespace` default to zero and an empty string.
 `MemorySearchOutput.embedding_model` is required; `retrieval_risk` defaults to
 `"abstain"` and `term_leg` to `"off"`. Unbounded integer fields use `Integer`.
 

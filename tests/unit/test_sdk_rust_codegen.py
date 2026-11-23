@@ -26,6 +26,39 @@ def test_collection_factory_defaults_include_referenced_models() -> None:
     assert schema["$defs"]["Child"]["properties"]["items"]["default"] == []
 
 
+def test_projection_and_secret_metadata_reach_nested_models() -> None:
+    from server.knowledge.api.models_source_push import PushStatusOutput
+    from server.memory.api.models_crud import MemoryListOutput
+
+    schema = gen.schema_for(MemoryListOutput)
+    assert schema["$defs"]["_MemoryListEntry"]["_rust_projected"]
+    secret = gen.schema_for(PushStatusOutput)
+    assert secret["properties"]["verification_token"]["_rust_secret"]
+
+
+def test_collection_delete_requires_target_namespace() -> None:
+    from server.identity.api.models_collections import CollectionDeleteInput
+
+    emitter = gen.Emitter()
+    emitter.model(
+        "CollectionDeleteInput",
+        gen.schema_for(CollectionDeleteInput),
+        request=True,
+        operation=("collection.delete", "CollectionDeleteOutput"),
+    )
+    assert (
+        "pub fn new(namespace: impl Into<String>)" in emitter.declarations["CollectionDeleteInput"]
+    )
+
+
+def test_reader_filters_and_collection_targets_are_not_stamped() -> None:
+    facts = gen.operation_facts()
+    delete = next(line for line in facts.splitlines() if line.startswith('("collection.delete"'))
+    assert '&["org"]' in delete
+    listing = next(line for line in facts.splitlines() if line.startswith('("memory.list"'))
+    assert '&["namespace", "org"], &["agent", "session_id", "user_id"]' in listing
+
+
 def test_unknown_factory_is_refused_without_executing_it() -> None:
     def refuse() -> list[str]:
         raise AssertionError("must not execute arbitrary factories")

@@ -1,10 +1,30 @@
 """Executable fixtures for schema shapes absent from the selected production models."""
 
-from scripts.codegen.sdk_rust_gen import SUPPORT, Emitter, rustfmt
+from pydantic import BaseModel, Field
+
+from scripts.codegen.sdk_rust_gen import SUPPORT, Emitter, rustfmt, schema_for
+
+
+class SecretChild(BaseModel):
+    token: str = Field(repr=False)
+
+
+class SecretRequest(BaseModel):
+    secret: str = Field(repr=False)
+    child: SecretChild
+    a: str
+    b: str
+    c: str
+    d: str
+    e: str
+    f: str
 
 
 def build_fixture() -> str:
     em = Emitter()
+    secret_schema = schema_for(SecretRequest)
+    em.defs = secret_schema.get("$defs", {})
+    em.model("SecretRequest", secret_schema, request=True)
     nullable = {"anyOf": [{"type": "string"}, {"type": "null"}]}
     em.model(
         "Request",
@@ -68,6 +88,27 @@ def build_fixture() -> str:
 
 
 TESTS = """
+#[test]
+fn secret_debug_excludes_nested_and_required_group_credentials() {
+    let child = SecretChild::new("child-marker");
+    assert!(!format!("{child:?}").contains("child-marker"));
+    let required = SecretRequestRequired {
+        secret: "root-marker".into(), child,
+        a: "a".into(), b: "b".into(), c: "c".into(), d: "d".into(),
+        e: "e".into(), f: "f".into(),
+    };
+    let debug = format!("{required:?}");
+    assert!(!debug.contains("root-marker"));
+    assert!(!debug.contains("child-marker"));
+    let request = SecretRequest::new(required);
+    let debug = format!("{request:?}");
+    assert!(!debug.contains("root-marker"));
+    assert!(!debug.contains("child-marker"));
+    let wire = serde_json::to_value(request).unwrap();
+    assert_eq!(wire["secret"], "root-marker");
+    assert_eq!(wire["child"]["token"], "child-marker");
+}
+
 #[test]
 fn nullable_zero_and_empty_enum_defaults_match_schema() {
     let response: Defaults = serde_json::from_str("{}").unwrap();

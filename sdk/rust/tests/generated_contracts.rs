@@ -76,11 +76,13 @@ fn complete_responses_follow_server_defaults_and_nested_models() {
         }]
     }))
     .unwrap();
-    assert!(!memory.pinned);
-    assert!(memory.tags.is_empty());
-    assert_eq!(memory.code.len(), 1);
-    assert_eq!(memory.code[0].state, CodeLinkState::Changed);
-    assert_eq!(memory.verification, "none");
+    assert_eq!(memory.found, Some(false));
+    assert_eq!(memory.pinned, None);
+    assert_eq!(memory.tags, None);
+    let code = memory.code.unwrap();
+    assert_eq!(code.len(), 1);
+    assert_eq!(code[0].state, CodeLinkState::Changed);
+    assert_eq!(memory.verification, None);
     let saved: SetResponse = from_value(json!({
         "version": u64::MAX, "advisories": ["review"], "chunks_written": 2
     }))

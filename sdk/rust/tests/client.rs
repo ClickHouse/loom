@@ -37,6 +37,9 @@ mod probe;
 #[path = "update_filters/mod.rs"]
 mod update_filters;
 
+#[path = "review_regressions/mod.rs"]
+mod review_regressions;
+
 #[cfg(feature = "blocking")]
 #[path = "blocking_cases/mod.rs"]
 mod blocking_cases;
