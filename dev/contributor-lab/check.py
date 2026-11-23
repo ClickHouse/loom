@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -34,23 +35,24 @@ def check(track: str, directory: Path) -> dict[str, object]:
             "checks": len(results),
             "passed": all(code == 0 for code in results),
         }
-    report = directory / f"{track}.xml"
-    command = [
-        sys.executable,
-        "-m",
-        "pytest",
-        "-q",
-        _TESTS[track],
-        "-o",
-        "cache_dir=/tmp/loom-pytest-cache",
-        f"--junitxml={report}",
-    ]
-    result = subprocess.run(command, check=False, timeout=120)
-    suites = ET.parse(report).getroot().findall(".//testsuite") if report.is_file() else []
-    total = sum(int(suite.get("tests", "0")) for suite in suites)
-    skipped = sum(int(suite.get("skipped", "0")) for suite in suites)
-    passed = result.returncode == 0 and total > skipped
-    return {"track": track, "tests": total, "skipped": skipped, "passed": passed}
+    with tempfile.TemporaryDirectory(dir=directory) as run_directory:
+        report = Path(run_directory) / "report.xml"
+        command = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            _TESTS[track],
+            "-o",
+            "cache_dir=/tmp/loom-pytest-cache",
+            f"--junitxml={report}",
+        ]
+        result = subprocess.run(command, check=False, timeout=120)
+        suites = ET.parse(report).getroot().findall(".//testsuite") if report.is_file() else []
+        total = sum(int(suite.get("tests", "0")) for suite in suites)
+        skipped = sum(int(suite.get("skipped", "0")) for suite in suites)
+        passed = result.returncode == 0 and total > skipped
+        return {"track": track, "tests": total, "skipped": skipped, "passed": passed}
 
 
 def main() -> None:

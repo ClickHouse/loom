@@ -186,6 +186,15 @@ class SelectedCheckReports(unittest.TestCase):
                         result = self.module.check("functional", Path(directory))
                     self.assertEqual(result["passed"], expected)
 
+    def test_a_previous_successful_report_is_not_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            previous = Path(directory) / "functional.xml"
+            previous.write_text('<testsuites><testsuite tests="2" skipped="0"/></testsuites>')
+            with patch("subprocess.run", return_value=SimpleNamespace(returncode=0)):
+                result = self.module.check("functional", Path(directory))
+            self.assertFalse(result["passed"])
+            self.assertEqual(result["tests"], 0)
+
     def test_one_failed_quality_check_fails_the_track(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with patch(
