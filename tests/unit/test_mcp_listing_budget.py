@@ -402,9 +402,9 @@ def test_compact_coding_grep_advertises_body_default_and_literal_alternatives():
     assert "stable literal fragment" in description
     assert "literal alternatives" in description
     assert "Matches include enclosing bodies by default" in description
-    assert "`include_body: false` for names or locations only" in description
+    assert "`include_body: false` for names, locations or short excerpts" in description
     assert "loom_code_search" in description
-    assert "`context_lines` for a short excerpt" in description
+    assert "short excerpts with `context_lines`" in description
 
 
 # ---------------------------------------------------------------- one revision policy

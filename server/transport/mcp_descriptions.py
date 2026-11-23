@@ -1359,9 +1359,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.grep": (
         "Find text and enclosing symbols in indexed source. "
-        "Matches include bodies by default. Set `include_body: false` for names or locations only. "
+        "Matches include bodies by default. "
+        "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
         "Use literal strings or one RE2 string with `regex: true`. "
-        "`context_lines` adds nearby source. "
         "Filter by `path_prefix`, `path_globs` or `langs`. "
         "`neighbours` adds graph links. `deadline_ms` allows partial results. "
         "`mode: 'message'` finds printed error templates. "
@@ -2186,8 +2186,8 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.grep": (
         "Find exact text by stable literal fragment or literal alternatives. "
         "Matches include enclosing bodies by default. "
-        "Set `include_body: false` for names or locations only. "
-        "Use code.search for behavior and `context_lines` for a short excerpt. "
+        "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
+        "Use code.search for behavior. "
         "`regex: true` uses one RE2 string. "
         "Scope with `path_prefix`, `path_globs` or `langs`. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
