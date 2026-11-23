@@ -110,6 +110,7 @@ def chart_data(protocol, entries, views_manifest):
                 equal_warm_cost=number(result.get("equal_warm_provider_cost_usd")),
                 generation_cost=number(result.get("generation_cost_usd")),
                 generation_cost_source=result.get("generation_cost_source"),
+                solver_token_source=result.get("solver_token_source"),
                 loom_provider_cost=number(result.get("loom_provider_cost_usd")),
                 agent_seconds=number(result.get("agent_time_s")),
                 **{

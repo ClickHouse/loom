@@ -343,6 +343,7 @@ def export_public(protocol, output: Path, *, public_config=None, require_complet
                 judge_fixed=result.get("judge_fixed"),
                 harbor_reward_valid=result.get("harbor_reward_valid"),
                 generation_cost_source=result.get("generation_cost_source"),
+                solver_token_source=result.get("solver_token_source"),
                 loom_connection_at_start=result.get("loom_connection_at_start"),
                 loom_plugin_loaded=result.get("loom_plugin_loaded"),
                 loom_code_skill_loaded=result.get("loom_code_skill_loaded"),

@@ -11,7 +11,6 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from .metrics import known_total
 from .pricing import first_prompt_input_prices
 from .runtime import write
 
@@ -100,7 +99,8 @@ def uncached_input(total, cache_reads, cache_writes):
 def cache_usage(extra):
     reads = number(extra.get("cache_read_input_tokens"))
     writes = number(extra.get("cache_creation_input_tokens"))
-    partition = extra.get("cache_creation") or {}
+    partition = extra.get("cache_creation")
+    partition = partition if isinstance(partition, dict) else {}
     short_writes = number(partition.get("ephemeral_5m_input_tokens"))
     long_writes = number(partition.get("ephemeral_1h_input_tokens"))
     if writes == 0 and not partition:
@@ -113,6 +113,44 @@ def cache_usage(extra):
         "cache_write_5m_tokens": short_writes,
         "cache_write_1h_tokens": long_writes,
     }
+
+
+def reported_usage(trial: Path):
+    """Read the provider counters recorded by Claude Code before Harbor normalizes them."""
+    path = trial / "agent/claude-code.txt"
+    totals, first = {}, {}
+    first_id = None
+    if path.is_file():
+        for line in path.read_text().splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "result":
+                usage = event.get("usage")
+                totals = usage if isinstance(usage, dict) else {}
+            if (
+                event.get("type") == "assistant"
+                and event.get("parent_tool_use_id") is None
+                and not event.get("isSidechain")
+            ):
+                message = event.get("message") or {}
+                if not isinstance(message, dict):
+                    continue
+                identifier = message.get("id")
+                if isinstance(identifier, str) and first_id is None:
+                    first_id = identifier
+                usage = message.get("usage")
+                if first_id is not None and identifier == first_id and isinstance(usage, dict):
+                    first.update(usage)
+    return totals, first
+
+
+def reported_input(usage, cache):
+    pieces = [usage.get("input_tokens"), cache["cache_read_tokens"], cache["cache_write_tokens"]]
+    return sum(pieces) if all(type(piece) is int and piece >= 0 for piece in pieces) else None
 
 
 def elapsed(value):
@@ -190,19 +228,12 @@ def measurements(raw: dict, trial: Path) -> dict:
         for cmd in commands
         if isinstance(cmd, str)
     )
-    incoming, outgoing = (
-        number(metrics.get("total_prompt_tokens")),
-        number(metrics.get("total_completion_tokens")),
-    )
     extra = metrics.get("extra") or {}
+    provider, first_provider = reported_usage(trial)
+    cache = cache_usage(provider)
+    incoming = reported_input(provider, cache)
+    outgoing = number(provider.get("output_tokens"))
     steps = (trajectory or {}).get("steps", [])
-    per_step_cache = [
-        cache_usage(step["metrics"].get("extra") or {})
-        for step in steps
-        if step.get("metrics") and not step.get("is_copied_context")
-    ]
-    cache_reads = known_total(per_step_cache, "cache_read_tokens")
-    cache_writes = known_total(per_step_cache, "cache_write_tokens")
     first_step = next(
         (
             step
@@ -215,8 +246,8 @@ def measurements(raw: dict, trial: Path) -> dict:
     )
     first = first_step.get("metrics") or {}
     first_extra = first.get("extra") or {}
-    first_input = number(first.get("prompt_tokens"))
-    first_cache = cache_usage(first_extra)
+    first_cache = cache_usage(first_provider)
+    first_input = reported_input(first_provider, first_cache)
     first_read = first_cache["cache_read_tokens"]
     first_write = first_cache["cache_write_tokens"]
     first_prices = {}
@@ -243,20 +274,18 @@ def measurements(raw: dict, trial: Path) -> dict:
         "solver_version": ((trajectory or {}).get("agent") or {}).get("version"),
         "generation_cost_usd": number(metrics.get("total_cost_usd")),
         "generation_cost_source": extra.get("cost_source", "claude-code-reported"),
+        "solver_token_source": "anthropic-reported" if provider else None,
         "model_input_tokens": incoming,
         "model_output_tokens": outgoing,
         "model_total_tokens": incoming + outgoing
         if incoming is not None and outgoing is not None
         else None,
-        "model_cache_read_tokens": cache_reads,
-        "model_cache_write_tokens": cache_writes,
-        "model_cache_write_5m_tokens": known_total(per_step_cache, "cache_write_5m_tokens"),
-        "model_cache_write_1h_tokens": known_total(per_step_cache, "cache_write_1h_tokens"),
-        "model_uncached_input_tokens": uncached_input(incoming, cache_reads, cache_writes),
+        **{"model_" + key: value for key, value in cache.items()},
+        "model_uncached_input_tokens": number(provider.get("input_tokens")),
         "first_cache_read_tokens": first_read,
         "first_cache_write_tokens": first_write,
         "first_prompt_input_tokens": first_input,
-        "first_uncached_input_tokens": uncached_input(first_input, first_read, first_write),
+        "first_uncached_input_tokens": number(first_provider.get("input_tokens")),
         **first_prices,
         "tool_total_requests": len(calls) if calls is not None else None,
         "loom_tool_calls": sum(count for name, count in counts.items() if is_loom_tool(name))

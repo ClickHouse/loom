@@ -70,6 +70,22 @@ class NativeMeasurements(TestCase):
                 },
             }
             (root / "agent/trajectory.json").write_text(json.dumps(trajectory))
+            messages = [
+                {
+                    "type": "assistant",
+                    "message": {"id": "first", "usage": {"cache_read_input_tokens": 70}},
+                },
+                {
+                    "type": "result",
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cache_read_input_tokens": 70,
+                        "cache_creation_input_tokens": 20,
+                    },
+                },
+            ]
+            (root / "agent/claude-code.txt").write_text("\n".join(map(json.dumps, messages)))
             raw = {
                 "agent_execution": {
                     "started_at": "2000-01-01T00:00:00Z",
@@ -81,7 +97,8 @@ class NativeMeasurements(TestCase):
             self.assertEqual(row["loom_tool_calls"], 2)
             self.assertEqual(row["model_total_tokens"], 105)
             self.assertEqual(row["model_cache_read_tokens"], 70)
-            self.assertIsNone(row["model_cache_write_tokens"])
+            self.assertEqual(row["model_cache_write_tokens"], 20)
+            self.assertEqual(row["solver_token_source"], "anthropic-reported")
             self.assertEqual(row["first_cache_read_tokens"], 70)
             self.assertIsNone(row["first_cache_write_tokens"])
             self.assertEqual(row["generation_cost_usd"], 0.02)

@@ -572,6 +572,7 @@ def export(protocol: dict, job_name="live") -> dict:
             "duration_s",
             "generation_cost_usd",
             "generation_cost_source",
+            "solver_token_source",
             "loom_provider_cost_usd",
             "total_provider_cost_usd",
             "equal_cold_provider_cost_usd",

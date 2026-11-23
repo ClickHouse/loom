@@ -366,7 +366,11 @@ function attemptsTable(rows) {
       node("td", format(row[time.key], "time"), "numeric"),
       node("td", format(row.loom_tool_calls, "count"), "numeric"),
     );
-    item.append(tokenCell(format(row.model_total_tokens, "count"), (key) => row[key]));
+    const solverTokens = tokenCell(format(row.model_total_tokens, "count"), (key) => row[key]);
+    if (row.solver_token_source === "anthropic-reported") {
+      solverTokens.append(node("small", "Usage reported by Anthropic"));
+    }
+    item.append(solverTokens);
     const cell = node("td");
     const target = reportLink(row.url);
     if (target) {
