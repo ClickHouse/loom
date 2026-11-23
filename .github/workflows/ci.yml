@@ -1445,6 +1445,27 @@ jobs:
           uv pip list --python /tmp/sdk-venv/bin/python
       - name: Smoke-test the installed wheel
         run: /tmp/sdk-venv/bin/python scripts/gates/sdk_wheel_smoke.py dist/*.whl
+      - name: Report public types from the installed wheel
+        if: matrix.python == '3.12' && !matrix.lowest
+        run: |
+          uv tool run --from pyright==1.1.414 pyright \
+            --pythonpath /tmp/sdk-venv/bin/python --verifytypes loom --ignoreexternal \
+            --outputjson > "$RUNNER_TEMP/sdk-types.json" || result=$?
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          report = json.loads((Path(os.environ["RUNNER_TEMP"]) / "sdk-types.json").read_text())
+          if report["summary"]["filesAnalyzed"] < 1:
+              raise SystemExit("Pyright analyzed no SDK files")
+          types = report["typeCompleteness"]
+          if not types["pyTypedPath"] or types["exportedSymbolCounts"]["withKnownType"] == 0:
+              raise SystemExit("Pyright found no typed public SDK")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(f"Python SDK public type completeness: {types['completenessScore']:.1%}\n")
+          PY
+          # Pyright returns 1 for incomplete types. Measure before choosing a threshold.
+          test "${result:-0}" -le 1
 
   langflow-extension:
     needs: validate-ref
