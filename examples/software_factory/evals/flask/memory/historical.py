@@ -32,6 +32,16 @@ def _date(value):
     return parsed
 
 
+def _source_repository(source):
+    repository = source.get("repository", "pallets/flask")
+    _require(
+        repository == "pallets/flask"
+        or (repository == "pallets/click" and source["kind"] == "git-document"),
+        "Historical source repository is outside the pinned project and dependency",
+    )
+    return repository
+
+
 def validate_catalog(catalog, case, paths):
     records, sources, limits = catalog["records"], catalog["sources"], catalog["requirements"]
     _require(
@@ -45,8 +55,9 @@ def validate_catalog(catalog, case, paths):
     )
     cutoff = _date(case["cutoff"])
     for source in sources.values():
+        repository = _source_repository(source)
         _require(
-            source["url"].startswith("https://github.com/pallets/flask/")
+            source["url"].startswith(f"https://github.com/{repository}/")
             and re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
             and source["kind"] in {"git-document", "historical-pull-request"},
             "Historical source must identify a pinned public project document",
@@ -95,13 +106,18 @@ def verify_sources(sources):
     receipts = {}
     with httpx.Client(follow_redirects=True, timeout=120) as client:
         for name, source in sources.items():
+            repository = _source_repository(source)
             if source["kind"] == "git-document":
-                url = (
-                    "https://raw.githubusercontent.com/pallets/flask/"
-                    + source["commit"]
-                    + "/"
-                    + source["path"]
+                commit, path = source["commit"], source["path"]
+                _require(
+                    re.fullmatch(r"[0-9a-f]{40}", commit)
+                    and re.fullmatch(r"[\w./-]+", path)
+                    and not path.startswith("/")
+                    and ".." not in Path(path).parts
+                    and source["url"] == f"https://github.com/{repository}/blob/{commit}/{path}",
+                    "Historical document must identify a pinned file",
                 )
+                url = f"https://raw.githubusercontent.com/{repository}/{commit}/{path}"
                 response = client.get(url)
                 response.raise_for_status()
                 content = response.content

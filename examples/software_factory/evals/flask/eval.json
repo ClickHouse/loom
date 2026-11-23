@@ -1,6 +1,6 @@
 {
   "id": "flask",
-  "title": "Python E2E evaluation: Flask",
+  "title": "Python E2E pilot: Flask CLI option order",
   "suite_lock": "suite.lock.json",
   "scenario_manifest": "memory/historical_cases.json",
   "memory_catalog": "memory/historical_memories.json",

@@ -88,6 +88,15 @@
       "path": "docs/blueprints.rst",
       "published_at": "2021-05-11T14:43:42-07:00",
       "sha256": "e4e15084a59ebe7b6a8d29b665fb971704de07955edee462908db4da36e9d3e9"
+    },
+    "click-option-callbacks": {
+      "kind": "git-document",
+      "repository": "pallets/click",
+      "url": "https://github.com/pallets/click/blob/1784558ed7c75c65764d2a434bd9cbb206ca939d/docs/advanced.rst",
+      "commit": "1784558ed7c75c65764d2a434bd9cbb206ca939d",
+      "path": "docs/advanced.rst",
+      "published_at": "2020-04-27T20:12:27Z",
+      "sha256": "221339003bc61d233f9ec75b90020d0e562b73e1d1be149e210b7c53f9deabfa"
     }
   },
   "records": [
@@ -272,11 +281,17 @@
       "value": "A custom FlaskGroup receives an application factory and asks it to create the application when Click needs to operate on it. This lets the driver control application construction.",
       "files": [],
       "source_ids": ["cli"]
+    },
+    {
+      "key": "history/cli-option-callback-order",
+      "value": "Click runs parameter callbacks after parsing and value conversion. Eager parameters run before ordinary parameters. This applies to Flask CLI callbacks such as `_validate_key`.",
+      "files": ["src/flask/cli.py"],
+      "source_ids": ["click-option-callbacks"]
     }
   ],
   "requirements": {
-    "rows": 30,
-    "code_linked": 14,
+    "rows": 31,
+    "code_linked": 15,
     "unlinked": 16,
     "max_words": 45,
     "max_chars": 400
