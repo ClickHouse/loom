@@ -63,8 +63,11 @@ async def usage_examples(
     context_lines: int = 0,
 ) -> list[dict[str, Any]]:
     """Call sites of the symbol, test-covered callers first, newest first."""
+    with_context = bool(context_lines and settings.embedding_model)
     edges = await bounded(
-        repo.edges_for_symbols(org, ns, symbol_ids, direction="callers", limit=50),
+        repo.edges_for_symbols(
+            org, ns, symbol_ids, direction="callers", limit=50, with_revision=with_context
+        ),
         [],
     )
     if not edges:
@@ -77,6 +80,7 @@ async def usage_examples(
         key=lambda e: (str(e["path"]) not in tested_paths, str(e["path"])),
     )
     out = []
+    revisions: list[str] = []
     seen: set[tuple[str, int]] = set()
     for e in ranked:
         site = (str(e["path"]), int(e["line"]))
@@ -92,13 +96,18 @@ async def usage_examples(
                 "test_covered": str(e["path"]) in tested_paths,
             }
         )
+        if with_context:
+            revisions.append(str(e.get("indexed_commit") or "").rstrip("\0"))
         if len(out) >= limit:
             break
-    if context_lines and settings.embedding_model:
+    if with_context:
         model = served_model_label(settings.embedding_model)
         return list(
             await asyncio.gather(
-                *(_example_context(repo, org, ns, site, context_lines, model) for site in out)
+                *(
+                    _example_context(repo, org, ns, site, context_lines, model, revision)
+                    for site, revision in zip(out, revisions, strict=True)
+                )
             )
         )
     return out
@@ -111,14 +120,18 @@ async def _example_context(
     site: dict[str, Any],
     radius: int,
     model: str,
+    revision: str,
 ) -> dict[str, Any]:
     line = site["line"]
-    if line <= 0:
+    if line <= 0 or not revision:
         return site
     start, end = max(1, line - radius), line + radius
     with code_span("enrich.example_context"):
         rows = await bounded(
-            repo.source_chunks_for_span(org, ns, site["path"], start, end, model), []
+            repo.source_chunks_for_span(
+                org, ns, site["path"], start, end, model, with_revision=True
+            ),
+            [],
         )
     if len(rows) > 400:
         return site
@@ -128,10 +141,16 @@ async def _example_context(
     # Keep the evidence around the caller when the index lacks surrounding file text.
     start = max(start, min(row["start_line"] for row in containing))
     end = min(end, max(row["end_line"] for row in containing))
-    text = complete_source_span(rows, start, end, max_chars=0)
+    overlapping = [row for row in rows if row["start_line"] <= end and row["end_line"] >= start]
+    if any(str(row.get("indexed_commit") or "").rstrip("\0") != revision for row in overlapping):
+        return site
+    text = complete_source_span(overlapping, start, end, max_chars=0)
     if not text:
         return site
-    return {**site, "context": {"start_line": start, "end_line": end, "text": text}}
+    return {
+        **site,
+        "context": {"commit": revision, "start_line": start, "end_line": end, "text": text},
+    }
 
 
 async def lessons_for_symbol(

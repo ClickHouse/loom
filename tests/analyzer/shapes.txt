@@ -1760,10 +1760,12 @@ c6fedc654be3	SELECT count() AS n FROM loom.code_context_packs FINAL WHERE org = 
 c71b88136b17	SELECT count() AS n FROM loom.learnings_supporters WHERE org = {org:String} AND user_id = {uid:String} AND ?
 c72e7e6dceb9	SELECT count() AS n FROM loom.working_memory FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}
 c7914fc052d6	SELECT revision, count() AS samples, quantileExact(?)(steps_taken) AS p50_steps, quantileExact(?)(duration_ms) AS p50_duration_ms, quantileExact(?)(tokens) AS p50_tokens FROM loom.procedure_runs WHERE
+c7a141e14400	SELECT tier, edge_kind, to_symbol_id, from_symbol_id, path, line, argMax(from_qualified_name, version) AS from_qualified_name, argMax(to_qualified_name, version) AS to_qualified_name, argMax(confidenc
 c7ae15b6a560	SELECT path, count() AS chunks, min(start_line) AS first_line, count() OVER () AS total FROM ( SELECT path, start_line, tombstoned_at FROM loom.code_chunks WHERE org = {org:String} AND namespace = {ns
 c7c8b7f2f21c	ALTER TABLE loom.memory_record_conflicts DELETE WHERE (org = {org:String} AND (prior_record_id IN {ids:Array(UUID)} OR incoming_record_id IN {ids:Array(UUID)})) AND ({erasure_mutation_tag:String} = {e
 c7ec8090e470	SELECT memory_key, memory_type, content_excerpt, ? - cosineDistance(embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(temporal_anchor, toDateTime(?))) AS temporal_anchor, temporal_confi
 c8167139ec34	DELETE FROM loom.memory_embeddings WHERE (org = {org:String} AND has(tags, ?) AND hasAny(tags, {src:Array(String)}) AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, String))}
+c81fd524f869	SELECT DISTINCT start_line, end_line, content, kind, toString(indexed_commit) AS indexed_commit FROM loom.code_chunks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND path = {path:String
 c8342f918649	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 c8424367f9c9	SELECT namespace, source_uri, count() AS chunk_count FROM loom.chunks WHERE org = {org:String} AND (namespace, source_uri) IN {keys:Array(Tuple(String, String))} AND doc_superseded_at IS NULL AND (org
 c850ef07bf65	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g

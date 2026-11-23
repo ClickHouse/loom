@@ -332,24 +332,45 @@ def _apply_enrichment(units: list[Any], enrichment: dict[str, Any]) -> None:
 
 
 def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any], int, int]:
-    """Reserve source before fitting whole lessons into an explicit request budget."""
+    """Reserve definitions and site metadata before optional context and lessons."""
     from server.code.domain.units import budget_units, estimate_unit_tokens
 
-    if not token_budget or not any(u.lessons for u in units):
+    if not token_budget or not any(
+        u.lessons or any("context" in site for site in u.examples) for u in units
+    ):
         kept, tokens = budget_units(units, token_budget)
         return kept, tokens, 0
-    lessons = [u.lessons for u in units]
-    bare = [u.model_copy(update={"lessons": []}) for u in units]
+    bare = [
+        u.model_copy(
+            update={
+                "lessons": [],
+                "examples": [
+                    {k: v for k, v in site.items() if k != "context"} for site in u.examples
+                ],
+            }
+        )
+        for u in units
+    ]
     kept, tokens = budget_units(bare, token_budget)
-    left_out = sum(len(rows) for rows in lessons)
-    for unit, rows in zip(kept, lessons, strict=False):
-        for lesson in rows:
+    left_out = sum(len(u.lessons) for u in units)
+    for unit, original in zip(kept, units, strict=False):
+        for lesson in original.lessons:
             candidate = unit.model_copy(update={"lessons": [*unit.lessons, lesson]})
             extra = estimate_unit_tokens(candidate) - estimate_unit_tokens(unit)
             if tokens + extra <= token_budget:
                 unit.lessons.append(lesson)
                 tokens += extra
                 left_out -= 1
+        for index, site in enumerate(original.examples):
+            if "context" not in site:
+                continue
+            examples = list(unit.examples)
+            examples[index] = site
+            candidate = unit.model_copy(update={"examples": examples})
+            extra = estimate_unit_tokens(candidate) - estimate_unit_tokens(unit)
+            if tokens + extra <= token_budget:
+                unit.examples = examples
+                tokens += extra
     return kept, tokens, left_out
 
 

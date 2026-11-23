@@ -224,20 +224,29 @@ class FilesMixin(CodeRepoBase):
         return [(str(r["kind"]), int(r["start_line"]), int(r["end_line"])) for r in rows]
 
     async def source_chunks_for_span(
-        self, org: str, ns: str, path: str, start: int, end: int, embedding_model: str
+        self,
+        org: str,
+        ns: str,
+        path: str,
+        start: int,
+        end: int,
+        embedding_model: str,
+        *,
+        with_revision: bool = False,
     ) -> list[dict[str, Any]]:
         """Bounded live raw chunks overlapping a definition under one served label.
 
         The extra row detects a capped read; the caller never treats it as complete.
         """
+        revision_sql = ", toString(indexed_commit) AS indexed_commit" if with_revision else ""
         return await self._ch.query_all(
-            """
-            SELECT DISTINCT start_line, end_line, content, kind
+            f"""
+            SELECT DISTINCT start_line, end_line, content, kind{revision_sql}
             FROM loom.code_chunks FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND path = {path:String}
-              AND embedding_model = {model:String}
-              AND start_line <= {end:UInt32} AND end_line >= {start:UInt32}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND path = {{path:String}}
+              AND embedding_model = {{model:String}}
+              AND start_line <= {{end:UInt32}} AND end_line >= {{start:UInt32}}
               AND kind != 'class_skeleton'
               AND tombstoned_at IS NULL
             ORDER BY start_line, end_line LIMIT 401

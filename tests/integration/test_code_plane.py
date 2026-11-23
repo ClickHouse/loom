@@ -294,6 +294,7 @@ async def test_read_ops_and_abstain(code_env, monkeypatch) -> None:
     from server.code.api.models_symbol import CodeCallersInput, CodeSymbolInput
     from server.code.app.search.handler import handle_code_search
     from server.code.app.symbol import handle_code_callers, handle_code_symbol
+    from server.code.domain.units import _card_of, estimate_unit_tokens
     from server.embedding.fake import fake_model_name
     from server.settings import settings
 
@@ -341,16 +342,27 @@ async def test_read_ops_and_abstain(code_env, monkeypatch) -> None:
         include_history=False,
         include_lessons=False,
     )
-    plain = (await handle_code_symbol(query)).definitions[0].examples
+    plain_response = await handle_code_symbol(query)
+    plain = plain_response.definitions[0].examples
     examples = await handle_code_symbol(query.model_copy(update={"example_context_lines": 2}))
     sites = examples.definitions[0].examples
     assert plain and [{k: v for k, v in site.items() if k != "context"} for site in sites] == plain
     site = next(site for site in sites if site["caller"] == "DB::Squasher::flush")
     context = site["context"]
+    assert context["commit"] == "a" * 40
     assert context["start_line"] <= site["line"] <= context["end_line"]
     assert context["text"].splitlines()[site["line"] - context["start_line"]].strip() == (
         "void flush() { squashImpl(); }"
     )
+    plain_definition = plain_response.definitions[0]
+    budget = max(
+        estimate_unit_tokens(plain_definition), estimate_unit_tokens(_card_of(plain_definition))
+    )
+    limited = await handle_code_symbol(
+        query.model_copy(update={"example_context_lines": 2, "token_budget": budget})
+    )
+    assert limited.definitions[0].body == plain_definition.body
+    assert limited.definitions[0].examples == plain
 
 
 async def test_deletion_tombstones_everything(code_env) -> None:
