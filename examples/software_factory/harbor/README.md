@@ -31,6 +31,12 @@ source bodies or lesson excerpts. Model turns and tool requests are separate
 counts; several tools can share a model response. Native trajectories remain
 authoritative for global counts including subagents.
 
+`diagnostics/attempt-NN-model-usage.json` records input and output tokens, cache
+reads and writes, and estimated cost for each measured model step in the native
+trajectory. Tool-call IDs join the step to the recorded tool responses. The source
+hash names the trajectory, and missing usage fields stay unknown. Attempt totals
+remain authoritative for cost. This optional capture runs after billing collection.
+
 `diagnostics/attempt-NN-code-traces.json` preserves the existing code-search trace
 rows named by that attempt's returned trace ids, scoped to its source namespace.
 It retains routes, index revision, result counts and per-stage timings, without

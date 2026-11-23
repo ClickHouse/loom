@@ -5,7 +5,11 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from examples.software_factory.harbor.native_metrics import initialization, measurements
+from examples.software_factory.harbor.native_metrics import (
+    capture_turn_usage,
+    initialization,
+    measurements,
+)
 
 
 class NativeMeasurements(TestCase):
@@ -18,18 +22,21 @@ class NativeMeasurements(TestCase):
                 "function_name": "mcp__loom__loom_code_search",
                 "arguments": {},
             }
+            metrics = {"prompt_tokens": 80, "cached_tokens": 70, "completion_tokens": 5}
             trajectory = {
                 "agent": {"name": "claude-code", "version": "pinned"},
                 "steps": [
                     {
+                        "step_id": 1,
+                        "metrics": metrics,
                         "tool_calls": [
-                            call,
+                            {**call, "arguments": {"query": "private source"}},
                             {
                                 **call,
                                 "tool_call_id": "plugin",
                                 "function_name": "mcp__plugin_loom_loom__loom_code_search",
                             },
-                        ]
+                        ],
                     },
                     {
                         "extra": {"agent_id": "child"},
@@ -41,7 +48,12 @@ class NativeMeasurements(TestCase):
                             }
                         ],
                     },
-                    {"is_copied_context": True, "tool_calls": [call]},
+                    {
+                        "step_id": 3,
+                        "is_copied_context": True,
+                        "metrics": metrics,
+                        "tool_calls": [call],
+                    },
                 ],
                 "final_metrics": {
                     "total_prompt_tokens": 100,
@@ -68,6 +80,14 @@ class NativeMeasurements(TestCase):
             self.assertEqual(row["agent_time_s"], 10)
             self.assertEqual(row["agent_test_runs"], 1)
             self.assertIsNone(row["memory_rows_written"])
+            target = root / "usage.json"
+            capture_turn_usage(root, target)
+            self.assertNotIn("private source", target.read_text())
+            turns = json.loads(target.read_text())["turns"]
+            self.assertEqual(len(turns), 1)
+            self.assertEqual(turns[0]["tool_call_ids"], ["one", "plugin"])
+            self.assertEqual(turns[0]["cache_read_tokens"], 70)
+            self.assertIsNone(turns[0]["cache_write_tokens"])
 
     def test_missing_trajectory_is_unknown_including_zero_tool_calls(self):
         with tempfile.TemporaryDirectory() as directory:

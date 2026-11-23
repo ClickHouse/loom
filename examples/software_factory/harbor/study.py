@@ -664,6 +664,7 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
         )
         summary = export(protocol, kind)
         if kind == "live":
+            from .native_metrics import capture_turn_usage
             from .native_trace import summarize
             from .trace_capture import capture_or_report
 
@@ -672,6 +673,11 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
             write(diagnostics / f"attempt-{order:02d}.json", summarize(trial_folder))
             await asyncio.to_thread(
                 audit_provider_costs, protocol, read(output / "live-attempts.json")
+            )
+            await asyncio.to_thread(
+                capture_turn_usage,
+                trial_folder,
+                diagnostics / f"attempt-{order:02d}-model-usage.json",
             )
             await asyncio.to_thread(capture_or_report, protocol, order)
             summary = export(protocol, kind)

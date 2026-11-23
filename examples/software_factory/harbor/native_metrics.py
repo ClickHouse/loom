@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import math
 import re
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from .runtime import write
+
 LOOM_TOOL_PREFIXES = ("mcp__loom__", "mcp__plugin_loom_loom__")
+logger = logging.getLogger(__name__)
 
 
 def is_loom_tool(name: str) -> bool:
@@ -90,6 +95,38 @@ def elapsed(value):
     return (
         datetime.fromisoformat(value["finished_at"]) - datetime.fromisoformat(value["started_at"])
     ).total_seconds()
+
+
+def capture_turn_usage(trial: Path, target: Path) -> None:
+    """Save numeric native step usage beside the private tool trace."""
+    try:
+        raw = (trial / "agent/trajectory.json").read_bytes()
+        trajectory = json.loads(raw)
+        if trajectory.get("agent", {}).get("name") != "claude-code":
+            raise ValueError("Expected the native Harbor Claude Code trajectory")
+        turns = []
+        for step in trajectory.get("steps", []):
+            metrics = step.get("metrics")
+            if not metrics or step.get("is_copied_context"):
+                continue
+            turns.append(
+                {
+                    "step_id": step["step_id"],
+                    "tool_call_ids": [
+                        call["tool_call_id"] for call in step.get("tool_calls") or []
+                    ],
+                    "input_tokens": number(metrics.get("prompt_tokens")),
+                    "output_tokens": number(metrics.get("completion_tokens")),
+                    "cache_read_tokens": number(metrics.get("cached_tokens")),
+                    "cache_write_tokens": number(
+                        (metrics.get("extra") or {}).get("cache_creation_input_tokens")
+                    ),
+                    "estimated_cost_usd": number(metrics.get("cost_usd")),
+                }
+            )
+        write(target, {"trajectory_sha256": hashlib.sha256(raw).hexdigest(), "turns": turns})
+    except Exception as error:  # noqa: BLE001 — optional diagnostics cannot sink a run
+        logger.warning("Model usage capture failed for %s (%s)", target.name, type(error).__name__)
 
 
 def measurements(raw: dict, trial: Path) -> dict:

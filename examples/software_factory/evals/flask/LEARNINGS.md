@@ -33,6 +33,12 @@ links can have no path, and an enclosing chunk can contain a nested definition.
 The focus rule keeps both cases, along with constraints, decisions, pins and broad
 file notes. Use `memory.for_file` to retrieve the full file context.
 
+On the multi-mount blueprint issue, the first search in each memory arm retains
+the registration lesson and leaves out five lessons attached to other methods.
+One candidate passes the hidden duplicate-name warning check and fails the
+blind issue grade. The grader and judge measure different requirements. Keep
+both verdicts when reviewing the implementation.
+
 The original upstream hidden callback test also exercises teardown ordering.
 The public issue names four earlier callback types. In the grep body pilot the
 blind judge rejects the one patch that changes teardown, which is also the only
@@ -59,6 +65,12 @@ change agent execution. API duration includes model, network and queuing time.
 The remainder of CLI time includes client and tool work; it is not isolated Loom
 server latency. Character counts are not billed provider tokens.
 
+Per-response usage records pair prompt, output, cache-read and cache-write tokens
+with the native tool call IDs. The first measured response establishes usage before
+any tool has returned. Compare later responses with the tool trace to see where
+the context grows. A tool call ID relates records across the two sources. The
+provider does not report token charges for individual tool results.
+
 Body retrieval is opt-in. Compare the recorded request flag, body counts and the
 next model response before claiming that a combined lookup removed a local read
 or a model turn. A smaller tool count alone does not establish either saving.
@@ -74,3 +86,5 @@ See [automatic reports](../../harbor/README.md), the
 [debugging guide](../../../../docs/guides/debugging.md#diagnose-coding-agent-overhead)
 and the [native grep body pilot](results/native-grep-body-pilot/README.md) and
 [literal-alternatives pilot](results/native-literal-alternatives-pilot/README.md).
+The [search lessons pilot](results/native-search-lessons-pilot/README.md) records
+per-arm results and the corresponding cache and retrieval measurements.
