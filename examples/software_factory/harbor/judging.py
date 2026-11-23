@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import difflib
+import io
 import json
 import os
 import random
@@ -69,6 +71,20 @@ def parse_verdict(response, labels):
     return value
 
 
+def _file_patch(path: str, before: str | None, after: str | None) -> dict[str, str]:
+    change = "added" if before is None else "deleted" if after is None else "modified"
+    lines = difflib.unified_diff(
+        io.StringIO(before or "").readlines(),
+        io.StringIO(after or "").readlines(),
+        fromfile="/dev/null" if before is None else "a/" + path,
+        tofile="/dev/null" if after is None else "b/" + path,
+    )
+    patch = "".join(
+        line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines
+    )
+    return {"change": change, "patch": patch}
+
+
 def blind_input(task, candidates, *, seed, validate_candidate, public_documents=None):
     """Return the judge-visible data and a separate private order mapping."""
     if len(candidates) not in (len(CONTROLS), len(PRIMARY)):
@@ -95,11 +111,17 @@ def blind_input(task, candidates, *, seed, validate_candidate, public_documents=
         "public_documents": dict(documents),
         "base_files": {path: task.files.get(path) for path in changed},
         **{
-            label: {path: candidate.get(path) for path in changed}
+            label: {
+                path: _file_patch(path, task.files.get(path), candidate.get(path))
+                for path in changed
+                if candidate.get(path) != task.files.get(path)
+            }
             for label, candidate in zip("ABCDE"[: len(files)], files, strict=True)
         },
         "context": (
-            "Only files changed by a candidate are included. Null means the file is absent."
+            "Each candidate contains its own patches against the shared base files. "
+            "Paths absent from a candidate keep the shared base. Null in base_files "
+            "means the file was absent. An addition or deletion can have an empty patch."
         ),
     }
     mapping = {

@@ -61,8 +61,8 @@ class BlindJudging(unittest.TestCase):
         self.entries = []
         for i, candidate in enumerate(self.candidates):
             folder = self.root / f"trial-{i}"
-            (folder / "agent").mkdir(parents=True)
-            (folder / "agent/candidate.json").write_text(json.dumps(candidate))
+            (folder / "verifier").mkdir(parents=True)
+            (folder / "verifier/candidate.json").write_text(json.dumps(candidate))
             self.entries.append({"order": i, "result": {"harbor_trial": str(folder)}})
 
     def response(self):
@@ -96,6 +96,13 @@ class BlindJudging(unittest.TestCase):
         self.assertNotIn("must stay private", json.dumps(visible))
         self.assertEqual({entry["order"] for entry in mapping.values()}, set(range(5)))
         self.assertEqual(self.candidates, before)
+        path = "src/flask/app.py"
+        self.assertEqual(visible["base_files"], self.task.files)
+        for label, entry in mapping.items():
+            patch = visible[label][path]
+            self.assertEqual(patch["change"], "modified")
+            self.assertIn("-value = 1\n", patch["patch"])
+            self.assertIn("+" + before[entry["order"]]["files"][path], patch["patch"])
 
     def test_structured_verdict_preserves_unknown_and_rejects_nonboolean_or_multiple(self):
         self.assertIsNone(parse_verdict(self.response(), "ABCDE")["fixed"]["B"])
@@ -178,7 +185,7 @@ class BlindJudging(unittest.TestCase):
 
     def test_judging_is_once_per_complete_pair_with_independent_cost_and_no_raw_edits(self):
         provider = Mock(step=Mock(return_value=self.response()))
-        before = {p: p.read_bytes() for p in self.root.glob("trial-*/agent/candidate.json")}
+        before = {p: p.read_bytes() for p in self.root.glob("trial-*/verifier/candidate.json")}
         with patch(
             "examples.software_factory.harbor.judging.task_inputs",
             return_value=(None, None, self.task, None),

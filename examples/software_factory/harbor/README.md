@@ -73,6 +73,11 @@ unknown because a single scenario cannot measure variation across scenarios.
 Hidden tests, full regression checks and blind fixed judgments use the same
 contracts as the full matrix.
 
+The blind judge receives the shared base of changed files once and an anonymous
+patch for each candidate. Every patch applies to the same base. Issue text and
+public project documents are shared, and the judge's costs stay separate from
+solver costs.
+
 Add `--cache-pairs` to a pilot to schedule a cold and warm attempt for each arm.
 Use a dedicated Claude API workspace with no other traffic. Each warm attempt
 uses the same provider cache after its paired cold attempt, with a fresh solver
