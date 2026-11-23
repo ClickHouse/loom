@@ -30,6 +30,8 @@ Successful `code.*` answers also carry numeric content counts in `args`:
 | `out_lesson_rows`, `out_lesson_chars`                                                                       | Returned lesson rows and their excerpt character count                                                        |
 | `out_lesson_fresh`, `out_lesson_moved`, `out_lesson_changed`, `out_lesson_unresolved`, `out_lesson_missing` | Lesson counts by code-link state                                                                              |
 | `out_lesson_unclassified`                                                                                   | Lessons with an absent or unrecognized code-link state                                                        |
+| `out_lesson_rows_omitted`                                                                                   | Omitted lessons when the response discloses `lessons_left_out`                                                |
+| `out_grep_match_lines`                                                                                      | Lines returned by `code.grep`, including zero when it returns an empty line list                              |
 
 The same counts appear on the active span as `loom.response.code.<name>`, without
 the `out_` prefix, in both trace exporters. No source text, excerpts, paths or memory
@@ -44,6 +46,12 @@ by four. It measures a different quantity from source or lesson characters and c
 differ from the MCP-rendered response size. Neither measure is a provider invoice.
 A zero lesson count does not distinguish a disabled read, no matches, an inaccessible
 scope or an enrichment failure; use the request arguments and enrichment span as well.
+
+Code spans record exclusive stage milliseconds in `out_stage_ms` when the request
+has no response stage partition. The ledger includes spans after the retrieval
+handler's trace snapshot, including inline lesson reads. Concurrent spans can
+overlap. Use `latency_ms` for the elapsed request and read each stage as its own
+measurement. These ledger timings work with the trace exporter disabled.
 
 Each request row also carries its service-level columns:
 

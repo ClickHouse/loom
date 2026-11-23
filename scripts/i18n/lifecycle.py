@@ -107,10 +107,10 @@ def candidate_problems(
     path: str,
     text: str,
     *,
-    current: bool = True,
+    current: bool | None = True,
     inventory: frozenset[str] | None = None,
 ) -> list[str]:
-    """Reuse a pass's membership snapshot; check the used source's path and hash afresh."""
+    """Check the source at use time; `current=None` accepts stale present pages."""
     path = publication_path(path)
     owned = owner(path, text)
     if owned is None:
@@ -119,16 +119,15 @@ def candidate_problems(
     stamp = t.STAMP.match(text)
     assert stamp
     model = t.os.environ.get("LOOM_I18N_MODEL", t.DEFAULT_MODEL)
-    if current:
+    if current is not False:
         if inventory is None:
             inventory = frozenset(t.sources())
-        if (
-            source not in inventory
-            or not regular(source)
-            or stamp[2] != t.blob(source)
-            or stamp[3] != model
-        ):
+        if source in inventory and not regular(source):
             return [f"{path}: pending output is stale"]
+        fresh = source in inventory and stamp[2] == t.blob(source) and stamp[3] == model
+        if current is True and not fresh:
+            return [f"{path}: pending output is stale"]
+        current = fresh
     expected_header = t.header(source, lang, stamp[3], stamp[2])
     if not text.startswith(expected_header):
         return [f"{path}: stamp or banner differs"]
@@ -319,7 +318,6 @@ def require_owned_outputs() -> None:
 def present_problems() -> list[str]:
     problems = []
     inventory = frozenset(t.sources())
-    model = t.os.environ.get("LOOM_I18N_MODEL", t.DEFAULT_MODEL)
     for path in all_files():
         if path == refresh.PATH:
             try:
@@ -331,11 +329,7 @@ def present_problems() -> list[str]:
             problems.append(f"{path}: not a regular generated Markdown page")
             continue
         text = (t.ROOT / path).read_text()
-        stamp = t.STAMP.match(text)
-        current = bool(
-            stamp and stamp[1] in inventory and stamp[2] == t.blob(stamp[1]) and stamp[3] == model
-        )
-        problems += candidate_problems(path, text, current=current, inventory=inventory)
+        problems += candidate_problems(path, text, current=None, inventory=inventory)
     problems += link_problems()
     problems += t.untranslated_pages()
     problems += [

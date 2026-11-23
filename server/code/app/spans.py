@@ -10,7 +10,10 @@ import contextlib
 import time
 from collections.abc import Iterator
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
+
+from server.core import request_work
 
 # ---------------------------------------------------------------------------
 # Spans. A single root span per op cannot say which leg of a slow call is slow, so
@@ -67,9 +70,9 @@ def code_span(name: str, **attrs: Any) -> Any:
     is skipped. Yields the span (or None when OTel is off), so callers can add post-hoc
     facts via span_attrs().
 
-    When the op started a stage wall, the span's wall time is also charged to
-    `stage_of(name)` on it: the one clock the response and the trace row read, OTel on
-    or off."""
+    Charge exclusive time to `stage_of(name)` on the handler's stage wall and the request's
+    work bag, when present. The bag includes spans that run after a handler snapshots its
+    trace row, such as lesson enrichment. Both clocks work without OTel."""
     try:
         from server.observability.otel import traced
 
@@ -78,9 +81,10 @@ def code_span(name: str, **attrs: Any) -> Any:
     except Exception:  # noqa: BLE001 — telemetry must never fail a request
         inner = contextlib.nullcontext()
     wall = _STAGE_WALL.get()
-    if wall is None:
+    work = request_work.current()
+    if wall is None and work is None:
         return inner
-    return _timed_span(inner, wall, stage_of(name))
+    return _timed_span(inner, wall, work, stage_of(name))
 
 
 # ---------------------------------------------------------------------------
@@ -117,9 +121,16 @@ class StageWall:
 
 
 _STAGE_WALL: ContextVar[StageWall | None] = ContextVar("loom_code_stage_wall", default=None)
-# Open code_span frames of THIS task's context: each frame accumulates the
-# inclusive time of its finished children so the parent charges only its own.
-_STAGE_FRAMES: ContextVar[tuple[list[float], ...]] = ContextVar(
+
+
+@dataclass(slots=True)
+class _SpanInterval:
+    started: float
+    ended: float | None = None
+
+
+# Spawned tasks inherit the parent frame. Its child intervals can overlap.
+_STAGE_FRAMES: ContextVar[tuple[list[_SpanInterval], ...]] = ContextVar(
     "loom_code_stage_frames", default=()
 )
 
@@ -169,21 +180,39 @@ def with_stage_ms(work: dict[str, Any]) -> dict[str, Any]:
     return work
 
 
+def _exclusive_ms(started: float, ended: float, children: list[_SpanInterval]) -> float:
+    covered = 0.0
+    edge = started
+    for child in sorted(children, key=lambda item: item.started):
+        left = max(edge, child.started)
+        right = min(ended, child.ended) if child.ended is not None else ended
+        if right > left:
+            covered += right - left
+            edge = right
+    return max(0.0, (ended - started - covered) * 1000.0)
+
+
 @contextlib.contextmanager
-def _timed_span(inner: Any, wall: StageWall, stage: str) -> Iterator[Any]:
-    frame = [0.0]
-    token = _STAGE_FRAMES.set((*_STAGE_FRAMES.get(), frame))
-    t0 = time.perf_counter()
+def _timed_span(
+    inner: Any, wall: StageWall | None, work: request_work.RequestWork | None, stage: str
+) -> Iterator[Any]:
+    parents = _STAGE_FRAMES.get()
+    interval = _SpanInterval(time.perf_counter())
+    if parents:
+        parents[-1].append(interval)
+    children: list[_SpanInterval] = []
+    token = _STAGE_FRAMES.set((*parents, children))
     try:
         with inner as span:
             yield span
     finally:
-        elapsed = (time.perf_counter() - t0) * 1000.0
+        ended = interval.ended = time.perf_counter()
         _STAGE_FRAMES.reset(token)
-        wall.add(stage, elapsed - frame[0])
-        parents = _STAGE_FRAMES.get()
-        if parents:
-            parents[-1][0] += elapsed
+        exclusive = _exclusive_ms(interval.started, ended, children)
+        if wall is not None:
+            wall.add(stage, exclusive)
+        if work is not None:
+            work.code_stage_ms[stage] = work.code_stage_ms.get(stage, 0.0) + exclusive
 
 
 def span_attrs(span: Any, **attrs: Any) -> None:
