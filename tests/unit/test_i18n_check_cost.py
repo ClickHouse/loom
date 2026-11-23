@@ -79,6 +79,48 @@ def test_present_page_freshness_is_not_reused_between_checks(repo: pathlib.Path)
     assert lc.present_problems() == []
 
 
+@pytest.mark.parametrize("restamp", [False, True])
+def test_present_pages_recheck_source_edits_between_outputs(
+    repo: pathlib.Path, monkeypatch: pytest.MonkeyPatch, restamp: bool
+) -> None:
+    source = "docs/a.md"
+    paths = sorted(publish(repo, source, lang) for lang in t.LANGUAGES[:2])
+    first, later = [path.relative_to(repo).as_posix() for path in paths]
+    candidate = lc.candidate_problems
+    hash_source = t.blob
+    visited = []
+
+    def edit_after_first(
+        path: str,
+        text: str,
+        *,
+        current: bool | None = True,
+        inventory: frozenset[str] | None = None,
+    ) -> list[str]:
+        visited.append(path)
+        problems = candidate(path, text, current=current, inventory=inventory)
+        if path == first:
+            (repo / source).write_text("# A\n\nKeep `--changed` and 43.\n")
+            if restamp:
+                previous = paths[1].read_text()
+                stamp = t.STAMP.match(previous)
+                assert stamp
+                paths[1].write_text(previous.replace(stamp[2], hash_source(source), 1))
+        return problems
+
+    monkeypatch.setattr(lc, "candidate_problems", edit_after_first)
+    problems = lc.present_problems()
+    assert visited == [first, later]
+    if restamp:
+        # A current stamp must not hide an old body behind a cached source hash.
+        assert any(
+            problem.startswith(f"{later}:") and ("code" in problem or "numbers" in problem)
+            for problem in problems
+        )
+    else:
+        assert problems == []
+
+
 @pytest.mark.parametrize("corruption", ["banner", "code", "number", "heading", "mapping"])
 def test_current_present_pages_keep_their_validation(repo: pathlib.Path, corruption: str) -> None:
     path = publish(repo, "docs/a.md", t.LANGUAGES[1])
