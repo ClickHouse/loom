@@ -23,7 +23,7 @@ from server.code.domain.anchor import local_name
 from server.memory.api.models_for_file import MemoryForFileInput
 from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
-from server.memory.domain.decision_schema import CONSTRAINT_TAG
+from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
 from server.memory.domain.lemmatize import snowball_stem_tokens
 from server.memory.domain.recall import query_tokens
 
@@ -104,15 +104,18 @@ def _ordered_candidates(
 
 
 def _excludes_other_symbol(hit: dict[str, Any], path: str, symbols: set[str]) -> bool:
-    tags = hit.get("tags") or []
-    if (
-        hit.get("pinned")
-        or hit.get("memory_type") == "decision"
-        or (CONSTRAINT_TAG in tags or "decision" in tags)
-    ):
+    if hit.get("pinned") or is_whole_row(hit.get("memory_type", ""), hit.get("tags") or []):
         return False
-    anchors = hit.get("code_symbols") or []
-    return bool(anchors) and all(name and local_name(name, path) not in symbols for name in anchors)
+    anchors = [local_name(name, path) for name in hit.get("code_symbols", [])]
+    # A chunk can hold a nested declaration without naming it as its own scope.
+    return bool(anchors) and all(
+        name
+        and not any(
+            name == scope or name.startswith(scope + ".") or scope.startswith(name + ".")
+            for scope in symbols
+        )
+        for name in anchors
+    )
 
 
 def _focused_paths(

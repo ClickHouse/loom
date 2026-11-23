@@ -741,7 +741,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
-| `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
+| `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
 | `matches` | `list[dict[str, Any]]` | {path, line, text, scope, scope_start_line, scope_end_line} per matching LINE, path/line ordered. scope_* is the span of the enclosing unit named by `scope` (0/0 when the line sits in no unit) — enough to decide whether to fetch the body… |
 | `definitions` | `list[dict[str, Any]]` | include_body: distinct enclosing units, in hit order; `lines` names the matching lines each definition covers. |
 | `definitions_partial` | `bool` |  |

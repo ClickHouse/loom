@@ -502,7 +502,9 @@ async def _rows_for(
                 "code_state": code_change.worst([a["state"] for a in links]),
                 "code_changed_since": code_change.worst_commit(links),
                 "code_symbols": [
-                    a["qualified_name"] if a["state"] in ("fresh", "moved", "changed") else ""
+                    a["qualified_name"]
+                    if a.get("complete") and a["state"] in ("fresh", "moved", "changed")
+                    else ""
                     for a in links
                 ],
             }
