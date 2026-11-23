@@ -1564,11 +1564,12 @@ List facts on trial (written with memory.set proposed=true) with the graded runs
 | `tags` | `list[str]` | *(computed)* | Only proposals carrying any of these tags; empty = no tag filter. |
 | `only` | `Literal['', 'ready']` | `''` | `ready` keeps only proposals the policy thresholds would decide now (accept or reject); "" lists every proposal. |
 | `limit` | `int` | `50` | At most this many proposals returned, newest first. |
+| `count_only` | `bool` | `False` | A badge or a tab count needs the number, not the rows. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `proposals` | `list[MemoryProposal]` | The proposals in scope, newest first, with graded counts and `ready`. |
-| `total` | `int` | Proposals in scope before `only` and `limit`. |
+| `total` | `int` | Proposals in scope before `only` and `limit` — on a listing, capped by the scan cap; on a `count_only` call, the full uncapped in-scope count. |
 | `policy` | `ProposalPolicy` | The namespace's proposal policy: `mode` (manual / auto) and thresholds. |
 
 ## `memory.provenance`

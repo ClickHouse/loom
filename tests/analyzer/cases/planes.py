@@ -871,6 +871,18 @@ async def _conversation_threads(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
 
 
+async def _memory_proposals_count_only(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """memory.proposals with `count_only` off and on: the listing query and the
+    bounded count query must both stay in the corpus — the badge and the Review
+    queue's tab ask for the number every minute, the queue page for the rows."""
+    from server.memory.api.models_proposals import MemoryProposalsInput
+    from server.memory.app.proposals_ops import handle_memory_proposals
+
+    await handle_memory_proposals(
+        MemoryProposalsInput(org=ORG, namespace=NS, count_only=c["count_only"])
+    )
+
+
 async def _budget_warning_events(ch: RecordingCH, _v: dict[str, Any]) -> None:
     from server.tasks.store import budget_notifications
 
@@ -1132,6 +1144,15 @@ def cases() -> list[Case]:
             "server.knowledge.app.conversations",
             _conversation_threads,
             {"fields": (None, ["msg_count"], ["last_role"]), "agent": ("*", AGENT)},
+            rows=_HANDLER_ROWS,
+        )
+    )
+    out.append(
+        Case(
+            "memory_proposals.count_and_listing",
+            "server.memory.app.proposals_ops",
+            _memory_proposals_count_only,
+            {"count_only": (False, True)},
             rows=_HANDLER_ROWS,
         )
     )

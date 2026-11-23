@@ -28,8 +28,9 @@ const SHARED_KEY =
   "More than one proposal holds this key; a decision names only the key, so it cannot choose between them.";
 
 /** Facts on trial (written with `proposed=true`) and how the runs that relied on each
- *  went: accept one to serve it by default, reject it to retire it. */
-export function ProposalsPanel() {
+ *  went: accept one to serve it by default, reject it to retire it. `onDecided` fires
+ *  after a decision, so the Review queue's per-kind counts are read again. */
+export function ProposalsPanel({ onDecided }: { onDecided?: (decided: number) => void }) {
   const identity = useIdentity();
   const scope = { org: identity.org, namespace: identity.namespace };
   const [rows, setRows] = useState<MemoryProposal[] | null>(null);
@@ -98,10 +99,12 @@ export function ProposalsPanel() {
 
   const decide = async (key: string, decision: "accept" | "reject", approvedHash = "") => {
     setBusy(true);
+    let decidedCount = 0;
     try {
       const r = await decideProposals(scope, [key], decision, {
         [key]: approvedHash,
       });
+      decidedCount = r.decided;
       const result = r.results[0];
       if (r.decided === 0)
         // Not a proposal any more: decided by the policy or by someone else first.
@@ -119,6 +122,8 @@ export function ProposalsPanel() {
     setReading(true);
     panel.current?.focus();
     setReload((n) => n + 1);
+    // The pending count drops with the decision: the page reads it again.
+    onDecided?.(decidedCount);
   };
   const held = busy || reading;
   // memory.proposal_decide names a proposal by key and decides the newest row of it, so a

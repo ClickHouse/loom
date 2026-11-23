@@ -2,13 +2,17 @@ import { renderHook } from "../test/rtl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readPlace } from "./place";
 import {
+  badgeCacheKey,
   navigationHref,
   pathnameView,
   pathToView,
+  reviewBadgeLabel,
+  reviewCount,
   useIdentity,
   useStore,
   viewHref,
   viewToPath,
+  type AdminBadges,
   type View,
 } from "./state";
 
@@ -406,5 +410,57 @@ describe("a navigation leaves a place for Back to restore", () => {
     useStore.getState().bootIdentity({ org: "dev", namespace: "joined", agent: "loom-ui" });
     useStore.getState().bootView("memories");
     expect(useStore.getState()).toMatchObject({ inspectedMemoryKey: "k", inspectedAgent: "bot" });
+  });
+});
+
+describe("the review badge's count, label and cache key", () => {
+  const badges = (conflicts: number | null, pendingProposals: number | null): AdminBadges => ({
+    conflicts,
+    pendingProposals,
+    autoResolved: false,
+    overCap: false,
+    newAgents: 0,
+  });
+
+  it("counts review items as open conflicts plus pending proposals", () => {
+    expect(reviewCount(badges(2, 3))).toEqual({ total: 5, known: true });
+    expect(reviewCount(badges(0, 0))).toEqual({ total: 0, known: true });
+    expect(reviewCount(null)).toEqual({ total: 0, known: false });
+  });
+
+  it("a kind that failed to read makes the count partial, never a false zero", () => {
+    expect(reviewCount(badges(2, null))).toEqual({ total: 2, known: false });
+    expect(reviewCount(badges(null, null))).toEqual({ total: 0, known: false });
+    // An older cached answer without the field counts as unknown too.
+    expect(reviewCount({ conflicts: 1, autoResolved: false, overCap: false, newAgents: 0 } as AdminBadges)).toEqual({
+      total: 1,
+      known: false,
+    });
+  });
+
+  it("labels the badge with what the number counts, per kind, and 'at least' when partial", () => {
+    expect(reviewBadgeLabel(badges(2, 3))).toBe("5 items to review: 2 conflicts, 3 pending proposals");
+    expect(reviewBadgeLabel(badges(1, 0))).toBe("1 item to review: 1 conflict");
+    expect(reviewBadgeLabel(badges(0, 1))).toBe("1 item to review: 1 pending proposal");
+    expect(reviewBadgeLabel(badges(2, null))).toBe("at least 2 items to review: 2 conflicts");
+    expect(reviewBadgeLabel(badges(0, 0))).toBe("");
+    expect(reviewBadgeLabel(null)).toBe("");
+  });
+
+  it("the cache key carries org, namespace, principal and role — no boundary is crossed", () => {
+    expect(badgeCacheKey("acme", "team", "u@x", "admin")).toBe("badges:acme/team:u@x:admin");
+    expect(badgeCacheKey("acme", "team", "u@x", "admin")).not.toBe(badgeCacheKey("acme", "team", "v@x", "admin"));
+    expect(badgeCacheKey("acme", "team", "u@x", "admin")).not.toBe(badgeCacheKey("acme", "other", "u@x", "admin"));
+    expect(badgeCacheKey("acme", "team", "u@x", "admin")).not.toBe(badgeCacheKey("other", "team", "u@x", "admin"));
+    expect(badgeCacheKey("acme", "team", "u@x", "admin")).not.toBe(badgeCacheKey("acme", "team", "u@x", "viewer"));
+    expect(badgeCacheKey("acme", "team", undefined, null)).toBe("badges:acme/team:anon:unknown");
+  });
+
+  it("the Review queue owns the ?tab= query key, so a proposal-only link survives navigation", () => {
+    window.history.replaceState(null, "", "/admin/review_queue?tab=proposals&repo=x");
+    const href = navigationHref("admin:review_queue");
+    expect(href).toContain("tab=proposals");
+    expect(href).not.toContain("repo=");
+    window.history.replaceState(null, "", "/memories");
   });
 });

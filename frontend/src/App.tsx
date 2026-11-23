@@ -48,8 +48,6 @@ import { Sidebar } from "./layout/Sidebar";
 import { Header } from "./layout/Header";
 import { MobileNav } from "./layout/MobileNav";
 import { ToastViewport, toast, toastError } from "./components/Toast";
-import { ConfirmViewport } from "./components/ConfirmDialog";
-import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import {
   assistantAddress,
   assistantPopstate,
@@ -116,6 +114,13 @@ const ProfileSectionDialog = lazy(() =>
 );
 const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.TokenGate })));
 const LinkTokenConfirm = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.LinkTokenConfirm })));
+// The confirm dialog and the pending-request banner open on demand, not at boot, so their
+// chunks load on the first open, not with the shell (keeps the index chunk inside its
+// bundle budget).
+const ConfirmViewport = lazy(() => import("./components/ConfirmDialog").then((m) => ({ default: m.ConfirmViewport })));
+const PendingRequestBanner = lazy(() =>
+  import("./components/PendingRequestBanner").then((m) => ({ default: m.PendingRequestBanner })),
+);
 // The expired-session card's chunk is fetched as the app loads, from the build that served
 // it: it shows on a long-lived tab, the one most likely to predate a deploy, and a chunk
 // first asked for then would be gone and its stale-chunk reload would lose the page.
@@ -580,7 +585,9 @@ export default function App() {
           <TokenGate onLogin={() => location.reload()} reason={gateReason} ssoAsked={ssoAsked} />
         </Suspense>
         <ToastViewport />
-        <ConfirmViewport />
+        <Suspense fallback={null}>
+          <ConfirmViewport />
+        </Suspense>
       </>
     );
   }
@@ -634,7 +641,9 @@ export default function App() {
               <Suspense fallback={null}>
                 <ProblemsBanner />
               </Suspense>
-              <PendingRequestBanner />
+              <Suspense fallback={null}>
+                <PendingRequestBanner />
+              </Suspense>
               {/* Keyed by view so each navigation replays the fade-in, and the no-access
                 page is a page of its own: leaving it mounts the view afresh, never under
                 the hidden old page. `h-full`
@@ -699,7 +708,9 @@ export default function App() {
           ) : null
         }
       />
-      <ConfirmViewport />
+      <Suspense fallback={null}>
+        <ConfirmViewport />
+      </Suspense>
     </div>
   );
 }

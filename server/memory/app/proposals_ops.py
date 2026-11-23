@@ -44,6 +44,16 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
         where.append("hasAny(tags, {tags:Array(String)})")
         params["tags"] = list(input.tags)
     where.extend(scope_where(request_scope(), params))
+    if input.count_only:
+        # The sidebar badge and the Review queue's tab counts ask for the number every
+        # minute from every open tab, not the rows: one bounded `count()` over the same
+        # scope — no value column, and no scan cap, so the count matches the whole
+        # authorized queue rather than its first page. `only` never narrows it.
+        counted = await ch.query_all(
+            f"SELECT count() AS n FROM loom.memory FINAL WHERE {' AND '.join(where)}",
+            params={k: v for k, v in params.items() if k != "cap"},
+        )
+        return MemoryProposalsOutput(proposals=[], total=int(counted[0]["n"]) if counted else 0)
     rows = await ch.query_all(
         f"""
         SELECT memory_key, toString(memory_id) AS mid, content_sha256, agent, memory_type,

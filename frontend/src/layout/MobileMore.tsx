@@ -6,7 +6,7 @@ import { canWrite, needsRole, useNamespaceRole } from "../lib/namespaceRole";
 import { openNewDialog } from "../lib/newDialogs";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore, viewHref, type AdminBadges } from "../lib/state";
-import { adminItems, NavBadge, RAIL_GROUPS, SETTINGS_ITEM, type NavItem } from "./Sidebar";
+import { adminItems, NavBadge, railGroups, SETTINGS_ITEM, type NavItem } from "./Sidebar";
 import { ACTIVE, PRIMARY_IDS } from "./mobileTabs";
 
 // The sheet is generated from the sidebar's own nav arrays rather than a second hand-written
@@ -23,12 +23,14 @@ export function mobileMoreItems(
   namespace: string,
   badges: AdminBadges | null,
 ): Array<{ group: string; items: NavItem[] }> {
-  // The sheet shows the rail's own groups; the two primary tabs are left out of theirs,
-  // and Settings closes the list. An unlabelled rail group (Profile) joins the first
-  // labelled one on the phone rather than heading a one-item group of its own.
+  // The sheet shows the rail's own groups — including the Review queue entry the rail
+  // adds for a caller who may view review work, so the phone exposes the same entry;
+  // the two primary tabs are left out of theirs, and Settings closes the list. An
+  // unlabelled rail group (Profile) joins the first labelled one on the phone rather
+  // than heading a one-item group of its own.
   const groups: Array<{ group: string; items: NavItem[] }> = [];
   let carry: NavItem[] = [];
-  for (const g of RAIL_GROUPS) {
+  for (const g of railGroups(whoami, mine, namespace, badges)) {
     const items = [...carry, ...g.items.filter((m) => !PRIMARY_IDS.includes(m.id))];
     if (!g.label) {
       carry = items;
@@ -48,7 +50,7 @@ export function mobileMoreItems(
  *  out), then every route the sidebar has, in its groups. */
 export default function MoreSheet({ onClose }: { onClose: () => void }) {
   const view = useStore((s) => s.view);
-  const setView = useStore((s) => s.setView);
+  const navigate = useStore((s) => s.navigate);
   const whoami = useStore((s) => s.whoami);
   const myNamespaces = useStore((s) => s.myNamespaces);
   const namespace = useStore((s) => s.identity?.namespace ?? "");
@@ -109,17 +111,19 @@ export default function MoreSheet({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-3 gap-2">
             {g.items.map((m) => {
               const active = view === m.id || (m.id === "setup" && view === "connected-accounts");
+              const href = m.query ? `${viewHref(m.id)}?${new URLSearchParams(m.query).toString()}` : viewHref(m.id);
               return (
                 <a
                   key={m.id}
-                  href={viewHref(m.id)}
+                  href={href}
                   onClick={(e) => {
                     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
                     e.preventDefault();
-                    setView(m.id);
+                    navigate(m.id, m.query ? { query: m.query } : {});
                     onClose();
                   }}
                   aria-current={active ? "page" : undefined}
+                  aria-label={m.badgeLabel ? `${m.label}, ${m.badgeLabel}` : undefined}
                   className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-sm transition-colors no-underline hover:no-underline text-text ${
                     active ? `${ACTIVE} font-medium` : "bg-surface-2 hover:bg-surface-3"
                   }`}

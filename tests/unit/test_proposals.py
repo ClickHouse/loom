@@ -538,3 +538,50 @@ async def test_listing_decodes_the_native_fixed_string_hash(monkeypatch):
     monkeypatch.setattr(p, "policy_for", policy)
     out = await proposals_ops.handle_memory_proposals(MemoryProposalsInput(org="o", namespace="n"))
     assert out.proposals[0].content_sha256 == _HASH
+
+
+async def test_count_only_counts_the_whole_scope_without_reading_rows(monkeypatch):
+    """A badge count is one bounded `count()` over the same scope: no row bodies, and
+    no scan cap, so it matches the complete queue rather than its first page."""
+    from server.memory.api.models_proposals import MemoryProposalsInput
+    from server.memory.app import proposals_ops
+
+    seen: list[str] = []
+    seen_params: list[dict[str, Any]] = []
+
+    class CH:
+        async def query_all(self, sql, params=None, **kwargs):
+            seen.append(sql)
+            seen_params.append(dict(params or {}))
+            if "count()" in sql:
+                return [{"n": 7}]
+            return []
+
+    monkeypatch.setattr(proposals_ops, "get_client", CH)
+    out = await proposals_ops.handle_memory_proposals(
+        MemoryProposalsInput(org="o", namespace="n", count_only=True, prefix="lesson_")
+    )
+    assert out.proposals == [] and out.total == 7
+    assert len(seen) == 1  # one query, no row read, no policy read after it
+    sql = seen[0]
+    assert "count()" in sql and "status = 'proposed'" in sql and "tombstoned_at IS NULL" in sql
+    assert "substring(value" not in sql  # no value column, no row bodies
+    assert "LIMIT" not in sql  # not capped by the scan cap
+    assert "startsWith(memory_key" in sql  # the same filters apply
+    assert seen_params[0].get("p") == "lesson_" and "cap" not in seen_params[0]
+
+
+async def test_count_only_counts_zero_when_nothing_is_on_trial(monkeypatch):
+    from server.memory.api.models_proposals import MemoryProposalsInput
+    from server.memory.app import proposals_ops
+
+    class CH:
+        async def query_all(self, sql, params=None, **kwargs):
+            assert "count()" in sql
+            return [{"n": 0}]
+
+    monkeypatch.setattr(proposals_ops, "get_client", CH)
+    out = await proposals_ops.handle_memory_proposals(
+        MemoryProposalsInput(org="o", namespace="n", count_only=True)
+    )
+    assert out.total == 0 and out.proposals == []
