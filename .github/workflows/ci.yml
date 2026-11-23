@@ -1448,8 +1448,11 @@ jobs:
       - name: Report public types from the installed wheel
         if: matrix.python == '3.12' && !matrix.lowest
         run: |
-          uv tool run --from pyright==1.1.414 pyright \
-            --pythonpath /tmp/sdk-venv/bin/python --verifytypes loom --ignoreexternal \
+          cd "$RUNNER_TEMP"
+          # Install after the wheel smoke so the smoke still tests declared dependencies.
+          uv pip install --python /tmp/sdk-venv/bin/python pyright==1.1.414
+          # The verifier discovers its interpreter on PATH.
+          PATH="/tmp/sdk-venv/bin:$PATH" /tmp/sdk-venv/bin/pyright --verifytypes loom --ignoreexternal \
             --outputjson > "$RUNNER_TEMP/sdk-types.json" || result=$?
           python3 - <<'PY'
           import json, os
@@ -1459,8 +1462,11 @@ jobs:
           if report["summary"]["filesAnalyzed"] < 1:
               raise SystemExit("Pyright analyzed no SDK files")
           types = report["typeCompleteness"]
-          if not types["pyTypedPath"] or types["exportedSymbolCounts"]["withKnownType"] == 0:
-              raise SystemExit("Pyright found no typed public SDK")
+          marker = Path(types.get("pyTypedPath") or ".").resolve()
+          if marker.name != "py.typed" or not marker.is_relative_to(Path("/tmp/sdk-venv").resolve()):
+              raise SystemExit("Pyright did not inspect the installed wheel")
+          if types["exportedSymbolCounts"]["withKnownType"] == 0:
+              raise SystemExit("Pyright found no typed public symbols")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
               summary.write(f"Python SDK public type completeness: {types['completenessScore']:.1%}\n")
           PY
