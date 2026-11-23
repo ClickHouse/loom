@@ -1359,6 +1359,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.grep": (
         "Find text and enclosing symbols in indexed source. "
+        "Pass a list in `pattern` to search literal alternatives in one call. "
         "Matches include bodies by default. "
         "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
         "Use literal strings or one RE2 string with `regex: true`. "
@@ -2184,7 +2185,8 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "elision disclosures; use local tools for changed or unindexed code."
     ),
     "code.grep": (
-        "Find exact text by stable literal fragment or literal alternatives. "
+        "Find exact text. Pass a list of stable literal fragments in `pattern` "
+        "to search alternatives in one call. "
         "Matches include enclosing bodies by default. "
         "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
         "Use code.search for behavior. "

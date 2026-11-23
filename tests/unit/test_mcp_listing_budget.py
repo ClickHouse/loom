@@ -399,8 +399,8 @@ def test_the_compact_profile_keeps_the_tool_names():
 def test_compact_coding_grep_advertises_body_default_and_literal_alternatives():
     tools = {t["name"]: t for t in _listing("coding", True, "compact")}
     description = tools["loom_code_grep"]["description"]
-    assert "stable literal fragment" in description
-    assert "literal alternatives" in description
+    assert "list of stable literal fragments in `pattern`" in description
+    assert "search alternatives in one call" in description
     assert "Matches include enclosing bodies by default" in description
     assert "`include_body: false` for names, locations or short excerpts" in description
     assert "loom_code_search" in description
