@@ -102,6 +102,38 @@ class GitHubTokenShapes(unittest.TestCase):
         self.assertNotIn(token, str(finding))
         self.assertIn("…", str(finding))
 
+    def test_annotation_has_the_actual_location_and_static_rule(self):
+        finding = self.one("ghp_" + body(36))
+        annotation = finding.annotation()
+        self.assertTrue(annotation.startswith("::error file="))
+        self.assertIn(
+            ",line=1,title=GitHub personal access token::Possible credential.", annotation
+        )
+        self.assertNotIn(finding.value, annotation)
+        self.assertNotIn(finding.value[:4], annotation)
+
+    def test_annotation_escapes_workflow_command_properties(self):
+        finding = GUARD.Finding(
+            "notes%,:\r\n::error file=injected.py", 23, "Synthetic,\r\nRule%", "unused"
+        )
+        annotation = finding.annotation()
+        self.assertTrue(
+            annotation.startswith("::error file=notes%25%2C%3A%0D%0A%3A%3Aerror file=injected.py,")
+        )
+        self.assertIn(",line=23,title=Synthetic%2C%0D%0ARule%25::", annotation)
+        self.assertEqual(len(annotation.splitlines()), 1)
+        self.assertEqual(annotation.count("::error "), 1)
+
+    def test_annotation_never_formats_matched_value_fragments(self):
+        value = "SENSITIVE_VALUE_NOT_FOR_OUTPUT_END"
+        finding = GUARD.Finding("data.txt", 4, "Synthetic rule", value)
+        annotation = finding.annotation()
+        self.assertEqual(
+            annotation, "::error file=data.txt,line=4,title=Synthetic rule::Possible credential."
+        )
+        for fragment in [value, value[:4], value[-2:]]:
+            self.assertNotIn(fragment, annotation)
+
     def test_token_in_a_url_is_recognized_without_a_named_variable(self):
         token = "ghp_" + body(36)
         findings = self.scan(f'URL="https://{token}@example.invalid/repo"\n')

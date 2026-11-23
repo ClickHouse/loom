@@ -21,6 +21,7 @@ file people add to until it matches everything.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -118,6 +119,25 @@ class Finding:
         masked = self.value[:4] + "…" + self.value[-2:] if len(self.value) > 8 else "…"
         return f"{self.path}:{self.line}: {self.label} ({masked})"
 
+    def annotation(self) -> str:
+        """Report location and rule without copying any part of the matched value."""
+
+        def property_value(value: str) -> str:
+            for character, escaped in [
+                ("%", "%25"),
+                ("\r", "%0D"),
+                ("\n", "%0A"),
+                (":", "%3A"),
+                (",", "%2C"),
+            ]:
+                value = value.replace(character, escaped)
+            return value
+
+        return (
+            f"::error file={property_value(self.path)},line={self.line},"
+            f"title={property_value(self.label)}::Possible credential."
+        )
+
 
 def _tracked_files(include_untracked: bool) -> list[str]:
     cmd = ["git", "ls-files", "-z"]
@@ -188,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
     for p in bad_paths:
         print(f"{p}: an env file is tracked — untrack it and add it to .gitignore")
     for finding in findings:
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print(finding.annotation())
         print(finding)
     print(
         f"\n{len(findings) + len(bad_paths)} finding(s). If one is a false positive, "
