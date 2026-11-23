@@ -6,12 +6,13 @@ body:
     attributes:
       value: |
         > Search [existing issues](https://github.com/ClickHouse/loom/issues?q=is%3Aissue) first. A change to storage, the identity model, auth or a new external dependency is discussed here before any pull request.
-  - type: textarea
+  - type: input
+    id: company
     attributes:
-      label: Company or project name
-      description: Optional. Put your company name or project description here.
+      label: Company
+      description: Your company or organization. Enter "Independent" if filing personally.
     validations:
-      required: false
+      required: true
   - type: dropdown
     id: component
     attributes:
