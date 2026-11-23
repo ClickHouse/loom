@@ -1,0 +1,10 @@
+/.github/CODEOWNERS      @ClickHouse/ai-ml
+/.github/workflows/     @ClickHouse/ai-ml
+/scripts/release/       @ClickHouse/ai-ml
+/install.sh             @ClickHouse/ai-ml
+/server/auth/           @ClickHouse/ai-ml
+/server/identity/       @ClickHouse/ai-ml
+/server/erasure/        @ClickHouse/ai-ml
+/server/transport/      @ClickHouse/ai-ml
+/deploy/apparmor/       @ClickHouse/ai-ml
+/dev/seccomp/           @ClickHouse/ai-ml
