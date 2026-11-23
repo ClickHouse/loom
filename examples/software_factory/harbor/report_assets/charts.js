@@ -197,7 +197,7 @@ function summary(rows, plannedRows) {
     (waiting ? `${waiting} completed attempts await matching arms. ` : "") +
     "Hidden test failures are included. " +
     (cost.key === "generation_cost"
-      ? "Costs below are solver-only; the combined provider-cost audit is not complete."
+      ? "Observed costs use solver charges. Equal-cache estimates require a known combined provider cost."
       : "Costs include solver and matched Loom provider charges. Infrastructure and judge costs are separate.");
 }
 function issuesTable(rows, plannedRows) {
