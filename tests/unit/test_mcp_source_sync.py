@@ -32,10 +32,12 @@ from server.knowledge.domain.connected_accounts import ConnectedAccount
 from server.knowledge.domain.mcp_identity import resource_uri
 from server.knowledge.domain.mcp_sources import (
     ConnectionEnvelope,
+    CopyConsent,
     ResourceIdentity,
     SourceContract,
     encode_envelope,
     encode_source,
+    selection_sha256,
 )
 from server.knowledge.domain.sources import MIRRORED_ACCESS, KnowledgeSource
 from server.knowledge.store import blobs, chunks, documents
@@ -90,6 +92,18 @@ class Harness:
             payload["resources"].append({"type": "resource", "id": SECOND})
         if resources is not None:
             payload["resources"] = [{"type": "resource", "id": item} for item in resources]
+        payload["copy_consent"] = (
+            CopyConsent(
+                version=1,
+                publisher=self.source.owner_subject,
+                namespace=self.source.namespace,
+                resources_sha256=selection_sha256(
+                    tuple(ResourceIdentity.model_validate(r) for r in payload["resources"])
+                ),
+            ).model_dump(mode="json")
+            if policy == "collection_copy"
+            else None
+        )
         self.contract = SourceContract.model_validate_json(json.dumps(payload))
         config, items = encode_source(self.contract)
         self.source = replace(self.source, generic_config_json=config, generic_items_json=items)
@@ -582,10 +596,52 @@ async def test_current_authority_refusals(
 
 
 @pytest.mark.asyncio
-async def test_collection_copy_is_refused_even_with_operator_allow(harness: Harness) -> None:
+async def test_collection_copy_requires_current_destination_administration(
+    harness: Harness,
+) -> None:
     harness.select(policy="collection_copy")
     with pytest.raises(authority.MCPAuthorityError):
         await authority.validate_source(harness.source)
+
+
+@pytest.mark.asyncio
+async def test_explicit_collection_copy_uses_the_same_protected_write_path(
+    storage: Harness, upstream: FastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage.select(policy="collection_copy")
+    monkeypatch.setattr(authority.authz, "grant_role_for", AsyncMock(return_value=Role.ADMIN))
+    result = await execute(storage)
+    assert result.complete and result.status == "ok" and not result.full
+    document = storage.doc_rows[0]
+    assert document["namespace"] == MIRROR
+    assert access_list.from_json(document["access_json"]) == access_list.AccessList(anyone=True)
+    metadata = json.loads(document["metadata"])
+    assert metadata["mcp_reader_policy"] == "collection_copy"
+    assert metadata["ingested_from"] == resource_uri(storage.source.source_id, RESOURCE)
+
+
+@pytest.mark.parametrize("field,value", [("publisher", "other"), ("namespace", "other")])
+def test_copy_consent_cannot_be_reused_for_another_stored_binding(
+    harness: Harness, field: str, value: str
+) -> None:
+    harness.select(policy="collection_copy")
+    consent = harness.contract.copy_consent
+    assert consent is not None
+    changed = harness.contract.model_copy(
+        update={"copy_consent": consent.model_copy(update={field: value})}
+    )
+    config, items = encode_source(changed)
+    source = replace(harness.source, generic_config_json=config, generic_items_json=items)
+    with pytest.raises(authority.MCPAuthorityError):
+        authority.source_contract(source)
+
+
+def test_pause_refuses_execution_without_retiring_copies(harness: Harness) -> None:
+    paused = harness.contract.model_copy(update={"paused": True})
+    config, items = encode_source(paused)
+    source = replace(harness.source, generic_config_json=config, generic_items_json=items)
+    with pytest.raises(authority.MCPAuthorityError):
+        authority.source_contract(source)
 
 
 @pytest.mark.asyncio

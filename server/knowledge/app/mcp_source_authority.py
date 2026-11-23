@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 
 from server.auth import aliases, authz
+from server.auth.context import current_auth
+from server.auth.jwt import AuthInfo
+from server.auth.reader_identity import reader_subject, resolve_reader
 from server.clients.mcp_source import MCPSourceClient
 from server.core.ch import own_write_reads
 from server.core.errors import ValidationError
@@ -120,9 +124,15 @@ def source_contract(src: KnowledgeSource) -> SourceContract:
     if (contract.generation, contract.slot) != (src.connection_id, src.connection_slot):
         raise MCPAuthorityError()
     resource_uri(src.source_id, contract.resources[0].id)
-    # No stored writer-consent proof exists for a deliberate collection copy.
-    if contract.reader_policy != "owner_only" or src.access != MIRRORED_ACCESS:
+    if contract.paused or src.access != MIRRORED_ACCESS:
         raise MCPAuthorityError()
+    if contract.reader_policy == "collection_copy":
+        consent = contract.copy_consent
+        if consent is None or (consent.publisher, consent.namespace) != (
+            src.owner_subject,
+            src.namespace,
+        ):
+            raise MCPAuthorityError()
     return contract
 
 
@@ -136,19 +146,14 @@ class SourceAuthority:
         return self.connection.contract
 
     @property
-    def selection_sha256(self) -> str:
-        payload = [
-            self.source.org,
-            self.source.namespace,
-            self.source.name,
-            self.source.source_id,
-            self.source.owner_subject,
-            self.source.connection_id,
-            self.contract.model_dump(mode="json"),
-        ]
-        return hashlib.sha256(
-            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+    def selected_uris(self) -> frozenset[str]:
+        return frozenset(
+            resource_uri(self.source.source_id, resource.id) for resource in self.contract.resources
+        )
+
+    @property
+    def scope_sha256(self) -> str:
+        return source_scope_sha256(self.source, self.contract)
 
     async def validate(self) -> None:
         fresh = await validate_source(self.source)
@@ -157,6 +162,22 @@ class SourceAuthority:
 
     def client(self) -> MCPSourceClient:
         return self.connection.client(self.validate)
+
+
+def source_scope_sha256(source: KnowledgeSource, contract: SourceContract) -> str:
+    """Bind read evidence to source authority; labels and pause do not change the selection."""
+    payload = [
+        source.org,
+        source.namespace,
+        source.name,
+        source.source_id,
+        source.owner_subject,
+        source.connection_id,
+        contract.model_dump(mode="json", exclude={"label", "paused"}),
+    ]
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 async def validate_source(src: KnowledgeSource) -> SourceAuthority:
@@ -194,11 +215,61 @@ async def validate_registration(src: KnowledgeSource) -> ConnectionAuthority:
             await aliases.verified_spellings(src.org, src.owner_subject)
             aliases.invalidate(src.org, [src.owner_subject])
             role = await authz.grant_role_for(src.org, src.namespace, src.owner_subject)
-            if role is None or role < Role.WRITER:
+            minimum = Role.ADMIN if contract.reader_policy == "collection_copy" else Role.WRITER
+            if role is None or role < minimum:
                 raise MCPAuthorityError()
             await source_ops._require_source_namespace(src.org, src.namespace)
             await source_ops._require_no_erasure(src.org, src.namespace)
             return connection
+
+
+def _reader_context(src: KnowledgeSource, auth: AuthInfo | None) -> AuthInfo:
+    if (
+        auth is None
+        or current_auth() is not auth
+        or auth.org != src.org
+        or (auth.expires_at is not None and auth.expires_at <= time.time())
+    ):
+        raise MCPAuthorityError()
+    return auth
+
+
+async def _reader_authority(src: KnowledgeSource, auth: AuthInfo | None) -> SourceAuthority:
+    async with _refusals():
+        auth = _reader_context(src, auth)
+        if not await authz.row_in_scope(src.org, src.namespace, Role.VIEWER):
+            raise MCPAuthorityError()
+        bound = await validate_source(src)
+        if bound.contract.reader_policy == "owner_only":
+            subject = reader_subject(auth)
+            reader = await resolve_reader(src.org, subject) if subject else None
+            if reader is None or reader.subject != src.owner_subject or auth.issued_at is None:
+                raise MCPAuthorityError()
+            await accounts._standing(
+                src.org,
+                reader.subject,
+                min((auth.issued_at, *auth.parent_iats)),
+                (auth.subject, auth.token_id, auth.session_id, *auth.parents),
+            )
+        _reader_context(src, auth)
+        if not await authz.row_in_scope(src.org, src.namespace, Role.VIEWER):
+            raise MCPAuthorityError()
+        _reader_context(src, auth)
+        return bound
+
+
+async def validate_indexed_reader(src: KnowledgeSource, auth: AuthInfo | None) -> SourceAuthority:
+    bound = await _reader_authority(src, auth)
+    if bound.contract.mode == "live":
+        raise MCPAuthorityError()
+    return bound
+
+
+async def validate_live_reader(src: KnowledgeSource, auth: AuthInfo | None) -> SourceAuthority:
+    bound = await _reader_authority(src, auth)
+    if bound.contract.mode != "live" or bound.contract.reader_policy != "owner_only":
+        raise MCPAuthorityError()
+    return bound
 
 
 @asynccontextmanager

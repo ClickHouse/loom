@@ -1,6 +1,28 @@
 """Selected source setup uses the common transport and destination grants."""
 
-from server.knowledge.api.models_mcp_sources import MCPSourcePreviewInput, MCPSourcePreviewOutput
+from server.knowledge.api.models_mcp_sources import (
+    MCPSourceAddInput,
+    MCPSourceInput,
+    MCPSourceInspectOutput,
+    MCPSourceListInput,
+    MCPSourceListOutput,
+    MCPSourceOutput,
+    MCPSourcePreviewInput,
+    MCPSourcePreviewOutput,
+    MCPSourceRemoveInput,
+    MCPSourceUpdateInput,
+)
+from server.knowledge.app.mcp_source_ops import (
+    handle_mcp_source_add,
+    handle_mcp_source_inspect,
+    handle_mcp_source_list,
+    handle_mcp_source_pause,
+    handle_mcp_source_refresh,
+    handle_mcp_source_remove,
+    handle_mcp_source_resume,
+    handle_mcp_source_update,
+    source_audit_subject,
+)
 from server.knowledge.app.mcp_source_preview import handle_mcp_source_preview
 from server.operations.base import Operation, Role
 
@@ -15,3 +37,99 @@ OPERATIONS: list[Operation] = [
         maturity="experimental",
     ),
 ]
+
+
+OPERATIONS.extend(
+    [
+        Operation(
+            name="knowledge.source.mcp_add",
+            input_model=MCPSourceAddInput,
+            output_model=MCPSourceOutput,
+            handler=handle_mcp_source_add,
+            idempotent=False,
+            required_role=Role.WRITER,
+            audit=True,
+            writes=True,
+            audit_subject=source_audit_subject,
+            maturity="experimental",
+        ),
+        Operation(
+            name="knowledge.source.mcp_update",
+            input_model=MCPSourceUpdateInput,
+            output_model=MCPSourceOutput,
+            handler=handle_mcp_source_update,
+            idempotent=False,
+            required_role=Role.WRITER,
+            audit=True,
+            writes=True,
+            audit_subject=source_audit_subject,
+            maturity="experimental",
+        ),
+        Operation(
+            name="knowledge.source.mcp_list",
+            input_model=MCPSourceListInput,
+            output_model=MCPSourceListOutput,
+            handler=handle_mcp_source_list,
+            idempotent=True,
+            required_role=Role.WRITER,
+            maturity="experimental",
+        ),
+        Operation(
+            name="knowledge.source.mcp_inspect",
+            input_model=MCPSourceInput,
+            output_model=MCPSourceInspectOutput,
+            handler=handle_mcp_source_inspect,
+            idempotent=True,
+            required_role=Role.WRITER,
+            maturity="experimental",
+        ),
+        Operation(
+            name="knowledge.source.mcp_pause",
+            input_model=MCPSourceInput,
+            output_model=MCPSourceOutput,
+            handler=handle_mcp_source_pause,
+            idempotent=False,
+            required_role=Role.WRITER,
+            audit=True,
+            writes=True,
+            audit_subject=source_audit_subject,
+            maturity="experimental",
+        ),
+        Operation(
+            name="knowledge.source.mcp_resume",
+            input_model=MCPSourceInput,
+            output_model=MCPSourceOutput,
+            handler=handle_mcp_source_resume,
+            idempotent=False,
+            required_role=Role.WRITER,
+            audit=True,
+            writes=True,
+            audit_subject=source_audit_subject,
+            maturity="experimental",
+        ),
+        Operation(
+            name="knowledge.source.mcp_refresh",
+            input_model=MCPSourceInput,
+            output_model=MCPSourceOutput,
+            handler=handle_mcp_source_refresh,
+            idempotent=False,
+            required_role=Role.WRITER,
+            audit=True,
+            writes=True,
+            audit_subject=source_audit_subject,
+            maturity="experimental",
+        ),
+        Operation(
+            name="knowledge.source.mcp_remove",
+            input_model=MCPSourceRemoveInput,
+            output_model=MCPSourceOutput,
+            handler=handle_mcp_source_remove,
+            idempotent=False,
+            required_role=Role.WRITER,
+            audit=True,
+            writes=True,
+            audit_subject=source_audit_subject,
+            maturity="experimental",
+        ),
+    ]
+)

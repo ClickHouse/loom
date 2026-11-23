@@ -17,6 +17,7 @@ from server.auth.context import current_auth
 from server.clients.mcp_source import MCPSourceClient
 from server.core.ch import get_client
 from server.core.cursors import decode_bound_cursor, encode_bound_cursor
+from server.core.diagnostics import private_work
 from server.core.errors import LoomServerError, ValidationError
 from server.core.secrets_at_rest import seal, unseal
 from server.knowledge.api.models_mcp_connections import (
@@ -59,7 +60,8 @@ class _Refused(ValidationError):
 @asynccontextmanager
 async def _errors() -> AsyncIterator[None]:
     try:
-        yield
+        with private_work():
+            yield
     except _Refused:
         raise
     except Exception as e:  # noqa: BLE001 — credentials and upstream errors must never escape

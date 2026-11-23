@@ -293,6 +293,37 @@ async def erase_connected_owner(
     )
 
 
+async def mcp_sources_page(
+    org: str,
+    namespace: str,
+    owner: str,
+    *,
+    after: str,
+    include_retired: bool,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> list[KnowledgeSource]:
+    """One bounded exact-owner page; no other namespace's selections are fetched."""
+    if type(limit) is not int or not 1 <= limit <= 21:
+        raise ValueError("mcp_source_page_bound")
+    rows = await (ch or _default_client()).query_all(
+        f"SELECT {_COLUMNS} FROM {TABLE} FINAL WHERE org = {{org:String}} "
+        "AND namespace = {ns:String} AND owner_subject = {subject:String} "
+        "AND source_kind = 'mcp' AND credential_mode = 'connected' "
+        "AND name > {after:String} AND ({include_retired:Bool} OR active = 1) "
+        "ORDER BY name LIMIT {limit:UInt64}",
+        params={
+            "org": org,
+            "ns": namespace,
+            "subject": owner,
+            "after": after,
+            "include_retired": include_retired,
+            "limit": limit,
+        },
+    )
+    return [_source(dict(row)) for row in rows]
+
+
 async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) -> None:
     """Write `src` as a new full version row; `created_at` is carried forward. The
     version is left to the column's DEFAULT, the ClickHouse servers' clocks, not the

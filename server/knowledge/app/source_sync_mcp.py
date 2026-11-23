@@ -40,7 +40,7 @@ def _progress(
     index = saved.get("mcp_next_index", 0)
     request = asked.get("requested_at", saved.get("mcp_requested_at", ""))
     if (
-        saved.get("mcp_selection_sha256") != bound.selection_sha256
+        saved.get("mcp_scope_sha256") != bound.scope_sha256
         or saved.get("mcp_requested_at", "") != request
         or type(index) is not int
         or not 0 <= index <= count
@@ -50,7 +50,7 @@ def _progress(
         index = 0
     return {
         "mcp_mode": bound.contract.mode,
-        "mcp_selection_sha256": bound.selection_sha256,
+        "mcp_scope_sha256": bound.scope_sha256,
         "mcp_next_index": index,
         "mcp_selected_count": count,
         "mcp_requested_at": request,
@@ -85,6 +85,7 @@ async def _publish(
 ) -> bool:
     digest = _receipt(client, selected, evidence)
     src = bound.source
+    copied = bound.contract.reader_policy == "collection_copy"
     return await sync.write_document(
         src,
         {"id": selected, "name": evidence.title, "mimeType": evidence.mime_type},
@@ -92,15 +93,16 @@ async def _publish(
         evidence.text,
         ingested_format="mcp_text",
         original=evidence.text.encode(),
-        permissions=AccessList(owner=src.owner_subject),
+        permissions=AccessList(anyone=True) if copied else AccessList(owner=src.owner_subject),
         extra_metadata={
             "mcp_content_sha256": digest,
-            "mcp_selection_sha256": bound.selection_sha256,
+            "mcp_scope_sha256": bound.scope_sha256,
             "mcp_profile_sha256": bound.contract.profile_sha256,
             "mcp_connection_generation": bound.contract.generation,
             "mcp_source_id": src.source_id,
             "mcp_read_operation": "tools/call" if client.config.read else "resources/read",
-            "mcp_reader_policy": "owner_only",
+            "mcp_reader_policy": bound.contract.reader_policy,
+            **({"ingested_from": resource_uri(src.source_id, selected)} if copied else {}),
         },
     )
 

@@ -12,8 +12,8 @@ from server.knowledge.api.models_mcp_sources import (
 )
 from server.knowledge.app import mcp_connections as connections
 from server.knowledge.app import sources
-from server.knowledge.app.mcp_contracts import validate_source_contract
-from server.knowledge.domain.mcp_sources import ResourceIdentity, SourceContract
+from server.knowledge.app.mcp_contracts import validate_resource_selection
+from server.knowledge.domain.mcp_sources import ResourceIdentity
 from server.knowledge.store import connected_accounts as account_store
 from server.operations.base import Role
 from server.settings import settings
@@ -83,20 +83,11 @@ async def handle_mcp_source_preview(input: MCPSourcePreviewInput) -> MCPSourcePr
         approved = False
         if entry.state == "configured":
             await connections._validate(account)
-            profile, envelope = connections._binding(account)
-            contract = SourceContract(
-                version=1,
-                slot=input.slot,
-                generation=account.connection_id,
-                profile_id=envelope.profile_id,
-                profile_sha256=envelope.profile_sha256,
-                mode=input.mode,
-                reader_policy=input.reader_policy,
-                resources=tuple(
-                    ResourceIdentity(type="resource", id=r) for r in input.resource_ids
-                ),
+            profile, _envelope = connections._binding(account)
+            # Preview validates scope without issuing publication consent.
+            validate_resource_selection(
+                tuple(ResourceIdentity(type="resource", id=r) for r in input.resource_ids)
             )
-            validate_source_contract(contract)
             approved = profile.metadata.allow_collection_copy
         rule = access_rule(
             input.mode,

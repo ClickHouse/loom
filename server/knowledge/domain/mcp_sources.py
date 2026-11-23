@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import unicodedata
 from typing import Annotated, Any, Literal, Self
@@ -102,6 +103,21 @@ class ResourceIdentity(_ContractModel):
     id: _Identifier
 
 
+def selection_sha256(resources: tuple[ResourceIdentity, ...]) -> str:
+    """Hash ordered exact resource IDs without URL or Unicode normalization."""
+    payload = json.dumps([r.id for r in resources], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+class CopyConsent(_ContractModel):
+    """Server-issued publication authority for one destination and exact selection."""
+
+    version: _Version
+    publisher: _Identifier
+    namespace: _Identifier
+    resources_sha256: _Digest
+
+
 class SourceContract(_ContractModel):
     """Reader policy is declarative; grants, consent and publication are checked elsewhere.
 
@@ -116,7 +132,24 @@ class SourceContract(_ContractModel):
     profile_sha256: _Digest
     mode: Literal["live", "snapshot", "selected_refresh"]
     reader_policy: Literal["owner_only", "collection_copy"]
+    scope_revision: Annotated[int, Field(strict=True, ge=1, le=2**63 - 1)] = 1
     resources: Annotated[tuple[ResourceIdentity, ...], Field(min_length=1, max_length=1000)]
+    copy_consent: CopyConsent | None = None
+    paused: bool = False
+    label: Annotated[_Identifier, Field(max_length=256)] | None = None
+
+    @model_validator(mode="after")
+    def _copy_authority(self) -> Self:
+        if self.reader_policy == "owner_only":
+            if self.copy_consent is not None:
+                raise ValueError("unexpected copy consent")
+        elif (
+            self.mode == "live"
+            or self.copy_consent is None
+            or self.copy_consent.resources_sha256 != selection_sha256(self.resources)
+        ):
+            raise ValueError("invalid copy consent")
+        return self
 
     @field_validator("resources")
     @classmethod

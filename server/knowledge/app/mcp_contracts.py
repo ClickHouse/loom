@@ -4,6 +4,7 @@ from server.knowledge.domain import mcp_sources as wire
 from server.knowledge.domain.mcp_sources import (
     ConnectionEnvelope,
     MCPSourceContractError,
+    ResourceIdentity,
     SourceContract,
 )
 from server.settings import settings
@@ -34,9 +35,18 @@ def validate_source_contract(contract: SourceContract) -> None:
         contract = SourceContract.model_validate(contract)
     except (ValueError, TypeError, RecursionError):
         raise MCPSourceContractError() from None
-    if len(contract.resources) > settings.knowledge_mcp_selected_resources_max or any(
-        len(resource.id.encode("utf-8")) > settings.knowledge_mcp_resource_id_max_bytes
-        for resource in contract.resources
+    validate_resource_selection(contract.resources)
+
+
+def validate_resource_selection(resources: tuple[ResourceIdentity, ...]) -> None:
+    if (
+        not resources
+        or len(resources) > settings.knowledge_mcp_selected_resources_max
+        or len({resource.id for resource in resources}) != len(resources)
+        or any(
+            len(resource.id.encode("utf-8")) > settings.knowledge_mcp_resource_id_max_bytes
+            for resource in resources
+        )
     ):
         raise MCPSourceContractError()
 

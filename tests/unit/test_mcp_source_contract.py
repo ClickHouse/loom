@@ -11,6 +11,7 @@ from pydantic import SecretStr, ValidationError
 
 from server.knowledge.domain.mcp_sources import (
     ConnectionEnvelope,
+    CopyConsent,
     MCPSourceContractError,
     ResourceIdentity,
     SourceContract,
@@ -19,6 +20,7 @@ from server.knowledge.domain.mcp_sources import (
     decode_source,
     encode_envelope,
     encode_source,
+    selection_sha256,
 )
 
 _TOKEN = "fixture-secret-bearer"
@@ -216,9 +218,26 @@ def test_source_splits_columns_without_duplicating_selection_and_preserves_order
 @pytest.mark.parametrize("mode", ["live", "snapshot", "selected_refresh"])
 @pytest.mark.parametrize("policy", ["owner_only", "collection_copy"])
 def test_policy_and_mode_are_declarations_not_authority(mode: str, policy: str) -> None:
+    if policy == "collection_copy":
+        with pytest.raises(ValidationError):
+            _source(mode=mode, reader_policy=policy)
+        return
     source = _source(mode=mode, reader_policy=policy)
     assert decode_source(*encode_source(source)) == source
     assert source.reader_policy == policy
+    assert not hasattr(source, "authorized")
+
+
+@pytest.mark.parametrize("mode", ["snapshot", "selected_refresh"])
+def test_copy_consent_is_scoped_metadata_not_runtime_authorization(mode: str) -> None:
+    consent = CopyConsent(
+        version=1,
+        publisher="person-one",
+        namespace="col-team",
+        resources_sha256=selection_sha256(_source().resources),
+    )
+    source = _source(mode=mode, reader_policy="collection_copy", copy_consent=consent)
+    assert decode_source(*encode_source(source)) == source
     assert not hasattr(source, "authorized")
 
 

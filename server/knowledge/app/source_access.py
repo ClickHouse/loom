@@ -84,6 +84,7 @@ class ReadPlan:
     _connected_pins: dict[tuple[str, str], KnowledgeSource] = field(
         default_factory=dict, repr=False
     )
+    _mcp_uris: dict[tuple[str, str], frozenset[str]] = field(default_factory=dict, repr=False)
 
     @property
     def discovery_sources(self) -> dict[tuple[str, str], str]:
@@ -190,6 +191,11 @@ class ReadPlan:
                 continue
             if not original or (pg.enabled() and not _head_serves(heads[pair], candidate, chunks)):
                 continue
+            pinned = self._connected_pins.get((original, sid))
+            if pinned is not None and pinned.kind == "mcp":
+                selected = self._mcp_uris.get((original, sid))
+                if selected is None or doc["source_uri"] not in selected:
+                    continue
             if chunks and not pg.enabled() and int(candidate["revision"]) != doc["revision"]:
                 continue
             access = permissions[pair]
@@ -305,13 +311,15 @@ async def prepare(org: str, namespaces: list[str]) -> ReadPlan:
 
 async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) -> None:
     from server.knowledge.app.connected_accounts import validate_indexed
+    from server.knowledge.app.mcp_source_authority import validate_indexed_reader
     from server.knowledge.store import sources as source_store
 
     eligible = []
+    mcp_uris: dict[tuple[str, str], frozenset[str]] = {}
     for row in sources:
         key = row["namespace"], row["source_id"]
         mode = row.get("credential_mode", "shared")
-        if opaque_payload(
+        if row.get("source_kind") != "mcp" and opaque_payload(
             kind=str(row.get("source_kind") or ""),
             mode=mode,
             version=int(row.get("source_contract_version") or 0),
@@ -328,29 +336,33 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
             if (
                 source is None
                 or source.source_id != row["source_id"]
-                or opaque_payload(
-                    kind=source.kind,
-                    mode=source.credential_mode,
-                    version=source.source_contract_version,
+                or (source.org, source.namespace, source.name)
+                != (plan.org, row["namespace"], row["name"])
+                or (
+                    source.kind != "mcp"
+                    and opaque_payload(
+                        kind=source.kind,
+                        mode=source.credential_mode,
+                        version=source.source_contract_version,
+                    )
                 )
             ):
                 continue
             pinned = plan._connected_pins.get(key)
-            if pinned is not None and (
-                source.connection_id != pinned.connection_id
-                or source.owner_subject != pinned.owner_subject
-                or source.kind != pinned.kind
-                or source.items != pinned.items
-                or source.config != pinned.config
-            ):
+            if pinned is not None and source != pinned:
                 continue
-            await validate_indexed(source, plan._auth)
+            if source.kind == "mcp":
+                bound = await validate_indexed_reader(source, plan._auth)
+                mcp_uris[key] = bound.selected_uris
+            else:
+                await validate_indexed(source, plan._auth)
             eligible.append(row)
             if not plan._scope_frozen:
                 plan._connected_pins[key] = copy.deepcopy(source)
         except Exception:  # noqa: BLE001 — one unverifiable connection admits no private leg
             continue
     sources = eligible
+    plan._mcp_uris = mcp_uris
     names = sorted({s["namespace"] for s in sources})
     mirrors = await mirrors_repo.mirrors_of(plan.org, names, live_only=True)
     by_original: dict[str, list[str]] = {}
