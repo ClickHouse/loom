@@ -296,6 +296,10 @@ settings:
   # [restart]
   # local_embedding_model_dir: "var/models"
 
+  # Texts per local ONNX inference batch; smaller values reduce peak memory. Every input
+  # is still embedded, in order; this does not limit input count or length. [restart]
+  # local_embedding_batch_size: 16
+
   # --- memory ---
 
   # memory.ask synthesis (the strong tier when the cascade is on). [restart]

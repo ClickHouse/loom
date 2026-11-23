@@ -193,6 +193,7 @@ class _StubTextEmbedding:
     instantiated_with: list[str] = []
     loaded_from: list[str] = []
     calls: list[list[str]] = []
+    batch_sizes: list[int] = []
 
     def __init__(
         self, model_name: str, specific_model_path: str, threads: int | None = None
@@ -201,10 +202,11 @@ class _StubTextEmbedding:
         type(self).loaded_from.append(specific_model_path)
         self.model_name, self.threads = model_name, threads
 
-    def embed(self, texts):
+    def embed(self, texts, *, batch_size):
         import array
 
         type(self).calls.append(list(texts))
+        type(self).batch_sizes.append(batch_size)
         for _ in texts:
             # 384-dim raw vector (norm != 1) — .tolist() compatible.
             yield array.array("f", [3.0, 4.0] + [0.0] * 382)
@@ -219,6 +221,7 @@ def _stub_fastembed(monkeypatch: pytest.MonkeyPatch, tmp_path):
     _StubTextEmbedding.instantiated_with = []
     _StubTextEmbedding.loaded_from = []
     _StubTextEmbedding.calls = []
+    _StubTextEmbedding.batch_sizes = []
     monkeypatch.setattr(local_models, "model_dir", lambda alias: tmp_path / alias)
     import types
 
@@ -261,12 +264,16 @@ async def test_local_embed_empty_input_is_zero_vector(_stub_fastembed) -> None:
     assert _StubTextEmbedding.instantiated_with == []
 
 
+@pytest.mark.parametrize("batch_size", [1, 16, 32])
 @pytest.mark.asyncio
 async def test_local_embed_many_is_one_inference_call_over_the_raw_texts(
     _stub_fastembed,
+    monkeypatch: pytest.MonkeyPatch,
+    batch_size: int,
 ) -> None:
     """The write path sends raw text (queries are normalised; batches are
     not) in one inference call; a blank text is a zero vector in its slot."""
+    monkeypatch.setattr(settings, "local_embedding_batch_size", batch_size)
     e = local_mod.LocalEmbedder(spec="local")
     out = await e.embed_many(["a  b", "   ", "c\n\nd"])
     assert _StubTextEmbedding.calls == [["a  b", "c\n\nd"]]
@@ -274,6 +281,7 @@ async def test_local_embed_many_is_one_inference_call_over_the_raw_texts(
     assert out[0][:2] == pytest.approx([0.6, 0.8]) and out[2][:2] == pytest.approx([0.6, 0.8])
     await e.embed("a  b")
     assert _StubTextEmbedding.calls[-1] == ["a b"]
+    assert _StubTextEmbedding.batch_sizes == [batch_size, batch_size]
 
 
 @pytest.mark.asyncio
