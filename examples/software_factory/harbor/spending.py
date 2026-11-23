@@ -13,7 +13,7 @@ from pathlib import Path
 
 from examples.software_factory.factory.model import digest
 
-from .pricing import MODELS, rates
+from .pricing import CACHE_WRITE_1H, CACHE_WRITE_5M, MODELS, cache_read_multiplier, rates
 
 ATTRIBUTION = {"org", "namespace", "feature", "order"}
 USAGE = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
@@ -159,14 +159,11 @@ class Spending:
         )
         incoming, outgoing = self.rates(model, total)
         detail = usage["cache_creation"]
-        cache_read_multiplier = Decimal(
-            "0.05" if model in {"claude-sonnet-5-5", "claude-opus-5-5"} else "0.1"
-        )
         charged_input = (
             usage["input_tokens"]
-            + cache_read_multiplier * usage["cache_read_input_tokens"]
-            + Decimal("1.25") * detail.get("ephemeral_5m_input_tokens", 0)
-            + Decimal("2") * detail.get("ephemeral_1h_input_tokens", 0)
+            + cache_read_multiplier(model) * usage["cache_read_input_tokens"]
+            + CACHE_WRITE_5M * detail.get("ephemeral_5m_input_tokens", 0)
+            + CACHE_WRITE_1H * detail.get("ephemeral_1h_input_tokens", 0)
         )
         return (
             incoming,

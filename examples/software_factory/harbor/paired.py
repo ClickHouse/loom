@@ -9,7 +9,7 @@ from statistics import fmean
 from bench.bootstrap import paired_bootstrap
 from examples.software_factory.factory.model import digest
 
-from .arms import ALL, contrasts, validate_schedule
+from .arms import ALL, CACHE_STARTS, contrasts, validate_schedule
 from .cohorts import comparison_cohorts
 
 ARMS = tuple(ALL)
@@ -152,6 +152,8 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     if len(identity) > 1:
         raise ValueError("Provider or task kind changed within the controlled cohort")
     missing = sorted(set(range(len(rows))) - set(observed))
+    cache_pilot = "cache_start" in rows[0]
+    pilot = rows[0].get("pilot") is True
     report = {
         "schema_version": 1,
         "schedule_sha256": digest(rows),
@@ -166,7 +168,7 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
         if identity
         else None,
         "exploratory_only": True,
-        "study_mode": "pilot" if rows[0].get("pilot") is True else "full",
+        "study_mode": "cache-pilot" if cache_pilot else "pilot" if pilot else "full",
         "cluster_count": len(tasks),
         "seed": seed,
         "resamples": resamples,
@@ -178,6 +180,11 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
             "Input provenance and billing require independent qualification."
         ),
     }
+    if cache_pilot:
+        report["cache_start_deltas"] = {state: {} for state in CACHE_STARTS}
+        report["cache_starts_verified"] = not missing and all(
+            result.get("cache_start_verified") is True for result in observed.values()
+        )
     for arm in ARMS:
         slots = [r["order"] for r in rows if r["arm"] == arm]
         present = [i for i in slots if i in observed]
@@ -202,12 +209,17 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     if missing:
         return report  # Missing attempts are visible; no partial-cohort selection.
     lookup = {(r["task_id"], r["repeat"], r["arm"]): metrics[r["order"]] for r in rows}
-    pilot = rows[0].get("pilot") is True
-    report["study_mode"] = "pilot" if pilot else "full"
-    comparisons = [
-        (report["paired_deltas"], left, right, range(1 if pilot else 3))
-        for left, right in contrasts()
-    ]
+    if cache_pilot:
+        comparisons = [
+            (report["cache_start_deltas"][state], left, right, [repeat])
+            for repeat, state in enumerate(CACHE_STARTS)
+            for left, right in contrasts()
+        ]
+    else:
+        comparisons = [
+            (report["paired_deltas"], left, right, range(1 if pilot else 3))
+            for left, right in contrasts()
+        ]
     if not pilot:
         comparisons.append((report["aa_reference"], "baseline-b", "baseline-a", ["aa"]))
     for destination, left, right, repeats in comparisons:

@@ -24,15 +24,17 @@ from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.index import MUTABLE_STATE_KEYS, select_snapshot, snapshot
 from examples.software_factory.harbor.paired import ARMS, analyze, analyze_cohorts
 from examples.software_factory.harbor.reporting import generate_reports
-from examples.software_factory.harbor.runtime import read, task_inputs, verify, write
+from examples.software_factory.harbor.runtime import append, read, task_inputs, verify, write
 
 from .billing import FIELDS as BILLING_FIELDS
 from .billing import audit_provider_costs
+from .cache_start import CACHE_5M_SECONDS, quiet_period, verified_start
 from .fairness import audit_fairness
 from .judging import load_verdicts, run_judging
 from .metrics import known_total, paid_token_totals
 from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp_settings
 from .native_metrics import measurements
+from .pricing import first_prompt_cost_sensitivity
 from .profiles import load_profile
 from .project_guidance import guidance
 from .project_guidance import stage as stage_guidance
@@ -395,6 +397,9 @@ def result_record(slot: dict, raw: dict, folder: Path, *, task_kind: str, model_
         "status": "completed" if raw.get("exception_info") is None else "agent_error",
         **observed,
     }
+    if agent == "claude-code" and "cache_start" in slot:
+        result["cache_start"] = slot["cache_start"]
+        result["cache_start_verified"] = verified_start(slot["cache_start"], observed)
     result["model_selected_loom_requests"] = result.get("loom_tool_calls")
     if slot["mode"] == "baseline" or agent == "oracle":
         if result.get("loom_tool_calls") not in (0, None):
@@ -459,6 +464,7 @@ def enrich_evaluations(protocol, entries, job_name):
         result.update(paid_token_totals(result))
         components = [result.get("generation_cost_usd"), result.get("loom_provider_cost_usd")]
         result["total_provider_cost_usd"] = sum(components) if None not in components else None
+        result.update(first_prompt_cost_sensitivity(result))
         full = result.get("full_suite")
         changed = profile.full_suite_regressions(
             full if job_name == "base" else bases.get(result["task_id"]), full
@@ -542,6 +548,7 @@ def export(protocol: dict, job_name="live") -> dict:
                     "loom_provider_cost_usd",
                     "total_provider_cost_usd",
                     "model_input_tokens",
+                    "model_uncached_input_tokens",
                     "model_output_tokens",
                     "model_total_tokens",
                     "model_cache_read_tokens",
@@ -557,13 +564,18 @@ def export(protocol: dict, job_name="live") -> dict:
             "task_id",
             "arm",
             "repeat",
+            "cache_start",
+            "cache_start_verified",
             "resolved",
             "status",
             "end_to_end_s",
             "duration_s",
             "generation_cost_usd",
+            "generation_cost_source",
             "loom_provider_cost_usd",
             "total_provider_cost_usd",
+            "equal_cold_provider_cost_usd",
+            "equal_warm_provider_cost_usd",
             "total_cost_usd",
             "agent_time_s",
             "agent_test_requests",
@@ -574,10 +586,20 @@ def export(protocol: dict, job_name="live") -> dict:
             "full_suite_regressions",
             "judge_fixed",
             "model_input_tokens",
+            "model_uncached_input_tokens",
             "model_output_tokens",
             "model_total_tokens",
             "model_cache_read_tokens",
             "model_cache_write_tokens",
+            "model_cache_write_5m_tokens",
+            "model_cache_write_1h_tokens",
+            "first_prompt_input_tokens",
+            "first_uncached_input_tokens",
+            "first_cache_read_tokens",
+            "first_cache_write_tokens",
+            "loom_provider_input_tokens",
+            "loom_provider_output_tokens",
+            "loom_embedding_tokens",
             "model_selected_loom_requests",
             "loom_physical_requests",
             "provider_physical_requests",
@@ -616,6 +638,21 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
     timers = {}
     frozen_snapshot = read(output / "index-content.json")
     next_orders = [int(Path(t.path).name.removeprefix("slot-")) for t in config.tasks]
+    cache_pilot = kind == "live" and "cache_start" in protocol["schedule"][0]
+    lease = CACHE_5M_SECONDS
+
+    async def wait_for_cache(seconds):
+        started = time.monotonic()
+        print(json.dumps({"phase": "provider-cache-quiet-period", "seconds": seconds}), flush=True)
+        await asyncio.sleep(seconds)
+        append(
+            output / "cache-quiet-periods.jsonl",
+            {
+                "before_order": next_orders[0],
+                "required_s": seconds,
+                "elapsed_s": time.monotonic() - started,
+            },
+        )
 
     async def start(event):
         timers[event.trial_name] = time.monotonic()
@@ -646,6 +683,7 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
             os.fsync(stream.fileno())
 
     async def end(event):
+        nonlocal lease
         order = int(event.config.task.path.name.removeprefix("slot-"))
         scopes = selected_scopes(protocol, protocol["schedule"][order]) if kind == "live" else []
         current = await asyncio.to_thread(snapshot, protocol["server_container"], scopes)
@@ -696,10 +734,17 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
             ),
             flush=True,
         )
+        if cache_pilot:
+            lease = max(lease, quiet_period(trial_folder))
+            if protocol["schedule"][order]["cache_start"] == "warm" and next_orders:
+                await wait_for_cache(lease)
+                lease = CACHE_5M_SECONDS
 
     job.on_trial_started(start).on_trial_ended(end)
     if kind == "live":
         export(protocol, kind)
+    if cache_pilot and next_orders:
+        await wait_for_cache(lease)
     await job.run()
     summary = export(protocol, kind)
     if kind == "live":

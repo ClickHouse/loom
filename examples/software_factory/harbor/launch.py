@@ -119,7 +119,7 @@ def native_model(root):
     raise LaunchError("The native Anthropic model default is missing")
 
 
-def plan(root=ROOT, evaluation="flask", pilot_task=None):
+def plan(root=ROOT, evaluation="flask", pilot_task=None, *, cache_pairs=False):
     descriptor = load_evaluation(root, evaluation)
     locked, histories, memories = (
         read(descriptor["paths"][name])
@@ -127,13 +127,15 @@ def plan(root=ROOT, evaluation="flask", pilot_task=None):
     )
     task_ids = {row["task_id"] for row in locked["tasks"]}
     history_ids = {row["case_id"] for row in histories["cases"]}
+    if cache_pairs and pilot_task is None:
+        raise LaunchError("Cache pairs require a frozen pilot task")
     if pilot_task is not None:
         if pilot_task not in task_ids | history_ids:
             raise LaunchError("The pilot task must name a frozen evaluation scenario")
         task_ids &= {pilot_task}
         history_ids &= {pilot_task}
     cold, warm = len(task_ids - history_ids), len(history_ids)
-    cases, repeats = len(task_ids | history_ids), 1 if pilot_task else 3
+    cases, repeats = len(task_ids | history_ids), 2 if cache_pairs else 1 if pilot_task else 3
     aa_attempts = 0 if pilot_task else cases * 2
     memory_attempts = cases * repeats * sum(arm.memory_enabled for arm in PRIMARY.values())
     seeded_attempts = warm * repeats * sum(arm.history_seeded for arm in PRIMARY.values())
@@ -143,8 +145,9 @@ def plan(root=ROOT, evaluation="flask", pilot_task=None):
         raise LaunchError("Public cases or project memory identities are invalid")
     return {
         "schema_version": 1,
-        "study_mode": "pilot" if pilot_task else "full",
+        "study_mode": "cache-pilot" if cache_pairs else "pilot" if pilot_task else "full",
         "pilot_task": pilot_task,
+        "cache_pairs": cache_pairs,
         "evaluation": {
             key: descriptor[key] for key in ("id", "title", "adapter", "descriptor_sha256")
         },
@@ -518,7 +521,15 @@ def output_lock(output):
 
 
 def execute(
-    action, output, amount=None, *, root=ROOT, docker=None, evaluation="flask", pilot_task=None
+    action,
+    output,
+    amount=None,
+    *,
+    root=ROOT,
+    docker=None,
+    evaluation="flask",
+    pilot_task=None,
+    cache_pairs=False,
 ):
     if amount is not None:
         raise LaunchError("Native coding evaluations run without a spending cap")
@@ -529,8 +540,8 @@ def execute(
     output, root = requested.resolve(), Path(root).resolve()
     descriptor = load_evaluation(root, evaluation)
     if action == "run":
-        if pilot_task is not None:
-            plan(root=root, evaluation=evaluation, pilot_task=pilot_task)
+        if pilot_task is not None or cache_pairs:
+            plan(root=root, evaluation=evaluation, pilot_task=pilot_task, cache_pairs=cache_pairs)
         if not docker.key or any(c.isspace() for c in docker.key):
             raise LaunchError("Run requires ANTHROPIC_API_KEY")
         if output.exists():
@@ -553,13 +564,16 @@ def execute(
                     docker=docker,
                     descriptor=descriptor,
                     pilot_task=pilot_task,
+                    cache_pairs=cache_pairs,
                 )
             finally:
                 if tunnel is not None:
                     docker.proxy_url = docker.proxy_host_url = docker.proxy_token = None
 
 
-def _execute(action, output, amount, *, root, docker, descriptor, pilot_task=None):
+def _execute(
+    action, output, amount, *, root, docker, descriptor, pilot_task=None, cache_pairs=False
+):
     path = output / "launch.json"
     if action == "run":
         owner = uuid.uuid4().hex
@@ -569,6 +583,7 @@ def _execute(action, output, amount, *, root, docker, descriptor, pilot_task=Non
             owner=owner,
             evaluation=descriptor["id"],
             pilot_task=pilot_task,
+            cache_pairs=cache_pairs,
             source_root=str(root),
             output_root=str(output),
             source_sha256=source_hash(root, output),
@@ -658,6 +673,9 @@ def main(argv=None):
     free.add_argument("--json", action="store_true")
     free.add_argument("--eval", default="flask", dest="evaluation")
     free.add_argument("--pilot-task", help="One frozen task, once per arm, without A/A attempts")
+    free.add_argument(
+        "--cache-pairs", action="store_true", help="Cold and warm starts for each arm"
+    )
     for name in ("run", "resume", "cleanup"):
         child = sub.add_parser(name)
         child.add_argument("--output", required=True)
@@ -666,9 +684,14 @@ def main(argv=None):
             child.add_argument("--budget-usd", type=budget)
         if name == "run":
             child.add_argument("--pilot-task", help="One frozen task, once per arm")
+            child.add_argument(
+                "--cache-pairs", action="store_true", help="Use a quiet provider workspace"
+            )
     args = parser.parse_args(argv)
     if args.command == "plan":
-        description = plan(evaluation=args.evaluation, pilot_task=args.pilot_task)
+        description = plan(
+            evaluation=args.evaluation, pilot_task=args.pilot_task, cache_pairs=args.cache_pairs
+        )
         if args.json:
             print(json.dumps(description, indent=2))
         else:
@@ -693,6 +716,7 @@ def main(argv=None):
             getattr(args, "budget_usd", None),
             evaluation=args.evaluation,
             pilot_task=getattr(args, "pilot_task", None),
+            cache_pairs=getattr(args, "cache_pairs", False),
         )
     except (LaunchError, OSError, ValueError) as error:
         print(f"Factory launcher refused ({type(error).__name__}): {error}", file=sys.stderr)

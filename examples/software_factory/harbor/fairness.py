@@ -8,6 +8,7 @@ from pathlib import Path
 
 from examples.software_factory.factory.model import digest
 
+from .cache_start import verified_start
 from .index import select_snapshot
 from .memory import validate_history_certificate
 from .native_environment import mcp_settings
@@ -101,6 +102,8 @@ def audit_fairness(protocol, entries, *, billing=None):
             == "known",
         }
         seen.add(order)
+        if "cache_start" in slot:
+            row["provider_cache_start"] = verified_start(slot["cache_start"], result)
         row["passed"] = all(value is True for key, value in row.items() if key != "order")
         checks.append(row)
     receipt = {

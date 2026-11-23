@@ -11,6 +11,8 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from .metrics import known_total
+from .pricing import first_prompt_input_prices
 from .runtime import write
 
 LOOM_TOOL_PREFIXES = ("mcp__loom__", "mcp__plugin_loom_loom__")
@@ -89,6 +91,30 @@ def number(value):
     return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
 
 
+def uncached_input(total, cache_reads, cache_writes):
+    if all(type(value) is int and value >= 0 for value in (total, cache_reads, cache_writes)):
+        return number(total - cache_reads - cache_writes)
+    return None
+
+
+def cache_usage(extra):
+    reads = number(extra.get("cache_read_input_tokens"))
+    writes = number(extra.get("cache_creation_input_tokens"))
+    partition = extra.get("cache_creation") or {}
+    short_writes = number(partition.get("ephemeral_5m_input_tokens"))
+    long_writes = number(partition.get("ephemeral_1h_input_tokens"))
+    if writes == 0 and not partition:
+        short_writes = long_writes = 0
+    if short_writes is None or long_writes is None or short_writes + long_writes != writes:
+        short_writes = long_writes = None
+    return {
+        "cache_read_tokens": reads,
+        "cache_write_tokens": writes,
+        "cache_write_5m_tokens": short_writes,
+        "cache_write_1h_tokens": long_writes,
+    }
+
+
 def elapsed(value):
     if not isinstance(value, dict) or not value.get("started_at") or not value.get("finished_at"):
         return None
@@ -109,18 +135,20 @@ def capture_turn_usage(trial: Path, target: Path) -> None:
             metrics = step.get("metrics")
             if not metrics or step.get("is_copied_context"):
                 continue
+            input_tokens = number(metrics.get("prompt_tokens"))
+            cache = cache_usage(metrics.get("extra") or {})
             turns.append(
                 {
                     "step_id": step["step_id"],
                     "tool_call_ids": [
                         call["tool_call_id"] for call in step.get("tool_calls") or []
                     ],
-                    "input_tokens": number(metrics.get("prompt_tokens")),
-                    "output_tokens": number(metrics.get("completion_tokens")),
-                    "cache_read_tokens": number(metrics.get("cached_tokens")),
-                    "cache_write_tokens": number(
-                        (metrics.get("extra") or {}).get("cache_creation_input_tokens")
+                    "input_tokens": input_tokens,
+                    "uncached_input_tokens": uncached_input(
+                        input_tokens, cache["cache_read_tokens"], cache["cache_write_tokens"]
                     ),
+                    "output_tokens": number(metrics.get("completion_tokens")),
+                    **cache,
                     "estimated_cost_usd": number(metrics.get("cost_usd")),
                 }
             )
@@ -167,6 +195,46 @@ def measurements(raw: dict, trial: Path) -> dict:
         number(metrics.get("total_completion_tokens")),
     )
     extra = metrics.get("extra") or {}
+    steps = (trajectory or {}).get("steps", [])
+    per_step_cache = [
+        cache_usage(step["metrics"].get("extra") or {})
+        for step in steps
+        if step.get("metrics") and not step.get("is_copied_context")
+    ]
+    cache_reads = known_total(per_step_cache, "cache_read_tokens")
+    cache_writes = known_total(per_step_cache, "cache_write_tokens")
+    first_step = next(
+        (
+            step
+            for step in steps
+            if step.get("source") == "agent"
+            and not step.get("is_copied_context")
+            and not (step.get("extra") or {}).get("is_sidechain")
+        ),
+        {},
+    )
+    first = first_step.get("metrics") or {}
+    first_extra = first.get("extra") or {}
+    first_input = number(first.get("prompt_tokens"))
+    first_cache = cache_usage(first_extra)
+    first_read = first_cache["cache_read_tokens"]
+    first_write = first_cache["cache_write_tokens"]
+    first_prices = {}
+    if (
+        first_extra.get("service_tier", "standard") == "standard"
+        and first_extra.get("inference_geo", "global") == "global"
+    ):
+        first_prices = first_prompt_input_prices(
+            first_step.get("model_name"),
+            prompt_tokens=first_input,
+            output_tokens=first.get("completion_tokens"),
+            cached_tokens=first_read,
+            written_tokens=first_write,
+            long_writes=(first_extra.get("cache_creation") or {}).get(
+                "ephemeral_1h_input_tokens", 0
+            ),
+            step_cost=number(first.get("cost_usd")),
+        )
     return {
         **initialization(trial),
         **summarize(trial)["metrics"],
@@ -180,8 +248,16 @@ def measurements(raw: dict, trial: Path) -> dict:
         "model_total_tokens": incoming + outgoing
         if incoming is not None and outgoing is not None
         else None,
-        "model_cache_read_tokens": number(metrics.get("total_cached_tokens")),
-        "model_cache_write_tokens": number(extra.get("total_cache_creation_input_tokens")),
+        "model_cache_read_tokens": cache_reads,
+        "model_cache_write_tokens": cache_writes,
+        "model_cache_write_5m_tokens": known_total(per_step_cache, "cache_write_5m_tokens"),
+        "model_cache_write_1h_tokens": known_total(per_step_cache, "cache_write_1h_tokens"),
+        "model_uncached_input_tokens": uncached_input(incoming, cache_reads, cache_writes),
+        "first_cache_read_tokens": first_read,
+        "first_cache_write_tokens": first_write,
+        "first_prompt_input_tokens": first_input,
+        "first_uncached_input_tokens": uncached_input(first_input, first_read, first_write),
+        **first_prices,
         "tool_total_requests": len(calls) if calls is not None else None,
         "loom_tool_calls": sum(count for name, count in counts.items() if is_loom_tool(name))
         if counts is not None

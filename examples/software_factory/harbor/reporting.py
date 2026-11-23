@@ -312,6 +312,20 @@ def _native_views(protocol, observed, groups, jobs, names, job_name):
 
 def _trace_table(record):
     fields = (
+        ("First prompt input", "first_prompt_input_tokens"),
+        ("First prompt cache reads", "first_cache_read_tokens"),
+        ("First prompt cache writes", "first_cache_write_tokens"),
+        ("First prompt uncached input", "first_uncached_input_tokens"),
+        ("Solver tokens", "model_total_tokens"),
+        ("Solver uncached input", "model_uncached_input_tokens"),
+        ("Solver cache reads", "model_cache_read_tokens"),
+        ("Solver cache writes", "model_cache_write_tokens"),
+        ("Solver five-minute cache writes", "model_cache_write_5m_tokens"),
+        ("Solver one-hour cache writes", "model_cache_write_1h_tokens"),
+        ("Solver output", "model_output_tokens"),
+        ("Loom provider input", "loom_provider_input_tokens"),
+        ("Loom provider output", "loom_provider_output_tokens"),
+        ("Loom embedding tokens", "loom_embedding_tokens"),
         ("Full-suite failing tests", "full_suite_failed_tests"),
         ("Main-session model responses", "model_turns_main"),
         ("Main-session parallel tool groups", "parallel_tool_groups_main"),
@@ -340,6 +354,9 @@ def _summary(slots, observed):
         "expected": len(slots),
         "observed": len(records),
         "pending": len(slots) - len(records),
+        "cache_starts_verified": sum(r.get("cache_start_verified") is True for r in records)
+        if any("cache_start" in slot for slot in slots)
+        else None,
         "resolved": sum(r["resolved"] for r in records),
         "success_rate": sum(r["resolved"] for r in records) / len(slots)
         if complete and slots
@@ -347,6 +364,8 @@ def _summary(slots, observed):
         "infrastructure_errors": sum(not r.get("harbor_reward_valid", False) for r in records),
         "generation_cost_usd": sum(costs) if costs and None not in costs else None,
         "total_provider_cost_usd": _known_sum(records, "total_provider_cost_usd"),
+        "equal_cold_provider_cost_usd": _known_sum(records, "equal_cold_provider_cost_usd"),
+        "equal_warm_provider_cost_usd": _known_sum(records, "equal_warm_provider_cost_usd"),
         "loom_provider_cost_usd": _known_sum(records, "loom_provider_cost_usd"),
         "known_generation_cost_usd": sum(c for c in costs if c is not None) if costs else None,
         "unknown_generation_costs": sum(c is None for c in costs),
@@ -381,24 +400,55 @@ def _known_sum(records, key):
     return sum(values) if values and None not in values else None
 
 
+def _cache_arm_summaries(slots, observed):
+    return {
+        state: {
+            arm: _summary(
+                [s for s in slots if s.get("cache_start") == state and s["arm"] == arm], observed
+            )
+            for arm in PRIMARY_VIEWS
+        }
+        for state in dict.fromkeys(s["cache_start"] for s in slots if "cache_start" in s)
+    }
+
+
 def _number(value, digits=3):
     return "pending / unknown" if value is None else f"{value:.{digits}f}"
 
 
-def _table(arms):
+def _table(arms, *, cache_starts=False):
     lines = [
-        "| Arm | Observed / expected | Pending | Resolved | Generation estimate (USD) "
+        "| Arm | Observed / expected | Pending | Resolved | Solver USD | Observed provider USD "
+        "| Equal cold USD | Equal warm USD "
         "| Mean full end-to-end (s) | Mean native Harbor (s) |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
+    if cache_starts:
+        lines[0] += " Cache starts verified |"
+        lines[1] += "---:|"
     for arm, info in arms.items():
         lines.append(
             f"| {arm} | {info['observed']} / {info['expected']} | {info['pending']} "
             f"| {info['resolved']} | {_number(info['generation_cost_usd'], 7)} "
+            f"| {_number(info['total_provider_cost_usd'], 7)} "
+            f"| {_number(info['equal_cold_provider_cost_usd'], 7)} "
+            f"| {_number(info['equal_warm_provider_cost_usd'], 7)} "
             f"| {_number(info['mean_end_to_end_s'])} "
             f"| {_number(info['mean_native_duration_s'])} |"
         )
-    return "\n".join(lines) + "\n"
+        if cache_starts:
+            lines[-1] += f" {info['cache_starts_verified']} / {info['observed']} |"
+    return "\n".join(lines) + (
+        "\n\nEqual-cache estimates reprice the first solver input as a full five-minute "
+        "cache write or a full cache read. Later turns and Loom charges use the recorded values.\n"
+    )
+
+
+def _cache_tables(cache_arms):
+    return "\n".join(
+        f"## Planned {state} start\n\n" + _table(arms, cache_starts=True)
+        for state, arms in cache_arms.items()
+    )
 
 
 def generate_reports(protocol, entries, *, job_name="live"):
@@ -504,6 +554,14 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             for label, (path, url) in assets.items():
                 if (folder / path).exists():
                     item["links"][label] = url
+            for label, suffix in (
+                ("model usage by turn", "-model-usage"),
+                ("Loom retrieval stages", "-code-traces"),
+                ("tool response summary", ""),
+            ):
+                name = f"attempt-{order:02d}{suffix}.json"
+                if (output / "diagnostics" / name).is_file():
+                    item["links"][label] = "../../diagnostics/" + name
         attempts.append(item)
         path = report_dir / "attempts" / f"attempt-{order:02d}.json"
         if not path.exists() or _read(path) != item or not path.with_suffix(".md").exists():
@@ -514,12 +572,23 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             )
             if entry:
                 record = entry["result"]
+                if "cache_start" in slot:
+                    verification = (
+                        "verified" if record.get("cache_start_verified") is True else "unverified"
+                    )
+                    text += (
+                        f"Planned {slot['cache_start']} start. "
+                        f"Provider cache state {verification}.\n\n"
+                    )
                 text += (
                     f"Resolved: {record['resolved']}. "
                     f"Full end-to-end: {_number(record['end_to_end_s'])}s. "
                     f"Native Harbor: {_number(record['native_duration_s'])}s. "
-                    "Generation estimate (USD): "
-                    f"{_number(record.get('generation_cost_usd'), 7)}.\n\n"
+                    f"Solver cost (USD) {_number(record.get('generation_cost_usd'), 7)}. "
+                    "Observed provider cost (USD) "
+                    f"{_number(record.get('total_provider_cost_usd'), 7)}. "
+                    f"Equal cold {_number(record.get('equal_cold_provider_cost_usd'), 7)}. "
+                    f"Equal warm {_number(record.get('equal_warm_provider_cost_usd'), 7)}.\n\n"
                 )
                 text += (
                     " · ".join(f"[{key}]({value})" for key, value in item["links"].items()) + "\n"
@@ -607,6 +676,9 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             "attempts": [a for a in attempts if a["task_id"] == task],
             "comparison_links": links,
         }
+        cache_arms = _cache_arm_summaries(selected, observed)
+        if cache_arms:
+            info["cache_start_arms"] = cache_arms
         scenarios[task] = info
         safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", task) + "-" + _digest(task)[:8]
         scenario_links.append((task, "scenarios/" + safe_name + ".md"))
@@ -619,7 +691,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         _atomic(
             report_dir / "scenarios" / (safe_name + ".md"),
             f"# Scenario {task}\n\n"
-            + _table(info["arms"])
+            + (_cache_tables(cache_arms) if cache_arms else _table(info["arms"]))
             + "\n## A/A controls\n\n"
             + _table(info["aa_control_arms"])
             + "\n"
@@ -660,6 +732,9 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             "Original UUIDs, config paths, metrics, costs and timestamps remain unchanged."
         ),
     }
+    cache_arms = _cache_arm_summaries(schedule, observed)
+    if cache_arms:
+        report["cache_start_arms"] = cache_arms
     _atomic(report_dir / "comparison.json", report)
     text = (
         f"# Factory comparison\n\n{len(observed)}/{len(schedule)} attempts observed across "
@@ -668,7 +743,8 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         "Historical issues and authored experiments are reported separately. "
         "Native Harbor comparison links include all scenarios.\n\n"
     )
-    text += _table(primary) + "\n" + " · ".join(f"[{key}]({value})" for key, value in links.items())
+    text += (_cache_tables(cache_arms) if cache_arms else _table(primary)) + "\n"
+    text += " · ".join(f"[{key}]({value})" for key, value in links.items())
     for family, cohort in cohort_reports.items():
         if family != cohorts["default"]:
             text += "\n\n## " + cohort["label"] + "\n\n" + _table(cohort["arms"])

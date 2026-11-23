@@ -95,6 +95,8 @@ def chart_data(protocol, entries, views_manifest):
             **{metric["key"]: None for metric in METRICS},
             "url": None,
         }
+        if "cache_start" in slot:
+            row.update(cache_start=slot["cache_start"], cache_start_verified=None)
         if result is not None:
             row.update(
                 state="complete" if result.get("harbor_reward_valid") else "error",
@@ -104,7 +106,10 @@ def chart_data(protocol, entries, views_manifest):
                 seconds=number(result.get("end_to_end_s")),
                 native_seconds=number(result.get("harbor_wall_s")),
                 cost=number(result.get("total_provider_cost_usd")),
+                equal_cold_cost=number(result.get("equal_cold_provider_cost_usd")),
+                equal_warm_cost=number(result.get("equal_warm_provider_cost_usd")),
                 generation_cost=number(result.get("generation_cost_usd")),
+                generation_cost_source=result.get("generation_cost_source"),
                 loom_provider_cost=number(result.get("loom_provider_cost_usd")),
                 agent_seconds=number(result.get("agent_time_s")),
                 **{
@@ -121,9 +126,16 @@ def chart_data(protocol, entries, views_manifest):
                         "memory_rows_written",
                         "model_total_tokens",
                         "model_input_tokens",
+                        "model_uncached_input_tokens",
                         "model_output_tokens",
                         "model_cache_read_tokens",
                         "model_cache_write_tokens",
+                        "model_cache_write_5m_tokens",
+                        "model_cache_write_1h_tokens",
+                        "first_cache_read_tokens",
+                        "first_cache_write_tokens",
+                        "first_prompt_input_tokens",
+                        "first_uncached_input_tokens",
                         "loom_provider_input_tokens",
                         "loom_provider_output_tokens",
                         "loom_provider_total_tokens",
@@ -132,6 +144,8 @@ def chart_data(protocol, entries, views_manifest):
                     )
                 },
             )
+            if "cache_start" in slot:
+                row["cache_start_verified"] = result.get("cache_start_verified")
             if result.get("harbor_trial") and view.get("job_name"):
                 row["url"] = (
                     base.rstrip("/")
@@ -168,8 +182,8 @@ def chart_data(protocol, entries, views_manifest):
         "evaluation_complete": evaluation_complete,
         "comparison_url": views_manifest.get("links", {}).get("comparison"),
         "target_reduction": 0.20,
-        "cost_note": "Provider cost combines generation list-price estimates and "
-        "matched Loom provider ledger costs, including failed attempts. "
+        "cost_note": "Provider cost combines the solver-reported cost (or Harbor's fallback "
+        "estimate) and paid model calls recorded by Loom, including failed attempts. "
         "Unmatched backend cost remains unknown. Judge and infrastructure costs are separate.",
     }
 

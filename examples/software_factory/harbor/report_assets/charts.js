@@ -16,6 +16,7 @@ const names = {
 const arms = Object.keys(data.arms);
 const labelFor = (arm) => names[arm] || data.arms[arm] || arm;
 const byId = (id) => document.getElementById(id);
+const cacheStarts = [...new Set(data.attempts.map((row) => row.cache_start).filter(Boolean))];
 function reportLink(value) {
   if (typeof value !== "string" || !value) return null;
   try {
@@ -33,12 +34,55 @@ const node = (tag, text, cls) => {
   return element;
 };
 const finite = (value) => typeof value === "number" && Number.isFinite(value);
+const tokenParts = [
+  ["model_cache_read_tokens", "cache reads"],
+  ["model_cache_write_tokens", "cache writes"],
+  ["model_uncached_input_tokens", "uncached input"],
+  ["model_output_tokens", "output"],
+];
+const cacheCosts = [
+  { key: "equal_cold_cost", title: "Equal-cold estimate", kind: "cost" },
+  { key: "equal_warm_cost", title: "Equal-warm estimate", kind: "cost" },
+];
+const signedPercent = new Intl.NumberFormat(undefined, {
+  style: "percent",
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+  signDisplay: "exceptZero",
+});
 function format(value, kind) {
   if (!finite(value)) return "Unknown";
   if (kind === "cost") return "$" + value.toFixed(4);
   if (kind === "rate") return (value * 100).toFixed(0) + "%";
   if (kind === "time") return value.toFixed(1) + " s";
   return Math.round(value).toLocaleString();
+}
+function tokenCell(label, partValue) {
+  const cell = node("td", label, "numeric");
+  for (const [key, label] of tokenParts) {
+    const value = partValue(key);
+    if (finite(value)) cell.append(node("small", `${format(value, "count")} ${label}`));
+  }
+  return cell;
+}
+function changeFromBaseline(value, baseline) {
+  return finite(value) && baseline > 0 ? signedPercent.format(value / baseline - 1) : null;
+}
+function addFirstPrompt(cell, valueFor) {
+  const total = valueFor("first_prompt_input_tokens");
+  const read = format(valueFor("first_cache_read_tokens"), "count");
+  const write = format(valueFor("first_cache_write_tokens"), "count");
+  const uncached = format(valueFor("first_uncached_input_tokens"), "count");
+  cell.append(node("small", finite(total) ? `First prompt ${format(total, "count")} input tokens` : "First prompt input"));
+  cell.append(node("small", `${read} read · ${write} written · ${uncached} uncached`));
+}
+function addCacheCosts(cell, valueFor, baselineFor = () => null) {
+  for (const metric of cacheCosts) {
+    const value = valueFor(metric);
+    const delta = changeFromBaseline(value, baselineFor(metric));
+    const valueLabel = format(value, "cost");
+    cell.append(node("small", `${metric.title} ${valueLabel}${delta === null ? "" : ` (${delta})`}`));
+  }
 }
 function aggregate(rows, arm, metric) {
   const observed = rows.filter((row) => row.arm === arm && row.state !== "pending");
@@ -68,6 +112,7 @@ function selected() {
     (row) =>
       tasks.includes(row.task) &&
       (!byId("issue").value || row.task === byId("issue").value) &&
+      (!cacheStarts.length || row.cache_start === byId("cache-start").value) &&
       (!byId("repeat").value || String(row.repeat) === byId("repeat").value),
   );
 }
@@ -101,9 +146,12 @@ function headings(id, cells) {
 }
 function summary(rows, plannedRows) {
   const cost = costMetric(rows),
-    time = timeMetric();
+    time = timeMetric(),
+    metrics = [cost, time];
+  const baseline = metrics.map((metric) => aggregate(rows, "baseline", metric).value);
+  const baselineTokens = aggregate(rows, "baseline", { key: "model_total_tokens", kind: "count" }).value;
   const empty = plannedRows.some((row) => row.state === "complete") ? "Awaiting pairs" : "Not run";
-  headings("summary-heading", ["Arm", "Issues solved", "Attempts passed", cost.title, time.title]);
+  headings("summary-heading", ["Arm", "Issues solved", "Attempts passed", cost.title, time.title, "Solver tokens"]);
   const body = byId("summary-body");
   body.replaceChildren();
   for (const arm of arms) {
@@ -113,6 +161,7 @@ function summary(rows, plannedRows) {
     const planned = new Set(plannedRows.filter((row) => row.arm === arm).map((row) => row.task));
     const row = node("tr");
     row.append(node("th", labelFor(arm)));
+    const tokens = (key) => aggregate(rows, arm, { key, kind: "count" }).value;
     const issues = node("td", tried.size ? `${solved.size} / ${tried.size} tried` : empty, "numeric");
     if (tried.size < planned.size) issues.append(node("small", `${planned.size} issues scheduled`));
     row.append(
@@ -123,27 +172,43 @@ function summary(rows, plannedRows) {
         "numeric",
       ),
     );
-    for (const metric of [cost, time]) {
+    for (const [index, metric] of metrics.entries()) {
       const value = aggregate(rows, arm, metric);
       const cell = node("td", value.n ? format(value.value, metric.kind) : empty, "numeric");
-      if (value.n) cell.append(node("small", `${value.known} of ${value.n} measured`));
+      const delta = arm === "baseline" ? null : changeFromBaseline(value.value, baseline[index]);
+      if (delta !== null) cell.append(node("small", `${delta} vs No Loom`));
+      if (value.known < value.n) cell.append(node("small", `${value.known} of ${value.n} measured`));
+      if (metric === cost && observed.length) {
+        addFirstPrompt(cell, tokens);
+        addCacheCosts(
+          cell,
+          (variant) => aggregate(rows, arm, variant).value,
+          (variant) => (arm === "baseline" ? null : aggregate(rows, "baseline", variant).value),
+        );
+      }
       row.append(cell);
     }
+    const total = tokens("model_total_tokens");
+    const tokenDelta = arm === "baseline" ? null : changeFromBaseline(total, baselineTokens);
+    const tokenLabel = observed.length ? format(total, "count") : empty;
+    row.append(tokenCell(tokenDelta === null ? tokenLabel : `${tokenLabel} (${tokenDelta})`, tokens));
     body.append(row);
   }
   const partial = !data.complete || rows.length !== plannedRows.length || !matched(rows);
   const blocks = new Set(rows.map((row) => `${row.task}:${row.repeat}`)).size;
   const plannedBlocks = new Set(plannedRows.map((row) => `${row.task}:${row.repeat}`)).size;
   const waiting = plannedRows.filter((row) => row.state === "complete" && !row.comparison_included).length;
+  const graded = plannedRows.filter((row) => row.state === "complete");
+  const verified = graded.filter((row) => row.cache_start_verified === true).length;
   byId("comparison-note").textContent =
-    `Comparing ${blocks} of ${plannedBlocks} issue/repeat blocks: ${blocks} matched attempts per arm. ` +
-    "Only blocks graded in all five arms contribute; failed hidden tests remain included. " +
-    `${waiting} completed attempt(s) await matching arms and remain in progress totals and individual records. ` +
     (partial
-      ? "Partial comparison; the remaining blocks can change the result. "
-      : "All planned blocks are matched. A/A controls show variation. ") +
+      ? `${blocks} of ${plannedBlocks} planned blocks matched across all five arms. `
+      : `${blocks} matched ${blocks === 1 ? "attempt" : "attempts"} per arm. `) +
+    (waiting ? `${waiting} completed attempts await matching arms. ` : "") +
+    (cacheStarts.length ? `Provider cache evidence matches the planned start in ${verified} of ${graded.length} graded attempts. ` : "") +
+    "Hidden test failures are included. " +
     (cost.key === "generation_cost"
-      ? "Costs below are solver-only; the combined provider-cost audit is not complete."
+      ? "Observed costs use solver charges. Equal-cache estimates require a known combined provider cost."
       : "Costs include solver and matched Loom provider charges. Infrastructure and judge costs are separate.");
 }
 function issuesTable(rows, plannedRows) {
@@ -177,11 +242,12 @@ function issuesTable(rows, plannedRows) {
 function chart(rows, plannedRows) {
   const key = byId("chart-metric").value;
   const metric =
-    key === "cost"
+    cacheCosts.find((metric) => metric.key === key) ||
+    (key === "cost"
       ? costMetric(rows)
       : key === "agent_seconds"
         ? timeMetric()
-        : { key: "resolved", title: "Attempts passed", kind: "rate" };
+        : { key: "resolved", title: "Attempts passed", kind: "rate" });
   const sums = Object.fromEntries(arms.map((arm) => [arm, aggregate(rows, arm, metric)]));
   const maximum = metric.kind === "rate" ? 1 : Math.max(...Object.values(sums).map((x) => x.value ?? 0), 0) * 1.1 || 1;
   const target =
@@ -190,6 +256,7 @@ function chart(rows, plannedRows) {
       : data.complete &&
           rows.length === plannedRows.length &&
           matched(rows) &&
+          (!cacheStarts.length || rows.every((row) => row.cache_start_verified === true)) &&
           data.run_status !== "interrupted" &&
           data.run_status !== "failed" &&
           sums.baseline.value !== null
@@ -228,9 +295,11 @@ function extraMetrics(rows) {
   headings("metrics-heading", ["Measurement", ...arms.map(labelFor)]);
   const metrics = [
     ...data.metrics.filter((m) => !["resolved", "cost", "agent_seconds"].includes(m.key)),
-    ...["model_input_tokens", "model_output_tokens", "model_cache_read_tokens", "model_cache_write_tokens"].map(
-      (key) => ({ key, title: key.replaceAll("_", " "), kind: "count" }),
-    ),
+    ...tokenParts.map(([key, title]) => ({ key, title: `Solver ${title}`, kind: "count" })),
+    { key: "model_cache_write_5m_tokens", title: "Solver five-minute cache writes", kind: "count" },
+    { key: "model_cache_write_1h_tokens", title: "Solver one-hour cache writes", kind: "count" },
+    { key: "loom_provider_input_tokens", title: "Loom provider input", kind: "count" },
+    { key: "loom_provider_output_tokens", title: "Loom provider output", kind: "count" },
     { key: "seconds", title: "End-to-end time", kind: "time" },
     { key: "native_seconds", title: "Native Harbor time", kind: "time" },
     { key: "generation_cost", title: "Solver cost / attempt", kind: "cost" },
@@ -277,12 +346,27 @@ function attemptsTable(rows) {
       row.state === "complete" ? "Completed" : row.state === "error" ? "Error / not graded" : "Not run",
       row.state === "complete" ? (row.resolved ? "Pass" : "Fail") : "Not graded",
       row.comparison_included ? "Matched" : "Awaiting matching arms",
-      format(row[cost.key], "cost"),
-      format(row[time.key], "time"),
-      format(row.loom_tool_calls, "count"),
-      format(row.model_total_tokens, "count"),
     ])
       item.append(node("td", text));
+    const costCell = node("td", format(row[cost.key], "cost"), "numeric");
+    if (row.state !== "pending") {
+      const costSource = {
+        "claude-code-reported": "Solver cost reported by Claude Code",
+        litellm_estimate: "Solver cost estimated by Harbor",
+      }[row.generation_cost_source];
+      if (costSource) costCell.append(node("small", costSource));
+      addFirstPrompt(costCell, (key) => row[key]);
+      if (row.cache_start && row.cache_start_verified !== true) {
+        costCell.append(node("small", "Planned cache state unverified"));
+      }
+      addCacheCosts(costCell, (metric) => row[metric.key]);
+    }
+    item.append(
+      costCell,
+      node("td", format(row[time.key], "time"), "numeric"),
+      node("td", format(row.loom_tool_calls, "count"), "numeric"),
+    );
+    item.append(tokenCell(format(row.model_total_tokens, "count"), (key) => row[key]));
     const cell = node("td");
     const target = reportLink(row.url);
     if (target) {
@@ -353,6 +437,13 @@ for (const [key, group] of Object.entries(data.cohorts.groups).filter(([, group]
   byId("cohort").append(option);
 }
 byId("cohort").value = data.cohorts.default;
+byId("cache-filter").hidden = !cacheStarts.length;
+byId("repeat-label").hidden = Boolean(cacheStarts.length);
+for (const start of cacheStarts) {
+  const option = node("option", start === "cold" ? "Cold start" : "Warm start");
+  option.value = start;
+  byId("cache-start").append(option);
+}
 byId("cohort-label").hidden = Object.values(data.cohorts.groups).filter((group) => group.task_ids.length).length === 1;
 for (const task of [...new Set(data.attempts.map((row) => row.task))].sort()) {
   const option = node("option", data.titles[task] || task);
@@ -370,6 +461,6 @@ byId("cohort").addEventListener("change", () => {
   for (const option of byId("issue").options) option.hidden = Boolean(option.value) && !tasks.includes(option.value);
   render();
 });
-for (const id of ["issue", "repeat", "timing", "chart-metric", "attempt-filter"])
+for (const id of ["issue", "repeat", "cache-start", "timing", "chart-metric", "attempt-filter"])
   byId(id).addEventListener("change", render);
 render();
