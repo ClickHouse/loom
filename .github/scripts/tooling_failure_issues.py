@@ -106,9 +106,7 @@ def latest_run(api: Api, workflow: str) -> dict[str, Any] | None:
     return max(matches, key=lambda run: (run["created_at"], run["id"]), default=None)
 
 
-def list_rows(
-    api: Api, path: str, *, field: str | None = None
-) -> Iterator[dict[str, Any]]:
+def list_rows(api: Api, path: str, *, field: str | None = None) -> Iterator[dict[str, Any]]:
     separator = "&" if "?" in path else "?"
     page = 1
     while True:
@@ -120,9 +118,7 @@ def list_rows(
         page += 1
 
 
-def shared_failures(
-    workflow: str, jobs: Iterator[dict[str, Any]]
-) -> set[tuple[str, str]]:
+def shared_failures(workflow: str, jobs: Iterator[dict[str, Any]]) -> set[tuple[str, str]]:
     failures: set[tuple[str, str]] = set()
     for job in jobs:
         if job.get("conclusion") not in FAILURES:
@@ -162,9 +158,7 @@ def collect_failures(api: Api, workflows: list[str]) -> dict[str, tuple[str, int
             # successful jobs retained when GitHub reruns only the failures.
             checks = shared_failures(
                 workflow,
-                list_rows(
-                    api, f"actions/runs/{run_id}/jobs?filter=latest", field="jobs"
-                ),
+                list_rows(api, f"actions/runs/{run_id}/jobs?filter=latest", field="jobs"),
             )
         for key, label in checks:
             failures[key] = (label, run_id)
@@ -179,9 +173,7 @@ def existing_issues(api: Api, failures: dict[str, tuple[str, int]]) -> set[str]:
             continue
         body = issue.get("body") or ""
         for key, run_id in MARKER.findall(body):
-            if key in failures and (
-                issue["state"] == "open" or int(run_id) == failures[key][1]
-            ):
+            if key in failures and (issue["state"] == "open" or int(run_id) == failures[key][1]):
                 matched.add(key)
         title = TITLE.match(issue.get("title") or "")
         if title and issue["state"] == "open":
@@ -216,13 +208,8 @@ def report(api: Api, workflows: list[str]) -> int:
 
 
 def main() -> None:
-    if (
-        os.environ["GITHUB_REPOSITORY"] != REPO
-        or os.environ["GITHUB_REF"] != "refs/heads/main"
-    ):
-        raise SystemExit(
-            "Tooling issues require the default branch of the owning repository"
-        )
+    if os.environ["GITHUB_REPOSITORY"] != REPO or os.environ["GITHUB_REF"] != "refs/heads/main":
+        raise SystemExit("Tooling issues require the default branch of the owning repository")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     workflows = select_workflows(os.environ["GITHUB_EVENT_NAME"], event)
     print(f"Tooling maintenance issues opened: {report(github_api, workflows)}")

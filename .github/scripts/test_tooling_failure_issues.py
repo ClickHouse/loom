@@ -46,9 +46,7 @@ def fake_api(runs: list[dict], issues: list[dict] | None = None) -> Mock:
 class ToolingIssuesTests(unittest.TestCase):
     def test_workflow_run_requires_an_eligible_main_failure(self) -> None:
         event = {"workflow_run": run(2, event="schedule")}
-        self.assertEqual(
-            select_workflows("workflow_run", event), ["external-links.yml"]
-        )
+        self.assertEqual(select_workflows("workflow_run", event), ["external-links.yml"])
         for ignored in (
             run(2, repository="fork/loom"),
             run(2, branch="another"),
@@ -56,9 +54,7 @@ class ToolingIssuesTests(unittest.TestCase):
             run(2, conclusion="success"),
             {**run(2), "path": ".github/workflows/unlisted.yml"},
         ):
-            self.assertEqual(
-                select_workflows("workflow_run", {"workflow_run": ignored}), []
-            )
+            self.assertEqual(select_workflows("workflow_run", {"workflow_run": ignored}), [])
         self.assertEqual(select_workflows("pull_request", event), [])
 
     def test_does_not_create_an_issue_for_an_old_failure(self) -> None:
