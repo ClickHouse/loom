@@ -28,6 +28,8 @@ class ProjectInstructions(TestCase):
         self.assertIn("services, crates", actual.decode())
         self.assertEqual(instructions["applies_to"], "loom-enabled")
         self.assertIn("Use Loom to discover and read unchanged source", actual.decode())
+        self.assertIn("use Loom for each search or read", actual.decode())
+        self.assertIn("Reserve Bash grep, rg, sed, cat, find", actual.decode())
         self.assertIn("Use local tools for edits, tests, Git", actual.decode())
 
     def test_baseline_and_loom_use_their_frozen_images(self):
