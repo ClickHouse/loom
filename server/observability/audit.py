@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from server.core.ch import get_client
 from server.core.ch_writes import batched_insert_settings
 from server.core.hashing import sha256_value
+from server.core.repo_base import _CHClient
 from server.observability import pg_pipeline
 from server.observability.instance import stamp_row
 
@@ -118,9 +119,11 @@ async def emit_strict(
     request_id: str = "",
     ts: datetime | None = None,
     consumer: str | None = None,
+    ch: _CHClient | None = None,
 ) -> str:
     """`emit` that raises when the row is not written: for a record an op depends on (an
-    Undo's, which the conflict resolver reads; a restore's, which marks it done)."""
+    Undo's, which the conflict resolver reads; a restore's, which marks it done).
+    A point receipt uses its writer's selected client to reach the same store."""
     row = audit_row(
         event_type,
         org,
@@ -131,7 +134,7 @@ async def emit_strict(
         ts=ts,
         consumer=consumer,
     )
-    await get_client().insert("loom.audit_log", [row], settings=batched_insert_settings())
+    await (ch or get_client()).insert("loom.audit_log", [row], settings=batched_insert_settings())
     pg_pipeline.record_insert("audit_log", 1)
     return str(row["row_hash"])
 

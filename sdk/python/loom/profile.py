@@ -156,8 +156,10 @@ class ProfileClient:
         user_id: str | None = None,
         session_id: str | None = None,
     ) -> bool:
-        """Tombstone a profile section. Soft-delete via memory.delete;
-        restoreable via `memory.restore` within the grace window."""
+        """Tombstone a profile section and refuse its removed content.
+
+        `memory.restore` cannot republish explicitly deleted content.
+        """
         return await self._agent.memory.delete(
             memory_key=label,
             user_id=user_id,

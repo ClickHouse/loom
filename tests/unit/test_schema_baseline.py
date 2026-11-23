@@ -170,6 +170,7 @@ def test_the_journal_files() -> None:
         "112_code_repo_git_proxy_identity.sql",
         "113_oauth_verified_email.sql",
         "114_memory_proposal_review.sql",
+        "115_memory_refusals.sql",
     ]
 
 

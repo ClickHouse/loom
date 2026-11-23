@@ -30,6 +30,7 @@ from server.memory.app import write as write_mod
 from server.memory.domain.conflicts import ConflictResult
 from server.memory.domain.excerpt import EXCERPT_LIMIT
 from server.memory.store import MemoryRow
+from server.memory.store.rows import build_memory_version_row, identity_key
 from server.settings import settings
 
 
@@ -69,17 +70,24 @@ class _CH:
         self.query_all_sqls: list[str] = []
         self.routes = routes or []
         self.fail_inserts_into: tuple[str, ...] = ()
+        self.heads = {}
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         if table in self.fail_inserts_into:
             raise RuntimeError(f"insert into {table} unavailable")
         self.inserts.append((table, rows, settings or {}))
+        if table == "loom.memory":
+            self.heads.update({identity_key(row): dict(row) for row in rows})
 
     async def query_one(self, *_: Any, **__: Any) -> dict[str, Any] | None:
         return None
 
     async def query_all(self, sql: str, params: Any = None, **_: Any) -> list[dict[str, Any]]:
         self.query_all_sqls.append(sql)
+        if "FROM loom.memory_refusals" in sql:
+            return []
+        if "FROM loom.memory FINAL" in sql and "keys" in (params or {}):
+            return [self.heads[key] for key in params["keys"] if key in self.heads]
         for needle, result in self.routes:
             if needle in sql:
                 return result
@@ -463,6 +471,7 @@ async def test_memory_delete_tombstones_the_keys_chunks(monkeypatch: pytest.Monk
     async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
         return existing
 
+    ch.heads[identity_key(existing)] = build_memory_version_row(existing)
     monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
     out = await mem_handlers.handle_memory_delete(
         MemoryDeleteInput(org="test", namespace="ops-alerts", agent="sre", memory_key=_KEY)
@@ -507,6 +516,7 @@ async def test_memory_delete_of_an_episodic_row_reads_no_chunks(
     async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
         return existing
 
+    ch.heads[identity_key(existing)] = build_memory_version_row(existing)
     monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
     await mem_handlers.handle_memory_delete(
         MemoryDeleteInput(org="test", namespace="ops-alerts", agent="sre", memory_key=_KEY)
@@ -662,6 +672,7 @@ async def test_memory_delete_announces_its_tombstone_when_retiring_derived_rows_
     async def _retire(*_: Any, **__: Any) -> tuple[int, int]:
         raise RuntimeError("summary downgrade failed")
 
+    ch.heads[identity_key(existing)] = build_memory_version_row(existing)
     monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
     monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
     monkeypatch.setattr(mem_handlers, "_retire_derived", _retire)
@@ -752,7 +763,12 @@ async def test_a_writer_retires_only_its_own_and_legacy_chunks() -> None:
         ch=ch,
         embedder=_BatchEmbedder(),
     )
-    assert [p["uid"] for p in ch.params if "uid" in p] == ["u-7"]
+    chunk_params = [
+        params
+        for sql, params in zip(ch.query_all_sqls, ch.params, strict=True)
+        if "FROM loom.memory_chunks FINAL" in sql
+    ]
+    assert [params["uid"] for params in chunk_params] == ["u-7"]
 
 
 @pytest.mark.asyncio
@@ -785,6 +801,7 @@ async def test_memory_delete_retires_the_deleted_rows_users_chunks(
     async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
         return existing
 
+    ch.heads[identity_key(existing)] = build_memory_version_row(existing)
     monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
     await mem_handlers.handle_memory_delete(
         MemoryDeleteInput(
@@ -811,6 +828,9 @@ async def test_chunks_that_land_after_the_key_turned_high_are_tombstoned(
         return 1
 
     class _CH:
+        async def query_all(self, *args, **kwargs):
+            return []
+
         async def insert(self, *_a: Any, **_k: Any) -> None:
             return None
 
@@ -847,6 +867,9 @@ async def test_a_failed_head_read_retires_the_chunks_it_just_wrote(
         return 1
 
     class _CH:
+        async def query_all(self, *args, **kwargs):
+            return []
+
         async def insert(self, *_a: Any, **_k: Any) -> None:
             return None
 

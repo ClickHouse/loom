@@ -33,10 +33,12 @@ import uuid
 from datetime import timedelta
 from typing import Any, NamedTuple
 
+from server.core.ch import sequential_reads
 from server.core.ch_names import split_table
 from server.core.datetimes import UNIX_EPOCH
 from server.core.datetimes import utc_now as _now
-from server.core.errors import stored_caller_text
+from server.core.errors import ValidationError, stored_caller_text
+from server.core.hashing import sha256_text
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
     ReadFilters,
@@ -46,6 +48,7 @@ from server.identity.domain.read_scope import (
 )
 from server.llm import customer
 from server.memory.api.models_bulk import MemorySetFromMessagesInput
+from server.memory.domain.refusals import transcript_content
 from server.memory.store.rows import next_version
 from server.settings import settings
 
@@ -177,8 +180,90 @@ async def enqueue(
         "version": next_version(),
         "enqueued_by": str(json.loads(payload).get(ENQUEUED_BY_KEY) or ""),
     }
-    await ch.insert(TABLE, [row], settings=_SYNC)
+    await _insert_rows(ch, [row], skip_refused=False, create=True)
     return qid
+
+
+async def _insert_rows(
+    ch: Any, rows: list[dict[str, Any]], *, skip_refused: bool = True, create: bool = False
+) -> list[dict[str, Any]]:
+    """State transitions carry raw payloads, so they need intake admission too."""
+    from server.memory.store.refusals import content_policy_row, publication
+
+    written = []
+    for row in rows:
+        content = [*transcript_content(json.loads(row.get("payload") or "{}"))]
+        if row.get("last_error"):
+            content.append(row["last_error"])
+        try:
+            async with publication(ch, [content_policy_row(row, content)]):
+                if not create and not await _source_present(ch, row):
+                    continue
+                await ch.insert(TABLE, [row], settings=_SYNC)
+            written.append(row)
+        except ValidationError as error:
+            if not skip_refused or error.extra.get("reason") != "forgotten":
+                raise
+            await _drop_refused(ch, row)
+    return written
+
+
+class _QueueRevision(dict[str, Any]):
+    def __init__(self, values: dict[str, Any], source_version: int) -> None:
+        super().__init__(values)
+        self.source_version = source_version
+
+
+async def _source_present(ch: Any, row: dict[str, Any]) -> bool:
+    if not isinstance(row, _QueueRevision):
+        raise ValueError("A queue transition requires its exact source revision")
+    with sequential_reads():
+        found = await ch.query_all(
+            "SELECT 1 FROM loom.memory_extraction_queue FINAL "
+            "WHERE org={org:String} AND namespace={namespace:String} AND agent={agent:String} "
+            "AND user_id={user_id:String} AND session_id={session_id:String} "
+            "AND queue_id={queue_id:String} AND version={source_version:UInt64} "
+            "AND hex(SHA256(payload))={payload_sha:String} LIMIT 1",
+            params={
+                **{
+                    key: row[key]
+                    for key in (
+                        "org",
+                        "namespace",
+                        "agent",
+                        "user_id",
+                        "session_id",
+                        "queue_id",
+                    )
+                },
+                "source_version": row.source_version,
+                "payload_sha": sha256_text(str(row.get("payload") or "")).upper(),
+            },
+        )
+    return bool(found)
+
+
+async def _drop_refused(ch: Any, row: dict[str, Any]) -> None:
+    """End an existing refused job without copying any of its erased payload."""
+    if not isinstance(row, _QueueRevision):
+        raise ValueError("A refused transition requires its exact source revision")
+    await ch.execute(
+        "ALTER TABLE loom.memory_extraction_queue UPDATE status='failed', "
+        "last_error='dropped: refusal policy', lease_until=toDateTime64(0,3) "
+        "WHERE org={org:String} AND namespace={namespace:String} AND agent={agent:String} "
+        "AND user_id={user_id:String} AND session_id={session_id:String} "
+        "AND queue_id={queue_id:String} AND version={source_version:UInt64} "
+        "AND hex(SHA256(payload))={payload_sha:String} "
+        "AND status IN ('pending','running')",
+        params={
+            **{
+                key: row[key]
+                for key in ("org", "namespace", "agent", "user_id", "session_id", "queue_id")
+            },
+            "source_version": row.source_version,
+            "payload_sha": sha256_text(str(row.get("payload") or "")).upper(),
+        },
+    )
 
 
 def _mirror(row: dict[str, Any], **changes: Any) -> dict[str, Any]:
@@ -197,7 +282,7 @@ def _mirror(row: dict[str, Any], **changes: Any) -> dict[str, Any]:
     for c in ("last_error", "payload", "enqueued_by"):
         if out.get(c) is None:
             out[c] = ""
-    return out
+    return _QueueRevision(out, int(row["version"]))
 
 
 def backoff_s(attempts: int) -> int:
@@ -269,18 +354,15 @@ async def claim_batch(
     claimed = [
         _mirror(dict(r), status=STATUS_RUNNING, lease_until=lease, last_error="") for r in rows
     ]
-    await ch.insert(TABLE, claimed, settings=_SYNC)
-    return claimed
+    return await _insert_rows(ch, claimed)
 
 
 async def mark_done(row: dict[str, Any], *, written: int, ch: Any | None = None) -> None:
     from server.core.ch import get_client
 
     ch = ch or get_client()
-    await ch.insert(
-        TABLE,
-        [_mirror(row, status=STATUS_DONE, written=int(written), lease_until=UNIX_EPOCH)],
-        settings=_SYNC,
+    await _insert_rows(
+        ch, [_mirror(row, status=STATUS_DONE, written=int(written), lease_until=UNIX_EPOCH)]
     )
 
 
@@ -299,8 +381,8 @@ async def mark_error(
     ch = ch or get_client()
     attempts = int(row.get("attempts") or 0) + 1
     failed = attempts >= max(1, int(max_attempts))
-    await ch.insert(
-        TABLE,
+    await _insert_rows(
+        ch,
         [
             _mirror(
                 row,
@@ -312,7 +394,6 @@ async def mark_error(
                 else _now() + timedelta(seconds=backoff_s(attempts)),
             )
         ],
-        settings=_SYNC,
     )
     return STATUS_FAILED if failed else STATUS_PENDING
 
@@ -324,8 +405,8 @@ async def mark_unreachable(row: dict[str, Any], *, error: str, ch: Any | None = 
 
     ch = ch or get_client()
     wait = backoff_s(int(row.get("attempts") or 0) + 1)
-    await ch.insert(
-        TABLE,
+    await _insert_rows(
+        ch,
         [
             _mirror(
                 row,
@@ -334,7 +415,6 @@ async def mark_unreachable(row: dict[str, Any], *, error: str, ch: Any | None = 
                 lease_until=_now() + timedelta(seconds=wait),
             )
         ],
-        settings=_SYNC,
     )
 
 
@@ -348,8 +428,8 @@ async def mark_held(
     from server.core.ch import get_client
 
     ch = ch or get_client()
-    await ch.insert(
-        TABLE,
+    await _insert_rows(
+        ch,
         [
             _mirror(
                 row,
@@ -360,7 +440,6 @@ async def mark_held(
                 enqueued_by=str(row.get("enqueued_by") or "") or enqueued_actor(row),
             )
         ],
-        settings=_SYNC,
     )
 
 
@@ -423,13 +502,12 @@ async def drop_waiting(
         ch=ch,
     )
     why = f"{DROPPED_LABEL}model calls switched off, waited over {older_than_days} days"
-    await ch.insert(
-        TABLE,
+    await _insert_rows(
+        ch,
         [
             _mirror(dict(r), status=STATUS_FAILED, last_error=why, lease_until=UNIX_EPOCH)
             for r in rows
         ],
-        settings=_SYNC,
     )
     return len(rows)
 
@@ -482,8 +560,8 @@ async def drop_expiring(
     why = (
         f"{DROPPED_LABEL}still waiting after {_LAST_DAY} days, a day before the {TTL_DAYS}-day TTL"
     )
-    await ch.insert(
-        TABLE,
+    await _insert_rows(
+        ch,
         [
             _mirror(
                 dict(r),
@@ -493,7 +571,6 @@ async def drop_expiring(
             )
             for r in rows
         ],
-        settings=_SYNC,
     )
     return len(rows)
 

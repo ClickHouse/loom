@@ -56,7 +56,7 @@ async def _observer_principal(world, monkeypatch):
                 await client.connect()
                 assert await client.query_one("SELECT currentUser() AS user") == {"user": username}
                 writers = await event_cutover._writers(client)
-                async with client.policy_observers() as observers:
+                async with client.policy_observers(writers.servers) as observers:
                     assert {observer.server_uuid for observer in observers} == writers.servers
                     for observer in observers:
                         assert isinstance(await observer.policies(), list)
@@ -148,7 +148,8 @@ async def test_native_reprovisioning_accepts_installed_generated_event_policies(
         await analysis_store.write_entities(
             statements, names=boundary.SettingNames(prefix), ch=world.client
         )
-        async with world.client.policy_observers() as channels:
+        writers = await event_cutover._writers(world.client)
+        async with world.client.policy_observers(writers.servers) as channels:
             catalog = tuple(await channels[0].policies())
             installed = tuple(statement for statement in catalog if world.db in statement)
             assert len(installed) == 4
@@ -312,8 +313,8 @@ async def test_native_insert_with_old_metadata_drains_before_the_private_census(
             return query
 
         @asynccontextmanager
-        async def observers():
-            async with world.client.policy_observers() as channels:
+        async def observers(servers):
+            async with world.client.policy_observers(servers) as channels:
                 yield tuple(
                     SimpleNamespace(
                         server_uuid=channel.server_uuid,

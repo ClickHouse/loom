@@ -154,6 +154,9 @@ async def test_scip_tier_rewrites_moved_symbol_and_keeps_unmoved():
             "path": "src/x.cpp",
             "tier": "scip",
             "signature": "void a()",
+            "name": "a",
+            "decl_paths": [],
+            "doc_comment": "",
         },
         {
             "qualified_name": "DB::b",
@@ -164,6 +167,9 @@ async def test_scip_tier_rewrites_moved_symbol_and_keeps_unmoved():
             "path": "src/x.cpp",
             "tier": "scip",
             "signature": "void b()",
+            "name": "b",
+            "decl_paths": [],
+            "doc_comment": "",
         },  # stale: moved 25 -> 30
     ]
     repo = _Repo(symbols=live)

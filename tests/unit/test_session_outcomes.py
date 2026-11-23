@@ -15,6 +15,18 @@ import pytest
 from server.memory.app import session_outcomes as so
 from server.memory.store.session_outcomes import OUTCOMES_TABLE
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
+
+@pytest.fixture
+def qualified_sessions(monkeypatch):
+    """Outcome policy cases start after source proof, tested separately below."""
+
+    async def qualified(ch, rows):
+        return rows
+
+    monkeypatch.setattr("server.memory.store.summary_sources.verified_summary_batch", qualified)
+
 
 class FakeCH:
     def __init__(self) -> None:
@@ -140,6 +152,7 @@ def test_build_outcome_row_validates_and_stamps_a_version() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("qualified_sessions")
 async def test_label_sessions_judges_unlabelled_summaries_and_isolates_failures() -> None:
     ch = FakeCH()
     ch.all_returns.append(
@@ -237,6 +250,7 @@ def _neg(sid="bad", conf=0.9):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("qualified_sessions")
 async def test_distil_pairs_a_failed_session_with_its_nearest_success_and_writes_one_reflection() -> (
     None
 ):
@@ -295,9 +309,10 @@ async def test_distil_pairs_a_failed_session_with_its_nearest_success_and_writes
     assert "s.user_id = {uid:String}" in sql and params["uid"] == "u"
     assert "o.agent = s.agent" in sql and "o.user_id = s.user_id" in sql
     assert params["q"] == [0.1, 0.2, 0.3]
-    # the contrast prompt carried both digests and the judged reason
+    # The contrast prompt carries proven digests; an unproven judged reason stays out.
     system, user = llm.calls[0]
-    assert "Never ran the tests." in user and "ran the suite" in user and "declared done" in user
+    assert "Never ran the tests." not in user
+    assert "ran the suite" in user and "declared done" in user
     w = written[0]
     assert (w["neg_session"], w["pos_session"]) == ("bad", "good")
     assert w["lessons"] == ["Run the test suite before declaring a parser change done."]
@@ -307,6 +322,7 @@ async def test_distil_pairs_a_failed_session_with_its_nearest_success_and_writes
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("qualified_sessions")
 async def test_distil_skips_when_no_neighbour_is_close_enough_or_nothing_was_learned() -> None:
     ch = FakeCH()
     ch.all_returns.append([_neg("a"), _neg("b"), _neg("c")])
@@ -497,3 +513,19 @@ def test_user_erasure_deletes_the_users_session_outcomes(monkeypatch) -> None:
         dict(saga_steps.USER_STEPS)["session_outcomes.delete"]
         is memory_steps.delete_session_outcomes_by_user
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("contrast", [False, True])
+async def test_an_unproven_session_never_reaches_judgement_or_contrast(contrast):
+    ch = FakeCH()
+    ch.all_returns.append([_neg()])
+    llm = FakeLLM(["{}"])
+    result = so.DistillResult()
+    if contrast:
+        await so.distil_contrasts(ch, llm, so.DistillConfig(), result)
+        assert result.contrast_candidates == 0
+    else:
+        await so.label_sessions(ch, llm, so.DistillConfig(), result)
+        assert result.sessions_scanned == 0
+    assert llm.calls == [] and ch.inserted == []

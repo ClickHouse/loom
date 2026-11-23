@@ -1,0 +1,23 @@
+[Unit]
+Description=Check and repair the Cell nightly acceptance result
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/loom-cell-nightly-agent
+ExecStart=/usr/bin/python3 %h/loom-cell-nightly-agent/monitor.py
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=TMPDIR=%t/loom-cell-nightly-agent
+RuntimeDirectory=loom-cell-nightly-agent
+RuntimeDirectoryMode=0700
+TimeoutStartSec=60min
+TimeoutStopSec=30s
+KillMode=control-group
+Delegate=yes
+MemoryMax=1536M
+TasksMax=128
+UMask=0077
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal

@@ -52,6 +52,7 @@ from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.value_shape import value_shape_advisories
 from server.memory.store import key_write_lock, pg_memory
+from server.memory.store.lifecycle import finish_followups
 from server.memory.store.pg_memory import AdmissionContendedError, HeadMoved
 from server.memory.store.rows import next_version, version_over
 from server.settings import settings
@@ -784,7 +785,11 @@ async def _memory_set_once(input: MemorySetInput, *, embedder: Any = None) -> Me
         peers_out = []  # a conflict the mark found no live peer for: none to resolve
 
     return await finished(
-        w, _set_after_write(w, ch, _cfg, conflict_result, duplicate_of_id, peers_out)
+        w,
+        finish_followups(
+            _set_after_write(w, ch, _cfg, conflict_result, duplicate_of_id, peers_out),
+            name="memory.set.after_write",
+        ),
     )
 
 

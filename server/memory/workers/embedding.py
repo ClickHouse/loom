@@ -289,13 +289,19 @@ async def _stubs_still_served(
     rows: list[dict[str, Any]], stub_embedding: list[float], now: datetime
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """The stubs whose head may still keep a vector, and tombstones (two above the
-    stub, its excerpt cleared) for the rest. Shared-scope stubs have no head of
-    their own and are kept."""
+    stub, its excerpt cleared) for the rest. Shared stubs require their promoted
+    source proof before any provider work; an unbacked cache row is withheld."""
+    from server.core.ch import get_client
     from server.memory.store import read_your_writes_enabled
+    from server.memory.store.shared import shared_embedding_source
 
+    shared = {
+        id(row)
+        for row in rows
+        if row.get("scope") == "shared"
+        and await shared_embedding_source(row, ch=get_client()) is not None
+    }
     own = [r for r in rows if str(r.get("scope") or "") != "shared"]
-    if not own:
-        return rows, []
     sequential = read_your_writes_enabled()
     heads = await memory_repo.head_sensitivities(
         sorted({memory_repo.identity_key(r) for r in own}), sequential=sequential
@@ -303,7 +309,7 @@ async def _stubs_still_served(
 
     def served(r: dict[str, Any]) -> bool:
         if str(r.get("scope") or "") == "shared":
-            return True
+            return id(r) in shared
         head = heads.get(memory_repo.identity_key(r))
         return head != "high" and (head is not None or not sequential)
 
@@ -317,7 +323,7 @@ async def _stubs_still_served(
             embedding=stub_embedding,
             tombstoned_at=now,
         )
-        for r in rows
+        for r in own
         if not served(r)
     ]
     return keep, dropped
@@ -407,6 +413,29 @@ def _outcome(result: EmbeddingWorkerResult, *, idle: bool, rows_written: int) ->
     }
 
 
+def _record_fill_outcomes(
+    replacements: list[dict[str, Any]], retries: list[dict[str, Any]], result: EmbeddingWorkerResult
+) -> None:
+    result.embedded = [
+        {"namespace": row["namespace"], "memory_key": row["memory_key"]}
+        for row in replacements
+        if row.get("tombstoned_at") is None and row.get("embedding_dim", 0) > 0
+    ]
+    result.failed, result.poisoned = [], []
+    for row in retries:
+        if row.get("embed_last_error") == HELD:
+            continue
+        target = result.poisoned if row.get("embed_failed_at") is not None else result.failed
+        target.append(
+            {
+                "namespace": row["namespace"],
+                "memory_key": row["memory_key"],
+                "attempts": row.get("embed_attempts", 0),
+                "error": row.get("embed_last_error", ""),
+            }
+        )
+
+
 async def run_pass(
     cfg: EmbeddingWorkerConfig | None = None,
 ) -> EmbeddingWorkerResult:
@@ -448,7 +477,7 @@ async def run_pass(
                 since_seconds=_orphan_scan_window(),
             )
             if orphans:
-                await memory_repo.insert_embedding_rows(
+                reconciled = await memory_repo.insert_embedding_rows(
                     [
                         memory_repo.build_embedding_row(
                             **{k: v for k, v in o.items() if k != "created_at"},
@@ -465,12 +494,12 @@ async def run_pass(
                     ]
                 )
                 result.reconciled = [
-                    {"namespace": o["namespace"], "memory_key": o["memory_key"]} for o in orphans
+                    {"namespace": o["namespace"], "memory_key": o["memory_key"]} for o in reconciled
                 ]
                 log.warning(
                     "embedding worker: reconciled %d memories that had NO embedding "
                     "row (unsearchable until now)",
-                    len(orphans),
+                    len(reconciled),
                 )
         except Exception as e:  # noqa: BLE001 — repair is additive; never break the pass
             # The pass goes on, the supervisor hears about it.
@@ -493,7 +522,7 @@ async def run_pass(
         # to the embedding provider: its excerpt may hold the high text. It is retired.
         rows, dropped = await _stubs_still_served(rows, stub_embedding, now)
         if dropped:
-            await memory_repo.insert_embedding_rows(dropped)
+            dropped = await memory_repo.insert_embedding_rows(dropped)
         writers = await memory_writers(rows) if rows and identity.reads_writer() else {}
         if rows:
             embedded = await _embed_rows(embedder, rows, writers)
@@ -552,31 +581,18 @@ async def run_pass(
                     )
                     continue
                 replacements.extend(_replacement_rows(r, vec, embedder, stub_embedding, now))
-                result.embedded.append(
-                    {
-                        "namespace": r["namespace"],
-                        "memory_key": r["memory_key"],
-                    }
-                )
-            # Entities can advance between the stub read and this insert
-            # (the entity extractor's apply_entities_batch re-emits version rows);
-            # a re-emit built from the stale snapshot would resurrect the
-            # old list under FINAL.
-            # Re-read at insert time to shrink that window from
-            # minutes (embed round-trips) to milliseconds.
+            # Refresh mutable facets, then report only acknowledged publications.
             await _refresh_entities(replacements + retries)
-            await memory_repo.insert_embedding_rows(replacements)
-            # A stub drawn from a read before a 'high' write landed can sit above
-            # its fence: the fill re-checks its heads like every vector copy.
+            replacements = await memory_repo.insert_embedding_rows(replacements)
             await memory_repo.retire_copies_under_unembedded_heads(replacements)
-            # A fill sits at its stub's version + 1, usually far under the BM25 watermark.
             await memory_repo.index_late_rows(replacements)
-            await memory_repo.insert_embedding_rows(retries)
+            retries = await memory_repo.insert_embedding_rows(retries)
+            _record_fill_outcomes(replacements, retries, result)
 
         rec.outcome = _outcome(
             result,
             idle=not rows and not result.reconciled,
-            rows_written=len(replacements) + len(retries) + len(result.reconciled),
+            rows_written=len(replacements) + len(retries) + len(result.reconciled) + len(dropped),
         )
 
     log.info(

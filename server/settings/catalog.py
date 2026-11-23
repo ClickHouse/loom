@@ -674,8 +674,8 @@ class ClickHouseSettings(BaseModel):
     ch_cluster: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]*$")] = "default"
     # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
     ch_secure: bool | None = None
-    # Additional trusted writer HTTP origins for analyst setup policy observations.
-    # Uses the configured service credentials; missing or duplicate writers refuse.
+    # Extra trusted HTTP origins if the service endpoint cannot reach every writer.
+    # Analyst setup discovers checked replica sessions with the service credentials.
     ch_analysis_observer_urls: list[str] = Field(default_factory=list, max_length=32)
     # Append `sql:<shape12> <first 200 chars>` of each statement to its
     # `log_comment` ("<op> <request_id>"), so query_log rows group by shape.
@@ -880,8 +880,8 @@ class CodeSettings(BaseModel):
     code_test_gate_run_templates: Annotated[str, JsonArray] = ""
 
     # Retrieval context (tokens) code.ask hands to synthesis when the caller
-    # passes no token_budget.
-    code_ask_token_budget: int = 4000
+    # passes no token_budget; 0 means unlimited.
+    code_ask_token_budget: int = Field(default=0, ge=0)
     # The code.ask answer cache's hit cosine. 0 = the per-embedding-model table
     # in code/app/answers_entry.py; a value in (0, 1] pins one threshold for
     # every model.
@@ -922,9 +922,9 @@ class CodeSettings(BaseModel):
     # Whether the code ops that return files carry `lessons`, the readable memories about
     # their top files.
     code_result_lessons: Annotated[bool, LIVE] = True
-    # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at
-    # 4 characters a token.
-    code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=250, ge=50, le=2000)
+    # Estimated-token cap on file or symbol `lessons`, counted on serialized rows at
+    # 4 characters a token; 0 means unlimited. Rows are whole or left out.
+    code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=0, ge=0)
     # How many of an answer's files, in rank order, its `lessons` are read for.
     code_result_lessons_paths: Annotated[int, LIVE] = Field(default=3, ge=1, le=10)
     # --- repository access ---
@@ -1657,6 +1657,9 @@ class CodeSettings(BaseModel):
     # code.search `bodies` when the request omits it: "auto" fills bodies into
     # the budget; "none" serves handles only.
     code_search_bodies_default: Literal["auto", "none"] = "auto"
+    # code.search response budget in tokens when the request omits token_budget;
+    # 0 = unlimited. An explicit request budget overrides this default.
+    code_search_token_budget: int = Field(default=0, ge=0)
     # Memoise served code.search responses per (org, namespace, request shape)
     # in loom.code_search_memo and replay within the TTL (route "+memo");
     # `fresh=true` bypasses it.
@@ -1980,8 +1983,8 @@ class CodeSettings(BaseModel):
     code_review_brief_rationale_paths: Annotated[int, LIVE] = Field(default=10, ge=1, le=50)
     # Decision and constraint rows the `rationale` section serves.
     code_review_brief_rationale_rows: Annotated[int, LIVE] = Field(default=8, ge=1, le=50)
-    # The `rationale` section's own token budget; its first row is served even past it.
-    code_review_brief_rationale_tokens: Annotated[int, LIVE] = Field(default=250, ge=50)
+    # The `rationale` section's own token budget; 0 means unlimited.
+    code_review_brief_rationale_tokens: Annotated[int, LIVE] = Field(default=0, ge=0)
 
 
 # ===== Context ================================================================
@@ -2684,9 +2687,9 @@ class McpSettings(BaseModel):
     # "full" (+ outputSchema) or "compact" (first paragraph, argument tree).
     # Per request: `?schema_profile=`.
     mcp_schema_profile: Annotated[Literal["standard", "full", "compact"], CaseFolded] = "standard"
-    # Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad.
-    # Empty leaves loading to the host; set names to keep selected tools upfront.
-    mcp_always_load_tools: str = ""
+    # "auto" selects upfront tools by toolset. A comma-separated list overrides it;
+    # empty leaves loading to the host.
+    mcp_always_load_tools: str = "auto"
     # Seconds without a tool call after which the mcp_session_run_sweep worker
     # closes an MCP session's implicit run (one per token and `Mcp-Session-Id`,
     # begun on the first run-scoped tool call); with no background workers
@@ -2780,9 +2783,13 @@ class MemorySettings(BaseModel):
     # memory.list rows per call for a token below writer on the namespace; it
     # pages with `offset` (wire cap stays 1000). 0 = no viewer cap.
     memory_list_viewer_limit: int = 100
-    # Transcript characters the session-digest call reads (~4 chars a token);
-    # 0 = the built-in 3000.
+    # Characters of complete source facts included in an extractive session digest;
+    # 0 = the built-in 3000. Facts are never clipped to fit.
     memory_session_digest_max_input_chars: int = 3000
+    # Raw digest candidates per query while filling listing, outline and export rows.
+    memory_digest_listing_page_size: int = Field(default=256, ge=1, le=2000)
+    # Queries allowed to find enough proven digests; exhaustion answers BACKEND_UNAVAILABLE.
+    memory_digest_listing_max_pages: int = Field(default=256, ge=1)
     # content_excerpt ceiling for answer-bearing facts (question_topic set)
     # when memory_capture_structured_answers is on, so an enumerated answer
     # is not clipped mid-list; every other fact keeps EXCERPT_LIMIT (1,200 chars).
@@ -3511,12 +3518,10 @@ class MemoryAskSettings(BaseModel):
     # question's own grounding rows. 0 = off.
     memory_ask_code_hop_symbols: Annotated[int, LIVE] = 4
     # Token budget of the code.symbol read that grounds a code-entity question in the
-    # code plane.
-    memory_ask_code_symbol_token_budget: Annotated[int, LIVE] = Field(default=400, ge=200, le=12000)
-    # Token budget of the code.search read that grounds a code-entity question.
-    memory_ask_code_search_token_budget: Annotated[int, LIVE] = Field(
-        default=1400, ge=200, le=12000
-    )
+    # code plane; 0 means unlimited.
+    memory_ask_code_symbol_token_budget: Annotated[int, LIVE] = Field(default=0, ge=0)
+    # Token budget of the grounding code.search read; 0 means unlimited.
+    memory_ask_code_search_token_budget: Annotated[int, LIVE] = Field(default=0, ge=0)
 
     # For each PR the query or grounding references, inject its authoritative
     # code_pr_history record (author, merged_at, title) as a high-trust grounding fact; the
@@ -4094,7 +4099,7 @@ class ModelSettings(BaseModel):
     # --- defaults ---------------------------------------------------------------
     # The deployment's LLM: memory extraction, rerank and every job whose own model
     # setting (the other *_model settings) is left "". Empty takes the resolved
-    # provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1).
+    # provider's default model (gpt-6-luna / claude-sonnet-5-5 / qwen2.5:3b / fake-echo-1).
     llm_model: str = ""
     # The assistant agent's model, which Loom writes into the agent definition at boot.
     # "" = the definition's own (integrations/librechat/agent.yaml), not llm_model.
@@ -4114,6 +4119,9 @@ class ModelSettings(BaseModel):
     # Where `local` models live (relative: under the working directory), one directory per
     # alias and revision; a missing file is fetched there. The image sets it by env.
     local_embedding_model_dir: str = "var/models"
+    # Texts per local ONNX inference batch; smaller values reduce peak memory.
+    # Every input is still embedded, in order; this does not limit input count or length.
+    local_embedding_batch_size: int = Field(default=16, ge=1)
 
     # --- memory -----------------------------------------------------------------
     # memory.ask synthesis (the strong tier when the cascade is on).
@@ -4443,7 +4451,7 @@ class ObservabilitySettings(BaseModel):
     # "off" records none (the default; consent is given, not withdrawn); "query" only
     # the legs whose prompt is the user's own search text (hyde, query_rewrite,
     # enrichment, …); "all" also the legs carrying retrieved memories or conversation
-    # turns (inline_rerank, iterative_judge, extract, session_summary, …).
+    # turns (inline_rerank, iterative_judge, extract, …).
     # A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒
     # all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token
     # counts, cost, latency and quality scores are never gated.
@@ -6793,8 +6801,6 @@ LLM_MAX_TOKENS: dict[str, int] = {
     # session.brief: one window's revision (about 600-1,500 tokens); a cut-off answer is
     # salvaged key by key.
     "session_brief_revision": 3000,
-    # The session summary: one to three dated sentences.
-    "session_summary": 160,
     # memory.ask: the judge of an answer against its evidence.
     "ask_consistency": 200,
     # memory.ask: the split of a question into sub-questions.

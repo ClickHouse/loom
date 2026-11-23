@@ -1188,12 +1188,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "conversation.delete": (
         "Soft-delete (tombstone) one conversation thread. Only call on explicit delete request."
     ),
-    # ---- Context pack (the first step of each task) ----
+    # ---- Context pack ----
     "context.pack": (
-        "A task's memories, decisions and procedures: call it first in each task, unless "
-        f"{FIRST_STEP_HOOK}. Pass the task as `query`; working memory and the profile come "
-        "too, `include_knowledge` / `include_conversations` add docs and chats. "
-        "`include_runs=true` adds a manifest of your recent sessions and runs "
+        "Task context: call first with a default memory namespace, unless "
+        f"{FIRST_STEP_HOOK}. Pass the task as `query` for memories, decisions, procedures, "
+        "working memory and the profile; `include_knowledge` / `include_conversations` "
+        "add docs and chats. "
+        "`include_runs=true` lists recent sessions and runs "
         "(goal, outcome, tool calls, files) — shortlist there "
         "before opening one with memory.evidence or memory.digests. For one "
         "fact, prefer loom_search; for activation only, "
@@ -1357,30 +1358,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "per-frame grep-and-open loop."
     ),
     "code.grep": (
-        "Exact literal or regex search over the indexed corpus — the "
-        "inside-loom answer to 'grep for this string'. Each hit arrives "
-        "with its ENCLOSING SYMBOL and that unit's scope_start_line / "
-        "scope_end_line (grep gives you a bare line), in one round-trip — "
-        "and the repo's thousands of unindexed .reference fixture files "
-        "never pollute the results. neighbours: true adds each enclosing "
-        "function's callers, callees, tests and citing docs in the same call. "
-        "Literal by default; set "
-        "regex: true for RE2. A regex-shaped literal (`a|b`, `foo\\(`) that "
-        "matches nothing is run once as a regex and `note` says so. For a "
-        "PRINTED error or log message, set mode: 'message' — the rendered "
-        "text finds the statement whose template printed it (`verdict` "
-        "raised_at, `template` with `{}` for the arguments, the ErrorCodes "
-        "name for a `Code: N` prefix); a code line sent there is grepped as a "
-        "literal (`fallback: literal`). deadline_ms returns the hits found "
-        "in that budget (`partial: true`) instead of timing out. "
-        "mode: 'presence' with namespaces: "
-        "[...] (up to 8 release-branch indexes) answers 'which branches "
-        "contain this string' in ONE call: per namespace present / absent / "
-        "unknown with files_total and the first matching file, plus a "
-        "summary — instead of one grep per branch. To find a FILE by name (a "
-        "test number, a glob) use code.files — grep "
-        "matches content, not paths. For your UNCOMMITTED working tree, "
-        "still use shell grep — this index only knows merged code."
+        "Find text in indexed source, with lines and enclosing symbols. "
+        "`pattern` is a string or list of literal alternatives. `regex: true` uses one RE2 string. "
+        "Scope with `path_prefix`, `path_globs` or `langs`. `include_body` adds definitions. "
+        "`neighbours` adds callers, callees, tests and docs. "
+        "A regex-shaped string with no literal hit may be retried as regex and disclosed. "
+        "`mode: 'message'` finds error or log templates, with a literal fallback. "
+        "`mode: 'presence'` checks branches via `namespaces`. "
+        "`deadline_ms` allows partial results. Check coverage before inferring absence. "
+        "Use code.files for paths and local tools for uncommitted source."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
@@ -1415,25 +1401,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "reported, not flagged."
     ),
     "code.search": (
-        "Search the shared code index of this repository (fresh to the last "
-        "merged PR). Use when grep has no name to look for or misses: "
-        "CONCEPTUAL lookups — 'quota enforcement', 'backpressure handling'; "
-        "a name you already know is cheaper to grep. For a full QUESTION you "
-        "want ANSWERED, prefer code.ask (grounded answer with citations, "
-        "often served instantly from the shared cache). Results: ranked "
-        "file:line pointers with descriptions, bodies where the budget allows. "
-        "Arbitration: for a DEFINITION or 'what calls X', "
-        "prefer code.symbol / code.callers (exact, "
-        "compiler-grade). For exact strings, error messages verbatim, or "
-        "anything in your UNCOMMITTED working tree, use grep — this index "
-        "only knows merged code. When the response says abstain: true, "
-        "trust it: grep beats a plausible wrong snippet. Set expand: true "
-        "to bridge natural-language wording to codebase identifiers (one "
-        "extra LLM hop, better recall on vocabulary mismatches). Set "
-        "namespaces: [...] to search several indexed repositories at once "
-        "(ranks interleaved, one budget; each hit says its namespace). "
-        "deadline_ms returns the best page found in that budget "
-        "(`partial: true`, `partial_reason`) instead of timing out."
+        "Find implementations by question, behavior or identifier using `query`. "
+        "Returns indexed source, file:line spans and linked project decisions and lessons. "
+        "Use returned evidence before reading more files. For a definition use "
+        "code.symbol, for callers use code.callers, and for exact text use code.grep. "
+        "Use local tools on request, for uncommitted or unindexed code, or if the index "
+        "is unavailable or abstains. For synthesized answers use code.ask. "
+        "`expand: true` adds a model call for vocabulary. `namespaces` searches indexes. "
+        "`deadline_ms` can return a partial page."
     ),
     "code.ask": (
         "Ask a QUESTION about this codebase and get a grounded answer with "
@@ -1872,9 +1847,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     # Every listed tool says what it does — the bare "Loom operation `x`
     # (p99 …)" fallback tells a model nothing.
     "code.enclosing": (
-        "Batched `path:line` -> what encloses each line: the function "
-        "(else class) in code; the heading's section in a document; the "
-        "block in a config file. One call for many grep hits."
+        "Resolve path:line locations together: enclosing functions, types, "
+        "document sections or config blocks. include_body: true returns "
+        "complete source when available. Use after code.grep to read several definitions "
+        "in one call instead of separate code.symbol lookups."
     ),
     "namespace.guide_get": (
         "The namespace's guide: Markdown its writers keep on what it holds, its key "
@@ -2211,10 +2187,27 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-# Descriptions for the coding toolset (a trimmed roster). The tier shares
-# TOOL_DESCRIPTIONS; memory.set's text is the core text with the chat-only sentences
-# removed. Derived, not copied, so the prose cannot drift from the core tier.
+# Coding descriptions focus on implementation tasks. Shared policies below are
+# derived from core text so revision and memory guidance stay consistent.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "code.symbol": (
+        "Read a named definition or path:line, with retained source and linked "
+        "project lessons. Pass `name` or `symbol_id`; code.search finds unknown "
+        "implementations. For several known locations, use "
+        "code.enclosing with locations [...] and include_body=true. "
+        "`uses_brief: true` adds a compact caller summary for one resolved definition; "
+        "code.callers reads a larger graph. `uses: true` adds the full mention list. "
+        "`near_paths` or `pr_number` rank ambiguous definitions. Check freshness and "
+        "elision disclosures; use local tools for changed or unindexed code."
+    ),
+    "code.grep": (
+        "Find text in indexed source, with lines and enclosing symbols. "
+        'Pass a `pattern` string or a list of literals like ["parse(", "load("]. '
+        "`regex: true` uses one RE2 string. For behavior use code.search. "
+        "Scope with `path_prefix`, `path_globs` or `langs`. "
+        "`include_body` returns distinct enclosing definitions. "
+        "`definitions_partial` flags missing source. Check coverage before inferring absence."
+    ),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.
     "code.impact": (

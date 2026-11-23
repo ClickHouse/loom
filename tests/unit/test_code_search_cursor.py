@@ -293,21 +293,44 @@ def test_last_page_has_no_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not out.has_more and out.next_cursor == "" and "page_stale" not in out.as_of
 
 
-def test_page_plan_is_route_aware_and_honours_an_explicit_budget() -> None:
-    assert shared.page_plan(_inp(query="MergeTreeData::loadDataParts")).token_budget == 1200
-    assert shared.page_plan(_inp()).token_budget == 3000
+@pytest.mark.parametrize("budget,top_k", [(300, 5), (500, 10)])
+@pytest.mark.parametrize("use_default", [False, True])
+def test_small_page_budget_keeps_results_before_optional_annotations(
+    monkeypatch: pytest.MonkeyPatch, budget: int, top_k: int, use_default: bool
+) -> None:
+    monkeypatch.setattr(settings, "code_risk_annotations", True)
+    monkeypatch.setattr(settings, "code_search_token_budget", budget if use_default else 0)
+    inp = _inp(top_k=top_k, token_budget=None if use_default else budget)
+    cursor = paging.encode(kind="s", run_id="r", offset=1, params=_ph(inp), indexed_commit="")
+    row = {"payload": _payload(12), "indexed_commit": "", "created_at": None}
+    _drive(monkeypatch, inp, row)
+    out = asyncio.run(h.handle_code_search(inp.model_copy(update={"cursor": cursor})))
+    assert out.results and not out.abstain
+    assert out.tokens_returned <= budget
+
+
+@pytest.mark.parametrize("default", [0, 2400])
+def test_page_plan_uses_the_deployment_budget_and_honours_the_request(
+    monkeypatch: pytest.MonkeyPatch, default: int
+) -> None:
+    monkeypatch.setattr(settings, "code_search_token_budget", default)
+    assert shared.page_plan(_inp(query="MergeTreeData::loadDataParts")).token_budget == default
+    assert shared.page_plan(_inp()).token_budget == default
     assert shared.page_plan(_inp(query="MergeTreeData::loadDataParts", token_budget=500)) == (
         shared.PagePlan(token_budget=500, bodies="auto", annotate=False, reserve=0)
     )
+    assert shared.page_plan(_inp(token_budget=0)).token_budget == 0
+    assert shared.page_plan(_inp(token_budget=20000)).token_budget == 20000
 
 
+@pytest.mark.parametrize("default", [0, 1400])
 def test_page_two_of_a_symbol_query_is_budgeted_as_page_one(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, default: int
 ) -> None:
-    """A symbol-shaped query that fell through to hybrid was budgeted at 1200 on page 1;
-    its continuation page fills bodies under the same budget."""
+    """A continuation uses the same deployment budget as the first page."""
     from server.code.domain import units as units_mod
 
+    monkeypatch.setattr(settings, "code_search_token_budget", default)
     inp = _inp(query="MergeTreeData::loadDataParts", top_k=2)
     cursor = paging.encode(kind="s", run_id="run1", offset=2, params=_ph(inp), indexed_commit="")
     row = {"payload": _payload(6), "indexed_commit": "", "created_at": None}
@@ -321,7 +344,7 @@ def test_page_two_of_a_symbol_query_is_budgeted_as_page_one(
 
     monkeypatch.setattr(units_mod, "budget_units", spy)
     asyncio.run(h.handle_code_search(inp.model_copy(update={"cursor": cursor})))
-    assert budgets == [shared.page_plan(inp).token_budget] == [1200]
+    assert budgets == [shared.page_plan(inp).token_budget] == [default]
 
 
 def test_cursor_for_another_query_is_a_400(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -339,10 +362,12 @@ def test_cursor_for_another_query_is_a_400(monkeypatch: pytest.MonkeyPatch) -> N
         asyncio.run(h.handle_code_search(inp))
 
 
+@pytest.mark.parametrize("budget", [None, 0, 3000, 20000])
 def test_missing_pool_row_falls_back_to_a_disclosed_research(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, budget: int | None
 ) -> None:
-    inp = _inp(top_k=2)
+    monkeypatch.setattr(settings, "code_search_token_budget", 0)
+    inp = _inp(top_k=2, token_budget=budget)
     ph = paging.params_hash(inp, rerank="", embedding_model="m")
     cursor = paging.encode(kind="s", run_id="gone", offset=2, params=ph, indexed_commit="")
     _drive(monkeypatch, inp, None)
@@ -352,7 +377,10 @@ def test_missing_pool_row_falls_back_to_a_disclosed_research(
         from server.code.api.models_search import CodeSearchOutput
 
         seen.append(fresh_inp)
-        units = [CodeUnit(unit_id=f"c{i}", path="p", score=1.0, body="b") for i in range(4)]
+        units = [
+            CodeUnit(unit_id=f"c{i}", path="p", score=1.0, body="b" * (10000 if i >= 2 else 1))
+            for i in range(4)
+        ]
         return CodeSearchOutput(
             results=units,
             route="hybrid",
@@ -368,8 +396,12 @@ def test_missing_pool_row_falls_back_to_a_disclosed_research(
         )
     )
     assert seen[0].cursor == "" and seen[0].top_k == 4 and seen[0].fresh is True
-    assert seen[0].token_budget == 6000  # scaled with the depth
+    assert seen[0].token_budget == (budget or 0) * 2  # scaled with the depth
     assert [u.unit_id for u in out.results] == ["c2", "c3"]
+    if budget:
+        assert out.tokens_returned <= budget
+    else:
+        assert all(u.body and not u.elided for u in out.results)
     assert out.route == "hybrid+page_fallback"
     assert out.as_of["page_fallback"] == "pool_not_found" and out.as_of["page_offset"] == 2
     assert out.next_cursor == "n"
@@ -533,7 +565,10 @@ def test_grep_cursor_for_another_pattern_is_a_400(monkeypatch: pytest.MonkeyPatc
         asyncio.run(grep.handle_code_grep(CodeGrepInput(pattern="needle", cursor=c)))
 
 
-@pytest.mark.parametrize("line_mapping", [None, 0, 2])
+@pytest.mark.parametrize(
+    "line_mapping",
+    [None, 0, grep._GREP_LINE_MAPPING_VERSION - 1, grep._GREP_LINE_MAPPING_VERSION + 1],
+)
 def test_grep_reruns_pools_without_the_current_source_mapping(
     monkeypatch: pytest.MonkeyPatch,
     line_mapping: int | None,

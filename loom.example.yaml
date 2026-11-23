@@ -61,8 +61,9 @@ settings:
   # [restart]
   # ch_secure: null
 
-  # Additional trusted writer HTTP origins for analyst setup policy observations. Uses
-  # the configured service credentials; missing or duplicate writers refuse. [restart]
+  # Extra trusted HTTP origins if the service endpoint cannot reach every writer.
+  # Analyst setup discovers checked replica sessions with the service credentials.
+  # [restart]
   # ch_analysis_observer_urls: []
 
   # Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment`
@@ -267,7 +268,7 @@ settings:
 
   # The deployment's LLM: memory extraction, rerank and every job whose own model
   # setting (the other *_model settings) is left "". Empty takes the resolved provider's
-  # default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1). [restart]
+  # default model (gpt-6-luna / claude-sonnet-5-5 / qwen2.5:3b / fake-echo-1). [restart]
   # llm_model: ""
 
   # The assistant agent's model, which Loom writes into the agent definition at boot. ""
@@ -294,6 +295,10 @@ settings:
   # alias and revision; a missing file is fetched there. The image sets it by env.
   # [restart]
   # local_embedding_model_dir: "var/models"
+
+  # Texts per local ONNX inference batch; smaller values reduce peak memory. Every input
+  # is still embedded, in order; this does not limit input count or length. [restart]
+  # local_embedding_batch_size: 16
 
   # --- memory ---
 
@@ -982,8 +987,8 @@ settings:
   # code_test_gate_run_templates: ""
 
   # Retrieval context (tokens) code.ask hands to synthesis when the caller passes no
-  # token_budget. [restart]
-  # code_ask_token_budget: 4000
+  # token_budget; 0 means unlimited. [restart]
+  # code_ask_token_budget: 0
 
   # The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in
   # code/app/answers_entry.py; a value in (0, 1] pins one threshold for every model.
@@ -1037,9 +1042,9 @@ settings:
   # their top files. [live]
   # code_result_lessons: true
 
-  # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4
-  # characters a token. [live]
-  # code_result_lessons_tokens: 250
+  # Estimated-token cap on file or symbol `lessons`, counted on serialized rows at 4
+  # characters a token; 0 means unlimited. Rows are whole or left out. [live]
+  # code_result_lessons_tokens: 0
 
   # How many of an answer's files, in rank order, its `lessons` are read for. [live]
   # code_result_lessons_paths: 3
@@ -1971,6 +1976,10 @@ settings:
   # "none" serves handles only. [restart]
   # code_search_bodies_default: "auto"
 
+  # code.search response budget in tokens when the request omits token_budget; 0 =
+  # unlimited. An explicit request budget overrides this default. [restart]
+  # code_search_token_budget: 0
+
   # Memoise served code.search responses per (org, namespace, request shape) in
   # loom.code_search_memo and replay within the TTL (route "+memo"); `fresh=true`
   # bypasses it. [restart]
@@ -2403,9 +2412,8 @@ settings:
   # Decision and constraint rows the `rationale` section serves. [live]
   # code_review_brief_rationale_rows: 8
 
-  # The `rationale` section's own token budget; its first row is served even past it.
-  # [live]
-  # code_review_brief_rationale_tokens: 250
+  # The `rationale` section's own token budget; 0 means unlimited. [live]
+  # code_review_brief_rationale_tokens: 0
 
   # ===== context.pack, context offload, session briefs and the mentor's hints =====
 
@@ -3133,10 +3141,9 @@ settings:
   # `?schema_profile=`. [restart]
   # mcp_schema_profile: "standard"
 
-  # Comma-separated ops whose MCP descriptors request eager loading with
-  # anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected
-  # tools upfront. [restart]
-  # mcp_always_load_tools: ""
+  # "auto" selects upfront tools by toolset. A comma-separated list overrides it; empty
+  # leaves loading to the host. [restart]
+  # mcp_always_load_tools: "auto"
 
   # Seconds without a tool call after which the mcp_session_run_sweep worker closes an
   # MCP session's implicit run (one per token and `Mcp-Session-Id`, begun on the first
@@ -3237,9 +3244,17 @@ settings:
   # `offset` (wire cap stays 1000). 0 = no viewer cap. [restart]
   # memory_list_viewer_limit: 100
 
-  # Transcript characters the session-digest call reads (~4 chars a token); 0 = the
-  # built-in 3000. [restart]
+  # Characters of complete source facts included in an extractive session digest; 0 =
+  # the built-in 3000. Facts are never clipped to fit. [restart]
   # memory_session_digest_max_input_chars: 3000
+
+  # Raw digest candidates per query while filling listing, outline and export rows.
+  # [restart]
+  # memory_digest_listing_page_size: 256
+
+  # Queries allowed to find enough proven digests; exhaustion answers
+  # BACKEND_UNAVAILABLE. [restart]
+  # memory_digest_listing_max_pages: 256
 
   # content_excerpt ceiling for answer-bearing facts (question_topic set) when
   # memory_capture_structured_answers is on, so an enumerated answer is not clipped
@@ -4126,11 +4141,11 @@ settings:
   # memory_ask_code_hop_symbols: 4
 
   # Token budget of the code.symbol read that grounds a code-entity question in the code
-  # plane. [live]
-  # memory_ask_code_symbol_token_budget: 400
+  # plane; 0 means unlimited. [live]
+  # memory_ask_code_symbol_token_budget: 0
 
-  # Token budget of the code.search read that grounds a code-entity question. [live]
-  # memory_ask_code_search_token_budget: 1400
+  # Token budget of the grounding code.search read; 0 means unlimited. [live]
+  # memory_ask_code_search_token_budget: 0
 
   # For each PR the query or grounding references, inject its authoritative
   # code_pr_history record (author, merged_at, title) as a high-trust grounding fact;
@@ -4987,10 +5002,10 @@ settings:
   # records none (the default; consent is given, not withdrawn); "query" only the legs
   # whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …);
   # "all" also the legs carrying retrieved memories or conversation turns
-  # (inline_rerank, iterative_judge, extract, session_summary, …). A namespace's
-  # `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also
-  # gates loom.search_trace_log.query. Token counts, cost, latency and quality scores
-  # are never gated. [restart]
+  # (inline_rerank, iterative_judge, extract, …). A namespace's `capture_generation_io`
+  # overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates
+  # loom.search_trace_log.query. Token counts, cost, latency and quality scores are
+  # never gated. [restart]
   # langfuse_capture_io_level: "off"
 
   # Per-field cap on recorded prompt/completion text; truncation adds an explicit

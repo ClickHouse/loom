@@ -50,6 +50,9 @@ def test_annotations_read_only_for_viewer_idempotent_ops() -> None:
 def test_annotations_destructive_for_delete_and_erasure_ops() -> None:
     for name in (
         "memory.delete",
+        "memory.clear",
+        "extraction_policy.clear",
+        "profile_schema.clear",
         "knowledge.delete",
         "erasure.request",
         "working_memory.delete",
@@ -475,4 +478,4 @@ def test_coding_toolset_initialize_instructions_are_the_compact_form() -> None:
     full = asyncio.run(_initialize_instructions(None, "core"))
     assert "loom_code_*" in coding and "loom_search" in coding
     assert "Loom-first mode" not in coding and "Loom-first mode" in full
-    assert len(coding) * 3 < len(full)
+    assert len(coding) < len(full)

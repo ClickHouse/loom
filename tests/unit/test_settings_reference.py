@@ -32,5 +32,5 @@ def test_the_reference_hides_exactly_the_fields_repr_masks() -> None:
 
 
 def test_a_token_budget_is_not_a_secret() -> None:
-    assert gen._default("code_ask_token_budget") == "`4000`"
+    assert gen._default("code_ask_token_budget") == "`0`"
     assert is_secret_field("code_github_token")

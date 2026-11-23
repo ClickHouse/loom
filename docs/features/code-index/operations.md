@@ -85,6 +85,24 @@ underscores. Toolsets: [MCP reference](../../reference/mcp.md#toolsets).
 | `code.map`       | you want an orientation map of the repository's modules                                                                                                                                           |
 | `code.trace`     | you have a stack trace: each frame resolved to its unit                                                                                                                                           |
 
+Pass `pattern` as a list of exact strings to find any of them in one scan. For
+example, `["parse(", "parse_async("]` matches both fragments without escaping
+the parentheses. All alternatives share a result limit, and each matching line
+or file appears once.
+`mode: "message"` and `regex: true` require a single string.
+
+In matches mode, `code.grep(include_body=true)` returns the enclosing definitions
+beside the hit lines. Each definition appears once; its `lines` lists the matching
+locations. The same retained-source reader backs `code.enclosing`, including type
+and document-section fallback. No token budget is imposed on these bodies.
+
+The default remains matching lines only. Bodies are read only for the served page,
+and page reruns remove definitions belonging to earlier pages. If source cannot be
+read, matching lines remain available with `definitions_partial=true` and a
+`definitions_note`. Unresolved or elided definitions retain their structural
+disclosures and next lookup when available. Check those fields before treating a
+missing body as missing code. The flag is rejected outside matches mode.
+
 A caller with a clock of its own passes `deadline_ms` to `code.grep` or `code.search`
 (clamped to 200–60000; 0 means none, and unset takes `LOOM_CODE_SEARCH_DEADLINE_MS`):
 the request stops starting new work when the budget runs out and returns what it has,
@@ -128,6 +146,21 @@ located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes
 (rg `-g`), `langs` (rg `-t`), `pattern` (constrains both legs to chunks containing it),
 `bodies: "none"` (spans and signatures only, the cheapest answer), `token_budget`,
 `expand` (one LLM hop to bridge wording to identifiers) and `cursor` for the next page.
+
+For `code.search` and `code.grep` in matches mode, pass the returned `next_cursor` as
+`cursor` with the original search arguments to get the next page. Omit `cursor`
+when starting a new search with a different query, pattern or filters.
+
+`code.search` has no response token cap by default. Set
+`LOOM_CODE_SEARCH_TOKEN_BUDGET` to a positive token count to set a deployment default;
+`0` means unlimited. A request's `token_budget` overrides that default, including
+`token_budget: 0` for an unlimited response. This applies to HTTP and MCP, cursor pages
+and searches across repositories. `top_k` still limits the number of results per page,
+and `bodies: "none"` still returns pointers without code bodies (the MCP default).
+Small finite budgets prioritize result heads over optional risk annotations.
+
+For a Compose installation, put the variable in the `.env` file beside `compose.yaml`
+and recreate the server container after changing it.
 
 ## Follow a specification to code and back
 
@@ -334,3 +367,25 @@ Adding, branching, restricting and removing repositories (`code.repo.add`,
 - [history-and-prs.md](history-and-prs.md) — the PR plane, bisect, backports
 - [Python SDK reference](../../reference/python-sdk.md), [MCP reference](../../reference/mcp.md)
 - [operations reference](../../reference/operations.md#code) — generated arguments
+
+### Response token limits
+
+Code retrieval returns selected context without an implicit token cap. `code.symbol`,
+`code.enclosing`, `code.outline`, `code.trace`, `code.context_pack`, `code.map` and
+`code.review_brief` default `token_budget` to `0` (unlimited). A positive value opts
+into a cap. Symbol lookups return complete retained bodies, including large containers;
+explicitly capped container lookups can return a skeleton and member outline.
+
+`code.ask` uses `code_ask_token_budget` when the request omits a budget; the setting
+defaults to `0`. An explicit request value of `0` overrides a finite deployment cap.
+Attached file lessons use `code_result_lessons_tokens`, also unlimited by default.
+The internal code grounding reads for memory questions likewise default to no token cap.
+
+For search and grep matches, a file with a lesson linked to a returned definition
+can omit ordinary lessons linked only to other definitions in that file.
+File-level results keep their wider scope. Constraints, decisions, pins, file
+notes and uncertain links stay eligible. `lessons_left_out` includes omissions.
+
+Result counts, requested body modes, access checks, source completeness checks and
+execution deadlines still apply. Unlimited does not reconstruct source absent from the
+index. Model generation limits are separate from retrieval context limits.

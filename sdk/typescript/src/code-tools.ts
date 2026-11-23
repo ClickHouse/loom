@@ -50,12 +50,11 @@ export function codeRequest(a: Readonly<Record<string, string | number>>): {
   if (kind !== "search" && !REFERENCE.test(target))
     throw new LoomError("target must be a symbol reference or path:line; use search for prose");
   const body: Record<string, unknown> = { include_lessons: false };
-  if (kind === "search") Object.assign(body, { query: target, top_k: 3, token_budget: 2500 });
+  if (kind === "search") Object.assign(body, { query: target, top_k: 3 });
   else {
     body.name = target;
     if (kind === "symbol")
       Object.assign(body, {
-        token_budget: 2500,
         include_body: true,
         include_history: false,
         include_examples: false,

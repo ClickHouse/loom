@@ -84,8 +84,9 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
         if on_inserted := _.get("on_inserted"):
             on_inserted()
 
-    async def _stubs(rows: list[dict[str, Any]], **_: Any) -> None:
+    async def _stubs(rows: list[dict[str, Any]], **_: Any) -> list[dict[str, Any]]:
         seen["stubs"].extend(rows)
+        return rows
 
     async def _retire(items: list[tuple[Any, int]], **_: Any) -> int:
         seen["retire_calls"].append(items)
@@ -465,10 +466,15 @@ async def test_under_postgres_a_reinstated_rows_document_is_owed_until_its_stub_
     async def _complete(seqs: list[Any], done: int, **_: Any) -> None:
         settled.append((list(seqs), done, list(calls["stubs"])))
 
+    async def _held(org: str, ns: str, ids: list[Any], **_: Any) -> set[Any]:
+        assert (org, ns) == ("test", "personal")
+        return {pg_publish.document_id(row) for row in calls["stubs"]} & set(ids)
+
     _authority_holds(monkeypatch, calls)
     monkeypatch.setattr(pg_publish, "commit", _commit)
     monkeypatch.setattr(pg_publish, "publish", _published)
     monkeypatch.setattr(pg_memory, "complete", _complete)
+    monkeypatch.setattr(pg_publish, "held_documents", _held)
     plan = RollbackPlan(
         reinstate=[_action("plain", "reinstate", 10), _action("secret", "reinstate", 11)],
         remove=[],

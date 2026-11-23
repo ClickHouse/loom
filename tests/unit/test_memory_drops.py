@@ -303,6 +303,7 @@ async def handle_consolidate(inp):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_schema_mode_records_stubbed_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     import server.memory.app.extract.handler as mx
     from server.llm.client import LLMResult

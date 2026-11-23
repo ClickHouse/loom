@@ -22,10 +22,9 @@ the pass is idempotent and additive and never writes back a period taken out.
 Under Postgres the authority's heads decide which periods are written, so one committed
 but not yet in ClickHouse is not written again. Nothing is tombstoned.
 
-The rows are plain memories: they compete in the vector legs like any fact,
-keep out of the session-digest leg (whose keys start with `summary:`) and
-out of the digest chain, and read back through `memory.list`
-and `memory.evidence` like every other derived row.
+The rows are proposals. Independent approval admits them to ordinary fact retrieval;
+explicit proposal reads can inspect them before approval. They keep out of the
+session-digest leg (whose keys start with `summary:`) and out of the digest chain.
 """
 
 from __future__ import annotations
@@ -34,6 +33,7 @@ import json
 import re
 import uuid
 from collections import defaultdict
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -262,6 +262,7 @@ def build_period_memory_rows(
         source_trace=f"{SOURCE_TRACE}|prompt={PERIOD_DIGEST_PROMPT_VERSION}",
         actor=writer_actor(fallback="process:period_digest"),
         source_class="derived",
+        status="proposed",
         tags=tags,
         entities=ents,
         content_sha256=sha,
@@ -291,7 +292,8 @@ def build_period_memory_rows(
         tags=tags,
         entities=ents,
         valid_at=valid_at,
-        status="active",
+        status="proposed",
+        content_sha256=sha,
     )
     return memory_row, embedding_row
 
@@ -342,28 +344,79 @@ async def _fetch_namespaces(ch: Any, cfg: PeriodDigestConfig) -> list[dict[str, 
     return list(rows or [])
 
 
-async def _fetch_digests(ch: Any, ident: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = await ch.query_all(
-        """
-        SELECT org, namespace, agent, user_id, session_id, summary_text, derived_from,
-               coalesce(valid_at, created_at) AS at
-        FROM loom.session_summaries FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String} AND user_id = {uid:String}
-          AND tombstoned_at IS NULL
-        ORDER BY at, session_id
-        """,
-        params={
-            "org": ident["org"],
-            "ns": ident["namespace"],
-            "agent": ident["agent"],
-            "uid": ident["user_id"],
-        },
-    )
-    return list(rows or [])
+async def _fetch_digests(
+    ch: Any,
+    ident: dict[str, Any],
+    *,
+    page_size: int = 256,
+    after: tuple[datetime, str] | None = None,
+) -> AsyncIterator[list[dict[str, Any]]]:
+    """Page one latest live digest per session before cutting period windows."""
+    from server.core.ch import set_query_tag
+
+    while True:
+        set_query_tag("cli.period_digest.sources")
+        cursor = " WHERE (at, session_id) > {after:Tuple(DateTime,String)}" if after else ""
+        rows = await ch.query_all(
+            "SELECT org, namespace, agent, user_id, session_id, embedding_model, version, "
+            "summary_text, key_facts, derived_from, at FROM ("
+            "SELECT org, namespace, agent, user_id, session_id, embedding_model, version, "
+            "summary_text, key_facts, derived_from, coalesce(valid_at, created_at) AS at "
+            "FROM loom.session_summaries FINAL "
+            "WHERE org={org:String} AND namespace={ns:String} "
+            "AND agent={agent:String} AND user_id={uid:String} AND tombstoned_at IS NULL "
+            "ORDER BY session_id, version DESC, embedding_model LIMIT 1 BY session_id)"
+            + cursor
+            + " ORDER BY at, session_id LIMIT {limit:UInt32}",
+            params={
+                "org": ident["org"],
+                "ns": ident["namespace"],
+                "agent": ident["agent"],
+                "uid": ident["user_id"],
+                "after": after,
+                "limit": page_size,
+            },
+        )
+        if not rows:
+            return
+        yield list(rows)
+        if len(rows) < page_size:
+            return
+        after = (rows[-1]["at"], str(rows[-1]["session_id"]))
 
 
-async def _skipped_period_keys(ch: Any, ident: dict[str, Any], *, rewrite: bool) -> set[str]:
+async def _plan_digest_pages(
+    ch: Any, ident: dict[str, Any], cfg: PeriodDigestConfig
+) -> tuple[list[Period], int]:
+    """Keep one page, an incomplete window, and at most the requested output cap."""
+    from dataclasses import replace
+
+    k, cap = max(2, cfg.sessions_per_period), max(0, cfg.max_periods_per_identity)
+    planned: list[Period] = []
+    tail: list[dict[str, Any]] = []
+    skipped = 0
+    if not cap:
+        return planned, skipped
+    async for page in _fetch_digests(ch, ident, page_size=max(256, k)):
+        combined = tail + page
+        complete = len(combined) // k * k
+        tail = combined[complete:]
+        periods, count = await _plan_identity(
+            ch,
+            combined[:complete],
+            ident,
+            replace(cfg, max_periods_per_identity=cap - len(planned)),
+        )
+        planned.extend(periods)
+        skipped += count
+        if len(planned) == cap:
+            break
+    return planned, skipped
+
+
+async def _skipped_period_keys(
+    ch: Any, ident: dict[str, Any], keys: list[str], *, rewrite: bool
+) -> set[str]:
     """On ClickHouse, the identity's period keys a pass skips: every key with a version, or
     under a rewrite only those taken out (deleted, redacted or no longer active: an Undo
     of a retirement brings a redacted version back as the live head)."""
@@ -375,7 +428,7 @@ async def _skipped_period_keys(ch: Any, ident: dict[str, Any], *, rewrite: bool)
         FROM loom.memory FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND agent = {agent:String} AND user_id = {uid:String} AND session_id = '-'
-          AND startsWith(memory_key, {pfx:String})
+          AND startsWith(memory_key, {pfx:String}) AND memory_key IN {keys:Array(String)}
         """,
         params={
             "org": ident["org"],
@@ -383,6 +436,7 @@ async def _skipped_period_keys(ch: Any, ident: dict[str, Any], *, rewrite: bool)
             "agent": ident["agent"],
             "uid": ident["user_id"],
             "pfx": PERIOD_KEY_PREFIX,
+            "keys": keys,
         },
     )
     return {str(r["memory_key"]) for r in rows if not rewrite or r["taken_out"]}
@@ -528,6 +582,15 @@ async def _write_period(
     if not text:
         result.failures.append(f"empty digest {period.memory_key}")
         return False
+    from server.memory.app import blacklist_guard
+
+    try:
+        policy = await blacklist_guard.enforce_rows(
+            [{"org": period.org, "namespace": period.namespace, "value": text}]
+        )
+    except Exception as e:  # noqa: BLE001 — refused output fails only this period
+        result.failures.append(f"policy {period.memory_key}: {error_summary(e)}"[:256])
+        return False
     try:
         with customer.for_org(period.org, **whose):
             embedding = await document_vector(embedder, text)
@@ -546,7 +609,9 @@ async def _write_period(
         entities=source_entities,
     )
     try:
-        published = await insert_documented_versions([memory_row], [embedding_row], ch=ch)
+        published = await insert_documented_versions(
+            [memory_row], [embedding_row], ch=ch, policy=policy
+        )
     except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues
         result.failures.append(f"write {period.memory_key}: {error_summary(e)}"[:256])
         return False
@@ -575,15 +640,31 @@ async def _plan_identity(
     """(the identity's periods to write, how many were skipped as written or taken out).
     Under Postgres the authority's heads decide which are written, ClickHouse's
     otherwise; the cap applies to what is left, so a period skipped takes no place in it."""
+    from server.memory.store.summary_sources import current_summary_sources
+
     k, rewrite = cfg.sessions_per_period, cfg.rewrite_existing
+    windows, _ = plan_periods(digests, sessions_per_period=k)
+    if not windows:
+        return [], 0
     if pg.enabled():
-        windows, _ = plan_periods(digests, sessions_per_period=k)
         writable = await _writable_in_authority(windows, rewrite=rewrite)
         skipped = len(windows) - len(writable)
     else:
-        skip = await _skipped_period_keys(ch, ident, rewrite=rewrite)
+        skip = await _skipped_period_keys(
+            ch, ident, [p.memory_key for p in windows], rewrite=rewrite
+        )
         writable, skipped = plan_periods(digests, sessions_per_period=k, skip_keys=skip)
-    return writable[: max(0, cfg.max_periods_per_identity)], skipped
+    if not writable:
+        return [], skipped
+    qualified = await current_summary_sources(
+        ch,
+        [d for p in writable for d in p.digests],
+        org=ident["org"],
+        namespace=ident["namespace"],
+    )
+    allowed = {id(d) for d in qualified}
+    verified = [p for p in writable if all(id(d) in allowed for d in p.digests)]
+    return verified[: max(0, cfg.max_periods_per_identity)], skipped
 
 
 async def run_period_digest(
@@ -615,8 +696,7 @@ async def run_period_digest(
     result.identities_scanned = len(identities)
     for ident in identities:
         try:
-            digests = await _fetch_digests(ch, ident)
-            periods, skipped = await _plan_identity(ch, digests, ident, cfg)
+            periods, skipped = await _plan_digest_pages(ch, ident, cfg)
             result.periods_planned += len(periods)
             result.periods_skipped += skipped
             if dry_run:

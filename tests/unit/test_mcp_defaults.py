@@ -1,9 +1,10 @@
-"""Over MCP, code.index_status defaults to the brief answer and code.search to a
-1,500-token budget; HTTP keeps the ops' own defaults."""
+"""MCP keeps index status brief and shares code search's deployment defaults."""
 
 from __future__ import annotations
 
 from pathlib import Path
+
+import pytest
 
 from server.code.api.models_status import CodeIndexStatusInput
 from server.transport.mcp_defaults import mcp_default_arguments
@@ -20,10 +21,10 @@ def test_index_status_is_brief_over_mcp_unless_asked_otherwise() -> None:
     )
 
 
-def test_code_search_answers_within_1500_tokens_over_mcp_unless_asked_otherwise() -> None:
+def test_code_search_uses_the_deployment_token_budget_over_mcp() -> None:
     from server.code.api.models_search import CodeSearchInput
 
-    assert mcp_default_arguments("code.search", {"query": "x"})["token_budget"] == 1500
+    assert "token_budget" not in mcp_default_arguments("code.search", {"query": "x"})
     assert (
         mcp_default_arguments("code.search", {"query": "x", "token_budget": 4000})["token_budget"]
         == 4000
@@ -33,10 +34,26 @@ def test_code_search_answers_within_1500_tokens_over_mcp_unless_asked_otherwise(
     assert "token_budget" not in mcp_default_arguments("code.symbol", {"name": "X"})
 
 
-def test_code_search_returns_pointers_and_code_symbol_the_definition_over_mcp() -> None:
+@pytest.mark.parametrize("default", ["auto", "none"])
+def test_code_search_uses_the_deployment_body_mode_over_mcp(
+    monkeypatch: pytest.MonkeyPatch, default: str
+) -> None:
+    from server.code.api.models_search import CodeSearchInput
+    from server.code.app.search.shared import page_plan
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_search_bodies_default", default)
+    args = mcp_default_arguments("code.search", {"query": "make_url"})
+    assert "bodies" not in args
+    assert page_plan(CodeSearchInput.model_validate(args)).bodies == default
+    explicit = "none" if default == "auto" else "auto"
+    args = mcp_default_arguments("code.search", {"query": "make_url", "bodies": explicit})
+    assert page_plan(CodeSearchInput.model_validate(args)).bodies == explicit
+
+
+def test_symbol_history_and_grep_page_defaults_remain_explicitly_overridable() -> None:
     from server.code.api.models_symbol import CodeSymbolInput
 
-    assert mcp_default_arguments("code.search", {"query": "x"})["bodies"] == "none"
     args = mcp_default_arguments("code.symbol", {"name": "X"})
     # the linked memories stay; the recent PRs serve a review, not a lookup
     assert "include_lessons" not in args and args["include_history"] is False

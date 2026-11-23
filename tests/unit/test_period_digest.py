@@ -28,6 +28,16 @@ from server.memory.app.period_digest import (
 )
 
 
+@pytest.fixture(autouse=True)
+def verified_period_inputs(monkeypatch, no_blacklisted_values):
+    """Period-policy tests start after source qualification, covered in test_summary_sources."""
+
+    async def qualified(ch, rows, **kwargs):
+        return rows
+
+    monkeypatch.setattr("server.memory.store.summary_sources.current_summary_sources", qualified)
+
+
 def _digest(n: int, agent: str = "a") -> dict[str, Any]:
     return {
         "org": "o",
@@ -149,13 +159,33 @@ class _FakeCH:
         self.link_calls: list[dict[str, Any]] = []
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        if "FROM loom.memory FINAL" in sql and "PREWHERE (org, namespace" in sql:
+            from server.memory.store.rows import identity_key
+
+            heads = {}
+            for table, rows in self.inserts:
+                if table == "loom.memory":
+                    heads.update({identity_key(row): row for row in rows})
+            return [heads[key] for key in params["keys"] if key in heads]
         if "uniqExact(s.session_id)" in sql:
             sessions = len({d["session_id"] for d in self._digests})
             return [
                 {"org": "o", "namespace": "ns", "agent": "a", "user_id": "-", "sessions": sessions}
             ]
         if "FROM loom.session_summaries FINAL" in sql:
-            return list(self._digests)
+            rows = self._digests
+            if "LIMIT 1 BY session_id" in sql:
+                latest = {}
+                for row in sorted(
+                    rows, key=lambda d: (-d.get("version", 1), d.get("embedding_model", ""))
+                ):
+                    latest.setdefault(row["session_id"], row)
+                rows = list(latest.values())
+            ordered = sorted(rows, key=lambda d: (d["at"], d["session_id"]))
+            after = params.get("after")
+            if after:
+                ordered = [d for d in ordered if (d["at"], d["session_id"]) > after]
+            return ordered[: params["limit"]]
         if "startsWith(memory_key" in sql:
             return [{"memory_key": k, "taken_out": False} for k in self._existing]
         if "memory_key IN" in sql:
@@ -276,7 +306,8 @@ async def test_a_failed_authority_read_writes_nothing_and_a_later_pass_writes_it
     async def _heads(keys: Any, **_: Any) -> Any:  # the sources, not yet the period
         return {k: {"version": 1, "redacted_at": None} for k in keys if "fact_" in k[-1]}
 
-    async def _commit(rows: Any, documents: Any, *, ch: Any) -> bool:
+    async def _commit(rows: Any, documents: Any, *, ch: Any, policy: Any) -> bool:
+        assert policy == {}
         ch.inserts.append(("loom.memory", rows))  # the authority commit, recorded
         return True
 
@@ -335,7 +366,7 @@ async def test_a_source_changed_since_its_read_lends_its_entities_only_as_a_copy
 async def test_a_failed_source_read_fails_the_period_before_its_model_call() -> None:
     class _SourcesDown(_FakeCH):
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            if "memory_key IN" in sql:
+            if "memory_key IN" in sql and "startsWith" not in sql:
                 raise ConnectionError("clickhouse unreachable")
             return await super().query_all(sql, params)
 
@@ -435,7 +466,8 @@ async def test_a_pending_publication_writes_no_lineage_and_is_recorded(
     async def _link(**kwargs: Any) -> None:
         linked.append(kwargs)
 
-    async def _pending(rows: Any, documents: Any, *, ch: Any) -> bool:
+    async def _pending(rows: Any, documents: Any, *, ch: Any, policy: Any) -> bool:
+        assert policy == {}
         return False
 
     monkeypatch.setattr("server.memory.app.evidence.link_belief_sources", _link)
@@ -693,3 +725,82 @@ def test_loom_period_digest_writes_as_its_command(monkeypatch: pytest.MonkeyPatc
     )
     assert app._dispatch(args) == 0
     assert seen == ["process:cli:period-digest"]
+
+
+async def test_unqualified_session_text_never_reaches_the_period_model(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from server.memory.app.period_digest import _plan_digest_pages
+
+    qualification = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "server.memory.store.summary_sources.current_summary_sources", qualification
+    )
+    ch = _FakeCH(_digests(1, 5))
+    assert await _plan_digest_pages(
+        ch, {"org": "o", "namespace": "ns", "agent": "a", "user_id": "-"}, _CFG
+    ) == ([], 0)
+    qualification.assert_awaited_once()
+
+
+async def test_period_paging_selects_one_latest_digest_per_session_before_its_cursor():
+    from server.memory.app.period_digest import _fetch_digests
+
+    rows = [dict(_digest(1), embedding_model=f"m{i}", version=i) for i in (1, 2, 3)]
+    rows.extend(_digests(2, 3))
+    identity = {"org": "o", "namespace": "ns", "agent": "a", "user_id": "-"}
+    found = [
+        row async for page in _fetch_digests(_FakeCH(rows), identity, page_size=2) for row in page
+    ]
+    assert [row["session_id"] for row in found] == [f"ns:session_{i}" for i in (1, 2, 3)]
+    assert found[0]["embedding_model"] == "m3"
+
+
+@pytest.mark.asyncio
+async def test_streamed_windows_skip_old_keys_before_proof_and_reach_later_pages(monkeypatch):
+    from datetime import timedelta
+    from unittest.mock import AsyncMock
+
+    from server.memory.app.period_digest import _plan_digest_pages
+
+    digests = [
+        dict(_digest(1), session_id=f"ns:session_{n}", at=datetime(2023, 1, 1) + timedelta(days=n))
+        for n in range(1, 401)
+    ]
+    existing = {period_key(f"ns:session_{n}", f"ns:session_{n + 4}") for n in range(1, 301, 5)}
+    qualified = AsyncMock(side_effect=lambda ch, rows, **kw: rows)
+    monkeypatch.setattr("server.memory.store.summary_sources.current_summary_sources", qualified)
+    ident = {"org": "o", "namespace": "ns", "agent": "a", "user_id": "-"}
+    cfg = replace(_CFG, max_periods_per_identity=2)
+    periods, skipped = await _plan_digest_pages(_FakeCH(digests, existing), ident, cfg)
+    assert [p.memory_key for p in periods] == [
+        period_key("ns:session_301", "ns:session_305"),
+        period_key("ns:session_306", "ns:session_310"),
+    ]
+    assert skipped == 60
+    qualified.assert_awaited_once()
+    checked = qualified.call_args.args[1]
+    assert len(checked) == 100 and all(
+        int(d["session_id"].rsplit("_", 1)[1]) > 300 for d in checked
+    )
+    existing.update(p.memory_key for p in periods)
+    later, _ = await _plan_digest_pages(_FakeCH(digests, existing), ident, cfg)
+    assert later[0].memory_key == period_key("ns:session_311", "ns:session_315")
+
+
+@pytest.mark.asyncio
+async def test_an_unproven_digest_withholds_its_whole_window_without_shifting_later_windows(
+    monkeypatch,
+):
+    from server.memory.app.period_digest import _plan_digest_pages
+
+    async def qualify(ch, rows, **kwargs):
+        return [d for d in rows if d["session_id"] != "ns:session_2"]
+
+    monkeypatch.setattr("server.memory.store.summary_sources.current_summary_sources", qualify)
+    periods, _ = await _plan_digest_pages(
+        _FakeCH(_digests(1, 10)),
+        {"org": "o", "namespace": "ns", "agent": "a", "user_id": "-"},
+        _CFG,
+    )
+    assert [p.memory_key for p in periods] == [_KEY_6_10]

@@ -23,6 +23,8 @@ class _CH:
         self.fail = fail
 
     async def query_all(self, sql, params=None):
+        if "FROM loom.memory_refusals" in sql:
+            return []
         if self.fail:
             raise RuntimeError("boom")
         self.queries.append((sql, dict(params or {})))
@@ -149,26 +151,33 @@ class _WriterCH(_CH):
         self.inserts.append((table, list(rows)))
 
 
-def _draft():
-    from server.memory.app.session_summary import SessionSummaryDraft
+def _wire_writer(monkeypatch, ch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
 
-    return SessionSummaryDraft(
-        summary_text="on 2024-03-12, the user moved.",
-        embedding=[0.1] * 4,
-        embedding_model="fake-4",
+    from server.memory import store
+    from server.memory.app import session_summary
+    from tests.unit.test_memory_verify import _row
+
+    source = _row(namespace="n", agent="a", user_id="u", session_id="s2", value="the user moved")
+    monkeypatch.setattr(store, "get_by_id", AsyncMock(return_value=source))
+    monkeypatch.setattr(
+        "server.memory.store.summary_sources.memory_rows_by_identity_keys",
+        AsyncMock(return_value={store.identity_key(source): source}),
     )
+    monkeypatch.setattr(session_summary, "get_client", lambda: ch)
+    monkeypatch.setattr(session_summary, "get_embedder", lambda: SimpleNamespace(model_name="fake"))
+    monkeypatch.setattr(session_summary, "document_vector", AsyncMock(return_value=[0.1] * 4))
+    return _FakeState(written=[{"memory_id": source.memory_id, "version": source.version}])
 
 
 @pytest.mark.asyncio
-async def test_digest_insert_then_chain_edges(monkeypatch) -> None:
-    from server.memory.app import bulk_set as _bulk_set_mod
-    from server.memory.app import session_summary as _session_summary_mod
-    from server.memory.app.session_summary import _insert_session_summary
+async def test_digest_insert_then_chain_edges(monkeypatch, no_blacklisted_values) -> None:
+    from server.memory.app.session_summary import _write_session_summary
 
     ch = _WriterCH(answers=[[{"session_id": "s1"}], []])
-    monkeypatch.setattr(_bulk_set_mod, "get_client", lambda: ch)
-    monkeypatch.setattr(_session_summary_mod, "get_client", lambda: ch)
-    await _insert_session_summary(_FakeInput(), _FakeState(), _draft())
+    state = _wire_writer(monkeypatch, ch)
+    await _write_session_summary(_FakeInput(), state)
     tables = [t for t, _ in ch.inserts]
     assert tables == ["loom.session_summaries", "loom.operator_edges"]
     edge = ch.inserts[1][1][0]
@@ -183,20 +192,22 @@ async def test_digest_insert_then_chain_edges(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_chain_failure_leaves_the_digest(monkeypatch) -> None:
-    from server.memory.app import bulk_set as _bulk_set_mod
-    from server.memory.app import session_summary as _session_summary_mod
-    from server.memory.app.session_summary import _insert_session_summary
+async def test_chain_failure_leaves_the_digest(monkeypatch, no_blacklisted_values) -> None:
+    from server.memory.app.session_summary import _write_session_summary
 
-    class _NoQuery:
+    class _ChainUnavailable:
+        async def query_all(self, sql, params=None):
+            if "FROM loom.memory_refusals" in sql:
+                return []
+            raise RuntimeError("chain unavailable")
+
         def __init__(self):
             self.inserts = []
 
         async def insert(self, table, rows, settings=None):
             self.inserts.append((table, list(rows)))
 
-    ch = _NoQuery()  # no query_all at all: the chain raises, the digest stays
-    monkeypatch.setattr(_bulk_set_mod, "get_client", lambda: ch)
-    monkeypatch.setattr(_session_summary_mod, "get_client", lambda: ch)
-    await _insert_session_summary(_FakeInput(), _FakeState(), _draft())
+    ch = _ChainUnavailable()
+    state = _wire_writer(monkeypatch, ch)
+    await _write_session_summary(_FakeInput(), state)
     assert [t for t, _ in ch.inserts] == ["loom.session_summaries"]

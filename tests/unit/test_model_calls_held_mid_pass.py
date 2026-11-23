@@ -280,13 +280,11 @@ def test_the_period_digest_records_no_failure_when_its_call_is_held(monkeypatch,
     async def idents(ch: Any, cfg: Any) -> list[dict[str, Any]]:
         return [{"org": "acme", "namespace": "n", "agent": "a", "user_id": "u"}]
 
-    async def nothing(*a: Any, **k: Any) -> Any:
-        return set()
+    async def planned(*a: Any, **k: Any) -> Any:
+        return [period], 0
 
     monkeypatch.setattr(pd, "_fetch_namespaces", idents)
-    monkeypatch.setattr(pd, "_fetch_digests", nothing)
-    monkeypatch.setattr(pd, "_skipped_period_keys", nothing)
-    monkeypatch.setattr(pd, "plan_periods", lambda *a, **k: ([period], 0))
+    monkeypatch.setattr(pd, "_plan_digest_pages", planned)
     monkeypatch.setattr(pd, "build_period_prompt", lambda p: ("system", "user"))
     llm = SimpleNamespace(complete=_raise(error))
     result = asyncio.run(pd.run_period_digest(ch=object(), llm=llm, embedder=object()))

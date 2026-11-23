@@ -5,6 +5,7 @@ call them, and every extraction path that ends its prompt with it."""
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -14,6 +15,13 @@ from server.memory.app import extraction_policy
 from server.memory.domain.extraction_policy import combine, policy_block, with_policy
 from server.settings import settings
 from tests.unit.switch_state import policies_read_now, policies_unread
+
+
+@pytest.fixture(autouse=True)
+def _no_refused_intake(monkeypatch):
+    # Pipeline and projection cases; actual refusal admission is tested separately.
+    monkeypatch.setattr("server.memory.store.refusals.check_intake", AsyncMock())
+
 
 _POLICY = "Never store credentials, payment card data or health data."
 _MSGS = [
@@ -182,29 +190,45 @@ async def test_the_typed_value_stage_ends_with_the_policy(monkeypatch) -> None:
     assert all(_POLICY not in s for s in llm.systems if s not in value_stage)
 
 
-async def test_the_session_digest_ends_with_the_policy(monkeypatch) -> None:
-    import server.llm.client as llm_client
-    from server.memory.app import session_summary
+async def test_the_session_digest_uses_committed_policy_filtered_facts_only(
+    monkeypatch, no_blacklisted_values
+) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
 
-    llm = _Provider(text="On 2026-01-01 the user said they live in Lisbon.")
-    monkeypatch.setattr(llm_client, "get_llm_client", lambda: llm)
+    from server.memory import store
+    from server.memory.app import digest_chain, session_summary
+    from tests.unit.test_memory_verify import _row
 
-    class _Embedder:
-        model_name = "fake"
-        dim = 1
+    source = _row(value="Lives in Lisbon.")
+    ch = SimpleNamespace(insert=AsyncMock(), query_all=AsyncMock(return_value=[]))
 
-        async def embed(self, text: str) -> list[float]:
-            return [1.0]
+    async def heads(keys, **kwargs):
+        from server.memory.store import identity_key
 
-        async def embed_many(self, texts: list[str]) -> list[list[float]]:
-            return [await self.embed(text) for text in texts]
+        return {identity_key(source): source}
 
-    monkeypatch.setattr(session_summary, "get_embedder", lambda: _Embedder())
-    draft = await session_summary._draft_session_summary(
-        object(), _MSGS, "2026-01-01", operator_policy=_POLICY
+    monkeypatch.setattr("server.memory.store.summary_sources.memory_rows_by_identity_keys", heads)
+    monkeypatch.setattr(session_summary, "get_client", lambda: ch)
+    monkeypatch.setattr(session_summary, "get_embedder", lambda: SimpleNamespace(model_name="fake"))
+    monkeypatch.setattr(session_summary, "document_vector", AsyncMock(return_value=[1.0]))
+    monkeypatch.setattr(store, "get_by_id", AsyncMock(return_value=source))
+    monkeypatch.setattr(digest_chain, "link_digest", AsyncMock())
+    inp = SimpleNamespace(
+        org=source.org,
+        namespace=source.namespace,
+        agent=source.agent,
+        user_id=source.user_id,
+        session_id=source.session_id,
     )
-    assert draft is not None
-    assert llm.systems == [with_policy(session_summary._SESSION_SUMMARY_SYSTEM, _POLICY)]
+    state = SimpleNamespace(
+        written=[{"memory_id": source.memory_id, "version": source.version}],
+        extracted_facts=[{"value": "forbidden raw detail"}],
+        operator_policy=_POLICY,
+        observation_date=None,
+    )
+    await session_summary._write_session_summary(inp, state)
+    assert ch.insert.call_args.args[1][0]["summary_text"] == "Lives in Lisbon."
 
 
 async def test_trajectory_events_and_notes_end_with_the_policy(
@@ -595,7 +619,7 @@ async def test_only_an_org_admin_of_the_org_calls_the_ops() -> None:
 
 def _wire(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """The handler with every write stubbed: what reached the pipeline and the
-    digest draft, and whether the evidence write ran."""
+    committed state, and whether the evidence write ran."""
     import server.identity.app.namespace_ontology as ont
     import server.memory.app.extract.handler as mx
     import server.memory.app.pipeline as pipe
@@ -610,9 +634,6 @@ def _wire(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         seen["state_policy"] = state.operator_policy
         return state
 
-    async def _draft(*args: Any, **kw: Any) -> None:
-        seen["draft_policy"] = kw.get("operator_policy")
-
     async def _nothing(*args: Any, **kw: Any) -> Any:
         return 0
 
@@ -621,7 +642,6 @@ def _wire(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(mx, "_write_source_evidence", _evidence)
     monkeypatch.setattr(pipe, "run_pipeline", _pipeline)
-    monkeypatch.setattr(mx, "_draft_session_summary", _draft)
     monkeypatch.setattr(mx, "_link_written_memories_to_evidence", _nothing)
     monkeypatch.setattr(mx, "write_memory_chunks", _nothing)
     monkeypatch.setattr(mx, "_write_session_summary", _nothing)
@@ -654,7 +674,6 @@ async def test_set_from_messages_runs_under_the_stored_policy_whatever_it_asks(
     )
     effective = f"{_POLICY}\n\nNo addresses."
     assert seen["state_policy"] == effective
-    assert seen["draft_policy"] == effective
     assert out.under_operator_policy is True
     policies_read_now({})
     assert (await mx.handle_memory_set_from_messages(_request())).under_operator_policy is False
@@ -1164,7 +1183,6 @@ async def test_set_from_messages_under_a_policy_writes_no_speaker_or_path_from_t
     no_delete_in_flight(monkeypatch)
     monkeypatch.setattr(pipe, "_newest_wins", no_conflict_policy)
     monkeypatch.setattr(mx, "_write_source_evidence", no_evidence)
-    monkeypatch.setattr(mx, "_draft_session_summary", nothing)
     monkeypatch.setattr(mx, "_link_written_memories_to_evidence", nothing)
     monkeypatch.setattr(mx, "write_memory_chunks", nothing)
     monkeypatch.setattr(mx, "_write_session_summary", nothing)

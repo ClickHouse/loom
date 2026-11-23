@@ -5,6 +5,7 @@ of the same name, a decision served whole."""
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any
 
 import httpx
@@ -35,6 +36,117 @@ def _set(
     assert r.status_code == 200, r.text
 
 
+async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
+    control_plane_url: str, mint_test_token: Any, ch_client: Any
+) -> None:
+    from server.settings import settings
+
+    org = unique_org("grep-lessons")
+    writer = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
+    _set(org, control_plane_url, writer, "notes/allowed", "Keep callback order.", [PATH])
+    ch_client.insert(
+        "loom.code_chunks",
+        [
+            [
+                org,
+                "code",
+                "m",
+                PATH,
+                uuid.uuid4(),
+                "function",
+                "run",
+                1,
+                2,
+                "def run():\n    return callback()\n",
+                [0.0] * settings.embedding_dim,
+                1,
+            ]
+        ],
+        column_names=[
+            "org",
+            "namespace",
+            "embedding_model",
+            "path",
+            "chunk_id",
+            "kind",
+            "scope",
+            "start_line",
+            "end_line",
+            "content",
+            "embedding",
+            "version",
+        ],
+    )
+    reader = mint_test_token(org=org, namespaces=["code", "dev"], roles=["viewer"])
+    body = dict(org=org, namespace="code", pattern="callback", lesson_namespaces=["dev"])
+    async with httpx.AsyncClient(
+        base_url=control_plane_url, headers={"Authorization": f"Bearer {reader}"}, timeout=10
+    ) as client:
+        response = await client.post("/v1/code.grep", json=body)
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert data["matches"][0]["path"] == PATH
+        assert {row["memory_key"] for row in data["lessons"]} == {"notes/allowed"}
+        response = await client.post("/v1/code.grep", json={**body, "include_lessons": False})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert "lessons" not in payload.get("data", payload)
+
+
+async def test_enclosing_attaches_only_authorized_resolved_file_lessons(
+    control_plane_url: str, mint_test_token: Any, ch_client: Any
+) -> None:
+    org = unique_org("enclosing-lessons")
+    writer = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
+    _set(org, control_plane_url, writer, "notes/allowed", "Keep run callback order.", [PATH])
+    _set(org, control_plane_url, writer, "notes/unrelated", "Storage configuration.", [PATH])
+    _set(org, control_plane_url, writer, "notes/missing", "Unresolved file note.", ["absent.py"])
+    ch_client.insert(
+        "loom.code_symbols",
+        [[org, "code", "treesitter", "pkg::run", "run-id", "run", "function", PATH, 1, 5]],
+        column_names=[
+            "org",
+            "namespace",
+            "tier",
+            "qualified_name",
+            "symbol_id",
+            "name",
+            "kind",
+            "path",
+            "start_line",
+            "end_line",
+        ],
+    )
+    body = dict(
+        org=org,
+        namespace="code",
+        locations=[f"{PATH}:2", f"{PATH}:3", "absent.py:1"],
+        lesson_namespaces=["dev"],
+    )
+    for names, include in [(["code", "dev"], True), (["code", "dev"], False), (["code"], True)]:
+        reader = mint_test_token(org=org, namespaces=names, roles=["viewer"])
+        async with httpx.AsyncClient(
+            base_url=control_plane_url, headers={"Authorization": f"Bearer {reader}"}, timeout=10
+        ) as client:
+            response = await client.post(
+                "/v1/code.enclosing", json={**body, "include_lessons": include}
+            )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert data["resolved"] == 2 and len(data["results"]) == 3
+        if include and "dev" in names:
+            assert data["lessons"][0]["memory_key"] == "notes/allowed"
+            assert {row["memory_key"] for row in data["lessons"]} == {
+                "notes/allowed",
+                "notes/unrelated",
+            }
+            assert data["lessons"][0]["path"] == PATH
+        else:
+            assert "lessons" not in data
+
+
 async def test_lessons_match_the_result_file_by_path(
     control_plane_url: str, mint_test_token: Any, ch_client: Any
 ) -> None:
@@ -62,6 +174,11 @@ async def test_lessons_match_the_result_file_by_path(
         ["server/memory/app/loom_search/handler.py"],
     )
     _set(org, control_plane_url, token, "design/memo", DECISION, [PATH], memory_type="decision")
+    long_note = (
+        "Callbacks release their context resources. " * 60
+        + "Source: https://example.com/design#cleanup"
+    )
+    _set(org, control_plane_url, token, "notes/long", long_note, [PATH])
     # More rows about other directories' handler.py than a small read would keep: the
     # exact path's rows still come back.
     for i in range(12):
@@ -80,11 +197,11 @@ async def test_lessons_match_the_result_file_by_path(
         rows = (
             await path_lessons.lessons_for_paths(org, ["dev"], "", [PATH], token_budget=2000)
         ).rows
-        if len(rows) >= 3:
+        if len(rows) >= 4:
             break
         await asyncio.sleep(0.2)
     keys = {r["memory_key"] for r in rows}
-    assert keys == {"notes/exact", "notes/bare", "design/memo"}, rows
+    assert keys == {"notes/exact", "notes/bare", "design/memo", "notes/long"}, rows
     by_key = {r["memory_key"]: r for r in rows}
     assert by_key["notes/exact"] == {
         "path": PATH,
@@ -94,6 +211,22 @@ async def test_lessons_match_the_result_file_by_path(
         "code_state": "",
     }
     assert by_key["design/memo"]["excerpt"] == " ".join(DECISION.split())
+    assert by_key["notes/long"]["excerpt"] == long_note
+    # Symbol lessons use the same stored value through their own read projection.
+    from server.memory.store.code_plane_reads import served_excerpts
+
+    response = await asyncio.to_thread(
+        httpx.post,
+        f"{control_plane_url}/v1/memory.get",
+        json={"org": org, "namespace": "dev", "agent": "claude-code", "memory_key": "notes/long"},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    memory_id = payload.get("data", payload)["memory_id"]
+    (stored,) = await served_excerpts(org, ["dev"], [memory_id])
+    assert stored["excerpt"] == long_note
     # a cap below the decision's size leaves it out, never cut
     small = (await path_lessons.lessons_for_paths(org, ["dev"], "", [PATH], token_budget=60)).rows
     assert "design/memo" not in {r["memory_key"] for r in small}

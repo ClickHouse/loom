@@ -621,12 +621,12 @@ def chunk_file(
     if header_chunk is not None:
         chunks.append(header_chunk)
 
-    # leftovers: uncovered source runs (blank lines and covered lines end
-    # a run), optionally merged across blank lines up to merge_target_chars
+    # Container separators are source too; a missing blank line prevents
+    # complete body reads. Blank lines outside containers still end a run.
     runs: list[tuple[int, int]] = []
     run_start = None
     for i in range(1, len(src_lines) + 1):
-        uncovered = not covered[i] and src_lines[i - 1].strip() != ""
+        uncovered = not covered[i] and (container_source[i] or src_lines[i - 1].strip() != "")
         if uncovered and run_start is None:
             run_start = i
         boundary = (not uncovered) or i == len(src_lines)

@@ -11,10 +11,17 @@ from typing import Any
 
 import pytest
 
-from server.code.api.models_navigation import CodeOutlineInput, CodeOutlineOutput
+from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput
+from server.code.api.models_navigation import (
+    CodeEnclosingInput,
+    CodeEnclosingOutput,
+    CodeOutlineInput,
+    CodeOutlineOutput,
+)
 from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import result_lessons, search_memo
-from server.memory.app import code_plane_reads, path_lessons
+from server.code.domain.units import CodeUnit
+from server.memory.app import code_plane_reads, for_file, path_lessons
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.settings import settings
 
@@ -58,14 +65,178 @@ async def _lessons(
     nss: tuple[str, ...] = ("mem-home", "code-repo"),
     budget: int = 2000,
     seen: list[Any] | None = None,
+    query: str = "",
 ) -> list[dict[str, Any]]:
     monkeypatch.setattr(
         path_lessons, "listing_rows", _listing(by_path, [] if seen is None else seen)
     )
     found = await path_lessons.lessons_for_paths(
-        "acme", list(nss), "code-repo", paths, token_budget=budget
+        "acme", list(nss), "code-repo", paths, token_budget=budget, query=query
     )
     return found.rows
+
+
+@pytest.mark.asyncio
+async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recent = _hit("theme", value="Change the page theme.")
+    older = _hit("retry", value="A retry must preserve the request identifier.", state="changed")
+    # Listing order would spend the cap on the unrelated row.
+    lesson = path_lessons._lesson(older, "a.py")
+    assert lesson is not None
+    cap = path_lessons._tokens(lesson)
+    rows = await _lessons(
+        monkeypatch, {"a.py": [recent, older]}, ["a.py"], budget=cap, query="retries"
+    )
+    assert [r["memory_key"] for r in rows] == ["retry"]
+    assert rows[0]["code_state"] == "changed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("namespace", ["code-repo", "code-branch"])
+@pytest.mark.parametrize("op", ["grep", "search", "search_file"])
+async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
+    monkeypatch: pytest.MonkeyPatch, namespace: str, op: str
+) -> None:
+    rows = [_hit(k) for k in ("exact", "other", "nested", "incomplete", "pending", "file")]
+    rows.append(_hit("constraint", tags=("constraint",)))
+    names = {
+        "exact": ("Thing::run", 1, "changed"),
+        "other": ("Other::run", 1, "fresh"),
+        "nested": ("Thing::run::inner", 1, "fresh"),
+        "incomplete": ("Other::run", 0, "fresh"),
+        "pending": ("Other::run", 1, "fresh"),
+        "constraint": ("Other::run", 1, "fresh"),
+    }
+    links = {
+        f"mem-home/{k}": [{"qualified_name": f"a::{name}", "complete": complete, "state": state}]
+        for k, (name, complete, state) in names.items()
+    }
+
+    class _Files:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return rows if params["ns"] == "mem-home" and "arrayExists" in sql else []
+
+    async def linked(*_args: Any) -> dict[str, list[dict[str, Any]]]:
+        return links
+
+    async def all_links(_org: str, ids: list[str]) -> list[dict[str, Any]]:
+        assert ids == ["mem-home/other", "mem-home/pending"]
+        return [
+            {**link, "code_namespace": "code-repo", "memory_id": mid, "path": "a.py"}
+            for mid in ids
+            for link in links[mid]
+        ] + [
+            {
+                "code_namespace": "code-repo",
+                "memory_id": "mem-home/pending",
+                "path": "",
+                "state": "pending",
+                "complete": 1,
+                "qualified_name": "a::Thing::run",
+            }
+        ]
+
+    async def namespaces(*_args: Any) -> list[str]:
+        return ["mem-home", "code-repo"]
+
+    async def no_extra_reads(*_args: Any) -> list[str]:
+        return []
+
+    async def grep(_input: CodeGrepInput) -> CodeGrepOutput:
+        return CodeGrepOutput(
+            matches=[{"path": "a.py", "line": 5, "scope": "Thing::run", "scope_start_line": 1}],
+            chunks_matched=1,
+        )
+
+    async def search(_input: CodeSearchInput) -> CodeSearchOutput:
+        unit = CodeUnit(
+            path="a.py", start_line=1, end_line=12, symbol="a::Thing::run", kind="function"
+        )
+        results = [unit]
+        if op == "search_file":
+            results.append(unit.model_copy(update={"granularity": "file"}))
+        return CodeSearchOutput(results=results, route="hybrid")
+
+    monkeypatch.setattr(for_file, "get_client", _Files)
+    monkeypatch.setattr(for_file, "_linked", linked)
+    monkeypatch.setattr(for_file, "_readable_extras", no_extra_reads)
+    monkeypatch.setattr(path_lessons.code_links, "for_memories", all_links)
+    monkeypatch.setattr(code_plane_reads, "lesson_namespaces", namespaces)
+    monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda *_: "code-repo")
+    monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: False)
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
+    if op == "grep":
+        wrapped = result_lessons.WithLessons(grep, result_lessons.grep_paths)
+        answer = await wrapped(CodeGrepInput(org="acme", namespace=namespace, pattern="run"))
+    else:
+        wrapped = result_lessons.WithLessons(search, result_lessons.search_paths)
+        answer = await wrapped(CodeSearchInput(org="acme", namespace=namespace, query="run"))
+    focused = namespace == "code-repo" and op != "search_file"
+    expected = {"exact", "nested", "incomplete", "pending", "constraint", "file"}
+    assert {row["memory_key"] for row in answer.lessons} == (
+        expected if focused else expected | {"other"}
+    )
+    assert answer.lessons_left_out == int(focused)
+    assert (
+        next(row for row in answer.lessons if row["memory_key"] == "exact")["code_state"]
+        == "changed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_matching_preserves_constraints_pins_and_tie_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _hit("constraint", tags=("constraint",), value="Keep secrets out of logs."),
+        {**_hit("pinned", value="Stable team policy."), "pinned": True},
+        _hit("recent", value="Unrelated display note."),
+        _hit("older", value="Retry requests with their original identifier."),
+        _hit("same-score", value="Retry transient requests."),
+    ]
+    found = await _lessons(monkeypatch, {"a.py": rows}, ["a.py"], query="retry")
+    assert [r["memory_key"] for r in found] == [
+        "constraint",
+        "pinned",
+        "older",
+        "same-score",
+        "recent",
+    ]
+    unchanged = await _lessons(monkeypatch, {"a.py": rows}, ["a.py"], query="unmatched")
+    assert [r["memory_key"] for r in unchanged] == [r["memory_key"] for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_query_matches_in_later_files_can_use_the_shared_token_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unrelated = _hit("theme", value="Change the page theme.")
+    relevant = _hit("retry", files=("b.py",), value="A retry preserves the request identifier.")
+    lesson = path_lessons._lesson(relevant, "b.py")
+    assert lesson is not None
+    cap = path_lessons._tokens(lesson)
+    by_path = {"a.py": [unrelated], "b.py": [relevant]}
+    found = await _lessons(monkeypatch, by_path, ["a.py", "b.py"], budget=cap, query="retry")
+    assert [(row["path"], row["memory_key"]) for row in found] == [("b.py", "retry")]
+    browsing = await _lessons(monkeypatch, by_path, ["a.py", "b.py"], budget=cap)
+    assert [row["memory_key"] for row in browsing] == ["theme"]
+
+
+@pytest.mark.asyncio
+async def test_constraints_and_pins_in_later_files_precede_ordinary_query_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    by_path = {
+        "a.py": [_hit("retry", value="Retry transient requests.")],
+        "b.py": [
+            _hit("rule", files=("b.py",), tags=("constraint",), value="Keep secrets out of logs.")
+        ],
+        "c.py": [{**_hit("pin", files=("c.py",)), "pinned": True}],
+    }
+    found = await _lessons(monkeypatch, by_path, ["a.py", "b.py", "c.py"], query="retry")
+    assert [row["memory_key"] for row in found] == ["rule", "pin", "retry"]
 
 
 @pytest.mark.asyncio
@@ -251,17 +422,34 @@ async def test_a_root_file_takes_only_rows_naming_it_by_name(
 
 
 @pytest.mark.asyncio
-async def test_the_token_cap_holds_on_serialized_rows_and_a_note_is_cut(
+async def test_the_token_cap_holds_on_serialized_rows_without_cutting_notes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     long = "word " * 200
     by_path = {"a.py": [_hit("k/long", value=long), _hit("k/short"), _hit("k/2", value=long)]}
-    rows = await _lessons(monkeypatch, by_path, ["a.py"], budget=110)
-    # the long row fits alone; the next long one would pass the cap, the short one fits
+    first = path_lessons._lesson(by_path["a.py"][0], "a.py")
+    second = path_lessons._lesson(by_path["a.py"][1], "a.py")
+    assert first is not None and second is not None
+    cap = path_lessons._tokens(first) + path_lessons._tokens(second)
+    rows = await _lessons(monkeypatch, by_path, ["a.py"], budget=cap)
+    # The first whole note and the short note fit; the next whole note does not.
     assert [r["memory_key"] for r in rows] == ["k/long", "k/short"]
-    assert len(rows[0]["excerpt"]) == path_lessons.EXCERPT_CHARS
-    assert rows[0]["excerpt"].endswith("…")
-    assert sum(len(json.dumps(r, ensure_ascii=False)) // 4 + 1 for r in rows) <= 110
+    assert rows[0]["excerpt"] == " ".join(long.split())
+    assert sum(len(json.dumps(r, ensure_ascii=False)) // 4 + 1 for r in rows) <= cap
+
+
+@pytest.mark.asyncio
+async def test_unlimited_lessons_keep_long_notes_and_source_references(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = (
+        "A project convention. " * 100 + "Sources: https://example.com/project/design#release-order"
+    )
+    rows = await _lessons(
+        monkeypatch, {"a.py": [_hit("history/long", value=value)]}, ["a.py"], budget=0
+    )
+    assert rows[0]["excerpt"] == value
+    assert rows[0]["excerpt"].endswith("#release-order")
 
 
 @pytest.mark.asyncio
@@ -331,6 +519,7 @@ async def test_reach_only_readable_namespaces_and_the_top_paths(
     )
     assert calls[-1]["nss"] == ["mem-home", "code-repo"]
     assert calls[0]["token_budget"] == settings.code_result_lessons_tokens
+    assert calls[0]["query"] == "q"
 
 
 @pytest.mark.asyncio
@@ -535,11 +724,13 @@ async def test_the_op_handler_attaches_lessons_after_its_answer(
 @pytest.mark.parametrize(
     "name",
     [
+        "code.grep",
         "code.search",
         "code.callers",
         "code.callees",
         "code.impact",
         "code.outline",
+        "code.enclosing",
         "code.context_pack",
     ],
 )
@@ -615,17 +806,21 @@ async def test_the_search_memo_never_stores_lessons(monkeypatch: pytest.MonkeyPa
 
 def test_every_code_result_op_is_wrapped_with_its_files() -> None:
     from server.code.app.context import handle_code_context_pack
+    from server.code.app.grep import handle_code_grep
     from server.code.app.search.handler import handle_code_search
+    from server.code.app.symbol.enclosing import handle_code_enclosing
     from server.code.app.symbol.graph import handle_code_callees, handle_code_callers
     from server.code.app.symbol.impact import handle_code_impact
     from server.code.app.symbol.outline import handle_code_outline
 
     wanted = {
+        "code.grep": (handle_code_grep, result_lessons.grep_paths),
         "code.search": (handle_code_search, result_lessons.search_paths),
         "code.callers": (handle_code_callers, result_lessons.edge_paths),
         "code.callees": (handle_code_callees, result_lessons.edge_paths),
         "code.impact": (handle_code_impact, result_lessons.impact_paths),
         "code.outline": (handle_code_outline, result_lessons.outline_paths),
+        "code.enclosing": (handle_code_enclosing, result_lessons.enclosing_paths),
         "code.context_pack": (handle_code_context_pack, result_lessons.pack_paths),
     }
     for name, (inner, paths_of) in wanted.items():
@@ -634,6 +829,119 @@ def test_every_code_result_op_is_wrapped_with_its_files() -> None:
         assert op.handler.paths_of is paths_of, name
         assert {"include_lessons", "lesson_namespaces"} <= set(op.input_model.model_fields)
         assert "lessons" in op.output_model.model_fields
+
+
+@pytest.mark.asyncio
+async def test_grep_lessons_use_matched_files_and_respect_opt_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    _stub_reads(monkeypatch, ["code-repo"], calls)
+
+    async def grep(inp: CodeGrepInput) -> CodeGrepOutput:
+        return CodeGrepOutput(
+            matches=[{"path": "src/a.py", "line": 1}], chunks_matched=1, truncated=False
+        )
+
+    wrapped = result_lessons.WithLessons(grep, result_lessons.grep_paths)
+    inp = CodeGrepInput(org="acme", namespace="code-repo", pattern="ab")
+    out = await wrapped(inp)
+    assert out.lessons[0]["memory_key"] == "k"
+    assert calls[0]["paths"] == ["src/a.py"]
+    assert calls[0]["query"] == "ab"
+    calls.clear()
+    out = await wrapped(inp.model_copy(update={"include_lessons": False}))
+    assert calls == [] and "lessons" not in out.model_dump()
+
+
+def test_grep_presence_and_uncovered_paths_have_no_lessons():
+    inp = CodeGrepInput(pattern="ab")
+    out = CodeGrepOutput(matches=[{"path": "src/a.py"}], chunks_matched=1, truncated=False)
+    assert result_lessons.grep_paths(inp, out) == ["src/a.py"]
+    assert result_lessons.grep_paths(inp.model_copy(update={"mode": "presence"}), out) == []
+    assert result_lessons.grep_paths(inp, out.model_copy(update={"not_covered": True})) == []
+    files = out.model_copy(update={"files": [{"path": "src/b.py"}]})
+    assert result_lessons.grep_paths(inp.model_copy(update={"mode": "files"}), files) == [
+        "src/b.py"
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skip", ["none", "argument", "narrowed", "unresolved"])
+async def test_enclosing_lessons_follow_only_resolved_files(
+    monkeypatch: pytest.MonkeyPatch, skip: str
+) -> None:
+    calls: list[dict[str, Any]] = []
+    _stub_reads(monkeypatch, ["mem-home", "code-repo"], calls)
+    monkeypatch.setattr(
+        "server.identity.app.request_scope.request_narrowed", lambda: skip == "narrowed"
+    )
+
+    async def enclosing(inp: CodeEnclosingInput) -> CodeEnclosingOutput:
+        resolved = skip != "unresolved"
+        return CodeEnclosingOutput(
+            results=[
+                {
+                    "path": "src/a.py",
+                    "start_line": 1 if resolved else 0,
+                    "end_line": 5,
+                    "symbol": "cleanup",
+                },
+                {
+                    "path": "src/a.py",
+                    "start_line": 2 if resolved else 0,
+                    "end_line": 5,
+                    "qualified_name": "pkg::finish",
+                },
+                {
+                    "path": "src/a.py",
+                    "start_line": 1 if resolved else 0,
+                    "end_line": 5,
+                    "symbol": "cleanup",
+                },
+                {"path": "missing.py", "start_line": 0, "end_line": 0, "symbol": "missing"},
+            ],
+            resolved=3 if resolved else 0,
+            paths_indexed=1,
+            paths_total=2,
+            took_ms=0,
+        )
+
+    wrapped = result_lessons.WithLessons(enclosing, result_lessons.enclosing_paths)
+    out = await wrapped(
+        CodeEnclosingInput(
+            org="acme",
+            namespace="code-repo",
+            locations=["src/a.py:2", "src/a.py:3", "src/a.py:4", "missing.py:1"],
+            lesson_namespaces=["mem-home", "denied"],
+            include_lessons=skip != "argument",
+        )
+    )
+    assert len(out.results) == 4
+    if skip != "none":
+        assert calls == [] and "lessons" not in out.model_dump()
+    else:
+        assert calls[0]["paths"] == ["src/a.py"]
+        assert calls[0]["nss"] == ["mem-home", "code-repo"]
+        assert calls[0]["query"] == "cleanup pkg::finish"
+        assert out.lessons[0]["namespace"] == "mem-home"
+
+
+def test_grep_enrichment_uses_only_the_remaining_deadline(monkeypatch: pytest.MonkeyPatch):
+    from types import SimpleNamespace
+
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock()
+    clock_time = SimpleNamespace(monotonic=clock.monotonic)
+    monkeypatch.setattr(result_lessons, "time", clock_time)
+    monkeypatch.setattr(result_lessons.code_deadline, "time", clock_time)
+    inp = CodeGrepInput(pattern="ab", deadline_ms=200)
+    started = clock.monotonic()
+    clock.advance(0.15)
+    assert result_lessons._bound_s(inp, started) == pytest.approx(0.05)
+    clock.advance(0.10)
+    assert result_lessons._bound_s(inp, started) <= 0
 
 
 def test_each_answer_names_its_files_best_first() -> None:
@@ -654,3 +962,12 @@ def test_each_answer_names_its_files_best_first() -> None:
     assert result_lessons.pack_paths(None, pack) == []
     pack._paths = ["a.py", "b.py"]
     assert result_lessons.pack_paths(None, pack) == ["a.py", "b.py"]
+
+
+@pytest.mark.asyncio
+async def test_unlimited_lessons_keep_all_selected_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = [
+        _hit(str(i), value="Historical constraint " * 40, tags=("constraint",)) for i in range(8)
+    ]
+    found = await _lessons(monkeypatch, {"a.py": rows}, ["a.py"], budget=0)
+    assert {row["memory_key"] for row in found} == {str(i) for i in range(8)}

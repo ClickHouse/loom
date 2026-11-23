@@ -39,17 +39,23 @@ from server.operations.base import MCP_HIDDEN
 
 
 class CodeSymbolInput(_CodeIdentity):
-    # bare, qualified, or partially qualified name — or `path:line`
+    # bare, qualified, or partially qualified name — or `path:line` / `path:symbol`
     # ("src/Foo.cpp:123"), which resolves to the innermost function
     # containing that line: a grep hit or review comment becomes the whole
     # function in one call.
-    name: str = ""
+    name: str = Field(
+        default="",
+        description="Definition name, path:line, or path:symbol. A filename constrains the lookup.",
+    )
     # An index symbol id (a definition's `unit_id`, an edge's `*_symbol_id`); when set it
     # wins over `name` and resolves exactly that definition.
     symbol_id: str = ""
-    # Read each definition's body; a 200+ line class ships its skeleton plus member
-    # outline instead. False = signature, doc and pointer only.
-    include_body: bool = True
+    # An unavailable complete body is disclosed with an outline or source pointer.
+    include_body: bool = Field(
+        default=True,
+        description="Include retained implementation source when available; "
+        "false returns metadata.",
+    )
     # Attach `recent_prs` (merged PRs over the definitions' paths) to the first definition.
     include_history: bool = True
     # Attach `examples` (call sites that use the symbol) to the first definition.
@@ -64,9 +70,8 @@ class CodeSymbolInput(_CodeIdentity):
     # team rules (over MCP the caller's memory home by default); one the caller cannot
     # read is skipped.
     lesson_namespaces: list[str] = Field(default_factory=list, max_length=4)
-    # Estimated-token budget for the answer; definitions past it are served elided
-    # (signature, doc, pointer), and the `uses_brief` block is paid out of it first.
-    token_budget: int = Field(default=2500, ge=200, le=12000)
+    # Estimated-token cap for definitions and `uses_brief`; 0 (default) is unlimited.
+    token_budget: int = Field(default=0, ge=0)
     # Definitions carry `fan_in` when the weekly stats are enabled; min_fan_in drops the
     # rest, sort_by='fan_in' puts the most-called definition of an overloaded/ambiguous
     # name first.
@@ -89,7 +94,10 @@ class CodeSymbolInput(_CodeIdentity):
     uses_limit: int = Field(default=50, ge=1, le=200)
     # Serve the compact `uses` block when the lookup resolves to one definition;
     # ignored when `uses` is true.
-    uses_brief: bool = False
+    uses_brief: bool = Field(
+        default=False,
+        description="Include a compact caller summary when one definition resolves.",
+    )
     # When several definitions match, rank them by the change at hand — the files in
     # `near_paths` (<= 20) or the merged PR's file list for `pr_number` from the ledger:
     # same file, same directory, co-change in code_pr_history, then path distance.
@@ -142,13 +150,19 @@ class CodeSymbolOutput(BaseModel):
     def _drop_empty_presence(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # presence / summary (and the other optional blocks) ride only when
         # their mode fired, so a plain lookup's payload carries none of them
-        return _drop_unfired_symbol_blocks(
+        data = _drop_unfired_symbol_blocks(
             _drop_unset_symbol_context(_drop_empty_presence_keys(handler(self)))
         )
+        if not data.get("lessons_left_out"):
+            data.pop("lessons_left_out", None)
+        return data
 
     # The resolved definitions (at most 10), fitted to `token_budget`; empty when
     # nothing resolved (see `candidates`) or on a presence answer.
     definitions: list[CodeUnit]
+    # Whole linked lessons omitted to preserve definitions within an explicit request budget.
+    # Absent when none were omitted; the deployment lesson budget is applied separately.
+    lessons_left_out: int = 0
     # True when the served definitions carry more than one distinct name/signature pair.
     ambiguous: bool = False
     # For a class / interface / enum definition, its type hierarchy from the `inherits`
@@ -172,7 +186,7 @@ class CodeSymbolOutput(BaseModel):
     # truncated, epistemic} or {count_floor, skipped: "hub", epistemic}; `uses_tokens`
     # is what it cost out of token_budget (0 and off the wire when no block was built).
     uses: list[dict[str, Any]] | dict[str, Any] = Field(default_factory=list)
-    # True when the `uses` list stopped at `uses_limit`.
+    # True when `uses_limit` shortened the list or the token cap withheld `uses_brief`.
     uses_truncated: bool = False
     # Estimated tokens the compact `uses` block cost out of `token_budget`.
     uses_tokens: int = 0
@@ -180,7 +194,7 @@ class CodeSymbolOutput(BaseModel):
     # — same_file | same_dir | co_change | path_distance | none. "" and off the wire
     # when no context was given.
     picked_by: str = ""
-    # `anonymous_namespace` | `tail` | `python_module` | `registration` when a
+    # `anonymous_namespace` | `tail` | `python_module` | `registration` | `file_symbol` when a
     # read-side name form bound; "" and off the wire for an exact hit.
     resolved_by: str = ""
     # The document sections that cite the definition (the Markdown lane's `reads` edges)
@@ -368,13 +382,13 @@ class CodeCallersOutput(_LessonsOut):
     # Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`;
     # when it is on, "" or how many changed files it did not fully read.
     overlay_note: str = ""
-    # How an over-qualified name bound when the exact form missed —
+    # How a read-side name spelling bound —
     # `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a
     # namespace the definition does not carry dropped; one definition fit), or
     # `registration` when a SQL-level name (`sumMap`, `arrayFold::executeImpl`) bound to
     # the implementing class's methods through its registration statement, or
-    # `python_module` for an import spelling of a retained Python name. "" and
-    # off the wire for an exact hit.
+    # `python_module` for an import spelling of a retained Python name, or
+    # `file_symbol` for a name constrained by a filename. "" and off the wire for an exact hit.
     resolved_by: str = ""
     # A bare short name that resolves to many unrelated definitions (setColumns
     # on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the
@@ -551,7 +565,7 @@ class CodeImpactOutput(_LessonsOut):
     # True when `impacted_symbols` is a page of the radius (per_hop_limit /
     # offset sliced it, or the per-hop edge read hit its cap).
     truncated: bool = False
-    # `anonymous_namespace` | `tail` | `python_module` | `registration` when a
+    # `anonymous_namespace` | `tail` | `python_module` | `registration` | `file_symbol` when a
     # read-side name form bound; "" and off the wire for an exact hit.
     resolved_by: str = ""
     # Why the radius is empty, '' when it is not. Answers:

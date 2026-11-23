@@ -535,7 +535,8 @@ jobs:
           refused "networkPolicy.egressExcept must be a list of CIDRs" --set networkPolicy.egressExcept=
           refused "networkPolicy.egressExcept must be a list of CIDRs" --set networkPolicy.egressExcept=0
       - name: install PyYAML for the render gates
-        run: python3 -m pip install --quiet --user pyyaml==6.0.3
+        run: |
+          python3 -m pip install --quiet --user --require-hashes --only-binary=:all: -r scripts/gates/requirements.txt
       # What the extractor's pods can be reached by and reach, read off the render.
       - name: extractor isolation
         run: python3 scripts/gates/helm_extractor_isolation.py
@@ -926,7 +927,7 @@ jobs:
             extractor.log
 
   integration-postgres:
-    name: pytest integration (Postgres ${{ matrix.postgres }} memory authority)
+    name: pytest integration (Postgres ${{ matrix.postgres }}, ${{ matrix.profile }})
     needs: [validate-ref, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -935,6 +936,7 @@ jobs:
       fail-fast: false
       matrix:
         postgres: ["16", "18"]
+        profile: [storage, isolation]
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
       LOOM_CH_HOST: localhost
@@ -1016,6 +1018,7 @@ jobs:
           tail -100 server.log
           exit 1
       - name: pytest (Postgres authority, memory, knowledge, isolation and the SQL surface)
+        if: ${{ matrix.profile == 'storage' }}
         run: >-
           pytest -q
           tests/integration/test_pg_authority.py
@@ -1096,6 +1099,7 @@ jobs:
           tests/integration/test_marked_durable_folds_native.py
           tests/integration/test_marked_sql_surface_native.py
       - name: pytest online-index durability on a private physical standby
+        if: ${{ matrix.profile == 'storage' }}
         timeout-minutes: 8
         env:
           LOOM_PG_IMAGE: postgres:${{ matrix.postgres }}
@@ -1124,6 +1128,7 @@ jobs:
           docker update --memory 1g --memory-swap 1g loom-scale-index-drill-pg loom-scale-index-drill-pg-standby
           pytest -q tests/integration/test_pg_online_index_durability.py
       - name: pytest placement durability on a private physical standby
+        if: ${{ matrix.profile == 'storage' }}
         timeout-minutes: 8
         env:
           LOOM_PG_IMAGE: postgres:${{ matrix.postgres }}
@@ -1162,12 +1167,12 @@ jobs:
           export LOOM_CELL_PLACE_DRILL_DSN="postgres://loom:loomdev@127.0.0.1:$port/loom"
           docker update --memory 1g --memory-swap 1g loom-scale-place-drill-pg loom-scale-place-drill-pg-standby
           pytest -q tests/integration/test_cell_place_durability.py
-      # The tenant-isolation gates again, against a second server that enforces auth:
+      # The tenant-isolation profile uses a second server that enforces auth:
       # the Postgres read paths (heads by key and by id, narrowed scopes) see real tokens.
-      # They run whether or not the memory suites passed (`!cancelled()`).
+      # Its matrix job runs independently of the storage profile's outcome.
       - name: Boot control plane with auth on
         id: auth_on
-        if: ${{ !cancelled() && steps.issuer.outcome == 'success' }}
+        if: ${{ !cancelled() && matrix.profile == 'isolation' && steps.issuer.outcome == 'success' }}
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_INSTANCE_LABEL: "ci:integration-postgres-auth"
@@ -1187,7 +1192,7 @@ jobs:
       # extraction queue, projection failures) hold no Postgres row: they run on the
       # ClickHouse job.
       - name: pytest isolation gates (Postgres authority, auth on)
-        if: ${{ !cancelled() && steps.auth_on.outcome == 'success' }}
+        if: ${{ !cancelled() && matrix.profile == 'isolation' && steps.auth_on.outcome == 'success' }}
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_BASE_URL: http://localhost:7778
@@ -1209,16 +1214,16 @@ jobs:
           tests/integration/test_pg_authority.py
           -k "not test_a_duplicate_never_resolves_to_a_canonical_outside_the_scope
           and not test_a_superseded_hit_never_names_a_successor_outside_the_scope"
-      # Last, on its own: `loom reconcile` acts on the whole database, every other test's
-      # rows included, so it runs after them all and in its file's order.
+      # Last in the storage profile: `loom reconcile` acts on the whole database,
+      # the storage tests' rows included, so it runs after them in its file's order.
       - name: pytest (loom reconcile drills)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.profile == 'storage' }}
         run: pytest -q -p no:randomly tests/integration/test_restore_reconcile.py
       - name: Upload server log on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: server-log-postgres-${{ matrix.postgres }}
+          name: server-log-postgres-${{ matrix.postgres }}-${{ matrix.profile }}
           path: |
             server.log
             server-auth.log
@@ -1356,7 +1361,9 @@ jobs:
       - name: Claude memory tool with Anthropic 1.11
         working-directory: sdk/typescript
         run: |
-          npm install --no-save --package-lock=false --no-audit --no-fund @anthropic-ai/sdk@1.11.0
+          npm ci --prefix ../../.github/anthropic-sdk-1.11 --ignore-scripts --no-audit --no-fund
+          rm -r node_modules/@anthropic-ai/sdk
+          ln -s "$GITHUB_WORKSPACE/.github/anthropic-sdk-1.11/node_modules/@anthropic-ai/sdk" node_modules/@anthropic-ai/sdk
           npm run type-check
           npx vitest run src/integrations/claude-memory.test.ts src/integrations/claude-memory-runner.test.ts
           npx vitest run --config vitest.dist.config.ts test/package/exports.test.ts
@@ -1419,8 +1426,9 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
-      - name: Install uv
-        run: pip install uv
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
       - name: Build wheel + sdist
         run: uv build sdk/python --out-dir dist
       - name: Install the wheel into a clean venv

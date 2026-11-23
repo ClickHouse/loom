@@ -669,7 +669,7 @@ conflicts and writes `memory.ask` answers. Both default to fakes that need no ne
 | ------------------------- | -------------------------------------------------------------- | ------------------------ |
 | `fake`                    | nothing; extraction produces nothing                           | `fake-echo-1`            |
 | `openai`                  | `OPENAI_API_KEY`                                               | `gpt-6-luna`             |
-| `anthropic`               | `ANTHROPIC_API_KEY`                                            | `claude-haiku-4-5`       |
+| `anthropic`               | `ANTHROPIC_API_KEY`                                            | `claude-sonnet-5-5`      |
 | `local`                   | a chat-completions server at `LOOM_LOCAL_LLM_BASE_URL`, no key | `qwen2.5:3b`             |
 
 - **Width.** `LOOM_EMBEDDING_DIM` must equal the model's width. It is fixed when the

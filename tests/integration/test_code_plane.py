@@ -92,6 +92,76 @@ async def test_ingest_lifecycle(code_env) -> None:
     assert s3.symbols_new == 0 and s3.symbols_tombstoned == 0
 
 
+async def test_grep_can_return_distinct_retained_enclosing_bodies(ch_client, monkeypatch) -> None:
+    from server.code.api.models_grep import CodeGrepInput
+    from server.code.app.grep import handle_code_grep
+    from server.code.app.index.repo_registry import read_registry
+    from server.code.store.index import CodeRepo
+    from server.core.ch import get_client
+    from server.settings import settings
+    from tests.integration._resources import unique_org
+
+    await get_client().connect()
+    assert await read_registry(get_client())
+    org, ns = unique_org("grep-bodies"), "source"
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    await _ingest(CodeRepo(), org, ns)
+    plain = await handle_code_grep(CodeGrepInput(org=org, namespace=ns, pattern="squashImpl"))
+    rich = await handle_code_grep(
+        CodeGrepInput(
+            org=org,
+            namespace=ns,
+            pattern="squashImpl",
+            include_body=True,
+        )
+    )
+    assert rich.matches == plain.matches and rich.matches
+    assert not plain.definitions
+    assert not rich.definitions_partial
+    assert len(rich.definitions) == len({row["symbol_id"] for row in rich.definitions}) == 2
+    assert all("squashImpl" in row["body"] and not row["body_elided"] for row in rich.definitions)
+
+    # A vanished continuation pool reruns lines, but must hydrate only its page.
+    from server.code.app import grep
+
+    first = await handle_code_grep(
+        CodeGrepInput(
+            org=org,
+            namespace=ns,
+            pattern="squashImpl",
+            limit=1,
+            include_body=True,
+        )
+    )
+    assert first.next_cursor
+    original = grep.definitions_for
+    hydrated = []
+
+    async def bodies(input, matches, budget):
+        hydrated.extend((row["path"], row["line"]) for row in matches)
+        return await original(input, matches, budget)
+
+    async def missing_pool(*args):
+        return None
+
+    monkeypatch.setattr(grep, "definitions_for", bodies)
+    monkeypatch.setattr(grep, "_read_pool_settling", missing_pool)
+    second = await handle_code_grep(
+        CodeGrepInput(
+            org=org,
+            namespace=ns,
+            pattern="squashImpl",
+            limit=1,
+            include_body=True,
+            cursor=first.next_cursor,
+        )
+    )
+    assert second.matches == rich.matches[1:2]
+    assert hydrated == [(row["path"], row["line"]) for row in second.matches]
+    assert not second.definitions_partial
+    assert len(second.definitions) == 1
+
+
 async def test_overloads_survive_engine_merge(code_env, ch_client) -> None:
     repo, org, ns = code_env
     await _ingest(repo, org, ns)
@@ -277,3 +347,21 @@ async def test_deletion_tombstones_everything(code_env) -> None:
     assert await repo.live_chunks_for_path(org, ns, "src/S.cpp", model) == []
     assert await repo.live_symbols_for_path(org, ns, "src/S.cpp", "treesitter") == []
     assert await repo.live_edges_for_path(org, ns, "src/S.cpp", "treesitter") == []
+
+
+async def test_file_qualified_symbol_keeps_overloads_and_declines_other_files(code_env) -> None:
+    from server.code.app.symbol.resolve import _resolve_symbols, near_misses
+
+    repo, org, ns = code_env
+    await _ingest(repo, org, ns)
+    plain = await repo.symbols_by_name(org, ns, "Squasher::insert")
+    scoped = await _resolve_symbols(repo, org, ns, symbol_id="", name="src/S.cpp:Squasher::insert")
+    assert len(scoped) == 2
+    assert {r["symbol_id"] for r in scoped} == {r["symbol_id"] for r in plain}
+    assert all(r["resolved_by"] == "file_symbol" for r in scoped)
+    assert not await _resolve_symbols(
+        repo, org, ns, symbol_id="", name="src/Other.cpp:Squasher::insert"
+    )
+    assert not await near_misses(repo, org, ns, "src/Other.cpp:Squasher::insert")
+    limited = await repo.symbols_by_name(org, ns, "insert", path="src/S.cpp", limit=1)
+    assert len(limited) == 1 and limited[0]["path"] == "src/S.cpp"

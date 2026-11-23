@@ -112,6 +112,11 @@ HTTP answers with a status and a `detail` body, MCP with a result that carries `
 0 disables the cap. Each request then passes these phases in order (`_make_endpoint`). A
 refusal ends the request.
 
+Refusals and handled operation errors retain the request id, schema version and any trace or rate-limit
+headers already established by admission. The error response also keeps its own
+headers, including retry and authentication challenges. Body framing and cookies
+from the injected success response do not transfer to an error response.
+
 | Phase                | Code                                   | Refusal                                                                                                                                                                                                                                                                                                                                                                                                |
 | -------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Begin                | `_begin_request`                       | None. Sets `X-Request-Id` (the caller's when it is 1 to 64 letters, digits, `.`, `_` or `-`, else a fresh UUID), `X-Schema-Version` and the query tag `"<op> <request_id>"`.                                                                                                                                                                                                                           |
@@ -182,6 +187,45 @@ have hand-written descriptors: `loom_search` (the `search.query` op, rendered as
 summary plus the lean sections), `loom_op` (calls any op by name through the same path;
 `op: "help"` lists them, `server/transport/mcp_op.py`) and `loom_activate` (the primer,
 the one tool that is not a registry op).
+
+#### Tool design
+
+The MCP surface follows the [MCP tools specification](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
+and [tool design guidance](https://www.anthropic.com/research/writing-tools-for-agents):
+
+- **Discover by task.** Curated rosters list common tools; `loom_op` help discovers
+  other reachable operations without loading every schema. Instructions name tools
+  the connection can use. The assistant toolset has only its listed read tools.
+  Coding instructions distinguish issue investigation, known-definition reads and
+  literal searches. Code-linked project knowledge explains what retrieval adds to
+  a source-file read; argument descriptions carry the inputs for each workflow.
+- **Offer an entrypoint.** Search and operation discovery request upfront schema
+  loading where listed; other tools can be discovered when needed. The loading
+  setting applies to registry operations and synthetic tools. Clearing it leaves
+  loading to the client. A loading hint never invokes a tool or widens its roster.
+- **Keep one contract.** The operation registry supplies schemas and handlers for
+  every transport. Descriptions explain when to call, inputs, and useful results.
+  Listings follow registry order and do not embed caller-specific context.
+  Code search uses the deployment's body mode and response budget over both HTTP
+  and MCP. Exact symbol matches include their complete retained source in automatic
+  body mode; incomplete source is disclosed as elided.
+  MCP result shaping retains requested definition bodies without a separate size cap.
+  Chunk responses omit a presentation prefix only when its entire text already
+  occurs in the retained source; distinct context and continuation headers stay.
+- **Spend context on evidence.** Reuse sufficient context and retrieve missing
+  evidence. A default memory namespace enables the task pack; a hook that already
+  supplied context avoids a duplicate lookup. Instructions also reach MCP-only
+  clients without plugin hooks.
+- **Enforce access in the server.** Instructions and read-only, destructive and
+  idempotent annotations guide clients; call-time authorization decides access.
+  Discovery and routing keep hidden operations hidden and respect read-only
+  connections. Writes require the user's intent and permission.
+- **Make results usable.** Return structured results and readable text, with
+  recovery guidance for argument errors and refusals. Result shaping retains
+  evidence while removing accounting detail unless requested.
+- **Measure outcomes.** A connected server, advertised tool and completed call are
+  separate observations. Evaluate task success, time, cost and tokens alongside
+  tool use; instructions alone prove no performance benefit.
 
 `_call_tool` (`mcp_call.py`; the telemetry, response and failure answer in
 `mcp_outcome.py`) runs these phases in order:

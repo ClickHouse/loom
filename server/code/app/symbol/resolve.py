@@ -29,6 +29,11 @@ async def _resolve_symbols(
         # `path:line` — the innermost function containing the line, the
         # shape a grep hit or a review comment arrives in.
         return await _symbols_at_location(repo, org, ns, *loc)
+    file_symbol = _parse_file_symbol(name)
+    if file_symbol:
+        path, local = file_symbol
+        rows = await repo.symbols_by_name(org, ns, local, path=path)
+        return symbol_forms.mark(rows, "file_symbol")
     if name:
         rows = await repo.symbols_by_name(org, ns, name)
         if rows:
@@ -49,6 +54,14 @@ def _parse_location(name: str) -> tuple[str, int] | None:
     if not m:
         return None
     return m.group("path"), int(m.group("line"))
+
+
+def _parse_file_symbol(name: str) -> tuple[str, str] | None:
+    """An explicit filename constrains a named definition; namespace separators do not."""
+    match = _FILE_SYMBOL.match(repo_relative(name))
+    if not match:
+        return None
+    return match.group("path"), match.group("name")
 
 
 def _containing(rows: list[dict[str, Any]], line: int) -> list[dict[str, Any]]:
@@ -107,8 +120,13 @@ async def near_misses(
     """The near-miss list for a name that resolved nothing: symbols whose name contains
     its bare name, or for a `path:line` the functions in that file nearest the line."""
     loc = _parse_location(name)
+    file_symbol = _parse_file_symbol(name)
     if loc:
         fuzzy = await _functions_near(repo, org, ns, *loc)
+    elif file_symbol:
+        path, local = file_symbol
+        needle = local.split("::")[-1].rsplit(".", 1)[-1]
+        fuzzy = await repo.symbols_fuzzy(org, ns, needle or fallback, path=path, limit=limit)
     else:
         fuzzy = await repo.symbols_fuzzy(org, ns, name.split("::")[-1] or fallback)
     return [
@@ -124,21 +142,24 @@ async def near_misses(
     ]
 
 
-async def symbol_body(repo: CodeRepo, org: str, ns: str, sym: dict[str, Any]) -> str:
+async def symbol_body(
+    repo: CodeRepo, org: str, ns: str, sym: dict[str, Any], *, model: str | None = None
+) -> str:
     """The whole retained definition, or no body when completeness is not established."""
     path = str(sym["path"])
     start, end = int(sym.get("start_line") or 0), int(sym.get("end_line") or 0)
-    if start <= 0 or end < start or end - start + 1 > 12000:
+    if start <= 0 or end < start:
         return ""
     # Hydration reads the configured label's retained text, without constructing a
     # provider or letting missing credentials select another model's chunks.
-    if not settings.embedding_model:
-        return ""
-    model = served_model_label(settings.embedding_model)
+    if model is None:
+        if not settings.embedding_model:
+            return ""
+        model = served_model_label(settings.embedding_model)
     rows = await repo.source_chunks_for_span(org, ns, path, start, end, model)
     if len(rows) > 400:
         return ""
-    return complete_source_span(rows, start, end, max_chars=12000)
+    return complete_source_span(rows, start, end, max_chars=0)
 
 
 async def _file_row(repo: CodeRepo, org: str, ns: str, path: str) -> dict[str, Any] | None:
@@ -161,4 +182,5 @@ def _seed_ids_of(seeds: list[dict[str, Any]]) -> list[str]:
     )
 
 
+_FILE_SYMBOL = re.compile(r"^(?P<path>[\w./+-]+\.[A-Za-z0-9]+):(?P<name>[A-Za-z_~].*)$")
 _FILE_LINE = re.compile(r"^(?P<path>[\w./+-]+\.[A-Za-z0-9]+):(?P<line>\d+)$")

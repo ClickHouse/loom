@@ -11,6 +11,8 @@ import pytest
 
 from server.memory.app import runs_manifest as rm
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 OBS = [
     {
         "session_id": "s-new",

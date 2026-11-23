@@ -29,6 +29,8 @@ class _CHClient(Protocol):
         self,
         sql: str,
         params: dict[str, Any] | None = ...,
+        *,
+        settings: dict[str, Any] | None = ...,
     ) -> list[dict[str, Any]]: ...
     async def execute(
         self,

@@ -47,6 +47,11 @@ width (`probe_embedding_dim`); a mismatch shows as `embedding_dim_mismatch` on
 files, pinned to a revision and sha256 (`server/embedding/local_models.py`); the stack's
 `env.example` embeds with it.
 
+Local ONNX inference uses `LOOM_LOCAL_EMBEDDING_BATCH_SIZE` texts per batch
+(default 16). This bounds the number of texts whose inference activations occupy
+memory together; every input still receives a vector in input order. Larger batches
+use more memory. The batch size changes neither the model nor the embedding space.
+
 ### Protocol and paths
 
 The `Embedder` protocol is `model_name`, `dim`, `async embed(text)` and
@@ -179,7 +184,8 @@ low.
 2. Else from `LOOM_LLM_MODEL`: `bedrock:*` is `bedrock`; `claude*` is `anthropic`; `gpt*`, `o1*`, `o3*`, `o4*`,
    `chatgpt*` are `openai`; `fake*` is `fake`.
 3. Else from the key present: `OPENAI_API_KEY` gives `openai` with `gpt-6-luna`, then
-   `ANTHROPIC_API_KEY` gives `anthropic` with `claude-haiku-4-5`.
+   `ANTHROPIC_API_KEY` gives `anthropic` with `claude-sonnet-5-5`.
+   An explicit deployment model or per-job model overrides this provider default.
 4. Else `fake` (`fake-echo-1`).
 
 `Settings` resolves it once at load; `settings.llm_provider` is always concrete, and

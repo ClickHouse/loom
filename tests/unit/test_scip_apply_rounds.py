@@ -74,6 +74,11 @@ class _RoundRepo:
                     "symbol_id": sd.symbol_id("ns::fn0", "()"),
                     "start_line": 1,
                     "end_line": 5,
+                    "name": "fn0",
+                    "kind": "function",
+                    "signature": "()",
+                    "decl_paths": [],
+                    "doc_comment": "",
                 }
             ]
         }

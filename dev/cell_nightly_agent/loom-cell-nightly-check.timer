@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily check after Cell nightly acceptance has time to finish
+
+[Timer]
+OnCalendar=*-*-* 06:13:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=loom-cell-nightly-check.service
+
+[Install]
+WantedBy=timers.target

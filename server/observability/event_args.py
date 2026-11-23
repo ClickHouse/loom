@@ -80,6 +80,8 @@ IDENTIFIER_KEYS: frozenset[str] = frozenset(
         "path",
         "prefix",
         "pattern",
+        "include_body",
+        "definitions_partial",
         "source_uri",
         "source",
         "subject",
@@ -618,10 +620,9 @@ def request_work_columns(work: Any) -> dict[str, str]:
 
 
 def request_work_stage_columns(work: Any) -> dict[str, str]:
-    """The bag's own stage partition as the stage columns, for a handler that
-    marks stages but whose result has no `retrieval_work` (memory.ask)."""
+    """Use the ask partition or observed code stages when the result has no partition."""
     try:
-        part = work.partition() if work is not None else {}
+        part = (work.partition() or work.code_stage_ms) if work is not None else {}
     except Exception:  # noqa: BLE001 — a projection failure never drops the event
         return {}
     if not part:
@@ -721,6 +722,15 @@ def project_result(result: Any, *, op_name: str = "") -> dict[str, str]:
         out.update(_retrieval_work_columns(result.get("retrieval_work")))
         out.update(_read_outcome_columns(result))
         out.update(_hits_column(op_name, result))
+        if op_name.startswith("code."):
+            from server.observability.code_response import code_response_counts
+
+            out.update(
+                {
+                    RESULT_PREFIX + key: str(value)
+                    for key, value in code_response_counts(result, op_name=op_name).items()
+                }
+            )
         for key in sorted(result):
             if key in IDENTITY_KEYS or key not in IDENTIFIER_KEYS:
                 continue

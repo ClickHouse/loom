@@ -285,7 +285,7 @@ def _plan(
         if d is not None:
             found.setdefault((d.path, d.qualified_name), d)
         elif ("::" in m.name or "." in m.name) and not any(
-            names_symbol(m.name, x.qualified_name) for x in same
+            names_symbol(m.name, x.qualified_name, x.path) for x in same
         ):
             waiting.append(m.name)  # not defined yet; a name defined twice is never linked
     # A file link only where no symbol link is finer: a removed function must not be

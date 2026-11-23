@@ -8,7 +8,7 @@
   <artifactId>loom-client</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <name>Loom Java client</name>
-  <description>A minimal client for Loom's memory ops: set, get, search and delete.</description>
+  <description>A minimal client for Loom's memory ops and the conversation ops a chat memory needs.</description>
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
@@ -48,6 +48,19 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.3.1</version>
+      </plugin>
+      <plugin>
+        <!-- The test-jar carries FakeLoom, which the chat memory modules' tests use. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>test-jar</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

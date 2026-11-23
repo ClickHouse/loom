@@ -21,6 +21,38 @@ changed what, with tamper evidence.
 passes write rows with `kind='worker'`. [Cost and usage](./cost-and-usage.md) is built on
 this table.
 
+Successful `code.*` answers also carry numeric content counts in `args`:
+
+| Ledger key                                                                                                  | Meaning                                                                                                       |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `out_source_bodies`, `out_source_chars`                                                                     | Nonempty definition bodies and their character count, across the root and its `definitions` or `results` rows |
+| `out_elided_bodies`                                                                                         | Rows with `body_elided=true`, including an empty body                                                         |
+| `out_lesson_rows`, `out_lesson_chars`                                                                       | Returned lesson rows and their excerpt character count                                                        |
+| `out_lesson_fresh`, `out_lesson_moved`, `out_lesson_changed`, `out_lesson_unresolved`, `out_lesson_missing` | Lesson counts by code-link state                                                                              |
+| `out_lesson_unclassified`                                                                                   | Lessons with an absent or unrecognized code-link state                                                        |
+| `out_lesson_rows_omitted`                                                                                   | Omitted lessons when the response discloses `lessons_left_out`                                                |
+| `out_grep_match_lines`                                                                                      | Lines returned by `code.grep`, including zero when it returns an empty line list                              |
+
+The same counts appear on the active span as `loom.response.code.<name>`, without
+the `out_` prefix, in both trace exporters. No source text, excerpts, paths or memory
+keys are added to spans. Counts describe the handler result before transport rendering;
+they do not prove that a client displayed or used it. Source counts exclude grep hit
+lines and examples. A repeated lesson counts on every answer that carries it.
+Characters are Unicode code points, not bytes or provider tokens. These counts have
+no effect on retrieval limits or response content.
+
+`response_tokens` estimates the serialized handler result as JSON characters divided
+by four. It measures a different quantity from source or lesson characters and can
+differ from the MCP-rendered response size. Neither measure is a provider invoice.
+A zero lesson count does not distinguish a disabled read, no matches, an inaccessible
+scope or an enrichment failure; use the request arguments and enrichment span as well.
+
+Code spans record exclusive stage milliseconds in `out_stage_ms` when the request
+has no response stage partition. The ledger includes spans after the retrieval
+handler's trace snapshot, including inline lesson reads. Concurrent spans can
+overlap. Use `latency_ms` for the elapsed request and read each stage as its own
+measurement. These ledger timings work with the trace exporter disabled.
+
 Each request row also carries its service-level columns:
 
 - `transport`: `http` or `mcp`.

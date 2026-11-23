@@ -222,11 +222,16 @@ def emit_agent_event(
     # returned: the deferred consistency verdict is such a
     # row, and its `out_consistency` is the label every analysis groups by.
     if result is not None:
-        args.update(project_result(result, op_name=op_name))
+        projected_result = project_result(result, op_name=op_name)
+        args.update(projected_result)
+        if success and op_name.startswith("code."):
+            from server.observability.code_response import record_response_counts
+
+            record_response_counts(projected_result)
     # The request's own work bag — ClickHouse rows
     # and bytes from every statement's response summary, identifier
-    # injection counts, legs skipped under schema skew, and the ask-side
-    # stage partition when the result carries none of its own.
+    # injection counts, legs skipped under schema skew, and observed ask or
+    # code stages when the result carries no partition of its own.
     try:
         from server.core import request_work as _request_work
         from server.observability.event_args import (

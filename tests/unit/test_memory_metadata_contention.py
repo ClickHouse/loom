@@ -32,6 +32,11 @@ class Replica:
         self.table.extend(batch)
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        if "FROM loom.memory_refusals" in sql:
+            from server.core.ch import sequential_reads_active
+
+            assert sequential_reads_active()
+            return []
         assert "loom.memory" in sql
         assert "select_sequential_consistency = 1" in sql
         heads = {}
@@ -245,9 +250,11 @@ async def test_uncertain_insert_keeps_every_key_fenced(memory_insert_keeper: Any
 
     with pytest.raises(TimeoutError):
         await insert_memory_versions(batch, ch=LostAnswer(table))
-    assert set(memory_insert_keeper.keys) == {
-        write_fence.lease_name(rows.identity_key(row)) for row in batch
-    }
+    from server.memory.store.refusals import fence_names
+
+    assert set(memory_insert_keeper.keys) == (
+        {write_fence.lease_name(rows.identity_key(row)) for row in batch} | set(fence_names(batch))
+    )
     with pytest.raises(lease_writes.FenceUnavailableError):
         await insert_memory_versions(batch[:1], ch=Replica(table))
     assert len(table) == 2
@@ -386,11 +393,17 @@ async def test_memory_insert_respects_its_admission_deadline(
     monkeypatch.setattr(lease_writes.leases, "release_shielded", release)
     monkeypatch.setattr(write_fence, "_admission_wait_s", lambda: wait_s)
     row = memory_repo.build_memory_version_row(_row())
+    from server.memory.store import refusals
+
+    names = {write_fence.lease_name(rows.identity_key(row)), *refusals.fence_names([row])}
+    count = len(names)
+    assert count > 1  # Key and consent admission share this deadline.
     if admitted:
         await insert_memory_versions([row], ch=client)
     else:
         with pytest.raises(lease_writes.FenceUnavailableError):
             await insert_memory_versions([row], ch=client)
     assert client.insert.await_count == int(admitted)
-    assert attempts == (2 if stage == "retry" and admitted else 1)
-    assert release.await_count == int(admitted or stage == "take")
+    assert attempts == count * (2 if stage == "retry" and admitted else 1)
+    expected_releases = count if stage == "take" else count - 1 + (count if admitted else 0)
+    assert release.await_count == expected_releases

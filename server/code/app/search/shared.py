@@ -42,23 +42,25 @@ class PagePlan:
 
 def page_plan(inp: Any) -> PagePlan:
     """The page plan of a CodeSearchInput. Page 1, every cursor page and the fan-out
-    resolve it here, so a continuation page is budgeted exactly as page 1 was. The
-    budget default is route-aware: 1200 for a symbol-shaped query (an exact symbol
-    lookup rarely needs the hybrid default's headroom, even when it falls through to
-    hybrid), 3000 otherwise; an explicit budget is honored unchanged."""
+    resolve it here. An omitted budget takes the deployment default; zero means
+    unlimited for every query shape and an explicit budget is honored unchanged."""
     from server.code.app import risk as code_risk
-    from server.code.app.search.shape import classify_query_shape
     from server.settings import settings as _settings
 
-    token_budget = inp.token_budget or (
-        1200 if classify_query_shape(inp.query) == "symbol" else 3000
+    token_budget = (
+        inp.token_budget if inp.token_budget is not None else _settings.code_search_token_budget
     )
     annotate = bool(inp.annotate and _settings.code_risk_annotations)
+    reserve = code_risk.reserve_for(inp.top_k) if annotate else 0
+    # Result heads take priority when a finite budget cannot fund annotations too.
+    if annotate and token_budget and token_budget < reserve + 200:
+        annotate = False
+        reserve = 0
     return PagePlan(
         token_budget=token_budget,
         bodies=inp.bodies or _settings.code_search_bodies_default,
         annotate=annotate,
-        reserve=code_risk.reserve_for(inp.top_k) if annotate else 0,
+        reserve=reserve,
     )
 
 

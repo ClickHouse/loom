@@ -13,6 +13,7 @@ enforces auth (an auth-off server ignores tokens); skips otherwise.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 import uuid
@@ -23,7 +24,7 @@ import httpx
 import pytest
 
 from server.insights.domain import analysis as boundary
-from tests.integration._eventually import wait_until
+from tests.integration._eventually import eventually, wait_until
 from tests.integration._resources import ch_client_from_env, unique_org
 
 _REFUSED = {403, 422}
@@ -407,6 +408,43 @@ def test_a_revoked_token_stops_new_calls(control_plane_url: str, seed: _Seed) ->
     )
 
 
+async def _wait_for_erasure_setup_publication(
+    seed: _Seed, user: str, key: str, memory_id: uuid.UUID, version: int
+) -> None:
+    import asyncpg
+
+    conn = await asyncpg.connect(os.environ["LOOM_PG_DSN"], timeout=5, command_timeout=5)
+    try:
+
+        async def acknowledged() -> bool:
+            return (
+                await conn.fetchval(
+                    "SELECT NOT EXISTS (SELECT 1 FROM loom.memory_deliveries d "
+                    "WHERE (d.org, d.namespace, d.seq) = (r.org, r.namespace, r.seq)) "
+                    "FROM loom.memory_current c JOIN loom.memory_revisions r "
+                    "ON (r.org, r.namespace, r.seq) = (c.org, c.namespace, c.seq) "
+                    "WHERE c.org=$1 AND c.namespace=$2 AND c.agent=$3 AND c.user_id=$4 "
+                    "AND c.session_id=$5 AND c.memory_key=$6 AND c.memory_id=$7 "
+                    "AND c.version=$8 AND r.memory_id=$7 AND r.version=$8",
+                    seed.org_a,
+                    seed.ns_a,
+                    "canary",
+                    user,
+                    "-",
+                    key,
+                    memory_id,
+                    version,
+                )
+            ) is True
+
+        await eventually(
+            acknowledged,
+            description="the erased user's exact revision to finish publication",
+        )
+    finally:
+        await conn.close(timeout=5)
+
+
 def test_an_erased_user_is_gone_from_the_next_statement(
     control_plane_url: str, seed: _Seed
 ) -> None:
@@ -433,6 +471,14 @@ def test_an_erased_user_is_gone_from_the_next_statement(
         max_wait=30,
         description="the erased user's memory to be readable before the erasure",
     )
+    if os.environ.get("LOOM_STORAGE_AUTHORITY") == "postgres":
+        # Row visibility precedes acknowledgement of every publication target.
+        written = r.json()
+        asyncio.run(
+            _wait_for_erasure_setup_publication(
+                seed, user, key, uuid.UUID(written["memory_id"]), int(written["version"])
+            )
+        )
     r = _call(
         control_plane_url,
         _platform_admin(seed.org_a, seed.nonce),

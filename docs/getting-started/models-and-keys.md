@@ -127,7 +127,7 @@ names its providers explicitly (the local embedder and the fake LLM).
 
 ```dotenv
 LOOM_LLM_PROVIDER=anthropic
-LOOM_LLM_MODEL=claude-haiku-4-5
+LOOM_LLM_MODEL=claude-sonnet-5-5
 ANTHROPIC_API_KEY=<your Anthropic API key>
 LOOM_REQUIRE_REAL_PROVIDERS=true
 ```

@@ -67,6 +67,7 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
     await repo.scope_file_count(ORG, NS, MODEL, scope or _scope("globs"), path_prefix=prefix)
     regex = c["scope"] == "regex"
     await repo.grep_chunks(ORG, NS, "needle", regex=regex, path_prefix=prefix, scope=scope)
+    await repo.grep_source_chunks_for_span(ORG, NS, "src/a.py", 1, 20, MODEL)
     if regex:
         # An alternation gets the needle guard in front of match()
         await repo.grep_chunks(ORG, NS, "needle|other", regex=True, path_prefix=prefix, scope=scope)

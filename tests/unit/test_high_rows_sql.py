@@ -661,9 +661,12 @@ async def test_a_period_taken_out_counts_as_written_so_a_pass_never_writes_it_ba
         "period_digest_s26_s30",
         "period_digest_s31_s35",
     }
-    assert await period_digest._skipped_period_keys(ch, ident, rewrite=False) == every
+    candidates = sorted(every | {"period_digest_s16_s20", "period_digest_s21_s25", "summary:s1"})
+    assert await period_digest._skipped_period_keys(ch, ident, candidates, rewrite=False) == every
     taken_out = {"period_digest_s1_s5", "period_digest_s6_s10", "period_digest_s31_s35"}
-    assert await period_digest._skipped_period_keys(ch, ident, rewrite=True) == taken_out
+    assert (
+        await period_digest._skipped_period_keys(ch, ident, candidates, rewrite=True) == taken_out
+    )
 
 
 @pytest.mark.asyncio
@@ -778,25 +781,47 @@ async def test_a_distill_pass_reads_only_observations_the_authority_serves(monke
 
 
 @pytest.mark.asyncio
-async def test_memory_digests_never_serves_a_stored_credential_key_fact(monkeypatch) -> None:
-    # A digest an earlier build wrote may hold one: the read leaves it out.
+async def test_memory_digests_never_serves_a_stored_credential_key_fact(
+    monkeypatch, no_blacklisted_values
+) -> None:
+    # One unsafe source withholds the whole digest; a proven neighbor remains available.
     from server.memory.api.models_temporal import MemoryDigestsInput
     from server.memory.app import curation
 
     token = "ghp_" + "a" * 36
-    ch = _LocalCH(
-        "SET enable_quantized_codec = 1",  # the summary embedding column's codec
-        ddl("session_summaries"),
-        "INSERT INTO loom.session_summaries (org, namespace, agent, user_id, session_id, "
-        "summary_text, key_facts, summary_embedding) VALUES ('o', 'n', 'a', '-', 's', "
-        f"'a session', ['the token is {token}', 'ran the tests'], "
-        "arrayWithConstant(3072, toFloat32(0)))",
-    )
+    import json
+
+    from clickhouse_connect.driver.binding import format_query_value
+
+    statements = ["SET enable_quantized_codec = 1", ddl("session_summaries"), ddl("memory")]
+    for session, key, text in (
+        ("s", "vault", f"the token is {token}"),
+        ("s", "tests", "ran the tests"),
+        ("safe", "safe", "safe fact"),
+    ):
+        statements.append(
+            "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+            "value, memory_type, version) VALUES ('o','n','a','-',"
+            f"{format_query_value(session)}, {format_query_value(key)}, "
+            f"{format_query_value(json.dumps(text))}, 'semantic', 1)"
+        )
+    for session, facts, keys in (
+        ("s", [f"the token is {token}", "ran the tests"], ["vault", "tests"]),
+        ("safe", ["safe fact"], ["safe"]),
+    ):
+        statements.append(
+            "INSERT INTO loom.session_summaries (org, namespace, agent, user_id, session_id, "
+            "summary_text, key_facts, derived_from, summary_embedding) VALUES ('o','n','a','-',"
+            f"{format_query_value(session)}, {format_query_value(chr(10).join(facts))}, "
+            f"{format_query_value(facts)}, {format_query_value(keys)}, "
+            "arrayWithConstant(3072, toFloat32(0)))"
+        )
+    ch = _LocalCH(*statements)
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     out = await curation.handle_memory_digests(
         MemoryDigestsInput(org="o", namespace="n", agent="a")
     )
-    assert [r.key_facts for r in out.rows] == [["ran the tests"]]
+    assert [(r.session_id, r.key_facts) for r in out.rows] == [("safe", ["safe fact"])]
 
 
 @pytest.mark.asyncio

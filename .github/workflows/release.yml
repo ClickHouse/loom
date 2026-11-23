@@ -256,7 +256,7 @@ jobs:
       - name: Sync the Python SDK version to the tag
         id: sync-python
         run: |
-          pip install packaging==26.3
+          python -m pip install --require-hashes --only-binary=:all: -r scripts/release/requirements.txt
           python - <<'PY'
           import os, pathlib, re
           from packaging.version import Version
@@ -275,7 +275,7 @@ jobs:
           sed -i "s/export const SDK_VERSION = \".*\";/export const SDK_VERSION = \"$VERSION\";/" src/version.ts
       - name: Build Python sdist + wheel
         run: |
-          pip install build==1.6.1
+          python -m pip install --require-hashes --only-binary=:all: -r scripts/release/requirements.txt
           python -m build sdk/python --outdir release/python
       - name: npm ci
         working-directory: sdk/typescript
@@ -344,7 +344,7 @@ jobs:
       # plugin zips without tests and with the executable bits git records.
       - name: Files carry this version and the expected contents
         run: |
-          pip install packaging==26.3
+          python -m pip install --require-hashes --only-binary=:all: -r scripts/release/requirements.txt
           python - <<'PY'
           import json, os, pathlib, subprocess, sys, tarfile, zipfile
           from packaging.version import Version

@@ -249,9 +249,9 @@ test("the Memories search asks for memory legs only and aborts a stale search", 
   expect(calls.search[1]).toMatchObject({ query: "exporter lane", legs: ["memory"] });
 });
 
-// The Memories page asks for the twelve fields its cards read and the preview length they
-// show (CARD_VALUE_CHARS); the list answers nothing else.
-test("the Memories list asks for the twelve fields the page reads and a 320-character preview", async ({ page }) => {
+// The Memories page asks for the thirteen fields its cards and its Conflicted status read and
+// the preview length they show (CARD_VALUE_CHARS); the list answers nothing else.
+test("the Memories list asks for the thirteen fields the page reads and a 320-character preview", async ({ page }) => {
   const calls = await installApi(page, { memoryRows: 12 });
   await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-memory-key]").first()).toBeVisible();
@@ -260,10 +260,10 @@ test("the Memories list asks for the twelve fields the page reads and a 320-char
   expect(body.preview_chars, "preview_chars rides on the list request").toBe(320);
   const fields = stringArray(body.fields) ?? [];
   expect(fields.length > 0, "fields rides on the list request").toBe(true);
-  for (const f of ["memory_key", "value", "tags", "agent", "created_at", "pinned", "verification"]) {
+  for (const f of ["memory_key", "value", "tags", "agent", "created_at", "pinned", "verification", "status"]) {
     expect(fields, `the page asks for ${f}`).toContain(f);
   }
-  expect(fields.length, "twelve fields, no more").toBe(12);
+  expect(fields.length, "thirteen fields, no more").toBe(13);
   for (const f of [
     "entities",
     "source_trace",
@@ -273,7 +273,6 @@ test("the Memories list asks for the twelve fields the page reads and a 320-char
     "updated_at",
     "version",
     "expires_at",
-    "status",
     "value_truncated",
   ]) {
     expect(fields, `the page does not ask for ${f}`).not.toContain(f);

@@ -489,8 +489,9 @@ def test_a_private_key_header_without_a_body_holds_only_its_own_chunk() -> None:
 
 
 @pytest.mark.asyncio
-async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_vector(
+async def test_import_holds_a_credential_chunk_and_withholds_an_unproven_digest(
     monkeypatch: pytest.MonkeyPatch,
+    no_blacklisted_values,
 ) -> None:
     import server.embedding as embmod
     from server.memory.api.models_evidence_transfer import (
@@ -525,9 +526,8 @@ async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_ve
     assert set(chunks) == {0, 1}
     assert (chunks[0]["embedding_dim"], chunks[1]["embedding_dim"]) == (2, 0)
     assert chunks[1]["content"] == f"key {OPENAI_KEY}"  # stored as written
-    [digest] = ch.inserts["loom.session_summaries"]
-    assert digest["embedding_dim"] == 0 and digest["summary_text"] == f"Shared {AWS_KEY_ID}."
-    assert (out.chunks_written, out.digests_written, out.skipped) == (2, 1, 1)
+    assert "loom.session_summaries" not in ch.inserts
+    assert (out.chunks_written, out.digests_written, out.skipped) == (2, 0, 2)
     assert out.embedding_dim == 2
     assert emb.seen == [_PLAIN]
 
@@ -659,24 +659,35 @@ def test_a_chunk_key_with_a_credential_version_is_held_back() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential() -> None:
+async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential(
+    monkeypatch, no_blacklisted_values
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from server.memory import store
     from server.memory.app.retrieval.summaries import fetch_session_summaries
+    from tests.unit.test_memory_verify import _row
+    from tests.unit.test_summary_sources import digest
+
+    secret = _row(
+        namespace="n",
+        agent="a",
+        user_id="u",
+        memory_key="secret",
+        session_id="s1",
+        value="x" * 1195 + f" {AWS_KEY_ID}.",
+    )
+    plain = _row(
+        namespace="n", agent="a", user_id="u", memory_key="plain", session_id="s2", value=_PLAIN
+    )
+    monkeypatch.setattr(
+        "server.memory.store.summary_sources.memory_rows_by_identity_keys",
+        AsyncMock(return_value={store.identity_key(r): r for r in [secret, plain]}),
+    )
 
     class _Rows:
         async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
-            return [
-                {
-                    # The key straddles the served excerpt's 1200-character cut.
-                    "session_id": "s1",
-                    "summary_text": "x" * 1195 + f" {AWS_KEY_ID}.",
-                    "distance": 0.1,
-                },
-                {
-                    "session_id": "s2",
-                    "summary_text": _PLAIN,
-                    "distance": 0.2,
-                },
-            ]
+            return [digest(secret), digest(plain, distance=0.2)]
 
     hits = await fetch_session_summaries(
         _Rows(),
@@ -710,29 +721,30 @@ async def test_the_ask_chunk_lookups_serve_no_chunk_that_reads_as_a_credential()
     assert asked == [2 + _HELD_MARGIN]
 
 
-@pytest.mark.asyncio
-async def test_a_digest_that_reads_as_a_credential_is_drafted_without_a_vector(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import server.llm.client as llm_client
+async def test_a_credential_source_never_enters_a_digest(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from server.memory import store
     from server.memory.app import session_summary
+    from tests.unit.test_memory_verify import _row
 
-    class _LLM:
-        async def complete(self, *_: Any, **__: Any) -> Any:
-            return SimpleNamespace(text=f"The user pasted {OPENAI_KEY}.", tokens_in=1, tokens_out=1)
-
-    emb = _Embedder()
-    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
-    monkeypatch.setattr(session_summary, "get_embedder", lambda: emb)
-    draft = await session_summary._draft_session_summary(
-        SimpleNamespace(session_id="s"),
-        [{"role": "user", "content": "x"}],
-        None,
-        operator_policy="",
+    source = _row(value=f"The user pasted {OPENAI_KEY}.", sensitivity="")
+    ch = SimpleNamespace(insert=AsyncMock())
+    vector = AsyncMock()
+    monkeypatch.setattr(session_summary, "get_client", lambda: ch)
+    monkeypatch.setattr(session_summary, "document_vector", vector)
+    monkeypatch.setattr(store, "get_by_id", AsyncMock(return_value=source))
+    inp = SimpleNamespace(
+        org=source.org,
+        namespace=source.namespace,
+        agent=source.agent,
+        user_id=source.user_id,
+        session_id=source.session_id,
     )
-    assert draft is not None
-    assert draft.embedding == [] and emb.seen == []
-    assert OPENAI_KEY in draft.summary_text  # stored as written
+    state = SimpleNamespace(written=[{"memory_id": source.memory_id, "version": source.version}])
+    await session_summary._write_session_summary(inp, state)
+    vector.assert_not_awaited()
+    ch.insert.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -797,31 +809,6 @@ async def test_the_deep_evidence_pass_opens_no_turn_that_reads_as_a_credential()
         max_chars_per_memory=1000,
         max_chars_total=5000,
         ch=_LinkedTurnsCH([f"deploy key {OPENAI_KEY}", _PLAIN]),
-    )
-    assert [t.content for t in turns] == [_PLAIN]
-
-
-@pytest.mark.asyncio
-async def test_a_summary_hit_opens_no_session_turn_that_reads_as_a_credential() -> None:
-    from server.memory.app.deep_evidence import fetch_session_turns
-
-    rows = [
-        {"session_id": "s1", "role": "user", "observed_at": "", "content": c}
-        for c in (f"the standup key is {AWS_KEY_ID}", _PLAIN)
-    ]
-
-    class _CH:
-        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-            return rows
-
-    turns = await fetch_session_turns(
-        org="o",
-        namespace="n",
-        session_ids=["s1"],
-        question="When is the standup?",
-        max_chars_per_session=1000,
-        max_chars_total=5000,
-        ch=_CH(),
     )
     assert [t.content for t in turns] == [_PLAIN]
 
