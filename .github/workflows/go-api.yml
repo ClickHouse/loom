@@ -1,0 +1,42 @@
+name: Go SDK API compatibility
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+    paths:
+      - "sdk/go/**"
+      - ".github/workflows/go-api.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  go-api:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The SDK source shipped with Loom v1.3.0.
+          ref: 47b479dcdae4c089aef2690428fa4c9a8f54554c
+          path: release-baseline
+          persist-credentials: false
+          sparse-checkout: sdk/go
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26.x"
+          cache: false
+      - name: Check for incompatible exported API changes
+        run: |
+          GOBIN="$RUNNER_TEMP" go install golang.org/x/exp/cmd/apidiff@e1094eeca1b508317bb24413555d977dea6bb30c
+          module=github.com/ClickHouse/loom/sdk/go
+          (cd release-baseline/sdk/go && "$RUNNER_TEMP/apidiff" -m -w "$RUNNER_TEMP/old.api" "$module")
+          (cd sdk/go && "$RUNNER_TEMP/apidiff" -m -w "$RUNNER_TEMP/new.api" "$module")
+          changes=$("$RUNNER_TEMP/apidiff" -m -incompatible "$RUNNER_TEMP/old.api" "$RUNNER_TEMP/new.api")
+          if [ -n "$changes" ]; then
+            printf '%s\n' "$changes"
+            exit 1
+          fi
