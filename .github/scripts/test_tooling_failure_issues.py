@@ -15,7 +15,7 @@ from tooling_failure_issues import (
     main,
     report,
     select_workflows,
-    shared_failures,
+    shared_results,
 )
 
 
@@ -45,7 +45,7 @@ def fake_api(
     runs: list[dict],
     issues: list[dict] | None = None,
     alerts: list[dict] | None = None,
-    jobs: list[dict] | None = None,
+    jobs: list[dict] | dict[int, list[dict]] | None = None,
 ) -> Mock:
     def request(path: str, *, payload: dict | None = None) -> dict | list:
         if payload is not None:
@@ -58,6 +58,8 @@ def fake_api(
             assert params["ref"] == ["refs/heads/main"] and params["state"] == ["open"]
             return alerts or []
         if "/jobs?" in path:
+            if isinstance(jobs, dict):
+                return {"jobs": jobs.get(int(path.split("/")[2]), [])}
             return {"jobs": jobs or []}
         if path.startswith("issues?"):
             return issues or []
@@ -180,6 +182,7 @@ class ToolingIssuesTests(unittest.TestCase):
                     "tooling_failure_issues.select_workflows",
                     return_value=["external-links.yml", "http-contract.yml"],
                 ),
+                patch("tooling_failure_issues.time.time", return_value=0),
                 patch("tooling_failure_issues.time.monotonic", side_effect=[0, 1, 2, 3, 120, 121]),
                 self.assertRaisesRegex(SystemExit, r"http-contract[.]yml [(]TimeoutError[)]"),
             ):
@@ -284,6 +287,20 @@ class ToolingIssuesTests(unittest.TestCase):
             issues[0]["title"], "[tooling-ci:http-contract] HTTP schema contract failed on main"
         )
 
+    def test_a_skipped_shared_job_does_not_hide_its_last_result(self) -> None:
+        runs = [run(2), run(3, conclusion="success")]
+        name = "typescript sdk (generated types)"
+        outcomes = {
+            2: [{"name": name, "conclusion": "failure"}],
+            3: [{"name": name, "conclusion": "skipped"}],
+        }
+        findings = collect_failures(fake_api(runs, jobs=outcomes), ["ci.yml"])
+        self.assertEqual(findings["typescript-sdk"].source_id, 2)
+        outcomes[3][0]["conclusion"] = "success"
+        self.assertNotIn(
+            "typescript-sdk", collect_failures(fake_api(runs, jobs=outcomes), ["ci.yml"])
+        )
+
     def test_shared_ci_only_reports_targeted_jobs_and_steps(self) -> None:
         jobs = [
             {"name": "pytest integration part 3 of 4", "conclusion": "failure"},
@@ -306,6 +323,6 @@ class ToolingIssuesTests(unittest.TestCase):
             },
         ]
         self.assertEqual(
-            {key for key, _ in shared_failures("ci.yml", iter(jobs))},
+            {key for (key, _), failed in shared_results("ci.yml", iter(jobs)).items() if failed},
             {"python-unit", "typescript-sdk", "twine"},
         )

@@ -114,7 +114,7 @@ def select_workflows(event_name: str, event: dict[str, Any]) -> list[str]:
     return []
 
 
-def latest_run(api: Api, workflow: str) -> dict[str, Any] | None:
+def recent_runs(api: Api, workflow: str) -> list[dict[str, Any]]:
     endpoint = f"actions/workflows/{workflow}/runs"
     query = urlencode({"branch": "main", "status": "completed", "per_page": 5})
     # Ask for each trusted event directly so PR runs cannot crowd out a scheduled run.
@@ -124,11 +124,11 @@ def latest_run(api: Api, workflow: str) -> dict[str, Any] | None:
             page = api(f"{endpoint}?{query}&event={event}")
         except HTTPError as exc:
             if exc.code == 404:
-                return None
+                return []
             raise
         matches.extend(run for run in page["workflow_runs"] if trusted(run))
     # Compare original run dates so rerunning older commits does not revive stale failures.
-    return max(matches, key=lambda run: (run["created_at"], run["id"]), default=None)
+    return sorted(matches, key=lambda run: (run["created_at"], run["id"]), reverse=True)
 
 
 def list_rows(api: Api, path: str, *, field: str | None = None) -> Iterator[dict[str, Any]]:
@@ -143,60 +143,74 @@ def list_rows(api: Api, path: str, *, field: str | None = None) -> Iterator[dict
         page += 1
 
 
-def shared_failures(workflow: str, jobs: Iterator[dict[str, Any]]) -> set[tuple[str, str]]:
-    failures: set[tuple[str, str]] = set()
+def shared_results(workflow: str, jobs: Iterator[dict[str, Any]]) -> dict[tuple[str, str], bool]:
+    results: dict[tuple[str, str], bool] = {}
+
+    def record(check: tuple[str, str], conclusion: str | None) -> None:
+        if conclusion == "success" or conclusion in FAILURES:
+            results[check] = results.get(check, False) or conclusion in FAILURES
+
     for job in jobs:
-        if job.get("conclusion") not in FAILURES:
-            continue
         name = job["name"]
+        conclusion = job.get("conclusion")
         if workflow == "docker-smoke.yml" and name in {
             "Quickstart (amd64)",
             "Quickstart (arm64)",
         }:
-            failures.add(("docker-quickstart", "Packaged quickstart"))
+            record(("docker-quickstart", "Packaged quickstart"), conclusion)
         if workflow != "ci.yml":
             continue
         if name.startswith("typescript sdk ("):
-            failures.add(("typescript-sdk", "TypeScript SDK checks"))
+            record(("typescript-sdk", "TypeScript SDK checks"), conclusion)
         if name.startswith("pytest unit part "):
-            failures.add(("python-unit", "Python unit checks"))
+            record(("python-unit", "Python unit checks"), conclusion)
         if name == "python sdk wheel (py 3.12)":
             for step in job["steps"]:
-                if step["name"] in CI_STEPS and step.get("conclusion") in FAILURES:
-                    failures.add(CI_STEPS[step["name"]])
-    return failures
+                if step["name"] in CI_STEPS:
+                    record(CI_STEPS[step["name"]], step.get("conclusion"))
+    return results
 
 
 def collect_failures(api: Api, workflows: list[str]) -> dict[str, Finding]:
     failures = {}
     for workflow in workflows:
-        run = latest_run(api, workflow)
-        if run is None or run.get("conclusion") not in FAILURES:
-            continue
-        run_id = run["id"]
-        if type(run_id) is not int or run_id <= 0:
-            raise ValueError("Expected a positive workflow run ID")
-        jobs_path = f"actions/runs/{run_id}/jobs?filter=latest"
-        publisher = ISSUE_PUBLISHERS.get(workflow)
-        if publisher and any(
-            job["name"] == publisher and job["conclusion"] == "success"
-            for job in list_rows(api, jobs_path, field="jobs")
-        ):
-            continue
+        runs = recent_runs(api, workflow)
         if workflow in WORKFLOWS:
-            checks = {WORKFLOWS[workflow]}
-        else:
-            # The run jobs endpoint includes the latest result of every job, including
-            # successful jobs retained when GitHub reruns only the failures.
-            checks = shared_failures(workflow, list_rows(api, jobs_path, field="jobs"))
-        for key, label in checks:
-            failures[key] = Finding(
-                run_id,
-                f"{label} failed on main",
-                f"{label} reported a workflow failure on `main`.",
-                "Review the checks",
-                f"https://github.com/{REPO}/actions/runs/{run_id}",
-            )
+            runs = runs[:1]
+        seen: set[str] = set()
+        for run in runs:
+            run_id = run["id"]
+            if type(run_id) is not int or run_id <= 0:
+                raise ValueError("Expected a positive workflow run ID")
+            jobs_path = f"actions/runs/{run_id}/jobs?filter=latest"
+            if workflow in WORKFLOWS:
+                if run.get("conclusion") not in FAILURES:
+                    continue
+                publisher = ISSUE_PUBLISHERS.get(workflow)
+                if publisher and any(
+                    job["name"] == publisher and job["conclusion"] == "success"
+                    for job in list_rows(api, jobs_path, field="jobs")
+                ):
+                    continue
+                outcomes = {WORKFLOWS[workflow]: True}
+            else:
+                # A completed shared workflow may omit a tool. Look for a
+                # conclusive result for each group before superseding its failure.
+                outcomes = shared_results(workflow, list_rows(api, jobs_path, field="jobs"))
+            for (key, label), failed in outcomes.items():
+                if key in seen:
+                    continue
+                seen.add(key)
+                if failed:
+                    failures[key] = Finding(
+                        run_id,
+                        f"{label} failed on main",
+                        f"{label} reported a workflow failure on `main`.",
+                        "Review the checks",
+                        f"https://github.com/{REPO}/actions/runs/{run_id}",
+                    )
+            if len(seen) >= (4 if workflow == "ci.yml" else 1):
+                break
     return failures
 
 
@@ -282,18 +296,23 @@ def main() -> None:
             raise TimeoutError("Tooling lookup budget exhausted")
         return github_api(path)
 
+    sources = select_workflows(event_name, event)
+    if event_name in {"schedule", "workflow_dispatch"}:
+        sources.append("code-scanning")
+        # Rotate so a consistently slow prefix cannot starve the last sources.
+        offset = int(time.time() // 3600) % len(sources)
+        sources = sources[offset:] + sources[:offset]
+
     findings: dict[str, Finding] = {}
     failed_sources: list[str] = []
-    for workflow in select_workflows(event_name, event):
+    for source in sources:
         try:
-            findings.update(collect_failures(lookup, [workflow]))
+            if source == "code-scanning":
+                findings.update(collect_scanning_findings(lookup))
+            else:
+                findings.update(collect_failures(lookup, [source]))
         except (OSError, HTTPException, ValueError, KeyError, TypeError) as exc:
-            failed_sources.append(f"{workflow} ({type(exc).__name__})")
-    if event_name in {"schedule", "workflow_dispatch"}:
-        try:
-            findings.update(collect_scanning_findings(lookup))
-        except (OSError, HTTPException, ValueError, KeyError, TypeError) as exc:
-            failed_sources.append(f"Code scanning ({type(exc).__name__})")
+            failed_sources.append(f"{source} ({type(exc).__name__})")
     created, failed_writes = report(github_api, findings)
     failed_sources.extend(failed_writes)
     print(f"Tooling maintenance issues opened: {created}")
