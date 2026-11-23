@@ -83,7 +83,7 @@ jobs:
             echo "Loom process RSS after the test (KiB)"
             echo
             echo '~~~'
-            ps -o rss= -p "$server"
+            ps -o rss= -p "$server" || echo 'unavailable (server exited)'
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$result" -eq 0 ]; then
