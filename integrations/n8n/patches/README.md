@@ -11,6 +11,11 @@ The patch covers the CommonJS, ESM and TypeScript source entries. Unbounded
 containers retain their validation behavior, and an overwrite before a bound
 still runs before that bound.
 
+[osv-scanner.toml](../osv-scanner.toml) records this backport for
+`GHSA-mrhx-c7xc-m3w5`. Its exclusion applies only to that advisory in this locked
+project; the validation security tests exercise the patched behavior. Remove the
+exclusion with the patch when a compatible fixed release replaces it.
+
 The manifest and lockfile bind both patches. The security tests resolve packages
 through their toolchain consumers and exercise prototype properties, shared
 references, chunk boundaries and bounded validation in both module formats.

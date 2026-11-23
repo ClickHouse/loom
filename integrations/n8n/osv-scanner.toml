@@ -1,0 +1,3 @@
+[[IgnoredVulns]]
+id = "GHSA-mrhx-c7xc-m3w5"
+reason = "The pinned package includes the bounds-check backport in patches/zod@3.25.76.patch, verified by test/validation-security.test.cjs."
