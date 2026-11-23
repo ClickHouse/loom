@@ -588,6 +588,15 @@ class CollectionOps:
     def __init__(self, agent: Agent) -> None:
         self._agent = agent
 
+    async def budget_set(
+        self, body: _ops.CollectionBudgetSetBody | None = None, /, **options: Any
+    ) -> _ops.CollectionBudgetSetOutput:
+        """`collection.budget_set`."""
+        return cast(
+            "_ops.CollectionBudgetSetOutput",
+            await self._agent.call("collection.budget_set", body, **options),
+        )
+
     async def create(
         self, body: _ops.CollectionCreateBody | None = None, /, **options: Any
     ) -> _ops.CollectionCreateOutput:

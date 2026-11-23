@@ -1909,6 +1909,25 @@ export interface CodeVerifyCitationsOutput {
   trace_run_id?: string;
 }
 
+export interface CollectionBudgetSetInput {
+  org: string;
+  namespace: string;
+  /** Collection cap in USD per rolling 24 hours; 0 inherits the server default, omit keeps it. */
+  daily_cost_cap_usd?: number | null;
+  /** Named-user cap in USD per rolling 24 hours; 0 inherits the server default, omit keeps it. */
+  daily_user_cost_cap_usd?: number | null;
+  /** An existing task inbox owned by this collection; '' disables warnings, omit keeps it. */
+  budget_alert_inbox?: string | null;
+}
+
+export interface CollectionBudgetSetOutput {
+  namespace: string;
+  changed: boolean;
+  daily_cost_cap_usd: number;
+  daily_user_cost_cap_usd: number;
+  budget_alert_inbox: string;
+}
+
 export interface CollectionCreateInput {
   org: string;
   /** The collection's name, also its namespace ('col-' then lowercase letters, digits and '-'), ignored with `derive_name`. */
@@ -10573,6 +10592,7 @@ export type OpName =
   | "code.trace"
   | "code.verify"
   | "code.verify_citations"
+  | "collection.budget_set"
   | "collection.create"
   | "collection.delete"
   | "collection.list"
@@ -10952,6 +10972,7 @@ export interface OpMap {
   "code.trace": { input: CodeTraceInput; output: CodeTraceOutput };
   "code.verify": { input: CodeVerifyInput; output: CodeVerifyOutput };
   "code.verify_citations": { input: CodeVerifyCitationsInput; output: CodeVerifyCitationsOutput };
+  "collection.budget_set": { input: CollectionBudgetSetInput; output: CollectionBudgetSetOutput };
   "collection.create": { input: CollectionCreateInput; output: CollectionCreateOutput };
   "collection.delete": { input: CollectionDeleteInput; output: CollectionDeleteOutput };
   "collection.list": { input: CollectionListInput; output: CollectionListOutput };
@@ -11331,6 +11352,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "code.trace", group: "code", method: "trace", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "code.verify", group: "code", method: "verify", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "code.verify_citations", group: "code", method: "verifyCitations", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
+  { name: "collection.budget_set", group: "collection", method: "budgetSet", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "collection.create", group: "collection", method: "create", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "collection.delete", group: "collection", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "collection.list", group: "collection", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },

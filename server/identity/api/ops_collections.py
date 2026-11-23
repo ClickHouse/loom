@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from server.identity.api.models_collections import (
+    CollectionBudgetSetInput,
+    CollectionBudgetSetOutput,
     CollectionCreateInput,
     CollectionCreateOutput,
     CollectionDeleteInput,
@@ -12,6 +14,7 @@ from server.identity.api.models_collections import (
     CollectionMoveInput,
     CollectionMoveOutput,
 )
+from server.identity.app.collection_budgets import handle_collection_budget_set
 from server.identity.app.collections import (
     create_audit_namespace,
     create_audit_subject,
@@ -53,6 +56,17 @@ collection_move = Operation(
     audit=True,
 )
 
+collection_budget_set = Operation(
+    name="collection.budget_set",
+    maturity="experimental",
+    input_model=CollectionBudgetSetInput,
+    output_model=CollectionBudgetSetOutput,
+    handler=handle_collection_budget_set,
+    idempotent=True,
+    required_role=Role.ADMIN,
+    audit=True,
+)
+
 collection_list = Operation(
     name="collection.list",
     maturity="experimental",
@@ -80,6 +94,7 @@ collection_delete = Operation(
 )
 
 OPERATIONS: list[Operation] = [
+    collection_budget_set,
     collection_create,
     collection_move,
     collection_list,

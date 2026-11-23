@@ -513,7 +513,14 @@ async def test_flush_sets_sends_the_gathered_batch_now(agent: Agent) -> None:
     assert sum(1 for r in results if r.get("coalesced")) == 3
 
 
-async def test_close_flushes_before_the_pool_closes(agent: Agent) -> None:
+async def test_close_flushes_before_the_pool_closes(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     t: Any = agent.transport
     tasks = [asyncio.ensure_future(agent.memory.set(f"k{i}", i)) for i in range(4)]
     await asyncio.sleep(0)

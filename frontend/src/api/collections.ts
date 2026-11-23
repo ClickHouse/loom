@@ -7,6 +7,21 @@ import { COLLECTIONS_PAGE } from "../lib/collections";
 
 // ===== Collections =====
 
+export interface CollectionBudgetPolicy {
+  daily_cost_cap_usd: number;
+  daily_user_cost_cap_usd: number;
+  budget_alert_inbox: string;
+}
+
+/** Change only the explicitly supplied spend policy fields of an administered collection. */
+export async function setCollectionBudget(
+  org: string,
+  namespace: string,
+  patch: Partial<CollectionBudgetPolicy>,
+): Promise<CollectionBudgetPolicy & { namespace: string; changed: boolean }> {
+  return post("/v1/collection.budget_set", { ...patch, org, namespace });
+}
+
 /** Mirrors `server/identity/api/models_collections.py::_CollectionEntry`. */
 export interface CollectionEntry {
   namespace: string;

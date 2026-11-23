@@ -1,5 +1,8 @@
 // The place picker (a select, or the tree beside the page), the path and chips, the
 // collection's menu, New collection, and how the list is read again after a write.
+import { startTransition } from "react";
+import { flushSync } from "react-dom";
+import { announceCreated } from "../flows/CreateCollectionDialog";
 import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { entry, matchOnly, Picker, read, ROWS, settle } from "../test/libraryCollections";
@@ -141,9 +144,12 @@ describe("LibraryCollections", () => {
     expect(screen.getByRole("button", { name: "Actions for col-q3" })).toBeInTheDocument();
   });
 
-  it("gives a viewer no menu: its members are behind See who in the header", async () => {
+  it("gives a viewer the unavailable Budget action without Move or Delete", async () => {
     render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={ROWS[0]} onPick={() => undefined} />);
-    expect(screen.queryByRole("button", { name: "Actions for col-plans" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for col-plans" }));
+    expect(await screen.findByRole("menuitem", { name: "Budget…" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("menuitem", { name: "Move…" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete collection" })).not.toBeInTheDocument();
   });
 
   it("on a phone shows the path as one back button and leaves the collections inside to the select", () => {
@@ -211,6 +217,44 @@ describe("useReadableCollections", () => {
     const c = useReadableCollections("acme");
     return <p data-testid="probe">{c.rows === null ? "reading" : c.rows.map((r) => r.namespace).join(",")}</p>;
   }
+
+  it("starts only the latest collection read when earlier effects were replaced before running", async () => {
+    let latest: ReadableCollections | null = null;
+    function Holder() {
+      latest = useReadableCollections("acme");
+      return null;
+    }
+    api.listCollections.mockResolvedValue({ collections: [entry("col-a")], next_cursor: null });
+    render(<Holder />);
+    // The deferred reads have not run yet: each reload supersedes the one before it.
+    act(() => latest?.reload());
+    act(() => latest?.reload());
+    await settle();
+    expect(api.listCollections).toHaveBeenCalledTimes(1);
+    expect(api.listCollections.mock.calls[0][1].signal.aborted).toBe(false);
+  });
+
+  it("coalesces a lower-priority create announcement with its synchronous opening read", async () => {
+    let latest: ReadableCollections | null = null;
+    function Holder() {
+      latest = useReadableCollections("acme");
+      return null;
+    }
+    api.listCollections.mockResolvedValue({ collections: [entry("col-a")], next_cursor: null });
+    render(<Holder />);
+    await settle();
+    const made = { namespace: "col-new", parent: "", created: true, title: "New" };
+    api.listCollections.mockResolvedValue({ collections: [entry("col-a"), entry(made.namespace)], next_cursor: null });
+    const reads = api.listCollections.mock.calls.length;
+    await act(async () => {
+      // Opening uses flushSync: the announcement must not arrive later at a lower priority.
+      startTransition(() => announceCreated(made, "New", "acme"));
+      flushSync(() => latest?.reload(made.namespace));
+      await Promise.resolve();
+    });
+    await settle();
+    expect(api.listCollections.mock.calls.length - reads).toBe(1);
+  });
 
   it("requests document counts with every collection page", async () => {
     api.listCollections
@@ -1190,6 +1234,16 @@ describe("the Library on a collection", () => {
   });
 
   describe("a create's answer, and the reads it starts", () => {
+    const readDetails = (from: number) =>
+      JSON.stringify(
+        api.listCollections.mock.calls.slice(from).map(([org, options]) => ({
+          org,
+          cursor: options?.cursor,
+          includeDocumentCounts: options?.includeDocumentCounts,
+          aborted: options?.signal?.aborted,
+        })),
+      );
+
     it("still opens it when a resize took the tree away", async () => {
       const narrow = resizable();
       const answer = await createInTree();
@@ -1405,7 +1459,7 @@ describe("the Library on a collection", () => {
       const reads = api.listCollections.mock.calls.length;
       await answer(q4);
       await settle();
-      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(api.listCollections.mock.calls.length - reads, readDetails(reads)).toBe(1);
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
     });
 
@@ -1426,7 +1480,7 @@ describe("the Library on a collection", () => {
       const reads = api.listCollections.mock.calls.length;
       await act(async () => answer(q4));
       await settle();
-      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(api.listCollections.mock.calls.length - reads, readDetails(reads)).toBe(1);
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
     });
 
@@ -1484,7 +1538,7 @@ describe("the Library on a collection", () => {
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q5");
-      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(api.listCollections.mock.calls.length - reads, readDetails(reads)).toBe(1);
     });
 
     it("moves nothing once the page shows another org", async () => {
