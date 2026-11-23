@@ -109,8 +109,9 @@ class ResponseTooLarge(RuntimeError):
 class GitHub:
     """Fixed-host client with bounded calls, responses and wall time; no redirects or retries."""
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, expected_sha: str | None = None) -> None:
         self.token = token
+        self.expected_sha = expected_sha
         self.calls = 0
         self.deadline = time.monotonic() + 180
 
@@ -123,6 +124,11 @@ class GitHub:
             or (path == _MAIN_REF and method == "GET")
         ):
             raise ValueError("Unapproved audit API request")
+        if method == "POST" and path.startswith(_ROOT) and self.expected_sha is not None:
+            if self.request("GET", _MAIN_REF)["object"]["sha"] != self.expected_sha:
+                raise RuntimeError("Default branch advanced before workflow issue publication")
+            if self.calls >= 40 or time.monotonic() >= self.deadline:
+                raise RuntimeError("Workflow audit API budget exhausted")
         self.calls += 1
         connection = http.client.HTTPSConnection("api.github.com", timeout=10)
         headers = {
@@ -216,6 +222,8 @@ class GitHub:
             if not isinstance(cursor, str) or not cursor or cursor in seen:
                 raise ValueError("Invalid workflow issue snapshot cursor")
             seen.add(cursor)
+            size = 100
+            history = 100
         raise RuntimeError("Workflow issue snapshot pagination budget exhausted")
 
 
@@ -251,10 +259,11 @@ def publish(api: Any, groups: dict[str, dict[str, Any]], run_url: str) -> dict[s
         if issue is not None and issue["state"] == "closed":
             counts["closed_preserved"] += 1
             continue
-        if counts["created"] + counts["updated"] >= 10:
-            counts["deferred"] += 1
-            continue
+        write_limit_reached = counts["created"] + counts["updated"] >= 10
         if issue is None:
+            if write_limit_reached:
+                counts["deferred"] += 1
+                continue
             prefix = f"Review {group['rule']} in "
             suffix = f" [workflow-audit:{key}]"
             limit = 250 - len(prefix) - len(suffix)
@@ -287,6 +296,9 @@ def publish(api: Any, groups: dict[str, dict[str, Any]], run_url: str) -> dict[s
         if states and state_hash(group) == states[-1]:
             counts["unchanged"] += 1
             continue
+        if write_limit_reached:
+            counts["deferred"] += 1
+            continue
         current = api.request("GET", f"{_ROOT}/{number}")
         if current.get("state") == "closed":
             counts["closed_preserved"] += 1
@@ -316,7 +328,7 @@ def main() -> None:
     sha = os.environ["GITHUB_SHA"]
     if not re.fullmatch(r"[a-f0-9]{40}", sha):
         raise ValueError("Invalid hosted commit")
-    api = GitHub(os.environ["GH_TOKEN"])
+    api = GitHub(os.environ["GH_TOKEN"], expected_sha=sha)
     if api.request("GET", _MAIN_REF)["object"]["sha"] != sha:
         print("The audit commit is older than the default branch head")
         return

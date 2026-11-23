@@ -477,15 +477,32 @@ class WorkflowAuditIssues(unittest.TestCase):
                 client.issue_snapshot()
             self.assertEqual(request.call_count, 1)
 
-    def test_snapshot_retries_an_oversized_page_with_fewer_issues(self):
+    def test_oversized_history_shrinks_the_page_but_the_next_page_recovers(self):
         client = AUDIT.GitHub("synthetic-token")
-        response = self.graphql_page()
+        first = self.graphql_page()
+        first["data"]["repository"]["issues"]["pageInfo"] = {
+            "hasNextPage": True,
+            "endCursor": "first",
+        }
+        second = self.graphql_page()
         with patch.object(
-            client, "request", side_effect=[AUDIT.ResponseTooLarge("oversized"), response]
+            client, "request", side_effect=[AUDIT.ResponseTooLarge("oversized"), first, second]
         ) as request:
-            self.assertEqual(len(client.issue_snapshot()), 1)
+            self.assertEqual(len(client.issue_snapshot()), 2)
         sizes = [call.args[2]["variables"]["size"] for call in request.call_args_list]
-        self.assertEqual(sizes, [100, 50])
+        self.assertEqual(sizes, [100, 50, 100])
+
+    def test_publication_refuses_a_head_that_advanced_after_collection(self):
+        client = AUDIT.GitHub("synthetic-token", expected_sha="a" * 40)
+        response = Mock(status=200)
+        response.read.return_value = b'{"object":{"sha":"' + b"b" * 40 + b'"}}'
+        with patch.object(AUDIT.http.client, "HTTPSConnection") as connection_type:
+            connection = connection_type.return_value
+            connection.getresponse.return_value = response
+            with self.assertRaisesRegex(RuntimeError, "Default branch advanced"):
+                client.request("POST", AUDIT._ROOT, {"title": "Test issue"})
+        self.assertEqual(connection.request.call_count, 1)
+        self.assertEqual(connection.request.call_args.args[:2], ("GET", AUDIT._MAIN_REF))
 
     def test_long_path_keeps_the_complete_issue_fingerprint(self):
         path = ".github/workflows/" + "x" * 180 + ".yml"
