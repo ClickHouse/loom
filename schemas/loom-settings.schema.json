@@ -3735,6 +3735,12 @@
           "type": "number",
           "description": "Longest backoff, in seconds, between two attempts of an LLM call."
         },
+        "local_embedding_batch_size": {
+          "default": 16,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Texts per local ONNX inference batch; smaller values reduce peak memory. Every input is still embedded, in order; this does not limit input count or length."
+        },
         "local_embedding_model_dir": {
           "default": "var/models",
           "type": "string",

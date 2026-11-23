@@ -47,6 +47,11 @@ width (`probe_embedding_dim`); a mismatch shows as `embedding_dim_mismatch` on
 files, pinned to a revision and sha256 (`server/embedding/local_models.py`); the stack's
 `env.example` embeds with it.
 
+Local ONNX inference uses `LOOM_LOCAL_EMBEDDING_BATCH_SIZE` texts per batch
+(default 16). This bounds the number of texts whose inference activations occupy
+memory together; every input still receives a vector in input order. Larger batches
+use more memory. The batch size changes neither the model nor the embedding space.
+
 ### Protocol and paths
 
 The `Embedder` protocol is `model_name`, `dim`, `async embed(text)` and

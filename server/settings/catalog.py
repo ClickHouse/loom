@@ -4119,6 +4119,9 @@ class ModelSettings(BaseModel):
     # Where `local` models live (relative: under the working directory), one directory per
     # alias and revision; a missing file is fetched there. The image sets it by env.
     local_embedding_model_dir: str = "var/models"
+    # Texts per local ONNX inference batch; smaller values reduce peak memory.
+    # Every input is still embedded, in order; this does not limit input count or length.
+    local_embedding_batch_size: int = Field(default=16, ge=1)
 
     # --- memory -----------------------------------------------------------------
     # memory.ask synthesis (the strong tier when the cascade is on).
