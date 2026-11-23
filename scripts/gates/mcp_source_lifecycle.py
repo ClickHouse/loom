@@ -17,6 +17,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 _LIMIT = 512
+_GENERATION_LIMIT = 8
 _FIXTURE_KEY = "ci-only-mcp-lifecycle-fixture"
 _ROTATED_KEY = "ci-only-mcp-lifecycle-rotated-fixture"
 _PROFILE_ID = "offline-lifecycle-profile"
@@ -53,6 +54,7 @@ def fixture_guard(opt_in: bool, result: Path) -> str:
         "LOOM_EMBEDDING_MODEL": "fake-ngram-1024",
         "LOOM_BACKGROUND_WORKERS": "off",
         "LOOM_BOOT_MIGRATE": "true",
+        "LOOM_KNOWLEDGE_CONNECTED_REGISTRY_SCAN_LIMIT": str(_GENERATION_LIMIT),
     }
     require(opt_in and all(os.environ.get(k) == v for k, v in expected.items()))
     authority = os.environ.get("LOOM_STORAGE_AUTHORITY", "")
@@ -326,20 +328,33 @@ class Fixture:
             }
         )
 
-    async def boundary(self, ch: Any, ended: Any) -> None:
+    async def boundary_marker(self, ch: Any, ended: Any) -> None:
         from server.auth import claims
         from server.knowledge.app import connected_accounts as accounts
         from server.knowledge.store import connected_accounts as account_store
-        from server.knowledge.store import sources
 
         require((ended.org, ended.subject, ended.kind) == self.target)
         marker = await account_store.get(*self.target)
+        original = next(a for a in self.accounts if (a.org, a.subject, a.kind) == self.target)
         require(marker is not None and not marker.active and not marker.credential_enc)
         require((marker.org, marker.subject, marker.kind) == self.target)
-        require(marker.connection_id == ended.connection_id and marker.connected_at is None)
+        require(marker.connection_id == original.connection_id and marker.connected_at is None)
         require(marker.disconnected_at is not None)
         require(not marker.account_id and not marker.workspace_id and not marker.account_email_enc)
         require(not marker.scopes and not marker.refresh_id)
+        key = accounts._fence_key(marker.connection_id)
+        require(key == accounts._fence_key(ended.connection_id))
+        require(await claims.get(ch, key) == ended.connection_id)
+        require(ended.connection_id.partition("/")[2].startswith("0"))
+        require(not ended.active and not ended.credential_enc and not ended.account_email_enc)
+        require(not await accounts._fence_current(marker, ch=ch))
+
+    async def boundary(self, ch: Any, ended: Any) -> None:
+        from server.auth import claims
+        from server.knowledge.app import connected_accounts as accounts
+        from server.knowledge.store import sources
+
+        await self.boundary_marker(ch, ended)
         for generation, owner in self.connections.items():
             observed = await claims.get(ch, accounts._fence_key(generation))
             require(observed is not None)
@@ -378,6 +393,16 @@ class Fixture:
             require(current.generic_items_json == row["items_json"])
             require(current.source_contract_version == row["source_contract_version"])
             await self.retirement_pending(ch, row)
+
+
+async def registration_workset(ch: Any) -> set[tuple[str, str, str, str]]:
+    from collections import defaultdict
+
+    from server.knowledge.app import connected_restore as restore
+
+    rows, _sources = await restore._metadata(ch)
+    restore._include(defaultdict(set), {}, rows)
+    return set(rows)
 
 
 async def current_accounts(ch: Any, fixture: Fixture) -> dict[tuple[str, str, str], Any]:
@@ -545,6 +570,66 @@ async def complete_restore(ch: Any, fixture: Fixture, stopped_at_boundary: dict[
     require(await count(ch, "code_index_state") == len(fixture.sources))
 
 
+async def run_restore_phases(
+    ch: Any,
+    fixture: Fixture,
+    before: dict[str, Any],
+    initial_workset: set[tuple[str, str, str, str]],
+    result: dict[str, Any],
+) -> None:
+    from server.erasure.app.connected_accounts import require_restore_erased
+    from server.knowledge.app import connected_accounts as accounts
+    from server.knowledge.app import connected_restore as restore
+    from server.settings import settings
+
+    client_attempts: list[None] = []
+
+    def refuse_native_client(*args: Any, **kwargs: Any) -> Any:
+        # Fail-only sentinel: no client or provider result can be supplied by this seam.
+        client_attempts.append(None)
+        raise AssertionError("MCP_LIFECYCLE_NATIVE_CLIENT_FORBIDDEN")
+
+    with patch.object(accounts, "client", new=refuse_native_client):
+        result["stage"] = "dry_run"
+        await restore.restore_all(apply=False, ch=ch)
+        require(await snapshot(ch) == before)
+        require(not client_attempts)
+        result["checks"].append("dry_run_unchanged")
+
+        result["stage"] = "reseal_forward"
+        await reseal_rotation(ch, fixture, _ROTATED_KEY, _FIXTURE_KEY, client_attempts)
+        result["checks"].append("reseal_forward_one_candidate_four_unreadable")
+        result["stage"] = "reseal_back"
+        await reseal_rotation(ch, fixture, _FIXTURE_KEY, _ROTATED_KEY, client_attempts)
+        require(str(settings.jwt_secret) == _FIXTURE_KEY and not settings.jwt_secret_previous)
+        result["checks"].append("reseal_back_one_candidate_four_unreadable")
+
+        result["stage"] = "interruption"
+        stopped_at_boundary = await interrupt_restore(ch, fixture, before)
+        interrupted_workset = await registration_workset(ch)
+        require(interrupted_workset == initial_workset)
+        result["counts"]["interrupted_registration_workset"] = len(interrupted_workset)
+        require(not client_attempts)
+        result["checks"].append("real_retirement_before_injected_erase_failure")
+
+        result["stage"] = "retry"
+        await complete_restore(ch, fixture, stopped_at_boundary)
+        require(not client_attempts)
+        result["checks"].append("retry_erases_all_raw_bindings_and_keeps_retirements")
+        result["counts"]["final_global_residue"] = 0
+        result["counts"]["pending_retirements"] = len(fixture.sources)
+
+        result["stage"] = "idempotent_rerun"
+        after = await snapshot(ch)
+        await restore.restore_all(apply=True, ch=ch)
+        require(await snapshot(ch) == after)
+        await require_restore_erased(ch=ch)
+        await owned_stores(ch, fixture.orgs)
+        require(not client_attempts)
+        result["checks"].append("completed_restore_rerun_unchanged")
+        result["counts"]["native_client_attempts"] = len(client_attempts)
+
+
 async def qualify(result: dict[str, Any]) -> None:
     from server import boot
     from server.cli._ch import connect_verified, disconnect
@@ -552,13 +637,12 @@ async def qualify(result: dict[str, Any]) -> None:
     from server.core.errors import OverloadedError
     from server.erasure.app.connected_accounts import require_restore_erased
     from server.erasure.store.census import connected_restore_residue
-    from server.knowledge.app import connected_accounts as accounts
-    from server.knowledge.app import connected_restore as restore
     from server.settings import settings
 
     require(settings.llm_provider == "fake" and settings.embedding_model == "fake-ngram-1024")
     require(settings.storage_authority == result["config"]["authority"])
     require(not settings.auth_actually_required())
+    require(settings.knowledge_connected_registry_scan_limit == _GENERATION_LIMIT)
     require(str(settings.jwt_secret) == _FIXTURE_KEY and not settings.jwt_secret_previous)
     ch = get_client()
     await ch.connect()
@@ -588,55 +672,17 @@ async def qualify(result: dict[str, Any]) -> None:
         else:
             require(False)
         before = await snapshot(ch)
+        initial_workset = await registration_workset(ch)
+        require(initial_workset == {(*owner, g) for g, owner in fixture.connections.items()})
+        require(len(initial_workset) == _GENERATION_LIMIT)
         result["counts"] = {
             "accounts": len(fixture.accounts),
             "sources": len(fixture.sources),
             "generations": len(fixture.connections),
             "mirrors": len(fixture.mirrors),
+            "initial_registration_workset": len(initial_workset),
         }
-        client_attempts: list[None] = []
-
-        def refuse_native_client(*args: Any, **kwargs: Any) -> Any:
-            # Fail-only sentinel: no client or provider result can be supplied by this seam.
-            client_attempts.append(None)
-            raise AssertionError("MCP_LIFECYCLE_NATIVE_CLIENT_FORBIDDEN")
-
-        with patch.object(accounts, "client", new=refuse_native_client):
-            result["stage"] = "dry_run"
-            await restore.restore_all(apply=False, ch=ch)
-            require(await snapshot(ch) == before)
-            require(not client_attempts)
-            result["checks"].append("dry_run_unchanged")
-
-            result["stage"] = "reseal_forward"
-            await reseal_rotation(ch, fixture, _ROTATED_KEY, _FIXTURE_KEY, client_attempts)
-            result["checks"].append("reseal_forward_one_candidate_four_unreadable")
-            result["stage"] = "reseal_back"
-            await reseal_rotation(ch, fixture, _FIXTURE_KEY, _ROTATED_KEY, client_attempts)
-            require(str(settings.jwt_secret) == _FIXTURE_KEY and not settings.jwt_secret_previous)
-            result["checks"].append("reseal_back_one_candidate_four_unreadable")
-
-            result["stage"] = "interruption"
-            stopped_at_boundary = await interrupt_restore(ch, fixture, before)
-            require(not client_attempts)
-            result["checks"].append("real_retirement_before_injected_erase_failure")
-
-            result["stage"] = "retry"
-            await complete_restore(ch, fixture, stopped_at_boundary)
-            require(not client_attempts)
-            result["checks"].append("retry_erases_all_raw_bindings_and_keeps_retirements")
-            result["counts"]["final_global_residue"] = 0
-            result["counts"]["pending_retirements"] = len(fixture.sources)
-
-            result["stage"] = "idempotent_rerun"
-            after = await snapshot(ch)
-            await restore.restore_all(apply=True, ch=ch)
-            require(await snapshot(ch) == after)
-            await require_restore_erased(ch=ch)
-            await owned_stores(ch, fixture.orgs)
-            require(not client_attempts)
-            result["checks"].append("completed_restore_rerun_unchanged")
-            result["counts"]["native_client_attempts"] = len(client_attempts)
+        await run_restore_phases(ch, fixture, before, initial_workset, result)
         result["stage"] = "complete"
         result["status"] = "passed"
     finally:
@@ -673,7 +719,12 @@ def main() -> int:
     except Exception:  # noqa: BLE001 — an unverified target must not open any store
         print("MCP lifecycle fixture guard refused", file=sys.stderr)
         return 2
-    result["config"] = {"authority": authority, "models": "fake", "workers": "off"}
+    result["config"] = {
+        "authority": authority,
+        "models": "fake",
+        "workers": "off",
+        "generation_limit": _GENERATION_LIMIT,
+    }
     try:
         asyncio.run(asyncio.wait_for(qualify(result), timeout=300))
     except Exception as error:  # noqa: BLE001 — emit no payload, SQL exception or credential in CI

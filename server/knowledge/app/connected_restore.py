@@ -170,7 +170,7 @@ async def _restore_owner(
         if current is not None:
             keys.append((current.org, current.subject, current.kind, current.connection_id))
         _include(groups, prefixes, keys)
-        if not groups[owner]:
+        if not keys:
             return None
         stopped: dict[str, str] = {}
         for connection in sorted(groups[owner]):
@@ -183,12 +183,13 @@ async def _restore_owner(
                 credential = unseal(CREDENTIAL_PURPOSE, current.credential_enc, warn=False) or ""
             except Exception:  # noqa: BLE001 — local deletion never depends on recovering a remote secret
                 pass
-        ended = ConnectedAccount(
-            *owner, next(iter(stopped.values())), disconnected_at=datetime.now(UTC)
+        registration = current.connection_id if current is not None else min(row[3] for row in keys)
+        marker = ConnectedAccount(*owner, registration, disconnected_at=datetime.now(UTC))
+        # Retain an inventoried registration so recovery cannot expand its admitted workset.
+        await account_store.put(marker, ch=ch)
+        ended = dataclasses.replace(
+            marker, connection_id=stopped[accounts._fence_key(registration)]
         )
-        # Preserve a credential-free recovery marker until every historical source
-        # id has durable retirement work and both raw-history censuses are empty.
-        await account_store.put(ended, ch=ch)
         await _retire_history(sources, ch)
         await accounts._erase_locked(ended, keep_marker=False)
         return (current, credential) if current is not None else None
