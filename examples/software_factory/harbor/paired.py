@@ -65,6 +65,7 @@ def _metrics(result: dict) -> dict:
             "automatic_final_test_runs",
             "loom_tool_calls",
             "loom_lesson_chars_main",
+            "loom_fresh_linked_lesson_rows_main",
             "first_fresh_linked_lesson_result_event_main",
             "first_possible_edit_request_event_main",
             "memory_rows_written",
@@ -370,6 +371,7 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
                     record["first_possible_edit_request_event_main"],
                 )
                 for record in records
+                if record["loom_fresh_linked_lesson_rows_main"] is not None
             ]
             targets["memory_vs_code_index"][left] = {
                 "code_only_arm": right,
@@ -377,13 +379,18 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
                     chars is not None and chars > 0 for chars in lesson_chars
                 ),
                 "main_session_lesson_evidence_missing": lesson_chars.count(None),
+                "main_session_lesson_timing_observed_attempts": len(timing),
                 "fresh_linked_lesson_before_potential_edit_attempts": sum(
                     fresh is not None and edit is not None and fresh < edit
                     for fresh, edit in timing
-                ),
+                )
+                if timing
+                else None,
                 "main_session_fresh_linked_lesson_attempts": sum(
                     fresh is not None for fresh, _ in timing
-                ),
+                )
+                if timing
+                else None,
                 "hidden_test_pass_rate_delta": hidden,
                 "blind_fixed_rate_delta": contrast["blind_fixed"],
                 "regressions_per_attempt_delta": contrast["full_suite_regressions"],

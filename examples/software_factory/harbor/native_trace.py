@@ -26,7 +26,7 @@ EVENTS = (
     "first_fresh_linked_lesson_result_event_main",
     "first_possible_edit_request_event_main",
 )
-POSSIBLE_EDIT_TOOLS = {"Agent", "Bash", "Edit", "MultiEdit", "NotebookEdit", "Task", "Write"}
+POSSIBLE_EDIT_TOOLS = {"agent", "bash", "edit", "multiedit", "notebookedit", "task", "write"}
 NONFRESH_LINK_STATES = {"moved", "changed", "unresolved", "missing"}
 TIMINGS = ("claude_cli_time_s", "claude_api_time_s")
 
@@ -138,7 +138,11 @@ def summarize(trial):
     summary["model_turns_main"] = len(responses)
     groups, seen, fresh_events = Counter(), set(), []
     summary["first_possible_edit_request_event_main"] = next(
-        (call["request_event"] for call in calls.values() if call["tool"] in POSSIBLE_EDIT_TOOLS),
+        (
+            call["request_event"]
+            for call in calls.values()
+            if call["tool"].casefold() in POSSIBLE_EDIT_TOOLS
+        ),
         None,
     )
     for identifier, call in calls.items():
