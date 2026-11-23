@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from server.settings import settings
 from server.transport import mcp_primer
 
 PROFILE = "<section label='persona'>" + "be terse. " * 600 + "</section>"
@@ -53,8 +54,8 @@ def _split(text: str) -> tuple[str, str]:
 @pytest.mark.parametrize(
     ("toolset", "expected_before"),
     [
-        (None, ["**7. Using Loom.**", "\n\nWORKSPACE"]),
-        ("coding", ["one plain-text claim", f"Default namespace `{NAMESPACE}`"]),
+        (None, ["**7. Using Loom.**", "\n\nWORKSPACE", "MENTOR", "Code index scope"]),
+        ("coding", ["one plain-text claim", "default memory namespace", "repository bound"]),
     ],
 )
 def test_the_profile_comes_after_every_rule(
@@ -63,7 +64,7 @@ def test_the_profile_comes_after_every_rule(
     text = asyncio.run(mcp_primer._initialize_instructions(object(), toolset))
     before_profile, profile = _split(text)
     assert "be terse." in profile and "be terse." not in before_profile
-    for part in [*expected_before, "MENTOR", "Code index scope for this connection"]:
+    for part in expected_before:
         assert part in before_profile, part
     assert len(wired_caller) == 1  # one render, so one restricted-access check per initialize
 
@@ -79,7 +80,7 @@ def test_coding_instructions_preserve_the_complete_large_profile() -> None:
     text = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
     before_profile, profile = _split(text)
     assert PROFILE in profile
-    assert "Code index scope for this connection" in before_profile
+    assert "repository bound to this connection" in before_profile
     assert "one plain-text claim" in before_profile
     assert text.endswith("Don't re-fetch — it's been delivered.")
 
@@ -88,8 +89,40 @@ def test_code_scope_precedes_a_long_memory_workspace_notice(monkeypatch) -> None
     monkeypatch.setattr(mcp_primer, "_coding_workspace_line", lambda _: "WORKSPACE" * 1000)
     text = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
     assert "WORKSPACE" * 1000 in text
-    scope_at = text.index("Code index scope for this connection")
+    scope_at = text.index("repository bound to this connection")
     workspace_at = text.index("WORKSPACE" * 1000)
     assert scope_at < workspace_at < text.index(PROFILE)
     assert text.index("`loom_code_symbol` for a named definition") < scope_at
     assert text.index("`loom_code_grep` for exact text or an error") < scope_at
+
+
+@pytest.mark.parametrize("toolset", ["coding", "coding+tracker"])
+def test_coding_startup_reuses_routing_text_across_implicit_bindings(
+    monkeypatch: pytest.MonkeyPatch, toolset: str
+) -> None:
+    async def different_default(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+        return {"org": "other-org", "namespace": "other-workspace", "agent": "b"}
+
+    async def mentor_should_be_on_demand(*_args: Any, **_kwargs: Any) -> str:
+        pytest.fail("Coding startup does not look up usage hints")
+
+    monkeypatch.setattr(mcp_primer, "_mentor_line", mentor_should_be_on_demand)
+    first = asyncio.run(mcp_primer._initialize_instructions(object(), toolset))
+    monkeypatch.setattr(mcp_primer, "_caller_defaults", different_default)
+    monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: ("other-org", "other-repo"))
+    second = asyncio.run(mcp_primer._initialize_instructions(object(), toolset))
+    assert first == second
+    assert NAMESPACE not in first
+    assert "acme/code-repo" not in first
+
+
+@pytest.mark.parametrize(
+    ("configured", "requested"),
+    [("coding", None), ("coding+tracker", "unknown"), ("core", "coding+unknown")],
+)
+def test_startup_resolves_toolset_like_the_listing(
+    monkeypatch: pytest.MonkeyPatch, configured: str, requested: str | None
+) -> None:
+    monkeypatch.setattr(settings, "mcp_toolset", configured)
+    expected = asyncio.run(mcp_primer._initialize_instructions(object(), configured))
+    assert asyncio.run(mcp_primer._initialize_instructions(object(), requested)) == expected

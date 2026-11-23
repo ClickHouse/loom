@@ -20,7 +20,8 @@ from server.code.api.models_navigation import (
 )
 from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import result_lessons, search_memo
-from server.memory.app import code_plane_reads, path_lessons
+from server.code.domain.units import CodeUnit
+from server.memory.app import code_plane_reads, for_file, path_lessons
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.settings import settings
 
@@ -90,6 +91,98 @@ async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
     )
     assert [r["memory_key"] for r in rows] == ["retry"]
     assert rows[0]["code_state"] == "changed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("namespace", ["code-repo", "code-branch"])
+@pytest.mark.parametrize("op", ["grep", "search", "search_file"])
+async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
+    monkeypatch: pytest.MonkeyPatch, namespace: str, op: str
+) -> None:
+    rows = [_hit(k) for k in ("exact", "other", "nested", "incomplete", "pending", "file")]
+    rows.append(_hit("constraint", tags=("constraint",)))
+    names = {
+        "exact": ("Thing::run", 1, "changed"),
+        "other": ("Other::run", 1, "fresh"),
+        "nested": ("Thing::run::inner", 1, "fresh"),
+        "incomplete": ("Other::run", 0, "fresh"),
+        "pending": ("Other::run", 1, "fresh"),
+        "constraint": ("Other::run", 1, "fresh"),
+    }
+    links = {
+        f"mem-home/{k}": [{"qualified_name": f"a::{name}", "complete": complete, "state": state}]
+        for k, (name, complete, state) in names.items()
+    }
+
+    class _Files:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return rows if params["ns"] == "mem-home" and "arrayExists" in sql else []
+
+    async def linked(*_args: Any) -> dict[str, list[dict[str, Any]]]:
+        return links
+
+    async def all_links(_org: str, ids: list[str]) -> list[dict[str, Any]]:
+        assert ids == ["mem-home/other", "mem-home/pending"]
+        return [
+            {**link, "code_namespace": "code-repo", "memory_id": mid, "path": "a.py"}
+            for mid in ids
+            for link in links[mid]
+        ] + [
+            {
+                "code_namespace": "code-repo",
+                "memory_id": "mem-home/pending",
+                "path": "",
+                "state": "pending",
+                "complete": 1,
+                "qualified_name": "a::Thing::run",
+            }
+        ]
+
+    async def namespaces(*_args: Any) -> list[str]:
+        return ["mem-home", "code-repo"]
+
+    async def no_extra_reads(*_args: Any) -> list[str]:
+        return []
+
+    async def grep(_input: CodeGrepInput) -> CodeGrepOutput:
+        return CodeGrepOutput(
+            matches=[{"path": "a.py", "line": 5, "scope": "Thing::run", "scope_start_line": 1}],
+            chunks_matched=1,
+        )
+
+    async def search(_input: CodeSearchInput) -> CodeSearchOutput:
+        unit = CodeUnit(
+            path="a.py", start_line=1, end_line=12, symbol="a::Thing::run", kind="function"
+        )
+        results = [unit]
+        if op == "search_file":
+            results.append(unit.model_copy(update={"granularity": "file"}))
+        return CodeSearchOutput(results=results, route="hybrid")
+
+    monkeypatch.setattr(for_file, "get_client", _Files)
+    monkeypatch.setattr(for_file, "_linked", linked)
+    monkeypatch.setattr(for_file, "_readable_extras", no_extra_reads)
+    monkeypatch.setattr(path_lessons.code_links, "for_memories", all_links)
+    monkeypatch.setattr(code_plane_reads, "lesson_namespaces", namespaces)
+    monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda *_: "code-repo")
+    monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: False)
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
+    if op == "grep":
+        wrapped = result_lessons.WithLessons(grep, result_lessons.grep_paths)
+        answer = await wrapped(CodeGrepInput(org="acme", namespace=namespace, pattern="run"))
+    else:
+        wrapped = result_lessons.WithLessons(search, result_lessons.search_paths)
+        answer = await wrapped(CodeSearchInput(org="acme", namespace=namespace, query="run"))
+    focused = namespace == "code-repo" and op != "search_file"
+    expected = {"exact", "nested", "incomplete", "pending", "constraint", "file"}
+    assert {row["memory_key"] for row in answer.lessons} == (
+        expected if focused else expected | {"other"}
+    )
+    assert answer.lessons_left_out == int(focused)
+    assert (
+        next(row for row in answer.lessons if row["memory_key"] == "exact")["code_state"]
+        == "changed"
+    )
 
 
 @pytest.mark.asyncio

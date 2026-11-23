@@ -880,11 +880,15 @@ export interface CodeGrepInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Exact text to find, or an RE2 expression when regex is true. */
-  pattern: string;
+  /** Literal text, a list of alternatives, or one RE2 expression with regex=true. */
+  pattern: string | string[];
+  /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
   case_sensitive?: boolean;
+  /** Include distinct enclosing bodies in matches mode; default false. */
+  include_body?: boolean;
   path_prefix?: string;
+  /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";
@@ -902,6 +906,9 @@ export interface CodeGrepOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
+  definitions?: Array<Record<string, unknown>>;
+  definitions_partial?: boolean;
+  definitions_note?: string;
   next_cursor?: string;
   has_more?: boolean;
   files?: Array<Record<string, unknown>>;
@@ -1566,6 +1573,7 @@ export interface CodeSearchInput {
   top_k?: number;
   token_budget?: number | null;
   path_prefix?: string;
+  /** Pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   rerank?: string;
@@ -6329,6 +6337,8 @@ export interface MemoryListInput {
   tags?: string[];
   tags_every?: boolean;
   contains?: string | null;
+  pinned_only?: boolean;
+  conflicted_only?: boolean;
   fields?: string[];
   known_version?: number | string | null;
 }

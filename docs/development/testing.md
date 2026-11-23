@@ -374,9 +374,10 @@ itself, and on every push to `main`, so a broken link or anchor fails the
 `docs site / build` check. It publishes the site to GitHub Pages from `main` only while the
 repository variable `DOCS_SITE_ENABLED` is `true`.
 
-A pull request stacked on another branch gets no checks until it is retargeted to `main` or
-a `release/X.Y` line, and a pull request with a merge conflict gets none either: "no checks
-reported" after a push usually means one of the two.
+Retarget a stacked pull request to `main` or a `release/X.Y` line before pushing its next
+real change or required rebase. Editing the base alone does not trigger the default
+`pull_request` activities: `opened`, `synchronize` or `reopened`. A merge conflict prevents
+those PR checks from starting. Inspect mergeability when no checks follow a push.
 
 ## Related
 

@@ -128,4 +128,15 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "loading to the host."
         ),
     ),
+    DefaultChange(
+        version="1.3.1",
+        name="mcp_always_load_tools",
+        old="search.query,code.search,code.symbol,code.grep,loom_op",
+        new="auto",
+        why=(
+            "Keep the named search and code tools upfront on the coding toolset and "
+            "defer the generic dispatcher to discovery. Other toolsets retain their "
+            "entrypoints. Explicit lists and empty values retain their meaning."
+        ),
+    ),
 )

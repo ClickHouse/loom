@@ -5,10 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 _LINK_STATES = ("fresh", "moved", "changed", "unresolved", "missing")
-_MAX_COUNT = 0xFFFFFFFF
 
 
-def code_response_counts(result: dict[str, Any]) -> dict[str, int]:
+def code_response_counts(result: dict[str, Any], *, op_name: str = "") -> dict[str, int]:
     """Count the source and lessons in the answer, including repeated returned rows.
 
     Only the root and its definition/result rows carry bodies or lessons. Walking
@@ -43,7 +42,12 @@ def code_response_counts(result: dict[str, Any]) -> dict[str, int]:
             lesson.get("code_state") not in _LINK_STATES for lesson in lessons
         ),
     }
-    return {key: min(value, _MAX_COUNT) for key, value in counts.items()}
+    if op_name == "code.grep" and isinstance(matches := result.get("matches"), list):
+        counts["grep_match_lines"] = len(matches)
+    omitted = result.get("lessons_left_out")
+    if type(omitted) is int and omitted >= 0:
+        counts["lesson_rows_omitted"] = omitted
+    return counts
 
 
 def record_response_counts(projected: dict[str, str]) -> None:
@@ -64,6 +68,8 @@ def record_response_counts(projected: dict[str, str]) -> None:
             "elided_bodies",
             "lesson_rows",
             "lesson_chars",
+            "lesson_rows_omitted",
+            "grep_match_lines",
             *("lesson_" + state for state in _LINK_STATES),
             "lesson_unclassified",
         )
