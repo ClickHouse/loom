@@ -1431,6 +1431,13 @@ jobs:
           version: ${{ env.UV_VERSION }}
       - name: Build wheel + sdist
         run: uv build sdk/python --out-dir dist
+      - name: Validate the PyPI description in both distributions
+        if: matrix.python == '3.12'
+        run: |
+          python -m venv "$RUNNER_TEMP/twine"
+          "$RUNNER_TEMP/twine/bin/python" -m pip install --require-hashes --only-binary=:all: \
+            -r scripts/release/twine-requirements.txt
+          "$RUNNER_TEMP/twine/bin/python" -m twine check --strict dist/*.whl dist/*.tar.gz
       - name: Install the wheel into a clean venv
         env:
           RESOLUTION: ${{ matrix.lowest && 'lowest-direct' || 'highest' }}
