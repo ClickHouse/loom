@@ -2,16 +2,16 @@
 went, and which legs it could not run.
 
 `agent_events` says how long a request took and what its LLM calls cost.
-This bag adds what the request read from ClickHouse, how a `memory.ask`
-split its wall between retrieval and synthesis, and which legs were skipped
+This bag adds what the request read from ClickHouse, the stages measured by code
+spans and `memory.ask`, and which legs were skipped
 because the service lacks a table this build reads — facts that otherwise
 sit in `system.query_log` on whichever replica ran the statement and in log
 lines, one of them not readable by the loom login.
 
 This module is the request-scoped place those facts accumulate. The
 transport binds a fresh bag at op start (next to the cost accumulator and the
-degradation notes); the ClickHouse client, the ask service and the schema
-guard write into it; `event_args.request_work_columns` flattens it onto the
+degradation notes); the ClickHouse client, code spans, the ask service and the
+schema guard write into it. `event_args` flattens it onto the
 ledger row. It also carries one authorization outcome the row's
 `status_class` reads: `answered_unverified`, which `server.auth.fail_closed`
 sets when the request hid a row because a read the check needed failed.
@@ -43,6 +43,8 @@ class RequestWork:
     # Ask-side stage partition: wall charged to named stages
     # from one origin, the way `StageClock` does for memory.search.
     stage_ms: dict[str, float] = field(default_factory=dict)
+    # Exclusive time per observed code span. Concurrent spans can overlap.
+    code_stage_ms: dict[str, float] = field(default_factory=dict)
     # ClickHouse cost from the response summary header, summed per request.
     ch_statements: int = 0
     ch_read_rows: int = 0

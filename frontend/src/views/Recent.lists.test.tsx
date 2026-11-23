@@ -30,7 +30,7 @@ const entry = (memory_key: string, over: Partial<MemoryListEntry> = {}): MemoryL
 const ROWS = [
   entry("a/pinned", { pinned: true }),
   entry("b/verified", { verification: "human", verified_by: "human:o@example.com", agent: "support-bot" }),
-  entry("c/conflicted", { agent: "support-bot" }),
+  entry("c/conflicted", { agent: "support-bot", status: "conflicted" }),
   entry("d/plain"),
 ];
 
@@ -47,7 +47,7 @@ vi.mock("../api", async (importOriginal) => {
     isAuthDisabled: () => false,
   };
 });
-import { getMemory, listMemories, pinMemory } from "../api";
+import { conflictKeys, getMemory, listMemories, pinMemory } from "../api";
 
 const owner: WhoAmI = {
   authenticated: true,
@@ -242,7 +242,7 @@ describe("Memories list chrome", () => {
       async (_id, limit = 50): Promise<MemoryListResponse> =>
         limit === 1000
           ? {
-              entries: Array.from({ length: 1000 }, (_, i) => entry(`p${i}`, { pinned: i < 60 })),
+              entries: Array.from({ length: 1000 }, (_, i) => entry(`p${i}`, i < 60 ? { verification: "human" } : {})),
               total: 5000,
               today: 0,
               truncated: true,
@@ -251,9 +251,9 @@ describe("Memories list chrome", () => {
     );
     render(<Recent />);
     await screen.findByText("d/plain");
-    await pick("Status", "pinned");
+    await pick("Status", "verified");
     await waitFor(() => expect(toolbar()).toHaveTextContent("60 matches"));
-    // 60 pinned among the newest rows read: not "the newest 60".
+    // 60 verified among the newest rows read: not "the newest 60".
     const pager = screen.getByRole("navigation", { name: "Memories pages" });
     expect(pager).toHaveTextContent("1–50 of 60");
     expect(pager).not.toHaveTextContent("newest");
@@ -265,7 +265,9 @@ describe("Memories list chrome", () => {
       async (_id, limit = 50): Promise<MemoryListResponse> =>
         limit === 1000
           ? {
-              entries: Array.from({ length: 100 }, (_, i) => entry(`t${i}`, { tags: ["api"], pinned: i < 60 })),
+              entries: Array.from({ length: 100 }, (_, i) =>
+                entry(`t${i}`, { tags: ["api"], ...(i < 60 ? { verification: "human" as const } : {}) }),
+              ),
               total: 340,
               today: 0,
               truncated: true,
@@ -276,7 +278,7 @@ describe("Memories list chrome", () => {
     await screen.findByText("d/plain");
     await userEvent.type(screen.getByLabelText("Search memories"), "tag:api");
     await waitFor(() => expect(toolbar()).toHaveTextContent("340 matches"));
-    await pick("Status", "pinned");
+    await pick("Status", "verified");
     await waitFor(() => expect(toolbar()).toHaveTextContent("60 matches"));
     expect(screen.getByRole("navigation", { name: "Memories pages" })).not.toHaveTextContent("newest");
   });
@@ -527,5 +529,103 @@ describe("Memories list chrome", () => {
     ).toBeInTheDocument();
     expect(document.querySelector("[data-toast-kind]")).toHaveAttribute("data-toast-kind", "error");
     expect(screen.getByText("request id req-f")).toBeInTheDocument();
+  });
+});
+
+describe("Memories status filters over the whole namespace", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    resetNamespaceRoleCache();
+    vi.mocked(listMemories).mockResolvedValue({ entries: ROWS, total: 1234, today: 2, truncated: false });
+    useStore.setState({
+      authed: true,
+      whoami: owner,
+      myNamespaces: [row],
+      identity: { org: "dev", namespace: "team", agent: "loom-ui" },
+      view: "memories",
+      inspectedMemoryKey: null,
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  it("asks the server for pinned rows and counts them from its total", async () => {
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, _limit, opts): Promise<MemoryListResponse> =>
+        opts?.pinnedOnly
+          ? {
+              entries: Array.from({ length: 1000 }, (_, i) => entry(`pin${i}`, { pinned: true })),
+              total: 1500,
+              today: 0,
+              truncated: true,
+            }
+          : { entries: ROWS, total: 1234, today: 2, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await pick("Status", "pinned");
+    expect(await screen.findByText("pin0")).toBeInTheDocument();
+    expect(vi.mocked(listMemories).mock.calls.at(-1)?.[2]).toMatchObject({ pinnedOnly: true });
+    await waitFor(() => expect(toolbar()).toHaveTextContent("1,500 matches"));
+    expect(
+      screen.getByText("Showing the newest matches. Add a tag or a search word to narrow them."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the pinned rows among those read when the server does not know pinned_only", async () => {
+    vi.mocked(listMemories).mockResolvedValue({
+      entries: ROWS,
+      total: 1234,
+      today: 2,
+      truncated: true,
+      ignored_args: ["pinned_only"],
+    });
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await pick("Status", "pinned");
+    await waitFor(() => expect(shown()).toEqual(["a/pinned"]));
+    expect(toolbar()).toHaveTextContent("1 match");
+    expect(screen.getByText("Showing the pinned memories among the newest ones read.")).toBeInTheDocument();
+  });
+
+  it("asks the server for conflicted rows and lists each by its own row", async () => {
+    const older = entry("shared-key", { agent: "agent-a", status: "conflicted", value: "the older conflicted value" });
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, _limit, opts): Promise<MemoryListResponse> =>
+        opts?.conflictedOnly
+          ? { entries: [older], total: 1, today: 0, truncated: false }
+          : { entries: ROWS, total: 1234, today: 2, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await pick("Status", "conflicted");
+    expect(await screen.findByText("the older conflicted value")).toBeInTheDocument();
+    expect(vi.mocked(listMemories).mock.calls.at(-1)?.[2]).toMatchObject({ conflictedOnly: true });
+    await waitFor(() => expect(toolbar()).toHaveTextContent("1 match"));
+  });
+
+  // Agent A's older row is conflicted; agent B wrote the same key later and its row is not.
+  // A server a release behind lists both: the page keeps A by its own status, never B.
+  it("keeps the conflicted row, not another agent's newer row under the same key", async () => {
+    const newer = entry("shared-key", { agent: "agent-b", status: "active", value: "the newer active value" });
+    const older = entry("shared-key", { agent: "agent-a", status: "conflicted", value: "the older conflicted value" });
+    vi.mocked(conflictKeys).mockResolvedValue(["shared-key"]);
+    vi.mocked(listMemories).mockResolvedValue({
+      entries: [newer, older, ...ROWS],
+      total: 1234,
+      today: 2,
+      truncated: false,
+      ignored_args: ["conflicted_only"],
+    });
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await pick("Status", "conflicted");
+    expect(await screen.findByText("the older conflicted value")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("the newer active value")).toBeNull());
+    expect(screen.getAllByText("shared-key")).toHaveLength(1);
+    expect(toolbar()).toHaveTextContent("2 matches");
   });
 });

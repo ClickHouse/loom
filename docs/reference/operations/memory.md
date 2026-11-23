@@ -1259,6 +1259,8 @@ List memory keys under this identity, optionally filtered.
 | `tags` | `list[str]` | *(computed)* | Only rows carrying any one of these tags, in any case; empty = no tag filter. |
 | `tags_every` | `bool` | `False` | Require every one of `tags` instead of any one; default off. |
 | `contains` | `str \| None` | `None` | Only rows whose value or key holds this text, any case (a high row by its key only) — the keyword filter of a browse page's search box, which must find every row that names a word (a ranked search returns its top k and misses the rest). |
+| `pinned_only` | `bool` | `False` | Only pinned rows. |
+| `conflicted_only` | `bool` | `False` | Only rows whose status is `conflicted`, each listed as its own row (another agent's or user's row under the same key is not). |
 | `fields` | `list[str]` | *(computed)* | Whitelist of entry field names; every entry carries only those plus `memory_key` and `sensitivity`. |
 | `known_version` | `int \| str \| None` | `None` | The `namespace_version` a previous answer carried. |
 

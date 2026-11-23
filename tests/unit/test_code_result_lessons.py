@@ -20,6 +20,7 @@ from server.code.api.models_navigation import (
 )
 from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import result_lessons, search_memo
+from server.code.domain.units import CodeUnit
 from server.memory.app import code_plane_reads, for_file, path_lessons
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.settings import settings
@@ -94,8 +95,9 @@ async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("namespace", ["code-repo", "code-branch"])
-async def test_grep_preserves_lessons_with_uncertain_or_nested_links(
-    monkeypatch: pytest.MonkeyPatch, namespace: str
+@pytest.mark.parametrize("op", ["grep", "search", "search_file"])
+async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
+    monkeypatch: pytest.MonkeyPatch, namespace: str, op: str
 ) -> None:
     rows = [_hit(k) for k in ("exact", "other", "nested", "incomplete", "pending", "file")]
     rows.append(_hit("constraint", tags=("constraint",)))
@@ -148,6 +150,15 @@ async def test_grep_preserves_lessons_with_uncertain_or_nested_links(
             chunks_matched=1,
         )
 
+    async def search(_input: CodeSearchInput) -> CodeSearchOutput:
+        unit = CodeUnit(
+            path="a.py", start_line=1, end_line=12, symbol="a::Thing::run", kind="function"
+        )
+        results = [unit]
+        if op == "search_file":
+            results.append(unit.model_copy(update={"granularity": "file"}))
+        return CodeSearchOutput(results=results, route="hybrid")
+
     monkeypatch.setattr(for_file, "get_client", _Files)
     monkeypatch.setattr(for_file, "_linked", linked)
     monkeypatch.setattr(for_file, "_readable_extras", no_extra_reads)
@@ -156,9 +167,13 @@ async def test_grep_preserves_lessons_with_uncertain_or_nested_links(
     monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda *_: "code-repo")
     monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: False)
     monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
-    wrapped = result_lessons.WithLessons(grep, result_lessons.grep_paths)
-    answer = await wrapped(CodeGrepInput(org="acme", namespace=namespace, pattern="run"))
-    focused = namespace == "code-repo"
+    if op == "grep":
+        wrapped = result_lessons.WithLessons(grep, result_lessons.grep_paths)
+        answer = await wrapped(CodeGrepInput(org="acme", namespace=namespace, pattern="run"))
+    else:
+        wrapped = result_lessons.WithLessons(search, result_lessons.search_paths)
+        answer = await wrapped(CodeSearchInput(org="acme", namespace=namespace, query="run"))
+    focused = namespace == "code-repo" and op != "search_file"
     expected = {"exact", "nested", "incomplete", "pending", "constraint", "file"}
     assert {row["memory_key"] for row in answer.lessons} == (
         expected if focused else expected | {"other"}
