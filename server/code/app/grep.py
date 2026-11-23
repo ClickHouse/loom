@@ -380,6 +380,19 @@ async def _grep_lines(
         retrieval_risk="low" if matches else "abstain",
         consumer=input.consumer,
     )
+    if (
+        not matches
+        and not note
+        and not truncated
+        and not coverage.get("partial")
+        and input.mode == "matches"
+        and not input.cursor
+        and not input.regex
+    ):
+        note = (
+            "No exact match in the indexed scope. Try shorter known fragments together in "
+            "a pattern list, code.symbol for a known name, or code.search for behavior."
+        )
     output = CodeGrepOutput(
         matches=matches,
         next_cursor=next_cursor,

@@ -1358,7 +1358,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "per-frame grep-and-open loop."
     ),
     "code.grep": (
-        "Find text and enclosing symbols in indexed source. "
+        "Find known text in indexed source. Use code.search for behavior. "
         "Pass a list in `pattern` to search literal alternatives in one call. "
         "Matches include bodies by default. "
         "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
@@ -2185,11 +2185,11 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "elision disclosures; use local tools for changed or unindexed code."
     ),
     "code.grep": (
-        "Find exact text. Pass a list of stable literal fragments in `pattern` "
+        "Find known text. Use code.search for behavior. "
+        "Pass a list of stable literal fragments in `pattern` "
         "to search alternatives in one call. "
         "Matches include enclosing bodies by default. "
         "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
-        "Use code.search for behavior. "
         "`regex: true` uses one RE2 string. "
         "Scope with `path_prefix`, `path_globs` or `langs`. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
