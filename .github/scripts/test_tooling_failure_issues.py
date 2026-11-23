@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from http.client import IncompleteRead
 from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
@@ -149,14 +150,43 @@ class ToolingIssuesTests(unittest.TestCase):
 
         def request(path: str, *, payload: dict | None = None) -> dict | list:
             if payload is not None and payload["title"].startswith("[tooling-ci:codeql-alerts]"):
-                raise HTTPError(path, 503, "Service unavailable", None, None)
+                raise IncompleteRead(b"")
             return api(path, payload=payload)
 
         self.assertEqual(
-            report(request, findings), (1, ["codeql-alerts issue creation (HTTPError)"])
+            report(request, findings), (1, ["codeql-alerts issue creation (IncompleteRead)"])
         )
         self.assertEqual(len(issues), 1)
         self.assertTrue(issues[0]["title"].startswith("[tooling-ci:external-links]"))
+
+    def test_lookup_budget_leaves_time_to_report_collected_findings(self) -> None:
+        issues: list[dict] = []
+        api = fake_api([run(2)], issues)
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / "event.json"
+            event.write_text("{}")
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "GITHUB_REPOSITORY": REPO,
+                        "GITHUB_REF": "refs/heads/main",
+                        "GITHUB_EVENT_PATH": str(event),
+                        "GITHUB_EVENT_NAME": "schedule",
+                    },
+                ),
+                patch("tooling_failure_issues.github_api", api),
+                patch(
+                    "tooling_failure_issues.select_workflows",
+                    return_value=["external-links.yml", "http-contract.yml"],
+                ),
+                patch("tooling_failure_issues.time.monotonic", side_effect=[0, 1, 2, 3, 120, 121]),
+                self.assertRaisesRegex(SystemExit, r"http-contract[.]yml [(]TimeoutError[)]"),
+            ):
+                main()
+        self.assertEqual(len(issues), 1)
+        self.assertTrue(issues[0]["title"].startswith("[tooling-ci:external-links]"))
+        self.assertFalse(any("http-contract.yml" in call.args[0] for call in api.call_args_list))
 
     def test_report_creates_one_issue_and_never_copies_run_content(self) -> None:
         issues: list[dict] = []

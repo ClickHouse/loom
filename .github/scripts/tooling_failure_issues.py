@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -17,6 +19,7 @@ REPO = "ClickHouse/loom"
 BOT = "github-actions[bot]"
 EVENTS = {"push", "schedule", "workflow_dispatch"}
 FAILURES = {"failure", "timed_out"}
+LOOKUP_BUDGET_S = 120
 WORKFLOWS = {
     "browser-smoke.yml": ("dashboard-browsers", "Dashboard browser smoke"),
     "codeql.yml": ("codeql", "CodeQL execution"),
@@ -82,7 +85,7 @@ def github_api(path: str, *, payload: dict[str, str] | None = None) -> Any:
             "X-GitHub-Api-Version": "2026-03-10",
         },
     )
-    with urlopen(request, timeout=20) as response:
+    with urlopen(request, timeout=10) as response:
         data = response.read(4 * 1024 * 1024 + 1)
     if len(data) > 4 * 1024 * 1024:
         raise ValueError("GitHub response exceeded the limit")
@@ -259,7 +262,7 @@ def report(api: Api, findings: dict[str, Finding]) -> tuple[int, list[str]]:
         }
         try:
             api("issues", payload=issue)
-        except (OSError, ValueError) as exc:
+        except (OSError, HTTPException, ValueError) as exc:
             failed.append(f"{key} issue creation ({type(exc).__name__})")
         else:
             created += 1
@@ -271,17 +274,25 @@ def main() -> None:
         raise SystemExit("Tooling issues require the default branch of the owning repository")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     event_name = os.environ["GITHUB_EVENT_NAME"]
+    # Leave time in the job for reading issue history and publishing the results.
+    lookup_deadline = time.monotonic() + LOOKUP_BUDGET_S
+
+    def lookup(path: str) -> Any:
+        if time.monotonic() >= lookup_deadline:
+            raise TimeoutError("Tooling lookup budget exhausted")
+        return github_api(path)
+
     findings: dict[str, Finding] = {}
     failed_sources: list[str] = []
     for workflow in select_workflows(event_name, event):
         try:
-            findings.update(collect_failures(github_api, [workflow]))
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+            findings.update(collect_failures(lookup, [workflow]))
+        except (OSError, HTTPException, ValueError, KeyError, TypeError) as exc:
             failed_sources.append(f"{workflow} ({type(exc).__name__})")
     if event_name in {"schedule", "workflow_dispatch"}:
         try:
-            findings.update(collect_scanning_findings(github_api))
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+            findings.update(collect_scanning_findings(lookup))
+        except (OSError, HTTPException, ValueError, KeyError, TypeError) as exc:
             failed_sources.append(f"Code scanning ({type(exc).__name__})")
     created, failed_writes = report(github_api, findings)
     failed_sources.extend(failed_writes)
