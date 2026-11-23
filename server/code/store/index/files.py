@@ -223,6 +223,34 @@ class FilesMixin(CodeRepoBase):
         )
         return [(str(r["kind"]), int(r["start_line"]), int(r["end_line"])) for r in rows]
 
+    async def function_chunk_starts(
+        self, org: str, ns: str, model: str, keys: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], int]:
+        """The first retained function chunk for each admitted symbol and path."""
+        rows = await self._ch.query_all(
+            """
+            SELECT path, symbol_id, min(start_line) AS start
+            FROM loom.code_chunks FINAL
+            ARRAY JOIN symbol_ids AS symbol_id
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND embedding_model = {model:String} AND path IN {paths:Array(String)}
+              AND kind = 'function'
+              AND (path, symbol_id) IN {keys:Array(Tuple(String, String))}
+              AND tombstoned_at IS NULL
+            GROUP BY path, symbol_id
+            LIMIT {limit:UInt32}
+            """,
+            {
+                "org": org,
+                "ns": ns,
+                "model": model,
+                "paths": list(dict.fromkeys(path for path, _ in keys)),
+                "keys": keys,
+                "limit": len(keys),
+            },
+        )
+        return {(str(r["path"]), str(r["symbol_id"])): int(r["start"]) for r in rows}
+
     async def source_chunks_for_span(
         self, org: str, ns: str, path: str, start: int, end: int, embedding_model: str
     ) -> list[dict[str, Any]]:

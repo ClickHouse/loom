@@ -225,16 +225,19 @@ def test_enclosing_decorator_and_def_share_one_retained_body(monkeypatch):
         async def functions_for_paths(self, *args, **kwargs):
             return [lookup]
 
+        async def function_chunk_starts(self, org, ns, model, keys):
+            assert keys == [("cli.py", "run-id")]
+            return {("cli.py", "run-id"): 4}
+
         async def source_chunks_for_span(self, org, ns, path, start, end, model):
-            assert (path, start, end) == ("cli.py", 3, 9)
+            assert (path, start, end) == ("cli.py", 4, 9)
             return [
                 {
-                    "kind": "other",
-                    "start_line": 3,
-                    "end_line": 7,
-                    "content": "other = 1\n" + decorator,
-                },
-                {"kind": "function", "start_line": 8, "end_line": 9, "content": definition},
+                    "kind": "function",
+                    "start_line": 4,
+                    "end_line": 9,
+                    "content": decorator + definition,
+                }
             ]
 
     locations = ["cli.py:9", "cli.py:6", "cli.py:3"]

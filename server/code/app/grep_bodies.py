@@ -73,18 +73,19 @@ async def definitions_for(
 def _distinct(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in rows:
-        key: tuple[Any, ...] = (
-            row.get("path"),
-            row.get("symbol_id"),
-            row.get("start_line"),
-            row.get("end_line"),
-        )
+        key: tuple[Any, ...] = (row.get("path"), row.get("symbol_id"))
         if not row.get("symbol_id"):
             key += (row.get("line"),)
         if key not in grouped:
             grouped[key] = {**row, "lines": []}
             grouped[key].pop("line", None)
-        elif not grouped[key].get("body") and row.get("body"):
+        elif row.get("body") and (
+            not grouped[key].get("body")
+            or (
+                row["start_line"] <= grouped[key]["start_line"]
+                and row["end_line"] >= grouped[key]["end_line"]
+            )
+        ):
             grouped[key] = {**row, "lines": grouped[key]["lines"]}
             grouped[key].pop("line", None)
         grouped[key]["lines"].append(row["line"])

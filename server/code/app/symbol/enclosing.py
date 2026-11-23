@@ -18,7 +18,7 @@ from server.code.app.common import (
     resolve_code_identity,
 )
 from server.code.app.spans import code_span, set_code_span_attributes, span_attrs
-from server.code.app.symbol.enclosing_decorators import recover_decorated_bodies
+from server.code.app.symbol.enclosing_decorators import extend_decorated_spans
 from server.code.app.symbol.neighbours import _attach_enclosing_neighbours
 from server.code.app.symbol.resolve import _innermost, symbol_body
 from server.code.store.index import CodeRepo
@@ -44,6 +44,13 @@ ENCLOSING_KINDS: tuple[str, ...] = (
 )
 
 
+def _by_path(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    paths: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        paths.setdefault(str(row["path"]), []).append(dict(row))
+    return paths
+
+
 async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutput:
     """Batched `path:line` -> enclosing function, one symbol-table read per 20
     distinct paths; a line inside no function falls back to the class or
@@ -66,22 +73,9 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
         # a SQL test's line encloses a statement record
         rows = await repo.functions_for_paths(org, ns, paths, limit=2000, kinds=ENCLOSING_KINDS)
         span_attrs(sp, rows=len(rows))
-    by_path: dict[str, list[dict[str, Any]]] = {}
-    for r in rows:
-        by_path.setdefault(str(r["path"]), []).append(dict(r))
-    decorated = (
-        await recover_decorated_bodies(
-            repo,
-            org,
-            ns,
-            [p for p in parsed if p],
-            by_path,
-            limit=_ENCLOSING_BODY_MAX_SYMBOLS,
-            concurrency=_ENCLOSING_BODY_CONCURRENCY,
-        )
-        if input.include_body
-        else {}
-    )
+    by_path = _by_path(rows)
+    if input.include_body:
+        await extend_decorated_spans(repo, org, ns, [p for p in parsed if p], by_path)
 
     # Second pass, only for lines no function contains: the class / struct
     # whose body holds the line (a member declaration in a header). One
@@ -98,8 +92,7 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
         with code_span("enclosing.types", paths=len(unresolved_paths)) as sp:
             trows = await repo.types_for_paths(org, ns, unresolved_paths, limit=2000)
             span_attrs(sp, rows=len(trows))
-        for r in trows:
-            types_by_path.setdefault(str(r["path"]), []).append(r)
+        types_by_path = _by_path(trows)
     # A line of a document or config file is enclosed by its heading's section (the chunk
     # the index cut there), not by nothing.
     sections_by_path = await _doc_sections(
@@ -165,7 +158,7 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
     bodies_returned = bodies_elided = tokens = 0
     if input.include_body and resolved:
         bodies_returned, bodies_elided, tokens = await _attach_enclosing_bodies(
-            repo, org, ns, results, input.token_budget, decorated
+            repo, org, ns, results, input.token_budget
         )
 
     want_neighbours = bool(input.neighbours)  # unset = off
@@ -293,7 +286,6 @@ async def _attach_enclosing_bodies(
     ns: str,
     results: list[dict[str, Any]],
     token_budget: int,
-    decorated: dict[str, str],
 ) -> tuple[int, int, int]:
     """Fetch each distinct enclosing function's body once and attach it to
     every hit inside it, filling by first appearance until the budget is
@@ -316,8 +308,6 @@ async def _attach_enclosing_bodies(
     sem = asyncio.Semaphore(_ENCLOSING_BODY_CONCURRENCY)
 
     async def one(r: dict[str, Any]) -> str:
-        if cached := decorated.get(str(r["symbol_id"])):
-            return cached
         async with sem:
             try:
                 return await symbol_body(repo, org, ns, r)
