@@ -36,7 +36,9 @@ Sibling text, Python layouts, workspace registries, module indexes, compiler con
 and barrel targets cache by tenant and namespace plus the pinned Git directory and
 commit. Concurrent passes share a pending read only within that source. Indexed-text
 reads use a separate cache scope. Each cache expires entries and bounds their count;
-the text cache also bounds the bytes it holds.
+the text cache also bounds the bytes it holds. Python ingestion resolves its layout
+before chunking and passes the layout snapshot to facet extraction; chunking threads
+do not access the mutable cache.
 
 A history read (`blame_range`, bisect, `first_build`, a lesson's code check) on a host
 without the mirror clones it once in the background

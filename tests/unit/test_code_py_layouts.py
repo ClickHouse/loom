@@ -336,28 +336,21 @@ def test_entry_point_facets_land_on_the_manifest_and_the_target_function():
     assert pl.script_facets(parse_file("lib/x.py", b"def f():\n    pass\n")) == []
 
 
-def test_the_ingest_hands_the_facets_to_the_symbol_stage():
-    key = ("org", "ns-11760")
+def test_chunks_use_the_supplied_python_layout():
     layout = pl.layout_from_texts({"pyproject.toml": PYPROJECT}, {"pyproject.toml"})
-    ingest_resolve._PY_LAYOUT_CACHE.put(key, layout)
-    try:
-        pf = parse_file("pyproject.toml", PYPROJECT.encode())
-        assert pf is not None and pf.lang == "config"
-        _c, _p, facets = _chunks_for(pf, pf.path, pf.source, 6000, key)
-        assert [f.name for f in facets] == ["srcpkg-cli", "srcpkg-mod", "srcpkg-gui", "echo"]
-        assert ingest_parse._facets_ride_symbols(pf, pf.path, False, facets)
-        cli = parse_file("lib/srcpkg/cli.py", b"def main():\n    return 0\n")
-        _c, _p, facets = _chunks_for(cli, cli.path, cli.source, 6000, key)
-        assert [(f.kind, f.name, f.line) for f in facets] == [("entry_point", "srcpkg-cli", 1)]
-        legacy = parse_file("legacy/setup.py", SETUP_PY.encode())
-        _c, _p, facets = _chunks_for(legacy, legacy.path, legacy.source, 6000, key)
-        assert [f.name for f in facets] == ["legacy-tool", "legacy-other"]
-        cold = parse_file("lib/srcpkg/cli.py", b"def main():\n    return 0\n")
-        assert _chunks_for(cold, cold.path, cold.source, 6000, ("org", "other"))[2] == [], (
-            "no layout read yet: no module-side facet (the heal re-derives)"
-        )
-    finally:
-        ingest_resolve._PY_LAYOUT_CACHE.pop(key)
+    pf = parse_file("pyproject.toml", PYPROJECT.encode())
+    assert pf is not None and pf.lang == "config"
+    _c, _p, facets = _chunks_for(pf, pf.path, pf.source, 6000, layout)
+    assert [f.name for f in facets] == ["srcpkg-cli", "srcpkg-mod", "srcpkg-gui", "echo"]
+    assert ingest_parse._facets_ride_symbols(pf, pf.path, False, facets)
+    cli = parse_file("lib/srcpkg/cli.py", b"def main():\n    return 0\n")
+    _c, _p, facets = _chunks_for(cli, cli.path, cli.source, 6000, layout)
+    assert [(f.kind, f.name, f.line) for f in facets] == [("entry_point", "srcpkg-cli", 1)]
+    legacy = parse_file("legacy/setup.py", SETUP_PY.encode())
+    _c, _p, facets = _chunks_for(legacy, legacy.path, legacy.source, 6000, layout)
+    assert [f.name for f in facets] == ["legacy-tool", "legacy-other"]
+    cold = parse_file("lib/srcpkg/cli.py", b"def main():\n    return 0\n")
+    assert _chunks_for(cold, cold.path, cold.source, 6000)[2] == []
 
 
 # ---------------------------------------------------------------------------

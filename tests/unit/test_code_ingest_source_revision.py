@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,7 +22,10 @@ def revisions(tmp_path: Path) -> tuple[str, list[str], set[str]]:
     for name in ("first", "second"):
         texts = {
             "body.py": f"{name} body\n",
-            "pyproject.toml": f'[tool.setuptools]\npackage-dir = {{"" = "{name}"}}\n',
+            "pyproject.toml": '[project.scripts]\nrepo-cli = "cli:main"\n'
+            + f'[tool.setuptools]\npackage-dir = {{"" = "{name}"}}\n',
+            "first/cli.py": "def main():\n    return 1\n",
+            "second/cli.py": "def main():\n    return 2\n",
             "package.json": '{"workspaces": ["packages/*"]}',
             "packages/pkg/package.json": f'{{"name": "@repo/{name}"}}',
             "go.mod": f"module example.com/{name}\n",
@@ -80,7 +84,7 @@ class Repo:
 def test_cached_source_views_follow_the_revision(revisions, monkeypatch, kind: str) -> None:
     git_dir, heads, paths = revisions
     repo: Any = Repo(paths)
-    monkeypatch.setitem(ir._LIVE_PATHS_CACHE, ("org", "ns"), (0.0, paths))
+    monkeypatch.setitem(ir._LIVE_PATHS_CACHE, ("org", "ns"), (time.monotonic(), paths))
 
     async def read(name: str) -> None:
         if kind == "text":
@@ -135,3 +139,49 @@ def test_indexed_text_does_not_mask_the_git_source(revisions) -> None:
         assert asyncio.run(ir._package_json_text(repo, "org", "ns", "body.py")) == "first body\n"
     assert asyncio.run(ir._package_json_text(repo, "org", "ns", "body.py")) == "indexed text"
     assert repo.reads == ["body.py"]
+
+
+@pytest.mark.parametrize("revision", [0, 1])
+def test_first_python_file_keeps_its_revision_entrypoint(revisions, monkeypatch, revision) -> None:
+    from server.code.app.index.ingest import ingest_file
+    from server.code.store.index import CodeRepo
+    from tests.unit.ch_fake import RecordingCH
+
+    git_dir, heads, paths = revisions
+    name = ("first", "second")[revision]
+    path = f"{name}/cli.py"
+    source = f"def main():\n    return {revision + 1}\n".encode()
+    monkeypatch.setitem(ir._LIVE_PATHS_CACHE, ("org", "ns"), (time.monotonic(), paths))
+    ch = RecordingCH()
+    for table in [
+        "code_chunks",
+        "code_symbols",
+        "code_symbol_names",
+        "code_edges",
+        "code_call_sites_unresolved",
+        "code_call_guards",
+        "code_test_facets",
+    ]:
+        ch.on(f"FROM loom.{table}", [])
+    repo: Any = CodeRepo(ch)
+    with ir.git_text_source(git_dir, heads[revision]):
+        stats = asyncio.run(
+            ingest_file(
+                repo,
+                "org",
+                "ns",
+                path=path,
+                source=source,
+                commit_sha=heads[revision],
+                embedding_model="m",
+            )
+        )
+    assert not stats.error
+    facets = [
+        row
+        for row in ch.inserted("code_test_facets")
+        if row["facet_kind"] == "entry_point" and row["tombstoned_at"] is None
+    ]
+    assert [(row["name"], row["path"], row["line"]) for row in facets] == [
+        ("repo-cli", path, 1),
+    ]
