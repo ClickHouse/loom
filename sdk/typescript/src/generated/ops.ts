@@ -882,11 +882,13 @@ export interface CodeGrepInput {
   consumer?: string;
   /** Literal text, a list of alternatives, or one RE2 expression with regex=true. */
   pattern: string | string[];
+  /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
   case_sensitive?: boolean;
   /** Include distinct enclosing bodies in matches mode; default false. */
   include_body?: boolean;
   path_prefix?: string;
+  /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";
@@ -1571,6 +1573,7 @@ export interface CodeSearchInput {
   top_k?: number;
   token_budget?: number | null;
   path_prefix?: string;
+  /** Pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   rerank?: string;

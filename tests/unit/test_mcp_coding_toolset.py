@@ -573,6 +573,13 @@ async def test_coding_schemas_keep_the_inputs_needed_to_select_and_call_code_too
         properties = descriptors[name]["inputSchema"]["properties"]
         assert all(properties[field].get("description") for field in fields)
 
+    for name in ("loom_code_search", "loom_code_grep"):
+        cursor = descriptors[name]["inputSchema"]["properties"]["cursor"]["description"]
+        assert "`next_cursor` with the original search arguments" in cursor
+        assert "omit it to start a new search" in cursor
+    regex = descriptors["loom_code_grep"]["inputSchema"]["properties"]["regex"]["description"]
+    assert "without lookaround or backreferences" in regex
+
 
 @pytest.mark.parametrize("defaults", [None, {"namespace": ""}])
 def test_coding_connections_without_a_memory_home_do_not_request_a_memory_pack(defaults) -> None:
