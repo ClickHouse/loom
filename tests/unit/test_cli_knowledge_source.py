@@ -1,171 +1,125 @@
-"""`loom knowledge source add|update`: the op body each builds from its flags, and the
-refusals it answers on its own, before any request."""
+"""The server CLI delegates source execution to the versioned SDK entry."""
 
-from __future__ import annotations
-
-from pathlib import Path
+import argparse
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
-from server.cli import knowledge_source as cli
-
-LINK = "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOp"
+from server.cli import knowledge_source
 
 
-@pytest.fixture
-def calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
-    seen: list[tuple[str, dict[str, Any]]] = []
-
-    def _call(args: Any, op: str, body: dict[str, Any]) -> int:
-        seen.append((op, body))
-        return 0
-
-    monkeypatch.setattr(cli, "_call", _call)
-    return seen
+def parser():
+    value = argparse.ArgumentParser()
+    knowledge_source.register_knowledge_source_cli(value.add_subparsers(required=True))
+    return value
 
 
-def _args(**kw: Any) -> SimpleNamespace:
-    base = {"name": "decks", "kind": "gdrive", "credential_file": "", "dry_run": False}
-    base |= {"item_json": [], "link": [], "include": [], "remove_item_json": [], "remove_link": []}
-    return SimpleNamespace(**(base | kw))
-
-
-def test_add_sends_its_links_and_the_credential_read_from_its_file(
-    tmp_path: Path, calls: list[Any]
-) -> None:
-    key = tmp_path / "key.json"
-    key.write_text(' {"k": 1}\n', encoding="utf-8")
-    assert cli._cmd_add(_args(credential_file=str(key), link=[LINK], include=["pdf"])) == 0
-    assert calls == [
-        (
-            "knowledge.source.add",
-            {
-                "name": "decks",
-                "kind": "gdrive",
-                "credential": '{"k": 1}',
-                "dry_run": False,
-                "links": [LINK],
-                "include": ["pdf"],
-            },
-        )
-    ]
-
-
-def test_add_sends_links_and_items_together(tmp_path: Path, calls: list[Any]) -> None:
-    key = tmp_path / "key.json"
-    key.write_text("k", encoding="utf-8")
-    args = _args(credential_file=str(key), link=[LINK], item_json=['{"type": "file", "id": "x"}'])
-    assert cli._cmd_add(args) == 0
-    [(_, body)] = calls
-    assert body["items"] == [{"type": "file", "id": "x"}] and body["links"] == [LINK]
-
-
-def test_add_names_a_credential_file_it_cannot_read(
-    tmp_path: Path, calls: list[Any], capsys: pytest.CaptureFixture[str]
-) -> None:
-    missing = tmp_path / "missing.json"
-    assert cli._cmd_add(_args(credential_file=str(missing), link=[LINK])) == 2
-    assert "--credential-file: cannot read" in capsys.readouterr().err and calls == []
-
-
-def test_update_sends_what_it_adds_and_removes(calls: list[Any]) -> None:
-    args = _args(
-        item_json=['{"type": "file", "id": "f1"}'],
-        remove_link=[LINK],
-        include=["docs"],
+def arguments(*action):
+    return parser().parse_args(
+        [
+            "source",
+            *action,
+            "--server-url",
+            "https://loom.invalid",
+            "--org",
+            "test-org",
+            "--session-file",
+            "/application/session.json",
+        ]
     )
-    assert cli._cmd_update(args) == 0
-    assert calls == [
-        (
-            "knowledge.source.update",
-            {
-                "name": "decks",
-                "add_items": [{"type": "file", "id": "f1"}],
-                "add_links": [],
-                "remove_items": [],
-                "remove_links": [LINK],
-                "include": ["docs"],
-            },
-        )
-    ]
 
 
-@pytest.mark.parametrize("value", ["[1, 2]", "not json", '"a string"'])
-def test_an_item_that_is_not_a_json_object_is_refused(
-    value: str, tmp_path: Path, calls: list[Any], capsys: pytest.CaptureFixture[str]
-) -> None:
-    key = tmp_path / "key.json"
-    key.write_text("k", encoding="utf-8")
-    assert cli._cmd_add(_args(credential_file=str(key), item_json=[value])) == 2
-    assert "not a JSON object" in capsys.readouterr().err and calls == []
+def test_missing_sdk_fails_with_supported_installation_message(monkeypatch, capsys):
+    def missing(name):
+        assert name == "loom.source_cli"
+        raise ModuleNotFoundError("loom")
+
+    monkeypatch.setattr(knowledge_source.importlib, "import_module", missing)
+    args = arguments("read", "--request-file", "input.json")
+    assert args.func(args) == 2
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert "matching-release clickhouse-loom" in out.err
+    assert "python -m loom.source_cli" in out.err
+    assert "server-only wheel" in out.err
 
 
-def test_add_names_a_credential_file_that_is_not_text(
-    tmp_path: Path, calls: list[Any], capsys: pytest.CaptureFixture[str]
-) -> None:
-    key = tmp_path / "key.p12"
-    key.write_bytes(b"\xff\xfe\x00")
-    assert cli._cmd_add(_args(credential_file=str(key), link=[LINK])) == 2
-    assert "not UTF-8 text" in capsys.readouterr().err and calls == []
+def test_incompatible_entry_does_not_dispatch(monkeypatch, capsys):
+    entry = SimpleNamespace(SOURCE_CLI_API=0)
+    monkeypatch.setattr(knowledge_source.importlib, "import_module", lambda name: entry)
+    args = arguments("list")
+    assert args.func(args) == 2
+    assert "matching-release" in capsys.readouterr().err
 
 
-def test_a_bad_remove_item_names_its_own_flag(
-    calls: list[Any], capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert cli._cmd_update(_args(remove_item_json=["[1]"])) == 2 and calls == []
-    assert "--remove-item-json: not a JSON object" in capsys.readouterr().err
+def test_matching_entry_receives_exact_parsed_arguments(monkeypatch):
+    seen = []
+
+    def execute(args):
+        seen.append(args)
+        return 7
+
+    entry = SimpleNamespace(SOURCE_CLI_API=2, run_server_entry=execute)
+    monkeypatch.setattr(knowledge_source.importlib, "import_module", lambda name: entry)
+    args = arguments("connection", "browse", "--request-file", "selection.json")
+    assert args.func(args) == 7
+    assert seen == [args]
+    assert args.source_command == "connection" and args.source_action == "browse"
+    assert args.request_file == "selection.json"
+    assert args.intent == "automatic"
+
+
+@pytest.mark.parametrize("action", knowledge_source._ACTIONS)
+def test_mcp_source_actions_parse_without_importing_sdk(action, monkeypatch):
+    def forbidden(name):
+        raise AssertionError("Parser construction must not import SDK runtime")
+
+    monkeypatch.setattr(knowledge_source.importlib, "import_module", forbidden)
+    args = arguments(action, "--namespace", "col-destination")
+    assert args.source_command == action
+    assert args.namespace == "col-destination"
+    assert args.intent == "automatic"
 
 
 @pytest.mark.parametrize(
-    ("status", "answer", "line"),
-    [
-        (
-            422,
-            {"detail": {"code": "BAD_LINK", "message": "unreadable links: x"}},
-            "knowledge.source.list → HTTP 422 BAD_LINK: unreadable links: x",
-        ),
-        (
-            0,
-            {"detail": "URLError: refused"},
-            "knowledge.source.list → no Loom answer: URLError: refused",
-        ),
-        (502, {"detail": "<html>login</html>"}, "knowledge.source.list → HTTP 502 Bad Gateway"),
-        (
-            422,
-            {"detail": [{"loc": ["body", "links"], "msg": "List should have at most 300 items"}]},
-            "knowledge.source.list → HTTP 422 validation_error: body.links: "
-            "List should have at most 300 items",
-        ),
-    ],
+    "flag", ["--link", "--item-json", "--include", "--token", "--credential-file"]
 )
-def test_a_failed_call_prints_one_line_and_exits_1(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    status: int,
-    answer: dict[str, Any],
-    line: str,
-) -> None:
-    monkeypatch.setattr(cli, "resolve_token", lambda token: ("tok", "flag"))
-    monkeypatch.setattr(cli, "refused_for_agent", lambda source: False)
-    monkeypatch.setattr(cli, "post_op", lambda *a, **kw: (status, answer))
-    args = SimpleNamespace(token=None, org="acme", namespace="docs", server_url="http://x")
-    assert cli._cmd_list(args) == 1
-    assert capsys.readouterr().err.strip() == line
+def test_native_document_setup_and_argv_credentials_are_absent(flag):
+    with pytest.raises(SystemExit) as caught:
+        arguments("add", flag, "value")
+    assert caught.value.code == 2
 
 
-def test_add_with_nothing_to_read_is_refused_before_reading_the_credential(
-    calls: list[Any], capsys: pytest.CaptureFixture[str]
-) -> None:
-    # No key file at all: the refusal comes first.
-    assert cli._cmd_add(_args(credential_file="/nonexistent/key.json")) == 2 and calls == []
-    assert "give --link or --item-json" in capsys.readouterr().err
+def test_recording_keeps_separate_credential_input():
+    args = arguments(
+        "recording", "add", "--request-file", "recording.json", "--credential-file", "-"
+    )
+    assert args.source_command == "recording" and args.source_action == "add"
+    assert args.credential_file == "-"
 
 
-def test_a_bad_item_is_refused_before_the_credential_is_read(
-    calls: list[Any], capsys: pytest.CaptureFixture[str]
-) -> None:
-    args = _args(credential_file="/nonexistent/key.json", item_json=["[1]"])
-    assert cli._cmd_add(args) == 2 and calls == []
-    assert "not a JSON object" in capsys.readouterr().err
+def test_connect_does_not_accept_bearer_as_an_argv_option():
+    with pytest.raises(SystemExit) as caught:
+        arguments("connection", "connect", "--bearer", "value")
+    assert caught.value.code == 2
+
+
+def test_session_pointer_is_required():
+    with pytest.raises(SystemExit) as caught:
+        parser().parse_args(
+            ["source", "list", "--server-url", "https://loom.invalid", "--org", "test-org"]
+        )
+    assert caught.value.code == 2
+
+
+def test_root_explicit_intent_is_forwarded_to_one_source_dispatch(monkeypatch):
+    from server.cli._session_context import invocation
+
+    seen = []
+    entry = SimpleNamespace(SOURCE_CLI_API=2, run_server_entry=lambda args: seen.append(args) or 7)
+    monkeypatch.setattr(knowledge_source.importlib, "import_module", lambda name: entry)
+    args = arguments("list")
+    with invocation("explicit"):
+        assert args.func(args) == 7
+    assert seen[0] is not args and seen[0].intent == "explicit"
+    assert args.intent == "automatic"

@@ -1,4 +1,5 @@
 import { defineConfig, type Plugin, type Rollup } from "vite";
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
@@ -91,6 +92,8 @@ export default defineConfig({
     },
   },
   server: {
+    // The protected browser adapter and operation metadata are maintained SDK source.
+    fs: { allow: [fileURLToPath(new URL(".", import.meta.url)), fileURLToPath(new URL("../sdk/typescript/src", import.meta.url))] },
     port: 5173,
     proxy: {
       "/v1": "http://127.0.0.1:7777",

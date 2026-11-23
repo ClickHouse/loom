@@ -514,7 +514,7 @@ export function BatchUpload({
     if (asCollections && start.some((r) => r.state === "waiting" && r.folder)) {
       foldersSent.current = true;
       setRows(start.map((r) => (r.state === "waiting" && r.folder ? { ...r, line: MAKING } : r)));
-      const folders = new FolderCollections(org, byFolder, root, quietRetry(c.signal), madeHere.current);
+      const folders = new FolderCollections(org, byFolder, root, quietRetry(c.signal), madeHere.current, "explicit");
       const placed = await placeFolders(start, folders, sourcesOf, wentTo, c.signal);
       madeHere.current.push(...folders.created);
       // Collections were made or titled: other views read again, waiting for the first made.
@@ -548,6 +548,7 @@ export function BatchUpload({
     // Each row as the run left it, kept here: the rendered rows may lag the last update.
     const final = new Map(begin.map((r) => [r.id, r]));
     await runBatch(begin, {
+      intent: "explicit",
       fields: { tags, allow_partial: allowPartial },
       signal: c.signal,
       cancelling: () => cancelling.current,

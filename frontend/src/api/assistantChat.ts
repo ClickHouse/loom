@@ -146,12 +146,14 @@ export async function streamAssistantChat(
   messages: ChatMessage[],
   on: ChatHandlers,
   signal: AbortSignal,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<void> {
   const r = await postStreaming(
     CHAT_PATH,
     { stream: true, messages },
     { "X-Loom-Namespace": namespace, Accept: "text/event-stream" },
     signal,
+    intent,
   );
   if (!r.body) throw new ApiError({ status: r.status, message: "the answer carried no body" });
   const requestId = r.headers.get("X-Request-Id") ?? "";

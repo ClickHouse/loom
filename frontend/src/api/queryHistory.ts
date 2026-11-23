@@ -23,9 +23,9 @@ export interface QueryHistorySources {
 export function listQueryHistory(id: Scope, opts: RequestOpts = {}): Promise<QueryHistorySources> {
   return post("/v1/knowledge.query_history.list", { ...id, limit: 1000 }, opts.signal);
 }
-export function addQueryHistory(id: Scope, source: QueryHistoryRegistration): Promise<QueryHistorySource> {
-  return post("/v1/knowledge.query_history.add", { ...id, ...source });
+export function addQueryHistory(id: Scope, source: QueryHistoryRegistration, intent: "automatic" | "explicit" = "automatic"): Promise<QueryHistorySource> {
+  return post("/v1/knowledge.query_history.add", { ...id, ...source }, undefined, intent);
 }
-export function removeQueryHistory(id: Scope, name: string): Promise<{ removed: boolean }> {
-  return post("/v1/knowledge.query_history.remove", { ...id, name });
+export function removeQueryHistory(id: Scope, name: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ removed: boolean }> {
+  return post("/v1/knowledge.query_history.remove", { ...id, name }, undefined, intent);
 }

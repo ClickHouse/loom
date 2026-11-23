@@ -669,14 +669,14 @@ describe("the collection header", () => {
         "approval",
         async (dialog) => {
           fireEvent.click(within(dialog).getByRole("button", { name: /^Approve as/ }));
-          await waitFor(() => expect(api.approveGrant).toHaveBeenCalledWith(expect.anything(), "carol", "approve"));
+          await waitFor(() => expect(api.approveGrant).toHaveBeenCalledWith(expect.anything(), "carol", "approve", undefined, "explicit"));
         },
       ],
       [
         "rejection",
         async (dialog) => {
           fireEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
-          await waitFor(() => expect(api.approveGrant).toHaveBeenCalledWith(expect.anything(), "carol", "reject"));
+          await waitFor(() => expect(api.approveGrant).toHaveBeenCalledWith(expect.anything(), "carol", "reject", undefined, "explicit"));
         },
       ],
     ];

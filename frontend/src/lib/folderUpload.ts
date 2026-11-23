@@ -345,6 +345,7 @@ export class FolderCollections {
     /** Collections an earlier upload from the same dialog made: other replicas may not
      *  know them yet either. */
     private earlier: readonly string[] = [],
+    private intent: "automatic" | "explicit" = "automatic",
   ) {}
 
   /** The collections this upload made, parents first. */
@@ -376,7 +377,7 @@ export class FolderCollections {
     try {
       r = await this.retry(() =>
         whileNew(
-          () => createCollection(this.org, "", { parent: parent.namespace, title: plan.title, deriveName: true }),
+          () => createCollection(this.org, "", { parent: parent.namespace, title: plan.title, deriveName: true }, this.intent),
           parent.fresh,
           signal,
         ),

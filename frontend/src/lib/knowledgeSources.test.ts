@@ -2,20 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   credentialLabel,
   emptySourceForm,
-  folderIds,
   kindLabel,
-  databaseIds,
   meetingIds,
-  pageIds,
   probeCount,
-  projectIds,
   retiredMessage,
   sourceAddBody,
   sourceFormFingerprint,
   sourceFormProblems,
   syncBadge,
   syncCounts,
-  toggleInclude,
   unconvertedDetail,
   type KnowledgeSourceSync,
 } from "./knowledgeSources";
@@ -36,8 +31,6 @@ function sync(over: Partial<KnowledgeSourceSync> = {}): KnowledgeSourceSync {
   };
 }
 
-const FOLDER = "1AbCdEfGhIjKlMnOp";
-
 describe("syncBadge", () => {
   it("names each state with its tone", () => {
     expect(syncBadge(sync())).toMatchObject({ text: "Never synced", tone: "muted" });
@@ -47,11 +40,11 @@ describe("syncBadge", () => {
     expect(syncBadge(sync({ status: "failed", error: "http_403" })).tip).toContain("http_403");
   });
 
-  it("directs retired Meet sources to Shared folder without suggesting credential rotation", () => {
+  it("describes retired providers without offering replaced source setup", () => {
     expect(syncBadge(sync({ status: "provider_removed" }))).toEqual({
-      text: "Meet sync retired",
+      text: "Provider unavailable",
       tone: "warn",
-      tip: "Add a Shared folder source for Meet transcripts and notes. Existing documents stay unless you ask to delete them.",
+      tip: "This provider is unavailable. Retained bytes and history do not grant current access.",
     });
   });
 
@@ -86,129 +79,18 @@ describe("syncCounts", () => {
   });
 });
 
-describe("the add form", () => {
-  it("takes folder ids or links, one per line or comma-separated, without duplicates", () => {
-    expect(folderIds(`${FOLDER}\nhttps://example.com/drive/folders/${FOLDER}?usp=sharing, 2ZyXwVuTsRqPoNm`)).toEqual([
-      FOLDER,
-      "2ZyXwVuTsRqPoNm",
-    ]);
-  });
-
-  it("lists every problem until the form can be checked", () => {
+describe("recording setup", () => {
+  const named = { ...emptySourceForm(), name: "notes", credential: "k" };
+  it("validates a name, meeting selection and credential before checking", () => {
     expect(sourceFormProblems(emptySourceForm())).toHaveLength(3);
-    const ok = { ...emptySourceForm(), name: " Design-Docs ", folders: FOLDER, credential: "{}" };
-    expect(sourceFormProblems(ok)).toEqual([]);
-    expect(sourceFormProblems({ ...ok, folders: "short" })).toEqual(["Not a folder id: short."]);
-    expect(sourceFormProblems({ ...ok, include: [] })).toEqual(["Pick at least one file kind."]);
-  });
-
-  it("sends the normalised name and the config, and fingerprints what the check read", () => {
-    const f = { ...emptySourceForm(), name: " Design-Docs ", folders: FOLDER, credential: " {} " };
-    expect(sourceAddBody("o", "code-x", f, true)).toEqual({
-      org: "o",
-      namespace: "code-x",
-      name: "design-docs",
-      kind: "gdrive",
-      config: { folder_ids: [FOLDER], include: ["docs", "slides", "pdf", "pptx"] },
-      credential: "{}",
-      dry_run: true,
+    expect(sourceFormProblems({ ...named, meetings: "81234567890" })).toEqual([]);
+    expect(sourceAddBody("o", "docs", { ...named, meetings: "81234567890" }, false)).toEqual({
+      org: "o", namespace: "docs", name: "notes", kind: "recording",
+      config: { provider: "zoom", ids: ["81234567890"] }, credential: "k", dry_run: false,
     });
-    expect(sourceFormFingerprint(f)).toBe(sourceFormFingerprint({ ...f, name: "design-docs" }));
-    expect(sourceFormFingerprint(f)).not.toBe(sourceFormFingerprint({ ...f, credential: "{ }" }));
-  });
-
-  it("counts a probe, a lower bound when there are more", () => {
-    expect(probeCount({ documents: 1, more: false, sample: [] })).toBe("1 document");
+    expect(sourceFormFingerprint({ ...named, meetings: "81234567890" })).not.toBe(sourceFormFingerprint({ ...named, meetings: "91234567890" }));
     expect(probeCount({ documents: 1000, more: true, sample: [] })).toBe("1000+ documents");
   });
-});
-
-const PROJECT = "0f8b2c4e-1a2b-4c3d-8e9f-0123456789ab";
-const PAGE = "1a2b3c4d5e6f708192a3b4c5d6e7f809";
-const DATABASE = "abcdefabcdefabcdefabcdefabcdef01";
-
-describe("the add form's other kinds", () => {
-  const named = { ...emptySourceForm(), name: "notes", credential: "k" };
-
-  it("sends a project tracker's project ids, lower-cased", () => {
-    const f = { ...named, kind: "linear" as const, projects: `${PROJECT.toUpperCase()}\n${PROJECT}` };
-    expect(sourceFormProblems(f)).toEqual([]);
-    expect(sourceAddBody("o", "code-x", f, true)).toEqual({
-      org: "o",
-      namespace: "code-x",
-      name: "notes",
-      kind: "linear",
-      config: { project_ids: [PROJECT] },
-      credential: "k",
-      dry_run: true,
-    });
-    // A project id is lower-cased; anything else, such as a pasted link, is named as typed.
-    const link = "https://tracker.example/Team/project/Roadmap-3f2a";
-    expect(projectIds(`${PROJECT.toUpperCase()} ${link}`)).toEqual([PROJECT, link]);
-    expect(sourceFormProblems({ ...f, projects: link })).toEqual([`Not a project id (a UUID): ${link}.`]);
-    expect(sourceFormProblems({ ...f, projects: "" })).toEqual(["Add at least one project."]);
-    expect(sourceFormProblems({ ...f, projects: "my-project" })).toEqual(["Not a project id (a UUID): my-project."]);
-    expect(sourceFormProblems({ ...f, credential: "" })).toEqual(["Paste the read-only API key."]);
-  });
-
-  it("sends a page store's page and database ids, from ids with or without dashes or from links", () => {
-    const dashed = `${PAGE.slice(0, 8)}-${PAGE.slice(8, 12)}-${PAGE.slice(12, 16)}-${PAGE.slice(16, 20)}-${PAGE.slice(20)}`;
-    expect(pageIds(`${dashed}, https://pages.example/team/Design-Notes-${PAGE}`)).toEqual([PAGE]);
-    // A link with no title, and one to a block on the page.
-    expect(pageIds(`https://pages.example/${PAGE}?pvs=4`)).toEqual([PAGE]);
-    expect(pageIds(`https://pages.example/team/Design-Notes-${PAGE}#${DATABASE}`)).toEqual([PAGE]);
-    // A database link's view id (`?v=`) is not the database's id; under Databases it
-    // gives the database, under Pages it is named as a database link.
-    const dbLink = `https://pages.example/team/${DATABASE}?v=${PAGE}`;
-    expect(databaseIds(dbLink)).toEqual([DATABASE]);
-    expect(pageIds(dbLink)).toEqual([dbLink]);
-    expect(sourceFormProblems({ ...named, kind: "notion", pages: dbLink })).toEqual([
-      `Paste a database link under Databases: ${dbLink}.`,
-    ]);
-    // A peek link opens a page of the database: the page is its `p=`.
-    const VIEW = "0123456789abcdef0123456789abcdef";
-    const peekLink = `https://pages.example/team/${DATABASE}?v=${VIEW}&p=${PAGE}&pm=s`;
-    expect(pageIds(peekLink)).toEqual([PAGE]);
-    // A row's peek link on its parent page (a `p=`, no `v=`) is a page: under Pages it
-    // gives the row, under Databases it is named, never read as the parent page.
-    const rowLink = `https://pages.example/team/Parent-${DATABASE}?p=${PAGE}&pm=s`;
-    expect(pageIds(rowLink)).toEqual([PAGE]);
-    expect(databaseIds(rowLink)).toEqual([rowLink]);
-    expect(sourceFormProblems({ ...named, kind: "notion", databases: rowLink })).toEqual([
-      `Paste a page link under Pages: ${rowLink}.`,
-    ]);
-    // A mistyped page in a peek link is named, never read as the database.
-    const badPeek = `https://pages.example/team/${DATABASE}?v=${VIEW}&p=${PAGE}0&pm=s`;
-    expect(pageIds(badPeek)).toEqual([badPeek]);
-    // In the databases field the same link is its database.
-    expect(databaseIds(peekLink)).toEqual([DATABASE]);
-    expect(sourceAddBody("o", "x", { ...emptySourceForm(), kind: "notion", databases: peekLink }, true).config).toEqual(
-      { page_ids: [], database_ids: [DATABASE] },
-    );
-    // Kept as typed, so the problem names it: an id one digit long is not cut to 32.
-    expect(pageIds(`${PAGE}0`)).toEqual([`${PAGE}0`]);
-    // A link whose id is mistyped one digit long is not cut to another id.
-    expect(pageIds(`https://pages.example/team/Home-${PAGE}0`)).toEqual([`https://pages.example/team/Home-${PAGE}0`]);
-    expect(pageIds(`https://pages.example/team/${PAGE}0`)).toEqual([`https://pages.example/team/${PAGE}0`]);
-    const f = { ...named, kind: "notion" as const, pages: PAGE, databases: DATABASE.toUpperCase() };
-    expect(sourceFormProblems(f)).toEqual([]);
-    expect(sourceAddBody("o", "code-x", f, true).config).toEqual({ page_ids: [PAGE], database_ids: [DATABASE] });
-    expect(sourceAddBody("o", "code-x", { ...f, databases: "" }, true).config).toEqual({
-      page_ids: [PAGE],
-      database_ids: [],
-    });
-    expect(sourceFormProblems({ ...f, pages: "", databases: "" })).toEqual(["Add at least one page or database."]);
-    expect(sourceFormProblems({ ...f, pages: "home" })).toEqual(["Not an id (32 hex digits): home."]);
-    const many = Array.from({ length: 11 }, (_, i) => i.toString(16).padStart(32, "0"));
-    expect(
-      sourceFormProblems({
-        ...f,
-        pages: many.join("\n"),
-        databases: many.map((id) => id.replace(/^0/, "f")).join("\n"),
-      }),
-    ).toEqual(["At most 20 pages and databases in all."]);
-  });
-
   it("sends Zoom meeting ids and rejects space ids and meeting links", () => {
     const zoom = { ...named, kind: "recording" as const, meetings: "81234567890" };
     expect(sourceFormProblems(zoom)).toEqual([]);
@@ -246,27 +128,6 @@ describe("the add form's other kinds", () => {
     expect(sourceFormProblems({ ...zoom, meetings: "" })).toEqual(["Add at least one meeting id."]);
   });
 
-  it("sends only the chosen kind's config, so switching kinds keeps the other kinds' ids out of the body", () => {
-    const f = { ...named, folders: FOLDER, projects: PROJECT };
-    expect(sourceAddBody("o", "x", f, true).config).toEqual({
-      folder_ids: [FOLDER],
-      include: ["docs", "slides", "pdf", "pptx"],
-    });
-    expect(sourceAddBody("o", "x", { ...f, kind: "linear" }, true).config).toEqual({ project_ids: [PROJECT] });
-    expect(sourceFormFingerprint(f)).not.toBe(sourceFormFingerprint({ ...f, kind: "linear" }));
-  });
-});
-
-describe("toggleInclude", () => {
-  it("keeps the options' order, so unticking and ticking again gives the same list", () => {
-    const defaults = emptySourceForm().include;
-    expect(defaults).not.toContain("docx");
-    const without = toggleInclude(defaults, "docs");
-    expect(without).toEqual(["slides", "pdf", "pptx"]);
-    expect(toggleInclude(without, "docs")).toEqual(defaults);
-    expect(toggleInclude(["pptx"], "pdf")).toEqual(["pdf", "pptx"]);
-    expect(toggleInclude(["docx"], "pdf")).toEqual(["pdf", "docx"]);
-  });
 });
 
 describe("retiredMessage", () => {
@@ -281,15 +142,9 @@ describe("retiredMessage", () => {
 });
 
 describe("kind words", () => {
-  it("names each served kind and its credential, and an unknown one by its wire name", () => {
-    expect(kindLabel("gdrive")).toBe("shared folder");
-    expect(kindLabel("linear")).toBe("project documents");
-    expect(kindLabel("notion")).toBe("pages");
+  it("names recording and renders unsupported metadata without a runtime claim", () => {
     expect(kindLabel("recording")).toBe("meeting transcripts");
-    expect(kindLabel("other")).toBe("other");
-    expect(credentialLabel("linear")).toMatch(/^Read-only API key/);
-    expect(credentialLabel("notion")).toMatch(/^Integration token/);
+    for (const kind of ["gdrive", "linear", "notion", "other"]) expect(kindLabel(kind)).toBe(`Unsupported source (${kind})`);
     expect(credentialLabel("recording")).toMatch(/^Read-only credential/);
-    expect(credentialLabel("other")).toMatch(/^Credential/);
   });
 });

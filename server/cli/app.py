@@ -377,15 +377,34 @@ def main(argv: list[str] | None = None) -> int:
         # Before the checkout's .env, which describes the server and would
         # otherwise override the user's own session (LOOM_API_KEY, LOOM_BASE_URL).
         return run_sdk_command(raw)
+    if (len(raw) > 2 and raw[0] == "--request-intent" and raw[2] in SDK_COMMANDS) or (
+        len(raw) > 1 and raw[0].startswith("--request-intent=") and raw[1] in SDK_COMMANDS
+    ):
+        return run_sdk_command(raw)
     _load_dotenv_like_the_container()
     parser = argparse.ArgumentParser(
         prog="loom",
         description="Loom — vendor-neutral agent memory plane on ClickHouse.",
     )
     parser.add_argument("--version", action="version", version=f"loom {_version()}")
+    parser.add_argument(
+        "--request-intent",
+        choices=("automatic", "explicit"),
+        default="automatic",
+        help="Explicit is one direct human request; automatic is the default.",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
     for _add_parsers in _SUBCOMMAND_BUILDERS:
         _add_parsers(sub)
     args = parser.parse_args(argv)
     wire()
-    return _dispatch(args)
+    from server.cli._session_context import CLIContextError, invocation
+
+    intent = args.request_intent
+    del args.request_intent
+    try:
+        with invocation(intent):
+            return _dispatch(args)
+    except CLIContextError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2

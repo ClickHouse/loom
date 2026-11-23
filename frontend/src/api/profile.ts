@@ -100,19 +100,20 @@ export async function setProfileSection(
   label: string,
   value: string,
   charLimit: number,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ version: string; content_sha256: string; value_length: number }> {
   return post<{ version: string; content_sha256: string; value_length: number }>("/v1/profile.set", {
     ...id,
     label,
     value,
     char_limit: charLimit,
-  });
+  }, undefined, intent);
 }
 
 /** Tombstone a profile section (14-day grace, restorable). Sections
  *  live in loom.memory so memory.delete is the right primitive. */
-export async function deleteProfileSection(id: Identity, label: string): Promise<void> {
-  await post<void>("/v1/memory.delete", { ...id, memory_key: label });
+export async function deleteProfileSection(id: Identity, label: string, intent: "automatic" | "explicit" = "automatic"): Promise<void> {
+  await post<void>("/v1/memory.delete", { ...id, memory_key: label }, undefined, intent);
 }
 
 export interface ProfileActivityEntry {

@@ -4,7 +4,10 @@ A minimal client for Loom's memory ops (`memory.set`, `memory.get`, `memory.sear
 `memory.delete`) and the conversation ops a chat memory needs (`conversation.append`,
 `get`, `create`, `delete`, `threads` and `set_logging`). It is a step towards a full Java
 SDK ([#53](https://github.com/ClickHouse/loom/issues/53)); the Python and TypeScript SDKs
-cover every op.
+cover every op. Java also exposes generic wire calls and map-based MCP source
+controls. See [protected source sessions](SESSION_PROTECTION.md) for the required
+application-owned conversation authority, explicit human calls, retained callback
+captures, Linux storage limits and hosted qualification status.
 
 Two chat memory modules build on it, each its own Maven project so the client keeps no
 framework dependency:

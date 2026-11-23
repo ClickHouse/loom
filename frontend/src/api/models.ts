@@ -78,10 +78,10 @@ export interface ModelSaveResult {
 }
 
 export const getModelStatus = (signal?: AbortSignal) => getJson<ModelStatus>("/v1/admin/models", { signal });
-export const validateModelConfiguration = (body: ModelConfiguration) =>
-  post<ModelValidation>("/v1/admin/models/validate", body);
-export const saveModelConfiguration = (body: ModelConfiguration) => post<ModelSaveResult>("/v1/admin/models", body);
-export const resetModelConfiguration = (expected_version: string) =>
-  post<ModelSaveResult>("/v1/admin/models/reset", { expected_version });
-export const retryModelConfiguration = (config_id: string) =>
-  post<ModelSaveResult>("/v1/admin/models/retry", { config_id });
+export const validateModelConfiguration = (body: ModelConfiguration, intent: "automatic" | "explicit" = "automatic") =>
+  post<ModelValidation>("/v1/admin/models/validate", body, undefined, intent);
+export const saveModelConfiguration = (body: ModelConfiguration, intent: "automatic" | "explicit" = "automatic") => post<ModelSaveResult>("/v1/admin/models", body, undefined, intent);
+export const resetModelConfiguration = (expected_version: string, intent: "automatic" | "explicit" = "automatic") =>
+  post<ModelSaveResult>("/v1/admin/models/reset", { expected_version }, undefined, intent);
+export const retryModelConfiguration = (config_id: string, intent: "automatic" | "explicit" = "automatic") =>
+  post<ModelSaveResult>("/v1/admin/models/retry", { config_id }, undefined, intent);

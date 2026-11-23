@@ -268,7 +268,7 @@ export function DockBody() {
     // A turn asked again and refused is answered again in its place, as it was asked again;
     // the field empties only when it holds the question.
     const { question, asked: _asked, ...again } = pending;
-    ask(question, c.namespace ?? header, asked, null, { ...again, fromField: draft === question });
+    ask(question, c.namespace ?? header, asked, null, { ...again, fromField: draft === question }, "explicit");
   };
 
   // Chat not set up or its setup failing: the panel is its empty state and the starters,

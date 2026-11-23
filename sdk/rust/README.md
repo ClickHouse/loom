@@ -266,3 +266,7 @@ A consuming application controls its own dependency lockfile.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Session protection
+
+Bind a durable conversation handle before reading protected sources, and retain its capture for every automatic write. See [Session protection](SESSION_PROTECTION.md) for restore, task cancellation and response limits.

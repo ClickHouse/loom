@@ -154,6 +154,7 @@ export async function ingestFile(
   fields: KnowledgeIngestFields,
   onStep: (line: string, phase: IngestPhase) => void,
   opts: {
+    intent?: "automatic" | "explicit";
     signal?: AbortSignal;
     onQueued?: (ingestionId: string) => void;
     /** Wraps the upload and the ingest call, to send each again when the server allows. */
@@ -166,10 +167,10 @@ export async function ingestFile(
   const retry = opts.retry ?? ((step) => step());
   const poll = opts.poll ?? ((step) => step());
   onStep("Uploading…", "upload");
-  const up = await retry(() => uploadKnowledgeFile(id, file, signal));
+  const up = await retry(() => uploadKnowledgeFile(id, file, signal, opts.intent));
   signal?.throwIfAborted(); // cancelled while the bytes went: nothing is queued
   onStep("Queuing…", "queue");
-  const job = await retry(() => ingestKnowledge(id, { ...fields, upload_id: up.upload_id }));
+  const job = await retry(() => ingestKnowledge(id, { ...fields, upload_id: up.upload_id }, opts.intent));
   opts.onQueued?.(job.ingestion_id);
   let missed = 0;
   for (;;) {

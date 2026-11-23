@@ -163,6 +163,7 @@ function Body({
           "memory.inspect",
           { subject, id },
           { alsoAsk: now.asks, gate: gate("memory.inspect"), namespace, unanswered: now.unanswered },
+          "explicit",
         );
       };
       // A pick is off as the subject starter is: while an answer comes in, and when its read

@@ -130,6 +130,16 @@ class SessionProtection:
         """Content-free control state, independent of token or server scope."""
         return {"base": str(self.base), "id": self.id}
 
+    def require_ready(self) -> None:
+        """Confirm existing readable and writable control state before admission."""
+        try:
+            directory = self._location()
+            with _file(directory / "state", os.O_RDWR | os.O_APPEND) as fd:
+                if os.read(fd, 3) not in (b"0\n", b"0\n1"):
+                    raise SessionProtectionUnavailable()
+        except Exception:  # noqa: BLE001 — missing control authority cannot promise protection
+            raise SessionProtectionUnavailable() from None
+
     def _location(self) -> Path:
         if (
             not self.base.is_absolute()
@@ -266,6 +276,7 @@ def observe_response(value: Any, root: SessionProtection | None) -> Any:
     refused = False
     for family in roots:
         try:
+            family.require_ready()
             family.observe(value)
         except SessionProtectionUnavailable:
             refused = True
@@ -296,6 +307,8 @@ def _marked(value: Any) -> bool:
         for key in ("result", "structuredContent"):
             if isinstance(item.get(key), dict):
                 pending.append(item[key])
+        if isinstance(item.get("error"), dict) and isinstance(item["error"].get("data"), dict):
+            pending.append(item["error"]["data"])
         if isinstance(item.get("items"), list):
             if len(pending) + len(item["items"]) > remaining:
                 raise SessionProtectionUnavailable()

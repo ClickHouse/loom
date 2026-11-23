@@ -261,6 +261,15 @@ class _Table:
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         if sql == (
+            "SELECT DISTINCT org, owner_subject, "
+            "if(credential_mode = 'mcp' OR source_kind = 'mcp', connection_slot, source_kind) AS slot "
+            "FROM loom.knowledge_sources WHERE "
+            "(credential_mode IN ('connected', 'mcp') OR source_kind = 'mcp') "
+            "ORDER BY org, owner_subject, slot LIMIT {limit:UInt64}"
+        ):
+            assert params == {"limit": settings.knowledge_connected_registry_scan_limit + 1}
+            return []
+        if sql == (
             "SELECT org, subject, kind, connection_id, account_id, workspace_id, "
             "account_email_enc, credential_enc, scopes, active, refresh_id, connected_at, "
             "disconnected_at, version FROM loom.connected_accounts FINAL "
@@ -323,13 +332,16 @@ class _Table:
 class _World:
     """The tables, the real revocation writes and reads over them, and the audit log."""
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _tables(self) -> None:
         self.accounts: dict[str, list[str]] = {}  # email -> subjects it reaches
         self.elsewhere: dict[str, list[str]] = {}  # subject -> other orgs it is in
         self.reached_in: dict[str, list[str]] = {}  # subject -> orgs its email reaches it in
         self.table = _Table(self.accounts, self.elsewhere, self.reached_in)
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.revoked_at_audit: list[dict[str, Any]] = []  # SCIM's revocations as each audit lands
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._tables()
         self.claim_limit: int | None = None  # names held at once before a claim runs out
         self.claims: dict[tuple[str, str], asyncio.Lock] = {}  # one holder a name, as a lease
         self.leases: list[str] = []
@@ -380,6 +392,9 @@ class _World:
         monkeypatch.setattr(settings, "scim_token", _TOKEN)
         monkeypatch.setattr(scim, "get_client", lambda: self.table)
         monkeypatch.setattr(ch, "get_client", lambda: self.table)
+        from server.knowledge.app import connected_accounts
+
+        monkeypatch.setattr(connected_accounts, "get_client", lambda: self.table)
         monkeypatch.setattr(scim, "_held", held)
         monkeypatch.setattr(grant_claims, "service_account_change", name_claim)
         monkeypatch.setattr(revocation, "asyncio", SimpleNamespace(sleep=no_wait))

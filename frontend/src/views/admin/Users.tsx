@@ -317,7 +317,7 @@ function ClaimReleaseSection() {
       return;
     setBusy(true);
     try {
-      const r = await claimRelease(identity.org, ns.trim(), reason.trim());
+      const r = await claimRelease(identity.org, ns.trim(), reason.trim(), "explicit");
       setResult(
         `Released ${r.namespace} (was owned by ${r.previous_owner || "unknown"}, revoked ${r.grants_revoked} grants).`,
       );

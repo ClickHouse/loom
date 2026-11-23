@@ -47,12 +47,13 @@ export async function registerWebhook(
   url: string,
   secretRef: string,
   events: WebhookEvent[],
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ webhook: Webhook }> {
-  return post("/v1/webhook.register", { org: id.org, namespace: id.namespace, url, secret_ref: secretRef, events });
+  return post("/v1/webhook.register", { org: id.org, namespace: id.namespace, url, secret_ref: secretRef, events }, undefined, intent);
 }
 
-export async function removeWebhook(id: Scope, webhookId: string): Promise<{ removed: boolean }> {
-  return post("/v1/webhook.remove", { org: id.org, namespace: id.namespace, webhook_id: webhookId });
+export async function removeWebhook(id: Scope, webhookId: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ removed: boolean }> {
+  return post("/v1/webhook.remove", { org: id.org, namespace: id.namespace, webhook_id: webhookId }, undefined, intent);
 }
 
 /** The fields of `server/memory/api/models_webhook.py::WebhookDelivery` the dialog reads. */

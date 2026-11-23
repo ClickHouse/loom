@@ -69,7 +69,7 @@ export function WebhooksSection({ unavailable = null }: { unavailable?: string |
       return;
     setRemoving((ids) => new Set(ids).add(h.webhook_id));
     try {
-      const r = await removeWebhook(identity, h.webhook_id);
+      const r = await removeWebhook(identity, h.webhook_id, "explicit");
       toast(r.removed ? "Webhook removed" : "This webhook was already removed", r.removed ? "ok" : "info");
       // Off the list at once, so no second Remove reaches it before the reread answers.
       setHooks((hs) => hs && hs.filter((x) => x.webhook_id !== h.webhook_id));
@@ -183,6 +183,7 @@ function AddWebhookDialog({ onClose }: { onClose: (added: boolean) => void }) {
         url.trim(),
         secretRef.trim(),
         WEBHOOK_EVENTS.filter((e) => events.has(e)),
+        "explicit",
       );
       toast("Webhook added", "ok");
       onClose(true);

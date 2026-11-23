@@ -40,9 +40,9 @@ export interface JoinTarget {
 export type JoinRole = "viewer" | "admin";
 
 /** `namespace.join`; the toast says whether the reader is in or queued. */
-export async function joinTarget(t: JoinTarget, role: JoinRole = "viewer"): Promise<JoinResponse | null> {
+export async function joinTarget(t: JoinTarget, role: JoinRole = "viewer", intent: "automatic" | "explicit" = "automatic"): Promise<JoinResponse | null> {
   try {
-    const res = await joinNamespace(t.org, t.namespace, { role });
+    const res = await joinNamespace(t.org, t.namespace, { role }, intent);
     if (res.status === "pending") {
       const n = (res.pending_admins || []).length;
       const what = role === "admin" ? "Maintainer role requested" : "Access requested";
@@ -58,7 +58,7 @@ export async function joinTarget(t: JoinTarget, role: JoinRole = "viewer"): Prom
 }
 
 /** Confirm, then `namespace.cancel_request`. Resolves true when withdrawn. */
-export async function withdrawTarget(t: JoinTarget): Promise<boolean> {
+export async function withdrawTarget(t: JoinTarget, intent: "automatic" | "explicit" = "automatic"): Promise<boolean> {
   if (
     !(await confirmAction({
       title: `Withdraw your request for ${t.label}?`,
@@ -68,7 +68,7 @@ export async function withdrawTarget(t: JoinTarget): Promise<boolean> {
   )
     return false;
   try {
-    await cancelNamespaceRequest(t.org, t.namespace);
+    await cancelNamespaceRequest(t.org, t.namespace, intent);
     toast(`Request withdrawn for ${t.label}`, "ok");
     return true;
   } catch (e) {
@@ -78,7 +78,7 @@ export async function withdrawTarget(t: JoinTarget): Promise<boolean> {
 }
 
 /** Confirm, then `namespace.leave`. Resolves true when left. */
-export async function leaveTarget(t: JoinTarget): Promise<boolean> {
+export async function leaveTarget(t: JoinTarget, intent: "automatic" | "explicit" = "automatic"): Promise<boolean> {
   if (
     !(await confirmAction({
       title: `Leave ${t.label}?`,
@@ -88,7 +88,7 @@ export async function leaveTarget(t: JoinTarget): Promise<boolean> {
   )
     return false;
   try {
-    await leaveNamespace(t.org, t.namespace);
+    await leaveNamespace(t.org, t.namespace, intent);
     toast(`Left ${t.label}`, "ok");
     return true;
   } catch (e) {

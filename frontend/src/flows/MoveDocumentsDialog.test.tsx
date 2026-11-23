@@ -115,6 +115,7 @@ describe("MoveDocumentsDialog", () => {
       ["doc://a.md"],
       expect.any(AbortSignal),
       expect.any(Function),
+      "explicit",
     );
     await waitFor(() => expect(onMoved).toHaveBeenCalledWith(["doc://a.md"]));
     expect(toast).toHaveBeenCalledWith("Moved 1 document to Engineering", "ok");
@@ -149,6 +150,7 @@ describe("MoveDocumentsDialog", () => {
       ["doc://b.md"],
       expect.any(AbortSignal),
       expect.any(Function),
+      "explicit",
     );
   });
   it("moves to the place picked and says whose sharing they take", async () => {
@@ -171,6 +173,7 @@ describe("MoveDocumentsDialog", () => {
       ["doc://a.md", "doc://b.md"],
       expect.any(AbortSignal),
       expect.any(Function),
+      "explicit",
     );
     await waitFor(() => expect(onMoved).toHaveBeenCalledWith(["doc://a.md", "doc://b.md"]));
     expect(toast).toHaveBeenCalledWith("Moved 2 documents to Storage", "ok");
@@ -234,6 +237,7 @@ describe("MoveDocumentsDialog", () => {
       ["doc://b.md"],
       expect.any(AbortSignal),
       expect.any(Function),
+      "explicit",
     );
   });
 

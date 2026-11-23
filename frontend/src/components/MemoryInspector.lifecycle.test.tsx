@@ -254,6 +254,7 @@ describe("MemoryInspector lifecycle actions", () => {
         "coffee_pref",
         LIVE.value,
         expect.objectContaining({ ttlSeconds: 3600 }),
+        "explicit",
       ),
     );
     await userEvent.click(screen.getByRole("button", { name: "Edit" }));
@@ -265,7 +266,7 @@ describe("MemoryInspector lifecycle actions", () => {
   it("deletes the row it shows, and says so when nothing was deleted", async () => {
     await open("writer");
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(api.deleteMemory).toHaveBeenCalledWith(row, "coffee_pref"));
+    await waitFor(() => expect(api.deleteMemory).toHaveBeenCalledWith(row, "coffee_pref", "explicit"));
     cleanup();
 
     vi.mocked(api.deleteMemory).mockResolvedValueOnce({ tombstoned: false, version: 0 });
@@ -288,6 +289,7 @@ describe("MemoryInspector lifecycle actions", () => {
         "coffee_pref",
         LIVE.value,
         expect.objectContaining({ tags: ["coffee", "ops"] }),
+        "explicit",
       ),
     );
     const items = within(await menu())
@@ -382,7 +384,7 @@ describe("MemoryInspector lifecycle actions", () => {
     await userEvent.click(within(dialog).getByRole("radio", { name: "No delete" }));
     await userEvent.type(within(dialog).getByLabelText("Reason"), "legal hold");
     await userEvent.click(within(dialog).getByRole("button", { name: "Lock" }));
-    await waitFor(() => expect(lc.lockMemory).toHaveBeenCalledWith(row, "coffee_pref", "no_delete", "legal hold"));
+    await waitFor(() => expect(lc.lockMemory).toHaveBeenCalledWith(row, "coffee_pref", "no_delete", "legal hold", "explicit"));
   });
 
   it("closes an open edit when a read only lock lands, and says so", async () => {
@@ -552,7 +554,7 @@ describe("MemoryInspector lifecycle actions", () => {
 
     await open("admin", locked);
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Unlock" }));
-    await waitFor(() => expect(lc.unlockMemory).toHaveBeenCalledWith(row, "coffee_pref"));
+    await waitFor(() => expect(lc.unlockMemory).toHaveBeenCalledWith(row, "coffee_pref", "explicit"));
   });
 
   it("marks a memory as wrong with the reason", async () => {
@@ -561,7 +563,7 @@ describe("MemoryInspector lifecycle actions", () => {
     const dialog = await screen.findByRole("dialog", { name: "Mark as wrong" });
     await userEvent.type(within(dialog).getByLabelText("Reason"), "she switched to soy");
     await userEvent.click(within(dialog).getByRole("button", { name: "Mark as wrong" }));
-    await waitFor(() => expect(lc.rejectMemory).toHaveBeenCalledWith(row, "coffee_pref", "she switched to soy"));
+    await waitFor(() => expect(lc.rejectMemory).toHaveBeenCalledWith(row, "coffee_pref", "she switched to soy", "explicit"));
   });
 
   it.each([
@@ -594,6 +596,7 @@ describe("MemoryInspector lifecycle actions", () => {
         expect.objectContaining({ agent: "-", user_id: "-", session_id: "-" }),
         "definition/arr",
         "abc123",
+        "explicit",
       ),
     );
   });
@@ -602,9 +605,9 @@ describe("MemoryInspector lifecycle actions", () => {
     await open("admin");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
     // Only a definition names the text it approves.
-    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref", undefined));
+    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref", undefined, "explicit"));
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Stop sharing" }));
-    await waitFor(() => expect(lc.unshareMemory).toHaveBeenCalledWith(identity, "coffee_pref"));
+    await waitFor(() => expect(lc.unshareMemory).toHaveBeenCalledWith(identity, "coffee_pref", "explicit"));
     expect(confirmAction).toHaveBeenCalledTimes(2);
     expect(vi.mocked(confirmAction).mock.calls[1][0]).toMatchObject({ title: "Stop sharing coffee_pref in team?" });
   });
@@ -670,7 +673,7 @@ describe("MemoryInspector lifecycle actions", () => {
     await userEvent.type(within(dialog).getByLabelText("Reason"), "card number");
     await userEvent.click(within(dialog).getByRole("button", { name: "Redact" }));
     await waitFor(() =>
-      expect(lc.redactMemoryVersion).toHaveBeenCalledWith("dev", "m1", "1790000000000000001", "card number"),
+      expect(lc.redactMemoryVersion).toHaveBeenCalledWith("dev", "m1", "1790000000000000001", "card number", "explicit"),
     );
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Redact v1" })).toBeNull());
   });
@@ -715,7 +718,7 @@ describe("MemoryInspector lifecycle actions", () => {
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "This misled" }));
     // By id: the op resolves a key in the `-` session only, and this row has its own.
-    await waitFor(() => expect(lc.recordMemoryOutcome).toHaveBeenCalledWith(identity, "m-live", "negative"));
+    await waitFor(() => expect(lc.recordMemoryOutcome).toHaveBeenCalledWith(identity, "m-live", "negative", "explicit"));
   });
 
   it("reads the memory again when a bad outcome rejects it", async () => {

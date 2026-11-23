@@ -677,33 +677,6 @@ class ConflictsOps:
         )
 
 
-class ConnectionOps:
-    """The `connection.*` operations."""
-
-    # SyncAgent proxies a nested client's coroutines as blocking calls.
-    _loom_nested_client = True
-
-    def __init__(self, agent: Agent) -> None:
-        self._agent = agent
-
-    async def disconnect(
-        self, body: _ops.ConnectionDisconnectBody | None = None, /, **options: Any
-    ) -> _ops.ConnectionDisconnectOutput:
-        """`connection.disconnect`."""
-        return cast(
-            "_ops.ConnectionDisconnectOutput",
-            await self._agent.call("connection.disconnect", body, **options),
-        )
-
-    async def list(
-        self, body: _ops.ConnectionListBody | None = None, /, **options: Any
-    ) -> _ops.ConnectionListOutput:
-        """`connection.list`."""
-        return cast(
-            "_ops.ConnectionListOutput", await self._agent.call("connection.list", body, **options)
-        )
-
-
 class ConsolidationsOps:
     """The `consolidations.*` operations."""
 
@@ -1318,6 +1291,60 @@ class KnowledgeOps:
             await self._agent.call("knowledge.bulk_delete", body, **options),
         )
 
+    async def connection_mcp_browse(
+        self, body: _ops.KnowledgeConnectionMcpBrowseBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpBrowseOutput:
+        """`knowledge.connection.mcp_browse`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpBrowseOutput",
+            await self._agent.call("knowledge.connection.mcp_browse", body, **options),
+        )
+
+    async def connection_mcp_connect(
+        self, body: _ops.KnowledgeConnectionMcpConnectBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpConnectOutput:
+        """`knowledge.connection.mcp_connect`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpConnectOutput",
+            await self._agent.call("knowledge.connection.mcp_connect", body, **options),
+        )
+
+    async def connection_mcp_disconnect(
+        self, body: _ops.MCPSlotBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpDisconnectOutput:
+        """`knowledge.connection.mcp_disconnect`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpDisconnectOutput",
+            await self._agent.call("knowledge.connection.mcp_disconnect", body, **options),
+        )
+
+    async def connection_mcp_discover(
+        self, body: _ops.MCPSlotBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpDiscoverOutput:
+        """`knowledge.connection.mcp_discover`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpDiscoverOutput",
+            await self._agent.call("knowledge.connection.mcp_discover", body, **options),
+        )
+
+    async def connection_mcp_inspect(
+        self, body: _ops.KnowledgeConnectionMcpInspectBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpInspectOutput:
+        """`knowledge.connection.mcp_inspect`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpInspectOutput",
+            await self._agent.call("knowledge.connection.mcp_inspect", body, **options),
+        )
+
+    async def connection_mcp_list(
+        self, body: _ops.KnowledgeConnectionMcpListBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpListOutput:
+        """`knowledge.connection.mcp_list`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpListOutput",
+            await self._agent.call("knowledge.connection.mcp_list", body, **options),
+        )
+
     async def dataset_approve(
         self, body: _ops.KnowledgeDatasetApproveBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeDatasetApproveOutput:
@@ -1556,40 +1583,103 @@ class KnowledgeOps:
             await self._agent.call("knowledge.source.list", body, **options),
         )
 
-    async def source_parse_links(
-        self, body: _ops.KnowledgeSourceParseLinksBody | None = None, /, **options: Any
-    ) -> _ops.KnowledgeSourceParseLinksOutput:
-        """`knowledge.source.parse_links`."""
+    async def source_mcp_add(
+        self, body: _ops.KnowledgeSourceMcpAddBody | None = None, /, **options: Any
+    ) -> _ops.MCPSourceOutput:
+        """`knowledge.source.mcp_add`."""
         return cast(
-            "_ops.KnowledgeSourceParseLinksOutput",
-            await self._agent.call("knowledge.source.parse_links", body, **options),
+            "_ops.MCPSourceOutput",
+            await self._agent.call("knowledge.source.mcp_add", body, **options),
         )
 
-    async def source_push_configure(
-        self, body: _ops.KnowledgeSourcePushConfigureBody | None = None, /, **options: Any
-    ) -> _ops.PushStatusOutput:
-        """`knowledge.source.push_configure`."""
+    async def source_mcp_inspect(
+        self, body: _ops.KnowledgeSourceMcpInspectBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceMcpInspectOutput:
+        """`knowledge.source.mcp_inspect`."""
         return cast(
-            "_ops.PushStatusOutput",
-            await self._agent.call("knowledge.source.push_configure", body, **options),
+            "_ops.KnowledgeSourceMcpInspectOutput",
+            await self._agent.call("knowledge.source.mcp_inspect", body, **options),
         )
 
-    async def source_push_confirm(
-        self, body: _ops.KnowledgeSourcePushConfirmBody | None = None, /, **options: Any
-    ) -> _ops.PushStatusOutput:
-        """`knowledge.source.push_confirm`."""
+    async def source_mcp_list(
+        self, body: _ops.KnowledgeSourceMcpListBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceMcpListOutput:
+        """`knowledge.source.mcp_list`."""
         return cast(
-            "_ops.PushStatusOutput",
-            await self._agent.call("knowledge.source.push_confirm", body, **options),
+            "_ops.KnowledgeSourceMcpListOutput",
+            await self._agent.call("knowledge.source.mcp_list", body, **options),
         )
 
-    async def source_push_status(
-        self, body: _ops.KnowledgeSourcePushStatusBody | None = None, /, **options: Any
-    ) -> _ops.PushStatusOutput:
-        """`knowledge.source.push_status`."""
+    async def source_mcp_pause(
+        self, body: _ops.MCPSourceBody | None = None, /, **options: Any
+    ) -> _ops.MCPSourceOutput:
+        """`knowledge.source.mcp_pause`."""
         return cast(
-            "_ops.PushStatusOutput",
-            await self._agent.call("knowledge.source.push_status", body, **options),
+            "_ops.MCPSourceOutput",
+            await self._agent.call("knowledge.source.mcp_pause", body, **options),
+        )
+
+    async def source_mcp_preview(
+        self, body: _ops.KnowledgeSourceMcpPreviewBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceMcpPreviewOutput:
+        """`knowledge.source.mcp_preview`."""
+        return cast(
+            "_ops.KnowledgeSourceMcpPreviewOutput",
+            await self._agent.call("knowledge.source.mcp_preview", body, **options),
+        )
+
+    async def source_mcp_profiles(
+        self, body: _ops.KnowledgeSourceMcpProfilesBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceMcpProfilesOutput:
+        """`knowledge.source.mcp_profiles`."""
+        return cast(
+            "_ops.KnowledgeSourceMcpProfilesOutput",
+            await self._agent.call("knowledge.source.mcp_profiles", body, **options),
+        )
+
+    async def source_mcp_read(
+        self, body: _ops.KnowledgeSourceMcpReadBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceMcpReadOutput:
+        """`knowledge.source.mcp_read`."""
+        return cast(
+            "_ops.KnowledgeSourceMcpReadOutput",
+            await self._agent.call("knowledge.source.mcp_read", body, **options),
+        )
+
+    async def source_mcp_refresh(
+        self, body: _ops.MCPSourceBody | None = None, /, **options: Any
+    ) -> _ops.MCPSourceOutput:
+        """`knowledge.source.mcp_refresh`."""
+        return cast(
+            "_ops.MCPSourceOutput",
+            await self._agent.call("knowledge.source.mcp_refresh", body, **options),
+        )
+
+    async def source_mcp_remove(
+        self, body: _ops.KnowledgeSourceMcpRemoveBody | None = None, /, **options: Any
+    ) -> _ops.MCPSourceOutput:
+        """`knowledge.source.mcp_remove`."""
+        return cast(
+            "_ops.MCPSourceOutput",
+            await self._agent.call("knowledge.source.mcp_remove", body, **options),
+        )
+
+    async def source_mcp_resume(
+        self, body: _ops.MCPSourceBody | None = None, /, **options: Any
+    ) -> _ops.MCPSourceOutput:
+        """`knowledge.source.mcp_resume`."""
+        return cast(
+            "_ops.MCPSourceOutput",
+            await self._agent.call("knowledge.source.mcp_resume", body, **options),
+        )
+
+    async def source_mcp_update(
+        self, body: _ops.KnowledgeSourceMcpUpdateBody | None = None, /, **options: Any
+    ) -> _ops.MCPSourceOutput:
+        """`knowledge.source.mcp_update`."""
+        return cast(
+            "_ops.MCPSourceOutput",
+            await self._agent.call("knowledge.source.mcp_update", body, **options),
         )
 
     async def source_remove(
@@ -1617,15 +1707,6 @@ class KnowledgeOps:
         return cast(
             "_ops.KnowledgeSourceSyncNowOutput",
             await self._agent.call("knowledge.source.sync_now", body, **options),
-        )
-
-    async def source_update(
-        self, body: _ops.KnowledgeSourceUpdateBody | None = None, /, **options: Any
-    ) -> _ops.KnowledgeSourceUpdateOutput:
-        """`knowledge.source.update`."""
-        return cast(
-            "_ops.KnowledgeSourceUpdateOutput",
-            await self._agent.call("knowledge.source.update", body, **options),
         )
 
     async def synthesize(
@@ -3563,7 +3644,6 @@ class OpsClient:
         self.code = CodeOps(agent)
         self.collection = CollectionOps(agent)
         self.conflicts = ConflictsOps(agent)
-        self.connection = ConnectionOps(agent)
         self.consolidations = ConsolidationsOps(agent)
         self.context = ContextOps(agent)
         self.conversation = ConversationOps(agent)

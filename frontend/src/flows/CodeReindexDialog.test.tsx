@@ -52,7 +52,7 @@ describe("CodeReindexDialog", () => {
     expect(screen.getByRole("button", { name: "Re-index" })).toBeDisabled();
     await pick();
     await userEvent.click(screen.getByRole("button", { name: "Re-index" }));
-    await waitFor(() => expect(api.codeReindex).toHaveBeenCalledWith({ org: "acme", namespace: "code-x" }, sha));
+    await waitFor(() => expect(api.codeReindex).toHaveBeenCalledWith({ org: "acme", namespace: "code-x" }, sha, "explicit"));
     expect(api.codeRecentCommits).toHaveBeenCalledWith({ org: "acme", namespace: "code-x" }, 100, expect.anything());
     expect(onDone).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();

@@ -98,7 +98,7 @@ export function TaskEditDialog({ open, onOpenChange, identity, mode, onSaved }: 
               ? { clear_not_before: true }
               : {}),
           ...(note.trim() ? { note: note.trim() } : {}),
-        });
+        }, "explicit");
         toast("Task updated", "ok");
         onSaved(r.task);
       } else {
@@ -111,7 +111,7 @@ export function TaskEditDialog({ open, onOpenChange, identity, mode, onSaved }: 
           disclosure,
           not_before: isoFromLocal(notBefore),
           deadline: isoFromLocal(deadline),
-        });
+        }, "explicit");
         toast(r.task.status === "triage" ? "Task posted — waiting in triage" : "Task posted", "ok");
         onSaved(r.task);
       }

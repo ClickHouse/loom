@@ -1,9 +1,10 @@
-"""Disconnect fences credentials and source work before any remote cleanup."""
+"""Local retirement fences credentials and source work without provider HTTP."""
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import pytest
 
 from server.erasure.store import census
@@ -60,8 +61,8 @@ class _World:
         monkeypatch.setattr(connections.source_store, "insert_source", self.insert_source)
         monkeypatch.setattr(sources, "_queue_retirement", self.queue)
         monkeypatch.setattr(source_push, "retire", self.retire_push)
-        monkeypatch.setattr(connections, "_revoke", self.revoke)
-        monkeypatch.setattr(connections.audit, "emit", self.audit)
+        monkeypatch.setattr(httpx.AsyncClient, "send", self.forbid_http)
+        monkeypatch.setattr(connections, "unseal", self.forbid_decryption)
 
     @asynccontextmanager
     async def lease(self, *_args: Any, **_kw: Any):
@@ -148,45 +149,45 @@ class _World:
     async def retire_push(self, source: KnowledgeSource):
         self.events.append(("push", source.source_id))
 
-    async def revoke(self, account: ConnectedAccount, **_kw: Any):
-        assert self.depth == 0, "provider cleanup ran under an account/source lease"
-        assert all(not a.active and not a.credential_enc for a in self.accounts.values())
-        assert all(not s.active and s.pending_delete for s in self.sources.values())
-        self.events.append(("provider", account.kind))
+    async def forbid_http(self, *_args: Any, **_kw: Any):
+        raise AssertionError("local retirement cannot dispatch provider HTTP")
 
-    async def audit(self, *_args: Any, **_kw: Any):
-        return None
+    def forbid_decryption(self, *_args: Any, **_kw: Any):
+        raise AssertionError("local retirement cannot decrypt legacy credentials")
+
+
+async def _stop(world: _World, kind: str = "gdrive") -> None:
+    async with connections.account_lease("team", "person", kind):
+        await connections._stop_locked(world.accounts["team", "person", kind])
 
 
 @pytest.mark.asyncio
-async def test_disconnect_queues_source_retirement_before_inactivation_and_remote_revoke(
+async def test_stop_queues_source_retirement_before_inactivation_without_native_execution(
     monkeypatch: pytest.MonkeyPatch,
 ):
     world = _World(monkeypatch)
     previous = world.accounts["team", "person", "gdrive"].connection_id
-    await connections.disconnect("team", "person", "gdrive")
+    await _stop(world)
     account = world.accounts["team", "person", "gdrive"]
     assert account.connection_id != previous
     assert world.fences[connections._fence_key(account.connection_id)] == account.connection_id
     assert world.events.index(("retire", "source-gdrive")) < world.events.index(
         ("source", "source-gdrive")
     )
-    assert world.events[-1] == ("provider", "gdrive")
+    assert not account.active and account.credential_enc == account.account_email_enc == ""
+    assert world.sources["gdrive"].pending_delete and not world.sources["gdrive"].active
     assert world.sources["gdrive"].credential_enc == world.sources["gdrive"].secret_enc == ""
 
 
 @pytest.mark.asyncio
-async def test_subject_revocation_stops_every_local_account_and_source_before_first_provider(
+async def test_subject_revocation_stops_every_local_account_and_source_without_native_execution(
     monkeypatch: pytest.MonkeyPatch,
 ):
     world = _World(monkeypatch, ("gdrive", "notion"))
     await connections.stop_subjects(["person"], org="team")
-    assert [item for item in world.events if item[0] == "provider"] == [
-        ("provider", "gdrive"),
-        ("provider", "notion"),
-    ]
-    first_provider = next(i for i, event in enumerate(world.events) if event[0] == "provider")
-    assert all(event[0] == "provider" for event in world.events[first_provider:])
+    assert all(not a.active and not a.credential_enc for a in world.accounts.values())
+    assert all(not s.active and s.pending_delete for s in world.sources.values())
+    assert {kind for event, kind in world.events if event == "erase"} == {"gdrive", "notion"}
 
 
 @pytest.mark.asyncio
@@ -197,13 +198,13 @@ async def test_disconnect_retry_repairs_cleanup_after_generation_fence_outlives_
     account = world.accounts["team", "person", "gdrive"]
     world.fail_next_account_write = True
     with pytest.raises(RuntimeError, match="account write lost"):
-        await connections.disconnect("team", "person", "gdrive")
+        await _stop(world)
     assert world.fences[connections._fence_key(account.connection_id)] != account.connection_id
     assert not any(event[0] == "provider" for event in world.events)
-    await connections.disconnect("team", "person", "gdrive")
+    await _stop(world)
     assert not world.accounts["team", "person", "gdrive"].active
     assert not world.sources["gdrive"].active and world.sources["gdrive"].pending_delete
-    assert world.events[-1] == ("provider", "gdrive")
+    assert world.accounts["team", "person", "gdrive"].credential_enc == ""
 
 
 @pytest.mark.asyncio
@@ -216,7 +217,7 @@ async def test_stale_account_row_cannot_stop_a_newer_live_connection(
     replacement = account.connection_id.partition("/")[0] + "/1" + "b" * 31
     world.fences[key] = replacement
     with pytest.raises(connections.ValidationError):
-        await connections.disconnect("team", "person", "gdrive")
+        await _stop(world)
     assert world.fences[key] == replacement
     assert world.accounts["team", "person", "gdrive"] is account
     assert world.sources["gdrive"].active

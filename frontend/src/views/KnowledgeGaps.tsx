@@ -94,7 +94,7 @@ function GapDraftAction({ org, namespace, gap }: { org: string; namespace: strin
     setBusy(true);
     setError("");
     try {
-      await draftKnowledgeGap({ org, namespace }, gap.gap_id);
+      await draftKnowledgeGap({ org, namespace }, gap.gap_id, "explicit");
       if (mounted.current) setQueued(true);
     } catch (e) {
       if (mounted.current) setError(humanizeError(e, { bare: true }));

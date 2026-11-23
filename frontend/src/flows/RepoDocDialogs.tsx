@@ -117,7 +117,7 @@ export function RepoDocAddDialog({
         setStep(line);
         setBusy(phase);
       },
-      { signal: ctrl.signal },
+      { signal: ctrl.signal, intent: "explicit" },
     );
     if (status.state === "ready") return null;
     if (status.state === "partial") return status.coverage?.lost ?? [];
@@ -136,6 +136,7 @@ export function RepoDocAddDialog({
         await addKnowledge(
           { org, namespace },
           { source_uri: uri, content: pasted, title: title.trim(), description: description.trim(), upsert: false },
+          "explicit",
         );
       onAdded(title.trim(), lost);
       onOpenChange(false);

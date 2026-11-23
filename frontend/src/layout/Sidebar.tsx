@@ -494,7 +494,7 @@ export function Sidebar() {
       <div className={`border-t border-border ${collapsed ? "p-2" : "p-3"}`}>
         <NavBtn
           item={SETTINGS_ITEM}
-          active={view === "setup" || view === "connected-accounts"}
+            active={view === "setup"}
           collapsed={collapsed}
           onActivate={() => setView("setup")}
         />

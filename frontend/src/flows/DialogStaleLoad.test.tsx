@@ -198,7 +198,7 @@ describe("a stale namespace load is dropped", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Save" })));
     expect(api.reregisterNamespace).toHaveBeenCalledWith({ org: "dev", namespace: "old-ns" }, nsRow("old-ns"), {
       description: "edited",
-    });
+    }, "explicit");
 
     rerender(<NamespaceSettingsDialog open onOpenChange={noop} org="dev" namespace="new-ns" />);
     await act(async () => undefined);

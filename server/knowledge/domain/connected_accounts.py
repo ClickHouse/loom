@@ -5,10 +5,30 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
+from server.knowledge.domain.mcp_sources import is_mcp_slot
+
 KINDS = frozenset({"gdrive", "notion", "linear"})
 CREDENTIAL_PURPOSE = "connected_accounts.credential"
 EMAIL_PURPOSE = "connected_accounts.email"
 PKCE_PURPOSE = "connected_accounts.pkce"
+
+
+def known_account_kind(value: object) -> bool:
+    """Recognize cleanup keys without admitting remote reads."""
+    return isinstance(value, str) and (value in KINDS or is_mcp_slot(value))
+
+
+def source_account_key(
+    *, org: str, owner: str, kind: str, mode: str, slot: str
+) -> tuple[str, str, str] | None:
+    """Use lifecycle metadata; unreadable credentials must not block owner erasure."""
+    if mode == "connected" and kind in KINDS:
+        account_kind = kind
+    elif (mode == "mcp" or kind == "mcp") and is_mcp_slot(slot):
+        account_kind = slot
+    else:
+        return None
+    return org, owner, account_kind
 
 
 @dataclass(frozen=True, repr=False)

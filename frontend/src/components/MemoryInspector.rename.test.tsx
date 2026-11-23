@@ -180,6 +180,7 @@ describe("MemoryInspector rename with redirect", () => {
       "coffee_pref",
       "prefs/coffee",
       { keepRedirect: true, dryRun: true },
+      "explicit",
     ]);
     const preview = await screen.findByTestId("rename-preview");
     expect(preview).toHaveTextContent(
@@ -194,6 +195,7 @@ describe("MemoryInspector rename with redirect", () => {
       "coffee_pref",
       "prefs/coffee",
       { keepRedirect: true, dryRun: false },
+      "explicit",
     ]);
     // The form closes, the list is told, the row is re-read and now wears the badge.
     await waitFor(() => expect(screen.queryByTestId("rename-form")).toBeNull());

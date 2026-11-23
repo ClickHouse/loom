@@ -109,8 +109,6 @@ OpName = Literal[
     "conflicts.list",
     "conflicts.propose_revision",
     "conflicts.resolve",
-    "connection.disconnect",
-    "connection.list",
     "consolidations.list",
     "context.fetch",
     "context.offload",
@@ -169,6 +167,12 @@ OpName = Literal[
     "knowledge.add",
     "knowledge.bulk_add",
     "knowledge.bulk_delete",
+    "knowledge.connection.mcp_browse",
+    "knowledge.connection.mcp_connect",
+    "knowledge.connection.mcp_disconnect",
+    "knowledge.connection.mcp_discover",
+    "knowledge.connection.mcp_inspect",
+    "knowledge.connection.mcp_list",
     "knowledge.dataset_approve",
     "knowledge.dataset_get",
     "knowledge.dedup_list",
@@ -196,14 +200,20 @@ OpName = Literal[
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
-    "knowledge.source.parse_links",
-    "knowledge.source.push_configure",
-    "knowledge.source.push_confirm",
-    "knowledge.source.push_status",
+    "knowledge.source.mcp_add",
+    "knowledge.source.mcp_inspect",
+    "knowledge.source.mcp_list",
+    "knowledge.source.mcp_pause",
+    "knowledge.source.mcp_preview",
+    "knowledge.source.mcp_profiles",
+    "knowledge.source.mcp_read",
+    "knowledge.source.mcp_refresh",
+    "knowledge.source.mcp_remove",
+    "knowledge.source.mcp_resume",
+    "knowledge.source.mcp_update",
     "knowledge.source.remove",
     "knowledge.source.rotate",
     "knowledge.source.sync_now",
-    "knowledge.source.update",
     "knowledge.synthesize",
     "knowledge.update_metadata",
     "knowledge.upsert",
@@ -488,8 +498,6 @@ OP_NAMES: tuple[str, ...] = (
     "conflicts.list",
     "conflicts.propose_revision",
     "conflicts.resolve",
-    "connection.disconnect",
-    "connection.list",
     "consolidations.list",
     "context.fetch",
     "context.offload",
@@ -548,6 +556,12 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.add",
     "knowledge.bulk_add",
     "knowledge.bulk_delete",
+    "knowledge.connection.mcp_browse",
+    "knowledge.connection.mcp_connect",
+    "knowledge.connection.mcp_disconnect",
+    "knowledge.connection.mcp_discover",
+    "knowledge.connection.mcp_inspect",
+    "knowledge.connection.mcp_list",
     "knowledge.dataset_approve",
     "knowledge.dataset_get",
     "knowledge.dedup_list",
@@ -575,14 +589,20 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
-    "knowledge.source.parse_links",
-    "knowledge.source.push_configure",
-    "knowledge.source.push_confirm",
-    "knowledge.source.push_status",
+    "knowledge.source.mcp_add",
+    "knowledge.source.mcp_inspect",
+    "knowledge.source.mcp_list",
+    "knowledge.source.mcp_pause",
+    "knowledge.source.mcp_preview",
+    "knowledge.source.mcp_profiles",
+    "knowledge.source.mcp_read",
+    "knowledge.source.mcp_refresh",
+    "knowledge.source.mcp_remove",
+    "knowledge.source.mcp_resume",
+    "knowledge.source.mcp_update",
     "knowledge.source.remove",
     "knowledge.source.rotate",
     "knowledge.source.sync_now",
-    "knowledge.source.update",
     "knowledge.synthesize",
     "knowledge.update_metadata",
     "knowledge.upsert",
@@ -1637,30 +1657,6 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
-    "connection.disconnect": OpSpec(
-        "connection.disconnect",
-        "ConnectionDisconnectInput",
-        "ConnectionDisconnectBody",
-        "ConnectionDisconnectOutput",
-        True,
-        "viewer",
-        "experimental",
-        30000,
-        False,
-        False,
-    ),
-    "connection.list": OpSpec(
-        "connection.list",
-        "ConnectionListInput",
-        "ConnectionListBody",
-        "ConnectionListOutput",
-        True,
-        "viewer",
-        "experimental",
-        1000,
-        False,
-        True,
-    ),
     "consolidations.list": OpSpec(
         "consolidations.list",
         "ConsolidationsListInput",
@@ -2357,6 +2353,78 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "knowledge.connection.mcp_browse": OpSpec(
+        "knowledge.connection.mcp_browse",
+        "KnowledgeConnectionMcpBrowseInput",
+        "KnowledgeConnectionMcpBrowseBody",
+        "KnowledgeConnectionMcpBrowseOutput",
+        True,
+        "viewer",
+        "experimental",
+        5000,
+        False,
+        True,
+    ),
+    "knowledge.connection.mcp_connect": OpSpec(
+        "knowledge.connection.mcp_connect",
+        "KnowledgeConnectionMcpConnectInput",
+        "KnowledgeConnectionMcpConnectBody",
+        "KnowledgeConnectionMcpConnectOutput",
+        False,
+        "viewer",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.connection.mcp_disconnect": OpSpec(
+        "knowledge.connection.mcp_disconnect",
+        "MCPSlotInput",
+        "MCPSlotBody",
+        "KnowledgeConnectionMcpDisconnectOutput",
+        False,
+        "viewer",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.connection.mcp_discover": OpSpec(
+        "knowledge.connection.mcp_discover",
+        "MCPSlotInput",
+        "MCPSlotBody",
+        "KnowledgeConnectionMcpDiscoverOutput",
+        True,
+        "viewer",
+        "experimental",
+        30000,
+        False,
+        True,
+    ),
+    "knowledge.connection.mcp_inspect": OpSpec(
+        "knowledge.connection.mcp_inspect",
+        "KnowledgeConnectionMcpInspectInput",
+        "KnowledgeConnectionMcpInspectBody",
+        "KnowledgeConnectionMcpInspectOutput",
+        True,
+        "viewer",
+        "experimental",
+        5000,
+        False,
+        True,
+    ),
+    "knowledge.connection.mcp_list": OpSpec(
+        "knowledge.connection.mcp_list",
+        "KnowledgeConnectionMcpListInput",
+        "KnowledgeConnectionMcpListBody",
+        "KnowledgeConnectionMcpListOutput",
+        True,
+        "viewer",
+        "experimental",
+        5000,
+        False,
+        True,
+    ),
     "knowledge.dataset_approve": OpSpec(
         "knowledge.dataset_approve",
         "KnowledgeDatasetApproveInput",
@@ -2681,52 +2749,136 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
-    "knowledge.source.parse_links": OpSpec(
-        "knowledge.source.parse_links",
-        "KnowledgeSourceParseLinksInput",
-        "KnowledgeSourceParseLinksBody",
-        "KnowledgeSourceParseLinksOutput",
+    "knowledge.source.mcp_add": OpSpec(
+        "knowledge.source.mcp_add",
+        "KnowledgeSourceMcpAddInput",
+        "KnowledgeSourceMcpAddBody",
+        "MCPSourceOutput",
+        False,
+        "writer",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.source.mcp_inspect": OpSpec(
+        "knowledge.source.mcp_inspect",
+        "KnowledgeSourceMcpInspectInput",
+        "KnowledgeSourceMcpInspectBody",
+        "KnowledgeSourceMcpInspectOutput",
+        True,
+        "writer",
+        "experimental",
+        5000,
+        False,
+        False,
+    ),
+    "knowledge.source.mcp_list": OpSpec(
+        "knowledge.source.mcp_list",
+        "KnowledgeSourceMcpListInput",
+        "KnowledgeSourceMcpListBody",
+        "KnowledgeSourceMcpListOutput",
+        True,
+        "writer",
+        "experimental",
+        5000,
+        False,
+        False,
+    ),
+    "knowledge.source.mcp_pause": OpSpec(
+        "knowledge.source.mcp_pause",
+        "MCPSourceInput",
+        "MCPSourceBody",
+        "MCPSourceOutput",
+        False,
+        "writer",
+        "experimental",
+        5000,
+        True,
+        False,
+    ),
+    "knowledge.source.mcp_preview": OpSpec(
+        "knowledge.source.mcp_preview",
+        "KnowledgeSourceMcpPreviewInput",
+        "KnowledgeSourceMcpPreviewBody",
+        "KnowledgeSourceMcpPreviewOutput",
+        True,
+        "writer",
+        "experimental",
+        5000,
+        False,
+        False,
+    ),
+    "knowledge.source.mcp_profiles": OpSpec(
+        "knowledge.source.mcp_profiles",
+        "KnowledgeSourceMcpProfilesInput",
+        "KnowledgeSourceMcpProfilesBody",
+        "KnowledgeSourceMcpProfilesOutput",
         True,
         "viewer",
         "experimental",
-        50,
+        5000,
         False,
         True,
     ),
-    "knowledge.source.push_configure": OpSpec(
-        "knowledge.source.push_configure",
-        "KnowledgeSourcePushConfigureInput",
-        "KnowledgeSourcePushConfigureBody",
-        "PushStatusOutput",
-        False,
-        "admin",
+    "knowledge.source.mcp_read": OpSpec(
+        "knowledge.source.mcp_read",
+        "KnowledgeSourceMcpReadInput",
+        "KnowledgeSourceMcpReadBody",
+        "KnowledgeSourceMcpReadOutput",
+        True,
+        "viewer",
         "experimental",
-        60000,
+        5000,
+        False,
+        True,
+    ),
+    "knowledge.source.mcp_refresh": OpSpec(
+        "knowledge.source.mcp_refresh",
+        "MCPSourceInput",
+        "MCPSourceBody",
+        "MCPSourceOutput",
+        False,
+        "writer",
+        "experimental",
+        5000,
         True,
         False,
     ),
-    "knowledge.source.push_confirm": OpSpec(
-        "knowledge.source.push_confirm",
-        "KnowledgeSourcePushConfirmInput",
-        "KnowledgeSourcePushConfirmBody",
-        "PushStatusOutput",
+    "knowledge.source.mcp_remove": OpSpec(
+        "knowledge.source.mcp_remove",
+        "KnowledgeSourceMcpRemoveInput",
+        "KnowledgeSourceMcpRemoveBody",
+        "MCPSourceOutput",
         False,
-        "admin",
+        "writer",
         "experimental",
-        1000,
+        5000,
         True,
         False,
     ),
-    "knowledge.source.push_status": OpSpec(
-        "knowledge.source.push_status",
-        "KnowledgeSourcePushStatusInput",
-        "KnowledgeSourcePushStatusBody",
-        "PushStatusOutput",
+    "knowledge.source.mcp_resume": OpSpec(
+        "knowledge.source.mcp_resume",
+        "MCPSourceInput",
+        "MCPSourceBody",
+        "MCPSourceOutput",
         False,
-        "admin",
+        "writer",
         "experimental",
-        1000,
+        5000,
+        True,
         False,
+    ),
+    "knowledge.source.mcp_update": OpSpec(
+        "knowledge.source.mcp_update",
+        "KnowledgeSourceMcpUpdateInput",
+        "KnowledgeSourceMcpUpdateBody",
+        "MCPSourceOutput",
+        False,
+        "writer",
+        "experimental",
+        5000,
+        True,
         False,
     ),
     "knowledge.source.remove": OpSpec(
@@ -2762,18 +2914,6 @@ OPS: dict[str, OpSpec] = {
         "writer",
         "experimental",
         300,
-        True,
-        False,
-    ),
-    "knowledge.source.update": OpSpec(
-        "knowledge.source.update",
-        "KnowledgeSourceUpdateInput",
-        "KnowledgeSourceUpdateBody",
-        "KnowledgeSourceUpdateOutput",
-        False,
-        "writer",
-        "experimental",
-        60000,
         True,
         False,
     ),
@@ -8418,48 +8558,6 @@ class ConflictsResolveOutput(TypedDict, total=False):
     total: NotRequired[Optional[int]]
 
 
-class ConnectionDisconnectInput(TypedDict, total=False):
-    "Disconnect the caller's own provider account and stop its connected sources."
-
-    org: Required[str]
-    kind: Required[Literal["gdrive", "notion", "linear"]]
-
-
-class ConnectionDisconnectBody(TypedDict, total=False):
-    "Disconnect the caller's own provider account and stop its connected sources."
-
-    org: NotRequired[str]
-    kind: Required[Literal["gdrive", "notion", "linear"]]
-
-
-class ConnectionDisconnectOutput(TypedDict, total=False):
-    disconnected: Required[bool]
-
-
-class ConnectionListInput(TypedDict, total=False):
-    "List the signed-in caller's own connected provider accounts."
-
-    org: Required[str]
-
-
-class ConnectionListBody(TypedDict, total=False):
-    "List the signed-in caller's own connected provider accounts."
-
-    org: NotRequired[str]
-
-
-class ConnectionListOutput(TypedDict, total=False):
-    connections: Required[list["ConnectionEntry"]]
-
-
-class ConnectionEntry(TypedDict, total=False):
-    kind: Required[Literal["gdrive", "notion", "linear"]]
-    connected: Required[bool]
-    account_email: NotRequired[Optional[str]]
-    scopes: NotRequired[list[str]]
-    connect_url: Required[str]
-
-
 class ConsolidationsListInput(TypedDict, total=False):
     "Namespace-scoped consolidation-run history. agent + user_id are"
 
@@ -10583,6 +10681,140 @@ class KnowledgeBulkDeleteResult(TypedDict, total=False):
     chunks_tombstoned: Required[int]
 
 
+class KnowledgeConnectionMcpBrowseInput(TypedDict, total=False):
+    org: Required[str]
+    slot: Required[str]
+    mode: Required[Literal["resources", "search"]]
+    query: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class KnowledgeConnectionMcpBrowseBody(TypedDict, total=False):
+    org: NotRequired[str]
+    slot: Required[str]
+    mode: Required[Literal["resources", "search"]]
+    query: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class KnowledgeConnectionMcpBrowseOutput(TypedDict, total=False):
+    slot: Required[str]
+    generation: Required[str]
+    mode: Required[Literal["resources", "search"]]
+    supported: NotRequired[bool]
+    resources: Required[Optional[bool]]
+    mapped_read: Required[bool]
+    mapped_search: Required[bool]
+    capabilities_checked: NotRequired[bool]
+    items: NotRequired[list["MCPBrowseItem"]]
+    complete: NotRequired[bool]
+    truncated: NotRequired[bool]
+    reason: NotRequired[Optional[str]]
+    limitations: Required[list[str]]
+    manual_resource_ids_supported: NotRequired[Literal[True]]
+    remote_identity_verified: NotRequired[Literal[False]]
+
+
+class MCPBrowseItem(TypedDict, total=False):
+    id: Required[str]
+    title: Required[str]
+    uri: Required[str]
+
+
+class KnowledgeConnectionMcpConnectInput(TypedDict, total=False):
+    org: Required[str]
+    profile_id: Required[str]
+    request_id: Required[str]
+    label: NotRequired[Optional[str]]
+    bearer: NotRequired[Optional[str]]
+
+
+class KnowledgeConnectionMcpConnectBody(TypedDict, total=False):
+    org: NotRequired[str]
+    profile_id: Required[str]
+    request_id: Required[str]
+    label: NotRequired[Optional[str]]
+    bearer: NotRequired[Optional[str]]
+
+
+class KnowledgeConnectionMcpConnectOutput(TypedDict, total=False):
+    connection: Required["MCPConnectionEntry"]
+
+
+class MCPConnectionEntry(TypedDict, total=False):
+    slot: Required[str]
+    generation: Required[str]
+    state: Required[Literal["configured", "stopped", "unavailable", "approval_drift"]]
+    profile_id: NotRequired[Optional[str]]
+    profile_sha256: NotRequired[Optional[str]]
+    label: NotRequired[Optional[str]]
+    compatibility: NotRequired[Literal["unchecked"]]
+    remote_identity_verified: NotRequired[Literal[False]]
+
+
+class MCPSlotInput(TypedDict, total=False):
+    org: Required[str]
+    slot: Required[str]
+
+
+class MCPSlotBody(TypedDict, total=False):
+    org: NotRequired[str]
+    slot: Required[str]
+
+
+class KnowledgeConnectionMcpDisconnectOutput(TypedDict, total=False):
+    disconnected: Required[bool]
+    upstream_revoked: NotRequired[Literal[False]]
+    upstream_action: NotRequired[Literal["revoke_credential_upstream"]]
+
+
+class KnowledgeConnectionMcpDiscoverOutput(TypedDict, total=False):
+    slot: Required[str]
+    generation: Required[str]
+    resources: Required[bool]
+    mapped_read: Required[bool]
+    mapped_search: Required[bool]
+    supported_reads: Required[bool]
+    limitations: Required[list[str]]
+    remote_identity_verified: NotRequired[Literal[False]]
+
+
+class KnowledgeConnectionMcpInspectInput(TypedDict, total=False):
+    org: Required[str]
+    slot: NotRequired[str]
+    request_id: NotRequired[str]
+
+
+class KnowledgeConnectionMcpInspectBody(TypedDict, total=False):
+    org: NotRequired[str]
+    slot: NotRequired[str]
+    request_id: NotRequired[str]
+
+
+class KnowledgeConnectionMcpInspectOutput(TypedDict, total=False):
+    found: Required[bool]
+    slot: Required[str]
+    connection: NotRequired[Optional["MCPConnectionEntry"]]
+    reconciliation: Required[Literal["absent", "present", "incomplete"]]
+
+
+class KnowledgeConnectionMcpListInput(TypedDict, total=False):
+    org: Required[str]
+    cursor: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+
+
+class KnowledgeConnectionMcpListBody(TypedDict, total=False):
+    org: NotRequired[str]
+    cursor: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+
+
+class KnowledgeConnectionMcpListOutput(TypedDict, total=False):
+    connections: Required[list["MCPConnectionEntry"]]
+    next_cursor: NotRequired[Optional[str]]
+
+
 class KnowledgeDatasetApproveInput(TypedDict, total=False):
     "Approve a dataset's schema, retyping the columns named: its rows are"
 
@@ -11738,34 +11970,26 @@ class SearchHit(TypedDict, total=False):
 
 
 class KnowledgeSourceAddInput(TypedDict, total=False):
-    "Register a document source on a namespace: a kind, what it reads (items"
+    "Register a shared recording source after checking its read-only credential."
 
     org: Required[str]
     namespace: Required[str]
     name: Required[str]
-    kind: Required[str]
-    items: NotRequired[Optional[list[dict[str, Any]]]]
-    links: NotRequired[Optional[list[str]]]
-    config: NotRequired[Optional[dict[str, Any]]]
-    include: NotRequired[Optional[list[str]]]
-    credential_mode: NotRequired[Literal["shared", "connected"]]
-    credential: NotRequired[str]
+    kind: NotRequired[Literal["recording"]]
+    config: Required[dict[str, Any]]
+    credential: Required[str]
     dry_run: NotRequired[bool]
 
 
 class KnowledgeSourceAddBody(TypedDict, total=False):
-    "Register a document source on a namespace: a kind, what it reads (items"
+    "Register a shared recording source after checking its read-only credential."
 
     org: NotRequired[str]
     namespace: NotRequired[str]
     name: Required[str]
-    kind: Required[str]
-    items: NotRequired[Optional[list[dict[str, Any]]]]
-    links: NotRequired[Optional[list[str]]]
-    config: NotRequired[Optional[dict[str, Any]]]
-    include: NotRequired[Optional[list[str]]]
-    credential_mode: NotRequired[Literal["shared", "connected"]]
-    credential: NotRequired[str]
+    kind: NotRequired[Literal["recording"]]
+    config: Required[dict[str, Any]]
+    credential: Required[str]
     dry_run: NotRequired[bool]
 
 
@@ -11773,8 +11997,6 @@ class KnowledgeSourceAddOutput(TypedDict, total=False):
     name: Required[str]
     kind: Required[str]
     namespace: Required[str]
-    items: NotRequired[list[dict[str, Any]]]
-    include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
     probe: NotRequired["KnowledgeSourceProbe"]
     dry_run: NotRequired[bool]
@@ -11786,12 +12008,10 @@ class KnowledgeSourceProbe(TypedDict, total=False):
     documents: NotRequired[int]
     more: NotRequired[bool]
     sample: NotRequired[list[str]]
-    checked: NotRequired[int]
-    sampled: NotRequired[bool]
 
 
 class KnowledgeSourceCheckInput(TypedDict, total=False):
-    "Probe a registered document source with its stored credential now (a check of"
+    "Probe a shared recording with its stored credential without writing."
 
     org: Required[str]
     namespace: Required[str]
@@ -11799,7 +12019,7 @@ class KnowledgeSourceCheckInput(TypedDict, total=False):
 
 
 class KnowledgeSourceCheckBody(TypedDict, total=False):
-    "Probe a registered document source with its stored credential now (a check of"
+    "Probe a shared recording with its stored credential without writing."
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11812,14 +12032,12 @@ class KnowledgeSourceCheckOutput(TypedDict, total=False):
     documents: NotRequired[int]
     more: NotRequired[bool]
     sample: NotRequired[list[str]]
-    checked: NotRequired[int]
-    sampled: NotRequired[bool]
     summary: NotRequired[str]
     checked_at: NotRequired[str]
 
 
 class KnowledgeSourceInspectInput(TypedDict, total=False):
-    "One registered document source: its items, its sync state and the"
+    "One registered document source: its config, its sync state and the"
 
     org: Required[str]
     namespace: Required[str]
@@ -11827,7 +12045,7 @@ class KnowledgeSourceInspectInput(TypedDict, total=False):
 
 
 class KnowledgeSourceInspectBody(TypedDict, total=False):
-    "One registered document source: its items, its sync state and the"
+    "One registered document source: its config, its sync state and the"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11840,8 +12058,6 @@ class KnowledgeSourceInspectOutput(TypedDict, total=False):
     credential_mode: NotRequired[str]
     access: NotRequired[str]
     owner_subject: NotRequired[str]
-    items: NotRequired[list[dict[str, Any]]]
-    include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
     created_by: NotRequired[str]
     created_at: NotRequired[str]
@@ -11903,116 +12119,297 @@ class KnowledgeSourceEntry(TypedDict, total=False):
     credential_mode: NotRequired[str]
     access: NotRequired[str]
     owner_subject: NotRequired[str]
-    items: NotRequired[list[dict[str, Any]]]
-    include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
     created_by: NotRequired[str]
     created_at: NotRequired[str]
     sync: NotRequired["KnowledgeSourceSync"]
 
 
-class KnowledgeSourceParseLinksInput(TypedDict, total=False):
-    "Read pasted links as a source's items, with no request to any store and"
-
+class KnowledgeSourceMcpAddInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
-    links: Required[list[str]]
+    slot: Required[str]
+    mode: Required[Literal["live", "snapshot", "selected_refresh"]]
+    reader_policy: NotRequired[Literal["owner_only", "collection_copy"]]
+    resource_ids: Required[list[str]]
+    request_id: Required[str]
+    label: NotRequired[Optional[str]]
+    confirm_copy_authority: NotRequired[bool]
 
 
-class KnowledgeSourceParseLinksBody(TypedDict, total=False):
-    "Read pasted links as a source's items, with no request to any store and"
-
+class KnowledgeSourceMcpAddBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
-    links: Required[list[str]]
+    slot: Required[str]
+    mode: Required[Literal["live", "snapshot", "selected_refresh"]]
+    reader_policy: NotRequired[Literal["owner_only", "collection_copy"]]
+    resource_ids: Required[list[str]]
+    request_id: Required[str]
+    label: NotRequired[Optional[str]]
+    confirm_copy_authority: NotRequired[bool]
 
 
-class KnowledgeSourceParseLinksOutput(TypedDict, total=False):
-    links: NotRequired[list["KnowledgeSourceParsedLink"]]
+class MCPSourceOutput(TypedDict, total=False):
+    source: Required["MCPSourceEntry"]
+    copies: NotRequired[Literal["retained", "erasure_requested"]]
+    refresh_requested: NotRequired[bool]
 
 
-class KnowledgeSourceParsedLink(TypedDict, total=False):
-    link: Required[str]
-    kind: NotRequired[str]
-    item: NotRequired[dict[str, Any]]
-    unreadable: NotRequired[str]
+class MCPSourceEntry(TypedDict, total=False):
+    name: Required[str]
+    source_id: Required[str]
+    slot: Required[str]
+    namespace: Required[str]
+    state: Required[Literal["registered", "paused", "retired", "unsupported"]]
+    mode: NotRequired[Optional[Literal["live", "snapshot", "selected_refresh"]]]
+    reader_policy: NotRequired[Optional[Literal["owner_only", "collection_copy"]]]
+    scope_revision: NotRequired[Optional[int]]
+    label: NotRequired[Optional[str]]
+    selected_count: NotRequired[Optional[int]]
+    sync_enabled: Required[bool]
+    read_evidence_stale_seconds: Required[int]
+    refresh_state: Required[
+        Literal["not_applicable", "enabled", "disabled", "paused", "retired", "unsupported"]
+    ]
+    compatibility: NotRequired[Literal["unchecked"]]
+    upstream_permissions: NotRequired[Literal["unsupported"]]
+    complete_enumeration: NotRequired[Literal[False]]
+    upstream_deletion_tracking: NotRequired[Literal[False]]
+    future_items_included: NotRequired[Literal[False]]
+    current_access_attested: NotRequired[Literal[False]]
+    local_authority: NotRequired[Literal["current", "unavailable", "unchecked"]]
+    pending_erasure: NotRequired[bool]
+    rule: NotRequired[Optional["MCPAccessRule"]]
+    resource_ids: NotRequired[list[str]]
 
 
-class KnowledgeSourcePushConfigureInput(TypedDict, total=False):
-    "Enable provider sync hints for an existing source, or disable its setup."
+class MCPAccessRule(TypedDict, total=False):
+    access: Required[Literal["owner_only", "collection_wide", "unavailable"]]
+    reason: NotRequired[str]
+    stores_copy: Required[bool]
+    future_items_included: NotRequired[Literal[False]]
+    upstream_permissions: NotRequired[Literal["unsupported"]]
+    reader_list_complete: NotRequired[Literal[False]]
+    collection_readers_receive_copy: NotRequired[bool]
+    inherited_grants_apply: NotRequired[Literal[True]]
+    membership_changes_affect_copy: NotRequired[bool]
+    publication_confirmation_required: NotRequired[bool]
+    explanation: Required[str]
 
+
+class KnowledgeSourceMcpInspectInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    name: NotRequired[str]
+    slot: NotRequired[str]
+    request_id: NotRequired[str]
+
+
+class KnowledgeSourceMcpInspectBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: NotRequired[str]
+    slot: NotRequired[str]
+    request_id: NotRequired[str]
+
+
+class KnowledgeSourceMcpInspectOutput(TypedDict, total=False):
+    found: Required[bool]
+    source: NotRequired[Optional["MCPSourceEntry"]]
+
+
+class KnowledgeSourceMcpListInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    cursor: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+    include_retired: NotRequired[bool]
+
+
+class KnowledgeSourceMcpListBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    cursor: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+    include_retired: NotRequired[bool]
+
+
+class KnowledgeSourceMcpListOutput(TypedDict, total=False):
+    sources: Required[list["MCPSourceSummary"]]
+    next_cursor: NotRequired[Optional[str]]
+
+
+class MCPSourceSummary(TypedDict, total=False):
+    name: Required[str]
+    source_id: Required[str]
+    slot: Required[str]
+    namespace: Required[str]
+    state: Required[Literal["registered", "paused", "retired", "unsupported"]]
+    mode: NotRequired[Optional[Literal["live", "snapshot", "selected_refresh"]]]
+    reader_policy: NotRequired[Optional[Literal["owner_only", "collection_copy"]]]
+    scope_revision: NotRequired[Optional[int]]
+    label: NotRequired[Optional[str]]
+    selected_count: NotRequired[Optional[int]]
+    sync_enabled: Required[bool]
+    read_evidence_stale_seconds: Required[int]
+    refresh_state: Required[
+        Literal["not_applicable", "enabled", "disabled", "paused", "retired", "unsupported"]
+    ]
+    compatibility: NotRequired[Literal["unchecked"]]
+    upstream_permissions: NotRequired[Literal["unsupported"]]
+    complete_enumeration: NotRequired[Literal[False]]
+    upstream_deletion_tracking: NotRequired[Literal[False]]
+    future_items_included: NotRequired[Literal[False]]
+    current_access_attested: NotRequired[Literal[False]]
+    local_authority: NotRequired[Literal["current", "unavailable", "unchecked"]]
+    pending_erasure: NotRequired[bool]
+    rule: NotRequired[Optional["MCPAccessRule"]]
+
+
+class MCPSourceInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
     name: Required[str]
-    enabled: NotRequired[bool]
-    agent: NotRequired[str]
-    user_id: NotRequired[str]
-    session_id: NotRequired[str]
 
 
-class KnowledgeSourcePushConfigureBody(TypedDict, total=False):
-    "Enable provider sync hints for an existing source, or disable its setup."
-
+class MCPSourceBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
     name: Required[str]
-    enabled: NotRequired[bool]
-    agent: NotRequired[str]
-    user_id: NotRequired[str]
-    session_id: NotRequired[str]
 
 
-class PushStatusOutput(TypedDict, total=False):
-    enabled: NotRequired[bool]
-    status: NotRequired[str]
-    provider: NotRequired[str]
-    generation: NotRequired[str]
-    callback_url: NotRequired[str]
-    provider_id: NotRequired[str]
-    challenge_fingerprint: NotRequired[str]
-    verification_token: NotRequired[str]
-    channels: NotRequired[int]
-    expires_at: NotRequired[float]
+class KnowledgeSourceMcpPreviewInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    slot: Required[str]
+    mode: Required[Literal["live", "snapshot", "selected_refresh"]]
+    reader_policy: NotRequired[Literal["owner_only", "collection_copy"]]
+    resource_ids: Required[list[str]]
 
 
-class KnowledgeSourcePushConfirmInput(TypedDict, total=False):
-    "Activate the exact pending setup."
+class KnowledgeSourceMcpPreviewBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    slot: Required[str]
+    mode: Required[Literal["live", "snapshot", "selected_refresh"]]
+    reader_policy: NotRequired[Literal["owner_only", "collection_copy"]]
+    resource_ids: Required[list[str]]
 
+
+class KnowledgeSourceMcpPreviewOutput(TypedDict, total=False):
+    namespace: Required[str]
+    mode: Required[Literal["live", "snapshot", "selected_refresh"]]
+    rule: Required["MCPAccessRule"]
+    connection_state: Required[Literal["configured", "stopped", "unavailable", "approval_drift"]]
+    compatibility: NotRequired[Literal["unchecked"]]
+    permission_evidence: NotRequired[Literal["unsupported"]]
+    refresh_state: Required[Literal["not_applicable", "enabled", "disabled"]]
+    selected_count: Required[int]
+    checked_at: Required[str]
+    read_evidence_stale_seconds: Required[int]
+    preview_grants_authority: NotRequired[Literal[False]]
+    limitations: Required[list[str]]
+
+
+class KnowledgeSourceMcpProfilesInput(TypedDict, total=False):
+    "List approved profile declarations for the signed-in caller's organization."
+
+    org: Required[str]
+    query: NotRequired[str]
+    cursor: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+
+
+class KnowledgeSourceMcpProfilesBody(TypedDict, total=False):
+    "List approved profile declarations for the signed-in caller's organization."
+
+    org: NotRequired[str]
+    query: NotRequired[str]
+    cursor: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+
+
+class KnowledgeSourceMcpProfilesOutput(TypedDict, total=False):
+    profiles: Required[list["MCPProfileEntry"]]
+    next_cursor: NotRequired[Optional[str]]
+    self_service_enabled: Required[bool]
+
+
+class MCPProfileEntry(TypedDict, total=False):
+    "An operator declaration, without remote identity or compatibility verification."
+
+    id: Required[str]
+    label: Required[str]
+    auth: Required[Literal["none", "bearer"]]
+    endpoint_origin: Required[str]
+    profile_sha256: Required[str]
+    approved_tools: Required[list[str]]
+    allow_collection_copy: Required[bool]
+
+
+class KnowledgeSourceMcpReadInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
     name: Required[str]
-    generation: Required[str]
-    challenge_fingerprint: NotRequired[str]
-    signing_secret: NotRequired[str]
+    resource_id: Required[str]
 
 
-class KnowledgeSourcePushConfirmBody(TypedDict, total=False):
-    "Activate the exact pending setup."
-
+class KnowledgeSourceMcpReadBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
     name: Required[str]
-    generation: Required[str]
-    challenge_fingerprint: NotRequired[str]
-    signing_secret: NotRequired[str]
+    resource_id: Required[str]
 
 
-class KnowledgeSourcePushStatusInput(TypedDict, total=False):
-    "Read push setup as a namespace admin."
+class KnowledgeSourceMcpReadOutput(TypedDict, total=False):
+    source_id: Required[str]
+    resource_id: Required[str]
+    uri: Required[str]
+    title: Required[str]
+    text: Required[str]
+    mime_type: Required[str]
+    resource_identity_verified: Required[bool]
+    remote_identity_verified: NotRequired[Literal[False]]
+    upstream_acl_verified: NotRequired[Literal[False]]
+    limitations: Required[list[str]]
 
+
+class KnowledgeSourceMcpRemoveInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
     name: Required[str]
-    reveal_challenge: NotRequired[bool]
+    confirm: Required[str]
+    delete_documents: NotRequired[bool]
 
 
-class KnowledgeSourcePushStatusBody(TypedDict, total=False):
-    "Read push setup as a namespace admin."
-
+class KnowledgeSourceMcpRemoveBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
     name: Required[str]
-    reveal_challenge: NotRequired[bool]
+    confirm: Required[str]
+    delete_documents: NotRequired[bool]
+
+
+class KnowledgeSourceMcpUpdateInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    if_scope_revision: NotRequired[Optional[int]]
+    resource_ids: Required[list[str]]
+    mode: Required[Literal["live", "snapshot", "selected_refresh"]]
+    label: NotRequired[Optional[str]]
+    confirm_copy_authority: NotRequired[bool]
+
+
+class KnowledgeSourceMcpUpdateBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    if_scope_revision: NotRequired[Optional[int]]
+    resource_ids: Required[list[str]]
+    mode: Required[Literal["live", "snapshot", "selected_refresh"]]
+    label: NotRequired[Optional[str]]
+    confirm_copy_authority: NotRequired[bool]
 
 
 class KnowledgeSourceRemoveInput(TypedDict, total=False):
@@ -12041,7 +12438,7 @@ class KnowledgeSourceRemoveOutput(TypedDict, total=False):
 
 
 class KnowledgeSourceRotateInput(TypedDict, total=False):
-    "Replace a registered document source's credential. A namespace admin may;"
+    "Replace a shared recording source's credential. A namespace admin may;"
 
     org: Required[str]
     namespace: Required[str]
@@ -12050,7 +12447,7 @@ class KnowledgeSourceRotateInput(TypedDict, total=False):
 
 
 class KnowledgeSourceRotateBody(TypedDict, total=False):
-    "Replace a registered document source's credential. A namespace admin may;"
+    "Replace a shared recording source's credential. A namespace admin may;"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -12085,42 +12482,6 @@ class KnowledgeSourceSyncNowBody(TypedDict, total=False):
 class KnowledgeSourceSyncNowOutput(TypedDict, total=False):
     name: Required[str]
     enabled: NotRequired[bool]
-
-
-class KnowledgeSourceUpdateInput(TypedDict, total=False):
-    "Add items to a registered document source or remove them, or change a gdrive"
-
-    org: Required[str]
-    namespace: Required[str]
-    name: Required[str]
-    add_items: NotRequired[list[dict[str, Any]]]
-    add_links: NotRequired[list[str]]
-    remove_items: NotRequired[list[dict[str, Any]]]
-    remove_links: NotRequired[list[str]]
-    include: NotRequired[Optional[list[str]]]
-
-
-class KnowledgeSourceUpdateBody(TypedDict, total=False):
-    "Add items to a registered document source or remove them, or change a gdrive"
-
-    org: NotRequired[str]
-    namespace: NotRequired[str]
-    name: Required[str]
-    add_items: NotRequired[list[dict[str, Any]]]
-    add_links: NotRequired[list[str]]
-    remove_items: NotRequired[list[dict[str, Any]]]
-    remove_links: NotRequired[list[str]]
-    include: NotRequired[Optional[list[str]]]
-
-
-class KnowledgeSourceUpdateOutput(TypedDict, total=False):
-    name: Required[str]
-    items: NotRequired[list[dict[str, Any]]]
-    include: NotRequired[list[str]]
-    config: NotRequired[dict[str, Any]]
-    added: NotRequired[list[dict[str, Any]]]
-    removed: NotRequired[list[dict[str, Any]]]
-    probe: NotRequired["KnowledgeSourceProbe"]
 
 
 class KnowledgeSynthesizeInput(TypedDict, total=False):
@@ -19307,7 +19668,8 @@ class LiveSearchHit(TypedDict, total=False):
     id: Required[str]
     title: Required[str]
     url: Required[str]
-    provider: Required[Literal["gdrive", "notion", "linear"]]
+    provider: Required[Literal["mcp"]]
+    resource_identity_verified: Required[bool]
     content: NotRequired[str]
     live: NotRequired[Literal[True]]
 

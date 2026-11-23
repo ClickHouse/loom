@@ -71,6 +71,7 @@ export function CreateNamespaceDialog({ open, onOpenChange, onCreated }: Props) 
           visibility,
           requires_approval: visibility === "public" ? requiresApproval : false,
         },
+        "explicit",
       );
       toast(`Created ${trimmed}`, "ok");
       // Switch to the freshly-created namespace.

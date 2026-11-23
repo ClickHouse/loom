@@ -58,7 +58,7 @@ export function EditDocumentMetadataDialog({ open, onOpenChange, identity, entry
         description: description.trim(),
         tags,
         reindex,
-      });
+      }, "explicit");
       if (reindex && r.chunks_reindexed > 0) {
         toast(`Saved · re-embedded ${r.chunks_reindexed} chunks`, "ok");
       } else {

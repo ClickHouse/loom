@@ -117,7 +117,7 @@ export function InboxSettingsDialog({ open, onOpenChange, identity, inbox, onSav
         triage_escalate_after_seconds: escalate,
         webhook_url: webhook.trim(),
         ...(version != null ? { if_match_version: version } : {}),
-      });
+      }, "explicit");
       toast(r.created ? "Inbox registered" : "Inbox settings saved", "ok");
       setVersion(r.inbox.version);
       onSaved(r.inbox);
@@ -527,7 +527,7 @@ function TrustTable({ identity, inbox, open }: { identity: Caller; inbox: string
         kind: draft.kind.trim() || "*",
         mode: draft.mode,
         require_evidence: splitList(draft.require_evidence),
-      });
+      }, "explicit");
       toast("Trust rule saved", "ok");
       setDraft(null);
       load();
@@ -542,7 +542,7 @@ function TrustTable({ identity, inbox, open }: { identity: Caller; inbox: string
     setBusy(true);
     setError(null);
     try {
-      await setPolicy(identity, { inbox, poster: p.poster, kind: p.kind, mode: p.mode, remove: true });
+      await setPolicy(identity, { inbox, poster: p.poster, kind: p.kind, mode: p.mode, remove: true }, "explicit");
       toast("Trust rule removed", "ok");
       load();
     } catch (e) {

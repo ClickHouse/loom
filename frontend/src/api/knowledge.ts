@@ -85,6 +85,7 @@ export async function updateKnowledgeMetadata(
      *  content re-upload would, without re-uploading the file. */
     reindex?: boolean;
   },
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ updated: boolean; title: string; description: string; tags: string[]; chunks_reindexed: number }> {
   return post("/v1/knowledge.update_metadata", {
     org: id.org,
@@ -94,15 +95,15 @@ export async function updateKnowledgeMetadata(
     ...(patch.description !== undefined ? { description: patch.description } : {}),
     ...(patch.tags !== undefined ? { tags: patch.tags } : {}),
     ...(patch.reindex ? { reindex: true } : {}),
-  });
+  }, undefined, intent);
 }
 
-export async function deleteKnowledge(id: Pick<Identity, "org" | "namespace">, sourceUri: string): Promise<void> {
+export async function deleteKnowledge(id: Pick<Identity, "org" | "namespace">, sourceUri: string, intent: "automatic" | "explicit" = "automatic"): Promise<void> {
   await post<void>("/v1/knowledge.delete", {
     org: id.org,
     namespace: id.namespace,
     source_uri: sourceUri,
-  });
+  }, undefined, intent);
 }
 
 export type RestoreRefusal = "not_found" | "live" | "revision_mismatch" | "not_restorable" | "expired";
@@ -119,8 +120,9 @@ export type KnowledgeRestoreResult = {
 export async function restoreKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   sourceUri: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<KnowledgeRestoreResult> {
-  return post("/v1/knowledge.restore", { org: id.org, namespace: id.namespace, source_uri: sourceUri });
+  return post("/v1/knowledge.restore", { org: id.org, namespace: id.namespace, source_uri: sourceUri }, undefined, intent);
 }
 
 /** Why a document did not move (`knowledge.move`'s `reason`). */
@@ -155,6 +157,7 @@ export async function moveKnowledge(
   sourceUris: string[],
   signal?: AbortSignal,
   onCall?: (results: KnowledgeMoveResult[]) => void,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<KnowledgeMoved> {
   const results: KnowledgeMoveResult[] = [];
   for (let i = 0; i < sourceUris.length && !signal?.aborted; i += MOVE_MAX) {
@@ -165,7 +168,7 @@ export async function moveKnowledge(
         namespace: id.namespace,
         to_namespace: to,
         source_uris: sourceUris.slice(i, i + MOVE_MAX),
-      });
+      }, undefined, intent);
     } catch (error) {
       onCall?.([]);
       return { found: true, results, error };
@@ -187,12 +190,13 @@ export interface KnowledgeBulkDeleteResult {
 export async function bulkDeleteKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   sourceUris: string[],
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ results: KnowledgeBulkDeleteResult[]; total_tombstoned: number }> {
   return post("/v1/knowledge.bulk_delete", {
     org: id.org,
     namespace: id.namespace,
     source_uris: sourceUris,
-  });
+  }, undefined, intent);
 }
 
 export interface KnowledgeDocument {
@@ -263,6 +267,7 @@ export async function addKnowledge(
     tags?: string[];
     upsert?: boolean;
   },
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<KnowledgeAddResponse> {
   const body: Record<string, unknown> = {
     org: id.org,
@@ -276,7 +281,7 @@ export async function addKnowledge(
   // knowledge.upsert replaces existing chunks for the same source_uri;
   // knowledge.add is add-only and 409s on duplicates. Default to upsert.
   const path = opts.upsert === false ? "/v1/knowledge.add" : "/v1/knowledge.upsert";
-  return post<KnowledgeAddResponse>(path, body);
+  return post<KnowledgeAddResponse>(path, body, undefined, intent);
 }
 
 /** A passage `knowledge.search` found: its document, where it sits (`locator`, read for
@@ -365,6 +370,7 @@ export async function uploadKnowledgeFile(
   id: Pick<Identity, "org" | "namespace">,
   file: File,
   signal?: AbortSignal,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<KnowledgeUpload> {
   const q = new URLSearchParams({
     org: id.org,
@@ -372,7 +378,7 @@ export async function uploadKnowledgeFile(
     filename: file.name,
     content_type: file.type,
   });
-  return postFile<KnowledgeUpload>(`/v1/knowledge.upload?${q}`, file, signal);
+  return postFile<KnowledgeUpload>(`/v1/knowledge.upload?${q}`, file, signal, intent);
 }
 
 export interface KnowledgeIngestJob {
@@ -397,6 +403,7 @@ export interface KnowledgeIngestFields {
 export async function ingestKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   opts: KnowledgeIngestFields & { upload_id: string },
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<KnowledgeIngestJob> {
   return post<KnowledgeIngestJob>("/v1/knowledge.ingest", {
     org: id.org,
@@ -408,7 +415,7 @@ export async function ingestKnowledge(
     tags: opts.tags || [],
     allow_partial: !!opts.allow_partial,
     ...(opts.expected_revision === undefined ? {} : { expected_revision: opts.expected_revision }),
-  });
+  }, undefined, intent);
 }
 
 export interface KnowledgeIngestStatus {
@@ -479,6 +486,7 @@ export async function approveDataset(
   sourceUri: string,
   dataset: Pick<Dataset, "dataset_id" | "snapshot_id">,
   columns: Record<string, DatasetType>,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ found: boolean; retyped: boolean }> {
   return post("/v1/knowledge.dataset_approve", {
     org: id.org,
@@ -487,7 +495,7 @@ export async function approveDataset(
     dataset_id: dataset.dataset_id,
     snapshot_id: dataset.snapshot_id,
     columns,
-  });
+  }, undefined, intent);
 }
 
 export interface IngestCancelResult {
@@ -501,8 +509,9 @@ export interface IngestCancelResult {
 export async function cancelIngestion(
   id: Pick<Identity, "org" | "namespace">,
   ingestionId: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<IngestCancelResult> {
-  return post("/v1/knowledge.ingest_cancel", { org: id.org, namespace: id.namespace, ingestion_id: ingestionId });
+  return post("/v1/knowledge.ingest_cancel", { org: id.org, namespace: id.namespace, ingestion_id: ingestionId }, undefined, intent);
 }
 
 /** How the Library shows an original file. An uploaded file is
@@ -650,6 +659,7 @@ export async function importCuratedDoc(
     heading_level?: number;
     extra_tags?: string[];
   },
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<ImportCuratedResult> {
   return post("/v1/memory.import_curated", {
     org: id.org,
@@ -658,5 +668,5 @@ export async function importCuratedDoc(
     source_uri: opts.source_uri || "",
     heading_level: opts.heading_level ?? 2,
     extra_tags: opts.extra_tags || [],
-  });
+  }, undefined, intent);
 }

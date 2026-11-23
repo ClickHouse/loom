@@ -18,6 +18,8 @@ use crate::{
     SetRequest, SetResponse,
 };
 use tokio::sync::Mutex;
+use crate::session_protection::{Observation, MAX_BODY};
+use crate::{SessionCapture, SessionProtection};
 
 const DEFAULT_URL: &str = "http://localhost:7777";
 
@@ -34,6 +36,7 @@ pub struct Client {
     pacing: bool,
     ratelimit_max_wait: Duration,
     rate_state: Arc<Mutex<HashMap<String, Duration>>>,
+    session_protection: Option<SessionProtection>,
 }
 
 /// Explicit endpoint and token options override LOOM_BASE_URL and LOOM_API_KEY.
@@ -45,6 +48,7 @@ pub struct ClientBuilder {
     retry: RetryPolicy,
     pacing: bool,
     ratelimit_max_wait: Duration,
+    session_protection: Option<SessionProtection>,
 }
 
 impl Client {
@@ -61,6 +65,7 @@ impl Client {
             retry: RetryPolicy::default(),
             pacing: true,
             ratelimit_max_wait: Duration::from_secs(15),
+            session_protection: None,
         }
     }
 
@@ -95,7 +100,8 @@ impl Client {
         })
     }
 
-    async fn call<T: DeserializeOwned>(
+    /// Call an explicit operation; bound protection observes before typed decoding.
+    pub async fn call<T: DeserializeOwned>(
         &self,
         op: &str,
         request: &impl Serialize,
@@ -171,21 +177,44 @@ impl Client {
             if let Some(authorization) = &self.authorization {
                 request = request.header(AUTHORIZATION, authorization);
             }
+            let mut observation = Observation::begin(self.session_protection.as_ref())?;
+            if observation.installed() {
+                request = request.header("x-loom-session-protection", "v1");
+            }
             sent += 1;
             log::debug!(target: "clickhouse_loom", "{op} attempt={attempt} sent={sent} rid={request_id}");
             let received = async {
-                let response = request.send().await?;
+                observation.before_send()?;
+                let mut response = request.send().await
+                    .map_err(|e| Error::Transport(e.without_url()))?;
                 let status = response.status();
                 let headers = response.headers().clone();
-                let bytes = response.bytes().await?;
-                Ok::<_, reqwest::Error>((status, headers, bytes))
+                let media = headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
+                observation.check_media(media, status.as_u16())?;
+                let bytes = if observation.installed() {
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = response.chunk().await
+                        .map_err(|e| Error::Transport(e.without_url()))? {
+                        if chunk.len() > MAX_BODY.saturating_sub(bytes.len()) {
+                            return Err(Error::Configuration("session protection response limit exceeded".into()));
+                        }
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    bytes
+                } else {
+                    response.bytes().await
+                        .map_err(|e| Error::Transport(e.without_url()))?.to_vec()
+                };
+                observation.observe(&bytes, media, status.as_u16())?;
+                Ok::<_, Error>((status, headers, bytes))
             }
             .await;
             let (error, allowed, hint) = match received {
-                Err(error) => {
+                Err(Error::Transport(error)) => {
                     let allowed = self.retry.retries_transport(&error, replayable);
                     (Error::Transport(error.without_url()), allowed, None)
                 }
+                Err(error) => return Err(error),
                 Ok((status, headers, bytes)) => {
                     self.record_rate_state(op, &headers).await;
                     if status.is_success() {
@@ -243,6 +272,16 @@ impl Client {
             tokio::time::sleep(delay).await;
             slept = slept.saturating_add(delay);
         }
+    }
+
+    /// Run automatic work with all retained contributing sessions, even on another client.
+    pub async fn call_automatic<T: DeserializeOwned>(
+        &self,
+        capture: &SessionCapture,
+        op: &str,
+        request: &impl Serialize,
+    ) -> Result<T, Error> {
+        capture.scope(self.call(op, request)).await?
     }
 
     async fn record_rate_state(&self, op: &str, headers: &HeaderMap) {
@@ -306,6 +345,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Bind the application's durable conversation authority. Clones retain it.
+    pub fn session_protection(mut self, protection: SessionProtection) -> Self {
+        self.session_protection = Some(protection);
+        self
+    }
+
     pub fn build(self) -> Result<Client, Error> {
         self.retry.validate()?;
         for key in ["org", "namespace", "agent"] {
@@ -362,6 +407,7 @@ impl ClientBuilder {
             pacing: self.pacing,
             ratelimit_max_wait: self.ratelimit_max_wait,
             rate_state: Arc::new(Mutex::new(HashMap::new())),
+            session_protection: self.session_protection,
         })
     }
 }

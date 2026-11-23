@@ -288,7 +288,7 @@ export function LibraryCollections({
     });
     if (!ok) return;
     try {
-      const r = await deleteCollection(org, c.namespace);
+      const r = await deleteCollection(org, c.namespace, "explicit");
       // The titles and places other pages show come from one shared read.
       invalidateSharedCollections();
       if (r.erasure_status && r.erasure_status !== "completed") {

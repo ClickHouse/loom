@@ -1,15 +1,3 @@
-/**
- * Adding, checking, syncing, rotating and retiring a namespace's document source.
- * Loaded on first use, behind `lazy()`, by the Sources list (a repository card's, or the
- * Library's).
- *
- * Add probes first: the form takes a kind and that kind's ids, Check sends
- * `knowledge.source.add` with `dry_run` (the credential is tried, nothing is stored) and
- * shows what the source holds; Add stays off until the form it would send is the one
- * that passed. A credential is typed into a password field, held in the dialog's state
- * only, sent once and never shown back. Changing the kind clears it, so
- * a credential is only ever sent to the store it was typed for.
- */
 import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -28,22 +16,18 @@ import { useAbortableEffect } from "../lib/hooks";
 import {
   credentialLabel,
   emptySourceForm,
-  INCLUDE_OPTIONS,
   KIND_FORM,
-  KIND_OPTIONS,
   normalisedName,
   probeCount,
   retiredMessage,
   sourceFormFingerprint,
   sourceFormProblems,
   sourceFormTouched,
-  toggleInclude,
   type KnowledgeSourceCheckResult,
   type KnowledgeSourceProbe,
   type SourceForm,
 } from "../lib/knowledgeSources";
 import { toast } from "../components/Toast";
-import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Alert } from "../components/ui/Alert";
 import { Loading } from "../components/ui/Loading";
 import { CancelButton, DialogFrame, ErrorNote } from "./TaskDialogFrame";
@@ -78,82 +62,7 @@ function ProbeResult({ probe, lead }: { probe: KnowledgeSourceProbe; lead: strin
 
 type SetField = <K extends keyof SourceForm>(key: K, value: SourceForm[K]) => void;
 
-/** The chosen kind's ids and filters, as the server's config for that kind takes them. */
-function SourceFields({ form, set }: { form: SourceForm; set: SetField }) {
-  switch (form.kind) {
-    case "gdrive":
-      return (
-        <>
-          <TextAreaField
-            id="ksrc-folders"
-            label="Folders (ids or folder links, one per line)"
-            rows={3}
-            className="font-mono"
-            value={form.folders}
-            onChange={(v) => set("folders", v)}
-          />
-          <fieldset>
-            <legend className="mb-1.5 block text-xs font-medium text-text-muted">File kinds to pull</legend>
-            <div className="flex flex-wrap gap-4">
-              {INCLUDE_OPTIONS.map((o) => (
-                <Checkbox
-                  key={o.value}
-                  label={o.label}
-                  checked={form.include.includes(o.value)}
-                  onCheckedChange={() => set("include", toggleInclude(form.include, o.value))}
-                />
-              ))}
-            </div>
-          </fieldset>
-        </>
-      );
-    case "linear":
-      return (
-        <TextAreaField
-          id="ksrc-projects"
-          label="Projects (project ids, UUIDs, one per line)"
-          rows={3}
-          className="font-mono"
-          value={form.projects}
-          onChange={(v) => set("projects", v)}
-        />
-      );
-    case "notion":
-      return (
-        <>
-          <TextAreaField
-            id="ksrc-pages"
-            label="Pages (ids or page links, one per line)"
-            rows={2}
-            className="font-mono"
-            value={form.pages}
-            onChange={(v) => set("pages", v)}
-          />
-          <TextAreaField
-            id="ksrc-databases"
-            label="Databases (ids or database links, one per line; 20 pages and databases in all)"
-            rows={2}
-            className="font-mono"
-            value={form.databases}
-            onChange={(v) => set("databases", v)}
-          />
-        </>
-      );
-    case "recording":
-      return (
-        <TextAreaField
-          id="ksrc-meetings"
-          label="Meetings (meeting ids, one per line)"
-          rows={3}
-          className="font-mono"
-          value={form.meetings}
-          onChange={(v) => set("meetings", v)}
-        />
-      );
-  }
-}
-
-export function AddSourceDialog({
+export function AddRecordingSourceDialog({
   open,
   onOpenChange,
   org,
@@ -166,14 +75,7 @@ export function AddSourceDialog({
   const [busy, setBusy] = useState<"check" | "add" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const set: SetField = (key, value) => {
-    // The credential and last error belong to the kind they were entered for.
-    const switched = key === "kind" && value !== form.kind;
-    if (switched) setError(null);
-    setForm((f) => ({
-      ...f,
-      [key]: value,
-      ...(switched ? { credential: "" } : {}),
-    }));
+    setForm((f) => ({ ...f, [key]: value }));
   };
   const problems = sourceFormProblems(form);
   const fingerprint = sourceFormFingerprint(form);
@@ -183,7 +85,7 @@ export function AddSourceDialog({
     setBusy(dryRun ? "check" : "add");
     setError(null);
     try {
-      const out = await addKnowledgeSource({ org, namespace }, form, dryRun);
+      const out = await addKnowledgeSource({ org, namespace }, form, dryRun, "explicit");
       if (dryRun) setChecked({ fingerprint, probe: out.probe });
       else {
         onAdded(out.name);
@@ -203,7 +105,7 @@ export function AddSourceDialog({
       open={open}
       onOpenChange={onOpenChange}
       width={560}
-      title={`Add a document source · ${label}`}
+      title={`Add a recording source · ${label}`}
       description={KIND_FORM[form.kind].about}
       footer={
         <>
@@ -237,16 +139,7 @@ export function AddSourceDialog({
         onChange={(v) => set("name", v)}
         autoFocus
       />
-      {/* Locked while a call runs, so its answer lands on the form it was sent for. */}
-      <ChoiceGroup
-        label="Kind"
-        inline
-        disabled={busy !== null}
-        value={form.kind}
-        onChange={(v) => set("kind", v)}
-        options={KIND_OPTIONS}
-      />
-      <SourceFields form={form} set={set} />
+      <TextAreaField label="Meetings (meeting ids, one per line)" value={form.meetings} rows={3} onChange={(v) => set("meetings", v)} />
       <PasswordField
         label={credentialLabel(form.kind)}
         value={form.credential}
@@ -326,7 +219,7 @@ export function SyncNowDialog({
     setBusy(true);
     setError(null);
     try {
-      const out = await syncKnowledgeSourceNow({ org, namespace }, name, full);
+      const out = await syncKnowledgeSourceNow({ org, namespace }, name, full, "explicit");
       toast(
         out.enabled
           ? `Sync requested: ${name} is synced next`
@@ -383,7 +276,7 @@ export function RotateSourceDialog({
     setBusy(true);
     setError(null);
     try {
-      await rotateKnowledgeSource({ org, namespace }, name, credential.trim());
+      await rotateKnowledgeSource({ org, namespace }, name, credential.trim(), "explicit");
       onRotated();
       onOpenChange(false);
     } catch (e) {
@@ -443,7 +336,7 @@ export function RetireSourceDialog({
     setBusy(true);
     setError(null);
     try {
-      const out = await removeKnowledgeSource({ org, namespace }, name, typed.trim(), deleteDocuments);
+      const out = await removeKnowledgeSource({ org, namespace }, name, typed.trim(), deleteDocuments, "explicit");
       toast(retiredMessage(name, deleteDocuments, out.documents_pending, enabled), "ok");
       onRetired();
       onOpenChange(false);

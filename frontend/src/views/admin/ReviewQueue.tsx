@@ -462,6 +462,7 @@ function ConflictsPanel() {
         current.memory_id,
         decision,
         reason.trim() ? { reason: reason.trim() } : {},
+        "explicit",
       );
       // Nothing was resolved (the row is gone or out of scope): the queue is read again
       // rather than dropping a row on a claim.
@@ -624,7 +625,7 @@ function RevisionHint({ memoryId }: { memoryId: string }) {
   const ask = async () => {
     setBusy(true);
     try {
-      const r = await proposeRevision({ org: identity.org, namespace: identity.namespace }, memoryId);
+      const r = await proposeRevision({ org: identity.org, namespace: identity.namespace }, memoryId, "explicit");
       setHint(r.found ? r.suggestions : "gone");
       // The link that had focus is gone; the answer takes it.
       region.current?.focus();
@@ -830,7 +831,7 @@ function LearningsPanel({
   const decide = async (id: string, decision: "promote" | "reject") => {
     if (reviewReason) return;
     try {
-      await reviewLearning({ org: identity.org, namespace: identity.namespace }, id, decision, reason[id] || "");
+      await reviewLearning({ org: identity.org, namespace: identity.namespace }, id, decision, reason[id] || "", "explicit");
       toast(decision === "promote" ? "Promoted" : "Rejected", "ok");
       setReload((n) => n + 1);
     } catch (e) {
@@ -1117,6 +1118,7 @@ function AutoResolvedPanel() {
         { org: identity.org, namespace: identity.namespace, agent: r.agent },
         r.memory_key,
         { user_id: r.user_id, session_id: r.session_id, if_superseded_by: r.superseded_by },
+        "explicit",
       );
       if (!mounted.current) return;
       setOutcome((m) => new Map(m).set(k, out.restored ? "restored" : "gone"));
@@ -1304,7 +1306,7 @@ function AllowlistPanel({ initial, onSeedUsed }: { initial?: AllowlistRow[] | nu
     )
       return;
     try {
-      await removeAllowlist({ org: identity.org, namespace: identity.namespace }, a, b);
+      await removeAllowlist({ org: identity.org, namespace: identity.namespace }, a, b, undefined, "explicit");
       toast("Removed", "ok");
       setReload((n) => n + 1);
     } catch (e) {

@@ -173,3 +173,7 @@ cd sdk/ruby && bundle install && bundle exec rake test
 ```
 
 The tests run against a local fake server and need no running Loom.
+
+## Session protection
+
+Bind a durable conversation handle before reading protected sources, and retain its capture for every automatic write. See [Session protection](SESSION_PROTECTION.md) for restore, callback and response limits.

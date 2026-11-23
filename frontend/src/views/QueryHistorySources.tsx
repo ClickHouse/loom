@@ -120,7 +120,7 @@ function SourceList({ org, namespace, focusDisclosure }: Scope & { focusDisclosu
     setBusy(name);
     setWriteError("");
     try {
-      await removeQueryHistory(scope, name);
+      await removeQueryHistory(scope, name, "explicit");
       if (mounted.current) {
         reload();
         if (connectButton.current) connectButton.current.focus();
@@ -249,6 +249,7 @@ function SourceForm({ org, namespace, onDone, onCancel }: Scope & { onDone: () =
             .map((s) => s.trim())
             .filter(Boolean),
         },
+        "explicit",
       );
       if (mounted.current) onDone();
     } catch (e) {

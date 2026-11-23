@@ -251,7 +251,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
   const save = async (row: SettingRow) => {
     setBusy(true);
     try {
-      const after = await adminSettingSet(row.name, parsed(draft, row), expected);
+      const after = await adminSettingSet(row.name, parsed(draft, row), expected, "explicit");
       toast(`${row.name} is ${shown(after.value)} on every replica within seconds`, "ok");
       close(row.name, true);
       onChanged();
@@ -271,7 +271,7 @@ function SettingsTable({ rows, onChanged }: { rows: SettingRow[]; onChanged: () 
     )
       return;
     try {
-      await adminSettingReset(row.name, row.value);
+      await adminSettingReset(row.name, row.value, "explicit");
       setFocusNext({ id: controlId("change", row.name), after: rows });
       onChanged();
     } catch (e) {

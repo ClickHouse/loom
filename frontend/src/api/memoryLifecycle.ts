@@ -11,18 +11,19 @@ export async function lockMemory(
   memoryKey: string,
   mode: LockMode,
   reason: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ locked: boolean; reason?: string }> {
-  return post("/v1/memory.lock", { ...id, memory_key: memoryKey, mode, reason });
+  return post("/v1/memory.lock", { ...id, memory_key: memoryKey, mode, reason }, undefined, intent);
 }
 
 /** POST /v1/memory.unlock (ADMIN). */
-export async function unlockMemory(id: Identity, memoryKey: string): Promise<{ unlocked: boolean; reason: string }> {
-  return post("/v1/memory.unlock", { ...id, memory_key: memoryKey });
+export async function unlockMemory(id: Identity, memoryKey: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ unlocked: boolean; reason: string }> {
+  return post("/v1/memory.unlock", { ...id, memory_key: memoryKey }, undefined, intent);
 }
 
 /** POST /v1/memory.reject: the fact is wrong; it is retired and not extracted again. */
-export async function rejectMemory(id: Identity, memoryKey: string, reason: string): Promise<{ rejected: boolean }> {
-  return post("/v1/memory.reject", { ...id, memory_key: memoryKey, rejection_reason: reason });
+export async function rejectMemory(id: Identity, memoryKey: string, reason: string, intent: "automatic" | "explicit" = "automatic"): Promise<{ rejected: boolean }> {
+  return post("/v1/memory.reject", { ...id, memory_key: memoryKey, rejection_reason: reason }, undefined, intent);
 }
 
 /** POST /v1/memory.promote (ADMIN): a copy in the namespace's shared layer, read by every agent.
@@ -32,16 +33,18 @@ export async function shareMemory(
   id: Identity,
   memoryKey: string,
   approvedSha256?: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ shared_memory_key: string }> {
-  return post("/v1/memory.promote", { ...id, memory_key: memoryKey, approved_sha256: approvedSha256 });
+  return post("/v1/memory.promote", { ...id, memory_key: memoryKey, approved_sha256: approvedSha256 }, undefined, intent);
 }
 
 /** POST /v1/memory.demote (ADMIN): the shared copy goes; the agent's own row stays. */
 export async function unshareMemory(
   id: Pick<Identity, "org" | "namespace">,
   memoryKey: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ demoted: boolean }> {
-  return post("/v1/memory.demote", { org: id.org, namespace: id.namespace, memory_key: memoryKey });
+  return post("/v1/memory.demote", { org: id.org, namespace: id.namespace, memory_key: memoryKey }, undefined, intent);
 }
 
 /** One source turn a memory was extracted from: `server/memory/api/models_lifecycle.py`. */
@@ -87,8 +90,9 @@ export async function recordMemoryOutcome(
   id: Identity,
   memoryId: string,
   outcome: "positive" | "negative",
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ recorded: boolean; quarantined: boolean }> {
-  return post("/v1/memory.outcome", { ...id, memory_id: memoryId, outcome, source: "dashboard" });
+  return post("/v1/memory.outcome", { ...id, memory_id: memoryId, outcome, source: "dashboard" }, undefined, intent);
 }
 
 /** POST /v1/memory.redact (ADMIN): scrub one past version's value, keeping its row and
@@ -99,6 +103,7 @@ export async function redactMemoryVersion(
   memoryId: string,
   versionText: string,
   reason: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ redacted: boolean; refused_head: boolean }> {
-  return post("/v1/memory.redact", { org, memory_id: memoryId, version: versionText, reason });
+  return post("/v1/memory.redact", { org, memory_id: memoryId, version: versionText, reason }, undefined, intent);
 }

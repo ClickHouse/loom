@@ -13,13 +13,12 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
-import httpx
 import pytest
 
-from server.core.errors import ValidationError
 from server.core.vectors import codes_state
 from server.knowledge.api.models_knowledge import KnowledgeUpsertInput
 from server.knowledge.app import connected_accounts as accounts
+from server.knowledge.app import mcp_source_authority as authority
 from server.knowledge.app import writes
 from server.knowledge.domain.access_list import AccessList, from_json
 from server.knowledge.domain.connected_accounts import stopped
@@ -28,6 +27,7 @@ from server.knowledge.store import blobs, chunks, documents
 from server.memory.domain.provenance import pipeline_actor
 from tests.unit.principals import acting_as
 from tests.unit.test_connected_source_authority import _World as _AuthorityWorld
+from tests.unit.test_mcp_source_sync import harness as harness
 
 _ORIGINAL = b"the original connected document"
 _CONTENT = "# Connected document\n\nThe owner publishes this revision."
@@ -41,14 +41,14 @@ class _World(_AuthorityWorld):
     model_name = "publication-test-embedder"
     dim = 4
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, http: httpx.AsyncClient) -> None:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, harness) -> None:
         self.events: list[str] = []
         self.held: dict[asyncio.Task[Any], list[str]] = {}
-        super().__init__(monkeypatch, http)
+        super().__init__(monkeypatch, harness)
         assert self.source is not None
         self.source = replace(self.source, mirror=_MIRROR)
         self.selected_source = self.source
-        self.key = self.source.org, self.source.owner_subject, self.source.kind
+        self.key = self.source.org, self.source.owner_subject, self.source.connection_slot
         namespace, tag = home(self.source)
         self.request = KnowledgeUpsertInput(
             org=self.source.org,
@@ -58,7 +58,7 @@ class _World(_AuthorityWorld):
             content=_CONTENT,
             description="An imported source document.",
             tags=[tag],
-            metadata={"source_kind": "gdrive", "source_name": "documents"},
+            metadata={"source_kind": "mcp", "source_name": "documents"},
             original_bytes_b64=base64.b64encode(_ORIGINAL).decode(),
             original_filename="document.txt",
             blob_content_type="text/plain",
@@ -122,24 +122,24 @@ class _World(_AuthorityWorld):
             return
         assert len(held) == 2
         assert held[0].startswith("connected-account:")
-        assert held[1] == "knowledge-source:team:shared-space"
+        assert held[1] == "knowledge-source:org:collection"
 
     async def no_duplicate(self, org: str, namespace: str, _sha: str, **_kw: Any):
-        assert (org, namespace) == ("team", _MIRROR)
+        assert (org, namespace) == ("org", _MIRROR)
         return None
 
     async def no_active_chunks(self, org: str, namespace: str, uri: str, **_kw: Any) -> int:
-        assert (org, namespace, uri) == ("team", _MIRROR, self.request.source_uri)
+        assert (org, namespace, uri) == ("org", _MIRROR, self.request.source_uri)
         return 0
 
     async def no_prior_document(self, org: str, namespace: str, uri: str, **kw: Any):
-        assert (org, namespace, uri) == ("team", _MIRROR, self.request.source_uri)
+        assert (org, namespace, uri) == ("org", _MIRROR, self.request.source_uri)
         assert kw == {"include_superseded": True}
         return None
 
     async def put_blob(self, org: str, namespace: str, raw: bytes, **kw: Any) -> str:
         self.assert_storage_leases()
-        assert (org, namespace, raw) == ("team", _MIRROR, _ORIGINAL)
+        assert (org, namespace, raw) == ("org", _MIRROR, _ORIGINAL)
         assert kw == {"uploader": "-"}
         self.events.append("blob")
         self.blob_writes.append({"org": org, "namespace": namespace, "raw": raw, **kw})
@@ -177,7 +177,7 @@ class _World(_AuthorityWorld):
     async def retire_versions(
         self, org: str, namespace: str, own: list[tuple[str, int]], **_kw: Any
     ) -> None:
-        assert (org, namespace) == ("team", _MIRROR)
+        assert (org, namespace) == ("org", _MIRROR)
         self.chunk_retirements.append(own)
 
     async def await_stage(self, event: asyncio.Event, work: asyncio.Task[Any]) -> None:
@@ -194,12 +194,8 @@ class _World(_AuthorityWorld):
 
 
 @pytest.fixture
-async def world(monkeypatch: pytest.MonkeyPatch):
-    async def no_provider(_request: httpx.Request) -> httpx.Response:
-        raise AssertionError("publication does not contact a provider")
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(no_provider)) as http:
-        yield _World(monkeypatch, http)
+def world(monkeypatch, harness):
+    return _World(monkeypatch, harness)
 
 
 async def _write(state: _World, *, guarded: bool = True):
@@ -207,7 +203,7 @@ async def _write(state: _World, *, guarded: bool = True):
         return await writes.handle_knowledge_upsert(
             state.request,
             permissions=_PERMISSIONS,
-            commit_guard=partial(accounts.publication_guard, state.selected_source)
+            commit_guard=partial(authority.publication_guard, state.selected_source)
             if guarded
             else None,
         )
@@ -224,7 +220,7 @@ async def test_a_valid_publication_keeps_real_rows_permissions_and_worker_identi
     assert chunk["content"] == "The owner publishes this revision."
     for stored in (row, chunk):
         assert (stored["org"], stored["namespace"], stored["source_uri"]) == (
-            "team",
+            "org",
             _MIRROR,
             world.request.source_uri,
         )
@@ -239,7 +235,7 @@ async def test_a_valid_publication_keeps_real_rows_permissions_and_worker_identi
             "source-sync-pass",
             "imported",
         )
-        assert stored["tags"] == ["source-id:source-id"]
+        assert stored["tags"] == ["source-id:00000000-0000-4000-8000-000000000001"]
     assert row["actor"] == SYNC_WORKER_ACTOR
     assert from_json(row["access_json"]) == _PERMISSIONS
     assert json.loads(row["metadata"]) == world.request.metadata
@@ -280,7 +276,7 @@ async def test_standing_lost_during_embedding_prevents_all_final_chunk_and_head_
                 assert world.source is not None
                 world.source = replace(world.source, active=False)
         world.embedding_release.set()
-        with pytest.raises(ValidationError, match="^the connected account is unavailable$"):
+        with pytest.raises(authority.MCPAuthorityError):
             await work
         assert world.chunk_writes == world.document_writes == []
         assert len(world.chunk_retirements) == 1
@@ -294,7 +290,7 @@ async def test_standing_lost_during_embedding_prevents_all_final_chunk_and_head_
 async def test_source_replacement_before_the_first_guard_prevents_even_blob_storage(world) -> None:
     assert world.source is not None
     world.source = replace(world.source, source_id="replacement-source")
-    with pytest.raises(ValidationError, match="^the connected account is unavailable$"):
+    with pytest.raises(authority.MCPAuthorityError):
         await _write(world)
     assert world.blob_writes == world.chunk_writes == world.document_writes == []
     assert world.embedded == world.chunk_retirements == []
@@ -312,7 +308,10 @@ async def test_local_stop_waits_until_the_guarded_head_commit_has_finished(world
             world.events.append("stop-acquired")
             # The registry deletion is external; this stop has no source left to retire.
             world.source = None
-            await accounts._stop_locked(world.rows[world.key])
+            current = world.rows[world.key]
+            generation = accounts._next_connection(current.connection_id, inactive=True)
+            await accounts._move_fence(current.connection_id, generation)
+            await world.put(stopped(current, connection_id=generation, at=datetime.now(UTC)))
             world.events.append("stop-finished")
 
     try:

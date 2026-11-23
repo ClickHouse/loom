@@ -21,6 +21,8 @@ export type {
   AssistantTurn,
 } from "./assistant.js";
 export { ASSISTANT_ROUTE } from "./assistant.js";
+export type { ProtectedBrowserTransport } from "./browser-protection.js";
+export { protectedBrowserTransport } from "./browser-protection.js";
 export type { ProbeResult } from "./capabilities.js";
 export { Capabilities, capabilities, probe } from "./capabilities.js";
 export type {

@@ -38,16 +38,18 @@ export async function registerRecordSchema(
   name: string,
   description: string,
   fields: SchemaField[],
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ name: string; status: string }> {
-  return post("/v1/memory_schema.register", { ...scope(id), name, description, fields });
+  return post("/v1/memory_schema.register", { ...scope(id), name, description, fields }, undefined, intent);
 }
 
 export async function decideRecordSchema(
   id: Scope,
   name: string,
   decision: "approve" | "reject",
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ status: string; updated: boolean }> {
-  return post("/v1/memory_schema.approve", { ...scope(id), name, decision });
+  return post("/v1/memory_schema.approve", { ...scope(id), name, decision }, undefined, intent);
 }
 
 // ===== Typed records =====
@@ -117,12 +119,12 @@ export async function getProfileSchema(id: Scope, opts: RequestOpts = {}): Promi
   return post("/v1/profile_schema.get", scope(id), opts.signal);
 }
 
-export async function setProfileSchema(id: Scope, jsonSchema: Record<string, unknown>): Promise<ProfileSchema> {
-  return post("/v1/profile_schema.set", { ...scope(id), json_schema: jsonSchema });
+export async function setProfileSchema(id: Scope, jsonSchema: Record<string, unknown>, intent: "automatic" | "explicit" = "automatic"): Promise<ProfileSchema> {
+  return post("/v1/profile_schema.set", { ...scope(id), json_schema: jsonSchema }, undefined, intent);
 }
 
-export async function clearProfileSchema(id: Scope): Promise<ProfileSchema> {
-  return post("/v1/profile_schema.clear", scope(id));
+export async function clearProfileSchema(id: Scope, intent: "automatic" | "explicit" = "automatic"): Promise<ProfileSchema> {
+  return post("/v1/profile_schema.clear", scope(id), undefined, intent);
 }
 
 // ===== Ontology =====
@@ -158,6 +160,7 @@ export async function listOntology(id: Scope, opts: RequestOpts = {}): Promise<O
 export async function registerOntologyTerm(
   id: Scope,
   term: Pick<OntologyEntry, "kind" | "name" | "description" | "cardinality">,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ registered: boolean }> {
   const { kind, name, description, cardinality } = term;
   return post("/v1/namespace.register_ontology", {
@@ -167,7 +170,7 @@ export async function registerOntologyTerm(
     description,
     cardinality,
     status: "accepted",
-  });
+  }, undefined, intent);
 }
 
 // ===== Categories =====
@@ -190,6 +193,7 @@ export async function registerCategory(
   id: Scope,
   name: string,
   description: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ category_id: string; embedded: boolean }> {
-  return post("/v1/namespace.register_category", { ...scope(id), name, description });
+  return post("/v1/namespace.register_category", { ...scope(id), name, description }, undefined, intent);
 }

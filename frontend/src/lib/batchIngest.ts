@@ -344,6 +344,7 @@ export function skipRepeats(rows: BatchRow[], where: (r: BatchRow) => string): B
 const SENT: ReadonlySet<RowState> = new Set(["done", "partial", "working", "goes_on"]);
 
 export interface BatchOptions {
+  intent?: "automatic" | "explicit";
   fields: { tags: string[]; allow_partial: boolean };
   /** Sends no more files. A job already queued goes on, unless `cancelling` says the
    *  person stopped the batch, when its row cancels it. */
@@ -395,6 +396,7 @@ async function sendRow(start: BatchRow, opts: BatchOptions): Promise<void> {
       },
       {
         signal: opts.signal,
+        intent: opts.intent,
         onQueued: (ingestionId) => set({ ingestionId }),
         // Into a collection made a moment ago, a refusal can mean another replica has not
         // learned of it yet.
@@ -411,7 +413,7 @@ async function sendRow(start: BatchRow, opts: BatchOptions): Promise<void> {
     set({ ingestionId: undefined, ...ended(status, row) });
   } catch (e) {
     if (opts.signal.aborted && row.ingestionId) {
-      if (opts.cancelling?.()) await cancelRow(row.target, row.ingestionId, set);
+      if (opts.cancelling?.()) await cancelRow(row.target, row.ingestionId, set, opts.intent);
       else set({ state: "goes_on", line: STILL });
       return;
     }
@@ -445,10 +447,11 @@ async function cancelRow(
   target: BatchRow["target"],
   ingestionId: string,
   set: (patch: Partial<BatchRow>) => void,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<void> {
   set({ line: "Stopping…" });
   try {
-    const out = await cancelIngestion(target, ingestionId);
+    const out = await cancelIngestion(target, ingestionId, intent);
     if (out.found && (out.state === "ready" || out.state === "partial"))
       set({ state: "done", line: "Added before it could stop" });
     // A running job stops before it publishes, unless it was already publishing.

@@ -3496,6 +3496,88 @@ export interface KnowledgeBulkDeleteOutput {
   total_chunks_tombstoned: number;
 }
 
+export interface KnowledgeConnectionMcpConnectInput {
+  /** The authenticated caller's organization. */
+  org: string;
+  /** The operator-approved profile ID. */
+  profile_id: string;
+  /** A client-generated UUID retained across uncertain-save retries. */
+  request_id: string;
+  /** An optional display label; it verifies no remote identity. */
+  label?: string | null;
+  /** The preissued upstream bearer for a bearer profile; default none. */
+  bearer?: string | null;
+}
+
+export interface MCPConnectionEntry {
+  slot: string;
+  generation: string;
+  state: "configured" | "stopped" | "unavailable" | "approval_drift";
+  profile_id?: string | null;
+  profile_sha256?: string | null;
+  label?: string | null;
+  compatibility?: "unchecked";
+  remote_identity_verified?: false;
+}
+
+export interface KnowledgeConnectionMcpConnectOutput {
+  connection: MCPConnectionEntry;
+}
+
+export interface MCPSlotInput {
+  /** The authenticated caller's organization. */
+  org: string;
+  /** The exact owned MCP connection slot. */
+  slot: string;
+}
+
+export interface KnowledgeConnectionMcpDisconnectOutput {
+  disconnected: boolean;
+  upstream_revoked?: false;
+  upstream_action?: "revoke_credential_upstream";
+}
+
+export interface KnowledgeConnectionMcpDiscoverOutput {
+  slot: string;
+  generation: string;
+  resources: boolean;
+  mapped_read: boolean;
+  mapped_search: boolean;
+  supported_reads: boolean;
+  limitations: string[];
+  remote_identity_verified?: false;
+}
+
+export interface KnowledgeConnectionMcpInspectInput {
+  /** The authenticated caller's organization. */
+  org: string;
+  /** An exact owned MCP slot, or empty when reconciling a request ID. */
+  slot?: string;
+  /** The original connect UUID for save reconciliation; default empty. */
+  request_id?: string;
+}
+
+export interface KnowledgeConnectionMcpInspectOutput {
+  found: boolean;
+  slot: string;
+  connection?: MCPConnectionEntry | null;
+  reconciliation: "absent" | "present" | "incomplete";
+}
+
+export interface KnowledgeConnectionMcpListInput {
+  /** The authenticated caller's organization. */
+  org: string;
+  /** The signed continuation for the same listing arguments; default none. */
+  cursor?: string | null;
+  /** Maximum connections per page, from 1 to 100; default 100. */
+  limit?: number;
+}
+
+export interface KnowledgeConnectionMcpListOutput {
+  connections: MCPConnectionEntry[];
+  next_cursor?: string | null;
+}
+
 export interface KnowledgeDatasetApproveInput {
   org: string;
   namespace: string;
@@ -4447,6 +4529,77 @@ export interface KnowledgeSourceListOutput {
   sources?: KnowledgeSourceEntry[];
   enabled?: boolean;
   accepts_sources?: boolean;
+}
+
+export interface KnowledgeSourceMcpPreviewInput {
+  /** The authenticated organization. */
+  org: string;
+  /** The ordinary destination collection or namespace. */
+  namespace: string;
+  /** The signed-in owner's MCP connection slot. */
+  slot: string;
+  /** Live lookup, a selected snapshot, or periodic refresh of the fixed selection. */
+  mode: "live" | "snapshot" | "selected_refresh";
+  /** Requested copy audience; default owner-only. */
+  reader_policy?: "owner_only" | "collection_copy";
+  /** Between 1 and 1000 explicit resource identities, without recursion. */
+  resource_ids: string[];
+}
+
+export interface MCPAccessRule {
+  access: "owner_only" | "collection_wide" | "unavailable";
+  reason?: string;
+  stores_copy: boolean;
+  future_items_included?: false;
+  upstream_permissions?: "unsupported";
+  reader_list_complete?: false;
+  collection_readers_receive_copy?: boolean;
+  inherited_grants_apply?: true;
+  membership_changes_affect_copy?: boolean;
+  publication_confirmation_required?: boolean;
+  explanation: string;
+}
+
+export interface KnowledgeSourceMcpPreviewOutput {
+  namespace: string;
+  mode: "live" | "snapshot" | "selected_refresh";
+  rule: MCPAccessRule;
+  connection_state: "configured" | "stopped" | "unavailable" | "approval_drift";
+  compatibility?: "unchecked";
+  permission_evidence?: "unsupported";
+  refresh_state: "not_applicable" | "enabled" | "disabled";
+  selected_count: number;
+  checked_at: string;
+  preview_grants_authority?: false;
+  limitations: string[];
+}
+
+export interface KnowledgeSourceMcpProfilesInput {
+  /** The caller's authenticated organization. */
+  org: string;
+  /** Case-insensitive ID or label filter, at most 256 UTF-8 bytes; default empty. */
+  query?: string;
+  /** Continuation from this listing with the same arguments; default none. */
+  cursor?: string | null;
+  /** Maximum profile declarations per page, from 1 to 100; default 100. */
+  limit?: number;
+}
+
+export interface MCPProfileEntry {
+  id: string;
+  label: string;
+  auth: "none" | "bearer";
+  profile_sha256: string;
+  approved_tools: string[];
+  /** Operator read-policy approval only; copying still requires publication grants. */
+  allow_collection_copy: boolean;
+}
+
+export interface KnowledgeSourceMcpProfilesOutput {
+  profiles: MCPProfileEntry[];
+  next_cursor?: string | null;
+  /** Whether the operator permits self-service source and credential registration. */
+  self_service_enabled: boolean;
 }
 
 export interface KnowledgeSourceParseLinksInput {
@@ -10653,6 +10806,11 @@ export type OpName =
   | "knowledge.add"
   | "knowledge.bulk_add"
   | "knowledge.bulk_delete"
+  | "knowledge.connection.mcp_connect"
+  | "knowledge.connection.mcp_disconnect"
+  | "knowledge.connection.mcp_discover"
+  | "knowledge.connection.mcp_inspect"
+  | "knowledge.connection.mcp_list"
   | "knowledge.dataset_approve"
   | "knowledge.dataset_get"
   | "knowledge.dedup_list"
@@ -10680,6 +10838,8 @@ export type OpName =
   | "knowledge.source.check"
   | "knowledge.source.inspect"
   | "knowledge.source.list"
+  | "knowledge.source.mcp_preview"
+  | "knowledge.source.mcp_profiles"
   | "knowledge.source.parse_links"
   | "knowledge.source.push_configure"
   | "knowledge.source.push_confirm"
@@ -11032,6 +11192,11 @@ export interface OpMap {
   "knowledge.add": { input: KnowledgeAddInput; output: KnowledgeAddOutput };
   "knowledge.bulk_add": { input: KnowledgeBulkAddInput; output: KnowledgeBulkAddOutput };
   "knowledge.bulk_delete": { input: KnowledgeBulkDeleteInput; output: KnowledgeBulkDeleteOutput };
+  "knowledge.connection.mcp_connect": { input: KnowledgeConnectionMcpConnectInput; output: KnowledgeConnectionMcpConnectOutput };
+  "knowledge.connection.mcp_disconnect": { input: MCPSlotInput; output: KnowledgeConnectionMcpDisconnectOutput };
+  "knowledge.connection.mcp_discover": { input: MCPSlotInput; output: KnowledgeConnectionMcpDiscoverOutput };
+  "knowledge.connection.mcp_inspect": { input: KnowledgeConnectionMcpInspectInput; output: KnowledgeConnectionMcpInspectOutput };
+  "knowledge.connection.mcp_list": { input: KnowledgeConnectionMcpListInput; output: KnowledgeConnectionMcpListOutput };
   "knowledge.dataset_approve": { input: KnowledgeDatasetApproveInput; output: KnowledgeDatasetApproveOutput };
   "knowledge.dataset_get": { input: KnowledgeDatasetGetInput; output: KnowledgeDatasetGetOutput };
   "knowledge.dedup_list": { input: KnowledgeDedupListInput; output: KnowledgeDedupListOutput };
@@ -11059,6 +11224,8 @@ export interface OpMap {
   "knowledge.source.check": { input: KnowledgeSourceCheckInput; output: KnowledgeSourceCheckOutput };
   "knowledge.source.inspect": { input: KnowledgeSourceInspectInput; output: KnowledgeSourceInspectOutput };
   "knowledge.source.list": { input: KnowledgeSourceListInput; output: KnowledgeSourceListOutput };
+  "knowledge.source.mcp_preview": { input: KnowledgeSourceMcpPreviewInput; output: KnowledgeSourceMcpPreviewOutput };
+  "knowledge.source.mcp_profiles": { input: KnowledgeSourceMcpProfilesInput; output: KnowledgeSourceMcpProfilesOutput };
   "knowledge.source.parse_links": { input: KnowledgeSourceParseLinksInput; output: KnowledgeSourceParseLinksOutput };
   "knowledge.source.push_configure": { input: KnowledgeSourcePushConfigureInput; output: PushStatusOutput };
   "knowledge.source.push_confirm": { input: KnowledgeSourcePushConfirmInput; output: PushStatusOutput };
@@ -11411,6 +11578,11 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.add", group: "knowledge", method: "add", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 50, audit: false, readOnly: false },
   { name: "knowledge.bulk_add", group: "knowledge", method: "bulkAdd", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 2000, audit: false, readOnly: false },
   { name: "knowledge.bulk_delete", group: "knowledge", method: "bulkDelete", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
+  { name: "knowledge.connection.mcp_connect", group: "knowledge", method: "connectionMcpConnect", idempotent: false, role: "viewer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.connection.mcp_disconnect", group: "knowledge", method: "connectionMcpDisconnect", idempotent: false, role: "viewer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.connection.mcp_discover", group: "knowledge", method: "connectionMcpDiscover", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: true },
+  { name: "knowledge.connection.mcp_inspect", group: "knowledge", method: "connectionMcpInspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5000, audit: false, readOnly: true },
+  { name: "knowledge.connection.mcp_list", group: "knowledge", method: "connectionMcpList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5000, audit: false, readOnly: true },
   { name: "knowledge.dataset_approve", group: "knowledge", method: "datasetApprove", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "knowledge.dataset_get", group: "knowledge", method: "datasetGet", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "knowledge.dedup_list", group: "knowledge", method: "dedupList", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: false },
@@ -11438,6 +11610,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
   { name: "knowledge.source.inspect", group: "knowledge", method: "sourceInspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "knowledge.source.list", group: "knowledge", method: "sourceList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
+  { name: "knowledge.source.mcp_preview", group: "knowledge", method: "sourceMcpPreview", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 5000, audit: false, readOnly: false },
+  { name: "knowledge.source.mcp_profiles", group: "knowledge", method: "sourceMcpProfiles", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5000, audit: false, readOnly: true },
   { name: "knowledge.source.parse_links", group: "knowledge", method: "sourceParseLinks", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
   { name: "knowledge.source.push_configure", group: "knowledge", method: "sourcePushConfigure", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.source.push_confirm", group: "knowledge", method: "sourcePushConfirm", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 1000, audit: true, readOnly: false },
@@ -11663,4 +11837,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 376;
+export const GENERATED_OP_COUNT = 383;

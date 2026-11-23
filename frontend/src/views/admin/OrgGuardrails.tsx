@@ -73,8 +73,8 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
     setBusy(true);
     try {
       const p = clear
-        ? await clearExtractionPolicy(identity, scope)
-        : await setExtractionPolicy(identity, scope, draft.trim());
+        ? await clearExtractionPolicy(identity, scope, "explicit")
+        : await setExtractionPolicy(identity, scope, draft.trim(), "explicit");
       setPolicy(p);
       setDraft(p.policy);
       // Name the panel's scope: a save can answer after a switch.
@@ -192,7 +192,7 @@ function ModelCallsPanel() {
       return;
     setBusy(true);
     try {
-      setState(await setOrgModelCalls(identity.org, enabled, reason.trim()));
+      setState(await setOrgModelCalls(identity.org, enabled, reason.trim(), "explicit"));
       setReason("");
       toast(`Model calls ${enabled ? "on" : "off"} for ${identity.org}`, "ok");
     } catch (e) {

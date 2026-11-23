@@ -53,7 +53,7 @@ describe("NamespaceSettingsDialog cost cap", () => {
     expect(api.reregisterNamespace).toHaveBeenCalledTimes(1);
     expect(api.reregisterNamespace).toHaveBeenCalledWith({ org: "dev", namespace: "ns" }, row("ns", 5), {
       daily_cost_cap_usd: 12,
-    });
+    }, "explicit");
   });
 
   it("Enter commits", async () => {
@@ -63,7 +63,7 @@ describe("NamespaceSettingsDialog cost cap", () => {
     expect(api.reregisterNamespace).toHaveBeenCalledTimes(1);
     expect(api.reregisterNamespace).toHaveBeenCalledWith({ org: "dev", namespace: "ns" }, row("ns", 5), {
       daily_cost_cap_usd: 7.5,
-    });
+    }, "explicit");
   });
 
   it.each(["-1", "", "5"])("%j sends nothing and reverts to the stored cap", async (text) => {

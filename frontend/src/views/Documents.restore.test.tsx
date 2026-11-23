@@ -76,7 +76,7 @@ describe("Library delete Undo", () => {
     const reads = api.listKnowledge.mock.calls.length;
     act(() => useStore.setState({ identity: { org: "acme", namespace: "other", agent: "loom-ui" } }));
     await userEvent.click(undo);
-    expect(api.restoreKnowledge).toHaveBeenCalledWith({ org: "acme", namespace: "team" }, "docs/refunds.md");
+    expect(api.restoreKnowledge).toHaveBeenCalledWith({ org: "acme", namespace: "team" }, "docs/refunds.md", "explicit");
     expect(await screen.findByText("Restored docs/refunds.md")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
     expect(screen.getByLabelText("Search library")).toHaveFocus();

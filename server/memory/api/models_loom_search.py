@@ -68,7 +68,10 @@ class LiveSearchHit(BaseModel):
     id: str = Field(min_length=1, max_length=1024)
     title: str = Field(max_length=1024)
     url: str = Field(min_length=1, max_length=4096)
-    provider: Literal["gdrive", "notion", "linear"]
+    provider: Literal["mcp"]
+    resource_identity_verified: bool = Field(
+        description="Whether the selected read echoed its requested resource identity."
+    )
     content: str = Field(default="", max_length=200)
     live: Literal[True] = True
 

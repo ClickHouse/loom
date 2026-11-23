@@ -95,7 +95,7 @@ function DatasetCard({
   const approve = async () => {
     setBusy(true);
     try {
-      const r = await approveDataset(identity, sourceUri, d, retyped);
+      const r = await approveDataset(identity, sourceUri, d, retyped, "explicit");
       toast(r.found ? `Approved ${d.name}` : `${d.name} is no longer in this document`, r.found ? "ok" : "info");
       onChanged();
     } catch (e) {

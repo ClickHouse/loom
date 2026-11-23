@@ -1,3 +1,4 @@
+import { ADMIN_SETTINGS_READ_ROUTES } from "./adminReadRoutes";
 // The API client is split by plane behind the `api.ts` barrel, so a view's client rides
 // in that view's chunk and the shell evaluates only the functions it calls. Importers
 // still import from `api.ts`.
@@ -293,12 +294,13 @@ export async function getNamespace(
 export async function setConversationLogging(
   id: Pick<Identity, "org" | "namespace">,
   enabled: boolean,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ namespace: string; enabled: boolean }> {
   return post("/v1/conversation.set_logging", {
     org: id.org,
     namespace: id.namespace,
     enabled,
-  });
+  }, undefined, intent);
 }
 
 /** The fields namespace.register writes. */
@@ -326,6 +328,7 @@ type RegisterResult = { registered: boolean; namespace: string; updated_at: stri
 export async function registerNamespace(
   id: Pick<Identity, "org" | "namespace">,
   opts: NamespaceRegisterFields,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<RegisterResult> {
   const body: Record<string, unknown> = {
     org: id.org,
@@ -353,7 +356,7 @@ export async function registerNamespace(
   if (opts.capture_generation_io !== undefined) {
     body["capture_generation_io"] = opts.capture_generation_io;
   }
-  return post("/v1/namespace.register", body);
+  return post("/v1/namespace.register", body, undefined, intent);
 }
 
 /** Rewrite an existing namespace's row with `patch` applied. The fields the settings
@@ -363,6 +366,7 @@ export async function reregisterNamespace(
   id: Pick<Identity, "org" | "namespace">,
   ns: NamespaceInfo,
   patch: Partial<NamespaceRegisterFields>,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<RegisterResult> {
   return registerNamespace(id, {
     owner_email: ns.owner_email,
@@ -376,7 +380,7 @@ export async function reregisterNamespace(
     requires_approval: ns.requires_approval ?? false,
     capture_generation_io: ns.capture_generation_io,
     ...patch,
-  });
+  }, intent);
 }
 
 /** Soft-delete a namespace (sets active=false); existing memories +
@@ -384,8 +388,9 @@ export async function reregisterNamespace(
  * data must go too. */
 export async function deleteNamespace(
   id: Pick<Identity, "org" | "namespace">,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ deleted: boolean; namespace: string; updated_at: string }> {
-  return post("/v1/namespace.delete", { org: id.org, namespace: id.namespace });
+  return post("/v1/namespace.delete", { org: id.org, namespace: id.namespace }, undefined, intent);
 }
 
 // ===== Consolidations =====
@@ -555,8 +560,9 @@ export async function requestErasure(
   requester: string,
   purge: boolean,
   signal?: AbortSignal,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<ErasureRequestResult> {
-  return post("/v1/erasure.request", { org, ...scope, requester, purge }, signal);
+  return post("/v1/erasure.request", { org, ...scope, requester, purge }, signal, intent);
 }
 
 /** Mirrors `server/erasure/api/erasure.py::ErasureStatusOutput` (the parts shown). */
@@ -594,8 +600,9 @@ export async function clearAgentMemories(
   id: Pick<Identity, "org" | "namespace">,
   agent: string,
   signal?: AbortSignal,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<MemoryClearResult> {
-  return post("/v1/memory.clear", { org: id.org, namespace: id.namespace, agent, confirm_subject: agent }, signal);
+  return post("/v1/memory.clear", { org: id.org, namespace: id.namespace, agent, confirm_subject: agent }, signal, intent);
 }
 
 /** One (token, agent) that read the namespace: `server/memory/api/models_exposure.py`. */
@@ -752,6 +759,7 @@ export async function addBlacklist(
     reason?: string;
     created_by?: string;
   } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ pattern_id: string; created_at: string }> {
   return post("/v1/blacklist.add", {
     org: id.org,
@@ -761,20 +769,21 @@ export async function addBlacklist(
     scope: opts.scope ?? "namespace",
     reason: opts.reason ?? "",
     created_by: opts.created_by ?? "",
-  });
+  }, undefined, intent);
 }
 
 export async function removeBlacklist(
   id: Pick<Identity, "org">,
   pattern_id: string,
   opts: { removed_by?: string; reason?: string } = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ removed: boolean; removed_at: string | null }> {
   return post("/v1/blacklist.remove", {
     org: id.org,
     pattern_id,
     removed_by: opts.removed_by ?? "",
     reason: opts.reason ?? "",
-  });
+  }, undefined, intent);
 }
 
 // ===== History policy =====
@@ -834,6 +843,7 @@ export async function setPolicy(
     description?: string;
     enabled?: boolean;
   },
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ rule: PolicyRule; leaf_count: number }> {
   return post("/v1/policy.set", {
     org: id.org,
@@ -844,14 +854,15 @@ export async function setPolicy(
     condition: rule.condition,
     description: rule.description ?? "",
     enabled: rule.enabled ?? true,
-  });
+  }, undefined, intent);
 }
 
 export async function deletePolicy(
   id: Pick<Identity, "org" | "namespace">,
   policy_id: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ removed: boolean }> {
-  return post("/v1/policy.delete", { org: id.org, namespace: id.namespace, policy_id });
+  return post("/v1/policy.delete", { org: id.org, namespace: id.namespace, policy_id }, undefined, intent);
 }
 
 export interface PolicyLeafResult {
@@ -896,6 +907,7 @@ export async function checkPolicy(
     at?: string;
     rules?: PolicyCondition[];
   },
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<PolicyCheckResponse> {
   const body: Record<string, unknown> = {
     org: id.org,
@@ -908,7 +920,7 @@ export async function checkPolicy(
   };
   if (req.at) body["at"] = req.at;
   if (req.rules) body["rules"] = req.rules;
-  return post("/v1/policy.check", body);
+  return post("/v1/policy.check", body, undefined, intent);
 }
 
 export interface PolicyDecisionRow {
@@ -1087,25 +1099,25 @@ export interface SettingChange {
 
 /** POST /v1/admin/settings.list — every setting's value in force on the replica that answers. */
 export async function adminSettingsList(opts: RequestOpts = {}): Promise<SettingRow[]> {
-  const out = await post<{ settings: SettingRow[] }>("/v1/admin/settings.list", {}, opts.signal);
+  const out = await post<{ settings: SettingRow[] }>(ADMIN_SETTINGS_READ_ROUTES.list, {}, opts.signal);
   return out.settings;
 }
 
 /** POST /v1/admin/settings.set — override a live setting, refused (409) unless `expected`
  *  is still the value in force. */
-export async function adminSettingSet(name: string, value: unknown, expected: unknown): Promise<SettingRow> {
-  const out = await post<{ setting: SettingRow }>("/v1/admin/settings.set", { name, value, expected });
+export async function adminSettingSet(name: string, value: unknown, expected: unknown, intent: "automatic" | "explicit" = "automatic"): Promise<SettingRow> {
+  const out = await post<{ setting: SettingRow }>("/v1/admin/settings.set", { name, value, expected }, undefined, intent);
   return out.setting;
 }
 
 /** POST /v1/admin/settings.set with `clear` — back to the environment's value or the default. */
-export async function adminSettingReset(name: string, expected: unknown): Promise<SettingRow> {
-  const out = await post<{ setting: SettingRow }>("/v1/admin/settings.set", { name, clear: true, expected });
+export async function adminSettingReset(name: string, expected: unknown, intent: "automatic" | "explicit" = "automatic"): Promise<SettingRow> {
+  const out = await post<{ setting: SettingRow }>("/v1/admin/settings.set", { name, clear: true, expected }, undefined, intent);
   return out.setting;
 }
 
 /** POST /v1/admin/settings.history — recorded changes, newest first. */
 export async function adminSettingsHistory(name = "", limit = 50, opts: RequestOpts = {}): Promise<SettingChange[]> {
-  const out = await post<{ changes: SettingChange[] }>("/v1/admin/settings.history", { name, limit }, opts.signal);
+  const out = await post<{ changes: SettingChange[] }>(ADMIN_SETTINGS_READ_ROUTES.history, { name, limit }, opts.signal);
   return out.changes;
 }

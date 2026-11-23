@@ -54,7 +54,7 @@ export function ProjectionFailuresPanel() {
   };
   const retry = () =>
     act(async () => {
-      const r = await retryProjectionFailures(identity);
+      const r = await retryProjectionFailures(identity, "explicit");
       const count = (keep: (x: ProjectionRetry) => boolean) => r.results.filter(keep).length;
       const fixed = count((x) => x.resolved);
       const failedAgain = count((x) => x.retried && !x.resolved && !x.abandoned);
@@ -71,7 +71,7 @@ export function ProjectionFailuresPanel() {
     });
   const dismiss = (id: string) =>
     act(async () => {
-      await resolveProjectionFailures(identity.org, [id]);
+      await resolveProjectionFailures(identity.org, [id], "explicit");
       toast("Dismissed", "ok");
     });
 

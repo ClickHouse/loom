@@ -7,6 +7,7 @@ require "securerandom"
 require "uri"
 
 require_relative "errors"
+require_relative "session_protection"
 require_relative "version"
 require_relative "configuration"
 require_relative "retry_policy"
@@ -73,7 +74,8 @@ module ClickHouse
       # out 429 answers (default 15, 0 raises the first). +sleeper+ is called with the
       # seconds to wait between attempts (a test seam; default Kernel#sleep).
       def initialize(base_url: nil, api_key: nil, org: nil, namespace: nil, agent: nil, open_timeout: nil,
-                     read_timeout: nil, retry_policy: nil, rate_limit_max_wait: nil, sleeper: nil)
+                     read_timeout: nil, retry_policy: nil, rate_limit_max_wait: nil, sleeper: nil,
+                     session_protection: nil)
         config = Loom.configuration
         @base_url = first_non_blank(base_url, config.base_url, ENV.fetch("LOOM_BASE_URL", nil),
                                     DEFAULT_BASE_URL).sub(%r{/+\z}, "")
@@ -88,6 +90,11 @@ module ClickHouse
         @retry_policy = RetryPolicy.resolve(@retry_policy, retry_policy, "Client")
         @rate_limit_max_wait = Float(rate_limit_max_wait || config.rate_limit_max_wait || 15)
         @sleeper = sleeper || ->(seconds) { sleep(seconds) }
+        unless session_protection.nil? || session_protection.is_a?(SessionProtection)
+          raise ArgumentError, "session_protection must be a SessionProtection"
+        end
+        @session_protection = session_protection
+        @session_protection&.ready!
         @groups = {}
       end
 
@@ -104,6 +111,11 @@ module ClickHouse
         body = JSON.generate(@identity.merge((input || {}).transform_keys(&:to_s)))
         policy = RetryPolicy.resolve(@retry_policy, retry_policy, "call #{op}")
         send_with_retries(op, spec, body, request_headers(spec, idempotency_key), policy)
+      end
+
+      # Retained automatic work uses the same barrier with every client and namespace.
+      def call_automatic(capture, op, input = nil, **options)
+        capture.call { call(op, input, **options) }
       end
 
       # Saves +value+ under +key+: plain text, or any Hash, Array or scalar. Writing a
@@ -256,9 +268,69 @@ module ClickHouse
         request = Net::HTTP::Post.new(uri)
         headers.each { |name, value| request[name] = value }
         request.body = body
+        if headers.keys.any? { |name| name.downcase == "x-loom-session-protection" }
+          raise SessionProtectionUnavailable
+        end
+        capture = SessionCapture.current
+        families = [@session_protection, *SessionCapture.current_families].compact.uniq { |family| family.pointer }
+        capture = SessionCapture.new(families) if capture
+        capture&.guard!
         Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https",
                                                 open_timeout: @open_timeout, read_timeout: @read_timeout) do |http|
-          http.request(request)
+          if families.empty?
+            http.request(request)
+          else
+            protected_post(http, request, families, capture)
+          end
+        end
+      end
+
+      def protected_post(http, request, families, capture)
+        attempts = []
+        complete = false
+        begin
+          families.each { |family| family.ready! }
+          capture&.guard!
+          families.each { |family| attempts << [family, family.begin_attempt] }
+          request["X-Loom-Session-Protection"] = "v1"
+          attempts.each { |family, name| family.attempt_ready!(name) }
+          capture&.families&.each do |family|
+            own = attempts.find { |candidate, _| candidate.pointer == family.pointer }&.last
+            raise AutomaticCaptureSuppressed if family.protected? || family.pending_except?(own)
+          end
+          response = http.request(request) do |answer|
+            media = answer["Content-Type"].to_s.split(";", 2).first.to_s.strip.downcase
+            unless media == "application/json" || media.end_with?("+json") || [204, 304].include?(answer.code.to_i)
+              raise SessionProtectionUnavailable
+            end
+            bytes = +""
+            answer.read_body do |chunk|
+              raise SessionProtectionUnavailable if bytes.bytesize + chunk.bytesize > SessionProtection::MAX_BODY
+
+              bytes << chunk
+            end
+            value = bytes.empty? && [204, 304].include?(answer.code.to_i) ? {} : JSON.parse(bytes)
+            raise SessionProtectionUnavailable unless value.is_a?(Hash)
+
+            families.each { |family| family.ready! }
+            families.each(&:mark!) if SessionProtection.marked?(value)
+            answer.body = bytes
+          end
+          attempts.each { |family, name| family.finish_attempt(name) }
+          complete = true
+          response
+        rescue JSON::ParserError, JSON::NestingError
+          raise SessionProtectionUnavailable
+        ensure
+          unless complete
+            families.each do |family|
+              begin
+                family.mark!
+              rescue SessionProtectionUnavailable
+                # The durable pending marker also refuses resumed automatic writes.
+              end
+            end
+          end
         end
       end
 

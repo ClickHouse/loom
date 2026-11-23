@@ -84,10 +84,10 @@ describe("ThreadActions", () => {
     await userEvent.clear(field);
     await userEvent.type(field, "Release plan");
     await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
-    await waitFor(() => expect(api.renameThread).toHaveBeenCalledWith(identity, "claude-code", "t1", "Release plan"));
+    await waitFor(() => expect(api.renameThread).toHaveBeenCalledWith(identity, "claude-code", "t1", "Release plan", "explicit"));
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
-    await waitFor(() => expect(api.deleteThread).toHaveBeenCalledWith(identity, "claude-code", "t1"));
+    await waitFor(() => expect(api.deleteThread).toHaveBeenCalledWith(identity, "claude-code", "t1", "explicit"));
     expect(onChanged).toHaveBeenCalledTimes(2);
   });
 
@@ -114,7 +114,7 @@ describe("ThreadActions", () => {
     await userEvent.type(within(dialog).getByLabelText("Title"), "Release plan");
     await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
     await waitFor(() =>
-      expect(api.createThreadRow).toHaveBeenCalledWith(identity, "claude-code", "t1", "Release plan"),
+      expect(api.createThreadRow).toHaveBeenCalledWith(identity, "claude-code", "t1", "Release plan", "explicit"),
     );
     expect(api.renameThread).not.toHaveBeenCalled();
   });
@@ -137,7 +137,7 @@ describe("ThreadActions", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
-    await waitFor(() => expect(api.createThreadRow).toHaveBeenCalledWith(identity, "claude-code", "t1", "Deploy plan"));
+    await waitFor(() => expect(api.createThreadRow).toHaveBeenCalledWith(identity, "claude-code", "t1", "Deploy plan", "explicit"));
   });
 
   it("renames as the agent that owns the thread's row, not the last writer", async () => {
@@ -160,7 +160,7 @@ describe("ThreadActions", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
-    await waitFor(() => expect(api.renameThread).toHaveBeenCalledWith(identity, "codex", "t1", "Deploy plan"));
+    await waitFor(() => expect(api.renameThread).toHaveBeenCalledWith(identity, "codex", "t1", "Deploy plan", "explicit"));
     expect(api.createThreadRow).not.toHaveBeenCalled();
   });
 
@@ -329,7 +329,7 @@ describe("ThreadActions", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
-    await waitFor(() => expect(api.renameThread).toHaveBeenLastCalledWith(identity, "cursor", "t1", "Deploy plan"));
+    await waitFor(() => expect(api.renameThread).toHaveBeenLastCalledWith(identity, "cursor", "t1", "Deploy plan", "explicit"));
     expect(api.createThreadRow).not.toHaveBeenCalled();
   });
 
@@ -378,7 +378,7 @@ describe("ThreadActions", () => {
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("This conversation was deleted", "info"));
-    expect(api.renameThread).toHaveBeenCalledWith(identity, "codex", "t1", "Deploy plan");
+    expect(api.renameThread).toHaveBeenCalledWith(identity, "codex", "t1", "Deploy plan", "explicit");
     expect(api.createThreadRow).not.toHaveBeenCalled();
     expect(onChanged).toHaveBeenCalled();
   });

@@ -95,11 +95,6 @@ export function Setup() {
       <PageHeader
         title="Settings"
         tab={TAB_LABELS[tab]}
-        actions={
-          <Button type="secondary" htmlType="button" onClick={() => setView("connected-accounts")}>
-            Connected accounts
-          </Button>
-        }
       >
         {tab === "models" ? (
           <span className="text-sm text-text-muted">Deployment-wide</span>
@@ -277,6 +272,7 @@ function ImportCuratedPanel({ unavailable }: { unavailable: string | null }) {
       const r = await importCuratedDoc(
         { org: identity.org, namespace: identity.namespace },
         { content, source_uri: sourceUri.trim() || "curated_doc" },
+        "explicit",
       );
       setResult(r);
       const tone = r.rejected > 0 ? "error" : r.written > 0 ? "ok" : "info";

@@ -101,7 +101,7 @@ export function ProposalsPanel() {
     try {
       const r = await decideProposals(scope, [key], decision, {
         [key]: approvedHash,
-      });
+      }, "explicit");
       const result = r.results[0];
       if (r.decided === 0)
         // Not a proposal any more: decided by the policy or by someone else first.

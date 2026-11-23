@@ -133,7 +133,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
     const savedKey = key;
     setSaving(true);
     try {
-      await reregisterNamespace({ org, namespace }, ns, patch);
+      await reregisterNamespace({ org, namespace }, ns, patch, "explicit");
       toast("Settings saved", "ok");
       const next = await getNamespace({ org, namespace });
       // The dialog moved to another namespace while this save was in flight.
@@ -174,7 +174,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
       return;
     setSaving(true);
     try {
-      const r = await deleteNamespace({ org, namespace });
+      const r = await deleteNamespace({ org, namespace }, "explicit");
       if (r.deleted) {
         toast(`Deleted ${namespace}`, "ok");
         onOpenChange(false);

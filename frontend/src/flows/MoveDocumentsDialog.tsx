@@ -106,6 +106,7 @@ export function MoveDocumentsDialog({
     const movedOf = (results: KnowledgeMoveResult[]) => results.filter((x) => x.moved).map((x) => x.source_uri);
     const r = await moveKnowledge({ org, namespace: from }, target.namespace, left, controller.signal, (results) =>
       onMoved(movedOf(results)),
+      "explicit",
     );
     const moved = movedOf(r.results);
     if (controller.signal.aborted) return; // closed meanwhile: each call read the list again

@@ -33,7 +33,7 @@ export function SessionBriefsSection({ org, namespace }: { org: string; namespac
     });
     if (!ok) return;
     try {
-      await deleteBrief({ org, namespace }, b.brief_key);
+      await deleteBrief({ org, namespace }, b.brief_key, "explicit");
       setBriefs((all) => all.filter((x) => x.brief_key !== b.brief_key));
     } catch (e) {
       toastError("Couldn't forget the brief", e);

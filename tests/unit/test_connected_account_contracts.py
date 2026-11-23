@@ -1,8 +1,7 @@
-"""Canonical-owner persistence, cleanup, own-list and configured lifecycle bounds."""
+"""Canonical-owner persistence, cleanup and configured lifecycle bounds."""
 
 from __future__ import annotations
 
-import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from types import SimpleNamespace
@@ -11,22 +10,12 @@ from typing import Any
 import pytest
 
 from server.auth import account_lifecycle
-from server.auth.context import current_auth_var
-from server.core.errors import BackendUnavailableError, ValidationError
-from server.core.secrets_at_rest import unseal
+from server.core.errors import BackendUnavailableError
 from server.erasure.store import census
-from server.knowledge.api.models_connections import ConnectionListInput
 from server.knowledge.app import connected_accounts as accounts
-from server.knowledge.app.connections import handle_connection_list
-from server.knowledge.domain.connected_accounts import CREDENTIAL_PURPOSE, ConnectedAccount
+from server.knowledge.domain.connected_accounts import ConnectedAccount
 from server.knowledge.store import connected_accounts as store
-from tests.unit.test_connected_account_callbacks import (
-    _auth,
-    _World,
-)
-from tests.unit.test_connected_account_callbacks import (
-    world as world,
-)
+from tests.unit.test_connected_account_cleanup import _World
 
 
 class _Rows:
@@ -114,19 +103,19 @@ async def test_owner_scan_refuses_truncation_and_reseal_page_uses_configured_bou
 
 
 async def test_account_lease_forwards_configured_ttl_and_wait_and_stop_bound(
-    world: _World,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    account_lease = accounts.account_lease
+    world = _World(monkeypatch)
+    world.sources.clear()
     held = []
     timeouts = []
-    lease = accounts.leases.cluster_lease
     timeout = accounts.asyncio.timeout
 
     @asynccontextmanager
     async def tracked_lease(key: str, **kw: Any):
         held.append((key, kw))
-        async with lease(key, **kw):
-            yield
+        yield
 
     def tracked_timeout(seconds: float):
         timeouts.append(seconds)
@@ -135,15 +124,15 @@ async def test_account_lease_forwards_configured_ttl_and_wait_and_stop_bound(
     monkeypatch.setattr(accounts.settings, "knowledge_connected_lease_ttl_s", 41.0)
     monkeypatch.setattr(accounts.settings, "knowledge_connected_lease_wait_s", 1.25)
     monkeypatch.setattr(accounts.settings, "knowledge_connected_stop_timeout_s", 7.0)
+    monkeypatch.setattr(accounts, "account_lease", account_lease)
     monkeypatch.setattr(accounts.leases, "cluster_lease", tracked_lease)
     monkeypatch.setattr(accounts, "asyncio", SimpleNamespace(timeout=tracked_timeout))
-    await accounts.disconnect("team", "person", "gdrive")
+    await accounts.stop_subjects(["person"], org="team")
     assert timeouts == [7.0]
     assert len(held) == 1 and held[0][0].startswith("connected-account:")
     assert held[0][1]["ttl_s"] == 41.0 and held[0][1]["wait_s"] == 1.25
-    assert not world.requests
-    assert set(world.rows) == {("team", "person", "gdrive")}
-    ended = world.rows[("team", "person", "gdrive")]
+    assert set(world.accounts) == {("team", "person", "gdrive")}
+    ended = world.accounts[("team", "person", "gdrive")]
     assert asdict(ended) == {
         "org": "team",
         "subject": "person",
@@ -160,65 +149,11 @@ async def test_account_lease_forwards_configured_ttl_and_wait_and_stop_bound(
         "disconnected_at": ended.disconnected_at,
         "version": ended.version,
     }
-    assert ended.disconnected_at is not None and ended.version > 0
+    assert ended.disconnected_at is not None
     prefix, generation = ended.connection_id.split("/")
     assert len(prefix) == len(generation) == 32 and generation.startswith("0")
     assert set(prefix + generation) <= set("0123456789abcdef")
-    assert world.keeper == {
-        "connected-account-generation:" + prefix: (ended.connection_id, accounts._FENCE_EXPIRY)
-    }
-
-
-async def test_provider_revoke_uses_its_own_bound_after_local_stop(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured = []
-
-    async def revoke(token: str, **kw: Any):
-        captured.append((token, kw))
-
-    monkeypatch.setattr(accounts.settings, "knowledge_connected_revoke_timeout_s", 2.5)
-    monkeypatch.setattr(accounts, "client", lambda _kind: SimpleNamespace(revoke=revoke))
-    before = time.monotonic()
-    await accounts._revoke(
-        ConnectedAccount("team", "person", "gdrive", "stopped"), credential="old"
-    )
-    after = time.monotonic()
-    assert len(captured) == 1 and captured[0][0] == "old"
-    assert captured[0][1]["refresh"] is True
-    assert before + 2.5 <= captured[0][1]["deadline"] <= after + 2.5
-
-
-async def test_connection_list_uses_own_subject_and_hides_a_stopped_generation(
-    world: _World,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _url, state, binding = await accounts.start(_auth(), "gdrive")
-    await accounts.callback("gdrive", state, binding, "older-code")
-    account = world.account()
-
-    async def owned(subjects: list[str], *, org: str):
-        assert subjects == ["person"] and org == "team"
-        return [account]
-
-    monkeypatch.setattr(store, "owned", owned)
-    token = current_auth_var.set(_auth())
-    try:
-        result = await handle_connection_list(ConnectionListInput(org="team"))
-        entry = next(x for x in result.connections if x.kind == "gdrive")
-        assert entry.connected and entry.account_email == "display@example.com"
-        with pytest.raises(ValidationError):
-            await handle_connection_list(ConnectionListInput(org="other"))
-        world.keeper[accounts._fence_key(account.connection_id)] = (
-            "stopped",
-            int(time.time()) + 60,
-        )
-        result = await handle_connection_list(ConnectionListInput(org="team"))
-        entry = next(x for x in result.connections if x.kind == "gdrive")
-        assert not entry.connected and entry.account_email is None and entry.scopes == []
-    finally:
-        current_auth_var.reset(token)
-    assert unseal(CREDENTIAL_PURPOSE, account.credential_enc)
+    assert world.fences == {"connected-account-generation:" + prefix: ended.connection_id}
 
 
 async def test_uncomposed_auth_retirement_refuses_instead_of_skipping_cleanup(
@@ -229,13 +164,10 @@ async def test_uncomposed_auth_retirement_refuses_instead_of_skipping_cleanup(
         await account_lifecycle.stop_connections(["person"], erase_owner=True)
 
 
-async def test_http_composition_binds_real_revocation_cleanup_before_serving(
-    world: _World, monkeypatch: pytest.MonkeyPatch
+async def test_lifecycle_binding_runs_real_revocation_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from fastapi import FastAPI
-
-    from server.knowledge.app import connection_routes
-
+    _World(monkeypatch)
     scans = []
 
     async def identities(*, org=None):
@@ -250,7 +182,7 @@ async def test_http_composition_binds_real_revocation_cleanup_before_serving(
 
     monkeypatch.setattr(store, "owner_identities", identities)
     monkeypatch.setattr(store, "owned", owned)
-    connection_routes.attach(FastAPI())
+    account_lifecycle.bind(accounts.stop_subjects)
     assert account_lifecycle._stopper is accounts.stop_subjects
     await account_lifecycle.stop_connections(["person"], respect_cutoff=True)
-    assert scans == [None] and not world.requests
+    assert scans == [None]

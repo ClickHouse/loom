@@ -87,7 +87,7 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded, reason 
         memoryType: "semantic",
         tags,
         ttlSeconds: EXPIRY_OPTIONS[expiryIdx].ttlSeconds,
-      });
+      }, "explicit");
       toast("Memory added", "ok");
     } catch (e) {
       // Added, with only lists and search behind: the dialog closes as after a success, so

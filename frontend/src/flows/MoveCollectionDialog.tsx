@@ -56,7 +56,7 @@ export function MoveCollectionDialog({
     setBusy(true);
     setError(null);
     try {
-      await moveCollection(org, collection.namespace, target);
+      await moveCollection(org, collection.namespace, target, "explicit");
       invalidateSharedCollections();
       toast(target ? `Moved ${self} into ${shown(target)}` : `${self} is top-level`, "ok");
       onMoved?.();

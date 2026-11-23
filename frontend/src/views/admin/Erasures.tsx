@@ -278,7 +278,7 @@ function ScopeDialog({
     const signal = AbortSignal.timeout(LONG_CALL_MS);
     try {
       if (erase) {
-        const r = await requestErasure(identity.org, scope, requester, purges, signal);
+        const r = await requestErasure(identity.org, scope, requester, purges, signal, "explicit");
         toast(
           r.status === "failed" ? `Erasure failed: ${r.failure_reason}` : `Erasure ${r.status}`,
           r.status === "failed" ? "error" : "ok",

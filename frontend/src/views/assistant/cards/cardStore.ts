@@ -196,6 +196,7 @@ export function startStarter(
     namespace,
     unanswered,
   }: { alsoAsk: boolean; gate: string | null; namespace: string; unanswered?: string | null },
+  intent: "automatic" | "explicit" = "automatic",
 ): void {
   const st = useChat.getState();
   // With the chat off a stored conversation is read-only: nothing is appended to it.
@@ -222,7 +223,7 @@ export function startStarter(
     readCard(turnId, gate);
   };
   if (alsoAsk) {
-    ask(question, namespace, { context: null, item: null }, { card, shown: (id) => readCard(id, gate), alone });
+    ask(question, namespace, { context: null, item: null }, { card, shown: (id) => readCard(id, gate), alone }, {}, intent);
     return;
   }
   useChat.setState({ notice: null });

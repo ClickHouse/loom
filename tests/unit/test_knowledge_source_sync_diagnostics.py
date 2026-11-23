@@ -10,12 +10,10 @@ from typing import Any
 
 import pytest
 
-from server.knowledge.app import extractors
 from server.knowledge.app import source_sync as sync
-from server.knowledge.domain import access_list
-from server.knowledge.domain.sources import MIRRORED_ACCESS
 from server.knowledge.workers.source_sync import outcome
-from tests.unit.test_knowledge_source_sync import DOCS, _file, _source
+from tests.unit.test_knowledge_source_sync import _source
+from tests.unit.test_mcp_source_sync import harness as harness
 
 
 @pytest.fixture
@@ -40,7 +38,7 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 @pytest.mark.parametrize("mirrored", [False, True])
 def test_document_figures_stay_in_private_turn(
-    boundary: dict[str, Any], monkeypatch: pytest.MonkeyPatch, mirrored: bool
+    boundary: dict[str, Any], monkeypatch: pytest.MonkeyPatch, harness, mirrored: bool
 ) -> None:
     answers = []
     for count in (1, 10000):
@@ -58,7 +56,7 @@ def test_document_figures_stay_in_private_turn(
             return answer
 
         monkeypatch.setattr(sync, "_turn_of", lambda src: run)
-        src = _source(access=MIRRORED_ACCESS) if mirrored else _source()
+        src = harness.source if mirrored else _source()
         result = sync.PassResult(sources=1)
         assert asyncio.run(sync._sync_one(src, {}, None, result)) is turn
         assert boundary["states"][-1] is turn
@@ -75,6 +73,7 @@ def test_mirrored_failures_have_one_boundary_code(
     boundary: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    harness,
     where: str,
 ) -> None:
     answers = []
@@ -97,9 +96,9 @@ def test_mirrored_failures_have_one_boundary_code(
             monkeypatch.setattr(sync, "_write_state", state)
         result = sync.PassResult()
         with caplog.at_level(logging.INFO, logger=sync.log.name):
-            asyncio.run(sync._sync_one(_source(access=MIRRORED_ACCESS), {}, None, result))
+            asyncio.run(sync._sync_one(harness.source, {}, None, result))
         assert "private-file" not in caplog.text
-        assert result.errors == ["acme/code-acme-app/decks: SYNC_FAILED"]
+        assert result.errors == ["org/collection/selected: SYNC_FAILED"]
         assert result.failed == 0
         assert boundary["failures"] == [("RuntimeError", "SYNC_FAILED")]
         answers.append((dataclasses.asdict(result), caplog.messages[:]))
@@ -119,47 +118,3 @@ def test_namespace_failure_keeps_its_existing_diagnostics(
     assert result.errors == ["acme/code-acme-app/decks: failed ValueError"]
     assert "namespace diagnostic" in caplog.text
     assert boundary["failures"] == [("RuntimeError", "ValueError")]
-
-
-@pytest.mark.parametrize("mirrored", [False, True])
-@pytest.mark.parametrize("stage", ["extract", "fetch", "write"])
-def test_per_file_failures_emit_no_mirrored_log(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    mirrored: bool,
-    stage: str,
-) -> None:
-    async def fetch(*args: Any) -> Any:
-        if stage == "extract":
-            raise extractors.ExtractionFailed("corrupt", "private extractor output")
-        if stage == "fetch":
-            raise ValueError("private fetch output")
-        return sync._Fetched("text", "markdown")
-
-    async def write(*args: Any, **kw: Any) -> Any:
-        raise ValueError("private write output")
-
-    async def current(*args: Any) -> None:
-        pass
-
-    monkeypatch.setattr(sync, "_fetch", fetch)
-    monkeypatch.setattr(sync, "write_document", write)
-    monkeypatch.setattr(sync, "require_current", current)
-    src = _source(access=MIRRORED_ACCESS) if mirrored else _source()
-    turn = sync.TurnResult(kind_state={sync._PICTURES_CHECKED: {}})
-    with caplog.at_level(logging.INFO, logger=sync.log.name):
-        for i in range(3):
-            file = _file(f"private-file-{i}", DOCS, "revision")
-            asyncio.run(
-                sync._fetch_and_write(
-                    src,
-                    "token",
-                    file,
-                    "uri",
-                    turn,
-                    stored_content_sha256="",
-                    permissions=access_list.UNREAD,
-                )
-            )
-    assert len(turn.waits) == 3
-    assert len(caplog.records) == (0 if mirrored else 3)

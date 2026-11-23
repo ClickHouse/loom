@@ -104,7 +104,7 @@ describe("MemoryInspector restore of a superseded row", () => {
         // Only the retirement on screen: a delete since is left as it is.
         if_superseded_by: "m-city-4",
         only_if_superseded: true,
-      }),
+      }, "explicit"),
     );
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Restored", "ok"));
     expect(onChanged).toHaveBeenCalled();
@@ -122,7 +122,7 @@ describe("MemoryInspector restore of a superseded row", () => {
         session_id: "s1",
         if_superseded_by: "",
         only_if_superseded: true,
-      }),
+      }, "explicit"),
     );
   });
 

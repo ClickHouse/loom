@@ -49,6 +49,19 @@ export class SessionProtection {
     return this.#tainted;
   }
 
+  async requireReady(): Promise<void> {
+    try {
+      if (this.#pending) await this.#pending;
+      const state = await this.#read();
+      if (state !== "clean" && state !== "protected") throw new SessionProtectionUnavailable();
+      if (state === "protected") this.#tainted = true;
+      if (this.#tainted && state !== "protected") throw new SessionProtectionUnavailable();
+    } catch {
+      this.#tainted = true;
+      throw new SessionProtectionUnavailable();
+    }
+  }
+
   mark(): Promise<void> {
     // The latch stops concurrent callbacks; only the durable acknowledgement releases content.
     this.#tainted = true;
@@ -90,7 +103,21 @@ export function responseRoots(
   capture?: SessionCapture,
   observe?: SessionCapture,
 ): readonly SessionProtection[] {
-  return Object.freeze([...new Set([...(capture?.roots ?? []), ...(observe?.roots ?? []), ...(root ? [root] : [])])]);
+  const roots = [...new Set([...(capture?.roots ?? []), ...(observe?.roots ?? []), ...(root ? [root] : [])])];
+  if (roots.some((family) => !(family instanceof SessionProtection))) throw new SessionProtectionUnavailable();
+  return Object.freeze(roots);
+}
+
+/** Only an installed observer may declare the existing request protocol. */
+export async function protectionHeaders(
+  headers: Record<string, string>,
+  roots: readonly SessionProtection[],
+): Promise<Record<string, string>> {
+  if (Object.keys(headers).some((name) => name.toLowerCase() === "x-loom-session-protection")) {
+    throw new SessionProtectionUnavailable();
+  }
+  await Promise.all(roots.map((root) => root.requireReady()));
+  return roots.length ? { ...headers, "X-Loom-Session-Protection": "v1" } : { ...headers };
 }
 
 export async function requireAutomaticAllowed(roots: readonly SessionProtection[], automatic: boolean): Promise<void> {
@@ -162,6 +189,7 @@ export async function observeResponse<T>(value: T, roots: readonly SessionProtec
   if (!roots.length) return value;
   let marked: boolean;
   try {
+    await Promise.all(roots.map((root) => root.requireReady()));
     if (!object(value)) throw new SessionProtectionUnavailable();
     marked = markedEnvelope(value);
   } catch {

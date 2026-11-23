@@ -161,8 +161,9 @@ export async function listTrackerSources(
 export async function addTrackerSource(
   body: Record<string, unknown>,
   opts: RequestOpts = {},
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<TrackerSourceAddResult> {
-  return post<TrackerSourceAddResult>("/v1/tracker.source.add", body, opts.signal);
+  return post<TrackerSourceAddResult>("/v1/tracker.source.add", body, opts.signal, intent);
 }
 
 export async function checkTrackerSource(
@@ -178,16 +179,18 @@ export async function rotateTrackerSource(
   name: string,
   user: string,
   password: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ name: string; contract: TrackerSourceCheckResult["contract"]; rotated_at: string }> {
-  return post("/v1/tracker.source.rotate", { org, name, user, password });
+  return post("/v1/tracker.source.rotate", { org, name, user, password }, undefined, intent);
 }
 
 export async function removeTrackerSource(
   org: string,
   name: string,
   confirm: string,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ name: string; deactivated: boolean; namespaces_retired: string[] }> {
-  return post("/v1/tracker.source.remove", { org, name, confirm });
+  return post("/v1/tracker.source.remove", { org, name, confirm }, undefined, intent);
 }
 
 /** The contract before a connection — every table and column Loom reads, what each holds, and a blank view per table (no I/O). */
@@ -223,6 +226,7 @@ export async function setTrackerMapping(
   name: string,
   mapping: SourceMapping | null,
   dryRun = false,
+  intent: "automatic" | "explicit" = "automatic",
 ): Promise<{ name: string; contract: TrackerSourceCheckResult["contract"]; dry_run: boolean; written: boolean }> {
-  return post("/v1/tracker.source.set_mapping", { org, name, mapping, dry_run: dryRun });
+  return post("/v1/tracker.source.set_mapping", { org, name, mapping, dry_run: dryRun }, undefined, intent);
 }

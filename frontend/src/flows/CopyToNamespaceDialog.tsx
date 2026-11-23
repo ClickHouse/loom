@@ -77,7 +77,7 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey }:
       const res = await copyMemoryTo(source, memoryKey, target, {
         targetKey: newKey.trim() || undefined,
         rationale: rationale.trim() || undefined,
-      });
+      }, "explicit");
       toast(`Copied to ${res.target_namespace} as ${res.target_key}`, "ok");
       reset();
       onOpenChange(false);

@@ -151,7 +151,7 @@ export function PrivacyFilters({
         pattern_type: "substring",
         scope,
         reason: reason.trim() || undefined,
-      });
+      }, "explicit");
       setPattern("");
       setReason("");
       toast("Pattern added", "ok");
@@ -163,7 +163,7 @@ export function PrivacyFilters({
 
   const remove = async (pattern_id: string) => {
     try {
-      await removeBlacklist({ org: identity.org }, pattern_id);
+      await removeBlacklist({ org: identity.org }, pattern_id, undefined, "explicit");
       reload();
     } catch (e) {
       toastError("Failed", e);
@@ -185,7 +185,7 @@ export function PrivacyFilters({
     if (!ok) return;
     setSweeping(r.pattern_id);
     try {
-      const s = await sweepBlacklistPattern(identity, r.pattern_id);
+      const s = await sweepBlacklistPattern(identity, r.pattern_id, "explicit");
       if (s.error) throw new Error(s.error);
       // Name the scope the sweep ran in: the page may have moved on before it answers.
       const where = inNamespace ? identity.namespace : identity.org;

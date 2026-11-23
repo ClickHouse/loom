@@ -1236,6 +1236,7 @@ describe("the Library on a collection", () => {
         "acme",
         expect.any(String),
         expect.objectContaining({ parent: "", title: "Q3" }),
+        "explicit",
       );
       const at = location.search;
       const docs = api.listKnowledge.mock.calls.length;

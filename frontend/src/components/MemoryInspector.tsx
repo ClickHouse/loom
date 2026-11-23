@@ -547,12 +547,12 @@ export function MemoryInspector({
     try {
       if (wasPinned) {
         // The row pinMemory writes to.
-        const result = await unpinMemory(rowIdentity(identity, detail), memoryKey);
+        const result = await unpinMemory(rowIdentity(identity, detail), memoryKey, "explicit");
         if (!result.unpinned && result.reason !== "not_pinned") {
           throw new Error(result.reason || "memory was not unpinned");
         }
       } else {
-        await pinMemory(identity, memoryKey, detail);
+        await pinMemory(identity, memoryKey, detail, "explicit");
       }
       toast(wasPinned ? "Unpinned" : "Pinned", "ok");
     } catch (e) {
@@ -575,7 +575,7 @@ export function MemoryInspector({
         revoke: live,
         userId: detail.user_id || undefined,
         sessionId: detail.session_id || undefined,
-      });
+      }, "explicit");
       setDetail({ ...detail, verified_by: r.verified_by, verified_at: r.verified_at, verification: r.verification });
       toast(live ? "Verification removed" : `Verified as ${r.verified_by}`, "ok");
       onChanged();
@@ -589,7 +589,7 @@ export function MemoryInspector({
     if (!detail?.memory_id) return;
     try {
       // By id: the op resolves a key in the `-` session only, and an extracted row has its own.
-      const r = await recordMemoryOutcome(identity, detail.memory_id, outcome);
+      const r = await recordMemoryOutcome(identity, detail.memory_id, outcome, "explicit");
       if (!r.recorded) {
         toast("Couldn't record that", "error");
         return;
@@ -610,7 +610,7 @@ export function MemoryInspector({
   // personal data): `memory.redact`, through RedactVersionDialog.
   const redact = async (h: MemoryHistoryEntry, label: string, reason: string) => {
     if (!h.memory_id || !h.version_text) throw new Error(`${label} has no exact version to redact.`);
-    const r = await redactMemoryVersion(identity.org, h.memory_id, h.version_text, reason);
+    const r = await redactMemoryVersion(identity.org, h.memory_id, h.version_text, reason, "explicit");
     if (r.refused_head) throw new Error(`${label} is a live version; edit or delete the memory instead.`);
     if (!r.redacted) throw new Error(`${label} is no longer recorded.`);
     toast(`Redacted ${label}`, "ok");
@@ -645,7 +645,7 @@ export function MemoryInspector({
   const onUnlock = async () => {
     if (!detail) return;
     try {
-      const r = await unlockMemory(rowIdentity(identity, detail), memoryKey);
+      const r = await unlockMemory(rowIdentity(identity, detail), memoryKey, "explicit");
       if (!r.unlocked) {
         toast(r.reason === "not_found" ? "This memory is no longer live" : "This memory carried no lock", "info");
         return;
@@ -671,7 +671,7 @@ export function MemoryInspector({
     try {
       // A definition's promotion names the text it approves: the one shown.
       const approved = detail.memory_type === "definition" ? detail.content_sha256 : undefined;
-      const r = await shareMemory(rowIdentity(identity, detail), memoryKey, approved);
+      const r = await shareMemory(rowIdentity(identity, detail), memoryKey, approved, "explicit");
       toast(`Shared as ${r.shared_memory_key}`, "ok");
       onChanged();
     } catch (e) {
@@ -688,7 +688,7 @@ export function MemoryInspector({
     });
     if (!ok) return;
     try {
-      const r = await unshareMemory(identity, memoryKey);
+      const r = await unshareMemory(identity, memoryKey, "explicit");
       toast(r.demoted ? "No longer shared" : "This memory was not shared", "ok");
       onChanged();
     } catch (e) {
@@ -739,7 +739,7 @@ export function MemoryInspector({
         memoryType: detail.memory_type || "semantic",
         tags: nextTags,
         charLimit: detail.char_limit ?? undefined,
-      });
+      }, "explicit");
     } catch (e) {
       if (!committedAnyway("Tag update failed", e)) {
         setDetail((d) => (d ? { ...d, tags: prev } : d));
@@ -774,7 +774,7 @@ export function MemoryInspector({
         ttlSeconds: ttlSeconds ?? undefined,
         clearExpiry: ttlSeconds === null,
         charLimit: detail.char_limit ?? undefined,
-      });
+      }, "explicit");
       toast(ttlSeconds === null ? "Expiry cleared — never expires" : "Expiry updated", "ok");
     } catch (e) {
       if (!committedAnyway("Expiry update failed", e)) return;
@@ -800,7 +800,7 @@ export function MemoryInspector({
         memoryType: detail.memory_type || "semantic",
         tags: detail.tags,
         charLimit: detail.char_limit ?? undefined,
-      });
+      }, "explicit");
       toast("Saved", "ok");
     } catch (e) {
       if (!committedAnyway("Save failed", e)) return;
@@ -846,7 +846,7 @@ export function MemoryInspector({
         // outside the reader's scope shows no successor, so it is guarded by status.
         if_superseded_by: detail.superseded_by,
         only_if_superseded: true,
-      });
+      }, "explicit");
       // Either way the row changed, so the list behind the drawer is stale too,
       // even if the drawer has moved on to another memory.
       onChanged();
@@ -895,7 +895,7 @@ export function MemoryInspector({
     )
       return;
     try {
-      const r = await deleteMemory(rowIdentity(identity, detail), memoryKey);
+      const r = await deleteMemory(rowIdentity(identity, detail), memoryKey, "explicit");
       if (!r.tombstoned) {
         toast("This memory is no longer live", "info");
         return;
@@ -2151,7 +2151,7 @@ function RenameForm({
   const call = async (dryRun: boolean) => {
     setBusy(dryRun ? "preview" : "rename");
     try {
-      const r = await moveMemory(identity, fromKey, target, { keepRedirect: redirect, dryRun });
+      const r = await moveMemory(identity, fromKey, target, { keepRedirect: redirect, dryRun }, "explicit");
       if (dryRun) setPreview(r);
       else onRenamed(r);
     } catch (e) {

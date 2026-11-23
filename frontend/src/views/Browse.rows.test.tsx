@@ -184,7 +184,7 @@ describe("Namespaces in your org: the rows", () => {
     // beta's guide opens from its summary link, so its menu does not offer it twice.
     expect(within(menu).queryByRole("menuitem", { name: "Guide" })).toBeNull();
     await user.click(within(menu).getByRole("menuitem", { name: "Leave" }));
-    await waitFor(() => expect(leaveNamespace).toHaveBeenCalledWith("acme", "beta"));
+    await waitFor(() => expect(leaveNamespace).toHaveBeenCalledWith("acme", "beta", "explicit"));
   });
 
   it("your personal namespace offers its guide like any namespace you manage", async () => {
@@ -378,7 +378,7 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
       "No listed public namespace named support.",
     );
     await userEvent.click(screen.getByRole("button", { name: "Request access" }));
-    expect(joinNamespace).toHaveBeenCalledWith("acme", "support", { role: "viewer" });
+    expect(joinNamespace).toHaveBeenCalledWith("acme", "support", { role: "viewer" }, "explicit");
   });
 
   it("says nothing matches a search that is no namespace name, and offers no request", async () => {
@@ -642,7 +642,7 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     await userEvent.type(box, "secret-ops");
     await userEvent.click(await screen.findByRole("button", { name: "Request access" }));
     await waitFor(() => expect(box).toHaveValue(""));
-    expect(joinNamespace).toHaveBeenCalledWith("acme", "secret-ops", { role: "viewer" });
+    expect(joinNamespace).toHaveBeenCalledWith("acme", "secret-ops", { role: "viewer" }, "explicit");
     // The card names the deferred text, so it leaves a render after the box empties.
     await waitFor(() => expect(screen.queryByRole("button", { name: "Request access" })).toBeNull());
   });

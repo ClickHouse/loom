@@ -522,12 +522,12 @@ export function Tasks() {
       try {
         const r =
           action === "accept"
-            ? await acceptTask(caller, task.task_id)
+            ? await acceptTask(caller, task.task_id, undefined, "explicit")
             : action === "start"
-              ? await claimTask(caller, task.task_id)
+              ? await claimTask(caller, task.task_id, "explicit")
               : action === "unblock"
-                ? await unblockTask(caller, task.task_id)
-                : await resumeTask(caller, task.task_id);
+                ? await unblockTask(caller, task.task_id, undefined, "explicit")
+                : await resumeTask(caller, task.task_id, undefined, "explicit");
         toast(actionDone(action, task.title), "ok");
         // A switch while the move was out: the list on screen is another namespace's.
         if (callerNow.current !== caller) return;

@@ -189,3 +189,49 @@ async def restore_workers_recent(*, ch: _CHClient | None = None) -> int:
     if row is None or "n" not in row:
         raise RuntimeError("connected_restore_offline_unavailable")
     return int(row["n"])
+
+
+async def mcp_owner_page(
+    org: str, subject: str, *, after: str = "", limit: int = 101, ch: _CHClient | None = None
+) -> list[ConnectedAccount]:
+    """Current valid MCP slots for one canonical owner, including stopped markers."""
+    if type(limit) is not int or not 1 <= limit <= 101:
+        raise ValueError("mcp_account_page_bound")
+    with own_write_reads():
+        rows = await (ch or _default_client()).query_all(
+            f"SELECT {_COLUMNS} FROM {TABLE} FINAL "
+            "WHERE org = {org:String} AND subject = {subject:String} "
+            "AND match(kind, {slot_pattern:String}) AND kind > {after:String} "
+            "ORDER BY kind LIMIT {limit:UInt32}",
+            params={
+                "org": org,
+                "subject": subject,
+                "slot_pattern": r"^mcp:[0-9a-f]{32}$",
+                "after": after,
+                "limit": limit,
+            },
+        )
+    return [_account(dict(row)) for row in rows]
+
+
+async def mcp_owner_active_count(
+    org: str, subject: str, *, maximum: int, ch: _CHClient | None = None
+) -> int:
+    """Count only to the quota ceiling plus one; the caller holds its owner barrier."""
+    if type(maximum) is not int or not 1 <= maximum <= 4096:
+        raise ValueError("mcp_account_count_bound")
+    with own_write_reads():
+        row = await (ch or _default_client()).query_one(
+            f"SELECT count() AS n FROM (SELECT 1 FROM {TABLE} FINAL "
+            "WHERE org = {org:String} AND subject = {subject:String} AND active = 1 "
+            "AND match(kind, {slot_pattern:String}) LIMIT {limit:UInt32})",
+            params={
+                "org": org,
+                "subject": subject,
+                "slot_pattern": r"^mcp:[0-9a-f]{32}$",
+                "limit": maximum + 1,
+            },
+        )
+    if row is None:
+        raise RuntimeError("mcp_account_count_unavailable")
+    return int(row["n"])

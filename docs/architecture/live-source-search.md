@@ -1,73 +1,97 @@
 # Live connected-source search
 
-`search.query(live=true)` adds an ephemeral section from the asker's own connected
-Drive and Notion registrations. The default is false. Indexed retrieval, ranking,
-withholding and paging keep their existing paths; provider results join only the
-final response. No provider result becomes an indexed hit or an ingestion request.
+`search.query(live=true)` adds an ephemeral section from the asker's own approved
+MCP source registrations in live mode. The default is false. The common
+`live_search` path retains indexed retrieval, ranking, withholding and paging;
+selected remote results join only the final response. Live retrieval never
+imports a document or saves a memory automatically.
 
 ## Authority and publication
 
-The leg requires authenticated operation, mirrored sources enabled, the caller's
-existing session-protection promise, a bound request work bag and an active
-required request tail. It marks the logical request and HTTP owner before private
-account discovery. Account and provider work runs under private diagnostics. A
-mark classifies the whole response, including an attempted read that times out;
-it does not establish a client protection promise.
+The leg requires authentication, mirrored sources enabled, the caller's supported
+session-protection promise, a bound request work bag and an active required
+request tail. It marks the logical request and HTTP owner before private account
+discovery. Account and remote work runs under private diagnostics. A mark
+classifies the whole response, including an attempted read that times out; it
+does not establish client readiness.
 
-The canonical requester selects only active connected registrations in the
-search's authorized content namespaces. Shared ingestion credentials and another
-person's registrations are excluded. The connected-account resolver checks the
-selected source identifier and retains its account generation, owner, corpus and
-requester. Provider authorization uses its checked access object, without exposing
-credential material to response assembly.
+The canonical requester selects only active, owner-bound MCP registrations in
+live mode within the search's authorized namespaces. Another person's connection
+and retained unsupported native sources are excluded. Current account generation,
+owner standing, approved profile, source scope and destination authority remain
+required throughout the read. A destination grant does not borrow an owner's
+connection.
 
-Each selected hit retains its original authority and native corpus membership.
-Both are checked before assembly and through the existing request-tail publication
-barrier after accounting. Revocation, source replacement, moved items or expired
-evidence cannot authorize replacement results. A failed final publication check
-refuses the response before its private bytes are sent. These are current read
-checks, not an atomic lock on a remote document.
+Each returned hit retains its exact selected resource identity and successful-read
+receipt. Final checks rediscover the approved capability and re-read retained
+resources, comparing their content digest and title. A changed source, connection,
+selection or resource cannot authorize replacement text. The common request-tail
+publication barrier retains these checks after required accounting and refuses
+unchecked private bytes at delivery. These checks are current observations, not
+an atomic lock on a remote document.
+
+An optional live contribution that fails before selection is omitted, leaving
+indexed sections available. Once a selected response frame retains private
+contributions, a failed final publication check refuses that frame before its
+private bytes are sent.
 
 ## Work bounds and coverage
 
-One five-second deadline covers account discovery, credential checkout, native
-search and final assembly. The leg considers at most three eligible registrations
-in namespace/name order and returns at most ten hits in total. Each provider
-response is capped at the smaller of 256 KiB and the configured source response
-limit. There are no retries or pagination.
+One common deadline covers discovery, connection admission, mapped search,
+selected reads and assembly. The existing `knowledge_live_search_*` settings
+bound the deadline, eligible registration count, hit count and response bytes.
+Trusted MCP profile bounds also constrain protocol calls, pages, content bytes
+and work. Configuration grants no wider selection or additional operation.
 
-The `knowledge_live_search_*` settings can reduce the deadline, registration and
-hit counts, response bytes, Drive item count and Notion ancestor count. Their
-defaults are these ceilings; configuration cannot increase them.
-
-Drive uses native full-text search constrained to registered folders, shared
-drives or filters. At most four source items are searched. Folder searches cover
-direct children even when a registration permits recursive ingestion; explicit
-file items have no native file-id search predicate and do not widen the search.
-Notion uses native title search and accepts pages only after checking registered
-page or database membership, following at most three ancestors. Incomplete
-coverage is not evidence that a document does not exist.
+A live search needs an approved declarative search mapping and a supported read
+capability. It reads one bounded search page, intersects returned identities with
+the saved selection, drops duplicates and reads each admitted resource before
+returning content. A resource-only server can support direct selected reads
+without offering mapped search. Browse and search windows are not complete
+catalogs; there is no recursive expansion, inferred upstream ACL or deletion
+claim. Missing hits never authorize content retirement.
 
 Live search runs only on the first page, without tags, for queries of at most
-1,000 characters. It ignores memory retrieval recipes. An unavailable or timed-out
-leg contributes no live section and leaves indexed sections unchanged. Cancellation
-or failure of indexed search cancels and joins its owned live task.
+1,000 characters. It ignores memory retrieval recipes. An unavailable or
+timed-out optional leg contributes no live section. Cancellation or failure of
+indexed search cancels and joins its owned live task. There is no native provider
+execution or OAuth fallback.
 
 ## Content boundary
 
-The separate `live` section contains bounded identifiers, titles, URLs, provider
-names and optional excerpts, with `live=true` on the section and each hit.
-`bodies=none` omits excerpts. HTTP, SDK and MCP responses retain the existing
-server-owned mirrored classification and protected-client handling.
+The separate `live` section contains bounded identifiers, titles, local source-copy
+citations and optional excerpts, with `live=true` on the section and each hit.
+Those citations identify the registration and exact selected resource; they are
+not upstream URLs or fetch targets. `bodies=none` omits excerpts. HTTP, SDK and MCP
+responses retain server-owned mirrored classification and protected-client
+handling.
 
-Provider data does not enter indexed rankers, search traces, page tokens, served
+Remote data does not enter indexed rankers, search traces, page tokens, served
 memory keys, gap contributions, learnings, snapshots, offloads or model prompts.
-A live answer suppresses the unanswered-query contribution explicitly. Existing
-numeric private request accounting remains required; it contains no live result
-identifier, URL, title or content. The operation remains a read, so response replay
-storage is not enabled. This path creates no table, stored content or erasure
-substrate.
+A live answer suppresses the unanswered-query contribution explicitly. Required
+numeric private request accounting contains no result identity, citation, title
+or content. The operation remains a read without response replay storage. This
+path creates no persistent live-result cache, stored content or erasure substrate.
+Remote hosts and participating clients retain their own requests and conversations
+under their respective policies.
 
-Connected-account authority and deployment protection follow
-[document sources](document-sources.md). The user-visible response contract is in
-[unified search](../features/unified-search.md).
+## Source entry points
+
+- `server/knowledge/app/live_search.py`: common selection, deadline and publication.
+- `server/knowledge/app/mcp_live.py`: approved mapped search, selected reads and
+  retained resource checks.
+- `server/knowledge/app/mcp_source_sessions.py`: checked connection sessions and
+  observed schema refusal.
+
+## Invariants
+
+A live hit belongs to the current saved selection and is read before publication.
+No model argument widens approval, account or selection. Final protected
+publication applies to the entire selected response frame. Live lookup creates no
+import, automatic memory write or deletion evidence.
+
+Connection and deployment protection follow
+[MCP document sources](mcp-document-sources.md) and the generic
+[document-source boundary](document-sources.md). The user-visible response contract
+is in [unified search](../features/unified-search.md). Synthetic protocol tests do
+not qualify an external service or every client application.
