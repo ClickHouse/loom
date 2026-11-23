@@ -22,22 +22,14 @@ from typing import Any, NamedTuple
 from server.memory.api.models_for_file import MemoryForFileInput
 from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
-from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
+from server.memory.domain.decision_schema import CONSTRAINT_TAG
 from server.memory.domain.lemmatize import snowball_stem_tokens
 from server.memory.domain.recall import query_tokens
 
-# A row's excerpt is cut here, unless it is a decision or a constraint, which is served
-# whole or not at all (a cut "never X unless Y" can say the opposite).
-EXCERPT_CHARS = 200
-
 
 def _excerpt(hit: dict[str, Any]) -> str | None:
-    """The row's text on one line: whole for a decision or constraint (None when its
-    stored value was cut, so it is not served), else cut at EXCERPT_CHARS."""
-    one = " ".join(value_text(hit).split())
-    if is_whole_row(str(hit.get("memory_type") or ""), hit.get("tags") or []):
-        return None if hit.get("value_truncated") else one
-    return one if len(one) <= EXCERPT_CHARS else one[: EXCERPT_CHARS - 1] + "…"
+    """Keep the whole fact; a cut condition or source reference cannot be trusted."""
+    return None if hit.get("value_truncated") else " ".join(value_text(hit).split())
 
 
 def _names_this_file(hit: dict[str, Any], path: str) -> bool:
@@ -64,8 +56,7 @@ def _tokens(lesson: dict[str, Any]) -> int:
 
 
 def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
-    """The row as a lesson, or None for a decision cut at the read (served whole or not
-    at all)."""
+    """The row as a lesson, or None when its source value is incomplete."""
     excerpt = _excerpt(hit)
     if excerpt is None:
         return None
@@ -101,7 +92,7 @@ def _ordered_candidates(
 
     def rank(candidate: tuple[str, dict[str, Any]]) -> tuple[bool, bool, int]:
         hit = candidate[1]
-        words = snowball_stem_tokens(query_tokens(value_text(hit)[:EXCERPT_CHARS]))
+        words = snowball_stem_tokens(query_tokens(value_text(hit)))
         return (
             CONSTRAINT_TAG not in (hit.get("tags") or []),
             not hit.get("pinned"),

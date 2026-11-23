@@ -1038,8 +1038,8 @@ settings:
   # their top files. [live]
   # code_result_lessons: true
 
-  # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4
-  # characters a token; 0 means unlimited. [live]
+  # Estimated-token cap on file or symbol `lessons`, counted on serialized rows at 4
+  # characters a token; 0 means unlimited. Rows are whole or left out. [live]
   # code_result_lessons_tokens: 0
 
   # How many of an answer's files, in rank order, its `lessons` are read for. [live]

@@ -367,6 +367,12 @@ The remaining file-lesson reads retain path and listing order.
 This reorders the same readable candidates within the same response token budget;
 it adds no model call or storage read. Superseded rows and unrelated paths remain excluded.
 
+File and symbol lessons carry complete memory text, including source references.
+The internal file listing reads complete values; the pre-edit block keeps its own
+read and render limits. A configured `code_result_lessons_tokens` budget leaves out
+whole lessons rather than cutting their conditions. Its default of zero is
+unlimited. Symbol definition budgeting accounts for its attached lessons.
+
 `bench/replay_code_lessons.py` compares recorded lesson order with query-aware order
 from an evaluation's native memory certificates and grep answers. It retains every
 timestamp-tie order that reproduces the recorded answer. Cases whose reads cannot be

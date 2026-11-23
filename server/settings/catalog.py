@@ -922,8 +922,8 @@ class CodeSettings(BaseModel):
     # Whether the code ops that return files carry `lessons`, the readable memories about
     # their top files.
     code_result_lessons: Annotated[bool, LIVE] = True
-    # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at
-    # 4 characters a token; 0 means unlimited.
+    # Estimated-token cap on file or symbol `lessons`, counted on serialized rows at
+    # 4 characters a token; 0 means unlimited. Rows are whole or left out.
     code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=0, ge=0)
     # How many of an answer's files, in rank order, its `lessons` are read for.
     code_result_lessons_paths: Annotated[int, LIVE] = Field(default=3, ge=1, le=10)

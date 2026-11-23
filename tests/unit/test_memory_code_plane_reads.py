@@ -237,6 +237,21 @@ async def _lessons(
 
 
 @pytest.mark.asyncio
+async def test_symbol_lessons_keep_whole_values_and_honor_an_opt_in_budget(monkeypatch) -> None:
+    links = [_link("m1"), _link("m2")]
+    value = "Keep the original context object. " * 80 + "Source: https://example.com/design#context"
+    excerpts = [dict(_excerpt("m1", "long"), excerpt=value), _excerpt("m2", "short")]
+    definitions = [("src/a.py", "src.a::Reader::read", "h1")]
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
+    whole = await _lessons(monkeypatch, links, excerpts, definitions)
+    assert whole[0]["excerpt"] == value
+    assert len(whole) == 2
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 80)
+    bounded = await _lessons(monkeypatch, links, excerpts, definitions)
+    assert [row["memory_key"] for row in bounded] == ["short"]
+
+
+@pytest.mark.asyncio
 async def test_code_gone_from_trunk_still_teaches_the_branch_that_has_it(monkeypatch) -> None:
     links = [_link("m1", state="missing", since="c3")]
     excerpts = [_excerpt("m1", "k1")]

@@ -329,17 +329,34 @@ async def test_a_root_file_takes_only_rows_naming_it_by_name(
 
 
 @pytest.mark.asyncio
-async def test_the_token_cap_holds_on_serialized_rows_and_a_note_is_cut(
+async def test_the_token_cap_holds_on_serialized_rows_without_cutting_notes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     long = "word " * 200
     by_path = {"a.py": [_hit("k/long", value=long), _hit("k/short"), _hit("k/2", value=long)]}
-    rows = await _lessons(monkeypatch, by_path, ["a.py"], budget=110)
-    # the long row fits alone; the next long one would pass the cap, the short one fits
+    first = path_lessons._lesson(by_path["a.py"][0], "a.py")
+    second = path_lessons._lesson(by_path["a.py"][1], "a.py")
+    assert first is not None and second is not None
+    cap = path_lessons._tokens(first) + path_lessons._tokens(second)
+    rows = await _lessons(monkeypatch, by_path, ["a.py"], budget=cap)
+    # The first whole note and the short note fit; the next whole note does not.
     assert [r["memory_key"] for r in rows] == ["k/long", "k/short"]
-    assert len(rows[0]["excerpt"]) == path_lessons.EXCERPT_CHARS
-    assert rows[0]["excerpt"].endswith("…")
-    assert sum(len(json.dumps(r, ensure_ascii=False)) // 4 + 1 for r in rows) <= 110
+    assert rows[0]["excerpt"] == " ".join(long.split())
+    assert sum(len(json.dumps(r, ensure_ascii=False)) // 4 + 1 for r in rows) <= cap
+
+
+@pytest.mark.asyncio
+async def test_unlimited_lessons_keep_long_notes_and_source_references(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = (
+        "A project convention. " * 100 + "Sources: https://example.com/project/design#release-order"
+    )
+    rows = await _lessons(
+        monkeypatch, {"a.py": [_hit("history/long", value=value)]}, ["a.py"], budget=0
+    )
+    assert rows[0]["excerpt"] == value
+    assert rows[0]["excerpt"].endswith("#release-order")
 
 
 @pytest.mark.asyncio
