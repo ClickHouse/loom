@@ -9,12 +9,16 @@ from examples.software_factory.harbor.native_trace import COUNTERS, EVENTS, TIMI
 
 
 class NativeTrace(unittest.TestCase):
-    def test_missing_or_unreadable_reply_leaves_source_totals_unknown(self):
+    def test_missing_or_unreadable_reply_leaves_content_totals_unknown(self):
         fields = (
             "loom_source_chars_main",
             "loom_match_chars_main",
             "loom_context_chars_main",
             "loom_caller_context_chars_main",
+            "loom_lesson_chars_main",
+            "loom_fresh_linked_lesson_rows_main",
+            "loom_nonfresh_linked_lesson_rows_main",
+            "first_fresh_linked_lesson_result_event_main",
         )
         assistant = {
             "type": "assistant",
@@ -29,7 +33,12 @@ class NativeTrace(unittest.TestCase):
         good_reply = {
             "type": "tool_result",
             "tool_use_id": "one",
-            "content": '{"matches":[{"text":"line"}]}',
+            "content": json.dumps(
+                {
+                    "matches": [{"text": "line"}],
+                    "lessons": [{"excerpt": "note", "code_state": "fresh"}],
+                }
+            ),
         }
         cases = (
             ([], None),
@@ -43,7 +52,7 @@ class NativeTrace(unittest.TestCase):
                         "is_error": True,
                     }
                 ],
-                (0, 4, 0, 0),
+                (0, 4, 0, 0, 4, 1, 0, 2),
             ),
         )
         with tempfile.TemporaryDirectory() as directory:

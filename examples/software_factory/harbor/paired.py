@@ -66,6 +66,7 @@ def _metrics(result: dict) -> dict:
             "loom_tool_calls",
             "loom_lesson_chars_main",
             "loom_fresh_linked_lesson_rows_main",
+            "loom_nonfresh_linked_lesson_rows_main",
             "first_fresh_linked_lesson_result_event_main",
             "first_possible_edit_request_event_main",
             "memory_rows_written",
@@ -190,6 +191,44 @@ def _threshold_summary(verified):
     }
 
 
+def _memory_target(right, records, contrast):
+    states = [
+        (r["loom_fresh_linked_lesson_rows_main"], r["loom_nonfresh_linked_lesson_rows_main"])
+        for r in records
+    ]
+    timing = [
+        (
+            r["first_fresh_linked_lesson_result_event_main"],
+            r["first_possible_edit_request_event_main"],
+        )
+        for r, (fresh, _) in zip(records, states, strict=True)
+        if fresh is not None
+    ]
+    hidden = contrast["quality"]
+    return {
+        "code_only_arm": right,
+        "main_session_linked_lesson_attempts": sum(
+            fresh is not None and other is not None and (fresh > 0 or other > 0)
+            for fresh, other in states
+        ),
+        "main_session_lesson_evidence_missing": sum(None in counts for counts in states),
+        "main_session_lesson_timing_observed_attempts": len(timing),
+        "fresh_linked_lesson_before_potential_edit_attempts": sum(
+            fresh is not None and edit is not None and fresh < edit for fresh, edit in timing
+        )
+        if timing
+        else None,
+        "main_session_fresh_linked_lesson_attempts": sum(fresh is not None for fresh, _ in timing)
+        if timing
+        else None,
+        "hidden_test_pass_rate_delta": hidden,
+        "blind_fixed_rate_delta": contrast["blind_fixed"],
+        "regressions_per_attempt_delta": contrast["full_suite_regressions"],
+        "observed_hidden_test_lift": hidden["estimate"] > 0,
+        "hidden_test_lift_lower_bound": hidden["ci95"][0] > 0 if hidden["ci95"] else None,
+    }
+
+
 def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) -> dict:
     """Use every scheduled attempt, equal task weights and task-level resampling.
 
@@ -292,11 +331,21 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     report["cohort_total_cost_usd"] = (
         math.fsum(costs) if not missing and None not in costs else None
     )
+    verified = not missing and all(
+        result.get("harbor_reward_valid") is True for result in observed.values()
+    )
     if cache_pairs:
-        verified = report["cache_starts_verified"] and all(
-            result.get("harbor_reward_valid") is True for result in observed.values()
+        report["cache_start_targets"] = _threshold_summary(
+            verified and report["cache_starts_verified"]
         )
-        report["cache_start_targets"] = _threshold_summary(verified)
+    else:
+        report["observed_targets"] = {
+            "relative_reduction_target": EFFICIENCY_TARGET,
+            "verifier_verified": verified,
+            "cache_policy": "observed",
+            "efficiency_vs_no_loom": {},
+            "memory_vs_code_index": {},
+        }
     if missing:
         return report  # Missing attempts are visible; no partial-cohort selection.
     lookup = {
@@ -317,12 +366,12 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
             comparisons.append((aa, "baseline-b", "baseline-a", ["aa"], state))
     for destination, left, right, repeats, state in comparisons:
         contrast, efficiency = {}, {}
-        qualifies = (
-            state is not None
-            and right == "baseline"
-            and left in PRIMARY
-            and report["cache_start_targets"]["cache_and_verifier_verified"]
-        )
+        targets = None
+        if state is None and verified:
+            targets = report["observed_targets"]
+        elif state is not None and report["cache_start_targets"]["cache_and_verifier_verified"]:
+            targets = report["cache_start_targets"]["cache_starts"][state]
+        qualifies = targets is not None and right == "baseline" and left in PRIMARY
         for key in next(iter(metrics.values())):
             task_pairs = [
                 [
@@ -347,9 +396,8 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
             if qualifies and key in EFFICIENCY_METRICS:
                 efficiency[key] = _target_margin(task_pairs, tasks, seed=seed, resamples=resamples)
         destination[left + "-minus-" + right] = contrast
-        if state is None or not report["cache_start_targets"]["cache_and_verifier_verified"]:
+        if targets is None:
             continue
-        targets = report["cache_start_targets"]["cache_starts"][state]
         if efficiency:
             targets["efficiency_vs_no_loom"][left] = {
                 **efficiency,
@@ -362,39 +410,6 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
                 ),
             }
         if MEMORY_PEERS.get(left) == right:
-            hidden = contrast["quality"]
             records = [lookup[task, repeat, left, state] for task in tasks for repeat in repeats]
-            lesson_chars = [record["loom_lesson_chars_main"] for record in records]
-            timing = [
-                (
-                    record["first_fresh_linked_lesson_result_event_main"],
-                    record["first_possible_edit_request_event_main"],
-                )
-                for record in records
-                if record["loom_fresh_linked_lesson_rows_main"] is not None
-            ]
-            targets["memory_vs_code_index"][left] = {
-                "code_only_arm": right,
-                "main_session_linked_lesson_attempts": sum(
-                    chars is not None and chars > 0 for chars in lesson_chars
-                ),
-                "main_session_lesson_evidence_missing": lesson_chars.count(None),
-                "main_session_lesson_timing_observed_attempts": len(timing),
-                "fresh_linked_lesson_before_potential_edit_attempts": sum(
-                    fresh is not None and edit is not None and fresh < edit
-                    for fresh, edit in timing
-                )
-                if timing
-                else None,
-                "main_session_fresh_linked_lesson_attempts": sum(
-                    fresh is not None for fresh, _ in timing
-                )
-                if timing
-                else None,
-                "hidden_test_pass_rate_delta": hidden,
-                "blind_fixed_rate_delta": contrast["blind_fixed"],
-                "regressions_per_attempt_delta": contrast["full_suite_regressions"],
-                "observed_hidden_test_lift": hidden["estimate"] > 0,
-                "hidden_test_lift_lower_bound": hidden["ci95"][0] > 0 if hidden["ci95"] else None,
-            }
+            targets["memory_vs_code_index"][left] = _memory_target(right, records, contrast)
     return report

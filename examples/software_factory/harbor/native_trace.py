@@ -13,6 +13,13 @@ SOURCE_COUNTERS = (
     ("context_chars", "loom_context_chars_main"),
     ("caller_context_chars", "loom_caller_context_chars_main"),
 )
+LESSON_COUNTERS = (
+    ("lesson_chars", "loom_lesson_chars_main"),
+    ("repeated_lesson_chars", "loom_repeated_lesson_chars_main"),
+    ("fresh_linked_lesson_rows", "loom_fresh_linked_lesson_rows_main"),
+    ("nonfresh_linked_lesson_rows", "loom_nonfresh_linked_lesson_rows_main"),
+)
+CONTENT_COUNTERS = SOURCE_COUNTERS + LESSON_COUNTERS
 COUNTERS = (
     "model_turns_main",
     "parallel_tool_groups_main",
@@ -22,11 +29,7 @@ COUNTERS = (
     "loom_errors_main",
     "tool_result_chars_main",
     "loom_result_chars_main",
-    *(target for _, target in SOURCE_COUNTERS),
-    "loom_lesson_chars_main",
-    "loom_repeated_lesson_chars_main",
-    "loom_fresh_linked_lesson_rows_main",
-    "loom_nonfresh_linked_lesson_rows_main",
+    *(target for _, target in CONTENT_COUNTERS),
 )
 EVENTS = (
     "first_fresh_linked_lesson_result_event_main",
@@ -151,7 +154,7 @@ def summarize(trial):
     summary.update(dict.fromkeys(COUNTERS, 0))
     summary["model_turns_main"] = len(responses)
     groups, seen, fresh_events = Counter(), set(), []
-    source_counts_complete = True
+    content_counts_complete = True
     summary["first_possible_edit_request_event_main"] = next(
         (
             call["request_event"]
@@ -188,28 +191,23 @@ def summarize(trial):
             summary["loom_result_chars_main"] += chars or 0
             body = _body(content)
             if not observed["is_error"] and body is None:
-                source_counts_complete = False
+                content_counts_complete = False
             if body is not None and not observed["is_error"]:
                 counted = _content_counts(body, seen)
                 if counted["fresh_linked_lesson_rows"]:
                     fresh_events.append(result_event)
                 observed.update(counted)
-                for source, target in (
-                    *SOURCE_COUNTERS,
-                    ("lesson_chars", "loom_lesson_chars_main"),
-                    ("repeated_lesson_chars", "loom_repeated_lesson_chars_main"),
-                    ("fresh_linked_lesson_rows", "loom_fresh_linked_lesson_rows_main"),
-                    ("nonfresh_linked_lesson_rows", "loom_nonfresh_linked_lesson_rows_main"),
-                ):
+                for source, target in CONTENT_COUNTERS:
                     summary[target] += counted[source]
                 trace_id = body.get("trace_run_id")
                 if isinstance(trace_id, str) and len(trace_id) <= 128:
                     observed["trace_run_id"] = trace_id
         output["calls"].append(observed)
-    if not source_counts_complete:
-        for _, target in SOURCE_COUNTERS:
+    if not content_counts_complete:
+        for _, target in CONTENT_COUNTERS:
             summary[target] = None
-    summary["first_fresh_linked_lesson_result_event_main"] = min(fresh_events, default=None)
+    else:
+        summary["first_fresh_linked_lesson_result_event_main"] = min(fresh_events, default=None)
     summary["tool_calls_main"] = len(calls)
     summary["parallel_tool_groups_main"] = sum(size > 1 for size in groups.values())
     for source, target in (

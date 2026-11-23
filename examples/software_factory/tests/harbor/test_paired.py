@@ -90,6 +90,8 @@ class PairedAnalysisContracts(unittest.TestCase):
                         "judge_fixed": baseline or memory,
                         "full_suite_regressions": 0,
                         "loom_lesson_chars_main": 100 if memory else 0,
+                        "loom_fresh_linked_lesson_rows_main": int(memory),
+                        "loom_nonfresh_linked_lesson_rows_main": 0,
                         "total_provider_cost_usd": (0.06 if baseline else 0.07)
                         if warm
                         else (0.15 if baseline else 0.12),
@@ -124,6 +126,42 @@ class PairedAnalysisContracts(unittest.TestCase):
         updated = analyze(frozen, entries, resamples=100)["cache_start_targets"]
         self.assertFalse(updated["cache_and_verifier_verified"])
         self.assertFalse(updated["cache_starts"]["warm"]["efficiency_vs_no_loom"])
+
+    def test_observed_targets_distinguish_linked_lessons_and_unreadable_traces(self):
+        order, entries = inputs()
+        arm = "loom-scip-memory"
+        memory_runs = []
+        for entry in entries:
+            result = entry["result"]
+            baseline = result["arm"] == "baseline"
+            result.update(
+                harbor_reward_valid=True,
+                total_provider_cost_usd=0.15 if baseline else 0.12,
+                generation_cost_source="claude-code-reported",
+                agent_time_s=20 if baseline else 16,
+                end_to_end_s=30 if baseline else 24,
+                loom_lesson_chars_main=100 if result.get("memory_enabled") else 0,
+                loom_fresh_linked_lesson_rows_main=0,
+                loom_nonfresh_linked_lesson_rows_main=0,
+            )
+            if result["arm"] == arm:
+                memory_runs.append(result)
+        memory_runs[0]["loom_nonfresh_linked_lesson_rows_main"] = 1
+        memory_runs[1]["loom_fresh_linked_lesson_rows_main"] = None
+
+        targets = analyze(order, entries, resamples=100)["observed_targets"]
+        self.assertEqual(targets["cache_policy"], "observed")
+        self.assertTrue(targets["verifier_verified"])
+        self.assertTrue(targets["efficiency_vs_no_loom"][arm]["all_observed_met"])
+        memory = targets["memory_vs_code_index"][arm]
+        self.assertEqual(memory["main_session_linked_lesson_attempts"], 1)
+        self.assertEqual(memory["main_session_lesson_evidence_missing"], 1)
+
+        memory_runs[1]["harbor_reward_valid"] = False
+        targets = analyze(order, entries, resamples=100)["observed_targets"]
+        self.assertFalse(targets["verifier_verified"])
+        self.assertFalse(targets["efficiency_vs_no_loom"])
+        self.assertFalse(targets["memory_vs_code_index"])
 
     def test_memory_treatment_requires_boolean_identity_and_no_disabled_writes(self):
         order, entries = inputs()

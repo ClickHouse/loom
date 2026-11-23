@@ -76,6 +76,13 @@ A missed cache state remains in the results and fails cache verification. The
 report displays the two start conditions separately and retains the observed
 cache counts for each attempt.
 
+`paired-report.json` reports target progress for complete cohorts with valid
+Harbor rewards. Runs with ordinary provider cache usage use `observed_targets`.
+Cache-pair runs report cold and warm targets separately after their cache
+receipts verify. A linked lesson counts when the recorded reply contains a
+nonempty lesson with an explicit code-link state. Incomplete Loom replies leave
+content totals and first-lesson timing unknown.
+
 Use `--loom-schema-profile compact` on `plan` and `run` to measure the compact
 MCP catalog against the default `standard` catalog. All Loom arms use the same
 profile. Setup verifies the catalog fingerprints and checks that the compact
