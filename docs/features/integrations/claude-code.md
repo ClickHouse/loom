@@ -14,6 +14,38 @@ The `loom` plugin for Claude Code does three things in one install:
 Source: `integrations/claude-code-plugin/`, Node ESM scripts with no dependencies. The
 Codex build runs the same scripts; see [codex.md](codex.md).
 
+## Project instructions for MCP-only sessions
+
+An MCP connection makes tools available; it does not require the agent to choose
+them. When using Loom without the plugin's routing hooks, add retrieval guidance
+to the project's existing `CLAUDE.md`. Preserve its other instructions and name
+the paths the index actually covers:
+
+```markdown
+When Loom MCP is configured, use its tools for supported context lookups:
+
+- loom_code_search for behavior; loom_code_symbol for a definition or path:line;
+  loom_code_outline for structure; loom_code_grep for text; loom_code_callers for callers.
+- Read returned bodies and linked lessons before retrieving more. Follow named
+  callees with loom_code_symbol. Discover deferred tools with ToolSearch.
+- Use loom_search for relevant history, decisions and documents. Check source
+  references, freshness and code-link state before relying on a recalled fact.
+- Avoid repeating a successful Loom lookup locally. Explain missing context
+  before falling back. Use local tools for unindexed or edited files, editing,
+  tests, builds and Git, or when Loom is unavailable.
+  When Loom is absent, use the available local tools. Skip retrieval when the
+  conversation already contains the evidence needed.
+```
+
+This guidance leaves the agent in charge of its solution and verification. It
+does not guarantee tool selection or fewer calls. Inspect the session trajectory
+to distinguish successful retrieval, tool errors and local fallback.
+
+The [software factory template](../../../examples/software_factory/harbor/project-guidance.md)
+is shared across its five arms, including the baseline without Loom. Its protocol
+retains the exact instructions and their hash. Keep these instructed measurements
+separate from measurements with no project guidance.
+
 ## Data handling
 
 This section covers the Claude Code plugin and the Codex plugin, which run the same

@@ -1,0 +1,170 @@
+{
+  "scope": "Descriptive matched pilot; predeclared initial-input sensitivity, not controlled cache measurements or invoices. Timing is native CLI/API report, not isolated Loom server latency.",
+  "attempts": [
+    {
+      "order": 0,
+      "arm": "loom-treesitter-memory",
+      "cost_components": {
+        "uncached_input_usd": 7.2e-5,
+        "cache_read_usd": 0.042498799999999996,
+        "cache_write_usd": 0.16126500000000002,
+        "output_usd": 0.08222
+      },
+      "timing": {
+        "agent_s": 48.633809,
+        "cli_s": 45.545,
+        "api_s": 42.647,
+        "cli_non_api_remainder_s": 2.8980000000000032,
+        "harbor_outside_cli_s": 3.0888089999999977
+      },
+      "first_input_sensitivity": {
+        "first_prompt_tokens": 22582,
+        "first_cache_read_tokens": 0,
+        "first_cache_write_tokens": 22580,
+        "uniform_initial_cold_write_solver_usd": 0.28605780000000003,
+        "uniform_initial_warm_read_solver_usd": 0.17766420000000002
+      },
+      "matched_baseline_deltas": {
+        "solver_cost_fraction": 0.2922580831690469,
+        "agent_time_fraction": -0.1371463180199416,
+        "api_s": -6.091000000000001,
+        "cli_non_api_remainder_s": -1.7519999999999953,
+        "uniform_initial_cold_write_solver_usd_fraction": 0.03894682248204373,
+        "uniform_initial_warm_read_solver_usd_fraction": -0.0669053881447369
+      },
+      "trajectory_sha256": "ff278a0f56d1fbfbe19e33c1df217e82edbebefa72c5d4a6528fbef75cc7ba4d"
+    },
+    {
+      "order": 1,
+      "arm": "baseline",
+      "cost_components": {
+        "uncached_input_usd": 9.6e-5,
+        "cache_read_usd": 0.0502602,
+        "cache_write_usd": 0.07666500000000001,
+        "output_usd": 0.09434000000000001
+      },
+      "timing": {
+        "agent_s": 56.363912,
+        "cli_s": 53.388,
+        "api_s": 48.738,
+        "cli_non_api_remainder_s": 4.649999999999999,
+        "harbor_outside_cli_s": 2.975912000000001
+      },
+      "first_input_sensitivity": {
+        "first_prompt_tokens": 17694,
+        "first_cache_read_tokens": 11244,
+        "first_cache_write_tokens": 6448,
+        "uniform_initial_cold_write_solver_usd": 0.2753344,
+        "uniform_initial_warm_read_solver_usd": 0.1904032
+      },
+      "matched_baseline_deltas": {
+        "solver_cost_fraction": 0.0,
+        "agent_time_fraction": 0.0,
+        "api_s": 0.0,
+        "cli_non_api_remainder_s": 0.0,
+        "uniform_initial_cold_write_solver_usd_fraction": 0.0,
+        "uniform_initial_warm_read_solver_usd_fraction": 0.0
+      },
+      "trajectory_sha256": "5febabf171879fee53faf78601fdf55c970cc715b813398d76574b5c6c065991"
+    },
+    {
+      "order": 2,
+      "arm": "loom-treesitter",
+      "cost_components": {
+        "uncached_input_usd": 7.999999999999999e-5,
+        "cache_read_usd": 0.0524206,
+        "cache_write_usd": 0.063825,
+        "output_usd": 0.08786000000000001
+      },
+      "timing": {
+        "agent_s": 54.867726,
+        "cli_s": 51.753,
+        "api_s": 46.745,
+        "cli_non_api_remainder_s": 5.008000000000003,
+        "harbor_outside_cli_s": 3.1147259999999974
+      },
+      "first_input_sensitivity": {
+        "first_prompt_tokens": 22593,
+        "first_cache_read_tokens": 18093,
+        "first_cache_write_tokens": 4498,
+        "uniform_initial_cold_write_solver_usd": 0.291034,
+        "uniform_initial_warm_read_solver_usd": 0.1825876
+      },
+      "matched_baseline_deltas": {
+        "solver_cost_fraction": -0.07759083344325934,
+        "agent_time_fraction": -0.02654510566974133,
+        "api_s": -1.993000000000002,
+        "cli_non_api_remainder_s": 0.3580000000000041,
+        "uniform_initial_cold_write_solver_usd_fraction": 0.05702011808186702,
+        "uniform_initial_warm_read_solver_usd_fraction": -0.041047629451605894
+      },
+      "trajectory_sha256": "9ee889abb9ebd13eb9e963981b77bd9f3497ae026c3de75b528689bb69b48b30"
+    },
+    {
+      "order": 3,
+      "arm": "loom-scip-memory",
+      "cost_components": {
+        "uncached_input_usd": 6.4e-5,
+        "cache_read_usd": 0.040537199999999995,
+        "cache_write_usd": 0.06811500000000001,
+        "output_usd": 0.07668000000000001
+      },
+      "timing": {
+        "agent_s": 45.435859,
+        "cli_s": 42.395,
+        "api_s": 39.914,
+        "cli_non_api_remainder_s": 2.4810000000000016,
+        "harbor_outside_cli_s": 3.0408589999999975
+      },
+      "first_input_sensitivity": {
+        "first_prompt_tokens": 22576,
+        "first_cache_read_tokens": 18093,
+        "first_cache_write_tokens": 4481,
+        "uniform_initial_cold_write_solver_usd": 0.27224459999999995,
+        "uniform_initial_warm_read_solver_usd": 0.16387979999999996
+      },
+      "matched_baseline_deltas": {
+        "solver_cost_fraction": -0.1624720140656991,
+        "agent_time_fraction": -0.19388386313568862,
+        "api_s": -8.823999999999998,
+        "cli_non_api_remainder_s": -2.168999999999997,
+        "uniform_initial_cold_write_solver_usd_fraction": -0.011221990423281758,
+        "uniform_initial_warm_read_solver_usd_fraction": -0.13930123023142482
+      },
+      "trajectory_sha256": "d8c2b633e1366520873776a27ac625bb249ed2d8aa5ea3342f3253c3f6a098e6"
+    },
+    {
+      "order": 4,
+      "arm": "loom-scip",
+      "cost_components": {
+        "uncached_input_usd": 9.6e-5,
+        "cache_read_usd": 0.06355419999999999,
+        "cache_write_usd": 0.066135,
+        "output_usd": 0.08022
+      },
+      "timing": {
+        "agent_s": 55.998281,
+        "cli_s": 52.968,
+        "api_s": 47.344,
+        "cli_non_api_remainder_s": 5.624000000000002,
+        "harbor_outside_cli_s": 3.030280999999995
+      },
+      "first_input_sensitivity": {
+        "first_prompt_tokens": 22581,
+        "first_cache_read_tokens": 18093,
+        "first_cache_write_tokens": 4486,
+        "uniform_initial_cold_write_solver_usd": 0.2968536,
+        "uniform_initial_warm_read_solver_usd": 0.1884648
+      },
+      "matched_baseline_deltas": {
+        "solver_cost_fraction": -0.0513007699632998,
+        "agent_time_fraction": -0.006486969889527905,
+        "api_s": -1.3939999999999984,
+        "cli_non_api_remainder_s": 0.9740000000000038,
+        "uniform_initial_cold_write_solver_usd_fraction": 0.07815659794054075,
+        "uniform_initial_warm_read_solver_usd_fraction": -0.010180501168047584
+      },
+      "trajectory_sha256": "2a522788cceadfed171c79fa8333b8d1d36b1421470e994217fa67d783164002"
+    }
+  ]
+}
