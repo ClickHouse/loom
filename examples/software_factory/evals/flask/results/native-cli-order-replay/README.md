@@ -40,6 +40,18 @@ and usage use the recorded values. Every Loom arm costs more than baseline
 in the equal-cold estimate. The largest equal-warm cost reduction is 13.1%.
 The observed cost comparison reflects provider cache reuse.
 
+Both CLI cohorts run the arms in the same order. SCIP is first in both and
+records zero first-prompt cache reads. These repeats share the same order
+effect. The full schedule rotates treatment positions across task blocks.
+
+## End-to-end timing
+
+Tree-sitter with memory spends 11.63 fewer seconds in the agent than No Loom.
+Environment setup, agent setup and verification together differ by 0.07 seconds.
+Time outside those three phases and agent execution is 7.60 seconds with
+Tree-sitter and memory and 4.51 seconds with No Loom. That residual accounts
+for most of the difference between the agent-time and end-to-end savings.
+
 ## Tool evidence
 
 The two memory connections have identical startup instruction fingerprints.
