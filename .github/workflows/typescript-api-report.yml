@@ -7,13 +7,19 @@ on:
       - "sdk/typescript/**"
       - ".github/ts-api-report/**"
       - ".github/workflows/typescript-api-report.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/typescript/**"
+      - ".github/ts-api-report/**"
+      - ".github/workflows/typescript-api-report.yml"
 
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   api-report:
