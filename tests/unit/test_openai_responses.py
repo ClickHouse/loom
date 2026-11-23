@@ -217,7 +217,6 @@ def test_a_cached_count_over_the_prompt_is_clamped(_setup: _Client) -> None:
             },
             "max_messages",
         ),
-        ({"status": "failed", "output": []}, "failed"),
         ({"output": [_message(_text("ok"))]}, ""),
     ],
 )
@@ -297,6 +296,51 @@ def test_a_failing_call_marks_openai_responses_failing(monkeypatch: pytest.Monke
     with pytest.raises(httpx.HTTPStatusError, match="from openai:responses"):
         asyncio.run(oa.OpenAILLMClient("gpt-x").complete("s", "u", max_tokens=10))
     assert provider_health.status()["providers"]["openai:responses"]["failing"] is True
+
+
+def _failed(code: str) -> dict[str, Any]:
+    return {
+        "object": "response",
+        "status": "failed",
+        "error": {"code": code, "message": "The response failed."},
+        "output": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "posts"),
+    [("server_error", 500, 3), ("rate_limit_exceeded", 429, 3), ("invalid_prompt", 400, 1)],
+)
+def test_a_failed_response_raises_the_http_error_its_code_stands_for(
+    _setup: _Client, monkeypatch: pytest.MonkeyPatch, code: str, status: int, posts: int
+) -> None:
+    import httpx
+
+    from server.observability import provider_health
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_retry_attempts", 3)
+    monkeypatch.setattr(settings, "llm_retry_max_wait_s", 0.0)
+    _setup.body = _failed(code)
+    provider_health.reset()
+    with pytest.raises(httpx.HTTPStatusError, match=f"from openai:responses: code={code}") as err:
+        _send(_setup)
+    assert err.value.response.status_code == status
+    assert len(_setup.calls) == posts  # a server error or a rate limit is retried
+    assert provider_health.status()["providers"]["openai:responses"]["failing"] is True
+
+
+def test_a_failed_response_hands_over_to_the_fallback(
+    _setup: _Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.llm.fake import FakeLLMClient
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_retry_attempts", 1)
+    _setup.body = _failed("server_error")
+    client = FallbackLLMClient(oa.OpenAILLMClient("gpt-x"), FakeLLMClient())
+    result = asyncio.run(client.complete("Answer in JSON.", "the turn", max_tokens=200))
+    assert result.provider == "fake"
 
 
 def test_a_key_check_calls_the_responses_api(_setup: _Client) -> None:

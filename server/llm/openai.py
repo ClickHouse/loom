@@ -242,6 +242,25 @@ def _text_format(response_format: Mapping[str, Any]) -> dict[str, Any]:
     return dict(response_format)
 
 
+# The HTTP status that a failed Responses reply's `error.code` stands for; any
+# other code is the request's problem, as a 400.
+_FAILED_STATUS = {"server_error": 500, "rate_limit_exceeded": 429}
+
+
+def _raise_for_failed(data: Any, url: str, source: str) -> None:
+    """A 200 whose body says the response failed (`status: "failed"`) raises the
+    HTTP error that its `error.code` stands for, so the retries, the fallback and
+    provider health treat it as that error."""
+    if not isinstance(data, dict) or data.get("status") != "failed":
+        return
+    error = data.get("error")
+    if not isinstance(error, dict):
+        error = {}
+    status = _FAILED_STATUS.get(str(error.get("code") or ""), 400)
+    request = httpx.Request("POST", url)
+    _raise_for_status(httpx.Response(status, json={"error": error}, request=request), source)
+
+
 async def _post(
     client: Any, url: str, headers: dict[str, str], payload: dict[str, Any]
 ) -> httpx.Response:
@@ -377,8 +396,7 @@ class OpenAILLMClient:
                         break
                     payload = wire.payload(model, call)
                     r = await _post(client, url, headers, payload)
-                _raise_for_status(r, self._source)
-                reply = wire.reply(r.json())
+                reply = self._read(url, r)
                 traits.note_hidden(model, reply.hidden)
                 cap_field = wire.cap_field(payload)
                 if reply.starved and cap_field:
@@ -387,7 +405,13 @@ class OpenAILLMClient:
                         model, int(payload[cap_field]), reply.hidden
                     )
                     r = await _post(client, url, headers, payload)
-                    _raise_for_status(r, self._source)
-                    reply = wire.reply(r.json())
+                    reply = self._read(url, r)
                 return reply
         raise RuntimeError("LLM retry loop exited without result")
+
+    def _read(self, url: str, r: httpx.Response) -> Reply:
+        """The reply of an answer that is neither an HTTP error nor a failed response."""
+        _raise_for_status(r, self._source)
+        data = r.json()
+        _raise_for_failed(data, url, self._source)
+        return self._wire.reply(data)

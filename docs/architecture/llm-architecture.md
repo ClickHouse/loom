@@ -299,6 +299,9 @@ Its reply's text is the `output_text` parts of the `message` items (reasoning it
 none), and its status becomes the stop reason in chat completions' words: `completed` is
 `stop`, `incomplete` for `max_output_tokens` is `length`, for `content_filter`
 `content_filter`, and a `refusal` part is `refusal`.
+A reply whose status is `failed` raises the HTTP error that its `error.code` stands for
+(`server_error` a 500, `rate_limit_exceeded` a 429, any other code a 400), so the
+retries, the fallback and provider health treat it as that error.
 
 **Structured output.** Callers pass `response_format={"type": "json_object"}` (or a
 `json_schema` format) in chat completions' shape. The local client passes it through; the
