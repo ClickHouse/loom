@@ -9,6 +9,58 @@ from examples.software_factory.harbor.native_trace import COUNTERS, EVENTS, TIMI
 
 
 class NativeTrace(unittest.TestCase):
+    def test_missing_or_unreadable_reply_leaves_source_totals_unknown(self):
+        fields = (
+            "loom_source_chars_main",
+            "loom_match_chars_main",
+            "loom_context_chars_main",
+            "loom_caller_context_chars_main",
+        )
+        assistant = {
+            "type": "assistant",
+            "message": {
+                "id": "model-1",
+                "content": [
+                    {"type": "tool_use", "id": "one", "name": "mcp__loom__loom_code_grep"},
+                    {"type": "tool_use", "id": "two", "name": "mcp__loom__loom_code_symbol"},
+                ],
+            },
+        }
+        good_reply = {
+            "type": "tool_result",
+            "tool_use_id": "one",
+            "content": '{"matches":[{"text":"line"}]}',
+        }
+        cases = (
+            ([], None),
+            ([{"type": "tool_result", "tool_use_id": "two", "content": "unreadable"}], None),
+            (
+                [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "two",
+                        "content": "error",
+                        "is_error": True,
+                    }
+                ],
+                (0, 4, 0, 0),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent").mkdir()
+            path = root / "agent/claude-code.txt"
+            for replies, expected in cases:
+                with self.subTest(replies=replies):
+                    user = {"type": "user", "message": {"content": [good_reply, *replies]}}
+                    path.write_text("\n".join(json.dumps(event) for event in (assistant, user)))
+                    result = summarize(root)
+                    actual = tuple(result["metrics"][field] for field in fields)
+                    self.assertEqual(
+                        actual, (None,) * len(fields) if expected is None else expected
+                    )
+                    self.assertEqual(result["calls"][0]["match_chars"], 4)
+
     def test_parallel_tools_are_one_model_turn_and_lesson_repeats_are_measured(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

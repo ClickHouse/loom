@@ -31,6 +31,7 @@ tool counts remain unknown.
 each attempt. It counts model responses, tool errors, source characters, lesson
 characters and repetitions, and reports native CLI/API duration. Source counts
 separate enclosing bodies, grep line matches, grep windows and caller windows.
+Source totals stay unknown when a Loom reply is missing or unreadable.
 It contains no tool arguments, source bodies or lesson excerpts. Model turns and
 tool requests have separate counts because several tools can share a model
 response. Native trajectories remain
