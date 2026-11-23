@@ -1,0 +1,53 @@
+name: External documentation links
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/external-links.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/external-links.yml"
+  schedule:
+    - cron: "23 7 * * 3"
+
+permissions:
+  contents: read
+
+jobs:
+  external-links:
+    if: github.repository == 'ClickHouse/loom'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            docs
+            sdk
+      - name: Install Lychee
+        working-directory: ${{ runner.temp }}
+        run: |
+          archive=lychee-x86_64-unknown-linux-gnu.tar.gz
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/$archive" -o "$archive"
+          echo "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" --strip-components=1 lychee-x86_64-unknown-linux-gnu/lychee
+      - name: Verify the link inventory on workflow changes
+        if: github.event_name == 'pull_request'
+        run: |
+          "$RUNNER_TEMP/lychee" --scheme https --scheme http --exclude-all-private \
+            --dump README.md CONTRIBUTING.md 'docs/getting-started/**/*.md' 'sdk/*/README.md' \
+            > "$RUNNER_TEMP/links.txt"
+          test -s "$RUNNER_TEMP/links.txt"
+      - name: Check public documentation URLs
+        if: github.ref == 'refs/heads/main'
+        run: |
+          "$RUNNER_TEMP/lychee" --scheme https --scheme http --exclude-all-private \
+            --exclude '^https?://([^/]+\.)?example\.(com|org|net)([:/]|$)' \
+            --exclude '^https?://localhost([:/]|$)' --max-concurrency 8 \
+            --timeout 10 --max-retries 1 --no-progress --format markdown \
+            --output "$GITHUB_STEP_SUMMARY" \
+            README.md CONTRIBUTING.md 'docs/getting-started/**/*.md' 'sdk/*/README.md'
