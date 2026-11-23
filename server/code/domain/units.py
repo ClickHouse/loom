@@ -14,6 +14,7 @@ import io
 import json
 import re
 import tokenize
+from itertools import islice
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -276,10 +277,11 @@ def symbol_signature(row: dict[str, Any], *, body: str = "") -> str:
 
 
 def _python_parameters(body: str, name: str) -> str:
-    # Read only the first declaration's header. Token strings keep multiline defaults intact.
+    # Read only the first declaration's header and keep the original parameter text.
+    source = io.StringIO(body)
     tokens = (
         token
-        for token in tokenize.generate_tokens(io.StringIO(body).readline)
+        for token in tokenize.generate_tokens(source.readline)
         if token.type not in {tokenize.COMMENT, tokenize.NL, tokenize.INDENT}
     )
     try:
@@ -292,22 +294,26 @@ def _python_parameters(body: str, name: str) -> str:
         if head.string != "def" or next(tokens).string != name:
             return ""
 
-        header = [(tokenize.NAME, "def"), (tokenize.NAME, "_")]
         depth = 0
-        parameters_started = False
+        start = None
         for token in tokens:
             if token.type in {tokenize.NEWLINE, tokenize.ENDMARKER}:
                 break
-            header.append((token.type, token.string))
             if token.type != tokenize.OP:
                 continue
             if token.string == "(" and depth == 0:
-                parameters_started = True
+                start = token.start
             depth += int(token.string in "([{") - int(token.string in ")]}")
-            if parameters_started and depth == 0:
+            if start is not None and depth == 0:
                 if next(tokens).string not in {":", "->"}:
                     break
-                statement = ast.parse(tokenize.untokenize(header) + ": pass").body[0]
+                start_line, start_col = start
+                end_line, end_col = token.end
+                source.seek(0)
+                lines = list(islice(source, start_line - 1, end_line))
+                end = sum(len(line) for line in lines[:-1]) + end_col
+                parameters = "".join(lines)[start_col:end]
+                statement = ast.parse("def _" + parameters + ": pass").body[0]
                 if isinstance(statement, ast.FunctionDef):
                     return f"({ast.unparse(statement.args)})"
                 break
