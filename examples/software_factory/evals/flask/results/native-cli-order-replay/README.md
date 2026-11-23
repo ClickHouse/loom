@@ -13,7 +13,7 @@ controls earn the expected rewards of zero and one.
 
 [Measured attempts and verified input hashes](results.json)
 
-[SCIP provider accounting and tool trace](SCIP-DIAGNOSTICS.md)
+[Five-arm tool trace and detailed SCIP provider accounting](SCIP-DIAGNOSTICS.md)
 
 | Arm                  | Hidden solved | Blind fixed | Regressions | Provider USD | Agent seconds | End-to-end seconds |  Tokens | Loom calls / total |
 | -------------------- | ------------: | ----------: | ----------: | -----------: | ------------: | -----------------: | ------: | -----------------: |

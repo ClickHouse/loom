@@ -1,10 +1,59 @@
-# SCIP cost and tool trace
+# Cost and tool trace by arm
 
 In the CLI option-order replay, SCIP spent $0.0142212 more than No Loom.
 Its first model response cost $0.0207650 more. The remaining responses cost
 $0.0065438 less. Both attempts solved the issue and passed the blind judgment.
 SCIP used one fewer model response and completed agent execution 7.69 seconds
 sooner. This is a one-issue, one-attempt-per-arm comparison. [Run results](results.json)
+
+## Five-arm trace
+
+| Arm                  | Model responses | Loom calls / total | First response USD | Later responses USD | Traced Loom server time |
+| -------------------- | --------------: | -----------------: | -----------------: | ------------------: | ----------------------: |
+| No Loom              |               7 |              0 / 8 |          0.0926880 |           0.0766808 |                       — |
+| Tree-sitter          |               6 |              2 / 5 |          0.0273446 |           0.0701530 |                   54 ms |
+| Tree-sitter + memory |               5 |              2 / 4 |          0.0272996 |           0.0677550 |                  184 ms |
+| SCIP                 |               6 |              1 / 5 |          0.1134530 |           0.0701370 |                   27 ms |
+| SCIP + memory        |               6 |              2 / 5 |          0.0059252 |           0.0761266 |                   79 ms |
+
+The prices by response are estimates reconciled to Claude Code's reported
+total. Traced Loom time sums the server operation latencies. Client transport,
+model time and local commands have separate timings.
+
+- **No Loom.** The first shell call located and read the callback. The next
+  read the option declarations. A later edit removed an unsupported issue
+  number from the changelog. This is the baseline for model responses, costs
+  and verifier results.
+- **Tree-sitter.** Exact symbol lookup located the callback. Unscoped grep
+  found the option and test references, then the agent read the option
+  declaration, test and changelog together. Retained grep windows cover that
+  source read. The newest decorator association supplies the owning function
+  for the option, so the reference has the right enclosing scope.
+- **Tree-sitter + memory.** Both lookups returned the same fresh 282-character
+  callback note. The agent then read source, tests and changelog together and
+  finished in five model responses. Lesson retrieval accounted for 160 ms
+  of the 174 ms exact lookup. This is the slowest individual Loom operation
+  across the five attempts and the fastest agent attempt overall. The time
+  trace supports measuring lesson work separately from its effect on later
+  model responses.
+- **SCIP.** The exact caller let the agent skip a separate grep. The agent
+  read a wider source span and looked up tests in the same shell call. This
+  path points to better source context around caller sites. The cost overage
+  occurred before that caller arrived.
+- **SCIP + memory.** The agent received the same fresh note twice and still
+  used grep, a combined source and test read, and a second test run on the
+  workspace with the source patch stashed. The warm first response accounted
+  for almost all of its observed cost advantage over No Loom. Later responses
+  were 0.7% cheaper.
+
+The observed duplicate note led to an opt-out for lesson retrieval on a
+follow-up grep. The source read led to opt-in retained grep windows. The same
+single issue ties on hidden and judged quality across all five arms, so the
+trace establishes note delivery and opportunities to reduce work. To measure
+quality lift, use an issue whose verifier distinguishes the historical
+constraint from a locally plausible patch.
+[Follow-up grep lesson control](https://github.com/ClickHouse/loom/pull/1271)
+[Retained grep windows](https://github.com/ClickHouse/loom/pull/1272)
 
 ## Provider accounting
 
@@ -71,6 +120,10 @@ an output-size measure, with separate counters for provider token usage.
    profiles expose the same tool names. Test compact discovery and invocation
    before changing a default. These isolated counts measure descriptor size.
    The native Claude Code prompt can include other setup text and tool metadata.
+   At the qualified five-minute write rate, 769 fewer tokens would save
+   $0.003845 on the first cold request. The replay's SCIP attempt needed
+   $0.048095 less in total to meet the 20% cold-cost target. Reaching that
+   target also requires savings beyond these four descriptors.
    [Anthropic token counting](https://platform.claude.com/docs/en/build-with-claude/token-counting)
 2. **Return the requested source span.** In the retained option search, six
    exact matches can carry 2,286 characters of nearby indexed source. The
