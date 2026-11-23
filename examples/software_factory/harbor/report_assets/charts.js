@@ -261,12 +261,15 @@ function chart(rows, plannedRows) {
         : { key: "resolved", title: "Attempts passed", kind: "rate" });
   const sums = Object.fromEntries(arms.map((arm) => [arm, aggregate(rows, arm, metric)]));
   const maximum = metric.kind === "rate" ? 1 : Math.max(...Object.values(sums).map((x) => x.value ?? 0), 0) * 1.1 || 1;
+  const measuredCost = metric.key === "cost" &&
+    rows.every((row) => row.generation_cost_source === "claude-code-reported");
   const target =
     metric.kind === "rate"
       ? 1
       : data.complete &&
           rows.length === plannedRows.length &&
           matched(rows) &&
+          (metric.kind !== "cost" || measuredCost) &&
           (!cacheStarts.length ||
             rows.every((row) => row.cache_start_verified === true) &&
             plannedRows.every((row) => verifiedPairOrders.has(row.order))) &&
