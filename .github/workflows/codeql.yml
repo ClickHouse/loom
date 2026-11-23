@@ -303,7 +303,7 @@ jobs:
               issue = managed.get(key)
               if result not in {"success", "failure"} or (issue and issue["state"] == "closed"):
                   continue
-              text = f"<!-- loom-sdk-codeql:v1 {key} -->\n<!-- loom-sdk-codeql-state:v1 {result} -->\n\n### Company or project name\n\nClickHouse\n\nThe bounded SDK static analysis check reports **{result}** on trusted main. [Read the selected SDK extraction and analysis logs]({url}).\n\nReproduce the SDK static analysis workflow using synthetic data. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
+              text = f"<!-- loom-sdk-codeql:v1 {key} -->\n<!-- loom-sdk-codeql-state:v1 {result} -->\n\n### Company or project name\n\nClickHouse\n\nThe bounded SDK static analysis check reports **{result}** on trusted main. [Read the selected SDK extraction and analysis logs]({url}).\n\nReproduce the SDK static analysis workflow using synthetic data. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions for recognized tasks. Keep the original title or the tracking marker in the body so later runs can identify this task."
               if issue is None:
                   if result == "failure":
                       api("POST", repo, {"title": titles[key], "body": text})
