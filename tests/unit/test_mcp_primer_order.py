@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from server.settings import settings
 from server.transport import mcp_primer
 
 PROFILE = "<section label='persona'>" + "be terse. " * 600 + "</section>"
@@ -113,3 +114,15 @@ def test_coding_startup_reuses_routing_text_across_implicit_bindings(
     assert first == second
     assert NAMESPACE not in first
     assert "acme/code-repo" not in first
+
+
+@pytest.mark.parametrize(
+    ("configured", "requested"),
+    [("coding", None), ("coding+tracker", "unknown"), ("core", "coding+unknown")],
+)
+def test_startup_resolves_toolset_like_the_listing(
+    monkeypatch: pytest.MonkeyPatch, configured: str, requested: str | None
+) -> None:
+    monkeypatch.setattr(settings, "mcp_toolset", configured)
+    expected = asyncio.run(mcp_primer._initialize_instructions(object(), configured))
+    assert asyncio.run(mcp_primer._initialize_instructions(object(), requested)) == expected

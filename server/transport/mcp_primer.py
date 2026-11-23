@@ -21,6 +21,7 @@ from typing import Any
 from server.auth.fanout import knowledge_search_reads_collections
 from server.code.domain.scope import current_code_scope
 from server.operations.registry import OPERATIONS_BY_NAME
+from server.operations.toolsets import resolve_toolset, toolset_parts
 from server.transport._common import begin_call, bind_request
 from server.transport.mcp_config import (
     _LOOM_PRIMER_RESOURCE_URI,
@@ -498,10 +499,13 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
     bearer: an anonymous probe (discovery_only / open modes) must not read
     profile content.
     """
+    from server.settings import settings
+
+    toolset = resolve_toolset(toolset, settings.mcp_toolset)
     if assistant_connection(toolset):
         return _assistant_primer(await _caller_defaults(auth, assistant=True))
     defaults = await _caller_defaults(auth)
-    coding = _is_coding_toolset(toolset)
+    coding = "coding" in toolset_parts(toolset)
     rules = _coding_instructions(toolset, defaults) if coding else _loom_rules(toolset, defaults)
     scope = current_code_scope()
     scope_line = ""
@@ -531,13 +535,6 @@ def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
     if not defaults["namespace"]:
         return f" {no_default_namespace_line(defaults)} loom_code_* calls use the code scope."
     return " The default memory namespace is filled in when a call names none."
-
-
-def _is_coding_toolset(toolset: str | None) -> bool:
-    """A connection listing the `coding` roster, alone or in a union."""
-    from server.operations.toolsets import toolset_parts
-
-    return "coding" in toolset_parts(toolset)
 
 
 def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = None) -> str:
