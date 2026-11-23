@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "kind": "historical-project-context",
+  "study_role": "predeclared historical dependency context for the CLI order pilot",
+  "cases": [
+    {
+      "case_id": "pallets__flask-4544",
+      "base_commit": "dba2be9311d2abfd1b973c6bb578f416ee771fda",
+      "cutoff": "2022-02-21T13:07:04Z",
+      "excluded_source_numbers": [4459, 4544],
+      "history_base_commit": "d7ac6f5bcf324e7fc588e501b2f18669efd5a12a",
+      "history_base_cutoff": "2021-05-03T14:13:43Z"
+    }
+  ]
+}

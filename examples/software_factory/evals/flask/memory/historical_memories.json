@@ -1,0 +1,307 @@
+{
+  "schema_version": 1,
+  "kind": "historical-project-context",
+  "study_role": "development regression; prior task outcomes were inspected",
+  "sources": {
+    "blueprints": {
+      "kind": "git-document",
+      "url": "https://github.com/pallets/flask/blob/298334fffc8288b5a9a45ef4150e3c4292e45318/docs/blueprints.rst",
+      "commit": "298334fffc8288b5a9a45ef4150e3c4292e45318",
+      "path": "docs/blueprints.rst",
+      "published_at": "2013-06-14T08:54:07Z",
+      "sha256": "ea8986117eb9fc09dc4e4070257c0e927f3685a0cf6385f881aa9eac9c1f7f5e"
+    },
+    "factories": {
+      "kind": "git-document",
+      "url": "https://github.com/pallets/flask/blob/298334fffc8288b5a9a45ef4150e3c4292e45318/docs/patterns/appfactories.rst",
+      "commit": "298334fffc8288b5a9a45ef4150e3c4292e45318",
+      "path": "docs/patterns/appfactories.rst",
+      "published_at": "2013-06-14T08:54:07Z",
+      "sha256": "3fcbfeb2705bc4fc02136eb31bb02200a009f6ab65c2b4130fe289fc277e86e2"
+    },
+    "app-context": {
+      "kind": "git-document",
+      "url": "https://github.com/pallets/flask/blob/298334fffc8288b5a9a45ef4150e3c4292e45318/docs/appcontext.rst",
+      "commit": "298334fffc8288b5a9a45ef4150e3c4292e45318",
+      "path": "docs/appcontext.rst",
+      "published_at": "2013-06-14T08:54:07Z",
+      "sha256": "5d6508b6b47da732ee33c6788e4b322050ed340b151023cba52a60b576837a37"
+    },
+    "request-context": {
+      "kind": "git-document",
+      "url": "https://github.com/pallets/flask/blob/298334fffc8288b5a9a45ef4150e3c4292e45318/docs/reqcontext.rst",
+      "commit": "298334fffc8288b5a9a45ef4150e3c4292e45318",
+      "path": "docs/reqcontext.rst",
+      "published_at": "2013-06-14T08:54:07Z",
+      "sha256": "d8f1799ad4897665532c4e8886e20d14d85b50aaeab78aa4941cb65108210998"
+    },
+    "streaming": {
+      "kind": "git-document",
+      "url": "https://github.com/pallets/flask/blob/298334fffc8288b5a9a45ef4150e3c4292e45318/docs/patterns/streaming.rst",
+      "commit": "298334fffc8288b5a9a45ef4150e3c4292e45318",
+      "path": "docs/patterns/streaming.rst",
+      "published_at": "2013-06-14T08:54:07Z",
+      "sha256": "3e21f0627cf3d649163d8aaf8db2d4a9732cee1da1a7322fb64a49925f03ad06"
+    },
+    "pr-2450": {
+      "kind": "historical-pull-request",
+      "url": "https://github.com/pallets/flask/pull/2450",
+      "number": 2450,
+      "published_at": "2017-08-19T03:46:06Z",
+      "last_edited_at": null,
+      "merged_at": "2017-10-09T15:18:35Z",
+      "sha256": "18361f9e9b06c877fafe76e1431acb27d5e4e1fd9eb97fad288920943d77a6bd",
+      "excerpt": "I want to use before_request function to my blueprint. here is my usecase: from flask import Flask, Blueprint, request, abort"
+    },
+    "pr-2635": {
+      "kind": "historical-pull-request",
+      "url": "https://github.com/pallets/flask/pull/2635",
+      "number": 2635,
+      "published_at": "2018-02-19T20:29:27Z",
+      "last_edited_at": null,
+      "merged_at": "2018-02-23T16:47:20Z",
+      "sha256": "31c76a1a3d44b42fea0cf6e7ce4ebea6bb05cc2f45e83841c6af026fc24ff011",
+      "excerpt": "This fixes #998. An argument can be made that this should actually land in Werkzeug instead. Question is if we"
+    },
+    "pr-2354": {
+      "kind": "historical-pull-request",
+      "url": "https://github.com/pallets/flask/pull/2354",
+      "number": 2354,
+      "published_at": "2017-06-02T18:16:30Z",
+      "last_edited_at": "2017-06-02T23:24:00Z",
+      "merged_at": "2017-06-03T19:26:15Z",
+      "sha256": "b27981ec6a1fdadfe8d93ee0b5a86057e19d4df3ef2111445cb1e6d8eaaecb95",
+      "excerpt": "When using stream_with_context, a new session was being opened based on the original request data. If the view containing the"
+    },
+    "cli": {
+      "kind": "git-document",
+      "url": "https://github.com/pallets/flask/blob/571334df8e26333f34873a3dcb84441946e6c64c/docs/cli.rst",
+      "commit": "571334df8e26333f34873a3dcb84441946e6c64c",
+      "path": "docs/cli.rst",
+      "published_at": "2017-05-16T08:39:30+02:00",
+      "sha256": "597de73ee3300cfee37950b7ae609697b7ed83cb7e4cb4457f073c2962717d93"
+    },
+    "nested-blueprints": {
+      "kind": "git-document",
+      "url": "https://github.com/pallets/flask/blob/2f0c62f5e6e290843f03c1fa70817c7a3c7fd661/docs/blueprints.rst",
+      "commit": "2f0c62f5e6e290843f03c1fa70817c7a3c7fd661",
+      "path": "docs/blueprints.rst",
+      "published_at": "2021-05-11T14:43:42-07:00",
+      "sha256": "e4e15084a59ebe7b6a8d29b665fb971704de07955edee462908db4da36e9d3e9"
+    },
+    "click-option-callbacks": {
+      "kind": "git-document",
+      "repository": "pallets/click",
+      "url": "https://github.com/pallets/click/blob/1784558ed7c75c65764d2a434bd9cbb206ca939d/docs/advanced.rst",
+      "commit": "1784558ed7c75c65764d2a434bd9cbb206ca939d",
+      "path": "docs/advanced.rst",
+      "published_at": "2020-04-27T20:12:27Z",
+      "sha256": "221339003bc61d233f9ec75b90020d0e562b73e1d1be149e210b7c53f9deabfa"
+    }
+  },
+  "records": [
+    {
+      "key": "history/component-recipe",
+      "value": "`Blueprint.register` can nest a child, with parent prefixes on endpoint names and URLs. Parent callbacks apply to descendants. A parent error handler is tried only if the child cannot handle the exception.",
+      "files": ["src/flask/blueprints.py"],
+      "source_ids": ["nested-blueprints"],
+      "initial_value": "`Blueprint.__init__` creates a reusable registration recipe, not an independent application.",
+      "initial_source_ids": ["blueprints"]
+    },
+    {
+      "key": "history/endpoint-hook-coupling",
+      "value": "`Blueprint.add_url_rule` once allowed dotted view names to misidentify the active blueprint and skip its authentication callback.",
+      "files": ["src/flask/blueprints.py"],
+      "source_ids": ["pr-2450"]
+    },
+    {
+      "key": "history/request-blueprint-identity",
+      "value": "`Request.blueprint` is derived from the endpoint identity; dots inside a view name previously changed that identity.",
+      "files": ["src/flask/wrappers.py"],
+      "source_ids": ["pr-2450"]
+    },
+    {
+      "key": "history/deferred-registration",
+      "value": "`Blueprint.register` applies operations recorded earlier to the application receiving that component.",
+      "files": ["src/flask/blueprints.py"],
+      "source_ids": ["blueprints"]
+    },
+    {
+      "key": "history/repeated-registration",
+      "value": "`Flask.register_blueprint` supports mounting a component more than once; its implementation must support repeated registration.",
+      "files": ["src/flask/app.py"],
+      "source_ids": ["blueprints"]
+    },
+    {
+      "key": "history/factory-reuse",
+      "value": "`Flask.__init__` supports separate application instances with different configurations in one process.",
+      "files": ["src/flask/app.py"],
+      "source_ids": ["factories"]
+    },
+    {
+      "key": "history/active-app-identity",
+      "value": "`Flask.app_context` supplies the active application without requiring a request, supporting multiple applications in one process.",
+      "files": ["src/flask/app.py"],
+      "source_ids": ["app-context"]
+    },
+    {
+      "key": "history/subdomain-opt-in",
+      "value": "`Flask.create_url_adapter` must preserve opt-in subdomain matching; setting the server name alone stopped enabling it.",
+      "files": ["src/flask/app.py"],
+      "source_ids": ["pr-2635"]
+    },
+    {
+      "key": "history/session-reuse",
+      "value": "`RequestContext.push` must reuse an already opened session so streaming observes changes made by the view.",
+      "files": ["src/flask/ctx.py"],
+      "source_ids": ["pr-2354"]
+    },
+    {
+      "key": "history/streaming-lifetime",
+      "value": "`stream_with_context` keeps request data available while a response generator runs after the view has returned.",
+      "files": ["src/flask/helpers.py"],
+      "source_ids": ["streaming"]
+    },
+    {
+      "key": "history/shared-component-config",
+      "value": "Components share their owning application configuration; independent applications are combined at the gateway layer instead.",
+      "files": [],
+      "source_ids": ["blueprints"]
+    },
+    {
+      "key": "history/endpoint-versus-url",
+      "value": "A component name prefixes endpoint identities. Changing that name does not itself change the mounted URL.",
+      "files": [],
+      "source_ids": ["blueprints"]
+    },
+    {
+      "key": "history/component-removal",
+      "value": "A registered component cannot be unregistered independently; rebuilding the application is required.",
+      "files": [],
+      "source_ids": ["blueprints"]
+    },
+    {
+      "key": "history/template-precedence",
+      "value": "Application templates take precedence over component templates, allowing the application to override reusable component presentation.",
+      "files": [],
+      "source_ids": ["blueprints"]
+    },
+    {
+      "key": "history/factory-test-isolation",
+      "value": "Factories allow tests to create independently configured application instances instead of reusing one global instance.",
+      "files": [],
+      "source_ids": ["factories"]
+    },
+    {
+      "key": "history/extension-state",
+      "value": "Reusable extension objects keep application-specific state outside the shared extension object so several applications can use one extension.",
+      "files": [],
+      "source_ids": ["factories"]
+    },
+    {
+      "key": "history/import-time-app-access",
+      "value": "Reusable components cannot depend on one application object at import time; request-time access uses the active application.",
+      "files": [],
+      "source_ids": ["factories"]
+    },
+    {
+      "key": "history/request-free-app-work",
+      "value": "Shell and command-line work may need an application context even when no HTTP request exists.",
+      "files": [],
+      "source_ids": ["app-context"]
+    },
+    {
+      "key": "history/context-resources",
+      "value": "Context-local resources are acquired lazily and released by context teardown rather than stored as process-wide shared state.",
+      "files": [],
+      "source_ids": ["app-context"]
+    },
+    {
+      "key": "history/context-thread-isolation",
+      "value": "Context-local application and request state is isolated between threads rather than shared as ordinary globals.",
+      "files": [],
+      "source_ids": ["request-context"]
+    },
+    {
+      "key": "history/direct-context-setup",
+      "value": "Pushing a test request context does not run the entire request dispatch lifecycle automatically.",
+      "files": [],
+      "source_ids": ["request-context"]
+    },
+    {
+      "key": "history/teardown-independence",
+      "value": "`Flask.do_teardown_request` runs when a request context is removed, including failure paths; cleanup cannot assume successful dispatch.",
+      "files": ["src/flask/app.py"],
+      "source_ids": ["request-context"]
+    },
+    {
+      "key": "history/stream-response-timing",
+      "value": "The view returns before its response generator is consumed, so request-bound work in the generator needs preserved context.",
+      "files": [],
+      "source_ids": ["streaming"]
+    },
+    {
+      "key": "history/stream-session-headers",
+      "value": "Streaming observes the existing session, but changing a cookie-backed session after response headers are sent cannot update those headers.",
+      "files": [],
+      "source_ids": ["pr-2354"]
+    },
+    {
+      "key": "history/cli-application-owner",
+      "value": "`FlaskGroup` is the application-aware parent of management commands. Custom Click drivers are supported, but application commands must run beneath a FlaskGroup so they know which application to use.",
+      "files": ["src/flask/cli.py"],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/cli-context-wrapper",
+      "value": "`AppGroup.command` wraps callbacks in an application context by default. Commands attached later with Click add_command do not receive that wrapper automatically; with_appcontext=False explicitly opts out.",
+      "files": ["src/flask/cli.py"],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/shell-application-context",
+      "value": "`Flask.make_shell_context` supplies shell locals after the correct application context has been established. The default shell exposes the application and g.",
+      "files": ["src/flask/app.py"],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/cli-import-selection",
+      "value": "FLASK_APP can identify a module or a filename. A colon suffix chooses an application object whose name differs from app.",
+      "files": [],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/cli-custom-driver",
+      "value": "Flask uses Click so reusable applications can ship a custom management driver integrated into a larger command-line application.",
+      "files": [],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/cli-factory-loading",
+      "value": "A custom FlaskGroup receives an application factory and asks it to create the application when Click needs to operate on it. This lets the driver control application construction.",
+      "files": [],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/cli-option-callback-order",
+      "value": "Click runs parameter callbacks after parsing and value conversion. Eager parameters run before ordinary parameters. This applies to Flask CLI callbacks such as `_validate_key`.",
+      "files": ["src/flask/cli.py"],
+      "source_ids": ["click-option-callbacks"]
+    }
+  ],
+  "requirements": {
+    "rows": 31,
+    "code_linked": 15,
+    "unlinked": 16,
+    "max_words": 45,
+    "max_chars": 400
+  },
+  "excluded_information": [
+    "target issue discussions",
+    "target fixing PRs",
+    "reference patches",
+    "hidden tests and failure messages",
+    "post-cutoff sources"
+  ],
+  "interpretation": "Curated historical knowledge replayed into fresh native memory; not autonomous months of learning."
+}

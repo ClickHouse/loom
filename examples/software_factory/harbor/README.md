@@ -1,0 +1,117 @@
+# Automatic Harbor reports
+
+Every live study exports reports before its first attempt, after each finalized
+attempt, and at completion. Export reads recorded results and copies artifacts;
+it makes no model requests. Qualification jobs remain separate.
+
+The output directory contains:
+
+- `reports/COMPARISON.md` and `reports/comparison.json`: the primary comparison,
+  links to native Harbor success, cost and duration views, and expected, observed
+  and pending counts.
+- `reports/attempts/attempt-NN.md` and `.json`: each scheduled attempt, with native
+  trajectory and verifier links when those artifacts exist.
+- `reports/scenarios/`: one summary per distinct task, across repeats and arms.
+- `reports/AA-CONTROLS.md` and `reports/aa-controls.json`: separate A/A controls.
+- `reports/charts.html` and `reports/charts.json`: bar charts for hidden success, blind fixed judgments, regressions, provider cost,
+  agent time, tests, Loom calls, memory writes and tokens and total tool calls, with scenario and attempt filters.
+- `reporting-manifest.json`: source job, derived jobs and report locations.
+
+With three scenarios, three repeats and five arms, the primary comparison has
+nine task/repeat rows and five columns. The six A/A controls are excluded from
+those columns. Missing attempts have null metrics and explicit pending counts.
+Observed successes are reported immediately; a final success rate is available
+only when all expected attempts in that arm have completed. Unknown cost and
+tool counts remain unknown.
+
+`diagnostics/attempt-NN.json` records a passive main-session trace summary after
+each attempt: model-response groups, tool errors, body and lesson characters,
+lesson repetition, and native CLI/API duration. It contains no tool arguments,
+source bodies or lesson excerpts. Model turns and tool requests are separate
+counts; several tools can share a model response. Native trajectories remain
+authoritative for global counts including subagents.
+
+`diagnostics/attempt-NN-model-usage.json` records input and output tokens, cache
+reads and writes, and estimated cost for each measured model step in the native
+trajectory. Tool-call IDs join the step to the recorded tool responses. The source
+hash names the trajectory, and missing usage fields stay unknown. Attempt totals
+remain authoritative for cost. This optional capture runs after billing collection.
+
+`diagnostics/attempt-NN-code-traces.json` preserves the existing code-search trace
+rows named by that attempt's returned trace ids, scoped to its source namespace.
+It retains routes, index revision, result counts and per-stage timings, without
+queries, paths, source or lesson text. Missing asynchronous trace rows remain
+explicitly partial and are checked again before cleanup. Stages can overlap;
+their sum is not request wall time. These snapshots do not require a remote trace
+exporter and do not replace the existing OpenTelemetry integration.
+
+Provider-ledger evidence is captured at each attempt end and again before cleanup.
+It includes request and trace ids, serving build and bounded ledger arguments for
+joining the existing Loom traces. A failed capture leaves billing unknown and a
+preservation receipt; it does not skip resource cleanup. These private diagnostics
+are separate from the allowlisted numeric public export.
+
+A `--pilot-task` run has one task/repeat row and all five arm columns. It has no
+A/A attempts. Its paired deltas are descriptive; confidence intervals remain
+unknown because a single scenario cannot measure variation across scenarios.
+Hidden tests, full regression checks and blind fixed judgments use the same
+contracts as the full matrix.
+
+Native Harbor duration is the recorded trial finish minus its start. Full study
+end-to-end duration also includes the post-trial index audit. Reports retain both.
+Generation cost comes from native Claude Code, with Harbor's marked estimate
+when reported cost is unavailable. Loom provider cost is attributed separately
+from the server ledger. These values do not measure infrastructure or reconcile invoices.
+
+Charts are published under the installed Harbor viewer's static assets when that
+directory is writable. A Charts link is added to the viewer navigation without
+restarting its server. The reporter links to the published charts, or to the
+standalone local HTML when publication is unavailable. The original viewer page
+is saved before adding the navigation script.
+
+## Native views
+
+By default, the reporter creates `no-loom`, `loom-treesitter`, `loom-treesitter-memory`,
+`loom-scip`, `loom-scip-memory` and `aa-controls` under the study's `jobs` directory. Each finalized trial's assets
+are copied once. Subsequent exports update aggregates and add newly finalized
+trials. Temporary copies are staged outside native job directories and recovered
+after an interrupted export. JSON and Markdown writes replace files atomically.
+
+The measured `jobs/live` directory is never modified. Copies preserve original
+trial UUIDs, configuration, metrics, costs and timestamps. Only the derived task
+display name and checksum, and the matching task lock name and digest, are
+normalized across the same task/repeat pair. This lets Harbor align each pair
+across the five arms. Each copied trial records the original identity, normalized
+fields, pairing inputs and source file hashes in `presentation-provenance.json`.
+Derived jobs are presentation views, not new executions.
+
+The reporter verifies cached assets against their source hashes, refuses changed
+trial assets and refuses to overwrite an unrelated job. It copies files without
+hardlinks or permission changes. Reports can be regenerated by exporting the
+study again.
+
+## A shared viewer
+
+The default viewer URL is `http://127.0.0.1:8080`. A prepared protocol may supply
+a `reporting` object:
+
+```json
+{
+  "reporting": {
+    "viewer_jobs_root": "/path/to/viewer/jobs",
+    "viewer_base_url": "http://127.0.0.1:8080",
+    "job_prefix": "study-name-"
+  }
+}
+```
+
+Omit `viewer_jobs_root` to use the study's `jobs` directory. For a separate viewer
+root, the default prefix combines the output directory name with a path hash to
+avoid collisions. An explicit prefix must contain only letters, numbers, dots,
+dashes or underscores. Point the existing Harbor viewer at the configured jobs
+root; exporting reports does not start or restart a server.
+
+For a viewer installed elsewhere, set `reporting.chart_assets_root` to its static
+assets directory. Set `reporting.chart_install_navigation` to `false` to publish
+charts without adding the navigation link, or `reporting.publish_charts` to
+`false` to generate only local chart files.
