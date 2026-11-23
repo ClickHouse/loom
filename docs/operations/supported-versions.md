@@ -41,6 +41,11 @@ say what an SDK at `X.0` needs.
 An older SDK keeps working against a newer server for as long as the server serves what it calls;
 a removal follows the rule below.
 
+The TypeScript SDK requires Node 22.13.0 or later. Its optional framework peers
+keep their own runtime requirements
+([TypeScript SDK](../reference/typescript-sdk.md#install)). Building the SDK from
+source uses Node 22.18 or later in the Node 22 line for the locked build toolchain.
+
 ## Coding-agent plugins
 
 The Claude Code and Codex plugins carry their own version, and name the oldest server their

@@ -138,7 +138,7 @@
   },
   "homepage": "https://clickhouse.github.io/loom/reference/typescript-sdk/",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.13.0"
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": ">=1.8.0 <1.9.0 || >=1.11.0 <1.12.0",

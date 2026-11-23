@@ -1356,6 +1356,13 @@ jobs:
       - name: build + dist tests + publint + attw
         working-directory: sdk/typescript
         run: npm run check:dist
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.13.0"
+      # Build tools run above on the development runtime; consumers run at the floor.
+      - name: Distribution and packed consumers on minimum Node
+        working-directory: sdk/typescript
+        run: npm run test:dist
       # Keep the locked 1.8 baseline above and qualify the other supported band
       # against the same source, native tool runner and package exports.
       - name: Claude memory tool with Anthropic 1.11

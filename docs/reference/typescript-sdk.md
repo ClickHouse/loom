@@ -8,7 +8,7 @@ registry. It behaves like the [Python SDK](./python-sdk.md): identity binding, a
 
 ## Install
 
-Node 20 or later (it uses the platform `fetch`). No runtime dependencies.
+Node 22.13.0 or later (it uses the platform `fetch`). No runtime dependencies.
 
 ```bash
 npm install @clickhouse/loom
@@ -32,8 +32,7 @@ points: `@clickhouse/loom/integrations/ai-sdk`, `@clickhouse/loom/integrations/l
 ## Credentials
 
 The client picks its server and credential as the Python SDK does (`readEnv`).
-The `profile` option names a `loom login` session and its server (Node 20.16
-or later, 22.3 or later on Node 22). Otherwise
+The `profile` option names a `loom login` session and its server. Otherwise
 `baseUrl` wins, else `LOOM_BASE_URL`, else `http://localhost:7777`, and the
 credential is `tokenProvider` or `apiKey`, then `LOOM_API_KEY`, then a bot's
 `LOOM_CLIENT_ID` with its key or workload token (`MachineLogin`), then the
