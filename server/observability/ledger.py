@@ -230,8 +230,8 @@ def emit_agent_event(
             record_response_counts(projected_result)
     # The request's own work bag — ClickHouse rows
     # and bytes from every statement's response summary, identifier
-    # injection counts, legs skipped under schema skew, and the ask-side
-    # stage partition when the result carries none of its own.
+    # injection counts, legs skipped under schema skew, and observed ask or
+    # code stages when the result carries no partition of its own.
     try:
         from server.core import request_work as _request_work
         from server.observability.event_args import (

@@ -12,6 +12,8 @@ from collections.abc import Iterator
 from contextvars import ContextVar
 from typing import Any
 
+from server.core import request_work
+
 # ---------------------------------------------------------------------------
 # Spans. A single root span per op cannot say which leg of a slow call is slow, so
 # code_span() wraps the shared traced() helper with a `code.` prefix and the waterfall reads
@@ -67,9 +69,9 @@ def code_span(name: str, **attrs: Any) -> Any:
     is skipped. Yields the span (or None when OTel is off), so callers can add post-hoc
     facts via span_attrs().
 
-    When the op started a stage wall, the span's wall time is also charged to
-    `stage_of(name)` on it: the one clock the response and the trace row read, OTel on
-    or off."""
+    Charge exclusive time to `stage_of(name)` on the handler's stage wall and the request's
+    work bag, when present. The bag includes spans that run after a handler snapshots its
+    trace row, such as lesson enrichment. Both clocks work without OTel."""
     try:
         from server.observability.otel import traced
 
@@ -78,9 +80,10 @@ def code_span(name: str, **attrs: Any) -> Any:
     except Exception:  # noqa: BLE001 — telemetry must never fail a request
         inner = contextlib.nullcontext()
     wall = _STAGE_WALL.get()
-    if wall is None:
+    work = request_work.current()
+    if wall is None and work is None:
         return inner
-    return _timed_span(inner, wall, stage_of(name))
+    return _timed_span(inner, wall, work, stage_of(name))
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +173,9 @@ def with_stage_ms(work: dict[str, Any]) -> dict[str, Any]:
 
 
 @contextlib.contextmanager
-def _timed_span(inner: Any, wall: StageWall, stage: str) -> Iterator[Any]:
+def _timed_span(
+    inner: Any, wall: StageWall | None, work: request_work.RequestWork | None, stage: str
+) -> Iterator[Any]:
     frame = [0.0]
     token = _STAGE_FRAMES.set((*_STAGE_FRAMES.get(), frame))
     t0 = time.perf_counter()
@@ -180,7 +185,11 @@ def _timed_span(inner: Any, wall: StageWall, stage: str) -> Iterator[Any]:
     finally:
         elapsed = (time.perf_counter() - t0) * 1000.0
         _STAGE_FRAMES.reset(token)
-        wall.add(stage, elapsed - frame[0])
+        exclusive = max(0.0, elapsed - frame[0])
+        if wall is not None:
+            wall.add(stage, exclusive)
+        if work is not None:
+            work.code_stage_ms[stage] = work.code_stage_ms.get(stage, 0.0) + exclusive
         parents = _STAGE_FRAMES.get()
         if parents:
             parents[-1][0] += elapsed

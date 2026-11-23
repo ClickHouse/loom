@@ -23,6 +23,8 @@ from server.code.api.models_search import CodeSearchInput
 from server.code.app import common as cc
 from server.code.app import spans
 from server.code.app.search import handler as h
+from server.core import request_work
+from server.observability.event_args import request_work_stage_columns
 from server.settings import settings
 
 # ---- the accumulator -------------------------------------------------------
@@ -96,6 +98,25 @@ def test_stage_of_maps_span_suffixes_to_the_stage_vocabulary() -> None:
     assert spans.stage_of("symbol.resolve") == "resolve"
     assert spans.stage_of("symbol.budget") == "budget"
     assert spans.stage_of("grep.chunks") == "chunks"
+
+
+def test_request_stages_include_post_handler_lessons(clock: _Clock) -> None:
+    work = request_work.RequestWork()
+    with request_work.bind(work):
+        spans.start_stage_wall()
+        with spans.code_span("grep.chunks"):
+            clock.advance(8)
+        trace_snapshot = spans.current_stage_ms()
+        with spans.code_span("enrich.lessons"):
+            clock.advance(37)
+    assert trace_snapshot == {"chunks": 8}
+    assert request_work_stage_columns(work) == {
+        "out_stage_top": "lessons",
+        "out_stage_top_ms": "37.0",
+        "out_stage_ms": "lessons=37,chunks=8",
+    }
+    with request_work.bind(request_work.RequestWork()):
+        assert request_work_stage_columns(request_work.current()) == {}
 
 
 def test_without_a_wall_a_span_still_yields_and_records_nothing() -> None:
