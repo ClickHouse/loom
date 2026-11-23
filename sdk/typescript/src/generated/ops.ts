@@ -873,6 +873,7 @@ export interface CodeFirstBuildOutput {
 }
 
 export interface CodeGrepInput {
+  /** Include linked lessons (default true) or set false when you already have the relevant notes. */
   include_lessons?: boolean;
   lesson_namespaces?: string[];
   org?: string;
