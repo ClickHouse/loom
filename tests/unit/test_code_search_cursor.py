@@ -565,7 +565,10 @@ def test_grep_cursor_for_another_pattern_is_a_400(monkeypatch: pytest.MonkeyPatc
         asyncio.run(grep.handle_code_grep(CodeGrepInput(pattern="needle", cursor=c)))
 
 
-@pytest.mark.parametrize("line_mapping", [None, 0, 2])
+@pytest.mark.parametrize(
+    "line_mapping",
+    [None, 0, grep._GREP_LINE_MAPPING_VERSION - 1, grep._GREP_LINE_MAPPING_VERSION + 1],
+)
 def test_grep_reruns_pools_without_the_current_source_mapping(
     monkeypatch: pytest.MonkeyPatch,
     line_mapping: int | None,
