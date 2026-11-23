@@ -8,12 +8,16 @@ overrides:
   glob@>=9 <14.0.2: 14.0.2
   minimatch@>=7 <11.0.1: 11.0.8
   qs@>=6.7.0 <6.16.1: 6.16.1
+  stream-json@<3.9.0: 3.9.0
   uuid@10.0.0: 11.1.1
 
 patchedDependencies:
-  stream-json@1.9.1:
-    hash: 7b4658eeba7a0b515544b7c022d99461f28b188cbeaef0d4c0dcaeaa59db90c8
-    path: patches/stream-json@1.9.1.patch
+  "@n8n/backend-common@1.47.4":
+    hash: 8930ff0bce5dfc52268fa20caef80f57d4528e3f005f2fa25cca237be69e4772
+    path: patches/@n8n__backend-common@1.47.4.patch
+  zod@3.25.76:
+    hash: 6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b
+    path: patches/zod@3.25.76.patch
 
 importers:
   .:
@@ -23,13 +27,13 @@ importers:
         version: 1.2.0
       "@langchain/classic":
         specifier: 1.0.27
-        version: 1.0.27(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+        version: 1.0.27(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       "@langchain/core":
         specifier: 1.4.0
-        version: 1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+        version: 1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       "@n8n/node-cli":
         specifier: 0.56.4
-        version: 0.56.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(zod@3.25.76))(@ibm-cloud/watsonx-ai@1.7.17)(@typescript-eslint/utils@8.73.0(eslint@9.29.0)(typescript@5.9.3))(eslint@9.29.0)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(n8n-workflow@2.47.2(zod@3.25.76))(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(playwright@1.65.1)(typescript@5.9.3)(ws@8.23.0)
+        version: 0.56.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(@ibm-cloud/watsonx-ai@1.7.17)(@typescript-eslint/utils@8.73.0(eslint@9.29.0)(typescript@5.9.3))(eslint@9.29.0)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(n8n-workflow@2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(playwright@1.65.1)(typescript@5.9.3)(ws@8.23.0)
       "@types/node":
         specifier: ^24
         version: 24.19.2
@@ -41,7 +45,7 @@ importers:
         version: 9.29.0
       n8n-workflow:
         specifier: 2.47.2
-        version: 2.47.2(zod@3.25.76)
+        version: 2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       prettier:
         specifier: 3.8.3
         version: 3.8.3
@@ -2957,13 +2961,13 @@ packages:
     resolution:
       { integrity: sha512-KGzahc7puUKkzyMt+IqAep+TVNbKP+k2Lmwhub39m1AsTSkaDutx56aDCo+HLDzf/D26BIHTJWNiTG1KAJiQCg== }
 
-  stream-chain@2.2.5:
+  stream-chain@4.4.2:
     resolution:
-      { integrity: sha512-1TJmBx6aSWqZ4tx7aTpBDXK0/e2hhcNSTV8+CbFJtDjbb+I1mZ8lHit0Grw9GRT+6JbIrrDd8esncgBi8aBXGA== }
+      { integrity: sha512-6WQtf7XW70N8/IXV4DfpTswi0VHTahsB0nO5UlLGp5HarJN+Q7VHT5HvBMlH9x0x77e+kJFnQkhkCdvFkwv2Vw== }
 
-  stream-json@1.9.1:
+  stream-json@3.9.0:
     resolution:
-      { integrity: sha512-uWkjJ+2Nt/LO9Z/JyKZbMusL8Dkh97uUBTv3AJQ74y07lVahLY4eEFsPsE97pxYBwr8nnjMAIch5eqI0gPShyw== }
+      { integrity: sha512-kL2w6owYCdzCRApK9/9HI7Vgrd+0iWE5tTGc8P/AS2AdPoHcFTQwUek66sbMpfaX73lgHvDN+u1AoRC/dzB1Hw== }
 
   string-width@4.2.3:
     resolution:
@@ -3316,10 +3320,10 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  "@asteasolutions/zod-to-openapi@7.3.4(zod@3.25.76)":
+  "@asteasolutions/zod-to-openapi@7.3.4(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))":
     dependencies:
       openapi3-ts: 4.6.2
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
 
   "@borewit/text-codec@0.2.3": {}
 
@@ -3335,17 +3339,17 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  "@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(zod@3.25.76)":
+  "@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))":
     dependencies:
       "@anthropic-ai/sdk": 0.27.3
       "@browserbasehq/sdk": 2.27.0
       "@playwright/test": 1.65.1
       deepmerge: 4.3.1
       dotenv: 16.6.1
-      openai: 6.49.0(ws@8.23.0)(zod@3.25.76)
+      openai: 6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       ws: 8.23.0
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
+      zod-to-json-schema: 3.25.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
     transitivePeerDependencies:
       - bufferutil
       - encoding
@@ -3577,11 +3581,11 @@ snapshots:
     dependencies:
       "@jitl/quickjs-ffi-types": 0.32.0
 
-  "@langchain/classic@1.0.27(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)":
+  "@langchain/classic@1.0.27(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)":
     dependencies:
-      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
-      "@langchain/openai": 1.4.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(ws@8.23.0)
-      "@langchain/textsplitters": 1.0.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))
+      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
+      "@langchain/openai": 1.4.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(ws@8.23.0)
+      "@langchain/textsplitters": 1.0.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))
       handlebars: 4.7.10
       js-yaml: 4.3.2
       jsonpointer: 5.0.1
@@ -3590,7 +3594,7 @@ snapshots:
       yaml: 2.9.1
       zod: 4.6.7
     optionalDependencies:
-      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
     transitivePeerDependencies:
       - "@aws-sdk/credential-provider-node"
       - "@opentelemetry/api"
@@ -3601,11 +3605,11 @@ snapshots:
       - openai
       - ws
 
-  "@langchain/classic@1.0.27(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)":
+  "@langchain/classic@1.0.27(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)":
     dependencies:
-      "@langchain/core": 1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
-      "@langchain/openai": 1.4.1(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(ws@8.23.0)
-      "@langchain/textsplitters": 1.0.1(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))
+      "@langchain/core": 1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
+      "@langchain/openai": 1.4.1(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(ws@8.23.0)
+      "@langchain/textsplitters": 1.0.1(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))
       handlebars: 4.7.10
       js-yaml: 4.3.2
       jsonpointer: 5.0.1
@@ -3614,7 +3618,7 @@ snapshots:
       yaml: 2.9.1
       zod: 4.6.7
     optionalDependencies:
-      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
     transitivePeerDependencies:
       - "@aws-sdk/credential-provider-node"
       - "@opentelemetry/api"
@@ -3625,22 +3629,22 @@ snapshots:
       - openai
       - ws
 
-  "@langchain/community@1.1.27(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(zod@3.25.76))(@ibm-cloud/watsonx-ai@1.7.17)(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(lodash@4.18.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(pdf-parse@2.4.5)(playwright@1.65.1)(ws@8.23.0)":
+  "@langchain/community@1.1.27(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(@ibm-cloud/watsonx-ai@1.7.17)(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(lodash@4.18.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(pdf-parse@2.4.5)(playwright@1.65.1)(ws@8.23.0)":
     dependencies:
-      "@browserbasehq/stagehand": 1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(zod@3.25.76)
+      "@browserbasehq/stagehand": 1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       "@ibm-cloud/watsonx-ai": 1.7.17
-      "@langchain/classic": 1.0.27(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
-      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
-      "@langchain/openai": 1.4.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(ws@8.23.0)
+      "@langchain/classic": 1.0.27(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
+      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
+      "@langchain/openai": 1.4.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(ws@8.23.0)
       binary-extensions: 2.3.0
       flat: 5.0.2
       ibm-cloud-sdk-core: 5.9.4
       js-yaml: 4.3.2
-      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       math-expression-evaluator: 2.0.7
-      openai: 6.49.0(ws@8.23.0)(zod@3.25.76)
+      openai: 6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       uuid: 11.1.1
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
     optionalDependencies:
       "@browserbasehq/sdk": 2.27.0
       ignore: 7.0.14
@@ -3656,12 +3660,12 @@ snapshots:
       - "@smithy/hash-node"
       - peggy
 
-  "@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)":
+  "@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)":
     dependencies:
       "@cfworker/json-schema": 4.1.6
       "@standard-schema/spec": 1.1.0
       js-tiktoken: 1.0.21
-      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       mustache: 4.2.0
       p-queue: 6.6.2
       zod: 4.6.7
@@ -3672,12 +3676,12 @@ snapshots:
       - openai
       - ws
 
-  "@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)":
+  "@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)":
     dependencies:
       "@cfworker/json-schema": 4.1.6
       "@standard-schema/spec": 1.1.0
       js-tiktoken: 1.0.21
-      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       mustache: 4.2.0
       p-queue: 6.6.2
       zod: 4.6.7
@@ -3688,33 +3692,33 @@ snapshots:
       - openai
       - ws
 
-  "@langchain/langgraph-checkpoint@1.2.2(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))":
+  "@langchain/langgraph-checkpoint@1.2.2(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))":
     dependencies:
-      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
 
-  "@langchain/langgraph-sdk@1.16.0(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))":
+  "@langchain/langgraph-sdk@1.16.0(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))":
     dependencies:
-      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       "@langchain/protocol": 0.0.21
       "@types/json-schema": 7.0.15
       p-queue: 9.3.5
       p-retry: 7.1.1
 
-  "@langchain/langgraph@1.7.4(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(zod@3.25.76)":
+  "@langchain/langgraph@1.7.4(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))":
     dependencies:
-      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
-      "@langchain/langgraph-checkpoint": 1.2.2(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))
-      "@langchain/langgraph-sdk": 1.16.0(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))
+      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
+      "@langchain/langgraph-checkpoint": 1.2.2(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))
+      "@langchain/langgraph-sdk": 1.16.0(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))
       "@langchain/protocol": 0.0.21
       "@standard-schema/spec": 1.1.0
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
     transitivePeerDependencies:
       - react
       - react-dom
 
-  "@langchain/openai@1.4.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(ws@8.23.0)":
+  "@langchain/openai@1.4.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(ws@8.23.0)":
     dependencies:
-      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       js-tiktoken: 1.0.21
       openai: 6.49.0(ws@8.23.0)(zod@4.6.7)
       zod: 4.6.7
@@ -3724,9 +3728,9 @@ snapshots:
       - "@smithy/signature-v4"
       - ws
 
-  "@langchain/openai@1.4.1(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(ws@8.23.0)":
+  "@langchain/openai@1.4.1(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(ws@8.23.0)":
     dependencies:
-      "@langchain/core": 1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      "@langchain/core": 1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       js-tiktoken: 1.0.21
       openai: 6.49.0(ws@8.23.0)(zod@4.6.7)
       zod: 4.6.7
@@ -3736,12 +3740,12 @@ snapshots:
       - "@smithy/signature-v4"
       - ws
 
-  "@langchain/openai@1.4.4(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(ws@8.23.0)":
+  "@langchain/openai@1.4.4(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(ws@8.23.0)":
     dependencies:
-      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       js-tiktoken: 1.0.21
-      openai: 6.49.0(ws@8.23.0)(zod@3.25.76)
-      zod: 3.25.76
+      openai: 6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
     transitivePeerDependencies:
       - "@aws-sdk/credential-provider-node"
       - "@smithy/hash-node"
@@ -3750,14 +3754,14 @@ snapshots:
 
   "@langchain/protocol@0.0.21": {}
 
-  "@langchain/textsplitters@1.0.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))":
+  "@langchain/textsplitters@1.0.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))":
     dependencies:
-      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       js-tiktoken: 1.0.21
 
-  "@langchain/textsplitters@1.0.1(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))":
+  "@langchain/textsplitters@1.0.1(@langchain/core@1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))":
     dependencies:
-      "@langchain/core": 1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      "@langchain/core": 1.4.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       js-tiktoken: 1.0.21
 
   "@lezer/common@1.5.5": {}
@@ -3772,9 +3776,9 @@ snapshots:
 
   "@marijn/find-cluster-break@1.0.4": {}
 
-  "@n8n/ai-node-sdk@0.37.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(zod@3.25.76))(@ibm-cloud/watsonx-ai@1.7.17)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(playwright@1.65.1)(ws@8.23.0)":
+  "@n8n/ai-node-sdk@0.37.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(@ibm-cloud/watsonx-ai@1.7.17)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(playwright@1.65.1)(ws@8.23.0)":
     dependencies:
-      "@n8n/ai-utilities": 0.40.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(zod@3.25.76))(@ibm-cloud/watsonx-ai@1.7.17)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(playwright@1.65.1)(ws@8.23.0)
+      "@n8n/ai-utilities": 0.40.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(@ibm-cloud/watsonx-ai@1.7.17)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(playwright@1.65.1)(ws@8.23.0)
     transitivePeerDependencies:
       - "@arcjet/redact"
       - "@aws-crypto/sha256-js"
@@ -3906,27 +3910,27 @@ snapshots:
       - ws
       - youtubei.js
 
-  "@n8n/ai-utilities@0.40.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(zod@3.25.76))(@ibm-cloud/watsonx-ai@1.7.17)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(playwright@1.65.1)(ws@8.23.0)":
+  "@n8n/ai-utilities@0.40.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(@ibm-cloud/watsonx-ai@1.7.17)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(playwright@1.65.1)(ws@8.23.0)":
     dependencies:
-      "@langchain/classic": 1.0.27(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
-      "@langchain/community": 1.1.27(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(zod@3.25.76))(@ibm-cloud/watsonx-ai@1.7.17)(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(lodash@4.18.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(pdf-parse@2.4.5)(playwright@1.65.1)(ws@8.23.0)
-      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
-      "@langchain/openai": 1.4.4(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(ws@8.23.0)
-      "@langchain/textsplitters": 1.0.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))
-      "@n8n/api-types": 1.47.4(zod@3.25.76)
+      "@langchain/classic": 1.0.27(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
+      "@langchain/community": 1.1.27(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(@ibm-cloud/watsonx-ai@1.7.17)(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(lodash@4.18.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(pdf-parse@2.4.5)(playwright@1.65.1)(ws@8.23.0)
+      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
+      "@langchain/openai": 1.4.4(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(ws@8.23.0)
+      "@langchain/textsplitters": 1.0.1(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))
+      "@n8n/api-types": 1.47.4(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       "@n8n/backend-network": 1.21.4
       "@n8n/typescript-config": 1.12.0
       "@n8n/utils": 1.54.0
       "@thednp/dommatrix": 3.1.4
       js-tiktoken: 1.0.21
-      langchain: 1.2.30(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      langchain: 1.2.30(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       lodash: 4.18.1
-      n8n-workflow: 2.47.2(zod@3.25.76)
+      n8n-workflow: 2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       pdf-parse: 2.4.5
       tmp-promise: 3.0.3
       undici: 7.30.2
-      zod: 3.25.76
-      zod-to-json-schema: 3.23.3(zod@3.25.76)
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
+      zod-to-json-schema: 3.23.3(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
     transitivePeerDependencies:
       - "@arcjet/redact"
       - "@aws-crypto/sha256-js"
@@ -4058,34 +4062,34 @@ snapshots:
       - ws
       - youtubei.js
 
-  "@n8n/api-types@1.47.4(zod@3.25.76)":
+  "@n8n/api-types@1.47.4(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))":
     dependencies:
-      "@asteasolutions/zod-to-openapi": 7.3.4(zod@3.25.76)
-      "@n8n/inbound-auth": 0.6.2(zod@3.25.76)
+      "@asteasolutions/zod-to-openapi": 7.3.4(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
+      "@n8n/inbound-auth": 0.6.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       "@n8n/permissions": 0.84.0
       "@n8n/utils": 1.54.0
       "@n8n_io/ai-assistant-sdk": 1.27.0
-      n8n-workflow: 2.47.2(zod@3.25.76)
+      n8n-workflow: 2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       validator: 13.15.26
       xss: 1.0.15
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  "@n8n/backend-common@1.47.4(zod@3.25.76)":
+  "@n8n/backend-common@1.47.4(patch_hash=8930ff0bce5dfc52268fa20caef80f57d4528e3f005f2fa25cca237be69e4772)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))":
     dependencies:
       "@n8n/config": 2.45.1
       "@n8n/constants": 0.45.0
-      "@n8n/decorators": 1.47.4(zod@3.25.76)
+      "@n8n/decorators": 1.47.4(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       "@n8n/di": 0.17.0
       "@n8n/utils": 1.54.0
       callsites: 3.1.0
       flatted: 3.4.2
       logform: 2.6.1
-      n8n-workflow: 2.47.2(zod@3.25.76)
+      n8n-workflow: 2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       picocolors: 1.0.1
-      stream-json: 1.9.1(patch_hash=7b4658eeba7a0b515544b7c022d99461f28b188cbeaef0d4c0dcaeaa59db90c8)
+      stream-json: 3.9.0
       winston: 3.14.2
       yargs-parser: 21.1.1
     transitivePeerDependencies:
@@ -4095,7 +4099,7 @@ snapshots:
 
   "@n8n/backend-network@1.21.4":
     dependencies:
-      "@n8n/backend-common": 1.47.4(zod@3.25.76)
+      "@n8n/backend-common": 1.47.4(patch_hash=8930ff0bce5dfc52268fa20caef80f57d4528e3f005f2fa25cca237be69e4772)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       "@n8n/config": 2.45.1
       "@n8n/constants": 0.45.0
       "@n8n/di": 0.17.0
@@ -4106,11 +4110,11 @@ snapshots:
       http-proxy-agent: 7.0.2
       https-proxy-agent: 7.0.6
       iconv-lite: 0.6.3
-      n8n-workflow: 2.47.2(zod@3.25.76)
+      n8n-workflow: 2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       proxy-from-env: 1.1.0
       qs: 6.16.1
       undici: 7.30.2
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
     transitivePeerDependencies:
       - debug
       - supports-color
@@ -4120,18 +4124,18 @@ snapshots:
       "@n8n/constants": 0.45.0
       "@n8n/di": 0.17.0
       reflect-metadata: 0.2.2
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
 
   "@n8n/constants@0.45.0": {}
 
-  "@n8n/decorators@1.47.4(zod@3.25.76)":
+  "@n8n/decorators@1.47.4(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))":
     dependencies:
-      "@n8n/api-types": 1.47.4(zod@3.25.76)
+      "@n8n/api-types": 1.47.4(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       "@n8n/constants": 0.45.0
       "@n8n/di": 0.17.0
       "@n8n/permissions": 0.84.0
       lodash: 4.18.1
-      n8n-workflow: 2.47.2(zod@3.25.76)
+      n8n-workflow: 2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
     transitivePeerDependencies:
       - debug
       - supports-color
@@ -4145,7 +4149,7 @@ snapshots:
     dependencies:
       callsites: 3.1.0
 
-  "@n8n/eslint-plugin-community-nodes@0.39.0(eslint@9.29.0)(n8n-workflow@2.47.2(zod@3.25.76))(typescript@5.9.3)":
+  "@n8n/eslint-plugin-community-nodes@0.39.0(eslint@9.29.0)(n8n-workflow@2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(typescript@5.9.3)":
     dependencies:
       "@n8n/utils": 1.54.0
       "@typescript-eslint/typescript-estree": 8.70.0(typescript@5.9.3)
@@ -4153,7 +4157,7 @@ snapshots:
       change-case: 5.4.4
       eslint: 9.29.0
       fastest-levenshtein: 1.0.16
-      n8n-workflow: 2.47.2(zod@3.25.76)
+      n8n-workflow: 2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       pluralize: 8.0.0
     transitivePeerDependencies:
       - supports-color
@@ -4174,23 +4178,23 @@ snapshots:
       quickjs-emscripten: 0.32.0
       title-case: 3.0.3
       transliteration: 2.3.5
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
 
-  "@n8n/inbound-auth@0.6.2(zod@3.25.76)":
+  "@n8n/inbound-auth@0.6.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))":
     dependencies:
       "@n8n/permissions": 0.84.0
-      n8n-workflow: 2.47.2(zod@3.25.76)
-      zod: 3.25.76
+      n8n-workflow: 2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  "@n8n/node-cli@0.56.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(zod@3.25.76))(@ibm-cloud/watsonx-ai@1.7.17)(@typescript-eslint/utils@8.73.0(eslint@9.29.0)(typescript@5.9.3))(eslint@9.29.0)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(n8n-workflow@2.47.2(zod@3.25.76))(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(playwright@1.65.1)(typescript@5.9.3)(ws@8.23.0)":
+  "@n8n/node-cli@0.56.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(@ibm-cloud/watsonx-ai@1.7.17)(@typescript-eslint/utils@8.73.0(eslint@9.29.0)(typescript@5.9.3))(eslint@9.29.0)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(n8n-workflow@2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(playwright@1.65.1)(typescript@5.9.3)(ws@8.23.0)":
     dependencies:
       "@clack/prompts": 0.11.0
       "@eslint/js": 9.39.5
-      "@n8n/ai-node-sdk": 0.37.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(zod@3.25.76))(@ibm-cloud/watsonx-ai@1.7.17)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(playwright@1.65.1)(ws@8.23.0)
-      "@n8n/eslint-plugin-community-nodes": 0.39.0(eslint@9.29.0)(n8n-workflow@2.47.2(zod@3.25.76))(typescript@5.9.3)
+      "@n8n/ai-node-sdk": 0.37.4(@browserbasehq/sdk@2.27.0)(@browserbasehq/stagehand@1.14.0(@playwright/test@1.65.1)(deepmerge@4.3.1)(dotenv@16.6.1)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(@ibm-cloud/watsonx-ai@1.7.17)(ibm-cloud-sdk-core@5.9.4)(ignore@7.0.14)(jsonwebtoken@9.0.3)(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(playwright@1.65.1)(ws@8.23.0)
+      "@n8n/eslint-plugin-community-nodes": 0.39.0(eslint@9.29.0)(n8n-workflow@2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(typescript@5.9.3)
       "@oclif/core": 4.14.0
       change-case: 5.4.4
       eslint: 9.29.0
@@ -4343,7 +4347,7 @@ snapshots:
 
   "@n8n/permissions@0.84.0":
     dependencies:
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
 
   "@n8n/tournament@1.16.0":
     dependencies:
@@ -5347,7 +5351,7 @@ snapshots:
       jsonwebtoken: 9.0.3
       load-esm: 1.0.3
       mime-types: 2.1.35
-      retry-axios: 2.6.0(axios@1.20.0(debug@4.4.3))
+      retry-axios: 2.6.0(axios@1.20.0)
       tough-cookie: 6.0.2
     transitivePeerDependencies:
       - supports-color
@@ -5500,14 +5504,14 @@ snapshots:
 
   kuler@2.0.0: {}
 
-  langchain@1.2.30(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0):
+  langchain@1.2.30(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0):
     dependencies:
-      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
-      "@langchain/langgraph": 1.7.4(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))(zod@3.25.76)
-      "@langchain/langgraph-checkpoint": 1.2.2(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0))
-      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0)
+      "@langchain/core": 1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
+      "@langchain/langgraph": 1.7.4(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
+      "@langchain/langgraph-checkpoint": 1.2.2(@langchain/core@1.2.8(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0))
+      langsmith: 0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0)
       uuid: 11.1.1
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
     transitivePeerDependencies:
       - "@opentelemetry/api"
       - "@opentelemetry/exporter-trace-otlp-proto"
@@ -5517,11 +5521,11 @@ snapshots:
       - react-dom
       - ws
 
-  langsmith@0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76))(ws@8.23.0):
+  langsmith@0.12.0(openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)))(ws@8.23.0):
     dependencies:
       p-queue: 6.6.2
     optionalDependencies:
-      openai: 6.49.0(ws@8.23.0)(zod@3.25.76)
+      openai: 6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b))
       ws: 8.23.0
 
   levn@0.4.1:
@@ -5625,7 +5629,7 @@ snapshots:
 
   mustache@4.2.0: {}
 
-  n8n-workflow@2.47.2(zod@3.25.76):
+  n8n-workflow@2.47.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)):
     dependencies:
       "@codemirror/autocomplete": 6.20.0
       "@n8n/constants": 0.45.0
@@ -5652,7 +5656,7 @@ snapshots:
       transliteration: 2.3.5
       uuid: 11.1.1
       xml2js: 0.6.2
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
     transitivePeerDependencies:
       - debug
       - supports-color
@@ -5703,10 +5707,10 @@ snapshots:
     dependencies:
       fn.name: 1.1.0
 
-  openai@6.49.0(ws@8.23.0)(zod@3.25.76):
+  openai@6.49.0(ws@8.23.0)(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)):
     optionalDependencies:
       ws: 8.23.0
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
 
   openai@6.49.0(ws@8.23.0)(zod@4.6.7):
     optionalDependencies:
@@ -5860,7 +5864,7 @@ snapshots:
 
   resolve-pkg-maps@1.0.0: {}
 
-  retry-axios@2.6.0(axios@1.20.0(debug@4.4.3)):
+  retry-axios@2.6.0(axios@1.20.0):
     dependencies:
       axios: 1.20.0(debug@4.4.3)
 
@@ -5958,11 +5962,11 @@ snapshots:
 
   stack-trace@0.0.10: {}
 
-  stream-chain@2.2.5: {}
+  stream-chain@4.4.2: {}
 
-  stream-json@1.9.1(patch_hash=7b4658eeba7a0b515544b7c022d99461f28b188cbeaef0d4c0dcaeaa59db90c8):
+  stream-json@3.9.0:
     dependencies:
-      stream-chain: 2.2.5
+      stream-chain: 4.4.2
 
   string-width@4.2.3:
     dependencies:
@@ -6228,14 +6232,14 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-to-json-schema@3.23.3(zod@3.25.76):
+  zod-to-json-schema@3.23.3(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)):
     dependencies:
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
 
-  zod-to-json-schema@3.25.2(zod@3.25.76):
+  zod-to-json-schema@3.25.2(zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)):
     dependencies:
-      zod: 3.25.76
+      zod: 3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b)
 
-  zod@3.25.76: {}
+  zod@3.25.76(patch_hash=6580cd0a1853b150e088e823a707fccfaad9376d5c16aac2de26ced2d1462f0b): {}
 
   zod@4.6.7: {}

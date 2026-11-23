@@ -1356,6 +1356,9 @@ jobs:
       - name: build + dist tests + publint + attw
         working-directory: sdk/typescript
         run: npm run check:dist
+      - name: SDK API documentation with locked tooling
+        working-directory: sdk/typescript
+        run: npm run docs
       # Keep the locked 1.8 baseline above and qualify the other supported band
       # against the same source, native tool runner and package exports.
       - name: Claude memory tool with Anthropic 1.11

@@ -1,13 +1,17 @@
 # Dependency patches
 
-`stream-json@1.9.1.patch` backports the assembler's `__proto__` handling from
-[the upstream fix](https://github.com/uhop/stream-json/commit/2f2d35bbb547306991ded6487a279154d865a358)
-for [prototype injection](https://github.com/advisories/GHSA-mjw6-4jj6-33hc).
-Both ordinary and reviver writes create an own data property instead of invoking
-the inherited setter.
+`@n8n__backend-common@1.47.4.patch` uses the installed parser's stream factory,
+assembler entry point and completion callback. The locked parser includes the
+upstream prototype-injection, nesting-depth and comment-scanning fixes.
 
-The toolchain imports the CommonJS `stream-json/Assembler` entry point. The patch
-retains that API; the upstream 3.6 release uses ESM and a different assembler API.
-The manifest and lockfile bind the patch, and the dependency security tests load
-the parser through its actual toolchain consumer. Remove the patch when that
-consumer supports an upstream fixed version.
+`zod@3.25.76.patch` rejects an oversized bounded array or set before parsing its
+elements. Its bundled v4 API applies the same check to bounded maps. This follows
+[the upstream size-bound fix](https://github.com/colinhacks/zod/commit/a0ebf97).
+The patch covers the CommonJS, ESM and TypeScript source entries. Unbounded
+containers retain their validation behavior, and an overwrite before a bound
+still runs before that bound.
+
+The manifest and lockfile bind both patches. The security tests resolve packages
+through their toolchain consumers and exercise prototype properties, shared
+references, chunk boundaries and bounded validation in both module formats.
+Remove each patch when its consumer uses a compatible upstream fixed release.

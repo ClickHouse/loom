@@ -67,10 +67,12 @@
       "glob@>=9 <14.0.2": "14.0.2",
       "minimatch@>=7 <11.0.1": "11.0.8",
       "qs@>=6.7.0 <6.16.1": "6.16.1",
+      "stream-json@<3.9.0": "3.9.0",
       "uuid@10.0.0": "11.1.1"
     },
     "patchedDependencies": {
-      "stream-json@1.9.1": "patches/stream-json@1.9.1.patch"
+      "zod@3.25.76": "patches/zod@3.25.76.patch",
+      "@n8n/backend-common@1.47.4": "patches/@n8n__backend-common@1.47.4.patch"
     }
   }
 }

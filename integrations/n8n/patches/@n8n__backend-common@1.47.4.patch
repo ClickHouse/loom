@@ -1,0 +1,25 @@
+diff --git a/dist/utils/flatted-async.js b/dist/utils/flatted-async.js
+index ec8157f775b6de771397241695cec8a1c364849e..1b53dd844bd9f809f7d0c12abfabfd98a8d95ab2 100644
+--- a/dist/utils/flatted-async.js
++++ b/dist/utils/flatted-async.js
+@@ -7,7 +7,7 @@ exports.parseFlattedAsync = parseFlattedAsync;
+ const ensure_error_1 = require("@n8n/utils/errors/ensure-error");
+ const stream_1 = require("stream");
+ const stream_json_1 = require("stream-json");
+-const Assembler_1 = __importDefault(require("stream-json/Assembler"));
++const Assembler_1 = __importDefault(require("stream-json/assembler.js"));
+ const CHUNK_SIZE = 64 * 1024;
+ const Primitive = String;
+ const primitive = 'string';
+@@ -90,9 +90,9 @@ async function parseFlattedAsync(flattedString) {
+                 });
+             },
+         });
+-        const jsonParser = (0, stream_json_1.parser)();
++        const jsonParser = (0, stream_json_1.parserStream)();
+         const asm = Assembler_1.default.connectTo(jsonParser);
+-        asm.on('done', (asmResult) => {
++        asm.onDone((asmResult) => {
+             try {
+                 const prepared = prepareFlatted(asmResult.current);
+                 resolve(resolveFlatted(prepared));

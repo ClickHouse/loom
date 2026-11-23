@@ -1,0 +1,176 @@
+diff --git a/src/v3/types.ts b/src/v3/types.ts
+index b10e84f1be..eb78eec488 100644
+--- a/src/v3/types.ts
++++ b/src/v3/types.ts
+@@ -2265,2 +2265,3 @@ export class ZodArray<T extends ZodTypeAny, Cardinality extends ArrayCardinality
+         });
++        if (tooBig) return INVALID;
+         status.dirty();
+@@ -2293,3 +2294,3 @@ export class ZodArray<T extends ZodTypeAny, Cardinality extends ArrayCardinality
+         });
+-        status.dirty();
++        return INVALID;
+       }
+@@ -3725,3 +3726,3 @@ export class ZodSet<Value extends ZodTypeAny = ZodTypeAny> extends ZodType<
+         });
+-        status.dirty();
++        return INVALID;
+       }
+diff --git a/src/v4/core/schemas.ts b/src/v4/core/schemas.ts
+index ce16838549..b582843f21 100644
+--- a/src/v4/core/schemas.ts
++++ b/src/v4/core/schemas.ts
+@@ -267,2 +267,3 @@ export const $ZodType: core.$constructor<$ZodType> = /*@__PURE__*/ core.$constru
+   };
++  capSize(inst);
+ });
+@@ -1510,1 +1511,31 @@ export interface $ZodArray<T extends SomeType = $ZodType> extends $ZodType<any,
++function capSize(inst: $ZodType) {
++  const type = inst._zod.def.type;
++  if (type !== "array" && type !== "map" && type !== "set") return;
++  const caps: [number, checks.$ZodCheck<never>][] = [];
++  for (const check of inst._zod.def.checks ?? []) {
++    const definition = check._zod.def as any;
++    if (!/_(length|size)$|_equals$/.test(definition.check)) break;
++    const maximum = definition.maximum ?? definition.length ?? definition.size;
++    if (maximum >= 0) caps.push([maximum, check]);
++  }
++  if (!caps.length) return;
++  const run = inst._zod.run;
++  inst._zod.run = (payload, ctx) => {
++    const value = payload.value;
++    const size = type === "array" ? (Array.isArray(value) ? value.length : -1) :
++      type === "map" ? (value instanceof Map ? value.size : -1) : (value instanceof Set ? value.size : -1);
++    for (const [maximum, check] of caps) {
++      if (size > maximum && (!check._zod.def.when || check._zod.def.when(payload))) {
++        const start = payload.issues.length;
++        check._zod.check(payload as ParsePayload<never>);
++        if (payload.issues.length > start) {
++          (payload.issues[start] as { continue?: boolean }).continue = false;
++          return payload;
++        }
++      }
++    }
++    return run(payload, ctx);
++  };
++}
++
+ function handleArrayResult(result: ParsePayload<any>, final: ParsePayload<any[]>, index: number) {
+diff --git a/v3/types.cjs b/v3/types.cjs
+index 11ed4dfc47..2b6de7f786 100644
+--- a/v3/types.cjs
++++ b/v3/types.cjs
+@@ -1792,2 +1792,3 @@ class ZodArray extends ZodType {
+                 });
++                if (tooBig) return parseUtil_js_1.INVALID;
+                 status.dirty();
+@@ -1818,3 +1819,3 @@ class ZodArray extends ZodType {
+                 });
+-                status.dirty();
++                return parseUtil_js_1.INVALID;
+             }
+@@ -2845,3 +2846,3 @@ class ZodSet extends ZodType {
+                 });
+-                status.dirty();
++                return parseUtil_js_1.INVALID;
+             }
+diff --git a/v3/types.js b/v3/types.js
+index 40b11c0f01..f3ab9beeb8 100644
+--- a/v3/types.js
++++ b/v3/types.js
+@@ -1771,2 +1771,3 @@ export class ZodArray extends ZodType {
+                 });
++                if (tooBig) return INVALID;
+                 status.dirty();
+@@ -1797,3 +1798,3 @@ export class ZodArray extends ZodType {
+                 });
+-                status.dirty();
++                return INVALID;
+             }
+@@ -2816,3 +2817,3 @@ export class ZodSet extends ZodType {
+                 });
+-                status.dirty();
++                return INVALID;
+             }
+diff --git a/v4/core/schemas.cjs b/v4/core/schemas.cjs
+index 7c77d2b5af..00f77639ba 100644
+--- a/v4/core/schemas.cjs
++++ b/v4/core/schemas.cjs
+@@ -128,2 +128,3 @@ exports.$ZodType = core.$constructor("$ZodType", (inst, def) => {
+     };
++    capSize(inst);
+ });
+@@ -646,2 +647,32 @@ exports.$ZodDate = core.$constructor("$ZodDate", (inst, def) => {
+ });
++function capSize(inst) {
++    const type = inst._zod.def.type;
++    if (type !== "array" && type !== "map" && type !== "set") return;
++    const caps = [];
++    for (const check of inst._zod.def.checks ?? []) {
++        const definition = check._zod.def;
++        if (!/_(length|size)$|_equals$/.test(definition.check)) break;
++        const maximum = definition.maximum ?? definition.length ?? definition.size;
++        if (maximum >= 0) caps.push([maximum, check]);
++    }
++    if (!caps.length) return;
++    const run = inst._zod.run;
++    inst._zod.run = (payload, ctx) => {
++        const value = payload.value;
++        const size = type === "array" ? (Array.isArray(value) ? value.length : -1) :
++            type === "map" ? (value instanceof Map ? value.size : -1) : (value instanceof Set ? value.size : -1);
++        for (const [maximum, check] of caps) {
++            if (size > maximum && (!check._zod.def.when || check._zod.def.when(payload))) {
++                const start = payload.issues.length;
++                check._zod.check(payload);
++                if (payload.issues.length > start) {
++                    payload.issues[start].continue = false;
++                    return payload;
++                }
++            }
++        }
++        return run(payload, ctx);
++    };
++}
++
+ function handleArrayResult(result, final, index) {
+diff --git a/v4/core/schemas.js b/v4/core/schemas.js
+index 692ce1fc2d..d7e94f3361 100644
+--- a/v4/core/schemas.js
++++ b/v4/core/schemas.js
+@@ -98,2 +98,3 @@ export const $ZodType = /*@__PURE__*/ core.$constructor("$ZodType", (inst, def)
+     };
++    capSize(inst);
+ });
+@@ -615,2 +616,32 @@ export const $ZodDate = /*@__PURE__*/ core.$constructor("$ZodDate", (inst, def)
+ });
++function capSize(inst) {
++    const type = inst._zod.def.type;
++    if (type !== "array" && type !== "map" && type !== "set") return;
++    const caps = [];
++    for (const check of inst._zod.def.checks ?? []) {
++        const definition = check._zod.def;
++        if (!/_(length|size)$|_equals$/.test(definition.check)) break;
++        const maximum = definition.maximum ?? definition.length ?? definition.size;
++        if (maximum >= 0) caps.push([maximum, check]);
++    }
++    if (!caps.length) return;
++    const run = inst._zod.run;
++    inst._zod.run = (payload, ctx) => {
++        const value = payload.value;
++        const size = type === "array" ? (Array.isArray(value) ? value.length : -1) :
++            type === "map" ? (value instanceof Map ? value.size : -1) : (value instanceof Set ? value.size : -1);
++        for (const [maximum, check] of caps) {
++            if (size > maximum && (!check._zod.def.when || check._zod.def.when(payload))) {
++                const start = payload.issues.length;
++                check._zod.check(payload);
++                if (payload.issues.length > start) {
++                    payload.issues[start].continue = false;
++                    return payload;
++                }
++            }
++        }
++        return run(payload, ctx);
++    };
++}
++
+ function handleArrayResult(result, final, index) {
