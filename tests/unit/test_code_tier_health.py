@@ -190,7 +190,7 @@ def test_a_credential_fix_names_the_host_the_submodule_and_the_setting() -> None
     "secret",
     [
         "https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz0123@github.com/o/r",
-        "token ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        "token ghp_abc" + "0" * 33,
         "Authorization: Basic eC1hY2Nlc3MtdG9rZW46c2VjcmV0",
         "github_pat_11ABCDEFG0123456789_abcdefghijklmnop",
     ],
