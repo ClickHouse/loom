@@ -843,7 +843,7 @@ Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius.
 | `causes` | `list[str]` | Why `epistemic` is `lower_bound`, from the set above; empty when it is `exact`. |
 | `by_hop_counts` | `dict[int, int]` | Distinct symbols reached per hop BEFORE any slicing: {1: n, 2: m}. |
 | `truncated` | `bool` | True when `impacted_symbols` is a page of the radius (per_hop_limit / offset sliced it, or the per-hop edge read hit its cap). |
-| `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` when a read-side name form bound; "" and off the wire for an exact hit. |
+| `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` \| `file_symbol` when a read-side name form bound; "" and off the wire for an exact hit. |
 | `verdict` | `str` | Why the radius is empty, '' when it is not. |
 | `paths_seen` | `list[dict[str, str]]` | Diff shape: every path the request named, with its class — `test` \| `doc` \| `config` \| `unindexed` (outside the indexed prefixes, or a source path the index holds no file row for) \| `src` — so the verdict is actionable without re-deriving… |
 | `overlay` | `bool` | On the wire only when `pr_number` was given — see CodeCallersOutput. |
@@ -1555,7 +1555,7 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `name` | `str` | `''` | Definition name or source path:line. |
+| `name` | `str` | `''` | Definition name, path:line, or path:symbol. |
 | `symbol_id` | `str` | `''` | An index symbol id (a definition's `unit_id`, an edge's `*_symbol_id`); when set it wins over `name` and resolves exactly that definition. |
 | `include_body` | `bool` | `True` | Include retained implementation source when available; false returns metadata. |
 | `include_history` | `bool` | `True` | Attach `recent_prs` (merged PRs over the definitions' paths) to the first definition. |
@@ -1588,7 +1588,7 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | `uses_truncated` | `bool` | True when `uses_limit` shortened the list or the token cap withheld `uses_brief`. |
 | `uses_tokens` | `int` | Estimated tokens the compact `uses` block cost out of `token_budget`. |
 | `picked_by` | `str` | Which context key ranked the definitions when `near_paths` / `pr_number` was given — same_file \| same_dir \| co_change \| path_distance \| none. "" and off the wire when no context was given. |
-| `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` when a read-side name form bound; "" and off the wire for an exact hit. |
+| `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` \| `file_symbol` when a read-side name form bound; "" and off the wire for an exact hit. |
 | `documented_in` | `list[dict[str, Any]]` | The document sections that cite the definition (the Markdown lane's `reads` edges) — section qualified name, path, line; at most five distinct sections, first by confidence. |
 | `neighbours` | `list[dict[str, Any]]` | The neighbours graph block on the definitions (one entry per definition anchor); empty unless `neighbours` ran. |
 | `anchors` | `int` | How many definitions the `neighbours` block was built for; 0 when it is off. |

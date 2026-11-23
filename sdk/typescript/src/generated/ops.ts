@@ -1686,7 +1686,7 @@ export interface CodeSymbolInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Definition name or source path:line. Qualified names disambiguate matches. */
+  /** Definition name, path:line, or path:symbol. A filename constrains the lookup. */
   name?: string;
   symbol_id?: string;
   /** Include retained implementation source when available; false returns metadata. */
