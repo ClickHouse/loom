@@ -20,6 +20,7 @@ from server.code.app.common import (
 from server.code.app.spans import code_span, set_code_span_attributes, span_attrs
 from server.code.app.symbol.neighbours import _attach_enclosing_neighbours
 from server.code.app.symbol.resolve import _innermost, symbol_body
+from server.code.domain.units import readable_signature
 from server.code.store.index import CodeRepo
 
 logger = logging.getLogger(__name__)
@@ -140,7 +141,7 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
                 "symbol": str(hit.get("name") or str(hit["qualified_name"]).rsplit("::", 1)[-1]),
                 "symbol_id": str(hit.get("symbol_id") or ""),
                 "qualified_name": str(hit["qualified_name"]),
-                "signature": str(hit.get("signature") or "")[:300],
+                "signature": hit.get("signature"),
                 "tier": str(hit.get("tier") or ""),
                 "kind": str(hit.get("kind") or "function"),
                 "start_line": int(hit.get("start_line") or 0),
@@ -153,6 +154,9 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
         bodies_returned, bodies_elided, tokens = await _attach_enclosing_bodies(
             repo, org, ns, results, input.token_budget
         )
+    else:
+        for row in results:
+            row["signature"] = readable_signature(row)
 
     want_neighbours = bool(input.neighbours)  # unset = off
     neighbours: list[dict[str, Any]] = []
@@ -261,7 +265,7 @@ async def _doc_sections(
         with code_span("enclosing.sections", paths=len(paths)) as sp:
             chunks = await repo.chunk_spans_for_paths(org, ns, paths)
             span_attrs(sp, rows=sum(len(v) for v in chunks.values()))
-    except Exception:
+    except Exception:  # noqa: BLE001 — section lookup failure leaves other locations usable
         logger.warning("code.enclosing section read failed", exc_info=True)
         return {}
     return section_rows(chunks)
@@ -307,20 +311,25 @@ async def _attach_enclosing_bodies(
     with code_span("enclosing.bodies", results=len(fetch)):
         bodies = await asyncio.gather(*(one(r) for r in fetch))
 
-    served: dict[str, str] = {}
+    served: dict[str, tuple[str, str]] = {}
     used = 0
     for r, body in zip(fetch, bodies, strict=True):
-        cost = estimate_tokens(body)
-        if body and (not token_budget or used + cost <= token_budget):
+        if not body:
+            continue
+        signature = readable_signature(r, body=body)
+        extra = estimate_tokens(signature) - estimate_tokens(readable_signature(r))
+        cost = estimate_tokens(body) + max(0, extra)
+        if not token_budget or used + cost <= token_budget:
             used += cost
-            served[str(r["symbol_id"])] = body
+            served[str(r["symbol_id"])] = (body, signature)
 
     returned = elided = 0
     for r in results:
         sid = str(r.get("symbol_id") or "")
+        body, signature = served.get(sid, ("", readable_signature(r)))
+        r["signature"] = signature
         if not sid:
             continue
-        body = served.get(sid, "")
         r["body"] = body
         r["body_elided"] = not body
         r["next"] = "" if body else f'code.symbol(symbol_id="{sid}")'

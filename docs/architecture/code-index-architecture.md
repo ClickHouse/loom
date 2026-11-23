@@ -380,6 +380,12 @@ locations to `code.enclosing` with `include_body=true`. It returns complete
 enclosing definitions together. `code.symbol` resolves a named definition or
 one location; the batch avoids a separate lookup for every located definition.
 
+Python SCIP identities use the same placeholder for callables of every
+arity. Definition and enclosing-body responses recover the parameter list
+from a retained declaration with the matching name. Metadata-only responses
+leave the signature empty when the index provides only the placeholder.
+The stored identity and call edges keep their existing keys.
+
 Search and grep rank candidate lessons across all selected files by query-term
 overlap after constraints and pinned rows. English inflections share stems; equal
 matches keep path order, then the listing's confidence and recency order.

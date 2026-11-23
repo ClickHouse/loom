@@ -9,8 +9,10 @@ quality feature: a tight, relevant context beats a 30K-token dump.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
+import textwrap
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -252,13 +254,33 @@ def unit_from_chunk(row: dict[str, Any], *, score: float = 0.0) -> CodeUnit:
 _SCIP_PLACEHOLDER_SIG = re.compile(r"^\(scip:[0-9a-f]+\)$")
 
 
-def readable_signature(value: object) -> str:
-    """A signature a reader can use, or "". The compiler tier stores an overload hash as
-    its signature (`(scip:49f6e7a0…)`): an identity, not a signature. Served as-is, a
-    model reads the hash as the signature, fetches the body to find the real one, then
-    greps the checkout."""
-    sig = str(value or "")[:300]
-    return "" if _SCIP_PLACEHOLDER_SIG.match(sig) else sig
+def readable_signature(row: dict[str, Any], *, body: str = "") -> str:
+    """Display source parameters when the compiler identity supplies no signature."""
+    sig = str(row.get("signature") or "")[:300]
+    if _SCIP_PLACEHOLDER_SIG.match(sig):
+        return ""
+    if not (
+        sig == "()"
+        and row.get("tier") == "scip"
+        and row.get("kind") in {"function", "method"}
+        and str(row.get("path") or "").lower().endswith((".py", ".pyi"))
+    ):
+        return sig
+    if not body:
+        return ""
+    name = str(row.get("qualified_name") or "").rsplit("::", 1)[-1]
+    try:
+        statements = ast.parse(textwrap.dedent(body)).body
+        if (
+            len(statements) == 1
+            and isinstance(declaration := statements[0], (ast.FunctionDef, ast.AsyncFunctionDef))
+            and declaration.name == name
+        ):
+            return f"({ast.unparse(declaration.args)})"
+    except (SyntaxError, ValueError, RecursionError):
+        # A retained declaration can use syntax newer than the server interpreter.
+        return ""
+    return ""
 
 
 def unit_from_symbol(row: dict[str, Any], *, body: str = "") -> CodeUnit:
@@ -269,7 +291,7 @@ def unit_from_symbol(row: dict[str, Any], *, body: str = "") -> CodeUnit:
         end_line=int(row.get("end_line") or 0),
         symbol=str(row.get("qualified_name") or ""),
         kind="symbol",
-        signature=readable_signature(row.get("signature")),
+        signature=readable_signature(row, body=body),
         body=body,
         description=str(row.get("doc_comment") or "")[:500],
         tier=str(row.get("tier") or ""),

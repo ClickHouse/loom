@@ -2,7 +2,12 @@
 
 import pytest
 
-from server.code.domain.units import budget_units, estimate_unit_tokens, unit_from_chunk
+from server.code.domain.units import (
+    budget_units,
+    estimate_unit_tokens,
+    unit_from_chunk,
+    unit_from_symbol,
+)
 
 
 def test_a_doc_prefix_already_in_the_source_is_served_once() -> None:
@@ -108,3 +113,37 @@ def test_an_expanded_body_is_not_mapped_as_a_source_chunk(granularity: str) -> N
     ).model_copy(update={"granularity": granularity})
     served, _ = budget_units([unit], 0)
     assert served[0].body == content
+
+
+@pytest.mark.parametrize(
+    ("body", "signature"),
+    [
+        ("def validate(ctx, param, value): return value\n", "(ctx, param, value)"),
+        (
+            "    @decorate\n"
+            "    async def validate(self, token: str, /, *, retry=(1, 2)):\n"
+            "        return token\n",
+            "(self, token: str, /, *, retry=(1, 2))",
+        ),
+        ("def validate(): pass\n", "()"),
+        ("def other(a): pass\n", ""),
+        ("def validate(:\n", ""),
+        ("", ""),
+    ],
+)
+def test_python_compiler_signature_requires_retained_declaration(body: str, signature: str) -> None:
+    row = {
+        "path": "src/cli.py",
+        "qualified_name": "src.cli::validate",
+        "kind": "function",
+        "symbol_id": "compiler-id",
+        "signature": "()",
+        "tier": "scip",
+    }
+    unit = unit_from_symbol(row, body=body)
+    assert unit.signature == signature
+    assert unit.unit_id == "compiler-id"
+    assert unit.body == body
+    assert row["signature"] == "()"
+    assert unit_from_symbol({**row, "tier": "treesitter"}).signature == "()"
+    assert unit_from_symbol({**row, "path": "src/cli.go"}).signature == "()"
