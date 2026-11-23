@@ -688,8 +688,8 @@ class MemoryClient:
         # Typed records: `agent.memory.record.write / query /
         # history / conflicts` and the schemas they validate against,
         # `agent.memory.schema.register / list` — see loom/records.py.
-        self.record = MemoryRecordClient(agent)
-        self.schema = MemorySchemaClient(agent)
+        self.record: MemoryRecordClient = MemoryRecordClient(agent)
+        self.schema: MemorySchemaClient = MemorySchemaClient(agent)
 
     def _set_coalescer(self) -> _SetCoalescer | None:
         if not bool(getattr(self._agent, "coalesce_sets", False)):

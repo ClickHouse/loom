@@ -149,7 +149,7 @@ class Agent:
         # An agent that names itself "", "-" or "*" is every
         # other unnamed caller to the ledger, the mentor and the cost views;
         # one not given at all is named after the script without a warning.
-        self.agent = default_agent_name(agent)
+        self.agent: str = default_agent_name(agent)
         if agent is not None and self.agent != agent:
             logger.warning(
                 "loom: agent name %r is anonymous; using %r — pass a real agent name so the "
@@ -166,10 +166,10 @@ class Agent:
                 "true",
                 "yes",
             )
-        self.mentor_brief = bool(mentor_brief)
+        self.mentor_brief: bool = bool(mentor_brief)
         self._mentor_brief_started = False
         self._mentor_brief_task: asyncio.Task[None] | None = None
-        self.coalesce_sets = bool(coalesce_sets)
+        self.coalesce_sets: bool = bool(coalesce_sets)
         if auto_run is None:
             auto_run = str(os.environ.get("LOOM_AUTO_RUN", "")).strip().lower() in (
                 "1",
@@ -177,11 +177,11 @@ class Agent:
                 "on",
                 "yes",
             )
-        self.auto_run = bool(auto_run)
+        self.auto_run: bool = bool(auto_run)
 
         base_url, api_key, auth = _credentials(base_url, api_key, profile)
 
-        self.transport = Transport(
+        self.transport: Transport = Transport(
             base_url=base_url,
             api_key=api_key,
             timeout_s=timeout_s,
@@ -208,39 +208,39 @@ class Agent:
         # Every served op as a generated method (`a.client.tracker.source_add`),
         # the same surface as the TypeScript `LoomClient`; the clients below are
         # the hand-written high-level layer.
-        self.client = OpsClient(self)
-        self.account = AccountClient(self)
-        self.deployment = DeploymentClient(self)
-        self.memory = MemoryClient(self)
-        self.working_memory = WorkingMemoryClient(self)
+        self.client: OpsClient = OpsClient(self)
+        self.account: AccountClient = AccountClient(self)
+        self.deployment: DeploymentClient = DeploymentClient(self)
+        self.memory: MemoryClient = MemoryClient(self)
+        self.working_memory: WorkingMemoryClient = WorkingMemoryClient(self)
         # Session briefs: a.briefs.save / get / list / delete.
-        self.briefs = BriefsClient(self)
-        self.knowledge = KnowledgeClient(self)
+        self.briefs: BriefsClient = BriefsClient(self)
+        self.knowledge: KnowledgeClient = KnowledgeClient(self)
         # The Loom assistant, asked as this agent: a.assistant.stream / ask.
-        self.assistant = AssistantClient(self)
-        self.conversations = ConversationsClient(self)
-        self.learnings = LearningsClient(self)
-        self.conflicts = ConflictsClient(self)
-        self.blacklist = BlacklistClient(self)
-        self.profile = ProfileClient(self)
-        self.grants = GrantsClient(self)
-        self.erasure = ErasureClient(self)
-        self.cost = CostClient(self)
-        self.audit = AuditClient(self)
-        self.facts = FactsClient(self)
+        self.assistant: AssistantClient = AssistantClient(self)
+        self.conversations: ConversationsClient = ConversationsClient(self)
+        self.learnings: LearningsClient = LearningsClient(self)
+        self.conflicts: ConflictsClient = ConflictsClient(self)
+        self.blacklist: BlacklistClient = BlacklistClient(self)
+        self.profile: ProfileClient = ProfileClient(self)
+        self.grants: GrantsClient = GrantsClient(self)
+        self.erasure: ErasureClient = ErasureClient(self)
+        self.cost: CostClient = CostClient(self)
+        self.audit: AuditClient = AuditClient(self)
+        self.facts: FactsClient = FactsClient(self)
         # `namespaces` (plural) is the registry client; `namespace` (singular)
         # remains this Agent's bound namespace string.
-        self.namespaces = NamespaceClient(self)
-        self.procedure = ProcedureClient(self)
-        self.run = RunClient(self)
+        self.namespaces: NamespaceClient = NamespaceClient(self)
+        self.procedure: ProcedureClient = ProcedureClient(self)
+        self.run: RunClient = RunClient(self)
         # The task inbox plane: a.tasks.pull / create / complete …
-        self.tasks = TasksClient(self)
-        self.policy = PolicyClient(self)
-        self.decision = DecisionClient(self)
-        self.calibration = CalibrationClient(self)
-        self.code = CodeClient(self)
-        self.tracker = TrackerClient(self)
-        self.context = ContextClient(self)
+        self.tasks: TasksClient = TasksClient(self)
+        self.policy: PolicyClient = PolicyClient(self)
+        self.decision: DecisionClient = DecisionClient(self)
+        self.calibration: CalibrationClient = CalibrationClient(self)
+        self.code: CodeClient = CodeClient(self)
+        self.tracker: TrackerClient = TrackerClient(self)
+        self.context: ContextClient = ContextClient(self)
 
     @property
     def ambient_run_id(self) -> str:

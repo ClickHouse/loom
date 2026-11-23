@@ -22,7 +22,7 @@ class DeploymentClient:
         self._agent = agent
         # Every /v1/admin/* route, one method each (generated); these methods are the
         # curated layer over them.
-        self.routes = AdminRoutes(agent)
+        self.routes: AdminRoutes = AdminRoutes(agent)
 
     async def _call(
         self, method: str, path: str, body: dict[str, Any] | None = None

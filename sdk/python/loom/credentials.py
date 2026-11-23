@@ -886,7 +886,7 @@ class StoredLogin(httpx.Auth):
 
     def __init__(self, profile: str, server: str) -> None:
         self.profile = profile
-        self.server = server.rstrip("/")
+        self.server: str = server.rstrip("/")
 
     def current_token(self) -> str:
         entry = _read()["profiles"].get(self.profile) or {}

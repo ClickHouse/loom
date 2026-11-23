@@ -229,14 +229,14 @@ class ReferenceClient:
         self.agent = agent
         self.user_id = user_id
         self.session_id = session_id
-        self.consumer = normalize_consumer(consumer)
+        self.consumer: str = normalize_consumer(consumer)
         self.timeout_s = timeout_s
-        self.fail_soft = fail_soft
-        self.max_retry_wait_s = max(0.0, float(max_retry_wait_s))
+        self.fail_soft: bool = fail_soft
+        self.max_retry_wait_s: float = max(0.0, float(max_retry_wait_s))
         self.run_id: str | None = None
         # Counters a bench or a dashboard reads: HTTP attempts (retries
         # included), calls per op, failures per code.
-        self.attempts = 0
+        self.attempts: int = 0
         self.calls_by_op: dict[str, int] = {}
         self.failures_by_code: dict[str, int] = {}
         self.catalogue: ProbeReport | None = None
