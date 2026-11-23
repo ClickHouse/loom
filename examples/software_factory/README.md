@@ -86,6 +86,8 @@ finished attempt and at completion. See [Harbor reports](harbor/README.md).
 [Flask](evals/flask/README.md) is the implemented Python profile; its
 [reproduction instructions](evals/flask/REPRODUCE.md) describe the public issues,
 source pins and historical memory. `--eval flask` selects it explicitly.
+The [evaluation findings](evals/flask/LEARNINGS.md) link observations to fixes,
+validation limits and retained negative results.
 
 Shared execution, accounting and reports live in `harbor/`. Project-specific source,
 dependencies, index recipes, historical facts and grading live in `evals/<id>/`.

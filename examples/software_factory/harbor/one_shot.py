@@ -118,6 +118,36 @@ def spending_summary(meter, output):
     }
 
 
+def preserve_ledger(output):
+    """Capture scoped request evidence before a disposable server is removed."""
+    from .billing import audit_provider_costs
+
+    protocol, attempts = output / "study/protocol.json", output / "study/live-attempts.json"
+    if not protocol.exists() or not attempts.exists():
+        return
+    try:
+        from .runtime import verify
+
+        frozen = read(protocol)
+        verify(frozen)
+        receipt = audit_provider_costs(frozen, read(attempts))
+        write(
+            output / "ledger-preservation.json",
+            {
+                "captured": True,
+                "known_attempts": sum(
+                    row["proof_status"] == "known" for row in receipt["attempts"].values()
+                ),
+                "cohort_complete": receipt["cohort_complete"],
+            },
+        )
+    except Exception as error:  # noqa: BLE001 — evidence failure must not skip resource cleanup
+        write(
+            output / "ledger-preservation.json",
+            {"captured": False, "error_type": type(error).__name__},
+        )
+
+
 def execute(args):
     from . import study
 
@@ -288,6 +318,7 @@ def execute(args):
     finally:
         try:
             try:
+                preserve_ledger(output)
                 write(output / "spending-summary.json", spending_summary(meter, output))
             finally:
                 if runtime is not None:

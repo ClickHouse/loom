@@ -24,6 +24,19 @@ Observed successes are reported immediately; a final success rate is available
 only when all expected attempts in that arm have completed. Unknown cost and
 tool counts remain unknown.
 
+`diagnostics/attempt-NN.json` records a passive main-session trace summary after
+each attempt: model-response groups, tool errors, body and lesson characters,
+lesson repetition, and native CLI/API duration. It contains no tool arguments,
+source bodies or lesson excerpts. Model turns and tool requests are separate
+counts; several tools can share a model response. Native trajectories remain
+authoritative for global counts including subagents.
+
+Provider-ledger evidence is captured at each attempt end and again before cleanup.
+It includes request and trace ids, serving build and bounded ledger arguments for
+joining the existing Loom traces. A failed capture leaves billing unknown and a
+preservation receipt; it does not skip resource cleanup. These private diagnostics
+are separate from the allowlisted numeric public export.
+
 A `--pilot-task` run has one task/repeat row and all five arm columns. It has no
 A/A attempts. Its paired deltas are descriptive; confidence intervals remain
 unknown because a single scenario cannot measure variation across scenarios.

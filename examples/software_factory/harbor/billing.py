@@ -29,7 +29,7 @@ async def main():
         rows=await client.query_all(
             'SELECT org,namespace,subject,request_id,operation,success,error_code,'
             'input_tokens,output_tokens,embedding_tokens,upstream_cost_usd,response_tokens,'
-            'agent,user_id,session_id,transport,latency_ms '
+            'agent,user_id,session_id,transport,latency_ms,trace_id,run_id,build_commit,kind,args '
             'FROM loom.agent_events WHERE org={org:String} AND subject={subject:String}',params)
         written = 0
         if params['memory_namespace']:

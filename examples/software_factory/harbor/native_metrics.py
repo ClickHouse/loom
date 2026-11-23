@@ -94,6 +94,8 @@ def elapsed(value):
 
 def measurements(raw: dict, trial: Path) -> dict:
     """Harbor's Claude Code trajectory includes normalized subagent tool calls."""
+    from .native_trace import summarize
+
     path = trial / "agent/trajectory.json"
     trajectory = json.loads(path.read_text()) if path.exists() else None
     if trajectory is not None and trajectory.get("agent", {}).get("name") != "claude-code":
@@ -130,6 +132,7 @@ def measurements(raw: dict, trial: Path) -> dict:
     extra = metrics.get("extra") or {}
     return {
         **initialization(trial),
+        **summarize(trial)["metrics"],
         "measurement_source": "native Harbor Claude Code trajectory and trial timing",
         "solver": "claude-code",
         "solver_version": ((trajectory or {}).get("agent") or {}).get("version"),

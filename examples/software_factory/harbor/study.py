@@ -406,6 +406,7 @@ def result_record(slot: dict, raw: dict, folder: Path, *, task_kind: str, model_
     result["hidden_grade"] = read(grade_path) if grade_path.exists() else None
     suite_path = folder / "verifier/full-suite.json"
     result["full_suite"] = read(suite_path) if suite_path.exists() else None
+    result["full_suite_failed_tests"] = (result["full_suite"] or {}).get("failed")
     rewards = (raw.get("verifier_result") or {}).get("rewards") or {}
     result["resolved"] = raw.get("reward_valid") is True and rewards.get("reward") == 1
     result["status"] = (
@@ -662,6 +663,16 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
             },
         )
         summary = export(protocol, kind)
+        if kind == "live":
+            from .native_trace import summarize
+
+            diagnostics = output / "diagnostics"
+            diagnostics.mkdir(exist_ok=True)
+            write(diagnostics / f"attempt-{order:02d}.json", summarize(trial_folder))
+            await asyncio.to_thread(
+                audit_provider_costs, protocol, read(output / "live-attempts.json")
+            )
+            summary = export(protocol, kind)
         print(
             json.dumps(
                 {

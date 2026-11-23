@@ -310,6 +310,28 @@ def _native_views(protocol, observed, groups, jobs, names, job_name):
     return {"status": "ready", "copied_trials": copied, "views": views}
 
 
+def _trace_table(record):
+    fields = (
+        ("Full-suite failing tests", "full_suite_failed_tests"),
+        ("Main-session model responses", "model_turns_main"),
+        ("Main-session parallel tool groups", "parallel_tool_groups_main"),
+        ("Main-session discovery calls", "tool_discovery_calls_main"),
+        ("Native CLI duration (s)", "claude_cli_time_s"),
+        ("Native model API duration (s)", "claude_api_time_s"),
+        ("Main-session Loom errors", "loom_errors_main"),
+        ("Main-session Loom result characters", "loom_result_chars_main"),
+        ("Main-session Loom body characters", "loom_source_chars_main"),
+        ("Main-session lesson characters", "loom_lesson_chars_main"),
+        ("Main-session repeated lesson characters", "loom_repeated_lesson_chars_main"),
+    )
+    rows = "\n".join(f"| {label} | {_number(record.get(key))} |" for label, key in fields)
+    return (
+        "\n| Diagnostic | Value |\n| --- | ---: |\n" + rows + "\n\n"
+        "API time includes model, network and queuing. Concurrent tools can share one "
+        "model response. Character counts are observed content, not provider tokens.\n\n"
+    )
+
+
 def _summary(slots, observed):
     records = [observed[s["order"]]["result"] for s in slots if s["order"] in observed]
     costs = [r.get("generation_cost_usd") for r in records]
@@ -502,6 +524,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                 text += (
                     " · ".join(f"[{key}]({value})" for key, value in item["links"].items()) + "\n"
                 )
+                text += _trace_table(record)
             else:
                 text += "No measured result yet. Cost, time and success remain unknown.\n"
             _atomic(path.with_suffix(".md"), text)
