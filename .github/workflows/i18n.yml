@@ -46,9 +46,9 @@ jobs:
     # Environment and runner-group restrictions admit this main-only workflow.
     environment: i18n
     permissions:
-      actions: write
-      contents: write
-      pull-requests: write
+      actions: write # Dispatch CI for the generated commit.
+      contents: write # Write budget and generated branch commits.
+      pull-requests: write # Open or update the generated pull request.
     env:
       LOOM_I18N_LANGUAGES: ${{ vars.LOOM_I18N_LANGUAGES }}
       LOOM_I18N_BATCH_LANGUAGES: ${{ inputs.languages }}
@@ -96,9 +96,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      actions: write
-      contents: write
-      pull-requests: write
+      actions: write # Dispatch the docs deployment after merge.
+      contents: write # Write the validated squash merge to main.
+      pull-requests: write # Squash-merge the validated translation pull request.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

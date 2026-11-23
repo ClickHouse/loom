@@ -31,7 +31,7 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      security-events: write
+      security-events: write # Upload CodeQL results.
     strategy:
       fail-fast: false
       matrix:
