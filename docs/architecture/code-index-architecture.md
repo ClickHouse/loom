@@ -360,6 +360,11 @@ through the shared result enrichment. Resolved symbol names rank matching lesson
 after constraints and pins; unresolved names contribute no query terms. Empty
 lesson fields stay off the wire.
 
+When several grep hits need implementation source, pass their `path:line`
+locations to `code.enclosing` with `include_body=true`. It returns complete
+enclosing definitions together. `code.symbol` resolves a named definition or
+one location; the batch avoids a separate lookup for every located definition.
+
 Search and grep rank candidate lessons across all selected files by query-term
 overlap after constraints and pinned rows. English inflections share stems; equal
 matches keep path order, then the listing's confidence and recency order.

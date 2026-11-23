@@ -768,10 +768,15 @@ export interface CodeEnclosingInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
+  /** Repo-relative path:line locations to resolve together. */
   locations: string[];
+  /** Include retained enclosing source per location; default false. */
   include_body?: boolean;
+  /** Estimated tokens for body content; zero is unlimited (default). */
   token_budget?: number;
+  /** Attach callers, callees and mapped tests per function; default off. */
   neighbours?: boolean | null;
+  /** Maximum callers and callees per function; default five. */
   neighbour_k?: number;
 }
 

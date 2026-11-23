@@ -590,11 +590,11 @@ Batched `path:line` -> enclosing function.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `locations` | `list[str]` | required | "src/Foo.cpp:123" — repo-relative path, 1-based line. |
-| `include_body` | `bool` | `False` | include_body: ship the enclosing function's whole body with each resolved location, so a grep hit becomes the function it sits in without a follow-up code.symbol or a file read (most index answers are otherwise followed by a read of the… |
-| `token_budget` | `int` | `0` | Estimated-token cap on included bodies; 0 (default) is unlimited. |
-| `neighbours` | `bool \| None` | `None` | neighbours: a graph evidence block per distinct enclosing function: up to neighbour_k callers, callees (compiler tier preferred, symbols outside the repo dropped, parser guesses below 0.8 confidence dropped) and mapped tests, the module… |
-| `neighbour_k` | `int` | `5` | With `neighbours`: at most this many callers and callees per function (1..20). |
+| `locations` | `list[str]` | required | Repo-relative path:line locations to resolve together. |
+| `include_body` | `bool` | `False` | Include retained enclosing source per location; default false. |
+| `token_budget` | `int` | `0` | Estimated tokens for body content; zero is unlimited (default). |
+| `neighbours` | `bool \| None` | `None` | Attach callers, callees and mapped tests per function; default off. |
+| `neighbour_k` | `int` | `5` | Maximum callers and callees per function; default five. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

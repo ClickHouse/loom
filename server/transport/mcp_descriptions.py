@@ -1358,30 +1358,19 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "per-frame grep-and-open loop."
     ),
     "code.grep": (
-        "Exact literal or regex search over the indexed corpus — the "
-        "inside-loom answer to 'grep for this string'. Each hit arrives "
-        "with its ENCLOSING SYMBOL and that unit's scope_start_line / "
-        "scope_end_line (grep gives you a bare line), in one round-trip — "
-        "and the repo's thousands of unindexed .reference fixture files "
-        "never pollute the results. neighbours: true adds each enclosing "
-        "function's callers, callees, tests and citing docs in the same call. "
-        "Literal by default; set "
-        "regex: true for RE2. A regex-shaped literal (`a|b`, `foo\\(`) that "
-        "matches nothing is run once as a regex and `note` says so. For a "
-        "PRINTED error or log message, set mode: 'message' — the rendered "
-        "text finds the statement whose template printed it (`verdict` "
-        "raised_at, `template` with `{}` for the arguments, the ErrorCodes "
-        "name for a `Code: N` prefix); a code line sent there is grepped as a "
-        "literal (`fallback: literal`). deadline_ms returns the hits found "
-        "in that budget (`partial: true`) instead of timing out. "
-        "mode: 'presence' with namespaces: "
-        "[...] (up to 8 release-branch indexes) answers 'which branches "
-        "contain this string' in ONE call: per namespace present / absent / "
-        "unknown with files_total and the first matching file, plus a "
-        "summary — instead of one grep per branch. To find a FILE by name (a "
-        "test number, a glob) use code.files — grep "
-        "matches content, not paths. For your UNCOMMITTED working tree, "
-        "still use shell grep — this index only knows merged code."
+        "Find literal text or RE2 regex in indexed source. Hits include source lines, "
+        "enclosing symbols and spans. Pass `pattern`; `regex: true` selects regex. "
+        "Narrow with `path_prefix`, `path_globs` or `langs`. For several hit bodies, "
+        "use code.enclosing(locations: [path:line, ...], include_body: true) in one call. "
+        "`neighbours: true` adds callers, callees, tests and citing docs. "
+        "`next_cursor` pages remaining matches. A regex-shaped literal with no match "
+        "is retried as regex and disclosed. `mode: 'message'` matches rendered errors "
+        "or logs to their source templates; code-shaped input falls back to literal. "
+        "`mode: 'presence'` with `namespaces` (up to eight) returns each branch's "
+        "present / absent / unknown verdict and a summary. Optional `deadline_ms` "
+        "returns hits found before expiry with `partial: true`. Coverage disclosures "
+        "distinguish absent matches from incomplete indexed source. For paths use "
+        "code.files; this searches content. Use local tools for uncommitted source."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
@@ -1865,9 +1854,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     # Every listed tool says what it does — the bare "Loom operation `x`
     # (p99 …)" fallback tells a model nothing.
     "code.enclosing": (
-        "Batched `path:line` -> what encloses each line: the function "
-        "(else class) in code; the heading's section in a document; the "
-        "block in a config file. One call for many grep hits."
+        "Resolve path:line locations together: enclosing functions, types, "
+        "document sections or config blocks. include_body: true returns "
+        "complete source when available. Use after code.grep to read several definitions "
+        "in one call instead of separate code.symbol lookups."
     ),
     "namespace.guide_get": (
         "The namespace's guide: Markdown its writers keep on what it holds, its key "
@@ -2208,24 +2198,22 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 # derived from core text so revision and memory guidance stay consistent.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.symbol": (
-        "Read a known function, class or other definition, including its retained source "
-        "and any linked project lessons. Use when a task or search result names the "
-        "definition; use code.search when you need to find the implementation first. "
-        "Pass `name` or `symbol_id`. If you also need callers, set `uses_brief: true` "
-        "to get the definition and a compact caller summary together when one definition "
-        "resolves; use code.callers for a larger call graph. `uses: true` requests the "
-        "full mention list. `near_paths` or `pr_number` rank ambiguous definitions. "
-        "Read freshness and elision disclosures; use local tools for changed or "
-        "unindexed code."
+        "Read a named definition or path:line, with retained source and linked "
+        "project lessons. Pass `name` or `symbol_id`; code.search finds unknown "
+        "implementations. For several known locations, use "
+        "code.enclosing(locations: [...], include_body: true) in one call. "
+        "`uses_brief: true` adds a compact caller summary for one resolved definition; "
+        "code.callers reads a larger graph. `uses: true` adds the full mention list. "
+        "`near_paths` or `pr_number` rank ambiguous definitions. Check freshness and "
+        "elision disclosures; use local tools for changed or unindexed code."
     ),
     "code.grep": (
-        "Find exact text or a regex in indexed source, with source lines and enclosing "
-        "symbols. Use when you know the text to locate; for a bug report or behavior "
-        "question use code.search to retrieve implementation context. Pass `pattern`, "
-        "not a natural-language query; `regex: true` selects regex matching. Narrow "
-        "with `path_prefix`, `path_globs` or `langs`, and follow `next_cursor` for more "
-        "matches. Coverage disclosures distinguish absent matches from incomplete "
-        "indexed source."
+        "Find exact text or regex in indexed source, with source lines and enclosing "
+        "symbols. Pass `pattern`; `regex: true` selects regex. For behavior questions "
+        "use code.search. Narrow with `path_prefix`, `path_globs` or `langs`; "
+        "`next_cursor` pages remaining matches. For several hit bodies, use "
+        "code.enclosing(locations: [path:line, ...], include_body: true) in one call. "
+        "Coverage disclosures distinguish absent matches from incomplete indexed source."
     ),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.
