@@ -58,9 +58,10 @@ class _Repo:
         return [s for s in self.seeds if s["qualified_name"] == name]
 
     async def edges_for_symbols(
-        self, org: str, ns: str, ids: list[str], *, direction: str, limit: int
+        self, org: str, ns: str, ids: list[str], *, direction: str, limit: int, with_revision: bool
     ) -> list[dict[str, Any]]:
         assert direction == "callers"
+        assert not with_revision
         self.edge_reads.append(list(ids))
         return self.edges
 
