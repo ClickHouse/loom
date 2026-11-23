@@ -339,7 +339,7 @@ def test_entry_point_facets_land_on_the_manifest_and_the_target_function():
 def test_the_ingest_hands_the_facets_to_the_symbol_stage():
     key = ("org", "ns-11760")
     layout = pl.layout_from_texts({"pyproject.toml": PYPROJECT}, {"pyproject.toml"})
-    ingest_resolve._PY_LAYOUT_CACHE[key] = (time.monotonic(), layout)
+    ingest_resolve._PY_LAYOUT_CACHE.put(key, layout)
     try:
         pf = parse_file("pyproject.toml", PYPROJECT.encode())
         assert pf is not None and pf.lang == "config"
@@ -357,7 +357,7 @@ def test_the_ingest_hands_the_facets_to_the_symbol_stage():
             "no layout read yet: no module-side facet (the heal re-derives)"
         )
     finally:
-        ingest_resolve._PY_LAYOUT_CACHE.pop(key, None)
+        ingest_resolve._PY_LAYOUT_CACHE.pop(key)
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +398,7 @@ def test_the_layout_is_read_off_the_event_loop(monkeypatch):
         return pl.Layout()
 
     monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (time.monotonic(), set()))
-    monkeypatch.setattr(ingest_resolve, "_PY_LAYOUT_CACHE", {})
+    ingest_resolve._PY_LAYOUT_CACHE.clear()
     monkeypatch.setattr(ingest_resolve, "_package_json_text", text)
     monkeypatch.setattr(pl, "layout_from_texts", layout)
     asyncio.run(ingest_resolve._py_layout(None, "o", "n", {"setup.py"}))  # type: ignore[arg-type]
@@ -416,7 +416,7 @@ def test_files_that_miss_the_layout_cache_at_once_share_one_read(monkeypatch):
         return pl.Layout()
 
     monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (time.monotonic(), set()))
-    monkeypatch.setattr(ingest_resolve, "_PY_LAYOUT_CACHE", {})
+    ingest_resolve._PY_LAYOUT_CACHE.clear()
     monkeypatch.setattr(ingest_resolve, "_package_json_text", text)
     monkeypatch.setattr(pl, "layout_from_texts", layout)
 

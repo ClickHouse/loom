@@ -19,7 +19,7 @@ from server.code.app.index.ingest_parse import (
     _statement_records_on,
     host_units_of,
 )
-from server.code.app.index.ingest_resolve import _PY_LAYOUT_CACHE
+from server.code.app.index.ingest_resolve import _PY_LAYOUT_CACHE, _source_key
 from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.chunker import Chunk, chunk_file
 from server.code.domain.extract.context_text import build_context_text
@@ -305,8 +305,8 @@ def _py_layout_facets(pf: ParsedFile, ns_key: tuple[str, str] | None) -> list[An
             out = []
         if pf.lang == "python":
             out.extend(pl.script_facets(pf, ordinal=len(out)))
-            hit = _PY_LAYOUT_CACHE.get(ns_key) if ns_key is not None else None
-            out.extend(pl.module_entry_facets(pf, hit[1] if hit else None, ordinal=len(out)))
+            layout = _PY_LAYOUT_CACHE.get(_source_key(*ns_key)) if ns_key is not None else None
+            out.extend(pl.module_entry_facets(pf, layout, ordinal=len(out)))
             if is_notebook_path(pf.path):
                 out.extend(cell_facets(pf.source))
         return out
