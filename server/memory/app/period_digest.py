@@ -582,6 +582,15 @@ async def _write_period(
     if not text:
         result.failures.append(f"empty digest {period.memory_key}")
         return False
+    from server.memory.app import blacklist_guard
+
+    try:
+        policy = await blacklist_guard.enforce_rows(
+            [{"org": period.org, "namespace": period.namespace, "value": text}]
+        )
+    except Exception as e:  # noqa: BLE001 — refused output fails only this period
+        result.failures.append(f"policy {period.memory_key}: {error_summary(e)}"[:256])
+        return False
     try:
         with customer.for_org(period.org, **whose):
             embedding = await document_vector(embedder, text)
@@ -600,7 +609,9 @@ async def _write_period(
         entities=source_entities,
     )
     try:
-        published = await insert_documented_versions([memory_row], [embedding_row], ch=ch)
+        published = await insert_documented_versions(
+            [memory_row], [embedding_row], ch=ch, policy=policy
+        )
     except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues
         result.failures.append(f"write {period.memory_key}: {error_summary(e)}"[:256])
         return False

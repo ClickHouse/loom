@@ -19,7 +19,6 @@ from server.code.app.index.ingest_parse import (
     _statement_records_on,
     host_units_of,
 )
-from server.code.app.index.ingest_resolve import _PY_LAYOUT_CACHE
 from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.chunker import Chunk, chunk_file
 from server.code.domain.extract.context_text import build_context_text
@@ -179,7 +178,7 @@ def _chunks_for(
     path: str,
     source: bytes,
     max_chunk_chars: int,
-    ns_key: tuple[str, str] | None = None,
+    py_layout: Any = None,
     parse_error: str = "",
 ) -> tuple[list[Chunk], dict[int, str], list[Facet]]:
     """The chunks of one parsed file and, for the languages that carry them, the
@@ -251,13 +250,13 @@ def _chunks_for(
                 *py_sql_units(pf).facets,
                 *_env_facets(pf),
                 *_py_facets(pf),
-                *_py_layout_facets(pf, ns_key),
+                *_py_layout_facets(pf, py_layout),
             ],
         )
     if pf.lang == "python":
-        return chunks, {}, [*_env_facets(pf), *_py_facets(pf), *_py_layout_facets(pf, ns_key)]
+        return chunks, {}, [*_env_facets(pf), *_py_facets(pf), *_py_layout_facets(pf, py_layout)]
     if pf.lang == "config" and _is_py_manifest(pf.path):
-        return chunks, {}, _py_layout_facets(pf, ns_key)  # Entry points
+        return chunks, {}, _py_layout_facets(pf, py_layout)  # Entry points
     if pf.lang == "go":
         # Directives, struct tags and framework markers are facet rows beside the SQL
         # islands'
@@ -288,12 +287,12 @@ def _is_py_manifest(path: str) -> bool:
     return is_manifest_path(path)
 
 
-def _py_layout_facets(pf: ParsedFile, ns_key: tuple[str, str] | None) -> list[Any]:
+def _py_layout_facets(pf: ParsedFile, layout: Any) -> list[Any]:
     """The entry points a file declares or serves, as `entry_point` facets — on a
     manifest at each declaration's line, on a `__main__.py` / `if __name__ ==
     "__main__":` module at the guard, on the module a `[project.scripts]` target names
-    at the function's line (read off the namespace's cached layout, warmed by the first
-    file's edge pass; the heal re-derives) — and a notebook's `notebook_cell` line map."""
+    at the function's line (from the ingest pass's resolved layout snapshot) — and a
+    notebook's `notebook_cell` line map."""
     from server.code.domain.extract import py_layouts as pl
     from server.code.domain.extract.py_notebooks import cell_facets, is_notebook_path
 
@@ -305,8 +304,7 @@ def _py_layout_facets(pf: ParsedFile, ns_key: tuple[str, str] | None) -> list[An
             out = []
         if pf.lang == "python":
             out.extend(pl.script_facets(pf, ordinal=len(out)))
-            hit = _PY_LAYOUT_CACHE.get(ns_key) if ns_key is not None else None
-            out.extend(pl.module_entry_facets(pf, hit[1] if hit else None, ordinal=len(out)))
+            out.extend(pl.module_entry_facets(pf, layout, ordinal=len(out)))
             if is_notebook_path(pf.path):
                 out.extend(cell_facets(pf.source))
         return out

@@ -1,0 +1,218 @@
+name: contributor lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      track:
+        description: Synthetic check to run
+        type: choice
+        required: true
+        default: functional
+        options: [functional, security, performance, stress, usability, quality, all]
+  pull_request:
+    branches: [main, "release/**"]
+    paths:
+      - .devcontainer/source/**
+      - dev/contributor-lab/**
+      - .github/workflows/contributor-lab.yml
+  push:
+    branches: [main]
+    paths:
+      - .devcontainer/source/**
+      - dev/contributor-lab/**
+      - .github/workflows/contributor-lab.yml
+  schedule:
+    - cron: "37 3 * * 4"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: contributor-lab-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'automatic' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  source_container:
+    name: Disposable source checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the source and selected unit inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /AGENTS.md
+            /README.md
+            /LICENSE*
+            /NOTICE*
+            /pyproject.toml
+            /uv.lock
+            /.gitignore
+            /server/
+            /sdk/python/
+            /scripts/
+            /schemas/
+            /extractor/
+            /tests/__init__.py
+            /tests/_shards.py
+            /tests/conftest.py
+            /tests/unit/__init__.py
+            /tests/unit/conftest.py
+            /tests/unit/mirror_latch_fake.py
+            /tests/unit/claims_fake.py
+            /tests/unit/switch_state.py
+            /tests/unit/test_provenance.py
+            /tests/unit/test_authz_target_validated.py
+            /tests/unit/test_llm_request_timeout.py
+            /tests/unit/test_code_budget_tiers.py
+            /tests/unit/test_cli_surface_snapshot.py
+            /tests/unit/snapshots/cli*
+            /.devcontainer/source/
+            /dev/contributor-lab/
+            /.github/workflows/contributor-lab.yml
+      - name: Build the pinned source environment
+        run: docker build --build-arg "CONTRIBUTOR_UID=$(id -u)" --tag "loom-contributor:$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" .devcontainer/source
+      - name: Create only this run's bounded container
+        env:
+          SELECTED_TRACK: ${{ github.event_name == 'workflow_dispatch' && inputs.track || 'all' }}
+        run: |
+          case "$SELECTED_TRACK" in functional|security|performance|stress|usability|quality|all) ;; *) exit 1 ;; esac
+          docker create --cidfile "$RUNNER_TEMP/loom-source.cid" \
+            --cpus 2 --memory 4g --pids-limit 256 --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,source=$GITHUB_WORKSPACE,target=/workspaces/loom-source,readonly" \
+            "loom-contributor:$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            bash dev/contributor-lab/bootstrap.sh "$SELECTED_TRACK"
+      - name: Run the selected synthetic checks
+        run: |
+          container=$(cat "$RUNNER_TEMP/loom-source.cid")
+          [[ "$container" =~ ^[a-f0-9]{64}$ ]]
+          docker start --attach "$container"
+          status=$(docker wait "$container")
+          test "$status" = 0
+      - name: Report actual check counts
+        if: always()
+        run: |
+          if [[ ! -s "$RUNNER_TEMP/loom-source.cid" ]]; then
+            printf '%s\n' 'The source container was not created; inspect the setup failure.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          container=$(cat "$RUNNER_TEMP/loom-source.cid")
+          [[ "$container" =~ ^[a-f0-9]{64}$ ]]
+          docker cp "$container:/tmp/loom-contributor-lab/report.json" "$RUNNER_TEMP/loom-source-report.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ["RUNNER_TEMP"]) / "loom-source-report.json"
+          assert path.stat().st_size <= 1024 * 1024
+          rows = json.loads(path.read_text())
+          allowed = {"functional", "security", "performance", "stress", "usability", "quality"}
+          assert isinstance(rows, list) and 0 < len(rows) <= len(allowed)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write("| Track | Checks/tests | Passed |\n| --- | ---: | --- |\n")
+              for row in rows:
+                  name, count, passed = row["track"], row.get("tests", row.get("checks")), row["passed"]
+                  assert name in allowed and type(count) is int and 0 < count <= 100000 and type(passed) is bool
+                  output.write(f"| {name} | {count} | {passed} |\n")
+          PY
+      - name: Remove exactly the container created by this run
+        if: always()
+        run: |
+          if [[ -s "$RUNNER_TEMP/loom-source.cid" ]]; then
+            container=$(cat "$RUNNER_TEMP/loom-source.cid")
+            [[ "$container" =~ ^[a-f0-9]{64}$ ]]
+            docker rm --force "$container"
+          fi
+
+  maintenance:
+    name: Record trusted source-lab failures
+    needs: [source_container]
+    if: >-
+      always() && github.repository == 'ClickHouse/loom' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'schedule')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # Record disposable source-check failures on trusted main runs only.
+    steps:
+      - name: Reconcile failure tasks without executing project code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LAB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from urllib.parse import urlencode
+          repo = "repos/ClickHouse/loom/issues"
+          bot = "github-actions[bot]"
+          marker = re.compile(r"<!-- loom-source-lab:v1 (source_container) -->")
+          state = re.compile(r"<!-- loom-source-lab-state:v1 (failure|success) -->")
+          titles = {"source_container": "[source-lab-ci] Restore the disposable source checks"}
+          calls = 0
+          def api(method, endpoint, payload=None):
+              global calls
+              calls += 1
+              assert calls <= 40, "Source lab issue API budget exhausted"
+              command = ["gh", "api", "--method", method, endpoint, "--hostname", "github.com"]
+              if payload is not None:
+                  command += ["--input", "-"]
+              result = subprocess.run(command, input=None if payload is None else json.dumps(payload), text=True, capture_output=True, timeout=20, check=True)
+              assert len(result.stdout) <= 2 * 1024 * 1024, "Source lab issue response exceeds budget"
+              return json.loads(result.stdout)
+          managed = {}
+          for page in range(1, 11):
+              issues = api("GET", repo + "?" + urlencode({"state": "all", "creator": bot, "per_page": 100, "page": page}))
+              assert isinstance(issues, list)
+              for issue in issues:
+                  if "pull_request" in issue or issue.get("user", {}).get("login") != bot:
+                      continue
+                  keys = marker.findall(issue.get("body") or "")
+                  keys += [key for key, title in titles.items() if issue.get("title") == title]
+                  keys = set(keys)
+                  assert len(keys) <= 1, "Conflicting Source lab issue markers"
+                  if keys:
+                      key = keys.pop()
+                      assert key not in managed, "Duplicate source lab task"
+                      managed[key] = issue
+              if len(issues) < 100:
+                  break
+          else:
+              raise RuntimeError("Source lab issue pagination budget exhausted")
+          results = json.loads(os.environ["LAB_RESULTS"])
+          assert set(results) == set(titles)
+          run_id = os.environ["GITHUB_RUN_ID"]
+          assert run_id.isdecimal()
+          url = "https://github.com/ClickHouse/loom/actions/runs/" + run_id
+          changed = 0
+          for key in titles:
+              result = results[key]["result"]
+              assert result in {"success", "failure", "cancelled", "skipped"}
+              issue = managed.get(key)
+              if result not in {"success", "failure"} or (issue and issue["state"] == "closed"):
+                  continue
+              text = f"<!-- loom-source-lab:v1 {key} -->\n<!-- loom-source-lab-state:v1 {result} -->\n\n### Company or project name\n\nClickHouse\n\nThe disposable source-lab check reports **{result}** on trusted main. [Read the source image build and bounded synthetic check logs]({url}).\n\nReproduce the source-lab workflow using synthetic data. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
+              if issue is None:
+                  if result == "failure":
+                      api("POST", repo, {"title": titles[key], "body": text})
+                      changed += 1
+                  continue
+              number = issue["number"]
+              assert isinstance(number, int) and number > 0
+              comments = api("GET", f"{repo}/{number}/comments?per_page=100")
+              assert isinstance(comments, list) and len(comments) < 100, "Source lab comment history budget exhausted"
+              candidates = [issue] + sorted(comments, key=lambda row: (row["created_at"], row["id"]))
+              states = [state.findall(row.get("body") or "") for row in candidates if row.get("user", {}).get("login") == bot]
+              states = [value[-1] for value in states if value]
+              if not states or states[-1] != result:
+                  api("POST", f"{repo}/{number}/comments", {"body": text})
+                  changed += 1
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(f"Source lab task reconciliation: {changed} task or status writes; closed decisions preserved.\n")
+          PY

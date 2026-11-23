@@ -27,6 +27,19 @@ a missing one (or `loom code init` does, ahead of time) and fetches it on every 
 `server/code/app/index/gitrepo.py` shells out to `git`; it has no working tree and writes
 nothing except `fetch`. Branches of one repository share the mirror.
 
+CLI backfills resolve sibling imports and re-exports from the mirror at the pinned
+backfill commit, including their edge reconciliation pass. Search chunks can carry
+doc comments and overlapping context, so their concatenation is not authoritative
+source text for parsing a sibling module.
+
+Sibling text, Python layouts, workspace registries, module indexes, compiler configs
+and barrel targets cache by tenant and namespace plus the pinned Git directory and
+commit. Concurrent passes share a pending read only within that source. Indexed-text
+reads use a separate cache scope. Each cache expires entries and bounds their count;
+the text cache also bounds the bytes it holds. Python ingestion resolves its layout
+before chunking and passes the layout snapshot to facet extraction; chunking threads
+do not access the mutable cache.
+
 A history read (`blame_range`, bisect, `first_build`, a lesson's code check) on a host
 without the mirror clones it once in the background
 (`server/code/app/index/mirrors.py`, `history_dir`). A read that names its op waits up
@@ -234,6 +247,8 @@ Tree-sitter modules import lazily, so a server with the code workers off boots w
 | `file_header`    | Leading comments and includes.                                                                              |
 | `other`          | The rest, grouped.                                                                                          |
 
+Python search responses omit a prefixed class docstring when the skeleton already contains its text.
+
 Files without a tree fall back to whole-line windows; lanes without a grammar cut on
 their symbol spans (`lane_units.span_chunks`). A chunk id is
 `uuid5("loom://code/{namespace}/{path}#{scope}@{sha16}")`. It is content-addressed, so
@@ -360,12 +375,29 @@ through the shared result enrichment. Resolved symbol names rank matching lesson
 after constraints and pins; unresolved names contribute no query terms. Empty
 lesson fields stay off the wire.
 
+When several grep hits need implementation source, pass their `path:line`
+locations to `code.enclosing` with `include_body=true`. It returns complete
+enclosing definitions together. `code.symbol` resolves a named definition or
+one location; the batch avoids a separate lookup for every located definition.
+
 Search and grep rank candidate lessons across all selected files by query-term
 overlap after constraints and pinned rows. English inflections share stems; equal
 matches keep path order, then the listing's confidence and recency order.
 The remaining file-lesson reads retain path and listing order.
-This reorders the same readable candidates within the same response token budget;
-it adds no model call or storage read. Superseded rows and unrelated paths remain excluded.
+The ranking uses the existing namespace-scoped candidates. On trunk, uncapped
+search and grep-match responses can focus a file's lessons when every returned
+hit names a definition and an exact linked lesson is available. Whole-file
+search hits use file-level selection. Read the broader file history with
+`memory.for_file`. Before omitting a lesson by scope, the enrichment checks its
+live link set for pending and uncertain links within the request's enrichment
+deadline. Ranking and focusing add no model calls.
+
+File and symbol lessons carry complete memory text, including source references.
+The internal file listing reads complete values; the pre-edit block keeps its own
+read and render limits. A configured `code_result_lessons_tokens` budget leaves out
+whole lessons rather than cutting their conditions. Its default of zero is
+unlimited. With an explicit symbol request budget, source definitions take precedence;
+whole linked lessons fit in the remainder and `lessons_left_out` counts omissions.
 
 `bench/replay_code_lessons.py` compares recorded lesson order with query-aware order
 from an evaluation's native memory certificates and grep answers. It retains every
@@ -510,6 +542,14 @@ Every column is in the generated [schema reference](../reference/schema.md).
 
 ## Query patterns
 
+A file-qualified symbol request (`src/module.py:Type.method` or
+`src/Type.cpp:Namespace::Type::method`) keeps the filename as a hard constraint.
+Candidate discovery reads that file's symbol rows; the authoritative live read
+checks the filename again before ranking and limiting. It never retries the name
+against other files. `resolved_by: file_symbol` discloses the binding; stored
+symbol names and ids stay intact. The shared resolver applies this spelling to
+structural code operations.
+
 Python import spellings use the bounded short-name candidate read after an exact
 symbol miss. Read-side matching preserves dotted module scopes and treats a package's
 `__init__.py` as implicit. Only Python source rows participate; ambiguous or incomplete
@@ -535,14 +575,25 @@ index tokenizer. The score counts only whole app lexemes and rejects partial mat
 from the gate. Underscore-only lexemes use the exact score within the same tenant,
 model and path scope because the text index has no token for them.
 
+After relevance ranking, per-file saturation spreads broad search results across
+files. It is skipped for an explicit path, a symbol route, test intent, or a
+code-shaped identifier named in the query that matches a qualified symbol
+component in the relevance window. This keeps related definitions together for
+questions about a named identifier. An unmatched identifier does not disable
+saturation. Per-symbol deduplication still removes repeated chunks of one definition,
+and continuation pages retain the final served order.
+
 ### Symbol bodies
 
 Literal hits, rendered-message matches and symbol mentions use the same retained-source
 line mapping as definition bodies. Copied doc comments and continuation headers do not
-become file lines. Compacted class skeletons and incomplete source fragments cannot
-establish exact hit coordinates: grep omits those lines and marks its response partial,
-and symbol mentions disclose truncation. A missing hit in that response is not evidence
-that the file lacks the text.
+become file lines. Compacted class skeletons cannot establish exact hit coordinates.
+Grep and symbol mentions recover their retained raw chunks under the same tenant,
+model and path. A summary is replaced only when those chunks cover its span without
+gaps or disagreements with already-read source. Recovery shares the grep scan's
+character bound and any caller-supplied deadline. Incomplete or failed recovery leaves
+grep partial and symbol mentions truncated. A missing hit in that response is not
+evidence that the file lacks the text.
 
 Grep continuation pools retain source-mapping and partial-coverage metadata. A
 pool with another mapping triggers a disclosed rerun; restart pagination for

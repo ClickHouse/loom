@@ -37,6 +37,13 @@ session primer (`initialize` instructions, `server/discover`, the `loom` prompt,
 toolset lists it, else the op name marked "(via loom_op)", and leaves out an op
 `loom_op` does not route there.
 
+Coding connections describe implicit code and memory scopes as defaults in
+`initialize` and `server/discover`. The routing text can be reused across
+sessions with different default bindings. When a call needs a namespace
+argument, the instructions name the available namespaces. Authored profiles
+remain in the instructions. Usage hints are available in tool results and
+through `mentor.brief`.
+
 Methods served: `initialize`, `notifications/initialized`,
 `notifications/cancelled`, `ping`, `tools/list`, `tools/call`, `prompts/list`,
 `prompts/get` (the `loom` prompt: the session primer), `resources/list`,

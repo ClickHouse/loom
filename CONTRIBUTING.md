@@ -81,6 +81,9 @@ The diagnostic holds ClickHouse reachability and worker and embedder configurati
 
 ## Development setup
 
+The [source contribution lab](.devcontainer/source/README.md) provides a local
+development container and bounded public-fork checks for a first reproduction.
+
 ```bash
 git clone https://github.com/ClickHouse/loom.git
 cd loom

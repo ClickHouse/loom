@@ -6640,6 +6640,7 @@ async def test_a_high_set_on_clickhouse_is_fenced_after_a_failed_lift(
     monkeypatch.setattr(set_commit, "_lift_above_deletes", _nothing)
     monkeypatch.setattr(set_commit, "_lift_after_insert", _lift_fails)
     monkeypatch.setattr(set_commit, "_announce_set", _nothing)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _nothing)
     monkeypatch.setattr(set_commit, "fence_high", _fence)
     with pytest.raises(RuntimeError, match="lift failed"):
         await set_commit._set_plain_insert(_high_set(), object())

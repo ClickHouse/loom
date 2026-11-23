@@ -29,7 +29,7 @@ from server.memory.app.period_digest import (
 
 
 @pytest.fixture(autouse=True)
-def verified_period_inputs(monkeypatch):
+def verified_period_inputs(monkeypatch, no_blacklisted_values):
     """Period-policy tests start after source qualification, covered in test_summary_sources."""
 
     async def qualified(ch, rows, **kwargs):
@@ -306,7 +306,8 @@ async def test_a_failed_authority_read_writes_nothing_and_a_later_pass_writes_it
     async def _heads(keys: Any, **_: Any) -> Any:  # the sources, not yet the period
         return {k: {"version": 1, "redacted_at": None} for k in keys if "fact_" in k[-1]}
 
-    async def _commit(rows: Any, documents: Any, *, ch: Any) -> bool:
+    async def _commit(rows: Any, documents: Any, *, ch: Any, policy: Any) -> bool:
+        assert policy == {}
         ch.inserts.append(("loom.memory", rows))  # the authority commit, recorded
         return True
 
@@ -465,7 +466,8 @@ async def test_a_pending_publication_writes_no_lineage_and_is_recorded(
     async def _link(**kwargs: Any) -> None:
         linked.append(kwargs)
 
-    async def _pending(rows: Any, documents: Any, *, ch: Any) -> bool:
+    async def _pending(rows: Any, documents: Any, *, ch: Any, policy: Any) -> bool:
+        assert policy == {}
         return False
 
     monkeypatch.setattr("server.memory.app.evidence.link_belief_sources", _link)

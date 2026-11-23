@@ -80,7 +80,11 @@ async def test_path_and_basename_are_bound_and_both_shapes_are_matched(
     # the attestation columns and the cut flag the verification state is derived from
     for column in ("verified_by", "verified_sha256", "content_sha256"):
         assert column in ch.sql
-    assert f"value_len > {mff._READ_BYTES} AS value_truncated" in ch.sql
+    assert ch.params["full_values"] == 0
+    assert (
+        f"({{full_values:UInt8}} = 0 AND value_len > {mff._READ_BYTES}) AS value_truncated"
+        in ch.sql
+    )
     # a decision or constraint is read up to the ceiling, every other row up to 600 bytes
     assert ch.params["whole_bytes"] == 1500 * mff.CHARS_PER_TOKEN * 12
     assert "if((memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))" in ch.sql

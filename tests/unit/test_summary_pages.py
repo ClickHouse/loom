@@ -11,6 +11,8 @@ from server.memory.store import summary_pages
 from server.memory.store.rows import identity_key
 from tests.unit.test_memory_verify import _row
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 
 class Pages:
     def __init__(self, rows, order):

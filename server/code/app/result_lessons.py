@@ -7,8 +7,9 @@ no memory call of its own. The read is bounded (`code_enrich_timeout_s`, as code
 lessons are); a slow or failed file leaves completed files' lessons intact. A token
 narrowed below its namespaces reads none (the memory rows are not filtered by user),
 as code.symbol's lessons do.
-`include_lessons: false` or `code_result_lessons` off skips the read. These are
-file-level; code.symbol's own `lessons` are the memories linked to the one symbol."""
+`include_lessons: false` or `code_result_lessons` off skips the read. Search and
+grep can focus a file's lessons on returned definitions. `code.symbol` reads the
+lessons linked to the requested symbol itself."""
 
 from __future__ import annotations
 
@@ -20,11 +21,12 @@ from typing import Any
 
 from server.code.api.models_grep import CodeGrepInput
 from server.code.api.models_navigation import CodeEnclosingInput
-from server.code.api.models_search import CodeSearchInput
+from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import common, enrich, memory_links
 from server.code.app.search_legs import resolve_deadline_ms
 from server.code.app.spans import code_span
 from server.code.domain import deadline as code_deadline
+from server.code.domain.anchor import local_name
 from server.identity.app import request_scope
 from server.memory.app import code_plane_reads, path_lessons
 from server.settings import settings
@@ -64,7 +66,12 @@ def _bound_s(input: Any, started: float) -> float:
 
 
 async def lessons_for(
-    input: Any, paths: Iterable[str], started: float, *, query: str = ""
+    input: Any,
+    paths: Iterable[str],
+    started: float,
+    *,
+    query: str = "",
+    matched_symbols: dict[str, set[str]] | None = None,
 ) -> path_lessons.Lessons:
     """The completed lessons for the answer's top `paths`; none when off, narrowed,
     past the call's deadline, or unable to read the scope. `started` is the call's
@@ -75,13 +82,13 @@ async def lessons_for(
     if request_scope.request_narrowed():
         return path_lessons.Lessons([])  # a token that may not read every user's memories
 
-    async def scope() -> tuple[str, list[str], str]:
+    async def scope() -> tuple[str, list[str], str, bool]:
         org, ns = common.resolve_code_identity(input.org, _searched_namespace(input))
         trunk = memory_links.trunk_namespace(org, ns) or ns
         nss = await code_plane_reads.lesson_namespaces(org, ns, input.lesson_namespaces)
         # another repository's code namespace would bring its links to a same-named file
         nss = [n for n in nss if memory_links.trunk_namespace(org, n) in ("", trunk)]
-        return org, nss, trunk if trunk in nss else ""
+        return org, nss, trunk if trunk in nss else "", ns == trunk
 
     bound = _bound_s(input, started)
     if bound <= 0:
@@ -92,7 +99,11 @@ async def lessons_for(
         remaining = bound - (time.monotonic() - read_started)
         if resolved is None or remaining <= 0:
             return path_lessons.Lessons([])
-        org, nss, trunk = resolved
+        org, nss, trunk, on_trunk = resolved
+        if isinstance(input, CodeSearchInput):
+            query = input.query
+        elif isinstance(input, CodeGrepInput):
+            query = " ".join(input.pattern) if isinstance(input.pattern, list) else input.pattern
         try:
             return await path_lessons.lessons_for_paths(
                 org,
@@ -101,13 +112,8 @@ async def lessons_for(
                 top,
                 token_budget=settings.code_result_lessons_tokens,
                 timeout_s=remaining,
-                query=(
-                    input.query
-                    if isinstance(input, CodeSearchInput)
-                    else input.pattern
-                    if isinstance(input, CodeGrepInput)
-                    else query
-                ),
+                matched_symbols=matched_symbols if on_trunk else None,
+                query=query,
             )
         except Exception as e:  # noqa: BLE001 — lesson enrichment must not fail the code answer
             logger.debug("code lessons skipped: %s", e)
@@ -127,9 +133,50 @@ class WithLessons:
         started = time.monotonic()
         out = await self.handler(input)
         query = _enclosing_query(out) if isinstance(input, CodeEnclosingInput) else ""
-        found = await lessons_for(input, self.paths_of(input, out), started, query=query)
+        symbols = None
+        if isinstance(input, CodeGrepInput) and input.mode == "matches":
+            symbols = _grep_match_symbols(out)
+        elif isinstance(input, CodeSearchInput):
+            symbols = _search_match_symbols(out)
+        found = await lessons_for(
+            input, self.paths_of(input, out), started, query=query, matched_symbols=symbols
+        )
         out.lessons, out.lessons_left_out = found.rows, found.left_out
         return out
+
+
+def _grep_match_symbols(out: Any) -> dict[str, set[str]]:
+    """Only focus files whose returned matches all name enclosing definitions."""
+    return _symbols_by_path(
+        (
+            str(row.get("path") or ""),
+            str(row.get("scope") or "") if row.get("scope_start_line") else "",
+        )
+        for row in out.matches
+    )
+
+
+def _search_match_symbols(out: CodeSearchOutput) -> dict[str, set[str]]:
+    """File-level hits grant wider scope than the same answer's named units."""
+    return _symbols_by_path(
+        (
+            unit.path,
+            unit.symbol
+            if unit.start_line > 0
+            and unit.symbol != unit.path
+            and unit.kind in ("function", "symbol", "class_skeleton")
+            and unit.granularity != "file"
+            else "",
+        )
+        for unit in out.results
+    )
+
+
+def _symbols_by_path(rows: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
+    symbols: dict[str, set[str]] = {}
+    for path, scope in rows:
+        symbols.setdefault(path, set()).add(local_name(scope, path) if scope else "")
+    return {path: names for path, names in symbols.items() if path and "" not in names}
 
 
 # The files each code answer returns, best first.

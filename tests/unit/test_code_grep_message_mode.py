@@ -485,6 +485,8 @@ def test_invalid_regex_shaped_literal_only_notes() -> None:
     out = _grep(repo, pattern=r"convertFieldToType(f, \*actual_type")
     assert repo.calls == [("chunks", False)] and out.matches == []
     assert out.note == mg.REGEX_INVALID_NOTE
+    assert "shorter literal fragment" in out.note
+    assert "escape literal punctuation and pass regex=true" in out.note
 
 
 def test_files_mode_falls_back_the_same_way() -> None:

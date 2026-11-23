@@ -63,10 +63,11 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         version="1.3.1",
         name="mcp_always_load_tools",
         old="code.search,code.symbol",
-        new="",
+        new="search.query,code.search,code.symbol,loom_op",
         why=(
-            "Leave tool loading to the host so sessions do not need unused code schemas "
-            "upfront. Set an explicit operation list to request eager loading."
+            "Expose search and operation discovery without a preliminary tool lookup; "
+            "other schemas stay under client discovery. An explicit list selects entrypoints, "
+            "and an empty value leaves loading to the host."
         ),
     ),
     DefaultChange(
@@ -115,5 +116,27 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         old=250,
         new=0,
         why="Return selected review rationale without an implicit token cap.",
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="mcp_always_load_tools",
+        old="search.query,code.search,code.symbol,loom_op",
+        new="search.query,code.search,code.symbol,code.grep,loom_op",
+        why=(
+            "Make literal code search callable without a preliminary tool lookup. "
+            "An explicit list still replaces the defaults; an empty value leaves "
+            "loading to the host."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="mcp_always_load_tools",
+        old="search.query,code.search,code.symbol,code.grep,loom_op",
+        new="auto",
+        why=(
+            "Keep the named search and code tools upfront on the coding toolset and "
+            "defer the generic dispatcher to discovery. Other toolsets retain their "
+            "entrypoints. Explicit lists and empty values retain their meaning."
+        ),
     ),
 )

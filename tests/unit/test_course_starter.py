@@ -355,6 +355,153 @@ def test_lab_4_rows_are_one_count_per_agent(tmp_path: Path) -> None:
         grade.counts([{"agent": "a"}])
 
 
+def _unfinished_tasks() -> list[asyncio.Task[object]]:
+    current = asyncio.current_task()
+    return [task for task in asyncio.all_tasks() if task is not current]
+
+
+async def _student_submission(mode: str, cleaned: list[str]) -> object:
+    try:
+        if mode == "event":
+            await asyncio.Event().wait()
+        elif mode == "future":
+            await asyncio.get_running_loop().create_future()
+        elif mode == "success":
+            return "done"
+        raise NotImplementedError("student exercise")
+    finally:
+        cleaned.append(mode)
+
+
+@pytest.mark.parametrize("mode", ["event", "future", "success", "not_implemented"])
+def test_a_student_step_deadline_fails_a_wait_and_continues(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """A cooperative wait fails its own check. A finished step and an unfinished TODO do not."""
+    asyncio.run(_deadline_case(monkeypatch, mode))
+
+
+async def _deadline_case(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    grade = load_grader(STARTER)
+    monkeypatch.setattr(grade, "STEP_TIMEOUT_S", 0.05)
+    cleaned: list[str] = []
+    ran: list[str] = []
+
+    async def first() -> None:
+        got = await grade.run_student(_student_submission(mode, cleaned))
+        if mode == "success":
+            assert got == "done"
+
+    async def later() -> None:
+        ran.append("later")
+
+    monkeypatch.setattr(grade, "CHECKS", [("student step", first), ("later check", later)])
+    # Without the grader deadline this waits forever; the bound fails the test instead.
+    results = await asyncio.wait_for(grade.run_checks(), 2)
+    assert cleaned == [mode]
+    assert ran == ["later"]
+    assert _unfinished_tasks() == []
+    student, nxt = results
+    assert nxt == ("later check", True, "")
+    if mode == "success":
+        assert student == ("student step", True, "")
+    elif mode == "not_implemented":
+        assert student[0] == "student step" and student[1] is False
+        assert "is not written yet" in student[2]
+        assert "did not finish" not in student[2]
+    else:
+        assert student[0] == "student step" and student[1] is False
+        assert student[2] == "did not finish within 0.05 seconds"
+
+
+def test_a_timeout_raised_by_the_student_is_not_the_grader_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asyncio.run(_student_timeout_case(monkeypatch))
+
+
+async def _student_timeout_case(monkeypatch: pytest.MonkeyPatch) -> None:
+    grade = load_grader(STARTER)
+    monkeypatch.setattr(grade, "STEP_TIMEOUT_S", 5)
+    ran: list[str] = []
+
+    async def submission() -> None:
+        raise TimeoutError("student budget")
+
+    async def first() -> None:
+        await grade.run_student(submission())
+
+    async def later() -> None:
+        ran.append("later")
+
+    monkeypatch.setattr(grade, "CHECKS", [("student step", first), ("later check", later)])
+    results = await grade.run_checks()
+    assert results == [
+        ("student step", False, "TimeoutError: student budget"),
+        ("later check", True, ""),
+    ]
+    assert ran == ["later"]
+    assert _unfinished_tasks() == []
+
+
+def test_cancelling_the_grader_propagates_and_skips_later_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asyncio.run(_cancel_case(monkeypatch))
+
+
+async def _cancel_case(monkeypatch: pytest.MonkeyPatch) -> None:
+    grade = load_grader(STARTER)
+    monkeypatch.setattr(grade, "STEP_TIMEOUT_S", 30)
+    cleaned: list[str] = []
+    ran: list[str] = []
+    started = asyncio.Event()
+
+    async def submission() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.append("cancelled")
+
+    async def first() -> None:
+        await grade.run_student(submission())
+
+    async def later() -> None:
+        ran.append("later")
+
+    monkeypatch.setattr(grade, "CHECKS", [("student step", first), ("later check", later)])
+    task = asyncio.create_task(grade.run_checks())
+    await asyncio.wait_for(started.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cleaned == ["cancelled"]
+    assert ran == []
+    assert _unfinished_tasks() == []
+
+
+def test_the_student_step_deadline_is_a_positive_finite_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LOOM_GRADE_STEP_TIMEOUT", raising=False)
+    assert load_grader(STARTER).STEP_TIMEOUT_S == 60
+    monkeypatch.setenv("LOOM_GRADE_STEP_TIMEOUT", "12.5")
+    assert load_grader(STARTER).STEP_TIMEOUT_S == 12.5
+    readme = (STARTER / "README.md").read_text()
+    assert "LOOM_GRADE_STEP_TIMEOUT" in readme
+    assert "60 seconds" in readme
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "inf", "nan", "later"])
+def test_a_deadline_that_is_not_positive_and_finite_is_refused(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    monkeypatch.setenv("LOOM_GRADE_STEP_TIMEOUT", raw)
+    with pytest.raises(RuntimeError, match="LOOM_GRADE_STEP_TIMEOUT"):
+        load_grader(STARTER)
+
+
 def test_course_starter_carries_the_repository_license_and_notices() -> None:
     """The starter is copied out as a standalone repository, so Loom's license
     and attribution text must travel with it (and keep no dangling references)."""

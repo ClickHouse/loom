@@ -16,28 +16,26 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
+from server.code.domain.anchor import local_name
 from server.memory.api.models_for_file import MemoryForFileInput
 from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
 from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
 from server.memory.domain.lemmatize import snowball_stem_tokens
 from server.memory.domain.recall import query_tokens
+from server.memory.store import code_links
 
-# A row's excerpt is cut here, unless it is a decision or a constraint, which is served
-# whole or not at all (a cut "never X unless Y" can say the opposite).
-EXCERPT_CHARS = 200
+logger = logging.getLogger(__name__)
 
 
 def _excerpt(hit: dict[str, Any]) -> str | None:
-    """The row's text on one line: whole for a decision or constraint (None when its
-    stored value was cut, so it is not served), else cut at EXCERPT_CHARS."""
-    one = " ".join(value_text(hit).split())
-    if is_whole_row(str(hit.get("memory_type") or ""), hit.get("tags") or []):
-        return None if hit.get("value_truncated") else one
-    return one if len(one) <= EXCERPT_CHARS else one[: EXCERPT_CHARS - 1] + "…"
+    """Keep the whole fact; a cut condition or source reference cannot be trusted."""
+    return None if hit.get("value_truncated") else " ".join(value_text(hit).split())
 
 
 def _names_this_file(hit: dict[str, Any], path: str) -> bool:
@@ -64,8 +62,7 @@ def _tokens(lesson: dict[str, Any]) -> int:
 
 
 def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
-    """The row as a lesson, or None for a decision cut at the read (served whole or not
-    at all)."""
+    """The row as a lesson, or None when its source value is incomplete."""
     excerpt = _excerpt(hit)
     if excerpt is None:
         return None
@@ -101,7 +98,7 @@ def _ordered_candidates(
 
     def rank(candidate: tuple[str, dict[str, Any]]) -> tuple[bool, bool, int]:
         hit = candidate[1]
-        words = snowball_stem_tokens(query_tokens(value_text(hit)[:EXCERPT_CHARS]))
+        words = snowball_stem_tokens(query_tokens(value_text(hit)))
         return (
             CONSTRAINT_TAG not in (hit.get("tags") or []),
             not hit.get("pinned"),
@@ -109,6 +106,82 @@ def _ordered_candidates(
         )
 
     return sorted(candidates, key=rank)
+
+
+def _excludes_other_symbol(hit: dict[str, Any], path: str, symbols: set[str]) -> bool:
+    if hit.get("pinned") or is_whole_row(hit.get("memory_type", ""), hit.get("tags") or []):
+        return False
+    return _outside_scope(hit.get("code_symbols", []), path, symbols)
+
+
+def _outside_scope(names: Sequence[str], path: str, symbols: set[str]) -> bool:
+    anchors = [local_name(name, path) for name in names]
+    # A chunk can hold a nested declaration without naming it as its own scope.
+    return bool(anchors) and all(
+        name
+        and not any(
+            name == scope or name.startswith(scope + ".") or scope.startswith(name + ".")
+            for scope in symbols
+        )
+        for name in anchors
+    )
+
+
+def _focused_paths(
+    candidates: list[tuple[str, dict[str, Any]]],
+    matched_symbols: dict[str, set[str]],
+    superseded: set[str],
+) -> set[str]:
+    """Focus a file only where the read found a whole lesson for a matched symbol."""
+    return {
+        path
+        for path, hit in candidates
+        if (symbols := matched_symbols.get(path))
+        and str(hit.get("memory_id")) not in superseded
+        and not hit.get("value_truncated")
+        and any(name and local_name(name, path) in symbols for name in hit.get("code_symbols", []))
+    }
+
+
+async def _confirmed_omissions(
+    org: str,
+    trunk_ns: str,
+    candidates: list[tuple[str, dict[str, Any]]],
+    symbols: dict[str, set[str]],
+    focused: set[str],
+    timeout_s: float | None,
+) -> set[tuple[str, str]]:
+    """Path reads miss pending links. Check only the rows being considered for omission."""
+    omitted = {
+        (path, mid)
+        for path, hit in candidates
+        if path in focused
+        and (mid := str(hit.get("memory_id") or ""))
+        and _excludes_other_symbol(hit, path, symbols[path])
+    }
+    if not omitted or not trunk_ns or (timeout_s is not None and timeout_s <= 0):
+        return set()
+    try:
+        async with asyncio.timeout(timeout_s):
+            links = await code_links.for_memories(org, sorted({mid for _, mid in omitted}))
+    except Exception as error:  # noqa: BLE001 — without confirmation, keep the lessons
+        logger.debug("Scope check unavailable for code lessons: %s", type(error).__name__)
+        return set()
+    resolved: dict[tuple[str, str], list[str]] = defaultdict(list)
+    uncertain: set[str] = set()
+    for link in links:
+        if link["code_namespace"] != trunk_ns:
+            continue
+        if not link["complete"] or link["state"] not in ("fresh", "moved", "changed"):
+            uncertain.add(link["memory_id"])
+        else:
+            resolved[(link["path"], link["memory_id"])].append(link["qualified_name"])
+    return {
+        (path, mid)
+        for path, mid in omitted
+        if mid not in uncertain
+        and _outside_scope(resolved.get((path, mid), []), path, symbols[path])
+    }
 
 
 async def lessons_for_paths(
@@ -120,6 +193,7 @@ async def lessons_for_paths(
     token_budget: int,
     timeout_s: float | None = None,
     query: str = "",
+    matched_symbols: dict[str, set[str]] | None = None,
 ) -> Lessons:
     """The live memories of `namespaces` (each already checked readable) that name or are
     linked to code in `paths`, in path order, then each file's memory.for_file order (past
@@ -135,9 +209,12 @@ async def lessons_for_paths(
     when the conflict check linked one. `timeout_s` bounds the file reads together;
     failed or unfinished reads leave the completed files' rows intact. A nonempty `query`
     ranks matching excerpts after constraints and pins across the selected paths,
-    preserving path and listing order on ties."""
+    preserving path and listing order on ties. `matched_symbols` focuses inline lessons
+    on the matched definitions when an uncapped answer finds a complete lesson
+    there. File-wide or uncertain links, decisions, constraints and pins remain eligible."""
     if not namespaces or not paths:
         return Lessons([])
+    started = asyncio.get_running_loop().time()
     # memory.for_file takes two extra namespaces and follows code links only into the
     # trunk an extra one names: each read names the trunk and two caller namespaces.
     own = [ns for ns in namespaces if ns != trunk_ns] or [trunk_ns]
@@ -166,9 +243,18 @@ async def lessons_for_paths(
         for hit in hits
         if _names_this_file(hit, inp.path)
     ]
+    symbols = (matched_symbols or {}) if not token_budget else {}
+    focused = _focused_paths(candidates, symbols, superseded)
+    remaining = (
+        None if timeout_s is None else timeout_s - (asyncio.get_running_loop().time() - started)
+    )
+    omitted = await _confirmed_omissions(org, trunk_ns, candidates, symbols, focused, remaining)
     for path, hit in _ordered_candidates(candidates, query):
         key = (str(hit["namespace"]), str(hit["memory_key"]))
         if key in seen:
+            continue
+        if (path, str(hit.get("memory_id") or "")) in omitted:
+            left.add(key)
             continue
         stale = str(hit.get("memory_id")) in superseded
         lesson = None if stale else _lesson(hit, path)

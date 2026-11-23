@@ -1,6 +1,6 @@
 ---
 name: loom-writing
-description: Plain technical English for commit messages, PR and issue text, review comments and replies, code comments and docs, with a checker for filler words and internal details. Use before writing or posting any of them, or when asked to make text read less generated. Owns wording, not sections.
+description: Plain technical English for commits, PRs, issues, release notes and announcements, review replies, code comments and docs, with a prose checker. Use before writing or posting them, or to make text read less generated. Owns wording; loom-release owns release publication.
 metadata:
   internal: true
 ---
@@ -39,6 +39,16 @@ Readers are maintainers who skim dozens of PRs, issues and comments a day. A tex
 | going forward, at this point in time | delete |
 | addresses, handles (vague) | fixes / rejects / retries / returns |
 | holistic, cutting-edge, state-of-the-art, best-in-class | delete |
+
+## Release notes and announcements
+
+- Open with 3–5 user-visible outcomes for a feature release; a small patch can have fewer. Put required upgrade actions and compatibility changes near the top, then the grouped detail and full changelog.
+- Explain each highlight through the previous behavior, resulting behavior, affected users and limits where relevant. Name the task a user can do or the failure they avoid; a list of merged pull request titles is supporting detail.
+- Give a documented upgrade path and state affected versions, migrations, configuration steps or client requirements when applicable. Do not invent an update command or imply all packages and deployment modes become available together.
+- Keep the subscriber announcement short: version and benefit, selected outcomes, required actions and known limits, then links to the full release, relevant docs and roadmap. Link a demo when one exists.
+- Separate shipped capabilities from planned roadmap work. Support availability and verification claims with this version's publication and check results; an earlier successful release proves nothing about the next one.
+
+Use [loom-release](../loom-release/SKILL.md#5a-publish-the-reviewed-summary-and-announcement) for carrying approved notes into the release page and publishing to the ongoing announcement discussion. Writing or reviewing text grants no permission to post it.
 
 ## Examples
 

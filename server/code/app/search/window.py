@@ -11,6 +11,7 @@ from server.code.app.search.priors import _TEST_INTENT_TOKENS
 from server.code.app.search.state import _POOL_KEEP, _SearchState
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.extract.tokenize import code_tokens
+from server.code.domain.idents import embedded_idents
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.settings import settings
@@ -33,8 +34,8 @@ async def _order_window(
     exclude_unit_ids: list[str] | None,
 ) -> list[CodeUnit]:
     """After relevance: history anchors, the caller's fan-in ordering and
-    floor, the seen-set, per-symbol diversity (sets `result.pool`) and the
-    per-file saturation; returns the ordered list the page is cut from."""
+    floor, the seen-set, per-symbol diversity and per-file saturation;
+    retains the final order in `result.pool` for continuation pages."""
     result, work, constrained = st.result, st.work, st.constrained
     history_units, history_section = st.history_units, st.history_section
     fan_in_explain = st.fan_in_explain
@@ -97,7 +98,6 @@ async def _order_window(
     if exclude_unit_ids:
         ranked = _exclude(ranked, exclude_unit_ids, work)
     ranked = _diversify(ranked, top_k)
-    result.pool = ranked[:_POOL_KEEP]
 
     # ---- per-file saturation (code_search_file_saturation; 0 = off): the 2nd, 3rd...
     # unit from one path decays by decay^excess so a single file cannot fill the window
@@ -109,7 +109,9 @@ async def _order_window(
     decay = float(settings.code_search_file_saturation)
     saturation_explain = ""
     if 0.0 < decay < 1.0:
-        skip = _saturation_skip_reason(route=result.route, path_prefix=path_prefix, query=query)
+        skip = _saturation_skip_reason(
+            route=result.route, path_prefix=path_prefix, query=query, head=ranked[:top_k]
+        )
         if skip:
             saturation_explain = f"saturation=skipped({skip})"
         else:
@@ -117,6 +119,8 @@ async def _order_window(
             work["saturation_moved"] = moved
             saturation_explain = f"saturation={decay:g}"
 
+    # Cursor offsets must address the order used for the served page.
+    result.pool = ranked[:_POOL_KEEP]
     st.fan_in_explain, st.saturation_explain = fan_in_explain, saturation_explain
     return ranked
 
@@ -161,18 +165,27 @@ def _same_path_in_window(ranked: list[CodeUnit], top_k: int) -> int:
     return n
 
 
-def _saturation_skip_reason(*, route: str, path_prefix: str, query: str) -> str:
+def _saturation_skip_reason(
+    *, route: str, path_prefix: str, query: str, head: list[CodeUnit] | None = None
+) -> str:
     """Where several units of one file ARE the answer, saturation is off:
     a path_prefix scopes the search to a subtree the asker chose; a
     symbol-shaped query asks for one identifier's definition and uses,
     which live together; a test-intent query wants the cases of one test
-    file."""
+    file. A natural-language query naming an identifier found in the
+    relevance window has the same locality as the symbol route."""
     if path_prefix:
         return "path_prefix"
     if route.startswith("symbol"):
         return "symbol"
     if _has_test_intent(query):
         return "test_intent"
+    named = embedded_idents(query)
+    if named and any(
+        named.intersection(c.lstrip("~").lower() for c in unit.symbol.split("::"))
+        for unit in head or []
+    ):
+        return "named_symbol"
     return ""
 
 

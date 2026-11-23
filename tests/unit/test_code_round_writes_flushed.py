@@ -96,7 +96,15 @@ async def test_bootstrap_slice_rounds_write_every_round() -> None:
 async def test_cli_backfill_rounds_write_every_round() -> None:
     repo = _Repo()
     await code_backfill._backfill_batch_rounds(
-        repo, "o", "n", PATHS, source=_source, one=_write_one, denylist=None
+        repo,
+        "o",
+        "n",
+        PATHS,
+        source=_source,
+        one=_write_one,
+        denylist=None,
+        git_dir="repo.git",
+        head="a" * 40,
     )
     assert sorted(repo.written) == WANT
 

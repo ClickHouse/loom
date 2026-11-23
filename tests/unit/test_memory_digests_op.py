@@ -12,6 +12,8 @@ from server.memory.api.models_temporal import MemoryDigestsInput, MemoryDigestsO
 from server.memory.app import curation as cur
 from server.operations.registry import ALL_OPERATIONS
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 
 class _FakeCH:
     def __init__(self, rows: list[dict[str, Any]]) -> None:

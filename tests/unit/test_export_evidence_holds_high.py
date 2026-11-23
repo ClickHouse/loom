@@ -39,7 +39,7 @@ class _CH:
 
 
 @pytest.fixture
-def evidence(monkeypatch: pytest.MonkeyPatch) -> list[list[dict[str, Any]]]:
+def evidence(monkeypatch: pytest.MonkeyPatch, no_blacklisted_values) -> list[list[dict[str, Any]]]:
     async def _links(_ch: Any, **_k: Any) -> dict[tuple[str, int], list[str]]:
         return {("s", 0): ["k"], ("s", 1): ["vault"], ("s", 2): [], ("s", 3): []}
 

@@ -23,6 +23,8 @@ from server.code.api.models_search import CodeSearchInput
 from server.code.app import common as cc
 from server.code.app import spans
 from server.code.app.search import handler as h
+from server.core import request_work
+from server.observability.event_args import request_work_stage_columns
 from server.settings import settings
 
 # ---- the accumulator -------------------------------------------------------
@@ -98,12 +100,59 @@ def test_stage_of_maps_span_suffixes_to_the_stage_vocabulary() -> None:
     assert spans.stage_of("grep.chunks") == "chunks"
 
 
+def test_request_stages_include_post_handler_lessons(clock: _Clock) -> None:
+    work = request_work.RequestWork()
+    with request_work.bind(work):
+        spans.start_stage_wall()
+        with spans.code_span("grep.chunks"):
+            clock.advance(8)
+        trace_snapshot = spans.current_stage_ms()
+        with spans.code_span("enrich.lessons"):
+            clock.advance(37)
+    assert trace_snapshot == {"chunks": 8}
+    assert request_work_stage_columns(work) == {
+        "out_stage_top": "lessons",
+        "out_stage_top_ms": "37.0",
+        "out_stage_ms": "lessons=37,chunks=8",
+    }
+    with request_work.bind(request_work.RequestWork()):
+        assert request_work_stage_columns(request_work.current()) == {}
+
+
 def test_without_a_wall_a_span_still_yields_and_records_nothing() -> None:
     spans._STAGE_WALL.set(None)
     with spans.code_span("search.lexical_leg") as sp:
         assert sp is None or not sp.is_recording()
     assert spans.current_stage_ms() == {}
     assert spans.with_stage_ms({"a": 1}) == {"a": 1}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_children_are_subtracted_from_the_parent_once(clock: _Clock) -> None:
+    ready_first = asyncio.Event()
+    ready_second = asyncio.Event()
+    release = asyncio.Event()
+
+    async def child(stage: str, ready: asyncio.Event) -> None:
+        with spans.code_span(stage):
+            ready.set()
+            await release.wait()
+
+    work = request_work.RequestWork()
+    with request_work.bind(work):
+        wall = spans.start_stage_wall()
+        with spans.code_span("symbol.enrich"):
+            clock.advance(10)
+            first = asyncio.create_task(child("enrich.examples", ready_first))
+            second = asyncio.create_task(child("enrich.lessons", ready_second))
+            await asyncio.gather(ready_first.wait(), ready_second.wait())
+            clock.advance(30)
+            release.set()
+            await asyncio.gather(first, second)
+            clock.advance(10)
+    stages = {"enrich": 20, "examples": 30, "lessons": 30}
+    assert wall.column() == stages
+    assert {name: round(value) for name, value in work.code_stage_ms.items()} == stages
 
 
 def test_spans_in_gathered_leg_tasks_report_into_one_wall() -> None:
