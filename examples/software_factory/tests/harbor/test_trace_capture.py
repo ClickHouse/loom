@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from examples.software_factory.harbor.runtime import write
-from examples.software_factory.harbor.trace_capture import capture
+from examples.software_factory.harbor.trace_capture import capture, capture_or_report
 
 
 class TraceCapture(unittest.TestCase):
@@ -22,7 +22,7 @@ class TraceCapture(unittest.TestCase):
             "server_container": "private-server",
             "attempt_scopes": {"0": {"org": "org", "code_namespace": "code"}},
         }
-        self.entry = {"order": 0}
+        self.order = 0
         self.native = self.root / "diagnostics/attempt-00.json"
         self.summary = {
             "source_sha256": "a" * 64,
@@ -45,8 +45,8 @@ class TraceCapture(unittest.TestCase):
 
     def test_complete_capture_retains_stage_evidence_and_needs_no_live_server_again(self):
         with self.observed([self.row]) as query:
-            receipt = capture(self.protocol, self.entry)
-            self.assertEqual(capture(self.protocol, self.entry), receipt)
+            receipt = capture(self.protocol, self.order)
+            self.assertEqual(capture(self.protocol, self.order), receipt)
         self.assertEqual(query.call_count, 1)
         self.assertTrue(receipt["complete"])
         self.assertEqual(receipt["rows"], [self.row])
@@ -54,16 +54,16 @@ class TraceCapture(unittest.TestCase):
 
     def test_missing_async_rows_stay_partial_and_can_be_captured_later(self):
         with self.observed([]):
-            first = capture(self.protocol, self.entry)
+            first = capture(self.protocol, self.order)
         self.assertFalse(first["complete"])
         self.assertEqual(first["missing_trace_run_ids"], ["run-1"])
         with self.observed([self.row]):
-            self.assertTrue(capture(self.protocol, self.entry)["complete"])
+            self.assertTrue(capture(self.protocol, self.order)["complete"])
 
     def test_other_scope_or_unrequested_ids_never_enter_the_saved_rows(self):
         for changed in ({"org": "other"}, {"namespace": "other"}, {"trace_run_id": "other"}):
             with self.subTest(changed=changed), self.observed([{**self.row, **changed}]):
-                receipt = capture(self.protocol, self.entry)
+                receipt = capture(self.protocol, self.order)
             self.assertEqual(receipt["state"], "capture_error")
             self.assertEqual(receipt["rows"], [])
             self.assertEqual(receipt["error_type"], "PermissionError")
@@ -74,12 +74,12 @@ class TraceCapture(unittest.TestCase):
             {**self.summary, "calls": [{"trace_run_id": name} for name in ("run-1", "run-2")]},
         )
         with self.observed([self.row]):
-            capture(self.protocol, self.entry)
+            capture(self.protocol, self.order)
         with patch(
             "examples.software_factory.harbor.trace_capture.subprocess.run",
             side_effect=OSError("private error payload"),
         ):
-            receipt = capture(self.protocol, self.entry)
+            receipt = capture(self.protocol, self.order)
         self.assertEqual(receipt["rows"], [self.row])
         self.assertFalse(receipt["complete"])
         self.assertEqual(receipt["missing_trace_run_ids"], ["run-2"])
@@ -88,24 +88,38 @@ class TraceCapture(unittest.TestCase):
     def test_missing_native_evidence_remains_unknown_then_can_be_supplied(self):
         self.native.unlink()
         with self.observed([self.row]) as query:
-            receipt = capture(self.protocol, self.entry)
+            receipt = capture(self.protocol, self.order)
             query.assert_not_called()
             self.assertFalse(receipt["complete"])
             self.assertEqual(receipt["state"], "unavailable")
             write(self.native, self.summary)
-            self.assertTrue(capture(self.protocol, self.entry)["complete"])
+            self.assertTrue(capture(self.protocol, self.order)["complete"])
 
     def test_changed_recorded_source_does_not_overwrite_prior_evidence(self):
         with self.observed([self.row]):
-            capture(self.protocol, self.entry)
+            capture(self.protocol, self.order)
         write(self.native, {**self.summary, "source_sha256": "b" * 64})
         with self.assertRaises(PermissionError):
-            capture(self.protocol, self.entry)
+            capture(self.protocol, self.order)
 
     def test_no_returned_trace_ids_is_distinct_from_missing_rows(self):
         write(self.native, {**self.summary, "calls": []})
         with self.observed([]) as query:
-            receipt = capture(self.protocol, self.entry)
+            receipt = capture(self.protocol, self.order)
         query.assert_not_called()
         self.assertTrue(receipt["complete"])
         self.assertEqual(receipt["state"], "no_trace_ids_returned")
+
+    def test_optional_capture_reports_disk_failure_without_raising(self):
+        with (
+            patch(
+                "examples.software_factory.harbor.trace_capture.write",
+                side_effect=OSError("private disk detail"),
+            ),
+            self.assertLogs(
+                "examples.software_factory.harbor.trace_capture", level="WARNING"
+            ) as logs,
+        ):
+            capture_or_report(self.protocol, self.order)
+        self.assertIn("attempt 0 (OSError)", logs.output[0])
+        self.assertNotIn("private disk detail", logs.output[0])

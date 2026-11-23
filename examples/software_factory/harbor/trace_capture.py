@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 
 from examples.software_factory.factory.model import digest
 
 from .runtime import read, write
+
+logger = logging.getLogger(__name__)
 
 SCRIPT = """import asyncio,json,sys
 from server.core.ch import get_client,set_query_tag
@@ -29,8 +32,16 @@ asyncio.run(main())
 """
 
 
-def capture(protocol, entry):
-    root, order = Path(protocol["output_root"]), entry["order"]
+def capture_or_report(protocol, order):
+    """Keep optional trace failures separate from grading and billing."""
+    try:
+        capture(protocol, order)
+    except Exception as error:  # noqa: BLE001 — optional diagnostics cannot sink a run
+        logger.warning("Code trace capture failed for attempt %s (%s)", order, type(error).__name__)
+
+
+def capture(protocol, order):
+    root = Path(protocol["output_root"])
     directory = root / "diagnostics"
     directory.mkdir(exist_ok=True)
     target = directory / f"attempt-{order:02d}-code-traces.json"
