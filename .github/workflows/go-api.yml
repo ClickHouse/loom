@@ -6,6 +6,11 @@ on:
     paths:
       - "sdk/go/**"
       - ".github/workflows/go-api.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/go/**"
+      - ".github/workflows/go-api.yml"
 
 permissions:
   contents: read
