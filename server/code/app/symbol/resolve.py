@@ -167,10 +167,7 @@ async def symbol_body(
         expected_commit is not None
         and _indexed_commit(sym.get("_extent_commit")) != expected_commit
     ):
-        owner = (
-            str(sym["qualified_name"]),
-            [str(sym["symbol_id"]), *(sym.get("_tier_ids") or [])],
-        )
+        owner = [str(sym["symbol_id"]), *(sym.get("_tier_ids") or [])]
     if expected_commit is None:
         rows = await repo.source_chunks_for_span(org, ns, path, start, end, model)
     else:
@@ -210,13 +207,14 @@ def _indexed_commit(value: Any) -> str:
 
 
 def _owned_span_rows(
-    rows: list[dict[str, Any]], owner: tuple[str, list[str]], start: int, end: int, revision: str
+    rows: list[dict[str, Any]], owner: list[str], start: int, end: int, revision: str
 ) -> list[dict[str, Any]]:
     """An unchanged symbol can predate the newly indexed text it still describes."""
-    scope, ids = owner
-    functions = [row for row in rows if row.get("kind") == "function"]
-    owned = [row for row in functions if set(row.get("symbol_ids") or []).intersection(ids)]
-    owned = owned or [row for row in functions if row.get("scope") == scope]
+    owned = [
+        row
+        for row in rows
+        if row.get("kind") == "function" and set(row.get("symbol_ids") or []).intersection(owner)
+    ]
     if (
         not owned
         or any(_indexed_commit(row.get("indexed_commit")) != revision for row in owned)

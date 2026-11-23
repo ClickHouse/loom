@@ -282,7 +282,7 @@ class FilesMixin(CodeRepoBase):
         embedding_model: str,
         *,
         with_revision: bool = False,
-        owner: tuple[str, list[str]] | None = None,
+        owner: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Bounded live raw chunks overlapping a definition under one served label.
 
@@ -293,7 +293,7 @@ class FilesMixin(CodeRepoBase):
         if owner is not None:
             span_sql = (
                 f"(({span_sql}) OR (kind = 'function' AND "
-                "(scope = {owner_scope:String} OR hasAny(symbol_ids, {owner_ids:Array(String)}))))"
+                "hasAny(symbol_ids, {owner_ids:Array(String)})))"
             )
         return await self._ch.query_all(
             f"""
@@ -314,7 +314,7 @@ class FilesMixin(CodeRepoBase):
                 "start": start,
                 "end": end,
                 "model": embedding_model,
-                **({"owner_scope": owner[0], "owner_ids": owner[1]} if owner is not None else {}),
+                **({"owner_ids": owner} if owner is not None else {}),
             },
         )
 

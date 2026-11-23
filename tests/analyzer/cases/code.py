@@ -70,7 +70,7 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
     await repo.grep_source_chunks_for_span(ORG, NS, "src/a.py", 1, 20, MODEL)
     await repo.source_chunks_for_span(ORG, NS, "src/a.py", 1, 20, MODEL, with_revision=True)
     await repo.source_chunks_for_span(
-        ORG, NS, "src/a.py", 1, 20, MODEL, with_revision=True, owner=("a::f", ["symbol-id"])
+        ORG, NS, "src/a.py", 1, 20, MODEL, with_revision=True, owner=["symbol-id"]
     )
     if regex:
         # An alternation gets the needle guard in front of match()

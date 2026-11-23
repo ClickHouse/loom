@@ -67,11 +67,14 @@ async def handle_code_enclosing(
     org, ns = resolve_code_identity(input.org, input.namespace)
     repo = CodeRepo()
 
-    parsed: list[tuple[str, int] | None] = []
-    for loc in input.locations:
-        m = _ENCLOSING_LOC.match(loc.strip())
-        parsed.append((repo_relative(m.group("path")), int(m.group("line"))) if m else None)
+    parsed = [
+        (repo_relative(m.group("path")), int(m.group("line")))
+        if (m := _ENCLOSING_LOC.match(loc.strip()))
+        else None
+        for loc in input.locations
+    ]
     paths = list(dict.fromkeys(p for p, _ in (x for x in parsed if x)))
+    revision_args = {"with_revision": True} if body_revisions is not None else {}
     with code_span("enclosing.symbols", paths=len(paths)) as sp:
         # a SQL test's line encloses a statement record
         rows = await repo.functions_for_paths(
@@ -80,7 +83,7 @@ async def handle_code_enclosing(
             paths,
             limit=2000,
             kinds=ENCLOSING_KINDS,
-            with_revision=body_revisions is not None,
+            **revision_args,
         )
         span_attrs(sp, rows=len(rows))
     by_path = _by_path(rows)
@@ -106,7 +109,7 @@ async def handle_code_enclosing(
     if unresolved_paths:
         with code_span("enclosing.types", paths=len(unresolved_paths)) as sp:
             trows = await repo.types_for_paths(
-                org, ns, unresolved_paths, limit=2000, with_revision=body_revisions is not None
+                org, ns, unresolved_paths, limit=2000, **revision_args
             )
             span_attrs(sp, rows=len(trows))
         types_by_path = _by_path(trows)
