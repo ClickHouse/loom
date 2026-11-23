@@ -1,9 +1,8 @@
-//! Remember travel preferences, recall, ask with citations, and record use.
+//! Remember travel preferences, recall, and ask for a grounded answer.
 mod common;
 
 use clickhouse_loom::{
-    CallOptions, Error, MemoryAskInput, MemoryOutcomeInput, MemoryOutcomeInputOutcome,
-    MemorySetInput, ProbeRequest, SearchRequest,
+    CallOptions, Error, MemoryAskInput, MemorySetInput, ProbeRequest, SearchRequest,
 };
 use common::{require, Args, Result};
 use serde_json::{json, Value};
@@ -19,12 +18,7 @@ async fn run() -> Result<()> {
     }
     let bot = common::demo_client("travel-assistant", "u-42").await?;
     let probe = bot
-        .probe(ProbeRequest::new().ops([
-            "memory.set",
-            "memory.search",
-            "memory.ask",
-            "memory.outcome",
-        ]))
+        .probe(ProbeRequest::new().ops(["memory.set", "memory.search", "memory.ask"]))
         .await?;
     println!(
         "probe: build={} ok={} unknown_to_sdk={}",
@@ -54,16 +48,14 @@ async fn run() -> Result<()> {
         ),
     ];
     let mut owned = Vec::new();
-    let mut receipts = std::collections::HashMap::new();
     let result: Result<()> = async {
         for (name, value) in facts {
             let key = format!("{prefix}/{name}");
-            let written = common::write_owned(
+            common::write_owned(
                 &bot,
                 MemorySetInput::new(&key, value).tags(["travel"]),
                 &mut owned,
             ).await?;
-            receipts.insert(key, written.memory_id);
         }
         let recall = bot.search(
             SearchRequest::new("what seat should I book for a long flight?")
@@ -80,14 +72,6 @@ async fn run() -> Result<()> {
                 .user_id("u-42"),
         ).await?;
         println!("ask: abstain={} answer={}", answer.abstain, answer.answer);
-        if !answer.abstain && !answer.answer.trim().is_empty() {
-            for key in &answer.memory_keys {
-                let id = receipts.get(key).ok_or("The answer cited a memory outside this example")?;
-                bot.memory_outcome(
-                    MemoryOutcomeInput::new(MemoryOutcomeInputOutcome::Used).memory_id(id),
-                ).await?;
-            }
-        }
         let miss = bot.get(&format!("{prefix}/never_written")).await?;
         require(!miss.found, "The missing key was found")?;
         let unknown = bot.call::<Value>("memory.no_such_op", &json!({}), CallOptions::default()).await;

@@ -665,14 +665,32 @@ def operation_facts() -> str:
             "working_memory.append",
         }:
             identity |= keys & {"run_id"}
-        if op.name in {"memory.search", "memory.search_trace", "memory.ask", "memory.list"}:
+        if op.name in {
+            "memory.search",
+            "memory.search_trace",
+            "memory.ask",
+            "memory.list",
+            "memory.extraction_status",
+        }:
             identity.discard("run_id")
-        if op.name in {"memory.ask", "memory.search", "memory.search_trace"}:
+        if op.name in {
+            "memory.ask",
+            "memory.search",
+            "memory.search_trace",
+            "memory.extraction_status",
+        }:
             identity -= {"agent", "user_id", "session_id"}
         if op.name == "memory.digests":
             identity.discard("session_id")
         defaults = set()
-        if op.name == "collection.delete":
+        # These namespaces name the object to change, not the client's write scope.
+        if op.name in {
+            "namespace.delete",
+            "namespace.rollback",
+            "collection.create",
+            "collection.move",
+            "collection.delete",
+        }:
             identity.discard("namespace")
         if op.name == "memory.list":
             identity -= {"agent", "user_id", "session_id"}

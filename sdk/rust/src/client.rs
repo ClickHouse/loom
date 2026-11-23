@@ -237,10 +237,10 @@ impl Client {
             return Err(Error::Input("memory.set value cannot be null".into()).into());
         }
         if op == "collection.delete"
-            && !fields
+            && fields
                 .get("namespace")
                 .and_then(Value::as_str)
-                .is_some_and(|target| !target.trim().is_empty())
+                .is_none_or(|target| target.trim().is_empty())
         {
             return Err(
                 Error::Input("collection.delete requires a target namespace".into()).into(),

@@ -493,7 +493,7 @@ the call sequence, output and cleanup for each program:
 | [memory.rs](examples/memory.rs)                                   | Save → read → lexical search → delete → confirm absence                                  |
 | [operations.rs](examples/operations.rs)                           | Async memory, knowledge and context calls, per-call options, metadata and request `send` |
 | [blocking.rs](examples/blocking.rs)                               | The memory, knowledge and context flow with the blocking client                          |
-| [agent_memory.rs](examples/agent_memory.rs)                       | Travel recall, grounded answers and cited-memory outcomes                                |
+| [agent_memory.rs](examples/agent_memory.rs)                       | Travel recall and grounded answers                                                       |
 | [document_search.rs](examples/document_search.rs)                 | Document citations and off-topic abstention                                              |
 | [code_lookup.rs](examples/code_lookup.rs)                         | Selected code lookup with bounded evidence                                               |
 | [fact_document_evidence.rs](examples/fact_document_evidence.rs)   | Identity-checked fact and document section reads                                         |

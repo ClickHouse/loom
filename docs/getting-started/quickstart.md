@@ -493,11 +493,11 @@ cargo add clickhouse-loom
 To install from source, clone this repository and run
 `cargo add clickhouse-loom --path ../loom/sdk/rust`, adjusting the path to your
 clone. Installation and client configuration are in the
-[Rust SDK README](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md#install).
+[Rust SDK installation](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md#install).
 
 The client surfaces are in the [Python SDK](../reference/python-sdk.md) and
 [TypeScript SDK](../reference/typescript-sdk.md) references, and the
-[Rust SDK README](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md#use).
+[Rust SDK usage](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md#use).
 
 ## 6. First memory from a coding agent
 

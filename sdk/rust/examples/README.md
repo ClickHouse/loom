@@ -177,16 +177,16 @@ The [Python examples](../../python/examples/README.md) contain eight standalone
 scenarios. Seven have Rust counterparts, in addition to the three basic examples
 above. Pipecat requires the Python integration.
 
-| Python example               | Rust example                                                    | Scenario                                                                                                |
-| ---------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `agent_memory.py`            | [agent_memory.rs](agent_memory.rs)                              | Travel preferences, semantic recall, grounded answer, cited-memory outcomes, missing key and unknown op |
-| `document_search.py`         | [document_search.rs](document_search.rs)                        | Two documents, subject searches with citations, off-topic knowledge abstention                          |
-| `code_lookup.py`             | [code_lookup.rs](code_lookup.rs)                                | Selected symbol, search, callers or impact lookup with bounded evidence                                 |
-| `fact_document_evidence.py`  | [fact_document_evidence.rs](fact_document_evidence.rs)          | Read a fact and selected document section for operator review                                           |
-| `multi_agent_handoff.py`     | [multi_agent_handoff.rs](multi_agent_handoff.rs)                | Planner and worker credentials, task lease, result memory and provenance                                |
-| `support_agent_memory.py`    | [support_agent_memory.rs](support_agent_memory.rs)              | Customer isolation, fact revision, user erasure and residue checks                                      |
-| `software_factory_memory.py` | [software_factory_memory.rs](software_factory_memory.rs)        | Source snapshot, derived note, review handoff, body recheck and run completion                          |
-| `pipecat_text_memory.py`     | [Python Pipecat guide](../../python/examples/pipecat/README.md) | Native Pipecat frames and `LoomMemoryService`; no Rust adapter                                          |
+| Python example               | Rust example                                                    | Scenario                                                                         |
+| ---------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `agent_memory.py`            | [agent_memory.rs](agent_memory.rs)                              | Travel preferences, semantic recall, grounded answer, missing key and unknown op |
+| `document_search.py`         | [document_search.rs](document_search.rs)                        | Two documents, subject searches with citations, off-topic knowledge abstention   |
+| `code_lookup.py`             | [code_lookup.rs](code_lookup.rs)                                | Selected symbol, search, callers or impact lookup with bounded evidence          |
+| `fact_document_evidence.py`  | [fact_document_evidence.rs](fact_document_evidence.rs)          | Read a fact and selected document section for operator review                    |
+| `multi_agent_handoff.py`     | [multi_agent_handoff.rs](multi_agent_handoff.rs)                | Planner and worker credentials, task lease, result memory and provenance         |
+| `support_agent_memory.py`    | [support_agent_memory.rs](support_agent_memory.rs)              | Customer isolation, fact revision, user erasure and residue checks               |
+| `software_factory_memory.py` | [software_factory_memory.rs](software_factory_memory.rs)        | Source snapshot, derived note, review handoff, body recheck and run completion   |
+| `pipecat_text_memory.py`     | [Python Pipecat guide](../../python/examples/pipecat/README.md) | Native Pipecat frames and `LoomMemoryService`; no Rust adapter                   |
 
 The Rust flows call typed SDK methods with request builders and read response
 fields directly. For example, memory recall uses `Client::search` with
@@ -227,9 +227,9 @@ cargo run --manifest-path sdk/rust/Cargo.toml --example agent_memory
 
 Prints a `Client::probe` report for the required operations and continues even
 when the report lists missing capabilities. Writes three travel facts under unique keys,
-recalls by meaning, asks for a grounded seat-and-meal answer and records `used`
-outcomes only when it uses a nonempty answer that does not abstain, addressing
-its own cited rows by their write receipt IDs. It checks a missing key and HTTP 404 for an
+recalls by meaning and asks for a grounded seat-and-meal answer. It omits automatic
+`used` outcomes because returned memory keys can include uncited grounding facts.
+It checks a missing key and HTTP 404 for an
 unknown operation. It attempts deletion of its own keys even after failure.
 An abstaining answer is a valid response; this example prints it.
 

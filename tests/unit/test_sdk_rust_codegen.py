@@ -53,10 +53,21 @@ def test_collection_delete_requires_target_namespace() -> None:
 
 def test_reader_filters_and_collection_targets_are_not_stamped() -> None:
     facts = gen.operation_facts()
-    delete = next(line for line in facts.splitlines() if line.startswith('("collection.delete"'))
-    assert '&["org"]' in delete
+    for op in (
+        "namespace.delete",
+        "namespace.rollback",
+        "collection.create",
+        "collection.move",
+        "collection.delete",
+    ):
+        target = next(line for line in facts.splitlines() if line.startswith(f'("{op}"'))
+        assert '&["org"], &[]' in target
     listing = next(line for line in facts.splitlines() if line.startswith('("memory.list"'))
     assert '&["namespace", "org"], &["agent", "session_id", "user_id"]' in listing
+    extraction = next(
+        line for line in facts.splitlines() if line.startswith('("memory.extraction_status"')
+    )
+    assert '&["namespace", "org"], &[]' in extraction
 
 
 def test_unknown_factory_is_refused_without_executing_it() -> None:

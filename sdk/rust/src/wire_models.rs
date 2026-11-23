@@ -334,14 +334,7 @@ pub(crate) const OP_POLICIES: &[OperationPolicy] = &[
         "memory.extraction_status",
         true,
         true,
-        &[
-            "agent",
-            "namespace",
-            "org",
-            "run_id",
-            "session_id",
-            "user_id",
-        ],
+        &["namespace", "org"],
         &[],
     ),
     (
@@ -1285,7 +1278,7 @@ pub(crate) const OP_POLICIES: &[OperationPolicy] = &[
     ),
     ("namespace.list", true, false, &["org"], &[]),
     ("namespace.get", true, true, &["namespace", "org"], &[]),
-    ("namespace.delete", true, false, &["namespace", "org"], &[]),
+    ("namespace.delete", true, false, &["org"], &[]),
     ("namespace.browse", true, true, &["org"], &[]),
     ("namespace.join", true, false, &["namespace", "org"], &[]),
     ("namespace.leave", true, false, &["namespace", "org"], &[]),
@@ -1312,13 +1305,7 @@ pub(crate) const OP_POLICIES: &[OperationPolicy] = &[
         &[],
     ),
     ("namespace.restore", true, false, &["org"], &[]),
-    (
-        "namespace.rollback",
-        false,
-        false,
-        &["namespace", "org"],
-        &[],
-    ),
+    ("namespace.rollback", false, false, &["org"], &[]),
     ("namespace.taxonomy", true, true, &["namespace", "org"], &[]),
     (
         "namespace.register_category",
@@ -1431,8 +1418,8 @@ pub(crate) const OP_POLICIES: &[OperationPolicy] = &[
         &["namespace", "org"],
         &[],
     ),
-    ("collection.create", true, false, &["namespace", "org"], &[]),
-    ("collection.move", true, false, &["namespace", "org"], &[]),
+    ("collection.create", true, false, &["org"], &[]),
+    ("collection.move", true, false, &["org"], &[]),
     ("collection.list", true, true, &["org"], &[]),
     ("collection.delete", true, false, &["org"], &[]),
     ("agents.connected", true, true, &["namespace", "org"], &[]),
@@ -36374,6 +36361,18 @@ pub struct MemoryListInput {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present_value"
     )]
+    pub pinned_only: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub conflicted_only: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
     pub fields: Option<Vec<String>>,
     #[serde(
         default,
@@ -36413,6 +36412,8 @@ impl MemoryListInput {
             tags: None,
             tags_every: None,
             contains: None,
+            pinned_only: None,
+            conflicted_only: None,
             fields: None,
             known_version: None,
         }
@@ -36531,6 +36532,14 @@ impl MemoryListInput {
     }
     pub fn contains_null(mut self) -> Self {
         self.contains = Some(None);
+        self
+    }
+    pub fn pinned_only(mut self, pinned_only: bool) -> Self {
+        self.pinned_only = Some(pinned_only);
+        self
+    }
+    pub fn conflicted_only(mut self, conflicted_only: bool) -> Self {
+        self.conflicted_only = Some(conflicted_only);
         self
     }
     pub fn fields(mut self, fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
