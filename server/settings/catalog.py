@@ -2460,6 +2460,22 @@ class KnowledgeSettings(BaseModel):
     # Bytes read from a connected-account token or identity response; larger metadata
     # replies are refused before parsing.
     knowledge_connected_oauth_response_max_bytes: int = Field(default=64 * 1024, ge=1024)
+    # Operator-approved MCP read profiles as version-1 JSON, at most 8 MiB UTF-8;
+    # empty approves none, and profile metadata grants no connection or publication access.
+    knowledge_source_mcp_profiles_json: str = Field(
+        default="", max_length=8 * 1024 * 1024, repr=False
+    )
+
+    @field_validator("knowledge_source_mcp_profiles_json")
+    @classmethod
+    def _mcp_profiles_size(cls, value: str) -> str:
+        try:
+            if len(value.encode("utf-8")) > 8 * 1024 * 1024:
+                raise ValueError("MCP_PROFILE_INVALID")
+        except UnicodeError:
+            raise ValueError("MCP_PROFILE_INVALID") from None
+        return value
+
     # Active document sources (knowledge.source.add) one namespace may register; an
     # add past it is refused with SOURCE_QUOTA.
     knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
