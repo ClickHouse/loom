@@ -6,6 +6,11 @@ on:
     paths:
       - "sdk/rust/**"
       - ".github/workflows/rust-api.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/rust/**"
+      - ".github/workflows/rust-api.yml"
 
 permissions:
   contents: read
