@@ -153,6 +153,9 @@ For `code.search` and `code.grep` in matches mode, pass the returned `next_curso
 `cursor` with the original search arguments to get the next page. Omit `cursor`
 when starting a new search with a different query, pattern or filters.
 
+`code.grep` includes linked lessons when available. Set `include_lessons: false`
+for a follow-up lookup when the relevant notes are already in context.
+
 `code.search` has no response token cap by default. Set
 `LOOM_CODE_SEARCH_TOKEN_BUDGET` to a positive token count to set a deployment default;
 `0` means unlimited. A request's `token_budget` overrides that default, including

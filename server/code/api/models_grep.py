@@ -55,6 +55,13 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         default=False,
         description="Include distinct enclosing bodies in matches mode; default false.",
     )
+    include_lessons: bool = Field(
+        default=True,
+        description=(
+            "Include linked lessons (default true) or set false "
+            "when you already have the relevant notes."
+        ),
+    )
     # Only paths under this repo-relative prefix; '' = the whole index. A prefix outside
     # the indexed ones answers `not_covered`.
     path_prefix: str = ""
