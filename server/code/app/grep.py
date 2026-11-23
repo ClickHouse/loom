@@ -38,6 +38,7 @@ from server.code.domain.symbol_body import retained_source_lines
 from server.code.store.index import CodeRepo
 from server.core.caller_regex import compile_caller_regex
 from server.core.ch import caller_shaped, class_timeout_s
+from server.core.errors import ValidationError
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -68,9 +69,10 @@ async def _code_grep(
     from server.observability.budget_shape import note_budget_shape
 
     require_code_intel()
+    pattern = input.pattern
+    if isinstance(pattern, list) and (input.regex or input.mode == "message"):
+        raise ValidationError("regex=true and message mode each require one pattern string")
     if input.include_body and input.mode != "matches":
-        from server.core.errors import ValidationError
-
         raise ValidationError("include_body on code.grep requires mode: 'matches'")
     # Presence on several namespaces: which of them contain the pattern, one row each. Unset:
     # matches / files on the one namespace.
@@ -85,6 +87,8 @@ async def _code_grep(
     start_stage_wall()
     org, ns = resolve_code_identity(input.org, input.namespace)
     route = "grep_regex" if input.regex else "grep_literal"
+    if isinstance(pattern, list):
+        route = "grep_literals"
     if input.mode == "message":
         route = "grep_message"
 
@@ -104,8 +108,8 @@ async def _code_grep(
 
     # RE2, as ClickHouse's match() reads it, and case-folded the way the SQL step's `(?i)` is
     line_re = (
-        compile_caller_regex(input.pattern, case_sensitive=input.case_sensitive)
-        if input.regex
+        compile_caller_regex(pattern, case_sensitive=input.case_sensitive)
+        if input.regex and isinstance(pattern, str)
         else None
     )
 
@@ -185,9 +189,10 @@ async def _fetch_grep_chunks(
         return rows
 
     chunks = await _read(input.regex)
-    if chunks or input.regex or not mg.regex_shaped(input.pattern):
+    pattern = input.pattern
+    if chunks or input.regex or not isinstance(pattern, str) or not mg.regex_shaped(pattern):
         return chunks, line_re, "", ""
-    fallback = mg.compile_fallback(input.pattern, case_sensitive=input.case_sensitive)
+    fallback = mg.compile_fallback(pattern, case_sensitive=input.case_sensitive)
     if fallback is None:
         return chunks, line_re, "", mg.REGEX_INVALID_NOTE
     if not _second_scan_allowed(budget, "regex retry"):
@@ -314,7 +319,7 @@ async def _grep_lines(
         org=org,
         ns=ns,
         op="code.grep",
-        query=input.pattern,
+        query=_grep_trace_query(input),
         route=route,
         args=_grep_trace_args(input),
         returned_ids=files,
@@ -446,7 +451,11 @@ def _matching_lines(
 ) -> tuple[list[dict[str, Any]], bool]:
     """(matching lines, capped): the lines of `chunks` the pattern matches, stopping past
     `keep` lines or `_LINE_SCAN_MAX_CHARS` of text (capped=True). Pure; runs in a thread."""
-    needle = input.pattern if input.case_sensitive else input.pattern.lower()
+    pattern = input.pattern
+    if not input.case_sensitive:
+        pattern = (
+            pattern.lower() if isinstance(pattern, str) else [text.lower() for text in pattern]
+        )
     excluded_paths = set(input.exclude_unit_ids)
     matches: list[dict[str, Any]] = []
     seen: set[tuple[str, int]] = set()
@@ -465,8 +474,15 @@ def _matching_lines(
         span = spans.get((str(c["path"]), scope), (0, 0)) if scope else (0, 0)
         for off, line in enumerate(lines):
             line = line.removesuffix("\n").removesuffix("\r")
-            hay = line if input.case_sensitive else line.lower()
-            hit = line_re.search(line) if line_re is not None else (needle in hay)
+            if line_re is not None:
+                hit = line_re.search(line)
+            else:
+                hay = line if input.case_sensitive else line.lower()
+                hit = (
+                    pattern in hay
+                    if isinstance(pattern, str)
+                    else any(text in hay for text in pattern)
+                )
             if not hit:
                 continue
             key = (str(c["path"]), int(c["start_line"] or 1) + off)
@@ -490,6 +506,14 @@ def _matching_lines(
 
 # Matching lines extracted past the served page and kept in the pool row.
 _GREP_POOL_EXTRA = 100
+
+
+def _grep_trace_query(input: CodeGrepInput) -> str:
+    return (
+        input.pattern
+        if isinstance(input.pattern, str)
+        else json.dumps(input.pattern, ensure_ascii=False)
+    )
 
 
 def _grep_trace_args(input: CodeGrepInput) -> dict[str, Any]:
@@ -570,7 +594,6 @@ async def _serve_grep_page(
     input: CodeGrepInput, org: str, ns: str, repo: CodeRepo, route: str, started: float
 ) -> tuple[CodeGrepOutput | None, str, int]:
     from server.code.app import search_cursor as paging
-    from server.core.errors import ValidationError
 
     ph = _grep_params_hash(input)
     try:
@@ -621,7 +644,7 @@ async def _serve_grep_page(
         org=org,
         ns=ns,
         op="code.grep",
-        query=input.pattern,
+        query=_grep_trace_query(input),
         route=route,
         args=_grep_trace_args(input),
         returned_ids=files,
@@ -760,18 +783,19 @@ async def _grep_files(
     note = ""
     kw: dict[str, Any] = {"scope": scope} if scope is not None and scope.has_path_filters else {}
     kw.update(case_sensitive=input.case_sensitive, path_prefix=input.path_prefix, limit=limit)
+    pattern = input.pattern
     with code_span("grep.files", route=route) as sp:
         files, total = await _bounded_scan(
-            budget, repo.grep_files, org, ns, input.pattern, regex=input.regex, **kw
+            budget, repo.grep_files, org, ns, pattern, regex=input.regex, **kw
         )
         # a regex-shaped literal that names no file: once more as a regex; a non-empty literal
         # answer is untouched
-        if not files and not input.regex and mg.regex_shaped(input.pattern):
-            if mg.compile_fallback(input.pattern, case_sensitive=input.case_sensitive) is None:
+        if not files and not input.regex and isinstance(pattern, str) and mg.regex_shaped(pattern):
+            if mg.compile_fallback(pattern, case_sensitive=input.case_sensitive) is None:
                 note = mg.REGEX_INVALID_NOTE
             elif _second_scan_allowed(budget, "regex retry"):
                 files, total = await _bounded_scan(
-                    budget, repo.grep_files, org, ns, input.pattern, regex=True, **kw
+                    budget, repo.grep_files, org, ns, pattern, regex=True, **kw
                 )
                 route += "+regex_fallback"
                 note = mg.REGEX_FALLBACK_NOTE if files else ""
@@ -782,7 +806,7 @@ async def _grep_files(
         org=org,
         ns=ns,
         op="code.grep",
-        query=input.pattern,
+        query=_grep_trace_query(input),
         route=route + "_files",
         args=_grep_trace_args(input),
         returned_ids=paths,
@@ -848,7 +872,9 @@ async def _grep_message(
 
     limit = input.effective_limit
     as_of = _as_of_early(repo, org, ns)  # Beside the reads
-    parsed = mg.split_message(input.pattern)
+    pattern = input.pattern
+    assert isinstance(pattern, str)  # Validated in _code_grep.
+    parsed = mg.split_message(pattern)
     # the ErrorCodes read needs the message alone, so it runs beside the scan
     (chunks, admitted, note), code_name = await asyncio.gather(
         _message_scan(repo, org, ns, input, parsed, route=route, scope=scope, budget=budget),
@@ -907,7 +933,7 @@ async def _grep_message(
         org=org,
         ns=ns,
         op="code.grep",
-        query=input.pattern,
+        query=pattern,
         route=route,
         args=_grep_trace_args(input),
         returned_ids=files,

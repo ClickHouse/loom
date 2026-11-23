@@ -880,8 +880,8 @@ export interface CodeGrepInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Exact text to find, or an RE2 expression when regex is true. */
-  pattern: string;
+  /** Literal text, a list of alternatives, or one RE2 expression with regex=true. */
+  pattern: string | string[];
   regex?: boolean;
   case_sensitive?: boolean;
   /** Include distinct enclosing bodies in matches mode; default false. */

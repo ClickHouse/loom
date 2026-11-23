@@ -233,6 +233,34 @@ def test_case_insensitive_and_regex() -> None:
         _run([chunk], pattern="[unclosed", regex=True)
 
 
+def test_literal_alternatives_match_punctuation_and_deduplicate_lines() -> None:
+    chunk = {
+        "path": "app.py",
+        "scope": "",
+        "start_line": 1,
+        "end_line": 4,
+        "content": "REVERSED(item.parts)\nchain(names, item.parts)\nchain(other)\n'pair|value'\n",
+    }
+    out = _run(
+        [chunk],
+        pattern=["reversed(", "item.parts", "chain(names", "pair|value"],
+        case_sensitive=False,
+    )
+    assert [hit["line"] for hit in out.matches] == [1, 2, 4]
+    assert out.note == ""
+
+
+def test_literal_alternatives_without_hits_remain_literal() -> None:
+    out = _run([], pattern=["missing(", "left|right"])
+    assert out.matches == [] and out.note == ""
+
+
+@pytest.mark.parametrize("fields", [{"regex": True}, {"mode": "message"}])
+def test_a_list_requires_literal_text_mode(fields: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError, match="require one pattern string"):
+        _run([], pattern=["reversed(", "chain(names"], **fields)
+
+
 def test_limit_marks_truncated() -> None:
     chunk = {
         "path": "a.py",

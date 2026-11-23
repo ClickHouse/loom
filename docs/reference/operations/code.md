@@ -721,7 +721,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `pattern` | `str` | required | Exact text to find, or an RE2 expression when regex is true. |
+| `pattern` | `str \| list[str]` | required | Literal text, a list of alternatives, or one RE2 expression with regex=true. |
 | `regex` | `bool` | `False` | True reads `pattern` as RE2; an invalid expression is a 422. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `include_body` | `bool` | `False` | Include distinct enclosing bodies in matches mode; default false. |

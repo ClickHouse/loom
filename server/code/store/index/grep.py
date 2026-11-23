@@ -56,7 +56,7 @@ class GrepMixin(CodeRepoBase):
         self,
         org: str,
         ns: str,
-        pattern: str,
+        pattern: str | list[str],
         *,
         regex: bool = False,
         case_sensitive: bool = True,
@@ -177,7 +177,7 @@ class GrepMixin(CodeRepoBase):
         self,
         org: str,
         ns: str,
-        pattern: str,
+        pattern: str | list[str],
         *,
         regex: bool = False,
         case_sensitive: bool = True,
@@ -186,7 +186,7 @@ class GrepMixin(CodeRepoBase):
         scope: SearchScope | None = None,
         max_execution_s: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Chunks whose content matches a literal (default) or RE2 regex.
+        """Chunks whose content matches any supplied literal or one RE2 regex.
 
         Powers code.grep — the exact-literal lookup, in place of shell grep.
         Returns whole chunk rows (content + scope + span + symbol_ids); the

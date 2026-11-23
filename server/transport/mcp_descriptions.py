@@ -1358,18 +1358,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "per-frame grep-and-open loop."
     ),
     "code.grep": (
-        "Find literal text or RE2 regex in indexed source. Hits include source lines, "
-        "enclosing symbols and spans. Pass `pattern`; `regex: true` selects regex. "
-        "Narrow with `path_prefix`, `path_globs` or `langs`. `include_body: true` "
-        "returns distinct enclosing definitions with the matches. "
-        "`neighbours: true` adds callers, callees, tests and citing docs. "
-        "`next_cursor` pages remaining matches. A regex-shaped literal with no match "
-        "is retried as regex and disclosed. `mode: 'message'` matches rendered errors "
-        "or logs to their source templates; code-shaped input falls back to literal. "
-        "`mode: 'presence'` with `namespaces` returns present / absent / unknown per "
-        "branch. Optional `deadline_ms` discloses partial results. Coverage distinguishes "
-        "absence from incomplete indexing. Use code.files for paths, "
-        "local tools for uncommitted source."
+        "Find text in indexed source, with lines and enclosing symbols. "
+        "`pattern` is a string or list of literal alternatives. `regex: true` uses one RE2 string. "
+        "Scope with `path_prefix`, `path_globs` or `langs`. `include_body` adds definitions. "
+        "`neighbours` adds callers, callees, tests and docs. Page with `next_cursor`. "
+        "A regex-shaped string with no literal hit may be retried as regex and disclosed. "
+        "`mode: 'message'` finds error or log templates, with a literal fallback. "
+        "`mode: 'presence'` checks branches via `namespaces`. "
+        "`deadline_ms` allows partial results. Check coverage before inferring absence. "
+        "Use code.files for paths and local tools for uncommitted source."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
@@ -2207,14 +2204,12 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "elision disclosures; use local tools for changed or unindexed code."
     ),
     "code.grep": (
-        "Find exact text or regex in indexed source, with source lines and enclosing "
-        "symbols. Pass `pattern`; regex=true uses RE2: escape literal code punctuation. "
-        "For behavior questions "
-        "use code.search. Narrow with `path_prefix`, `path_globs` or `langs`; "
-        "`next_cursor` pages remaining matches. Use `include_body: true` to read "
-        "distinct enclosing definitions in this call; no follow-up body lookup is needed "
-        "unless `definitions_partial` discloses unavailable source. "
-        "Coverage disclosures distinguish absent matches from incomplete indexed source."
+        "Find text in indexed source, with lines and enclosing symbols. "
+        'Pass a `pattern` string or a list of literals like ["parse(", "load("]. '
+        "`regex: true` uses one RE2 string. For behavior use code.search. "
+        "Scope with `path_prefix`, `path_globs` or `langs`. Page with `next_cursor`. "
+        "`include_body` returns distinct enclosing definitions. "
+        "`definitions_partial` flags missing source. Check coverage before inferring absence."
     ),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.

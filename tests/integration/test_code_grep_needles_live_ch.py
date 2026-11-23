@@ -125,6 +125,24 @@ def test_needles_return_exactly_what_the_exact_matcher_returns(
     assert matched >= 20
 
 
+@pytest.mark.parametrize("case_sensitive", [True, False])
+def test_literal_alternatives_match_the_union_of_exact_searches(
+    reader: Any, corpus: tuple[str, str], case_sensitive: bool
+) -> None:
+    org, ns = corpus
+    needles = ["gettOtals(", "setTotals(", "50% of", "a_b\\c", "CAFÉ", "café"]
+    cond, params = content_predicate(
+        needles, regex=False, case_sensitive=case_sensitive, index_guard=False
+    )
+    params.update(org=org, ns=ns, limit=100)
+    position = "position" if case_sensitive else "positionCaseInsensitive"
+    expected = f"arrayExists(term -> {position}(content, term) > 0, {{pat:Array(String)}})"
+    for build in (grep_sql.grep_chunks_sql, grep_sql.grep_files_sql):
+        observed = _rows(reader, build(cond, "", ""), params)
+        assert observed
+        assert observed == _rows(reader, build(expected, "", ""), params)
+
+
 def test_search_like_guard_returns_exactly_what_the_exact_matcher_returns(
     reader: Any, corpus: tuple[str, str]
 ) -> None:

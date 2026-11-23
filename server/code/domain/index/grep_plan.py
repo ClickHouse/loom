@@ -368,7 +368,7 @@ def any_literal_guard(needles: list[str], *, prefix: str = "gn") -> tuple[str, d
 
 
 def content_predicate(
-    pattern: str,
+    pattern: str | list[str],
     *,
     regex: bool,
     case_sensitive: bool,
@@ -388,10 +388,17 @@ def content_predicate(
     any case-insensitive regex); the needles come from k/s-free pieces, so one
     per branch suffices.
 
-    Three exact shapes:
+    A list uses `multiSearchAny` (or its case-insensitive variant) over literal alternatives.
+    A string uses one of three exact shapes:
     ``match(content, pat)`` (``(?i)`` prepended when not case-sensitive),
     ``position(content, pat) > 0``, ``positionCaseInsensitive(content, pat) > 0``.
     """
+    if isinstance(pattern, list):
+        search = "multiSearchAny" if case_sensitive else "multiSearchAnyCaseInsensitive"
+        exact = f"{search}(content, {{{param}:Array(String)}})"
+        guard, bound = any_literal_guard(pattern, prefix=prefix) if index_guard else ("", {})
+        bound[param] = pattern
+        return (f"{guard} AND {exact}" if guard else exact), bound
     ignore_case = not case_sensitive
     if regex:
         exact = f"match(content, {{{param}:String}})"

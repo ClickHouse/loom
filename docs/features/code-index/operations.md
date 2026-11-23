@@ -85,6 +85,12 @@ underscores. Toolsets: [MCP reference](../../reference/mcp.md#toolsets).
 | `code.map`       | you want an orientation map of the repository's modules                                                                                                                                           |
 | `code.trace`     | you have a stack trace: each frame resolved to its unit                                                                                                                                           |
 
+Pass `pattern` as a list of exact strings to find any of them in one scan. For
+example, `["parse(", "parse_async("]` matches both fragments without escaping
+the parentheses. All alternatives share a result limit, and each matching line
+or file appears once.
+`mode: "message"` and `regex: true` require a single string.
+
 In matches mode, `code.grep(include_body=true)` returns the enclosing definitions
 beside the hit lines. Each definition appears once; its `lines` lists the matching
 locations. The same retained-source reader backs `code.enclosing`, including type
