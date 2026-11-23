@@ -11,6 +11,7 @@ from examples.software_factory.harbor.pricing import cost_basis
 from .arms import PRIMARY, validate_schedule
 from .charts import METRICS
 from .cohorts import comparison_cohorts
+from .mcp_qualification import verify_catalog
 from .runtime import task_inputs, write
 from .scopes import binding_for, frozen_json, selected_scopes
 from .source import check_files, controller_identity
@@ -101,6 +102,7 @@ def freeze_plan(
         "runtime_network": runtime["network"],
         "loom_url": runtime["loom_url"],
         "loom_mcp": setup["loom_mcp"],
+        "mcp_qualification_file": setup["mcp_qualification_file"],
         "server_commit": runtime["server_commit"],
         "server_source_identity": runtime["server_source_identity"],
         "controller_source_identity": controller_identity(),
@@ -144,6 +146,7 @@ def freeze_plan(
     if any(key in project and project[key] != value for key, value in common.items()):
         raise PermissionError("Profile metadata changed the common measurement policy")
     plan["public_reproduction"] = {**project, **common}
+    verify_catalog(plan)
     output.mkdir(parents=True, exist_ok=False)
     path = output / "bootstrap-protocol.json"
     write(path, plan)

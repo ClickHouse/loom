@@ -7,7 +7,8 @@ import json
 
 from examples.software_factory.factory.model import digest
 
-from .native_environment import mcp_endpoint
+from .native_environment import MCP_SCHEMA_PROFILES, mcp_endpoint
+from .scopes import frozen_json
 
 
 def qualify(client, url, token, binding, *, schema_profile):
@@ -99,6 +100,8 @@ def qualify(client, url, token, binding, *, schema_profile):
 
 def qualified_catalog(schema_profile, receipts, standard):
     """Confirm one catalog across the Loom arms and a real compact projection."""
+    if schema_profile not in MCP_SCHEMA_PROFILES:
+        raise PermissionError("Unrecognized Loom MCP schema profile")
     catalogs = {row["tools_sha256"] for row in receipts.values()}
     if len(catalogs) != 1:
         raise PermissionError("Loom arm catalogs differ")
@@ -117,3 +120,25 @@ def qualified_catalog(schema_profile, receipts, standard):
         "tool_catalog_sha256": catalog,
         "standard_catalog_sha256": standard["tools_sha256"] if standard else catalog,
     }
+
+
+def verify_catalog(protocol):
+    """Check execution and reporting against the same immutable receipts."""
+    execution = protocol.get("loom_mcp")
+    public = protocol.get("public_reproduction", {}).get("loom_mcp")
+    path = protocol.get("mcp_qualification_file")
+    if execution is None and public is None and path is None:
+        return
+    if not path:
+        raise PermissionError("Loom MCP catalog qualification is missing")
+    receipt = frozen_json(path, protocol["public_inputs"].get(path))
+    expected_orders = {
+        str(slot["order"]) for slot in protocol["schedule"] if slot["mode"] != "baseline"
+    }
+    if set(receipt["attempts"]) != expected_orders:
+        raise PermissionError("Loom MCP qualification does not cover every Loom attempt")
+    catalog = qualified_catalog(
+        receipt["schema_profile"], receipt["attempts"], receipt["standard_control"]
+    )
+    if catalog != execution or catalog != public:
+        raise PermissionError("Loom MCP profile differs from the qualified catalog")

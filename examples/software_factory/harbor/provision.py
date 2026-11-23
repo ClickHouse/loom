@@ -1120,14 +1120,20 @@ class Provisioner:
                     schema_profile="standard",
                 )
         loom_mcp = qualified_catalog(loom_schema_profile, mcp_receipts, standard_catalog)
+        qualification_file = self.output / "mcp-qualification.json"
         save(
-            self.output / "mcp-qualification.json",
-            {"attempts": mcp_receipts, "standard_control": standard_catalog},
+            qualification_file,
+            {
+                "schema_profile": loom_schema_profile,
+                "attempts": mcp_receipts,
+                "standard_control": standard_catalog,
+            },
         )
         result = {
             "schema_version": 1,
             "runtime": self.runtime,
             "loom_mcp": loom_mcp,
+            "mcp_qualification_file": str(qualification_file),
             "tasks": {
                 task_id: {**task, "indexes": indexes[task_id]} for task_id, task in tasks.items()
             },

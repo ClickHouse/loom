@@ -541,7 +541,7 @@ def execute(
     evaluation="flask",
     pilot_task=None,
     cache_pairs=False,
-    loom_schema_profile="standard",
+    loom_schema_profile=None,
 ):
     if amount is not None:
         raise LaunchError("Native coding evaluations run without a spending cap")
@@ -552,6 +552,8 @@ def execute(
     output, root = requested.resolve(), Path(root).resolve()
     descriptor = load_evaluation(root, evaluation)
     if action == "run":
+        if loom_schema_profile is None:
+            loom_schema_profile = "standard"
         if loom_schema_profile not in MCP_SCHEMA_PROFILES:
             raise LaunchError("Choose the standard or compact Loom MCP schema profile")
         if pilot_task is not None or cache_pairs:
@@ -631,6 +633,8 @@ def _execute(
         record = read(path)
         if pilot_task is not None and pilot_task != record["pilot_task"]:
             raise LaunchError("Resume must keep the frozen pilot selection")
+        if loom_schema_profile is not None and loom_schema_profile != record["loom_schema_profile"]:
+            raise LaunchError("Resume must keep the frozen Loom MCP schema profile")
         if (
             record.get("kind") != "loom-factory-launch"
             or record.get("schema_version") != 1
@@ -759,7 +763,7 @@ def main(argv=None):
             evaluation=args.evaluation,
             pilot_task=getattr(args, "pilot_task", None),
             cache_pairs=getattr(args, "cache_pairs", False),
-            loom_schema_profile=getattr(args, "loom_schema_profile", "standard"),
+            loom_schema_profile=getattr(args, "loom_schema_profile", None),
         )
     except (LaunchError, OSError, ValueError) as error:
         print(f"Factory launcher refused ({type(error).__name__}): {error}", file=sys.stderr)

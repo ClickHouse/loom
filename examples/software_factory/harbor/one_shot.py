@@ -93,6 +93,17 @@ def profile_for(source_root: Path, identifier: str):
     return load_profile({"suite": {"adapter": descriptor["adapter"]}})
 
 
+def protocol_receipt(path: Path) -> dict:
+    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
+def checked_protocol_path(receipt: dict) -> Path:
+    path = Path(receipt["path"])
+    if path.is_symlink() or protocol_receipt(path) != receipt:
+        raise PermissionError("A frozen protocol changed")
+    return path
+
+
 def spending_summary(meter, output):
     """Keep native solver cost separate from metered setup, Loom and judge traffic."""
     gateway = meter.summary()
@@ -289,34 +300,29 @@ def execute(args):
         )
         plan = phases.run(
             "plan",
-            lambda: {
-                "path": str(
-                    profile.freeze_plan(
-                        prepared,
-                        setup,
-                        output / "plan",
-                        inference=inference,
-                        budget_usd=args.budget_usd,
-                    )
+            lambda: protocol_receipt(
+                profile.freeze_plan(
+                    prepared,
+                    setup,
+                    output / "plan",
+                    inference=inference,
+                    budget_usd=args.budget_usd,
                 )
-            },
+            ),
         )
+        bootstrap_path = checked_protocol_path(plan)
         staged = phases.run(
             "harbor",
-            lambda: {
-                "path": str(
-                    study.prepare(
-                        Path(plan["path"]),
-                        output / "study",
-                    )
-                )
-            },
+            lambda: protocol_receipt(study.prepare(bootstrap_path, output / "study")),
         )
-        protocol_path = Path(staged["path"])
         for kind in ("base", "reference", "live"):
             meter.set_phase(kind)
+            protocol_path = checked_protocol_path(staged)
             phases.run(
-                kind, lambda kind=kind: asyncio.run(study.run(protocol_path, kind, meter=meter))
+                kind,
+                lambda kind=kind, protocol_path=protocol_path: asyncio.run(
+                    study.run(protocol_path, kind, meter=meter)
+                ),
             )
         summary = {
             "owner": args.owner,

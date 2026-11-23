@@ -31,6 +31,7 @@ from .billing import audit_provider_costs
 from .cache_start import CACHE_5M_SECONDS, quiet_period, verified_start
 from .fairness import audit_fairness
 from .judging import load_verdicts, run_judging
+from .mcp_qualification import verify_catalog
 from .metrics import known_total, paid_token_totals
 from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp_settings
 from .native_metrics import measurements
@@ -193,6 +194,7 @@ def prepare(previous: Path, output: Path) -> Path:
     if not plan.get("public_reproduction"):
         raise ValueError("A public reproduction manifest is required")
     inputs = verified_input_files(plan)
+    verify_catalog(plan)
     endpoint = urlsplit(plan["loom_url"])
     if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
         raise ValueError("An explicit HTTP(S) Loom endpoint is required")

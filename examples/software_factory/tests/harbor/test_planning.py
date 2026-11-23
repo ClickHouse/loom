@@ -13,6 +13,7 @@ from examples.software_factory.harbor import planning
 from examples.software_factory.harbor.arms import PRIMARY
 from examples.software_factory.harbor.charts import METRICS
 from examples.software_factory.harbor.live_support import schedule
+from examples.software_factory.harbor.mcp_qualification import verify_catalog
 from examples.software_factory.harbor.source import sha
 
 
@@ -101,16 +102,41 @@ class SharedPlanning(unittest.TestCase):
             reference_controls_file="private-project-controls.json",
         )
         identity = dict(commit=self.server, dirty=False, relative_files={}, files={})
+        mcp_receipt = self.root / "mcp-qualification.json"
+        catalog = {
+            "tools_sha256": "a" * 64,
+            "tool_loading_sha256": "e" * 64,
+            "tool_names": ["loom_code_grep"],
+        }
+        mcp_receipt.write_text(
+            json.dumps(
+                dict(
+                    schema_profile="compact",
+                    attempts={
+                        str(slot["order"]): catalog
+                        for slot in self.rows
+                        if slot["mode"] != "baseline"
+                    },
+                    standard_control={**catalog, "tools_sha256": "b" * 64},
+                )
+            )
+        )
         self.setup = dict(
             loom_mcp={
                 "schema_profile": "compact",
                 "tool_catalog_sha256": "a" * 64,
                 "standard_catalog_sha256": "b" * 64,
             },
-            files={str(self.certificate): sha(self.certificate), str(content): sha(content)},
+            mcp_qualification_file=str(mcp_receipt),
+            files={
+                str(self.certificate): sha(self.certificate),
+                str(content): sha(content),
+                str(mcp_receipt): sha(mcp_receipt),
+            },
             runtime=dict(
                 server_container="owned",
                 loom_url="http://local.invalid",
+                network="owned-network",
                 server_commit=self.server,
                 server_source_identity=identity,
             ),
@@ -174,6 +200,14 @@ class SharedPlanning(unittest.TestCase):
         text = Path(planning.__file__).read_text()
         self.assertNotIn("evals.flask", text)
         self.assertNotIn("src/flask", text)
+
+    def test_public_or_execution_profile_drift_is_refused(self):
+        plan = self.freeze()
+        for location in (plan, plan["public_reproduction"]):
+            location["loom_mcp"] = {**location["loom_mcp"], "schema_profile": "standard"}
+            with self.assertRaisesRegex(PermissionError, "differs from the qualified catalog"):
+                verify_catalog(plan)
+            location["loom_mcp"] = self.setup["loom_mcp"]
 
     def test_profile_cannot_override_shared_public_measurement_fields(self):
         with self.assertRaisesRegex(PermissionError, "common measurement"):

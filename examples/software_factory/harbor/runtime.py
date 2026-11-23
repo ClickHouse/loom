@@ -11,6 +11,7 @@ from pathlib import Path
 from examples.software_factory.factory.anthropic_provider import accounting_usage
 from examples.software_factory.factory.model import digest
 
+from .mcp_qualification import verify_catalog
 from .pricing import MODELS, rates
 from .profiles import load_profile
 
@@ -46,6 +47,7 @@ def verify(protocol):
             raise PermissionError("A frozen runtime or evaluation input changed: " + path)
     if protocol["model_id"] not in MODELS or protocol["index_tier"] != "per-arm":
         raise PermissionError("Model or index tier differs from the qualified protocol")
+    verify_catalog(protocol)
 
 
 class ObservedProvider:

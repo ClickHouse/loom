@@ -214,7 +214,7 @@ class PublicLauncher(unittest.TestCase):
 
     def test_run_is_one_command_with_owned_images_and_identical_readonly_paths(self):
         docker = FakeDocker()
-        self.assertEqual(launch.execute("run", self.output, "10", root=self.root, docker=docker), 0)
+        self.assertEqual(launch.execute("run", self.output, root=self.root, docker=docker), 0)
         self.assertEqual(docker.containers, {})
         self.assertIsNone(docker.image)
         record = launch.read(self.output / "launch.json")
@@ -254,9 +254,12 @@ class PublicLauncher(unittest.TestCase):
         for invalid in ("0", "-1", "NaN", "Infinity"):
             with self.assertRaises(launch.argparse.ArgumentTypeError):
                 launch.budget(invalid)
-        self.output.mkdir()
-        with self.assertRaises(launch.LaunchError):
+        with self.assertRaisesRegex(launch.LaunchError, "without a spending cap"):
             launch.execute("run", self.output, "10", root=self.root, docker=docker)
+        self.output.mkdir()
+        docker.key = "fixture-key"
+        with self.assertRaisesRegex(launch.LaunchError, "fresh output path"):
+            launch.execute("run", self.output, root=self.root, docker=docker)
         self.assertEqual(docker.calls, [])
 
     def test_no_cap_is_forwarded_as_an_unlimited_frozen_run(self):
@@ -269,9 +272,7 @@ class PublicLauncher(unittest.TestCase):
 
     def test_interrupt_gracefully_cleans_without_replaying_a_paid_run(self):
         docker = FakeDocker(interrupt=True)
-        self.assertEqual(
-            launch.execute("run", self.output, "10", root=self.root, docker=docker), 130
-        )
+        self.assertEqual(launch.execute("run", self.output, root=self.root, docker=docker), 130)
         record = launch.read(self.output / "launch.json")
         self.assertEqual([r["action"] for r in record["containers"]], ["run", "cleanup"])
         self.assertTrue(any(args[0] == "graceful-interrupt" for args, _ in docker.calls))
@@ -280,15 +281,13 @@ class PublicLauncher(unittest.TestCase):
         cleanup_create = [args for args, _ in docker.calls if args[0] == "create"][-1]
         self.assertNotIn("ANTHROPIC_API_KEY", cleanup_create)
         docker.interrupted = False
-        self.assertEqual(
-            launch.execute("resume", self.output, "10", root=self.root, docker=docker), 0
-        )
+        self.assertEqual(launch.execute("resume", self.output, root=self.root, docker=docker), 0)
         self.assertTrue((self.output / "cleanup-receipt-prior-2.json").exists())
         self.assertIsNone(docker.image)
 
     def test_native_failure_is_not_replaced_by_successful_docker_attachment(self):
         docker = FakeDocker(exit_code=7)
-        self.assertEqual(launch.execute("run", self.output, "10", root=self.root, docker=docker), 7)
+        self.assertEqual(launch.execute("run", self.output, root=self.root, docker=docker), 7)
         self.assertEqual(launch.read(self.output / "launch.json")["state"], "failed")
         docker.key = ""
         self.assertEqual(launch.execute("cleanup", self.output, root=self.root, docker=docker), 0)
@@ -297,7 +296,7 @@ class PublicLauncher(unittest.TestCase):
     def test_foreign_owner_is_a_stopped_guard_not_a_cleanup_fallback(self):
         docker = FakeDocker(foreign=True)
         with self.assertRaises(launch.OwnershipError):
-            launch.execute("run", self.output, "10", root=self.root, docker=docker)
+            launch.execute("run", self.output, root=self.root, docker=docker)
         self.assertFalse(
             any(
                 args[0] in {"create", "rm"} or args[:2] == ["image", "rm"]
@@ -305,15 +304,17 @@ class PublicLauncher(unittest.TestCase):
             )
         )
 
-    def test_source_changes_and_budget_changes_block_resume(self):
+    def test_source_and_treatment_changes_block_resume(self):
         docker = FakeDocker(interrupt=True)
-        launch.execute("run", self.output, "10", root=self.root, docker=docker)
+        launch.execute("run", self.output, root=self.root, docker=docker)
         before = len(docker.calls)
-        with self.assertRaises(launch.LaunchError):
-            launch.execute("resume", self.output, "20", root=self.root, docker=docker)
+        with self.assertRaisesRegex(launch.LaunchError, "frozen Loom MCP schema profile"):
+            launch.execute(
+                "resume", self.output, root=self.root, docker=docker, loom_schema_profile="compact"
+            )
         (self.root / "server/public.py").write_text("changed = True\n")
         with self.assertRaises(launch.LaunchError):
-            launch.execute("resume", self.output, "10", root=self.root, docker=docker)
+            launch.execute("resume", self.output, root=self.root, docker=docker)
         self.assertEqual(len(docker.calls), before)
 
     def test_credentials_are_forwarded_by_name_and_scrubbed_from_output(self):
@@ -358,11 +359,11 @@ class PublicLauncher(unittest.TestCase):
 
     def test_output_lock_prevents_concurrent_resume_or_cleanup(self):
         docker = FakeDocker(interrupt=True)
-        launch.execute("run", self.output, "10", root=self.root, docker=docker)
+        launch.execute("run", self.output, root=self.root, docker=docker)
         before = len(docker.calls)
         with launch.output_lock(self.output):
             with self.assertRaisesRegex(launch.LaunchError, "Another launcher"):
-                launch.execute("resume", self.output, "10", root=self.root, docker=docker)
+                launch.execute("resume", self.output, root=self.root, docker=docker)
             with self.assertRaisesRegex(launch.LaunchError, "Another launcher"):
                 launch.execute("cleanup", self.output, root=self.root, docker=docker)
         self.assertEqual(len(docker.calls), before)
@@ -394,12 +395,12 @@ class PublicLauncher(unittest.TestCase):
 
     def test_profile_identity_cannot_change_on_resume_or_cleanup(self):
         docker = FakeDocker(interrupt=True)
-        launch.execute("run", self.output, "10", root=self.root, docker=docker)
+        launch.execute("run", self.output, root=self.root, docker=docker)
         before = len(docker.calls)
         for action in ("resume", "cleanup"):
             with self.subTest(action=action), self.assertRaises(launch.LaunchError):
                 launch.execute(
-                    action, self.output, "10", root=self.root, docker=docker, evaluation="sample"
+                    action, self.output, root=self.root, docker=docker, evaluation="sample"
                 )
         self.assertEqual(len(docker.calls), before)
 
