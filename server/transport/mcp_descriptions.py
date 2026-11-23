@@ -1358,15 +1358,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "per-frame grep-and-open loop."
     ),
     "code.grep": (
-        "Find text in indexed source, with lines and enclosing symbols. "
-        "`pattern` is a string or list of literal alternatives. `regex: true` uses one RE2 string. "
-        "Scope with `path_prefix`, `path_globs` or `langs`. `include_body` adds definitions. "
+        "Find indexed text with its lines and enclosing symbols. "
+        "`pattern` accepts literals or one RE2 expression with `regex: true`. "
+        "`include_body` adds definitions. "
         "`neighbours` adds callers, callees, tests and docs. "
-        "A regex-shaped string with no literal hit may be retried as regex and disclosed. "
-        "`mode: 'message'` finds error or log templates, with a literal fallback. "
-        "`mode: 'presence'` checks branches via `namespaces`. "
-        "`deadline_ms` allows partial results. Check coverage before inferring absence. "
-        "Use code.files for paths and local tools for uncommitted source."
+        "Regex and message-search fallbacks are disclosed. "
+        "`mode: 'message'` finds error or log templates. "
+        "`mode: 'presence'` checks namespaces. Check coverage before inferring absence. "
+        "Use code.files for paths and local tools for uncommitted code."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "

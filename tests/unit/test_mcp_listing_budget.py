@@ -538,6 +538,7 @@ def test_marked_fields_are_unlisted_but_still_accepted():
     assert m.kind_prior == "flat" and m.vector_shortlist == 50
     # the fields a description or a skill names stay listed
     keep = {
+        "code.grep": {"include_lessons"},
         "code.search": {"query", "expand", "namespaces", "top_k", "cursor"},
         "memory.set": {
             "dry_run",

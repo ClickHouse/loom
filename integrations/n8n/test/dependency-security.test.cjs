@@ -9,8 +9,10 @@ let toolRequire = createRequire(require.resolve("@n8n/node-cli/eslint"));
 for (const dependency of ["@n8n/ai-node-sdk", "@n8n/ai-utilities", "@n8n/backend-network", "@n8n/backend-common"]) {
   toolRequire = createRequire(toolRequire.resolve(dependency));
 }
-const Assembler = toolRequire("stream-json/Assembler");
-const { parser } = toolRequire("stream-json");
+const Assembler = toolRequire("stream-json/assembler.js").default;
+const { parserStream: parser } = toolRequire("stream-json");
+const { parseFlattedAsync } = toolRequire("./utils/flatted-async.js");
+const { stringify } = toolRequire("flatted");
 
 async function assemble(text, options) {
   const tokens = parser();
@@ -56,4 +58,13 @@ test("the parser retains ordinary values and reviver transformation and deletion
     return typeof value === "number" ? value + 1 : value;
   };
   assert.deepEqual(await assemble(text, { reviver }), JSON.parse(text, reviver));
+});
+
+test("the toolchain consumer reads shared references across parser chunks", async () => {
+  const shared = { text: "λ".repeat(70000), enabled: true };
+  const input = { first: shared, second: shared, items: [1, null, false] };
+  const result = await parseFlattedAsync(stringify(input));
+  assert.deepEqual(result, input);
+  assert.equal(result.first, result.second);
+  await assert.rejects(parseFlattedAsync('[{"invalid":]'));
 });

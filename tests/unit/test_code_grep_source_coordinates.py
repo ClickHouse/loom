@@ -45,6 +45,26 @@ def test_unicode_string_separators_are_not_source_line_boundaries() -> None:
     assert [(hit["line"], hit["text"]) for hit in matches] == [(3, "return target()")]
 
 
+def test_a_grep_line_uses_retained_chunk_provenance() -> None:
+    row = {
+        "path": "m.py",
+        "scope": "",
+        "start_line": 124,
+        "end_line": 124,
+        "content": "target = 1\n",
+        "indexed_commit": "b" * 40,
+    }
+    request = CodeGrepInput(pattern="target")
+    commits: dict[tuple[str, int], str] = {}
+    matches, _ = _matching_lines([row], {}, request, None, 20, match_commits=commits)
+    assert commits == {("m.py", 124): "b" * 40}
+    assert "indexed_commit" not in matches[0]
+    other = {**row, "indexed_commit": "a" * 40}
+    repeated, _ = _matching_lines([row, other], {}, request, None, 20, match_commits=commits)
+    assert repeated == matches
+    assert commits == {("m.py", 124): ""}
+
+
 def test_compacted_class_text_does_not_invent_a_matching_source_line() -> None:
     row = {
         "path": "m.py",

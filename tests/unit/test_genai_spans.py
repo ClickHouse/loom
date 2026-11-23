@@ -110,7 +110,11 @@ def test_usage_and_cost_land_on_the_span(monkeypatch: pytest.MonkeyPatch) -> Non
     [
         (
             "server.llm.openai",
-            {"choices": [{"message": {"content": "ok"}}], "usage": {"prompt_tokens": 3}},
+            {
+                "status": "completed",
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+                "usage": {"input_tokens": 3},
+            },
         ),
         (
             "server.llm.anthropic",

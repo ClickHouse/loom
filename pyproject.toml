@@ -347,6 +347,7 @@ exclude = [
   "server/code/domain/extract/edges_treesitter.py",
   "server/code/domain/extract/lang_bash.py",
   "server/code/domain/extract/lang_python.py",
+  "server/code/domain/extract/py_decorated_chunks.py",
   "server/code/domain/extract/py_layouts.py",
   "server/code/domain/extract/py_library_methods.py",
   "server/code/domain/extract/py_members.py",

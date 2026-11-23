@@ -95,15 +95,33 @@ async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("namespace", ["code-repo", "code-branch"])
-@pytest.mark.parametrize("op", ["grep", "search", "search_file"])
+@pytest.mark.parametrize("has_exact_lesson", [True, False])
+@pytest.mark.parametrize(
+    "op",
+    [
+        "grep",
+        "grep_mixed",
+        "grep_overlap",
+        "grep_stale",
+        "grep_mixed_commit",
+        "grep_cursor",
+        "grep_stale_named",
+        "grep_cursor_named",
+        "search",
+        "search_file",
+    ],
+)
 async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
-    monkeypatch: pytest.MonkeyPatch, namespace: str, op: str
+    monkeypatch: pytest.MonkeyPatch, namespace: str, op: str, has_exact_lesson: bool
 ) -> None:
-    rows = [_hit(k) for k in ("exact", "other", "nested", "incomplete", "pending", "file")]
+    rows = [_hit(k) for k in ("other", "nested", "incomplete", "pending", "file")]
     rows.append(_hit("constraint", tags=("constraint",)))
+    if has_exact_lesson:
+        rows.append(_hit("exact"))
+    renamed = op in {"grep_stale_named", "grep_cursor_named"}
     names = {
         "exact": ("Thing::run", 1, "changed"),
-        "other": ("Other::run", 1, "fresh"),
+        "other": ("Thing::renamed_run", 1, "moved") if renamed else ("Other::run", 1, "fresh"),
         "nested": ("Thing::run::inner", 1, "fresh"),
         "incomplete": ("Other::run", 0, "fresh"),
         "pending": ("Other::run", 1, "fresh"),
@@ -124,7 +142,16 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
     async def all_links(_org: str, ids: list[str]) -> list[dict[str, Any]]:
         assert ids == ["mem-home/other", "mem-home/pending"]
         return [
-            {**link, "code_namespace": "code-repo", "memory_id": mid, "path": "a.py"}
+            {
+                **link,
+                "code_namespace": "code-repo",
+                "memory_id": mid,
+                "path": "a.py",
+                "start_line": 20,
+                "end_line": 30,
+                "checked_commit": "b" * 40 if op == "grep_stale" or renamed else "a" * 40,
+                "anchored_name": "a::Thing::run" if renamed else link["qualified_name"],
+            }
             for mid in ids
             for link in links[mid]
         ] + [
@@ -145,10 +172,22 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
         return []
 
     async def grep(_input: CodeGrepInput) -> CodeGrepOutput:
-        return CodeGrepOutput(
-            matches=[{"path": "a.py", "line": 5, "scope": "Thing::run", "scope_start_line": 1}],
+        matches: list[dict[str, Any]] = [
+            {"path": "a.py", "line": 5, "scope": "Thing::run", "scope_start_line": 1}
+        ]
+        if op != "grep" and not renamed:
+            matches.append({"path": "a.py", "line": 24 if op == "grep_overlap" else 40})
+        out = CodeGrepOutput(
+            matches=matches,
             chunks_matched=1,
+            as_of={"commit": "a" * 40},
         )
+        if op not in {"grep_cursor", "grep_cursor_named"}:
+            out._match_commits = {
+                ("a.py", row["line"]): "b" * 40 if op == "grep_mixed_commit" and i else "a" * 40
+                for i, row in enumerate(matches)
+            }
+        return out
 
     async def search(_input: CodeSearchInput) -> CodeSearchOutput:
         unit = CodeUnit(
@@ -167,22 +206,32 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
     monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda *_: "code-repo")
     monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: False)
     monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
-    if op == "grep":
+    if op.startswith("grep"):
         wrapped = result_lessons.WithLessons(grep, result_lessons.grep_paths)
-        answer = await wrapped(CodeGrepInput(org="acme", namespace=namespace, pattern="run"))
+        answer = await wrapped(
+            CodeGrepInput(
+                org="acme",
+                namespace=namespace,
+                pattern="run",
+                cursor="saved-matches" if op in {"grep_cursor", "grep_cursor_named"} else "",
+            )
+        )
     else:
         wrapped = result_lessons.WithLessons(search, result_lessons.search_paths)
         answer = await wrapped(CodeSearchInput(org="acme", namespace=namespace, query="run"))
-    focused = namespace == "code-repo" and op != "search_file"
-    expected = {"exact", "nested", "incomplete", "pending", "constraint", "file"}
+    focused = namespace == "code-repo" and (
+        op in {"grep", "grep_mixed"} or (op == "search" and has_exact_lesson)
+    )
+    expected = {"nested", "incomplete", "pending", "constraint", "file"}
+    if has_exact_lesson:
+        expected.add("exact")
     assert {row["memory_key"] for row in answer.lessons} == (
         expected if focused else expected | {"other"}
     )
     assert answer.lessons_left_out == int(focused)
-    assert (
-        next(row for row in answer.lessons if row["memory_key"] == "exact")["code_state"]
-        == "changed"
-    )
+    if has_exact_lesson:
+        exact = next(row for row in answer.lessons if row["memory_key"] == "exact")
+        assert exact["code_state"] == "changed"
 
 
 @pytest.mark.asyncio

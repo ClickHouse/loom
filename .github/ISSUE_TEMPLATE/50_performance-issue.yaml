@@ -27,7 +27,12 @@ body:
         - Namespaces, tokens and grants
         - MCP server
         - Agent plugin (Claude Code, Codex, Cursor)
+        - .NET SDK
+        - Go SDK
+        - Java SDK
         - Python SDK
+        - Ruby SDK
+        - Rust SDK
         - TypeScript SDK
         - CLI
         - Dashboard

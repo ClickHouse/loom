@@ -288,8 +288,15 @@ async def _grep_lines(
     spans = await _unit_spans(repo, org, ns, chunks)
     # extract past the page: the extra lines become the continuation pool. Off the event
     # loop: a scan of 200 chunks must not stall every other request on this worker.
+    match_commits: dict[tuple[str, int], str] = {}
     matches, scan_capped = await asyncio.to_thread(
-        _matching_lines, chunks, spans, input, line_re, limit + _GREP_POOL_EXTRA
+        _matching_lines,
+        chunks,
+        spans,
+        input,
+        line_re,
+        limit + _GREP_POOL_EXTRA,
+        match_commits=match_commits,
     )
 
     truncated = scan_capped or len(matches) > limit or matched_chunks >= min(200, limit * 3)
@@ -352,7 +359,7 @@ async def _grep_lines(
         retrieval_risk="low" if matches else "abstain",
         consumer=input.consumer,
     )
-    return CodeGrepOutput(
+    output = CodeGrepOutput(
         matches=matches,
         next_cursor=next_cursor,
         has_more=bool(next_cursor),
@@ -368,6 +375,8 @@ async def _grep_lines(
         **bodies,
         **coverage,
     )
+    output._match_commits = match_commits
+    return output
 
 
 async def _grep_neighbours(
@@ -449,6 +458,8 @@ def _matching_lines(
     input: CodeGrepInput,
     line_re: Any,
     keep: int,
+    *,
+    match_commits: dict[tuple[str, int], str] | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """(matching lines, capped): the lines of `chunks` the pattern matches, stopping past
     `keep` lines or `_LINE_SCAN_MAX_CHARS` of text (capped=True). Pure; runs in a thread."""
@@ -491,6 +502,10 @@ def _matching_lines(
             if not hit:
                 continue
             key = (str(c["path"]), int(c["start_line"] or 1) + off)
+            if match_commits is not None:
+                commit = str(c.get("indexed_commit") or "").rstrip("\0")
+                if match_commits.setdefault(key, commit) != commit:
+                    match_commits[key] = ""
             if key in seen:
                 continue  # the same span indexed twice (re-parse race)
             seen.add(key)
