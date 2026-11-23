@@ -265,7 +265,7 @@ async def _doc_sections(
         with code_span("enclosing.sections", paths=len(paths)) as sp:
             chunks = await repo.chunk_spans_for_paths(org, ns, paths)
             span_attrs(sp, rows=sum(len(v) for v in chunks.values()))
-    except Exception:  # noqa: BLE001 — section lookup failure leaves other locations usable
+    except Exception:  # A section lookup failure leaves other locations usable.
         logger.warning("code.enclosing section read failed", exc_info=True)
         return {}
     return section_rows(chunks)
