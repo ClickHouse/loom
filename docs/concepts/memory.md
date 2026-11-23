@@ -468,8 +468,9 @@ The links are read where the code is:
   out. A decision or constraint is served whole or left out. The read runs after the answer,
   never enters the search memo, and is skipped for `include_lessons: false`, with
   `code_result_lessons` off, or for a token narrowed to its own user or session.
-- `code.search` and `code.grep` in matches mode can focus inline lessons when
-  returned definitions in a trunk file have a complete linked lesson.
+- `code.grep` in matches mode focuses inline lessons on the definitions its
+  matches name in trunk files. `code.search` focuses a file's lessons when a
+  returned definition has a complete linked lesson.
   They count omitted lessons in `lessons_left_out`. When grep also finds a
   line with no enclosing definition, it keeps lessons with overlapping links
   or unverified ranges at the retained chunk's revision.

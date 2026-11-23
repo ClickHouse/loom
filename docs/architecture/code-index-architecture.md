@@ -385,11 +385,11 @@ overlap after constraints and pinned rows. English inflections share stems; equa
 matches keep path order, then the listing's confidence and recency order.
 The remaining file-lesson reads retain path and listing order.
 The ranking uses the existing namespace-scoped candidates. On trunk, uncapped
-search and grep-match responses can focus a file's lessons when a returned
-definition has an exact linked lesson. Whole-file search hits use file-level
-selection. For grep, a match outside a named definition keeps any candidate
-whose link overlaps the line or lacks a verified range at that retained
-chunk's revision. Read the broader file history with
+grep responses focus lessons on the definitions their matches name. Search
+focuses a file's lessons when a returned definition has an exact linked lesson.
+Whole-file search hits use file-level selection. For grep, a match outside a named
+definition keeps any candidate whose link overlaps the line or lacks a verified
+range at that retained chunk's revision. Read the broader file history with
 `memory.for_file`. Before omitting a lesson by scope, the enrichment checks its
 live link set for pending and uncertain links within the request's enrichment
 deadline. Ranking and focusing add no model calls.

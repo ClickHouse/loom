@@ -95,6 +95,7 @@ async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("namespace", ["code-repo", "code-branch"])
+@pytest.mark.parametrize("has_exact_lesson", [True, False])
 @pytest.mark.parametrize(
     "op",
     [
@@ -109,10 +110,12 @@ async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
     ],
 )
 async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
-    monkeypatch: pytest.MonkeyPatch, namespace: str, op: str
+    monkeypatch: pytest.MonkeyPatch, namespace: str, op: str, has_exact_lesson: bool
 ) -> None:
-    rows = [_hit(k) for k in ("exact", "other", "nested", "incomplete", "pending", "file")]
+    rows = [_hit(k) for k in ("other", "nested", "incomplete", "pending", "file")]
     rows.append(_hit("constraint", tags=("constraint",)))
+    if has_exact_lesson:
+        rows.append(_hit("exact"))
     names = {
         "exact": ("Thing::run", 1, "changed"),
         "other": ("Other::run", 1, "fresh"),
@@ -211,16 +214,19 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
     else:
         wrapped = result_lessons.WithLessons(search, result_lessons.search_paths)
         answer = await wrapped(CodeSearchInput(org="acme", namespace=namespace, query="run"))
-    focused = namespace == "code-repo" and op in {"grep", "grep_mixed", "search"}
-    expected = {"exact", "nested", "incomplete", "pending", "constraint", "file"}
+    focused = namespace == "code-repo" and (
+        op in {"grep", "grep_mixed"} or (op == "search" and has_exact_lesson)
+    )
+    expected = {"nested", "incomplete", "pending", "constraint", "file"}
+    if has_exact_lesson:
+        expected.add("exact")
     assert {row["memory_key"] for row in answer.lessons} == (
         expected if focused else expected | {"other"}
     )
     assert answer.lessons_left_out == int(focused)
-    assert (
-        next(row for row in answer.lessons if row["memory_key"] == "exact")["code_state"]
-        == "changed"
-    )
+    if has_exact_lesson:
+        exact = next(row for row in answer.lessons if row["memory_key"] == "exact")
+        assert exact["code_state"] == "changed"
 
 
 @pytest.mark.asyncio

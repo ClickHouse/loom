@@ -72,7 +72,7 @@ async def lessons_for(
     *,
     query: str = "",
     matched_symbols: dict[str, set[str]] | None = None,
-    unscoped_grep: path_lessons.UnscopedGrep | None = None,
+    grep_lines: path_lessons.GrepMatchLines | None = None,
 ) -> path_lessons.Lessons:
     """The completed lessons for the answer's top `paths`; none when off, narrowed,
     past the call's deadline, or unable to read the scope. `started` is the call's
@@ -114,7 +114,7 @@ async def lessons_for(
                 token_budget=settings.code_result_lessons_tokens,
                 timeout_s=remaining,
                 matched_symbols=matched_symbols if on_trunk else None,
-                unscoped_grep=unscoped_grep,
+                grep_lines=grep_lines,
                 query=query,
             )
         except Exception as e:  # noqa: BLE001 — lesson enrichment must not fail the code answer
@@ -136,11 +136,10 @@ class WithLessons:
         out = await self.handler(input)
         query = _enclosing_query(out) if isinstance(input, CodeEnclosingInput) else ""
         symbols = None
-        unscoped_grep = None
+        grep_lines = None
         if isinstance(input, CodeGrepInput) and input.mode == "matches":
             symbols, lines = _grep_match_scopes(out.matches)
-            if lines:
-                unscoped_grep = path_lessons.UnscopedGrep(lines, out._match_commits)
+            grep_lines = path_lessons.GrepMatchLines(lines, out._match_commits)
         elif isinstance(input, CodeSearchInput):
             symbols = _search_match_symbols(out)
         found = await lessons_for(
@@ -149,7 +148,7 @@ class WithLessons:
             started,
             query=query,
             matched_symbols=symbols,
-            unscoped_grep=unscoped_grep,
+            grep_lines=grep_lines,
         )
         out.lessons, out.lessons_left_out = found.rows, found.left_out
         return out
