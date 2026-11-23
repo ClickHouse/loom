@@ -7,9 +7,9 @@ no memory call of its own. The read is bounded (`code_enrich_timeout_s`, as code
 lessons are); a slow or failed file leaves completed files' lessons intact. A token
 narrowed below its namespaces reads none (the memory rows are not filtered by user),
 as code.symbol's lessons do.
-`include_lessons: false` or `code_result_lessons` off skips the read. Grep can
-focus a file's lessons on its matched definitions. `code.symbol` reads the lessons
-linked to the requested symbol itself."""
+`include_lessons: false` or `code_result_lessons` off skips the read. Search and
+grep can focus a file's lessons on returned definitions. `code.symbol` reads the
+lessons linked to the requested symbol itself."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from typing import Any
 
 from server.code.api.models_grep import CodeGrepInput
 from server.code.api.models_navigation import CodeEnclosingInput
-from server.code.api.models_search import CodeSearchInput
+from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import common, enrich, memory_links
 from server.code.app.search_legs import resolve_deadline_ms
 from server.code.app.spans import code_span
@@ -133,11 +133,11 @@ class WithLessons:
         started = time.monotonic()
         out = await self.handler(input)
         query = _enclosing_query(out) if isinstance(input, CodeEnclosingInput) else ""
-        symbols = (
-            _grep_match_symbols(out)
-            if isinstance(input, CodeGrepInput) and input.mode == "matches"
-            else None
-        )
+        symbols = None
+        if isinstance(input, CodeGrepInput) and input.mode == "matches":
+            symbols = _grep_match_symbols(out)
+        elif isinstance(input, CodeSearchInput):
+            symbols = _search_match_symbols(out)
         found = await lessons_for(
             input, self.paths_of(input, out), started, query=query, matched_symbols=symbols
         )
@@ -147,12 +147,35 @@ class WithLessons:
 
 def _grep_match_symbols(out: Any) -> dict[str, set[str]]:
     """Only focus files whose returned matches all name enclosing definitions."""
+    return _symbols_by_path(
+        (
+            str(row.get("path") or ""),
+            str(row.get("scope") or "") if row.get("scope_start_line") else "",
+        )
+        for row in out.matches
+    )
+
+
+def _search_match_symbols(out: CodeSearchOutput) -> dict[str, set[str]]:
+    """File-level hits grant wider scope than the same answer's named units."""
+    return _symbols_by_path(
+        (
+            unit.path,
+            unit.symbol
+            if unit.start_line > 0
+            and unit.symbol != unit.path
+            and unit.kind in ("function", "symbol", "class_skeleton")
+            and unit.granularity != "file"
+            else "",
+        )
+        for unit in out.results
+    )
+
+
+def _symbols_by_path(rows: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
     symbols: dict[str, set[str]] = {}
-    for row in out.matches:
-        path = str(row.get("path") or "")
-        scope = str(row.get("scope") or "")
-        names = symbols.setdefault(path, set())
-        names.add(local_name(scope, path) if row.get("scope_start_line") else "")
+    for path, scope in rows:
+        symbols.setdefault(path, set()).add(local_name(scope, path) if scope else "")
     return {path: names for path, names in symbols.items() if path and "" not in names}
 
 

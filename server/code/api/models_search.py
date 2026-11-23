@@ -200,6 +200,9 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
 
 
 class CodeSearchOutput(_LessonsOut):
+    # File lessons omitted by symbol focus, a token budget, truncation or supersession.
+    lessons_left_out: int = 0
+
     @model_serializer(mode="wrap")
     def _drop_empty_fanout(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # fanout, legs_timed_out and epistemic are on the wire only when they

@@ -1488,7 +1488,7 @@ Start an issue investigation or implementation task here when repository context
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
-| `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
+| `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
 | `results` | `list[CodeUnit]` | The ranked units served on this page, cut to top_k and the token budget; empty on an abstain with no pool or a not-covered path. |
 | `route` | `str` | symbol_exact \| hybrid \| symbol_miss_hybrid |
 | `next_cursor` | `str` | Continuation: opaque cursor for the next page of the ranked pool, "" when nothing ranked remains past this page (symbol routes issue none). has_more mirrors it. |
