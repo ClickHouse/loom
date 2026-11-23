@@ -132,20 +132,22 @@ def test_top_k_bounds_the_sites(
 
 
 @pytest.mark.parametrize(
-    ("revisions", "expected"),
+    ("revisions", "extra", "expected"),
     [
-        (("head", "head", "head"), (8, 12)),
-        (("old", "head", "head"), (10, 12)),
-        (("head", "old", "head"), None),
+        (("head", "head", "head"), None, (8, 12)),
+        (("old", "head", "head"), None, (10, 12)),
+        (("head", "old", "head"), None, None),
+        (("head", "head", "head"), (8, "prefix … line continues\n"), (9, 12)),
+        (("head", "head", "head"), (11, "conflicting text\n"), (8, 10)),
     ],
 )
 def test_example_context_joins_adjacent_chunks_at_the_caller_revision(
-    revisions: tuple[str, ...], expected: tuple[int, int] | None
+    revisions: tuple[str, ...], extra: tuple[int, str] | None, expected: tuple[int, int] | None
 ) -> None:
     class Repo:
         async def source_chunks_for_span(self, *args: object, with_revision: bool) -> Any:
             assert with_revision
-            return [
+            rows = [
                 {
                     "start_line": start,
                     "end_line": end,
@@ -156,6 +158,17 @@ def test_example_context_joins_adjacent_chunks_at_the_caller_revision(
                     ((8, 9), (10, 10), (11, 12)), revisions, strict=True
                 )
             ]
+            if extra is not None:
+                line, text = extra
+                rows.append(
+                    {
+                        "start_line": line,
+                        "end_line": line,
+                        "indexed_commit": "head",
+                        "content": text,
+                    }
+                )
+            return rows
 
     site = {"path": "src/cli.py", "line": 10}
     repo: Any = Repo()

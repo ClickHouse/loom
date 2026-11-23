@@ -16,7 +16,7 @@ from collections.abc import Awaitable
 from typing import Any
 
 from server.code.app.spans import code_span
-from server.code.domain.symbol_body import complete_source_span
+from server.code.domain.symbol_body import retained_source_window
 from server.code.store.index import CodeRepo
 from server.embedding.embedder import served_model_label
 from server.settings import settings
@@ -135,27 +135,10 @@ async def _example_context(
         )
     if len(rows) > 400:
         return site
-    covered: set[int] = set()
-    stale: set[int] = set()
-    for row in rows:
-        span = range(max(start, row["start_line"]), min(end, row["end_line"]) + 1)
-        if str(row.get("indexed_commit") or "").rstrip("\0") == revision:
-            covered.update(span)
-        else:
-            stale.update(span)
-    covered.difference_update(stale)
-    if line not in covered:
+    window = retained_source_window(rows, start, end, anchor=line, revision=revision)
+    if window is None:
         return site
-    # Keep only the contiguous same-revision interval that contains the caller.
-    start = end = line
-    while start - 1 in covered:
-        start -= 1
-    while end + 1 in covered:
-        end += 1
-    overlapping = [row for row in rows if row["start_line"] <= end and row["end_line"] >= start]
-    text = complete_source_span(overlapping, start, end, max_chars=0)
-    if not text:
-        return site
+    start, end, text = window
     return {
         **site,
         "context": {"commit": revision, "start_line": start, "end_line": end, "text": text},
