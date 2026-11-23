@@ -7,11 +7,10 @@ python3 -m examples.software_factory plan
 ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --output ./factory-run
 ```
 
-Harbor runs its built-in Claude Code agent in a normal checkout. Claude chooses
-its tools, edits, test commands and stopping point. The evaluator supplies the
+Harbor runs its built-in Claude Code agent in a normal checkout. Claude follows shared project instructions and chooses
+its tool calls, edits, test commands and stopping point. The evaluator supplies the
 original issue and environment, then grades the submitted implementation in a
-separate container. It adds no coding loop, custom source tools, hooks, forced
-retrieval or completion review.
+separate container. It adds no coding loop, custom source tools, retrieval hooks or completion review.
 
 The comparison has five arms:
 
@@ -28,6 +27,15 @@ has its own writable namespace seeded with the same 30 historical facts, 14
 linked to code. Facts come from public sources before the issue's base revision;
 none are inserted into the issue prompt. The memory contrast measures both access
 to historical knowledge and native memory capability, rather than linking alone.
+
+Every arm receives identical [project instructions](harbor/project-guidance.md)
+in `/workspace/CLAUDE.md`. With Loom configured, these direct source discovery
+through Loom for unchanged indexed roots; without Loom, local tools supply that
+context. Local tools remain available for edits, tests, Git, unindexed files,
+changed files and source Loom reports as unavailable. This is an instructed
+comparison. It does not measure tool adoption without project instructions.
+The protocol freezes the instruction text and hash; task images use those bytes.
+The instructions contain no issue-specific hints or required retrieval sequence.
 
 This example uses MCP directly; it does not install the Loom plugin or its hooks.
 The server supplies initialization guidance. Reports record startup connection
