@@ -158,11 +158,10 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
         for row in results:
             row["signature"] = symbol_signature(row)
 
-    want_neighbours = bool(input.neighbours)  # unset = off
     neighbours: list[dict[str, Any]] = []
     anchors_capped = False
     neighbour_tokens = 0
-    if want_neighbours and resolved:
+    if input.neighbours and resolved:
         neighbours, anchors_capped, neighbour_tokens = await _attach_enclosing_neighbours(
             repo, org, ns, results, rows, input.neighbour_k
         )
