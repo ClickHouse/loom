@@ -24,7 +24,20 @@ class NativePublicExport(TestCase):
         instruction.parent.mkdir(parents=True)
         instruction.write_bytes(self.instruction)
         (trial / "agent/claude-code.txt").write_text(
-            json.dumps({"type": "system", "subtype": "init", "mcp_servers": []}) + "\n"
+            json.dumps({"type": "system", "subtype": "init", "mcp_servers": []})
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "result",
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 2,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    },
+                }
+            )
+            + "\n"
         )
         slot = {
             "order": 0,
@@ -110,6 +123,7 @@ class NativePublicExport(TestCase):
         self.assertFalse(row["resolved"])
         self.assertEqual(row["generation_cost_usd"], 0.02)
         self.assertEqual(row["model_total_tokens"], 12)
+        self.assertEqual(row["solver_token_source"], "anthropic-reported")
         self.assertEqual(row["tool_total_requests"], 0)
         self.assertNotIn("PRIVATE_SENTINEL", path.read_text())
         self.assertNotIn(str(self.root), path.read_text())
