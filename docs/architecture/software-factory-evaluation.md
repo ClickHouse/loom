@@ -47,6 +47,11 @@ sourced fact. This verifies a replayed memory lifecycle, rather than measuring
 months of autonomous learning. Historical knowledge is extra information, so the
 contrast does not isolate linking from access to that knowledge.
 
+Historical revision transitions apply Loom's native file deletion to text paths
+present in the earlier verified Git source and absent from the next. Source
+receipts retain those exact paths and retirement counts. Full index audits check
+the resulting live rows against the current source before coding begins.
+
 ## Grading and accounting
 
 Base and reference controls use Harbor's built-in oracle without model calls.

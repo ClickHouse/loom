@@ -1203,6 +1203,21 @@ class Provisioner:
         for revision in phases:
             head, files = self._source(task, fixture, revision)
             heads[revision] = head
+            transition = None
+            if authored and revision == "B":
+                transition_body = {
+                    "org": group["org"],
+                    "namespace": group["namespace"],
+                    "source_git": mirrors[group["task_id"]],
+                    "source_roots": task["source_roots"],
+                    "from_commit": heads["A"],
+                    "commit": head,
+                    "from_source_sha256": source_receipts["A"]["source_sha256"],
+                    "source_sha256": digest(files),
+                }
+                self._intent("index", "source_revision_transition", transition_body)
+                transition = self._rpc("retire_deleted_paths", transition_body)
+                self._observed("index", "source_revision_transition", transition)
             self._backfill(group, task, head)
             if group["index_tier"] == "scip":
                 compiler_snapshots[head] = self._compile(
@@ -1354,6 +1369,7 @@ class Provisioner:
             )
             status = self._status(group, head, admin, revision)
             source_receipts[revision] = {
+                "source_transition": transition,
                 "indexed_head": status["response"]["git_head"],
                 "checked_head": worker["checked_head"],
                 "source_sha256": digest(files),

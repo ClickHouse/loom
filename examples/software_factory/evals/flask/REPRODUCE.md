@@ -50,6 +50,10 @@ Every Loom arm exposes the same native coding tool roster. Only the two memory
 arms have private writable memory namespaces; they replay history from
 2.0.0rc2, observe changed links at the task base, then revise one source-backed
 fact and verify that its anchor becomes fresh again.
+Revision changes retire text paths removed from the verified Git source through
+Loom's native file-deletion path before backfilling the next revision. Source
+receipts record the exact paths and retirement counts; the complete index must
+still match the current source.
 
 The indexed text roots are `src/flask`, `tests` and `docs`, for every Loom arm.
 They contain only the original Git revision; evaluator patches are absent.

@@ -151,6 +151,10 @@ async def execute(request):
             from examples.software_factory.harbor.index_setup import audit_index
 
             return await audit_index(body)
+        if operation == "retire_deleted_paths":
+            from examples.software_factory.harbor.index_setup import retire_deleted_paths
+
+            return await retire_deleted_paths(body)
         if operation == "anchor_fingerprints":
             from examples.software_factory.harbor.anchors import capture
 

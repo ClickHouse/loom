@@ -1,4 +1,4 @@
-"""Audit native index units against current Git bytes without rewriting provenance."""
+"""Apply pinned source deletions and audit native index units against Git bytes."""
 
 from __future__ import annotations
 
@@ -13,6 +13,44 @@ from .source_tree import git, source_files
 def require(condition, message):
     if not condition:
         raise PermissionError(message)
+
+
+async def retire_deleted_paths(request):
+    from dataclasses import asdict
+
+    from server.code.app.index.ingest import tombstone_file
+    from server.code.store.index import CodeRepo
+    from server.core.ch import set_query_tag
+    from server.embedding.embedder import get_embedder
+
+    old = source_files(request["source_git"], request["from_commit"], request["source_roots"])
+    current = source_files(request["source_git"], request["commit"], request["source_roots"])
+    require(
+        digest(old) == request["from_source_sha256"]
+        and digest(current) == request["source_sha256"],
+        "Source transition differs from the pinned history",
+    )
+    removed = sorted(set(old) - set(current))
+    repo = CodeRepo()
+    model = get_embedder().model_name
+    set_query_tag("bench.factory.native_source_transition")
+    retired = {}
+    for path in removed:
+        retired[path] = asdict(
+            await tombstone_file(
+                repo,
+                request["org"],
+                request["namespace"],
+                path=path,
+                embedding_model=model,
+            )
+        )
+    return {
+        "from_commit": request["from_commit"],
+        "commit": request["commit"],
+        "removed_paths": removed,
+        "retired": retired,
+    }
 
 
 def edge_key(row):
@@ -133,7 +171,7 @@ async def audit_index(request):
                 }
                 continue
             chunks, prefixes, _ = _chunks_for(
-                pf, path, body.encode(), settings.code_chunk_max_chars, ns_key=(org, ns)
+                pf, path, body.encode(), settings.code_chunk_max_chars
             )
             expected_chunks.update({chunk.chunk_id(ns): chunk for chunk in chunks})
             _, texts = chunk_context_texts(ns, path, pf, chunks, chunks, prefixes, {})
