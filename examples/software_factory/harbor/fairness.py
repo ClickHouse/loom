@@ -8,7 +8,7 @@ from pathlib import Path
 
 from examples.software_factory.factory.model import digest
 
-from .cache_start import verified_start
+from .cache_start import pair_usage, verified_start
 from .index import select_snapshot
 from .memory import validate_history_certificate
 from .native_environment import mcp_settings
@@ -106,11 +106,20 @@ def audit_fairness(protocol, entries, *, billing=None):
             row["provider_cache_start"] = verified_start(slot["cache_start"], result)
         row["passed"] = all(value is True for key, value in row.items() if key != "order")
         checks.append(row)
+    pairs = pair_usage(protocol["schedule"], {entry["order"]: entry["result"] for entry in entries})
+    pairs_match = all(pair["first_prefix_token_count_match"] is True for pair in pairs)
     receipt = {
         "protocol_sha256": digest(protocol),
+        **(
+            {"provider_cache_pairs": pairs, "provider_cache_pairs_match": pairs_match}
+            if pairs
+            else {}
+        ),
         "auditor_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "attempts": checks,
-        "passed": len(checks) == len(protocol["schedule"]) and all(row["passed"] for row in checks),
+        "passed": pairs_match
+        and len(checks) == len(protocol["schedule"])
+        and all(row["passed"] for row in checks),
     }
     write(root / "fairness-audit.json", receipt)
     return receipt

@@ -212,6 +212,18 @@ class PublicLauncher(unittest.TestCase):
         self.assertEqual(result["total_attempts"], 10)
         self.assertFalse(result["paid_requests"])
 
+    def test_full_cache_plan_pairs_all_repeats_including_controls(self):
+        result = launch.plan(cache_pairs=True)
+        self.assertEqual(
+            (result["study_mode"], result["cases"], result["repeats"]), ("cache-full", 3, 6)
+        )
+        self.assertEqual(
+            (result["primary_attempts"], result["aa_attempts"], result["total_attempts"]),
+            (90, 12, 102),
+        )
+        self.assertEqual(result["blind_judges"]["requests"], 24)
+        self.assertFalse(result["paid_requests"])
+
     def test_run_is_one_command_with_owned_images_and_identical_readonly_paths(self):
         docker = FakeDocker()
         self.assertEqual(launch.execute("run", self.output, root=self.root, docker=docker), 0)

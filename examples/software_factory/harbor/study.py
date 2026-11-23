@@ -431,6 +431,8 @@ def result_record(slot: dict, raw: dict, folder: Path, *, task_kind: str, model_
     result["harbor_trial"] = str(folder)
     result["schedule_order"] = slot["order"]
     result["pairing_key"] = [slot["task_id"], slot["repeat"]]
+    if "cache_start" in result:
+        result["pairing_key"].append(slot["cache_start"])
     result["harbor_reward_valid"] = raw.get("reward_valid") is True
     return result
 
@@ -641,7 +643,7 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
     timers = {}
     frozen_snapshot = read(output / "index-content.json")
     next_orders = [int(Path(t.path).name.removeprefix("slot-")) for t in config.tasks]
-    cache_pilot = kind == "live" and "cache_start" in protocol["schedule"][0]
+    cache_pairs = kind == "live" and "cache_start" in protocol["schedule"][0]
     lease = CACHE_5M_SECONDS
 
     async def wait_for_cache(seconds):
@@ -737,7 +739,7 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
             ),
             flush=True,
         )
-        if cache_pilot:
+        if cache_pairs:
             lease = max(lease, quiet_period(trial_folder))
             if protocol["schedule"][order]["cache_start"] == "warm" and next_orders:
                 await wait_for_cache(lease)
@@ -746,7 +748,7 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
     job.on_trial_started(start).on_trial_ended(end)
     if kind == "live":
         export(protocol, kind)
-    if cache_pilot and next_orders:
+    if cache_pairs and next_orders:
         await wait_for_cache(lease)
     await job.run()
     summary = export(protocol, kind)

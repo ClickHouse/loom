@@ -33,6 +33,8 @@ def pair_usage(schedule, observed):
         pairs.append(
             {
                 "arm": cold["arm"],
+                "task_id": cold["task_id"],
+                "repeat": cold["repeat"],
                 "cold_order": cold["order"],
                 "warm_order": warm["order"],
                 "cold_first_read_tokens": cold_reads,

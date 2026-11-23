@@ -10,6 +10,7 @@ from bench.bootstrap import paired_bootstrap
 from examples.software_factory.factory.model import digest
 
 from .arms import ALL, CACHE_STARTS, contrasts, validate_schedule
+from .cache_start import pair_usage
 from .cohorts import comparison_cohorts
 
 ARMS = tuple(ALL)
@@ -134,9 +135,13 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
         if type(order) is not int or not 0 <= order < len(rows) or order in observed:
             raise ValueError("Duplicate or unscheduled attempt; no best-of selection")
         row = rows[order]
-        if type(result.get("memory_enabled")) is not bool or any(
-            result.get(k) != row[k]
-            for k in ("task_id", "mode", "arm", "index_tier", "memory_enabled")
+        if (
+            type(result.get("memory_enabled")) is not bool
+            or any(
+                result.get(k) != row[k]
+                for k in ("task_id", "mode", "arm", "index_tier", "memory_enabled")
+            )
+            or result.get("cache_start") != row.get("cache_start")
         ):
             raise ValueError("Attempt identity differs from its schedule slot")
         identity.add((result["provider"], result["kind"]))
@@ -152,8 +157,9 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     if len(identity) > 1:
         raise ValueError("Provider or task kind changed within the controlled cohort")
     missing = sorted(set(range(len(rows))) - set(observed))
-    cache_pilot = "cache_start" in rows[0]
+    cache_pairs = "cache_start" in rows[0]
     pilot = rows[0].get("pilot") is True
+    mode = "pilot" if pilot else "full"
     report = {
         "schema_version": 1,
         "schedule_sha256": digest(rows),
@@ -168,7 +174,7 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
         if identity
         else None,
         "exploratory_only": True,
-        "study_mode": "cache-pilot" if cache_pilot else "pilot" if pilot else "full",
+        "study_mode": f"cache-{mode}" if cache_pairs else mode,
         "cluster_count": len(tasks),
         "seed": seed,
         "resamples": resamples,
@@ -180,10 +186,17 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
             "Input provenance and billing require independent qualification."
         ),
     }
-    if cache_pilot:
+    if cache_pairs:
         report["cache_start_deltas"] = {state: {} for state in CACHE_STARTS}
-        report["cache_starts_verified"] = not missing and all(
-            result.get("cache_start_verified") is True for result in observed.values()
+        if not pilot:
+            report["cache_start_aa_reference"] = {state: {} for state in CACHE_STARTS}
+        report["cache_starts_verified"] = (
+            not missing
+            and all(result.get("cache_start_verified") is True for result in observed.values())
+            and all(
+                pair["first_prefix_token_count_match"] is True
+                for pair in pair_usage(rows, observed)
+            )
         )
     for arm in ARMS:
         slots = [r["order"] for r in rows if r["arm"] == arm]
@@ -208,27 +221,32 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     )
     if missing:
         return report  # Missing attempts are visible; no partial-cohort selection.
-    lookup = {(r["task_id"], r["repeat"], r["arm"]): metrics[r["order"]] for r in rows}
-    if cache_pilot:
-        comparisons = [
-            (report["cache_start_deltas"][state], left, right, [repeat])
-            for repeat, state in enumerate(CACHE_STARTS)
-            for left, right in contrasts()
-        ]
-    else:
-        comparisons = [
-            (report["paired_deltas"], left, right, range(1 if pilot else 3))
-            for left, right in contrasts()
-        ]
-    if not pilot:
-        comparisons.append((report["aa_reference"], "baseline-b", "baseline-a", ["aa"]))
-    for destination, left, right, repeats in comparisons:
+    lookup = {
+        (r["task_id"], r["repeat"], r["arm"], r.get("cache_start")): metrics[r["order"]]
+        for r in rows
+    }
+    comparisons = []
+    for i, state in enumerate(CACHE_STARTS if cache_pairs else (None,)):
+        repeats = [i] if pilot else range(3)
+        deltas = report["paired_deltas"] if state is None else report["cache_start_deltas"][state]
+        comparisons.extend((deltas, left, right, repeats, state) for left, right in contrasts())
+        if not pilot:
+            aa = (
+                report["aa_reference"]
+                if state is None
+                else report["cache_start_aa_reference"][state]
+            )
+            comparisons.append((aa, "baseline-b", "baseline-a", ["aa"], state))
+    for destination, left, right, repeats, state in comparisons:
         contrast = {}
         for key in next(iter(metrics.values())):
             differences = []
             for task in tasks:
                 pairs = [
-                    (lookup[task, repeat, left][key], lookup[task, repeat, right][key])
+                    (
+                        lookup[task, repeat, left, state][key],
+                        lookup[task, repeat, right, state][key],
+                    )
                     for repeat in repeats
                 ]
                 differences.append(

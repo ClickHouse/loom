@@ -66,6 +66,14 @@ coverage defines a separate cohort from implementation-only indexes.
 ## Execution and artifacts
 
 Three repeats of five arms plus six separate A/A controls produce 51 attempts.
+Pass `--cache-pairs` to both `plan` and `run` to measure each repeat with cold
+and warm provider starts. For Flask this schedules 90 primary attempts and 12
+A/A controls, with 24 blind judgments. Each warm session follows its own cold
+session. The controller waits for the provider cache lease to expire before the
+next cold session. This wait is outside agent and end-to-end attempt times.
+Cold and warm comparisons and A/A controls use separate groups. First-prompt
+read and write counters show whether each pair matched.
+
 Harbor uses its built-in `claude-code` agent, pinned by
 [agent.json](../../harbor/agent.json). Every arm receives the original public
 issue in an ordinary shallow checkout at its buggy base. Claude chooses its
@@ -91,8 +99,8 @@ memory namespace. Retrieval uses Loom defaults; no result-count or token-budget
 overrides are supplied. Each attempt has separate credentials and each memory
 attempt has separate writable state. Base/reference controls must qualify the
 same frozen protocol before inference. Harbor retries are disabled; Claude Code
-keeps its native provider behavior. Twelve blind fixed judgments run after coding
-and do not send feedback to the solver.
+keeps its native provider behavior. Blind fixed judgments run after coding without
+sending feedback to the solver. The default schedule uses twelve judgments.
 
 Native MCP connections send `Connection: close`. The pinned egress proxy can reuse
 an upstream HTTP connection after the server has closed it, causing the next tool

@@ -17,6 +17,9 @@ const arms = Object.keys(data.arms);
 const labelFor = (arm) => names[arm] || data.arms[arm] || arm;
 const byId = (id) => document.getElementById(id);
 const cacheStarts = [...new Set(data.attempts.map((row) => row.cache_start).filter(Boolean))];
+const verifiedPairOrders = new Set((data.cache_pairs || [])
+  .filter((pair) => pair.first_prefix_token_count_match === true)
+  .flatMap((pair) => [pair.cold_order, pair.warm_order]));
 function reportLink(value) {
   if (typeof value !== "string" || !value) return null;
   try {
@@ -200,8 +203,11 @@ function summary(rows, plannedRows) {
   const waiting = plannedRows.filter((row) => row.state === "complete" && !row.comparison_included).length;
   const graded = plannedRows.filter((row) => row.state === "complete");
   const verified = graded.filter((row) => row.cache_start_verified === true).length;
+  const plannedOrders = new Set(plannedRows.map((row) => row.order));
   const measuredPairs = (data.cache_pairs || []).filter(
-    (pair) => typeof pair.first_prefix_token_count_match === "boolean",
+    (pair) =>
+      (plannedOrders.has(pair.cold_order) || plannedOrders.has(pair.warm_order)) &&
+      typeof pair.first_prefix_token_count_match === "boolean",
   );
   const matchingPairs = measuredPairs.filter((pair) => pair.first_prefix_token_count_match).length;
   byId("comparison-note").textContent =
@@ -261,7 +267,9 @@ function chart(rows, plannedRows) {
       : data.complete &&
           rows.length === plannedRows.length &&
           matched(rows) &&
-          (!cacheStarts.length || rows.every((row) => row.cache_start_verified === true)) &&
+          (!cacheStarts.length ||
+            rows.every((row) => row.cache_start_verified === true) &&
+            plannedRows.every((row) => verifiedPairOrders.has(row.order))) &&
           data.run_status !== "interrupted" &&
           data.run_status !== "failed" &&
           sums.baseline.value !== null
@@ -448,7 +456,9 @@ for (const [key, group] of Object.entries(data.cohorts.groups).filter(([, group]
 }
 byId("cohort").value = data.cohorts.default;
 byId("cache-filter").hidden = !cacheStarts.length;
-byId("repeat-label").hidden = Boolean(cacheStarts.length);
+byId("repeat-label").hidden = cacheStarts.length > 0 && new Set(
+  data.attempts.filter((row) => row.cache_start === "cold").map((row) => row.repeat),
+).size < 2;
 for (const start of cacheStarts) {
   const option = node("option", start === "cold" ? "Cold start" : "Warm start");
   option.value = start;

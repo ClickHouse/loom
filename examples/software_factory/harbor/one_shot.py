@@ -275,11 +275,11 @@ def execute(args):
                 output / "inputs",
             ),
         )
-        if launch["pilot_task"] is not None:
+        if launch["pilot_task"] is not None or launch.get("cache_pairs", False):
             from .pilot import select
 
             prepared = phases.run(
-                "pilot-selection",
+                "pilot-selection" if launch["pilot_task"] is not None else "cache-selection",
                 lambda: select(
                     prepared,
                     launch["pilot_task"],

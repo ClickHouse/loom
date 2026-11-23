@@ -16,7 +16,7 @@ from statistics import fmean
 from urllib.parse import quote, urlencode
 from uuid import UUID, uuid5
 
-from .arms import PRIMARY
+from .arms import CONTROLS, PRIMARY
 from .cache_start import pair_usage
 from .cohorts import comparison_cohorts
 
@@ -119,7 +119,11 @@ def _pair_identity(protocol, slot):
         "source_sha256": spec["source_sha256"],
         "grader_sha256": spec["grader_sha256"],
     }
-    return f"{task_id}--repeat-{slot['repeat'] + 1}", _digest(identity), identity
+    name = f"{task_id}--repeat-{slot['repeat'] + 1}"
+    if "cache_start" in slot and not slot.get("pilot"):
+        identity["cache_start"] = slot["cache_start"]
+        name += f"--{slot['cache_start']}"
+    return name, _digest(identity), identity
 
 
 def _copy_trial(source, destination, raw, slot, protocol):
@@ -143,6 +147,7 @@ def _copy_trial(source, destination, raw, slot, protocol):
         "arm": slot["arm"],
         "task_id": slot["task_id"],
         "repeat": slot["repeat"],
+        **({"cache_start": slot["cache_start"]} if "cache_start" in slot else {}),
         "source_trial": str(source),
         "original_trial_id": raw["id"],
         "original_trial_name": raw["trial_name"],
@@ -401,13 +406,13 @@ def _known_sum(records, key):
     return sum(values) if values and None not in values else None
 
 
-def _cache_arm_summaries(slots, observed):
+def _cache_arm_summaries(slots, observed, *, arms=PRIMARY_VIEWS):
     return {
         state: {
             arm: _summary(
                 [s for s in slots if s.get("cache_start") == state and s["arm"] == arm], observed
             )
-            for arm in PRIMARY_VIEWS
+            for arm in arms
         }
         for state in dict.fromkeys(s["cache_start"] for s in slots if "cache_start" in s)
     }
@@ -445,9 +450,9 @@ def _table(arms, *, cache_starts=False):
     )
 
 
-def _cache_tables(cache_arms):
+def _cache_tables(cache_arms, *, subject=""):
     return "\n".join(
-        f"## Planned {state} start\n\n" + _table(arms, cache_starts=True)
+        f"## {subject}Planned {state} start\n\n" + _table(arms, cache_starts=True)
         for state, arms in cache_arms.items()
     )
 
@@ -456,8 +461,9 @@ def _cache_pair_table(pairs):
     lines = [
         "## First-prompt reuse by arm",
         "",
-        "| Arm | Cold reads | Cold writes | Warm reads | Warm writes | Prefix size matches |",
-        "| --- | ---: | ---: | ---: | ---: | --- |",
+        "| Issue | Repeat | Arm | Cold reads | Cold writes | Warm reads | Warm writes | "
+        "Prefix size matches |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
     ]
     fields = (
         "cold_first_read_tokens",
@@ -470,7 +476,10 @@ def _cache_pair_table(pairs):
         matched = {True: "Yes", False: "No", None: "Unverified"}[
             pair["first_prefix_token_count_match"]
         ]
-        lines.append(f"| {PRIMARY[pair['arm']].label} | {counters} | {matched} |")
+        arm = pair["arm"]
+        label = PRIMARY[arm].label if arm in PRIMARY else arm
+        repeat = pair["repeat"] + 1 if type(pair["repeat"]) is int else "A/A"
+        lines.append(f"| {pair['task_id']} | {repeat} | {label} | {counters} | {matched} |")
     lines.extend(
         (
             "",
@@ -516,6 +525,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             or record["mode"] != slot["mode"]
             or record.get("arm") != slot["arm"]
             or record.get("index_tier") != slot.get("index_tier")
+            or record.get("cache_start") != slot.get("cache_start")
         ):
             raise ValueError("Measured result differs from its scheduled identity")
         raw = _read(Path(record["harbor_trial"]) / "result.json")
@@ -651,8 +661,10 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         arm: _summary([s for s in groups.get("aa-controls", []) if s["arm"] == arm], observed)
         for arm in sorted({s["arm"] for s in groups.get("aa-controls", [])})
     }
+    cache_controls = _cache_arm_summaries(groups.get("aa-controls", []), observed, arms=CONTROLS)
     control_report = {
         "summary": controls,
+        **({"cache_start_arms": cache_controls} if cache_controls else {}),
         "arms": control_arms,
         "attempts": [a for a in attempts if a["arm"] not in PRIMARY_VIEWS],
     }
@@ -660,11 +672,11 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
     _atomic(
         report_dir / "AA-CONTROLS.md",
         "# A/A controls\n\nThese controls are excluded from the primary comparison.\n\n"
-        + _table(control_arms),
+        + (_cache_tables(cache_controls) if cache_controls else _table(control_arms)),
     )
     paired = sorted(
         {
-            (s["task_id"], s["repeat"])
+            (s["task_id"], s["repeat"], s.get("cache_start"))
             for s in schedule
             if s["arm"] in PRIMARY_VIEWS and s["task_id"] in primary_tasks
         }
@@ -673,6 +685,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         {
             "task_id": task,
             "repeat": repeat,
+            **({"cache_start": state} if state else {}),
             "cells": {
                 arm: next(
                     (
@@ -680,6 +693,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                         for item in attempts
                         if item["task_id"] == task
                         and item["repeat"] == repeat
+                        and item.get("cache_start") == state
                         and item["arm"] == arm
                     ),
                     None,
@@ -687,7 +701,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                 for arm in PRIMARY_VIEWS
             },
         }
-        for task, repeat in paired
+        for task, repeat, state in paired
     ]
     cache_pairs = pair_usage(
         schedule, {order: entry["result"] for order, entry in observed.items()}
@@ -712,9 +726,15 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             "comparison_links": links,
         }
         cache_arms = _cache_arm_summaries(selected, observed)
+        scenario_pairs = [pair for pair in cache_pairs if pair["task_id"] == task]
+        scenario_controls = _cache_arm_summaries(
+            [s for s in selected if s["arm"] in CONTROLS], observed, arms=CONTROLS
+        )
         if cache_arms:
             info["cache_start_arms"] = cache_arms
-            info["cache_pairs"] = cache_pairs
+            info["cache_pairs"] = scenario_pairs
+        if scenario_controls:
+            info["cache_start_aa_arms"] = scenario_controls
         scenarios[task] = info
         safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", task) + "-" + _digest(task)[:8]
         scenario_links.append((task, "scenarios/" + safe_name + ".md"))
@@ -722,18 +742,22 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         attempt_links = "\n".join(
             f"- [Attempt {a['order']}](../attempts/attempt-{a['order']:02d}.md): "
             f"{a['arm']}, repeat {a['repeat']}, {a['state']}"
+            + (f", {a['cache_start']} start" if "cache_start" in a else "")
             for a in info["attempts"]
         )
         _atomic(
             report_dir / "scenarios" / (safe_name + ".md"),
             f"# Scenario {task}\n\n"
             + (
-                _cache_tables(cache_arms) + "\n" + _cache_pair_table(cache_pairs)
+                _cache_tables(cache_arms) + "\n" + _cache_pair_table(scenario_pairs)
                 if cache_arms
                 else _table(info["arms"])
             )
-            + "\n## A/A controls\n\n"
-            + _table(info["aa_control_arms"])
+            + (
+                "\n" + _cache_tables(scenario_controls, subject="A/A controls, ")
+                if scenario_controls
+                else "\n## A/A controls\n\n" + _table(info["aa_control_arms"])
+            )
             + "\n"
             + " · ".join(f"[{key}]({value})" for key, value in links.items())
             + "\n\n"
@@ -772,10 +796,14 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             "Original UUIDs, config paths, metrics, costs and timestamps remain unchanged."
         ),
     }
-    cache_arms = _cache_arm_summaries(schedule, observed)
-    if cache_arms:
-        report["cache_start_arms"] = cache_arms
+    if cache_pairs:
+        for cohort in cohort_reports.values():
+            slots = [s for s in schedule if s["task_id"] in cohort["task_ids"]]
+            cohort["cache_start_arms"] = _cache_arm_summaries(slots, observed)
+        report["cache_start_arms"] = cohort_reports[cohorts["default"]]["cache_start_arms"]
         report["cache_pairs"] = cache_pairs
+    if cache_controls:
+        report["cache_start_aa_arms"] = cache_controls
     _atomic(report_dir / "comparison.json", report)
     text = (
         f"# Factory comparison\n\n{len(observed)}/{len(schedule)} attempts observed across "
@@ -784,7 +812,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         "Historical issues and authored experiments are reported separately. "
         "Native Harbor comparison links include all scenarios.\n\n"
     )
-    text += (_cache_tables(cache_arms) if cache_arms else _table(primary)) + "\n"
+    text += (_cache_tables(report["cache_start_arms"]) if cache_pairs else _table(primary)) + "\n"
     if cache_pairs:
         text += _cache_pair_table(cache_pairs) + "\n"
     text += " · ".join(f"[{key}]({value})" for key, value in links.items())

@@ -137,16 +137,16 @@ def plan(
     )
     task_ids = {row["task_id"] for row in locked["tasks"]}
     history_ids = {row["case_id"] for row in histories["cases"]}
-    if cache_pairs and pilot_task is None:
-        raise LaunchError("Cache pairs require a frozen pilot task")
     if pilot_task is not None:
         if pilot_task not in task_ids | history_ids:
             raise LaunchError("The pilot task must name a frozen evaluation scenario")
         task_ids &= {pilot_task}
         history_ids &= {pilot_task}
     cold, warm = len(task_ids - history_ids), len(history_ids)
-    cases, repeats = len(task_ids | history_ids), 2 if cache_pairs else 1 if pilot_task else 3
-    aa_attempts = 0 if pilot_task else cases * 2
+    starts = 2 if cache_pairs else 1
+    cases, repeats = len(task_ids | history_ids), starts * (1 if pilot_task else 3)
+    aa_attempts = 0 if pilot_task else cases * starts * 2
+    mode = "pilot" if pilot_task else "full"
     memory_attempts = cases * repeats * sum(arm.memory_enabled for arm in PRIMARY.values())
     seeded_attempts = warm * repeats * sum(arm.history_seeded for arm in PRIMARY.values())
     records = memories["records"]
@@ -155,7 +155,7 @@ def plan(
         raise LaunchError("Public cases or project memory identities are invalid")
     return {
         "schema_version": 1,
-        "study_mode": "cache-pilot" if cache_pairs else "pilot" if pilot_task else "full",
+        "study_mode": f"cache-{mode}" if cache_pairs else mode,
         "pilot_task": pilot_task,
         "cache_pairs": cache_pairs,
         "loom_schema_profile": loom_schema_profile,
@@ -175,7 +175,7 @@ def plan(
         "blind_judges": {
             "model": locked["model_id"],
             "fixed_only": True,
-            "requests": cases * (repeats + (0 if pilot_task else 1)),
+            "requests": cases * (repeats + (0 if pilot_task else starts)),
         },
         "embedding": {"model": "local:bge-small", "provider": "local", **model_pin(root)},
         "memory": {
@@ -741,9 +741,11 @@ def main(argv=None):
         if args.json:
             print(json.dumps(description, indent=2))
         else:
+            starts = 2 if args.cache_pairs else 1
+            cache_label = " × 2 cache starts" if args.cache_pairs else ""
             print(
                 f"{description['total_attempts']} attempts: {description['cases']} cases × "
-                f"{description['repeats']} repeats × {len(ARMS)} arms + "
+                f"{description['repeats'] // starts} repeats{cache_label} × {len(ARMS)} arms + "
                 f"{description['aa_attempts']} A/A controls"
             )
             print(json.dumps(description, indent=2))

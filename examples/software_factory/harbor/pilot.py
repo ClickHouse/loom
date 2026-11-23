@@ -1,34 +1,31 @@
-"""Freeze a single-scenario pilot without changing its task or grader."""
+"""Select the pilot issue or pair cache starts in a frozen schedule."""
 
-from .arms import CACHE_STARTS, validate_schedule
+from .arms import validate_schedule, with_cache_pairs
 from .runtime import read, write
 from .source import sha
 
 
 def select(prepared, task_id, output, *, cache_pairs=False):
-    if task_id is None:
-        return prepared
     validate_schedule(prepared["schedule"])
+    if task_id is None:
+        if not cache_pairs:
+            return prepared
+        rows = with_cache_pairs(prepared["schedule"])
+        validate_schedule(rows)
+        result = {**prepared, "schedule": rows}
+        output.mkdir(parents=True, exist_ok=False)
+        write(output / "inputs.json", result)
+        return result
     if task_id not in prepared["tasks"]:
         raise ValueError("The pilot task must name a frozen evaluation scenario")
-    rows = []
-    for row in prepared["schedule"]:
-        if row["task_id"] != task_id or row["repeat"] != 0:
-            continue
-        order = len(rows)
-        if cache_pairs:
-            rows.extend(
-                {
-                    **row,
-                    "order": order + repeat,
-                    "pilot": True,
-                    "repeat": repeat,
-                    "cache_start": cache,
-                }
-                for repeat, cache in enumerate(CACHE_STARTS)
-            )
-        else:
-            rows.append({**row, "order": order, "pilot": True})
+    rows = [
+        {**row, "order": order, "pilot": True}
+        for order, row in enumerate(
+            row for row in prepared["schedule"] if row["task_id"] == task_id and row["repeat"] == 0
+        )
+    ]
+    if cache_pairs:
+        rows = with_cache_pairs(rows)
     validate_schedule(rows)
     output.mkdir(parents=True, exist_ok=False)
     manifest = read(prepared["historical_manifest"])

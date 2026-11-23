@@ -53,10 +53,10 @@ def number(value):
 
 
 def paired_orders(rows, arms):
-    """Compare a task/repeat only after every arm has one graded attempt."""
+    """Compare each issue, repeat and cache start after every arm has a grade."""
     blocks = {}
     for row in rows:
-        blocks.setdefault((row["task"], row["repeat"]), []).append(row)
+        blocks.setdefault((row["task"], row["repeat"], row.get("cache_start")), []).append(row)
     expected = set(arms)
     return {
         row["order"]

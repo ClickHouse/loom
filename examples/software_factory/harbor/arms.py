@@ -40,6 +40,19 @@ ALL = {**PRIMARY, **CONTROLS}
 CACHE_STARTS = ("cold", "warm")
 
 
+def with_cache_pairs(rows):
+    return [
+        {
+            **row,
+            "order": len(CACHE_STARTS) * order + start,
+            "repeat": start if row.get("pilot") else row["repeat"],
+            "cache_start": state,
+        }
+        for order, row in enumerate(rows)
+        for start, state in enumerate(CACHE_STARTS)
+    ]
+
+
 def validate_schedule(rows):
     """Reject missing arms, repetitions, changed treatments and position imbalance."""
     if not isinstance(rows, list) or not rows:
@@ -48,10 +61,9 @@ def validate_schedule(rows):
     pilot = any("pilot" in row for row in rows)
     if pilot and (len(tasks) != 1 or any(row.get("pilot") is not True for row in rows)):
         raise ValueError("A pilot requires one scenario and an explicit marker on every arm")
-    cache_pilot = any("cache_start" in row for row in rows)
-    if cache_pilot and not pilot:
-        raise ValueError("A paired cache run requires a one-scenario pilot")
-    repeats = range(len(CACHE_STARTS) if cache_pilot else 1 if pilot else 3)
+    if any("cache_start" in row for row in rows):
+        return _validate_cache_pairs(rows)
+    repeats = range(1 if pilot else 3)
     expected = {(task, repeat, arm) for task in tasks for repeat in repeats for arm in PRIMARY}
     if not pilot:
         expected |= {(task, "aa", arm) for task in tasks for arm in CONTROLS}
@@ -68,14 +80,6 @@ def validate_schedule(rows):
         ):
             raise ValueError("Scheduled treatment identity or order differs")
     if pilot:
-        if cache_pilot:
-            for cold, warm in zip(rows[::2], rows[1::2], strict=True):
-                if (
-                    cold["arm"] != warm["arm"]
-                    or (cold["repeat"], warm["repeat"]) != (0, 1)
-                    or (cold.get("cache_start"), warm.get("cache_start")) != CACHE_STARTS
-                ):
-                    raise ValueError("Schedule a consecutive cold and warm attempt for every arm")
         return tasks
     global_positions = {arm: Counter() for arm in PRIMARY}
     for task in tasks:
@@ -94,6 +98,23 @@ def validate_schedule(rows):
         values = [counts[position] for position in range(len(PRIMARY))]
         if max(values) - min(values) > 1:
             raise ValueError("Global treatment positions are imbalanced")
+    return tasks
+
+
+def _validate_cache_pairs(rows):
+    logical = [
+        {**{key: value for key, value in row.items() if key != "cache_start"}, "order": order}
+        for order, row in enumerate(rows[::2])
+    ]
+    tasks = validate_schedule(logical)
+    expected = with_cache_pairs(logical)
+    if (
+        rows != expected
+        or any(type(row["order"]) is not int for row in rows)
+        or any(type(row.get("memory_enabled")) is not bool for row in rows)
+        or any(row["arm"] in PRIMARY and type(row["repeat"]) is not int for row in rows)
+    ):
+        raise ValueError("Schedule a consecutive cold and warm attempt for each treatment")
     return tasks
 
 

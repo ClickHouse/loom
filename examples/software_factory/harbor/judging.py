@@ -112,7 +112,9 @@ def blind_input(task, candidates, *, seed, validate_candidate, public_documents=
 def pair_slots(schedule):
     groups = {}
     for slot in schedule:
-        groups.setdefault((slot["task_id"], slot["repeat"]), []).append(slot)
+        groups.setdefault((slot["task_id"], slot["repeat"], slot.get("cache_start")), []).append(
+            slot
+        )
     for key, slots in sorted(groups.items(), key=lambda item: str(item[0])):
         expected = set(CONTROLS if key[1] == "aa" else PRIMARY)
         if len(slots) != len(expected) or {slot["arm"] for slot in slots} != expected:
