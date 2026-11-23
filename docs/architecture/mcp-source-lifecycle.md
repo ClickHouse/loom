@@ -73,6 +73,21 @@ preserved. This scoped deletion path shares per-owner lifecycle primitives with
 restore; it never invokes deployment-wide offline restore. Remote revocation follows
 all local cleanup.
 
+
+The credential-free recovery marker retains an already inventoried registration
+generation: the current account's registration, or an exact-owner historical
+registration when no account survives. It stays inactive and contains no credential,
+remote identity, scope or refresh state. Every family fence is stopped. Retaining
+that registration keeps interruption recovery within the same bounded raw-history
+workset, even when it already fills the configured generation limit.
+
+The erasure call receives a separate in-memory object carrying the actual stopped
+fence value from the marker registration's own prefix. The strict erasure guard
+still requires equality with that durable claim. The stored registration identifies
+recovery work; it grants no checkout authority. Retirement and all raw-history
+censuses must finish before the recovery row disappears. Retrying neither adds a
+registration nor skips a historical generation or its prefix validation.
+
 Disconnect and explicit erasure retain their existing meanings. Local bearer removal
 does not prove remote token revocation. Restore is destructive offline lifecycle
 work with fencing and a final census; it is not a reconfiguration or upgrade tool.

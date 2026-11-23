@@ -722,3 +722,103 @@ async def test_restore_inventory_normalizes_driver_uuid_without_weakening_bindin
     assert keys == [(OWNER[0], OWNER[1], SLOT if generic else "gdrive", CONNECTION)]
     assert len(sources) == 1 and sources[0].source_id == str(source_id)
     assert isinstance(sources[0].source_id, str)
+
+
+def _retry_budget_store(
+    monkeypatch: pytest.MonkeyPatch, state: SimpleNamespace, owner: tuple[str, str, str]
+) -> None:
+    async def keys(*, owner: Any = None, **kwargs: Any) -> list[Any]:
+        assert owner == state.owner
+        if len(state.registrations) > restore.settings.knowledge_connected_registry_scan_limit:
+            raise RuntimeError("connected_restore_inventory_bound")
+        return [(*owner, generation) for generation in sorted(state.registrations)]
+
+    async def put(account: Any, **kwargs: Any) -> None:
+        assert state.held == [owner] and not account.active and not account.credential_enc
+        state.rows[owner] = account
+        state.registrations.add(account.connection_id)
+        state.markers.append(account)
+        state.events.append(("marker", owner))
+
+    real_erase = restore.accounts._erase_locked
+
+    async def erase(account: Any, *, keep_marker: bool) -> None:
+        key = restore.accounts._fence_key(account.connection_id)
+        assert state.fences[key] == account.connection_id
+        assert account.connection_id.partition("/")[2].startswith("0")
+        assert not account.active and not account.credential_enc and not account.account_email_enc
+        assert ("retire", owner) in state.events
+        state.proofs.append(account)
+        if len(state.proofs) == 1:
+            raise _MarkerWritten
+        await real_erase(account, keep_marker=keep_marker)
+        state.registrations.clear()
+
+    monkeypatch.setattr(restore.account_store, "restore_keys", keys)
+    monkeypatch.setattr(restore.account_store, "put", put)
+    monkeypatch.setattr(restore.accounts, "_erase_locked", erase)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit,separate_prefixes", [(1, False), (2, False), (2, True)])
+@pytest.mark.parametrize("account_backed", [False, True])
+@pytest.mark.parametrize("generic", [False, True])
+async def test_retry_budget_retains_admitted_registration_workset(
+    owner_history: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    limit: int,
+    separate_prefixes: bool,
+    account_backed: bool,
+    generic: bool,
+) -> None:
+    state = owner_history
+    owner = OWNER if generic else (*OWNER[:2], "gdrive")
+    sources = [_owner_source(owner, "a")]
+    if limit == 2:
+        generation = ("b" if separate_prefixes else "a") * 32 + "/1" + "e" * 31
+        sources.append(replace(sources[0], connection_id=generation))
+    if not generic:
+        sources = [
+            replace(s, kind="gdrive", credential_mode="connected", connection_slot="")
+            for s in sources
+        ]
+    state.history = {owner: sources}
+    registration = sources[-1 if account_backed else 0].connection_id
+    if account_backed:
+        state.rows[owner] = restore.ConnectedAccount(*owner, registration, active=True)
+    state.owner, state.markers, state.proofs = owner, [], []
+    state.registrations = {registration} if account_backed else set()
+    original = {s.connection_id for s in sources} | state.registrations
+    assert len(original) == limit
+    monkeypatch.setattr(restore.settings, "knowledge_connected_registry_scan_limit", limit)
+    _retry_budget_store(monkeypatch, state, owner)
+    with pytest.raises(_MarkerWritten):
+        await restore.accounts.stop_subjects([owner[1]], erase_owner=True, revoke=False)
+    stopped = dict(state.fences)
+    keys, _sources = await restore._metadata(state, owner)
+    restore._include(defaultdict(set), {}, keys)
+    assert {row[3] for row in keys} == original
+    await restore.accounts.stop_subjects([owner[1]], erase_owner=True, revoke=False)
+    assert not state.history and not state.rows and not state.registrations
+    assert state.fences == stopped and len(state.proofs) == 2
+    for marker, proof in zip(state.markers, state.proofs, strict=True):
+        assert (marker.org, marker.subject, marker.kind) == owner
+        assert marker.connection_id == registration and marker.connected_at is None
+        assert marker.disconnected_at is not None and not marker.active
+        assert not any(
+            (
+                marker.credential_enc,
+                marker.account_email_enc,
+                marker.account_id,
+                marker.workspace_id,
+                marker.scopes,
+                marker.refresh_id,
+            )
+        )
+        assert restore.accounts._fence_key(marker.connection_id) == restore.accounts._fence_key(
+            proof.connection_id
+        )
+        assert (
+            state.fences[restore.accounts._fence_key(marker.connection_id)] == proof.connection_id
+        )
+        assert not await restore.accounts.available(marker)

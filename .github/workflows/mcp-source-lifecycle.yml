@@ -81,6 +81,7 @@ jobs:
       LOOM_BOOT_MIGRATE: "true"
       LOOM_ENV_FILE: ""
       LOOM_MCP_SOURCE_LIFECYCLE_FIXTURE: offline-isolated
+      LOOM_KNOWLEDGE_CONNECTED_REGISTRY_SCAN_LIMIT: "8"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
