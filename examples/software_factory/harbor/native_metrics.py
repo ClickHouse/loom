@@ -11,6 +11,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from .metrics import known_total
 from .pricing import first_prompt_input_prices
 from .runtime import write
 
@@ -96,6 +97,24 @@ def uncached_input(total, cache_reads, cache_writes):
     return None
 
 
+def cache_usage(extra):
+    reads = number(extra.get("cache_read_input_tokens"))
+    writes = number(extra.get("cache_creation_input_tokens"))
+    partition = extra.get("cache_creation") or {}
+    short_writes = number(partition.get("ephemeral_5m_input_tokens"))
+    long_writes = number(partition.get("ephemeral_1h_input_tokens"))
+    if writes == 0 and not partition:
+        short_writes = long_writes = 0
+    if short_writes is None or long_writes is None or short_writes + long_writes != writes:
+        short_writes = long_writes = None
+    return {
+        "cache_read_tokens": reads,
+        "cache_write_tokens": writes,
+        "cache_write_5m_tokens": short_writes,
+        "cache_write_1h_tokens": long_writes,
+    }
+
+
 def elapsed(value):
     if not isinstance(value, dict) or not value.get("started_at") or not value.get("finished_at"):
         return None
@@ -117,8 +136,7 @@ def capture_turn_usage(trial: Path, target: Path) -> None:
             if not metrics or step.get("is_copied_context"):
                 continue
             input_tokens = number(metrics.get("prompt_tokens"))
-            cache_reads = number(metrics.get("cached_tokens"))
-            cache_writes = number((metrics.get("extra") or {}).get("cache_creation_input_tokens"))
+            cache = cache_usage(metrics.get("extra") or {})
             turns.append(
                 {
                     "step_id": step["step_id"],
@@ -127,11 +145,10 @@ def capture_turn_usage(trial: Path, target: Path) -> None:
                     ],
                     "input_tokens": input_tokens,
                     "uncached_input_tokens": uncached_input(
-                        input_tokens, cache_reads, cache_writes
+                        input_tokens, cache["cache_read_tokens"], cache["cache_write_tokens"]
                     ),
                     "output_tokens": number(metrics.get("completion_tokens")),
-                    "cache_read_tokens": cache_reads,
-                    "cache_write_tokens": cache_writes,
+                    **cache,
                     "estimated_cost_usd": number(metrics.get("cost_usd")),
                 }
             )
@@ -178,12 +195,18 @@ def measurements(raw: dict, trial: Path) -> dict:
         number(metrics.get("total_completion_tokens")),
     )
     extra = metrics.get("extra") or {}
-    cache_reads = number(metrics.get("total_cached_tokens"))
-    cache_writes = number(extra.get("total_cache_creation_input_tokens"))
+    steps = (trajectory or {}).get("steps", [])
+    per_step_cache = [
+        cache_usage(step["metrics"].get("extra") or {})
+        for step in steps
+        if step.get("metrics") and not step.get("is_copied_context")
+    ]
+    cache_reads = known_total(per_step_cache, "cache_read_tokens")
+    cache_writes = known_total(per_step_cache, "cache_write_tokens")
     first_step = next(
         (
             step
-            for step in (trajectory or {}).get("steps", [])
+            for step in steps
             if step.get("source") == "agent"
             and not step.get("is_copied_context")
             and not (step.get("extra") or {}).get("is_sidechain")
@@ -193,8 +216,9 @@ def measurements(raw: dict, trial: Path) -> dict:
     first = first_step.get("metrics") or {}
     first_extra = first.get("extra") or {}
     first_input = number(first.get("prompt_tokens"))
-    first_read = number(first.get("cached_tokens"))
-    first_write = number(first_extra.get("cache_creation_input_tokens"))
+    first_cache = cache_usage(first_extra)
+    first_read = first_cache["cache_read_tokens"]
+    first_write = first_cache["cache_write_tokens"]
     first_prices = {}
     if (
         first_extra.get("service_tier", "standard") == "standard"
@@ -226,6 +250,8 @@ def measurements(raw: dict, trial: Path) -> dict:
         else None,
         "model_cache_read_tokens": cache_reads,
         "model_cache_write_tokens": cache_writes,
+        "model_cache_write_5m_tokens": known_total(per_step_cache, "cache_write_5m_tokens"),
+        "model_cache_write_1h_tokens": known_total(per_step_cache, "cache_write_1h_tokens"),
         "model_uncached_input_tokens": uncached_input(incoming, cache_reads, cache_writes),
         "first_cache_read_tokens": first_read,
         "first_cache_write_tokens": first_write,

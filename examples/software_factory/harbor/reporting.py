@@ -320,6 +320,8 @@ def _trace_table(record):
         ("Solver uncached input", "model_uncached_input_tokens"),
         ("Solver cache reads", "model_cache_read_tokens"),
         ("Solver cache writes", "model_cache_write_tokens"),
+        ("Solver five-minute cache writes", "model_cache_write_5m_tokens"),
+        ("Solver one-hour cache writes", "model_cache_write_1h_tokens"),
         ("Solver output", "model_output_tokens"),
         ("Loom provider input", "loom_provider_input_tokens"),
         ("Loom provider output", "loom_provider_output_tokens"),
@@ -352,6 +354,9 @@ def _summary(slots, observed):
         "expected": len(slots),
         "observed": len(records),
         "pending": len(slots) - len(records),
+        "cache_starts_verified": sum(r.get("cache_start_verified") is True for r in records)
+        if any("cache_start" in slot for slot in slots)
+        else None,
         "resolved": sum(r["resolved"] for r in records),
         "success_rate": sum(r["resolved"] for r in records) / len(slots)
         if complete and slots
@@ -411,13 +416,16 @@ def _number(value, digits=3):
     return "pending / unknown" if value is None else f"{value:.{digits}f}"
 
 
-def _table(arms):
+def _table(arms, *, cache_starts=False):
     lines = [
         "| Arm | Observed / expected | Pending | Resolved | Solver USD | Observed provider USD "
         "| Equal cold USD | Equal warm USD "
         "| Mean full end-to-end (s) | Mean native Harbor (s) |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
+    if cache_starts:
+        lines[0] += " Cache starts verified |"
+        lines[1] += "---:|"
     for arm, info in arms.items():
         lines.append(
             f"| {arm} | {info['observed']} / {info['expected']} | {info['pending']} "
@@ -428,6 +436,8 @@ def _table(arms):
             f"| {_number(info['mean_end_to_end_s'])} "
             f"| {_number(info['mean_native_duration_s'])} |"
         )
+        if cache_starts:
+            lines[-1] += f" {info['cache_starts_verified']} / {info['observed']} |"
     return "\n".join(lines) + (
         "\n\nEqual-cache estimates reprice the first solver input as a full five-minute "
         "cache write or a full cache read. Later turns and Loom charges use the recorded values.\n"
@@ -436,7 +446,8 @@ def _table(arms):
 
 def _cache_tables(cache_arms):
     return "\n".join(
-        f"## {state.capitalize()} start\n\n" + _table(arms) for state, arms in cache_arms.items()
+        f"## Planned {state} start\n\n" + _table(arms, cache_starts=True)
+        for state, arms in cache_arms.items()
     )
 
 
@@ -561,6 +572,14 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             )
             if entry:
                 record = entry["result"]
+                if "cache_start" in slot:
+                    verification = (
+                        "verified" if record.get("cache_start_verified") is True else "unverified"
+                    )
+                    text += (
+                        f"Planned {slot['cache_start']} start. "
+                        f"Provider cache state {verification}.\n\n"
+                    )
                 text += (
                     f"Resolved: {record['resolved']}. "
                     f"Full end-to-end: {_number(record['end_to_end_s'])}s. "

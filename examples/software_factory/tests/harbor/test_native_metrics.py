@@ -22,7 +22,12 @@ class NativeMeasurements(TestCase):
                 "function_name": "mcp__loom__loom_code_search",
                 "arguments": {},
             }
-            metrics = {"prompt_tokens": 80, "cached_tokens": 70, "completion_tokens": 5}
+            metrics = {
+                "prompt_tokens": 80,
+                "cached_tokens": 70,
+                "completion_tokens": 5,
+                "extra": {"cache_read_input_tokens": 70},
+            }
             trajectory = {
                 "agent": {"name": "claude-code", "version": "pinned"},
                 "steps": [
@@ -76,7 +81,7 @@ class NativeMeasurements(TestCase):
             self.assertEqual(row["loom_tool_calls"], 2)
             self.assertEqual(row["model_total_tokens"], 105)
             self.assertEqual(row["model_cache_read_tokens"], 70)
-            self.assertEqual(row["model_cache_write_tokens"], 20)
+            self.assertIsNone(row["model_cache_write_tokens"])
             self.assertEqual(row["first_cache_read_tokens"], 70)
             self.assertIsNone(row["first_cache_write_tokens"])
             self.assertEqual(row["generation_cost_usd"], 0.02)

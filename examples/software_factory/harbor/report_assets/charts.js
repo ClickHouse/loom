@@ -296,6 +296,8 @@ function extraMetrics(rows) {
   const metrics = [
     ...data.metrics.filter((m) => !["resolved", "cost", "agent_seconds"].includes(m.key)),
     ...tokenParts.map(([key, title]) => ({ key, title: `Solver ${title}`, kind: "count" })),
+    { key: "model_cache_write_5m_tokens", title: "Solver five-minute cache writes", kind: "count" },
+    { key: "model_cache_write_1h_tokens", title: "Solver one-hour cache writes", kind: "count" },
     { key: "loom_provider_input_tokens", title: "Loom provider input", kind: "count" },
     { key: "loom_provider_output_tokens", title: "Loom provider output", kind: "count" },
     { key: "seconds", title: "End-to-end time", kind: "time" },

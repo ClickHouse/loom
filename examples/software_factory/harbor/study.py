@@ -591,6 +591,8 @@ def export(protocol: dict, job_name="live") -> dict:
             "model_total_tokens",
             "model_cache_read_tokens",
             "model_cache_write_tokens",
+            "model_cache_write_5m_tokens",
+            "model_cache_write_1h_tokens",
             "first_prompt_input_tokens",
             "first_uncached_input_tokens",
             "first_cache_read_tokens",

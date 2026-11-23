@@ -130,6 +130,8 @@ def chart_data(protocol, entries, views_manifest):
                         "model_output_tokens",
                         "model_cache_read_tokens",
                         "model_cache_write_tokens",
+                        "model_cache_write_5m_tokens",
+                        "model_cache_write_1h_tokens",
                         "first_cache_read_tokens",
                         "first_cache_write_tokens",
                         "first_prompt_input_tokens",
