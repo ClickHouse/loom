@@ -421,7 +421,8 @@ function render() {
     `${new Set(complete.map((row) => row.task)).size} / ${new Set(rows.map((row) => row.task)).size}`;
   byId("progress").textContent = `${complete.length} / ${rows.length}`;
   byId("error-count").textContent = rows.filter((row) => row.state === "error").length;
-  const comparison = data.complete && paired.length === rows.length ? reportLink(data.comparison_url) : null;
+  const nativeComparison = data.comparison_by_cache_start?.[byId("cache-start").value] ?? data.comparison_url;
+  const comparison = data.complete && paired.length === rows.length ? reportLink(nativeComparison) : null;
   byId("comparison").hidden = !comparison;
   if (comparison) byId("comparison").href = comparison;
   summary(paired, rows);

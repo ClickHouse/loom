@@ -16,7 +16,7 @@ from statistics import fmean
 from urllib.parse import quote, urlencode
 from uuid import UUID, uuid5
 
-from .arms import CONTROLS, PRIMARY
+from .arms import CACHE_STARTS, CONTROLS, PRIMARY
 from .cache_start import pair_usage
 from .cohorts import comparison_cohorts
 
@@ -147,7 +147,11 @@ def _copy_trial(source, destination, raw, slot, protocol):
         "arm": slot["arm"],
         "task_id": slot["task_id"],
         "repeat": slot["repeat"],
-        **({"cache_start": slot["cache_start"]} if "cache_start" in slot else {}),
+        **(
+            {"cache_start": slot["cache_start"]}
+            if "cache_start" in slot and not slot.get("pilot")
+            else {}
+        ),
         "source_trial": str(source),
         "original_trial_id": raw["id"],
         "original_trial_name": raw["trial_name"],
@@ -507,6 +511,42 @@ def generate_reports(protocol, entries, *, job_name="live"):
         return _generate(protocol, entries, output, jobs, base, names, job_name)
 
 
+def _native_groups(groups, names):
+    view_groups, view_names, view_by_order = {}, {}, {}
+    for group, slots in groups.items():
+        if not slots:
+            view_groups[group], view_names[group] = [], names[group]
+        for slot in slots:
+            suffix = (
+                f"-{slot['cache_start']}" if "cache_start" in slot and not slot.get("pilot") else ""
+            )
+            key = group + suffix
+            view_by_order[str(slot["order"])] = key
+            view_names[key] = names[group] + suffix
+            view_groups.setdefault(key, []).append(slot)
+    return view_groups, view_names, view_by_order
+
+
+def _native_links(schedule, names, base):
+    first = next(iter(schedule), {})
+    suffixes = CACHE_STARTS if "cache_start" in first and not first.get("pilot") else ("",)
+    links, comparisons = {}, {}
+    for state in suffixes:
+        suffix = f"-{state}" if state else ""
+        query = urlencode([("job", names[arm + suffix]) for arm in PRIMARY_VIEWS])
+        url = base + "/compare?" + query
+        comparisons[state] = url
+        stem = f"{state} " if state else ""
+        links.update(
+            {
+                f"{stem}comparison": url,
+                f"{stem}cost": url + "&color=cost",
+                f"{stem}native_time": url + "&color=time",
+            }
+        )
+    return links, comparisons
+
+
 def _generate(protocol, entries, output, jobs, base, names, job_name):
     from examples.software_factory.harbor.charts import generate_charts
 
@@ -539,18 +579,16 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         record["native_duration_s"] = (finish - start).total_seconds()
         observed[order] = {"order": order, "result": record}
     groups = _groups(schedule)
-    native = _native_views(protocol, observed, groups, jobs, names, job_name)
-    comparison_query = urlencode([("job", names[arm]) for arm in PRIMARY_VIEWS])
-    links = {
-        "comparison": base + "/compare?" + comparison_query,
-        "cost": base + "/compare?" + comparison_query + "&color=cost",
-        "native_time": base + "/compare?" + comparison_query + "&color=time",
-    }
+    view_groups, view_names, view_by_order = _native_groups(groups, names)
+    native = _native_views(protocol, observed, view_groups, jobs, view_names, job_name)
+    links, comparisons = _native_links(schedule, view_names, base)
     views_manifest = {
         "kind": VIEW_KIND,
         "source_job": str(output / "jobs" / job_name),
         "viewer_jobs_root": str(jobs),
         "views": native["views"],
+        "comparison_by_cache_start": comparisons if "" not in comparisons else {},
+        "view_by_order": view_by_order,
         "links": links,
         "observed_attempts": len(observed),
         "complete": len(observed) == len(schedule),
@@ -570,7 +608,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
     for slot in schedule:
         order = slot["order"]
         entry = observed.get(order)
-        group = slot["arm"] if slot["arm"] in PRIMARY_VIEWS else "aa-controls"
+        view_name = view_names[view_by_order[str(order)]]
         item = {**slot, "state": "observed" if entry else "pending", "metrics": None, "links": {}}
         if entry:
             record = entry["result"]
@@ -578,12 +616,12 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             prefix = (
                 base
                 + "/api/jobs/"
-                + quote(names[group], safe="")
+                + quote(view_name, safe="")
                 + "/trials/"
                 + quote(folder.name, safe="")
             )
             item["metrics"] = record
-            item["links"] = {"native_job": base + "/jobs/" + quote(names[group], safe="")}
+            item["links"] = {"native_job": base + "/jobs/" + quote(view_name, safe="")}
             assets = {
                 "trajectory": ("agent/trajectory.json", prefix + "/trajectory"),
                 "verifier": ("verifier/grade.json", prefix + "/files/verifier/grade.json"),
@@ -818,7 +856,10 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
     text += " · ".join(f"[{key}]({value})" for key, value in links.items())
     for family, cohort in cohort_reports.items():
         if family != cohorts["default"]:
-            text += "\n\n## " + cohort["label"] + "\n\n" + _table(cohort["arms"])
+            text += "\n\n## " + cohort["label"] + "\n\n"
+            text += (
+                _cache_tables(cohort["cache_start_arms"]) if cache_pairs else _table(cohort["arms"])
+            )
     text += (
         "\n\nA/A controls are separate: "
         + str(controls["observed"])

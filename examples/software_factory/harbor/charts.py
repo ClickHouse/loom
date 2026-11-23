@@ -82,7 +82,8 @@ def chart_data(protocol, entries, views_manifest):
         if slot["arm"] not in ARMS:
             continue
         result = observed.get(slot["order"])
-        view = views_manifest.get("views", {}).get(slot["arm"], {})
+        key = views_manifest.get("view_by_order", {}).get(str(slot["order"]), slot["arm"])
+        view = views_manifest.get("views", {}).get(key, {})
         row = {
             "order": slot["order"],
             "task": slot["task_id"],
@@ -185,6 +186,7 @@ def chart_data(protocol, entries, views_manifest):
         "interruption_reason": views_manifest.get("interruption_reason", ""),
         "evaluation_complete": evaluation_complete,
         "comparison_url": views_manifest.get("links", {}).get("comparison"),
+        "comparison_by_cache_start": views_manifest.get("comparison_by_cache_start", {}),
         "target_reduction": 0.20,
         "cost_note": "Provider cost combines the solver-reported cost (or Harbor's fallback "
         "estimate) and paid model calls recorded by Loom, including failed attempts. "
@@ -228,13 +230,17 @@ def generate_charts(protocol, entries, views_manifest):
         atomic(target / (name + ".json"), encoded + "\n")
         index = target / "index.json"
         registry = json.loads(index.read_text()) if index.exists() else {"runs": {}}
+        by_order = views_manifest.get("view_by_order", {})
+        primary_keys = {by_order.get(str(row["order"]), row["arm"]) for row in data["attempts"]}
         registry["runs"][name] = {
             "name": data["name"],
             "observed": data["observed"],
             "scheduled": data["scheduled"],
             "url": "/assets/factory-charts/" + name + ".html",
             "jobs": [
-                v["job_name"] for k, v in views_manifest.get("views", {}).items() if k in ARMS
+                v["job_name"]
+                for k, v in views_manifest.get("views", {}).items()
+                if k in primary_keys
             ],
         }
         atomic(index, json.dumps(registry, ensure_ascii=False) + "\n")
