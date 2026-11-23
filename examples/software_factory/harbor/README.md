@@ -31,6 +31,14 @@ source bodies or lesson excerpts. Model turns and tool requests are separate
 counts; several tools can share a model response. Native trajectories remain
 authoritative for global counts including subagents.
 
+`diagnostics/attempt-NN-code-traces.json` preserves the existing code-search trace
+rows named by that attempt's returned trace ids, scoped to its source namespace.
+It retains routes, index revision, result counts and per-stage timings, without
+queries, paths, source or lesson text. Missing asynchronous trace rows remain
+explicitly partial and are checked again before cleanup. Stages can overlap;
+their sum is not request wall time. These snapshots do not require a remote trace
+exporter and do not replace the existing OpenTelemetry integration.
+
 Provider-ledger evidence is captured at each attempt end and again before cleanup.
 It includes request and trace ids, serving build and bounded ledger arguments for
 joining the existing Loom traces. A failed capture leaves billing unknown and a

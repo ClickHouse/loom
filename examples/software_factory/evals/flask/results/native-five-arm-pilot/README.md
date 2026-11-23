@@ -69,6 +69,14 @@ dropped-context defect is demonstrated.
 
 ## Cache and timing limits
 
+Tree-sitter with memory costs 40.1% more than tree-sitter alone while taking
+11.4% less agent time. Its cache writes cost USD 0.09744 more; all remaining
+token components together cost USD 0.0155698 less, leaving the observed
+USD 0.0818702 penalty. Its first input has zero cache-read tokens, compared with
+18,093 for tree-sitter alone. The first-input sizes are nearly equal: 22,582 and
+22,593 tokens. This explains the accounting difference; it does not establish
+a causal memory penalty or permit subtracting charges from the reported cost.
+
 Prompt-cache state differs between attempts. Keeping every later token unchanged,
 the predeclared initial-input sensitivity places tree-sitter-memory at 3.9% above
 baseline if both initial prompts are cold, or 6.7% below if both are warm. SCIP-memory

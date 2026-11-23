@@ -20,6 +20,18 @@ assistant can still miss a required change after reading its definition.
 
 ## Evidence boundaries
 
+In the retained callback pilot, both memory arms receive six file-level lessons
+once, totaling 1,364 excerpt characters. One excerpt names a matched definition;
+the other five discuss methods outside that matched set. This follows the current
+file-level contract. Evaluate the precision of code-linked context separately
+from whether the server delivered every row. A narrower read must preserve
+applicable constraints and keep broader file context accessible.
+
+The original upstream hidden callback test also exercises teardown ordering.
+The public issue names four earlier callback types. Keep that grading scope
+visible in the analysis, preserve the original issue and test, and do not turn
+the hidden failure into extra agent instructions or historical facts.
+
 The two index tiers use the same source base, issue, model and grader. Prompt-cache
 state, call grouping, generated patch and verification choices can differ between
 attempts. A difference between parser and compiler arms does not

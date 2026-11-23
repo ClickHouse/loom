@@ -665,6 +665,7 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
         summary = export(protocol, kind)
         if kind == "live":
             from .native_trace import summarize
+            from .trace_capture import capture
 
             diagnostics = output / "diagnostics"
             diagnostics.mkdir(exist_ok=True)
@@ -672,6 +673,10 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
             await asyncio.to_thread(
                 audit_provider_costs, protocol, read(output / "live-attempts.json")
             )
+            entry = next(
+                row for row in read(output / "live-attempts.json") if row["order"] == order
+            )
+            await asyncio.to_thread(capture, protocol, entry)
             summary = export(protocol, kind)
         print(
             json.dumps(

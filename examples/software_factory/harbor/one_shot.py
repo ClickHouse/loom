@@ -130,7 +130,12 @@ def preserve_ledger(output):
 
         frozen = read(protocol)
         verify(frozen)
-        receipt = audit_provider_costs(frozen, read(attempts))
+        entries = read(attempts)
+        receipt = audit_provider_costs(frozen, entries)
+        from .trace_capture import capture
+
+        for entry in entries:
+            capture(frozen, entry)
         write(
             output / "ledger-preservation.json",
             {
