@@ -6,7 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from examples.software_factory.evals.flask.historical import FrozenSource, fixture_path, git
+from examples.software_factory.evals.flask.historical import (
+    FrozenSource,
+    HistoricalGrader,
+    fixture_path,
+    git,
+)
+from examples.software_factory.factory.workspace import Checkout
 
 
 class FixtureExportTests(unittest.TestCase):
@@ -52,6 +58,30 @@ class FixtureExportTests(unittest.TestCase):
         source = FrozenSource(self.root, self.commit())
         with self.assertRaises(PermissionError):
             source.fixtures()
+
+    def test_standalone_grader_restores_frozen_fixtures(self):
+        self.put("src/flask/example.py", b"x = 1\n")
+        fixture = "tests/test_apps/.flaskenv"
+        self.put(fixture, b"PUBLIC_FIXTURE=1\n")
+        source = FrozenSource(self.root, self.commit())
+        self.put(fixture, b"FUTURE_CHANGE=2\n")
+        task = source.task(
+            {
+                "task_id": "fixture-check",
+                "repository": "pallets/flask",
+                "base_commit": source.commit,
+                "problem": "Read the tracked fixture.",
+            },
+            "fixture-test",
+            "example",
+        )
+        checkout = Checkout(self.root / "candidate", task)
+        grader = HistoricalGrader(source, "unused", [], [], "", self.root / "grade")
+        with patch("examples.software_factory.evals.flask.historical.DockerTests") as runner:
+            runner.return_value.run.return_value = {"passed": True}
+            grader.run(checkout)
+        workspace = runner.return_value.run.call_args.args[0]
+        self.assertEqual((workspace / fixture).read_bytes(), b"PUBLIC_FIXTURE=1\n")
 
     def test_task_evidence_is_public_text_at_the_exact_base(self):
         self.put("src/flask/example.py", b"x = 1\n")

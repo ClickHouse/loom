@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import resource
@@ -15,10 +14,10 @@ import time
 from pathlib import Path
 
 from examples.software_factory.evals.flask.historical import (
-    fixture_path,
     junit_statuses,
     ordinary,
     selected_statuses,
+    validate_fixtures,
 )
 from examples.software_factory.factory.model import digest
 
@@ -42,21 +41,6 @@ def child_limits():
         os.setgroups([])
         os.setgid(65534)
         os.setuid(65534)
-
-
-def validate_fixtures(fixtures: dict, base: dict, expected: str) -> dict[str, bytes]:
-    if digest(fixtures) != expected:
-        raise PermissionError("Evaluator fixtures differ from the frozen source")
-    restored, total = {}, 0
-    for name, encoded in fixtures.items():
-        if not fixture_path(name) or name in base or name.startswith("src/flask/"):
-            raise PermissionError("Evaluator fixture overlaps source or escapes its workspace")
-        content = base64.b64decode(encoded, validate=True)
-        total += len(content)
-        if len(content) > 1024 * 1024 or total > 20 * 1024 * 1024:
-            raise ValueError("Evaluator fixture exceeds the source bound")
-        restored[name] = content
-    return restored
 
 
 def stage_candidate(candidate_path: Path) -> tuple[dict, dict, Path]:

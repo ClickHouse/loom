@@ -55,6 +55,21 @@ def fixture_path(name: str) -> bool:
     )
 
 
+def validate_fixtures(fixtures: dict, base: dict, expected: str) -> dict[str, bytes]:
+    if digest(fixtures) != expected:
+        raise PermissionError("Evaluator fixtures differ from the frozen source")
+    restored, total = {}, 0
+    for name, encoded in fixtures.items():
+        if not fixture_path(name) or name in base or name.startswith("src/flask/"):
+            raise PermissionError("Evaluator fixture overlaps source or escapes its workspace")
+        content = base64.b64decode(encoded, validate=True)
+        total += len(content)
+        if len(content) > 1024 * 1024 or total > 20 * 1024 * 1024:
+            raise ValueError("Evaluator fixture exceeds the source bound")
+        restored[name] = content
+    return restored
+
+
 def git(root: Path, *args: str, data: bytes | None = None) -> bytes:
     root = root.resolve(strict=True)
     env = {
@@ -500,6 +515,12 @@ class HistoricalGrader:
                     ):
                         raise PermissionError("Hidden patch changes an evaluation-external file")
             git(workspace, "apply", "-", data=self.hidden_test_patch.encode())
+        fixtures = self.source.fixtures()
+        for name, content in validate_fixtures(fixtures, self.base, digest(fixtures)).items():
+            target = workspace / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("xb") as stream:
+                stream.write(content)
         runner = DockerTests(
             self.image,
             self.hidden if hidden else self.visible,

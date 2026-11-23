@@ -56,6 +56,10 @@ arm cannot establish a general quality benefit or a reliable efficiency gain.
 Retain every development result and require separate confirmation before making a
 public benefit claim.
 
+The standalone verifier restores the same tracked dotfiles and binary fixtures as
+the native grader. Missing dotfiles can fail CLI tests on both the base and
+reference. Check the source fixtures before changing test selectors.
+
 ## Observability
 
 Native Harbor trajectories supply global tool counts and model usage. Main-session
