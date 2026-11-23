@@ -247,6 +247,8 @@ Tree-sitter modules import lazily, so a server with the code workers off boots w
 | `file_header`    | Leading comments and includes.                                                                              |
 | `other`          | The rest, grouped.                                                                                          |
 
+Python search responses omit a prefixed class docstring when the skeleton already contains its text.
+
 Files without a tree fall back to whole-line windows; lanes without a grammar cut on
 their symbol spans (`lane_units.span_chunks`). A chunk id is
 `uuid5("loom://code/{namespace}/{path}#{scope}@{sha16}")`. It is content-addressed, so

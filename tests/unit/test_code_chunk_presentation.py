@@ -23,6 +23,56 @@ def test_a_doc_prefix_already_in_the_source_is_served_once() -> None:
     assert row["content"] == "Build the route.\n" + source
 
 
+@pytest.mark.parametrize("quote", ['"""', "'''"])
+@pytest.mark.parametrize("prefix", ["Routes and", "Routes and handlers.", "Continuation context"])
+def test_python_class_skeleton_keeps_its_source_docstring(quote: str, prefix: str) -> None:
+    source = (
+        "class Router(Base):\n"
+        f"    {quote}Routes and handlers.{quote}\n"
+        "    def route(self):\n"
+        "    # … body elided (indexed as its own chunk) …\n"
+    )
+    unit = unit_from_chunk(
+        {
+            "path": "routes.py",
+            "scope": "routes::Router",
+            "kind": "class_skeleton",
+            "start_line": 10,
+            "end_line": 28,
+            "content": prefix + "\n" + source,
+        }
+    )
+    served, tokens = budget_units([unit], 0)
+    expected = unit.body if prefix == "Continuation context" else source
+    assert served[0].body == expected
+    assert served[0].pointer == unit.pointer
+    assert tokens == estimate_unit_tokens(served[0])
+    assert unit.body == prefix + "\n" + source
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'class Router:\n    class Router:\n        """class Router:"""\n',
+        "# … continued from class Router:\n    class Router:\n"
+        '        """# … continued from class Router:"""\n',
+    ],
+)
+def test_nested_class_docstring_keeps_its_outer_context(source: str) -> None:
+    unit = unit_from_chunk(
+        {
+            "path": "routes.py",
+            "scope": "routes::Router",
+            "kind": "class_skeleton",
+            "start_line": 1,
+            "end_line": 3,
+            "content": source,
+        }
+    )
+    served, _ = budget_units([unit], 0)
+    assert served[0].body == source
+
+
 @pytest.mark.parametrize(
     "prefix",
     ["# … continued from def route():\n", "The route belongs to the public API.\n", ""],
