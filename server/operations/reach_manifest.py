@@ -8,8 +8,15 @@ this table from the tree and fails when it drifts."""
 from __future__ import annotations
 
 STATIC_REACH: dict[str, tuple[str, ...]] = {
-    "admin.users": ("dashboard",),
-    "agents.connected": ("dashboard",),
+    "admin.users": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "agents.connected": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "assistant.ask": ("sdk_method",),
     "audit.list": (
         "sdk_method",
         "dashboard",
@@ -26,15 +33,23 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "blacklist.sweep": ("dashboard",),
+    "blacklist.sweep": (
+        "sdk_method",
+        "dashboard",
+    ),
     "calibration.get": (
         "sdk_method",
         "dashboard",
     ),
+    "code.ask": ("sdk_method",),
     "code.backport_gap": ("sdk_method",),
     "code.backport_gaps": ("sdk_method",),
+    "code.bisect_candidates": ("sdk_method",),
     "code.blame_range": ("sdk_method",),
-    "code.calibrate": ("sdk_example",),
+    "code.calibrate": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "code.callees": (
         "sdk_method",
         "dashboard",
@@ -59,6 +74,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "code.coverage.unwatch": ("sdk_method",),
     "code.coverage.watch": ("sdk_method",),
+    "code.coverage_claim": ("sdk_method",),
     "code.enclosing": (
         "sdk_method",
         "plugin_hook",
@@ -72,7 +88,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "plugin_hook",
     ),
-    "code.index_errors": ("dashboard",),
+    "code.index_errors": (
+        "sdk_method",
+        "dashboard",
+    ),
     "code.index_status": (
         "sdk_method",
         "plugin_hook",
@@ -88,48 +107,96 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "plugin_hook",
     ),
     "code.outline": ("sdk_method",),
+    "code.path_guards": ("sdk_method",),
     "code.pr_check": ("sdk_method",),
-    "code.recent_commits": ("dashboard",),
-    "code.refresh": ("dashboard",),
-    "code.reindex": ("dashboard",),
-    "code.repo.add": ("dashboard",),
-    "code.repo.add_branch": ("dashboard",),
-    "code.repo.remote_branches": ("dashboard",),
-    "code.repo.remove": ("dashboard",),
-    "code.repo.set_access": ("dashboard",),
-    "code.repo.set_source": ("dashboard",),
+    "code.recent_commits": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "code.refresh": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "code.reindex": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "code.repo.add": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "code.repo.add_branch": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "code.repo.remote_branches": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "code.repo.remove": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "code.repo.set_access": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "code.repo.set_source": (
+        "sdk_method",
+        "dashboard",
+    ),
     "code.repos": (
         "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
     "code.review_brief": ("sdk_method",),
-    "code.scip_ingest": ("sdk_example",),
-    "code.scip_status": ("sdk_example",),
+    "code.scip_ingest": (
+        "sdk_method",
+        "sdk_example",
+    ),
+    "code.scip_status": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "code.search": (
         "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
+    "code.setting_facts": ("sdk_method",),
     "code.symbol": (
         "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
+    "code.symbol_history": ("sdk_method",),
     "code.test_gate": (
         "sdk_method",
         "plugin_hook",
     ),
+    "code.test_home": ("sdk_method",),
+    "code.tests_for": ("sdk_method",),
     "code.trace": ("sdk_method",),
     "code.verify": ("sdk_method",),
     "code.verify_citations": ("sdk_method",),
-    "collection.create": ("dashboard",),
-    "collection.delete": ("dashboard",),
+    "collection.create": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "collection.delete": (
+        "sdk_method",
+        "dashboard",
+    ),
     "collection.list": (
+        "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
-    "collection.move": ("dashboard",),
+    "collection.move": (
+        "sdk_method",
+        "dashboard",
+    ),
     "conflicts.allowlist_list": (
         "sdk_method",
         "dashboard",
@@ -142,14 +209,26 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "conflicts.propose_revision": ("dashboard",),
+    "conflicts.propose_revision": (
+        "sdk_method",
+        "dashboard",
+    ),
     "conflicts.resolve": (
         "sdk_method",
         "dashboard",
     ),
-    "connection.disconnect": ("dashboard",),
-    "connection.list": ("dashboard",),
-    "consolidations.list": ("dashboard",),
+    "connection.disconnect": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "connection.list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "consolidations.list": (
+        "sdk_method",
+        "dashboard",
+    ),
     "context.fetch": ("sdk_method",),
     "context.offload": ("sdk_method",),
     "context.pack": (
@@ -162,6 +241,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_example",
         "plugin_hook",
     ),
+    "conversation.compact": ("sdk_method",),
     "conversation.create": (
         "sdk_method",
         "sdk_example",
@@ -180,19 +260,39 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "conversation.list_saved_messages": ("sdk_method",),
+    "conversation.save_message": ("sdk_method",),
+    "conversation.saved_status": ("sdk_method",),
     "conversation.search": (
         "sdk_method",
         "dashboard",
     ),
-    "conversation.set_logging": ("dashboard",),
-    "conversation.threads": ("dashboard",),
+    "conversation.search_saved_messages": ("sdk_method",),
+    "conversation.set_logging": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "conversation.threads": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "conversation.unsave_message": ("sdk_method",),
     "conversation.update": (
         "sdk_method",
         "dashboard",
     ),
-    "cost.agent_summary": ("dashboard",),
-    "cost.budget_status": ("dashboard",),
-    "cost.record_turns": ("plugin_hook",),
+    "cost.agent_summary": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "cost.budget_status": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "cost.record_turns": (
+        "sdk_method",
+        "plugin_hook",
+    ),
     "cost.summary": (
         "sdk_method",
         "dashboard",
@@ -208,7 +308,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "erasure.list": ("dashboard",),
+    "erasure.list": (
+        "sdk_method",
+        "dashboard",
+    ),
     "erasure.request": (
         "sdk_method",
         "dashboard",
@@ -217,10 +320,22 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "extraction_policy.clear": ("dashboard",),
-    "extraction_policy.get": ("dashboard",),
-    "extraction_policy.set": ("dashboard",),
-    "facts.expire_by_adapter": ("dashboard",),
+    "extraction_policy.clear": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "extraction_policy.get": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "extraction_policy.set": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "facts.expire_by_adapter": (
+        "sdk_method",
+        "dashboard",
+    ),
     "facts.list": (
         "sdk_method",
         "dashboard",
@@ -237,7 +352,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "grants.approve": ("dashboard",),
+    "grants.approve": (
+        "sdk_method",
+        "dashboard",
+    ),
     "grants.create": (
         "sdk_method",
         "plugin_hook",
@@ -247,22 +365,48 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "grants.pending_for_me": ("dashboard",),
+    "grants.pending_for_me": (
+        "sdk_method",
+        "dashboard",
+    ),
     "grants.revoke": (
         "sdk_method",
         "dashboard",
     ),
+    "grants.share_agent": ("sdk_method",),
+    "grants.unshare_agent": ("sdk_method",),
     "help.get": (
+        "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
-    "help.search": ("plugin_hook",),
-    "inbox.list": ("dashboard",),
-    "inbox.policy_list": ("dashboard",),
-    "inbox.policy_set": ("dashboard",),
-    "inbox.principals": ("dashboard",),
-    "inbox.register": ("dashboard",),
+    "help.search": (
+        "sdk_method",
+        "plugin_hook",
+    ),
+    "inbox.list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "inbox.policy_list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "inbox.policy_set": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "inbox.principals": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "inbox.register": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "insights.catalog": ("sdk_method",),
     "insights.query": (
+        "sdk_method",
         "sdk_example",
         "plugin_hook",
     ),
@@ -277,8 +421,14 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "knowledge.dataset_approve": ("dashboard",),
-    "knowledge.dataset_get": ("dashboard",),
+    "knowledge.dataset_approve": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.dataset_get": (
+        "sdk_method",
+        "dashboard",
+    ),
     "knowledge.dedup_list": (
         "sdk_method",
         "dashboard",
@@ -292,9 +442,18 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_example",
         "dashboard",
     ),
-    "knowledge.formats": ("dashboard",),
-    "knowledge.gaps.draft": ("dashboard",),
-    "knowledge.gaps.list": ("dashboard",),
+    "knowledge.formats": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.gaps.draft": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.gaps.list": (
+        "sdk_method",
+        "dashboard",
+    ),
     "knowledge.get": (
         "sdk_method",
         "plugin_hook",
@@ -313,20 +472,39 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "knowledge.inspect": ("dashboard",),
+    "knowledge.inspect": (
+        "sdk_method",
+        "dashboard",
+    ),
     "knowledge.list": (
         "sdk_method",
         "dashboard",
     ),
-    "knowledge.move": ("dashboard",),
+    "knowledge.move": (
+        "sdk_method",
+        "dashboard",
+    ),
     "knowledge.outline": (
         "sdk_method",
         "plugin_hook",
     ),
-    "knowledge.query_history.add": ("dashboard",),
-    "knowledge.query_history.list": ("dashboard",),
-    "knowledge.query_history.remove": ("dashboard",),
-    "knowledge.reads": ("dashboard",),
+    "knowledge.query": ("sdk_method",),
+    "knowledge.query_history.add": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.query_history.list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.query_history.remove": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.reads": (
+        "sdk_method",
+        "dashboard",
+    ),
     "knowledge.restore": (
         "sdk_method",
         "dashboard",
@@ -337,18 +515,53 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "plugin_hook",
         "dashboard",
     ),
-    "knowledge.source.add": ("dashboard",),
-    "knowledge.source.check": ("dashboard",),
-    "knowledge.source.inspect": ("dashboard",),
-    "knowledge.source.list": ("dashboard",),
-    "knowledge.source.push_configure": ("dashboard",),
-    "knowledge.source.push_confirm": ("dashboard",),
-    "knowledge.source.push_status": ("dashboard",),
-    "knowledge.source.remove": ("dashboard",),
-    "knowledge.source.rotate": ("dashboard",),
-    "knowledge.source.sync_now": ("dashboard",),
+    "knowledge.source.add": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.source.check": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.source.inspect": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.source.list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.source.parse_links": ("sdk_method",),
+    "knowledge.source.push_configure": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.source.push_confirm": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.source.push_status": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.source.remove": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.source.rotate": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.source.sync_now": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "knowledge.source.update": ("sdk_method",),
     "knowledge.synthesize": ("sdk_method",),
-    "knowledge.update_metadata": ("dashboard",),
+    "knowledge.update_metadata": (
+        "sdk_method",
+        "dashboard",
+    ),
     "knowledge.upsert": (
         "sdk_method",
         "sdk_example",
@@ -359,19 +572,32 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "learnings.quality": ("dashboard",),
+    "learnings.quality": (
+        "sdk_method",
+        "dashboard",
+    ),
     "learnings.review": (
         "sdk_method",
         "dashboard",
     ),
-    "memory.agents_list": ("dashboard",),
+    "memory.agents_list": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.aggregate": ("sdk_method",),
     "memory.append_batch": ("sdk_method",),
     "memory.apply": ("sdk_method",),
     "memory.ask": ("sdk_method",),
     "memory.assign_category": ("sdk_method",),
-    "memory.auto_retirements": ("dashboard",),
-    "memory.backlinks": ("dashboard",),
+    "memory.auto_retirements": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.backlinks": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.brief": ("sdk_method",),
     "memory.bulk_get": (
         "sdk_method",
         "dashboard",
@@ -384,8 +610,15 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "memory.consolidate": ("dashboard",),
-    "memory.copy_to": ("dashboard",),
+    "memory.consolidate": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.copy_to": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.cross_promote": ("sdk_method",),
     "memory.dedup_collapse": (
         "sdk_method",
         "dashboard",
@@ -398,24 +631,39 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "memory.definitions.list": ("sdk_method",),
     "memory.delete": (
         "sdk_method",
         "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
+    "memory.delete_version": ("sdk_method",),
     "memory.demonstrate": ("sdk_method",),
     "memory.demote": (
         "sdk_method",
         "dashboard",
     ),
-    "memory.evidence": ("dashboard",),
-    "memory.exposure_summary": ("dashboard",),
+    "memory.digests": ("sdk_method",),
+    "memory.evidence": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.export_evidence": ("sdk_method",),
+    "memory.exposure_summary": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.extraction_retry_mine": ("sdk_method",),
     "memory.extraction_status": (
         "sdk_method",
         "dashboard",
     ),
-    "memory.for_file": ("plugin_hook",),
+    "memory.extraction_status_mine": ("sdk_method",),
+    "memory.for_file": (
+        "sdk_method",
+        "plugin_hook",
+    ),
     "memory.get": (
         "sdk_method",
         "sdk_example",
@@ -426,18 +674,28 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "memory.health": ("dashboard",),
+    "memory.health": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.history": (
         "sdk_method",
         "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
-    "memory.import_curated": ("dashboard",),
+    "memory.import": ("sdk_method",),
+    "memory.import_curated": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.import_evidence": ("sdk_method",),
     "memory.inspect": (
+        "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
+    "memory.keys": ("sdk_method",),
     "memory.lineage": (
         "sdk_method",
         "dashboard",
@@ -452,13 +710,20 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "memory.move": ("dashboard",),
+    "memory.move": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.outcome": (
         "sdk_method",
         "dashboard",
     ),
     "memory.outcome_run": ("sdk_method",),
-    "memory.owner_report": ("dashboard",),
+    "memory.outline": ("sdk_method",),
+    "memory.owner_report": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.pin": (
         "sdk_method",
         "dashboard",
@@ -467,8 +732,14 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "memory.proposal_decide": ("dashboard",),
-    "memory.proposals": ("dashboard",),
+    "memory.proposal_decide": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.proposals": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.provenance": (
         "sdk_method",
         "dashboard",
@@ -491,13 +762,22 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "memory.reindex": ("dashboard",),
-    "memory.reject": ("dashboard",),
+    "memory.reindex": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.reject": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.related": (
         "sdk_method",
         "dashboard",
     ),
-    "memory.resolve_orphan_duplicates": ("dashboard",),
+    "memory.resolve_orphan_duplicates": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.restore": (
         "sdk_method",
         "dashboard",
@@ -524,15 +804,25 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_example",
         "plugin_hook",
     ),
-    "memory.statuses": ("dashboard",),
-    "memory.sweep_expired": ("dashboard",),
+    "memory.stack": ("sdk_method",),
+    "memory.statuses": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "memory.sweep_expired": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.timeline": ("sdk_method",),
     "memory.touch": ("sdk_method",),
     "memory.unlock": (
         "sdk_method",
         "dashboard",
     ),
-    "memory.unpin": ("dashboard",),
+    "memory.unpin": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory.update": ("sdk_method",),
     "memory.update_by_id": (
         "sdk_method",
@@ -542,22 +832,37 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "memory_schema.approve": ("dashboard",),
+    "memory_schema.approve": (
+        "sdk_method",
+        "dashboard",
+    ),
     "memory_schema.list": (
         "sdk_method",
         "dashboard",
     ),
+    "memory_schema.propose": ("sdk_method",),
     "memory_schema.register": (
         "sdk_method",
         "dashboard",
     ),
-    "mentor.brief": ("dashboard",),
+    "mentor.brief": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "mentor.guide": ("sdk_method",),
     "namespace.audit": (
+        "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
-    "namespace.browse": ("dashboard",),
-    "namespace.cancel_request": ("dashboard",),
+    "namespace.browse": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "namespace.cancel_request": (
+        "sdk_method",
+        "dashboard",
+    ),
     "namespace.delete": (
         "sdk_method",
         "dashboard",
@@ -567,26 +872,49 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "plugin_hook",
         "dashboard",
     ),
-    "namespace.guide_get": ("dashboard",),
-    "namespace.guide_history": ("dashboard",),
-    "namespace.guide_set": ("dashboard",),
+    "namespace.guide_get": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "namespace.guide_history": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "namespace.guide_set": (
+        "sdk_method",
+        "dashboard",
+    ),
     "namespace.inventory": (
+        "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
-    "namespace.join": ("dashboard",),
-    "namespace.leave": ("dashboard",),
+    "namespace.join": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "namespace.leave": (
+        "sdk_method",
+        "dashboard",
+    ),
     "namespace.list": ("sdk_method",),
     "namespace.list_categories": (
         "sdk_method",
         "dashboard",
     ),
     "namespace.list_mine": (
+        "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
-    "namespace.list_ontology": ("dashboard",),
-    "namespace.mark_seen": ("dashboard",),
+    "namespace.list_ontology": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "namespace.mark_seen": (
+        "sdk_method",
+        "dashboard",
+    ),
     "namespace.register": (
         "sdk_method",
         "sdk_example",
@@ -596,16 +924,30 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "namespace.register_ontology": ("dashboard",),
-    "namespace.restore": ("dashboard",),
-    "namespace.rollback": ("dashboard",),
+    "namespace.register_ontology": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "namespace.restore": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "namespace.rollback": (
+        "sdk_method",
+        "dashboard",
+    ),
     "namespace.search_categories": ("sdk_method",),
-    "namespace.snapshot": ("dashboard",),
+    "namespace.snapshot": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "namespace.summary": ("sdk_method",),
     "namespace.taxonomy": (
         "sdk_method",
         "dashboard",
     ),
     "namespace.tune": (
+        "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
@@ -613,18 +955,39 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "plugin_hook",
     ),
-    "observe.crystallize": ("plugin_hook",),
+    "observe.crystallize": (
+        "sdk_method",
+        "plugin_hook",
+    ),
     "observe.record": (
         "sdk_method",
         "plugin_hook",
     ),
     "ops.capabilities": ("sdk_method",),
-    "ops.health": ("dashboard",),
-    "ops.projection_failures.list": ("dashboard",),
-    "ops.projection_failures.resolve": ("dashboard",),
-    "ops.projection_failures.retry": ("dashboard",),
-    "org.model_calls": ("dashboard",),
-    "org.set_model_calls": ("dashboard",),
+    "ops.health": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "ops.projection_failures.list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "ops.projection_failures.resolve": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "ops.projection_failures.retry": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "org.model_calls": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "org.set_model_calls": (
+        "sdk_method",
+        "dashboard",
+    ),
     "policy.check": (
         "sdk_method",
         "dashboard",
@@ -653,7 +1016,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "procedure.match": ("sdk_method",),
     "procedure.record_run": ("sdk_method",),
     "procedure.revise": ("sdk_method",),
-    "profile.activity": ("dashboard",),
+    "profile.activity": (
+        "sdk_method",
+        "dashboard",
+    ),
     "profile.append": ("sdk_method",),
     "profile.render": ("sdk_method",),
     "profile.replace": ("sdk_method",),
@@ -661,9 +1027,19 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "profile_schema.clear": ("dashboard",),
-    "profile_schema.get": ("dashboard",),
-    "profile_schema.set": ("dashboard",),
+    "profile.structured": ("sdk_method",),
+    "profile_schema.clear": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "profile_schema.get": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "profile_schema.set": (
+        "sdk_method",
+        "dashboard",
+    ),
     "run.begin": (
         "sdk_method",
         "sdk_example",
@@ -687,37 +1063,102 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "session.brief_delete": ("dashboard",),
+    "search.query": ("sdk_method",),
+    "session.brief_delete": (
+        "sdk_method",
+        "dashboard",
+    ),
     "session.brief_get": (
+        "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
     "session.brief_list": (
+        "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
-    "session.brief_save": ("plugin_hook",),
-    "task.accept": ("dashboard",),
-    "task.block": ("dashboard",),
-    "task.cancel": ("dashboard",),
-    "task.claim": ("dashboard",),
-    "task.complete": ("dashboard",),
+    "session.brief_save": (
+        "sdk_method",
+        "plugin_hook",
+    ),
+    "task.accept": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.block": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.cancel": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.claim": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.complete": (
+        "sdk_method",
+        "dashboard",
+    ),
     "task.counts": (
+        "sdk_method",
         "plugin_hook",
         "dashboard",
     ),
-    "task.create": ("dashboard",),
-    "task.defer": ("dashboard",),
-    "task.fail": ("dashboard",),
-    "task.get": ("dashboard",),
-    "task.history": ("dashboard",),
-    "task.list": ("dashboard",),
-    "task.reassign": ("dashboard",),
-    "task.reopen": ("dashboard",),
-    "task.resume": ("dashboard",),
-    "task.unblock": ("dashboard",),
-    "task.update": ("dashboard",),
-    "task.wont_do": ("dashboard",),
+    "task.create": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.defer": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.fail": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.get": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.heartbeat": ("sdk_method",),
+    "task.history": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.progress": ("sdk_method",),
+    "task.pull": ("sdk_method",),
+    "task.reassign": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.reopen": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.resume": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.unblock": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.update": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "task.updates": ("sdk_method",),
+    "task.wont_do": (
+        "sdk_method",
+        "dashboard",
+    ),
     "tracker.answer": (
         "sdk_method",
         "dashboard",
@@ -727,7 +1168,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "tracker.component": ("sdk_method",),
-    "tracker.contract": ("dashboard",),
+    "tracker.contract": (
+        "sdk_method",
+        "dashboard",
+    ),
     "tracker.duplicate_check": (
         "sdk_method",
         "plugin_hook",
@@ -740,19 +1184,55 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "tracker.links": ("sdk_method",),
     "tracker.release": ("sdk_method",),
     "tracker.similar": ("sdk_method",),
-    "tracker.source.add": ("dashboard",),
-    "tracker.source.check": ("dashboard",),
-    "tracker.source.inspect": ("dashboard",),
-    "tracker.source.list": ("dashboard",),
-    "tracker.source.remove": ("dashboard",),
-    "tracker.source.rotate": ("dashboard",),
-    "tracker.source.set_mapping": ("dashboard",),
+    "tracker.source.add": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "tracker.source.check": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "tracker.source.inspect": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "tracker.source.list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "tracker.source.remove": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "tracker.source.rotate": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "tracker.source.set_mapping": (
+        "sdk_method",
+        "dashboard",
+    ),
     "tracker.test_signal": ("sdk_method",),
-    "ui.vitals": ("dashboard",),
-    "webhook.deliveries": ("dashboard",),
-    "webhook.list": ("dashboard",),
-    "webhook.register": ("dashboard",),
-    "webhook.remove": ("dashboard",),
+    "ui.vitals": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "webhook.deliveries": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "webhook.list": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "webhook.register": (
+        "sdk_method",
+        "dashboard",
+    ),
+    "webhook.remove": (
+        "sdk_method",
+        "dashboard",
+    ),
     "working_memory.append": (
         "sdk_method",
         "plugin_hook",

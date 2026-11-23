@@ -1,13 +1,16 @@
-//! Use ClickHouse Loom's memory operations from Rust.
+//! Use ClickHouse Loom's memory, knowledge and context operations from Rust.
 //!
 //! Loom is a self-hosted server for shared long-term AI agent memory, document
-//! search and code indexing. This crate exposes async `set`, `get`, `search` and
-//! `delete` operations through [`Client`].
+//! search and code indexing. [`Client`] provides typed async methods for every
+//! registered operation. Method names replace dots with underscores.
+//! [`Client::call`] accepts a serializable request and a typed response,
+//! including `serde_json::Value`.
 //!
 //! Identity is bound once on [`Client`]. Calls return typed responses, and
 //! [`Error::Api`] preserves the server's error classification.
 //! Search defaults to all agents with no user or session filter. Set filters on
-//! [`SearchRequest`] explicitly; builder user and session values apply to other calls.
+//! [`SearchRequest`] explicitly. Builder identity values apply to declared identity
+//! fields; optional reader filters keep the values in the request.
 //! The default timeout covers each complete HTTP attempt for 60 seconds.
 //! Search hits preserve chunk parent keys and provenance. Check [`SearchResponse`]
 //! abstention, degradation and pending extraction before answering from the hits.
@@ -20,6 +23,56 @@
 //! [`Client::with_retry`] creates a policy override sharing connections and rate state.
 //! Dropping a call future cancels its retries and waits, but cannot undo a write.
 //! Logs use the `log` facade without installing a logger or recording payloads.
+//! Retries after dispatch require a known, declared idempotent operation.
+//! Unknown operations receive bound org and namespace and retry only connection
+//! failures. Operation names must be dotted identifiers.
+//!
+//! Enable the `blocking` feature for a synchronous client in the `blocking` module.
+//! It runs the async transport on a dedicated thread and rejects calls on Tokio
+//! runtime threads; use the async client there or call from a separate OS thread.
+//!
+//! # Capability probe
+//!
+//! [`Client::probe`] fetches fresh capabilities and reports missing operations
+//! and request fields. A mismatch returns [`ProbeReport`] with `ok = false`;
+//! HTTP and transport failures return [`Error`].
+//!
+//! ```
+//! use clickhouse_loom::{Client, Error, ProbeRequest};
+//!
+//! # async fn example(client: Client) -> Result<(), Error> {
+//! let report = client.probe(
+//!     ProbeRequest::new()
+//!         .ops(["memory.set", "memory.search"])
+//!         .fields("memory.set", ["tags"]),
+//! ).await?;
+//! println!("{}: {:?}", report.ok, report.missing_ops);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Per-call options and metadata
+//!
+//! [`CallOptions`] overrides timeout, retry policy and request identifiers for
+//! one call. The `*_with_options` methods return [`CallResult`] or [`CallFailure`].
+//! Both carry final-attempt metadata; validation failures have no attempt metadata.
+//! The original methods return their typed response and [`Error`].
+//!
+//! ```
+//! use clickhouse_loom::{CallFailure, CallOptions, Client, RetryPolicy};
+//! use std::time::Duration;
+//!
+//! # async fn example(client: Client) -> Result<(), CallFailure> {
+//! let options = CallOptions::default()
+//!     .timeout(Duration::from_secs(5))
+//!     .retry(RetryPolicy::disabled())
+//!     .request_id("recall-1");
+//! let result = client.get_with_options("preference", options).await?;
+//! assert_eq!(result.metadata.sent_request_id, "recall-1");
+//! println!("{} attempts={}", result.metadata.request_id, result.metadata.attempts);
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! # Using public types
 //!
@@ -29,6 +82,9 @@
 //!
 //! Response decoding ignores unknown JSON fields. Missing required fields produce
 //! [`Error::Protocol`].
+//! The memory facade preserves its public types and decoding defaults.
+//! Generated methods use full wire contracts such as [`MemorySetInput`] and
+//! [`MemoryGetOutput`], without changing [`SetRequest`] or [`GetResponse`].
 //!
 //! ```
 //! use clickhouse_loom::{ApiError, Error, GetResponse, SearchRequest, SetRequest};
@@ -101,14 +157,24 @@
 //! }
 //! ```
 
+mod call;
+mod capabilities;
 mod client;
 mod error;
 mod models;
+mod operations;
 mod retry;
+mod wire_models;
 
+#[cfg(feature = "blocking")]
+pub mod blocking;
+#[cfg(feature = "blocking")]
+mod blocking_operations;
+
+pub use call::{CallFailure, CallMetadata, CallOptions, CallResult, RateLimit};
+pub use capabilities::{ProbeReport, ProbeRequest};
 pub use client::{Client, ClientBuilder};
 pub use error::{ApiError, Error};
-pub use models::{
-    DeleteResponse, GetResponse, SearchHit, SearchRequest, SearchResponse, SetRequest, SetResponse,
-};
+pub use models::*;
 pub use retry::{RetryPolicy, RetryTimeouts};
+pub use wire_models::*;

@@ -22,6 +22,25 @@ const VERSION: u64 = 1_790_000_000_000_000_123;
 #[path = "network_cases/mod.rs"]
 mod network;
 
+#[path = "call_options/mod.rs"]
+mod call_options;
+
+#[path = "first_phase/mod.rs"]
+mod first_phase;
+
+#[path = "full_registry/mod.rs"]
+mod full_registry;
+
+#[path = "probe/mod.rs"]
+mod probe;
+
+#[path = "update_filters/mod.rs"]
+mod update_filters;
+
+#[cfg(feature = "blocking")]
+#[path = "blocking_cases/mod.rs"]
+mod blocking_cases;
+
 struct Request {
     line: String,
     headers: HashMap<String, String>,
@@ -163,7 +182,7 @@ async fn four_operations_use_post_json_and_bound_identity() {
         ),
         response(
             200,
-            json!({"results":[{"memory_key":"key","memory_type":"semantic",
+            json!({"embedding_model":"embed","results":[{"memory_key":"key","memory_type":"semantic",
                 "content_excerpt":"The user prefers short answers.",
                 "distance":0.1,"similarity":0.9,"version":VERSION}]}),
             "",
@@ -177,11 +196,11 @@ async fn four_operations_use_post_json_and_bound_identity() {
         .session_id("session")
         .build()
         .unwrap();
-    let mut set = SetRequest::new("key", json!({"count": VERSION}));
-    set.confidence = Some(0.0);
-    set.ttl_seconds = Some(0);
-    set.tags = Some(vec![]);
-    set.if_match_sha256 = Some("hash".into());
+    let set = SetRequest::new("key", json!({"count": VERSION}))
+        .confidence(0.0)
+        .ttl_seconds(0)
+        .tags(Vec::<String>::new())
+        .if_match_sha256("hash");
     let written = client.set(set).await.unwrap();
     assert_eq!(written.version, VERSION);
     assert_eq!(written.memory_id, "row");
@@ -189,8 +208,7 @@ async fn four_operations_use_post_json_and_bound_identity() {
     assert!(memory.found);
     assert_eq!(memory.version, Some(VERSION));
     assert_eq!(memory.value["count"].as_u64(), Some(VERSION));
-    let mut search = SearchRequest::new("preferences");
-    search.top_k = Some(3);
+    let search = SearchRequest::new("preferences").top_k(3);
     let hits = client.search(search).await.unwrap();
     assert_eq!(hits.results[0].similarity, 0.9);
     assert_eq!(hits.results[0].version, Some(VERSION));
@@ -234,7 +252,11 @@ async fn four_operations_use_post_json_and_bound_identity() {
 
 #[tokio::test]
 async fn explicit_search_filters_override_authorship_without_replacing_scope() {
-    let server = Server::new(vec![response(200, json!({"results": []}), "")]);
+    let server = Server::new(vec![response(
+        200,
+        json!({"results": [], "embedding_model": "embed"}),
+        "",
+    )]);
     let client = Client::builder("org", "ns", "writer")
         .base_url(&server.url)
         .api_key("")
@@ -242,11 +264,11 @@ async fn explicit_search_filters_override_authorship_without_replacing_scope() {
         .session_id("writer-session")
         .build()
         .unwrap();
-    let mut search = SearchRequest::new("query");
-    search.agent_id = Some("reader".into());
-    search.namespace_scope = Some("all_mine".into());
-    search.user_id = Some("".into());
-    search.session_id = Some("conversation".into());
+    let search = SearchRequest::new("query")
+        .agent_id("reader")
+        .namespace_scope("all_mine")
+        .user_id("")
+        .session_id("conversation");
     client.search(search).await.unwrap();
     assert_eq!(
         server.request().await.body,
@@ -261,7 +283,7 @@ async fn explicit_search_filters_override_authorship_without_replacing_scope() {
 async fn missing_memories_and_empty_search_are_successful() {
     let server = Server::new(vec![
         response(200, json!({"found":false}), ""),
-        response(200, json!({"results":[]}), ""),
+        response(200, json!({"results":[], "embedding_model": "embed"}), ""),
         response(
             200,
             json!({"found":false,"tombstoned":false,"version":VERSION}),

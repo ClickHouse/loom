@@ -27,6 +27,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
+  RUST_CODEGEN_VERSION: "1.84.1"
   # The Python jobs install the exact versions in uv.lock with this uv.
   UV_VERSION: "0.12.19"
 
@@ -91,6 +92,14 @@ jobs:
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: ruff
         run: ruff check server extractor sdk/python tests scripts .claude
+      - name: Install Rust formatter for generated contracts
+        run: |
+          rustup toolchain install "$RUST_CODEGEN_VERSION" --profile minimal --component rustfmt
+          rustup override set "$RUST_CODEGEN_VERSION"
+      - name: generated Rust contracts are current
+        run: |
+          python scripts/codegen/sdk_rust_gen.py --check
+          python scripts/codegen/sdk_rust_gen.py --fixtures --check
       - name: ruff format
         run: ruff format --check .
       # The Python SDK's op table, TypedDicts and per-op client are generated
@@ -886,6 +895,17 @@ jobs:
           name: pipecat-native-demo
           path: ${{ runner.temp }}/pipecat-native-demo.json
           if-no-files-found: error
+      - name: Install Rust for live SDK contracts
+        if: matrix.part == 'isolation' && !cancelled() && steps.auth_on.outcome == 'success'
+        run: rustup toolchain install stable --profile minimal
+      - name: Rust SDK live contracts (auth on)
+        if: matrix.part == 'isolation' && !cancelled() && steps.auth_on.outcome == 'success'
+        timeout-minutes: 6
+        env:
+          LOOM_AUTH_REQUIRED: "true"
+          LOOM_BASE_URL: http://localhost:7778
+          RUSTUP_TOOLCHAIN: stable
+        run: pytest -q tests/integration/_rust_sdk_ci.py
       - name: pytest isolation gates (auth on)
         if: matrix.part == 'isolation' && !cancelled() && steps.auth_on.outcome == 'success'
         env:
@@ -1269,18 +1289,20 @@ jobs:
 
   sdk-rust:
     needs: validate-ref
-    name: rust sdk (${{ matrix.rust }}, fmt, tests, clippy, docs, package)
+    name: rust sdk (${{ matrix.rust }}, ${{ matrix.mode }}, fmt, tests, clippy, docs, package)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         rust: ["1.84.1", stable]
+        mode: [async, blocking]
     defaults:
       run:
         working-directory: sdk/rust
     env:
       CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+      RUST_SDK_FEATURES: ${{ matrix.mode == 'blocking' && '--features blocking' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1295,16 +1317,16 @@ jobs:
       - name: Rust formatting
         run: cargo fmt --check
       - name: Unit, HTTP contract and documentation tests
-        run: cargo test --locked
+        run: cargo test --locked $RUST_SDK_FEATURES
       - name: Lint the library, tests and examples
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets $RUST_SDK_FEATURES -- -D warnings
       - name: API documentation
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --no-deps
+        run: cargo doc --locked --no-deps $RUST_SDK_FEATURES
       - name: Verify the distributable crate and its license
         run: |
-          cargo package --locked
+          cargo package --locked $RUST_SDK_FEATURES
           for archive in target/package/clickhouse-loom-*.crate; do
             package="$(basename "$archive" .crate)"
             tar -xOf "$archive" "$package/LICENSE" | cmp - ../../LICENSE

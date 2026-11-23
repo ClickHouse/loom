@@ -8,6 +8,14 @@ license = "Apache-2.0"
 repository = "https://github.com/ClickHouse/loom"
 readme = "README.md"
 
+[features]
+default = []
+blocking = ["tokio/rt"]
+
+[[example]]
+name = "blocking"
+required-features = ["blocking"]
+
 [dependencies]
 reqwest = { version = "0.12.28", default-features = false, features = [
   "json",
@@ -23,4 +31,5 @@ httpdate = "1"
 tokio = { version = "1", features = ["sync", "time"] }
 
 [dev-dependencies]
+sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "process"] }

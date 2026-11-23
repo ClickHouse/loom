@@ -27,6 +27,7 @@ ruff formatting, an atomic write, and the write-or-check protocol).
 | `sdk_py_admin_gen.py`       | `sdk/python/loom/admin_routes.py`: `AdminRoutes`, one method per `/v1/admin/*` route (`agent.deployment.routes.settings_set`)                                                                                          | the `/v1/admin/*` routers: each route's method, path, gate and docstring                                                                                                                              | yes                        |
 | `sdk_ts_gen.py`             | `sdk/typescript/src/generated/ops.ts`: one interface per model, the `OPS` table, the `OpMap` type                                                                                                                      | `server.operations.registry.ALL_OPERATIONS` (the models' JSON Schemas)                                                                                                                                | yes                        |
 | `sdk_rb_gen.py`             | `sdk/ruby/lib/clickhouse/loom/generated/`: `ops.rb` (the `OPS` table, one class per op group, one method per op) and `errors.rb` (one `Error` subclass per server code)                                                | `server.operations.registry.ALL_OPERATIONS`; the error codes as `docs_reference.py` collects them                                                                                                     | yes                        |
+| `sdk_rust_gen.py`           | `sdk/rust/src/wire_models.rs`: serde contracts, constructors, setters, request `send` methods and replay declarations                                                                                                  | the full registry, Pydantic schemas and collection defaults; names and numeric types are defined in the generator                                                                                     | yes                        |
 | `agent_plugin_sync.py`      | the Codex plugin's copies of the hook scripts (`hooks/*.mjs`), the shared library (`lib/*.mjs`), the skills and the listing icon (`assets/`), byte-identical with the executable bit                                   | `integrations/claude-code-plugin/`                                                                                                                                                                    | yes                        |
 | `settings_reference.py`     | the generated [configuration reference](../reference/configuration.md)                                                                                                                                                 | `server/settings/catalog.py`: each field's env var, type, default, and the comment above it                                                                                                           | yes                        |
 | `settings_schema.py`        | `schemas/loom-settings.schema.json`, the JSON Schema of the YAML settings file                                                                                                                                         | the settings fields' types, bounds, defaults and comments, secrets left out                                                                                                                           | yes                        |
@@ -64,6 +65,58 @@ segment, the method the rest with `.` joined, snake_case in Python
 (`agent.client.tracker.source_add`) and camelCase in TypeScript (`loom.tracker.sourceAdd`).
 `tests/unit/test_sdk_parity.py` fails when the two op tables, or the two method names of
 any op, differ.
+
+### sdk_rust_gen
+
+The Rust SDK commits serde models and async and blocking methods for every
+operation in the server registry. Regeneration
+needs the server's Python dependencies and `rustfmt`; consuming the crate needs
+only Rust. Run from the repository root:
+
+```bash
+python scripts/codegen/sdk_rust_gen.py
+python scripts/codegen/sdk_rust_gen.py --check
+python scripts/codegen/sdk_rust_gen.py --fixtures
+python scripts/codegen/sdk_rust_gen.py --fixtures --check
+```
+
+`--out` writes a separate model artifact. `--ops` requires `--out` and selects registry operations for
+a preview; production generation covers the full registry. The generator owns
+`wire_models.rs`, `operations.rs`, `blocking_operations.rs` and `registry_contracts.rs`.
+The models include identity, idempotence and
+read-only policies for the full registry, used by the public generic client call.
+Caller and authorship inputs receive bound identity; reader filters remain explicit.
+`memory.update` keeps `agent`, `user_id` and `session_id` as target filters,
+including omitted fields and wildcards; its bound `run_id` labels revision authorship.
+Run-ledger targets keep their request IDs; a bound run labels reads through a header.
+The generator shares atomic writes and read-only checks with the other generators.
+Checks compare the formatted artifact's bytes; CI uses Rust 1.84.1.
+The handwritten `sdk/rust/src/models.rs` preserves the memory facade's public
+types and decoding defaults. Full wire contracts have separate names such as
+`MemorySetInput` and `MemoryGetOutput`; generation does not replace facade types.
+`--fixtures` owns `sdk/rust/tests/schema_mapping.rs`, whose generated models check
+required nullable fields, constants, integer unions, nullable zero defaults and
+empty string enum defaults under `cargo test`.
+
+Requests omit unset options and leave their defaults to the server. Nullable
+options use `Option<Option<T>>`: `None` omits, `Some(None)` sends null and
+`Some(Some(value))` sends a value. Setters accept values; `<field>_null()` sends null.
+Bound identity fields are optional in constructors and are merged by the client.
+Responses enforce required fields and apply declared defaults, including empty
+collection and nested model factories that JSON Schema omits. The generator
+describes known factory values without executing arbitrary factories.
+Unknown response fields are ignored. Registry contract tests decode every
+request and response and compare response defaults with the schema.
+Default functions decode the schema's JSON literal as the emitted Rust type:
+nullable zero, false and empty collections retain `Some(value)`.
+Dates remain strings. Unbounded integer fields use `Integer`, preserving the
+JSON token's precision; the manifest retains existing `u64`, `u32` and `i64` fields.
+Numeric and string bounds remain server validations.
+
+Arrays, fixed tuples, maps, references, string enums, constants and `anyOf` unions
+are supported. Recursive references, unsupported compositions, conflicting names,
+unknown selections and arbitrary default factories fail before an artifact is written.
+The manifest's string-label overrides preserve existing public field types.
 
 ### agent_plugin_sync
 

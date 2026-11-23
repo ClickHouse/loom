@@ -35,7 +35,7 @@ Use this map to select local checks and inspect the matching CI jobs. Full integ
 | --- | --- |
 | `schemas/migrations/` | `make schema-dump` against a private, freshly migrated ClickHouse (`loom-dev-setup`), then `make schema-check`; `git diff schemas/schema.sql` shows only your change |
 | a migration, a row builder, an enum value, a wire format, worker leasing | `make test-mixed-version` — builds N-1 and N on one throwaway ClickHouse (needs docker; skips without it, CI fails) |
-| `server/**/api/`, op registry | `.venv/bin/python -m scripts.codegen.<gen>` for `sdk_py_gen`, `sdk_py_client_gen`, `sdk_ts_gen`, `docs_reference`, `op_reach_census` (without `--check` each regenerates) |
+| `server/**/api/`, op registry | `.venv/bin/python -m scripts.codegen.<gen>` for `sdk_py_gen`, `sdk_py_client_gen`, `sdk_ts_gen`, `sdk_rb_gen`, `sdk_rust_gen`, `sdk_rust_gen --fixtures`, `docs_reference`, `op_reach_census` (without `--check` each regenerates) |
 | `server/settings/` | `.venv/bin/python -m scripts.codegen.settings_reference` |
 | `server/cli/` | `LOOM_UPDATE_CLI_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_cli_surface_snapshot.py` in a 3.12 virtualenv (a newer Python renders the help differently) — then read the snapshot diff |
 | a ClickHouse statement builder | `pytest tests/analyzer -q` against a private, migrated ClickHouse; regenerate with `LOOM_ENV_FILE= .venv/bin/python -m tests.analyzer.corpus --write` on fake providers ([analyzer corpus](../../../docs/development/testing.md#the-analyzer-statement-corpus)) |
