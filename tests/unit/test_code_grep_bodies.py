@@ -17,12 +17,37 @@ def _verified(matches):
 def test_current_extent_replaces_only_the_same_older_symbol():
     from server.code.app.symbol import enclosing
 
-    stale = {"path": "a.cpp", "symbol_id": "run", "extent_commit": "b" * 40, "end_line": 1}
+    stale = {
+        "path": "a.cpp",
+        "symbol_id": "run",
+        "extent_commit": "b" * 40,
+        "start_line": 1,
+        "end_line": 1,
+    }
     current = {**stale, "extent_commit": COMMIT, "end_line": 4}
     other = {**stale, "symbol_id": "other"}
     assert enclosing._by_path([stale, current, other], {"a.cpp": COMMIT}) == {
         "a.cpp": [current, other]
     }
+    current_stub = {**current, "end_line": 1}
+    older_complete = {**stale, "end_line": 4}
+    assert enclosing._by_path([current_stub, older_complete], {"a.cpp": COMMIT}) == {
+        "a.cpp": [older_complete]
+    }
+
+
+def test_guarded_symbol_resolution_keeps_shared_ids_in_distinct_files():
+    from server.code.store.index.symbol_rank import _prefer_scip
+
+    first = {
+        "path": "a.cpp",
+        "symbol_id": "run",
+        "qualified_name": "run",
+        "extent_commit": COMMIT,
+        "tier": "scip",
+    }
+    second = {**first, "path": "b.cpp", "tier": "treesitter"}
+    assert _prefer_scip([first, second]) == [first, second]
 
 
 @pytest.mark.asyncio

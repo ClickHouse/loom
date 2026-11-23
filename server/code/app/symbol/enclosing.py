@@ -55,16 +55,35 @@ def _by_path(
     for path, commit in (revisions or {}).items():
         if path not in paths:
             continue
-        found = paths[path]
-        current = {r["symbol_id"] for r in found if _extent_commit(r) == commit}
-        paths[path] = [
-            r for r in found if r["symbol_id"] not in current or _extent_commit(r) == commit
-        ]
+        paths[path] = _prefer_revision_extents(paths[path], commit)
     return paths
 
 
 def _extent_commit(row: dict[str, Any]) -> str:
     return str(row.get("extent_commit") or "").rstrip("\0")
+
+
+def _prefer_revision_extents(rows: list[dict[str, Any]], commit: str) -> list[dict[str, Any]]:
+    """Prefer a complete current span. A one-line stub cannot establish extent."""
+    current = {
+        r["symbol_id"]
+        for r in rows
+        if _extent_commit(r) == commit and r["end_line"] > r["start_line"]
+    }
+    older = {
+        (r["symbol_id"], r["start_line"])
+        for r in rows
+        if _extent_commit(r) != commit and r["end_line"] > r["start_line"]
+    }
+    preferred = []
+    for r in rows:
+        symbol_id, start = r["symbol_id"], r["start_line"]
+        if _extent_commit(r) != commit and symbol_id in current:
+            continue
+        if r["end_line"] <= start and (symbol_id in current or (symbol_id, start) in older):
+            continue
+        preferred.append(r)
+    return preferred
 
 
 async def handle_code_enclosing(
@@ -398,8 +417,9 @@ async def _attach_enclosing_bodies(
         r["body_elided"] = not body
         if body:
             r["next"] = ""
-        elif key in widened:
-            loc = json.dumps(f"{r['path']}:{r['start_line']}")
+        elif key in widened or body_revisions is not None:
+            line = r["start_line"] if key in widened else r["line"]
+            loc = json.dumps(f"{r['path']}:{line}")
             r["next"] = f"code.enclosing(locations=[{loc}], include_body=true)"
         else:
             r["next"] = f'code.symbol(symbol_id="{sid}")'

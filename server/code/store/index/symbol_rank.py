@@ -214,10 +214,15 @@ def _prefer_scip(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     parser span (end_line) is carried onto the surviving compiler row, whose
     own span is a single line. Without this, one real definition read as
     `ambiguous: true` to a bot that cannot supply further qualification."""
-    best: dict[tuple[str, str, str], dict[str, Any]] = {}
-    order: list[tuple[str, str, str]] = []
+    best: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str, str, str]] = []
     for r in rows:
-        key = (str(r["qualified_name"]), str(r["symbol_id"]), str(r.get("extent_commit") or ""))
+        key = (
+            str(r["qualified_name"]),
+            str(r["symbol_id"]),
+            str(r["path"]) if "extent_commit" in r else "",
+            str(r.get("extent_commit") or ""),
+        )
         if key not in best:
             best[key] = r
             order.append(key)
