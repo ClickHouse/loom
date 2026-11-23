@@ -38,6 +38,7 @@ PRIMARY = {
 CONTROLS = {name: PRIMARY["baseline"] for name in ("baseline-a", "baseline-b")}
 ALL = {**PRIMARY, **CONTROLS}
 CACHE_STARTS = ("cold", "warm")
+EFFICIENCY_TARGET = 0.20
 
 
 def with_cache_pairs(rows):

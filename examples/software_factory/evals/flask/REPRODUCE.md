@@ -74,6 +74,13 @@ next cold session. This wait is outside agent and end-to-end attempt times.
 Cold and warm comparisons and A/A controls use separate groups. First-prompt
 read and write counters show whether each pair matched.
 
+The `paired-report.json` target checks use observed provider cost and each time
+measure for the same arm in the same cache state. A 20% margin is 0.8 times
+the No Loom mean minus the Loom mean. Missing cost evidence leaves the cost
+check unknown. Memory comparisons use the matching code-only index and retain
+hidden-test, blind-judge and regression deltas. Main-session linked-lesson
+counts show delivery. A pilot describes one issue without an uncertainty bound.
+
 Harbor uses its built-in `claude-code` agent, pinned by
 [agent.json](../../harbor/agent.json). Every arm receives the original public
 issue in an ordinary shallow checkout at its buggy base. Claude chooses its

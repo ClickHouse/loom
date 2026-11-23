@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
-from .arms import PRIMARY
+from .arms import EFFICIENCY_TARGET, PRIMARY
 from .cache_start import pair_usage
 from .cohorts import comparison_cohorts
 from .source import reporting_identity
@@ -187,7 +187,7 @@ def chart_data(protocol, entries, views_manifest):
         "evaluation_complete": evaluation_complete,
         "comparison_url": views_manifest.get("links", {}).get("comparison"),
         "comparison_by_cache_start": views_manifest.get("comparison_by_cache_start", {}),
-        "target_reduction": 0.20,
+        "target_reduction": EFFICIENCY_TARGET,
         "cost_note": "Provider cost combines the solver-reported cost (or Harbor's fallback "
         "estimate) and paid model calls recorded by Loom, including failed attempts. "
         "Unmatched backend cost remains unknown. Judge and infrastructure costs are separate.",

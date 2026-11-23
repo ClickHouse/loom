@@ -6,6 +6,7 @@ import copy
 import unittest
 
 from examples.software_factory.factory.model import digest
+from examples.software_factory.harbor.arms import with_cache_pairs
 from examples.software_factory.harbor.live_support import schedule
 from examples.software_factory.harbor.paired import analyze
 
@@ -65,6 +66,64 @@ class PairedAnalysisContracts(unittest.TestCase):
         contrast = report["paired_deltas"]["loom-treesitter-minus-baseline"]["quality"]
         self.assertEqual(contrast["estimate"], 0)
         self.assertIsNone(contrast["ci95"])
+
+    def test_cache_target_checks_use_same_condition_and_require_reported_cost(self):
+        schedule_data, original = inputs()
+        rows = with_cache_pairs(schedule_data["attempts"])
+        frozen = {"attempts": rows, "schedule_sha256": digest(rows)}
+        entries = []
+        for row in rows:
+            warm = row["cache_start"] == "warm"
+            baseline = row["mode"] == "baseline"
+            memory = row["memory_enabled"]
+            entries.append(
+                {
+                    "order": row["order"],
+                    "result": {
+                        **original[row["order"] // 2]["result"],
+                        "cache_start": row["cache_start"],
+                        "cache_start_verified": True,
+                        "first_cache_read_tokens": 100 if warm else 0,
+                        "first_cache_write_tokens": 0 if warm else 100,
+                        "harbor_reward_valid": True,
+                        "resolved": baseline or memory,
+                        "judge_fixed": baseline or memory,
+                        "full_suite_regressions": 0,
+                        "loom_lesson_chars_main": 100 if memory else 0,
+                        "total_provider_cost_usd": (0.06 if baseline else 0.07)
+                        if warm
+                        else (0.15 if baseline else 0.12),
+                        "generation_cost_source": "claude-code-reported",
+                        "agent_time_s": 20 if baseline else 16,
+                        "end_to_end_s": 30 if baseline else 24,
+                    },
+                }
+            )
+        report = analyze(frozen, entries, resamples=100)
+        targets = report["cache_start_targets"]
+        self.assertTrue(targets["cache_and_verifier_verified"])
+        cold, warm = (targets["cache_starts"][state] for state in ("cold", "warm"))
+        arm = "loom-scip-memory"
+        self.assertTrue(cold["efficiency_vs_no_loom"][arm]["all_observed_met"])
+        self.assertFalse(warm["efficiency_vs_no_loom"][arm]["all_observed_met"])
+        memory = warm["memory_vs_code_index"][arm]
+        self.assertEqual(memory["code_only_arm"], "loom-scip")
+        self.assertEqual(memory["main_session_linked_lesson_attempts"], 9)
+        self.assertTrue(memory["hidden_test_lift_lower_bound"])
+        fallback = next(
+            entry["result"]
+            for entry in entries
+            if entry["result"]["cache_start"] == "warm" and entry["result"]["arm"] == arm
+        )
+        fallback["generation_cost_source"] = "estimated"
+        updated = analyze(frozen, entries, resamples=100)["cache_start_targets"]
+        self.assertIsNone(
+            updated["cache_starts"]["warm"]["efficiency_vs_no_loom"][arm]["all_observed_met"]
+        )
+        fallback["first_cache_read_tokens"] = 99
+        updated = analyze(frozen, entries, resamples=100)["cache_start_targets"]
+        self.assertFalse(updated["cache_and_verifier_verified"])
+        self.assertFalse(updated["cache_starts"]["warm"]["efficiency_vs_no_loom"])
 
     def test_memory_treatment_requires_boolean_identity_and_no_disabled_writes(self):
         order, entries = inputs()

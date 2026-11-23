@@ -1,4 +1,4 @@
-"""Exploratory analysis of the persisted pilot order; never authorize inference."""
+"""Compare matched factory attempts from a frozen schedule."""
 
 from __future__ import annotations
 
@@ -9,11 +9,16 @@ from statistics import fmean
 from bench.bootstrap import paired_bootstrap
 from examples.software_factory.factory.model import digest
 
-from .arms import ALL, CACHE_STARTS, contrasts, validate_schedule
+from .arms import ALL, CACHE_STARTS, EFFICIENCY_TARGET, PRIMARY, contrasts, validate_schedule
 from .cache_start import pair_usage
 from .cohorts import comparison_cohorts
 
 ARMS = tuple(ALL)
+EFFICIENCY_METRICS = ("reported_provider_cost_usd", "agent_time_s", "end_to_end_s")
+MEMORY_PEERS = {
+    "loom-treesitter-memory": "loom-treesitter",
+    "loom-scip-memory": "loom-scip",
+}
 
 
 def analyze_cohorts(protocol, entries):
@@ -59,6 +64,7 @@ def _metrics(result: dict) -> dict:
             "agent_test_requests",
             "automatic_final_test_runs",
             "loom_tool_calls",
+            "loom_lesson_chars_main",
             "memory_rows_written",
             "model_selected_loom_requests",
             "provider_logical_requests",
@@ -72,6 +78,13 @@ def _metrics(result: dict) -> dict:
     metrics = {
         **counts,
         "quality": int(result["resolved"]),
+        "blind_fixed": int(result["judge_fixed"])
+        if type(result.get("judge_fixed")) is bool
+        else None,
+        "reported_provider_cost_usd": _number(result.get("total_provider_cost_usd"))
+        if result.get("generation_cost_source") == "claude-code-reported"
+        else None,
+        "full_suite_regressions": _number(result.get("full_suite_regressions"), integer=True),
         "attempt_duration_s": _number(result.get("duration_s")),
         "agent_time_s": _number(result.get("agent_time_s")),
         "end_to_end_s": _number(result.get("end_to_end_s")),
@@ -115,6 +128,63 @@ def _interval(values: list, tasks: list[str], *, seed: int, resamples: int) -> d
         }
     result = paired_bootstrap(values, clusters=tasks, seed=seed, resamples=resamples)
     return {"estimate": result.mean, "ci95": [result.lb, result.ub]}
+
+
+def _target_margin(task_pairs, tasks, *, seed, resamples):
+    # Equal-weight task means make the ratio and the paired margin use the same denominator.
+    units = [
+        (fmean(a for a, _ in pairs), fmean(b for _, b in pairs))
+        if all(a is not None and b is not None for a, b in pairs)
+        else (None, None)
+        for pairs in task_pairs
+    ]
+    if any(a is None or b is None for a, b in units) or not any(b > 0 for _, b in units):
+        return {
+            "relative_reduction": None,
+            "observed_met": None,
+            "lower_bound_met": None,
+            "margin": {"estimate": None, "ci95": None},
+        }
+    margin = _interval(
+        [(1 - EFFICIENCY_TARGET) * baseline - actual for actual, baseline in units],
+        tasks,
+        seed=seed,
+        resamples=resamples,
+    )
+    relative = 1 - fmean(a for a, _ in units) / fmean(b for _, b in units)
+    return {
+        "relative_reduction": relative,
+        "observed_met": _clears_margin(margin["estimate"]),
+        "lower_bound_met": _clears_margin(margin["ci95"][0])
+        if margin["ci95"] is not None
+        else None,
+        "margin": margin,
+    }
+
+
+def _clears_margin(value):
+    return value >= 0 or math.isclose(value, 0, abs_tol=1e-12)
+
+
+def _efficiency_reached(values):
+    if False in values:
+        return False
+    return True if all(value is True for value in values) else None
+
+
+def _threshold_summary(verified):
+    return {
+        "relative_reduction_target": EFFICIENCY_TARGET,
+        "cache_and_verifier_verified": verified,
+        "interpretation": (
+            "Observed means and issue-clustered intervals describe this cohort. "
+            "The pilot has no interval. An infrastructure or cache mismatch withholds the result."
+        ),
+        "cache_starts": {
+            state: {"efficiency_vs_no_loom": {}, "memory_vs_code_index": {}}
+            for state in CACHE_STARTS
+        },
+    }
 
 
 def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) -> dict:
@@ -219,6 +289,11 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     report["cohort_total_cost_usd"] = (
         math.fsum(costs) if not missing and None not in costs else None
     )
+    if cache_pairs:
+        verified = report["cache_starts_verified"] and all(
+            result.get("harbor_reward_valid") is True for result in observed.values()
+        )
+        report["cache_start_targets"] = _threshold_summary(verified)
     if missing:
         return report  # Missing attempts are visible; no partial-cohort selection.
     lookup = {
@@ -238,25 +313,68 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
             )
             comparisons.append((aa, "baseline-b", "baseline-a", ["aa"], state))
     for destination, left, right, repeats, state in comparisons:
-        contrast = {}
+        contrast, efficiency = {}, {}
+        qualifies = (
+            state is not None
+            and right == "baseline"
+            and left in PRIMARY
+            and report["cache_start_targets"]["cache_and_verifier_verified"]
+        )
         for key in next(iter(metrics.values())):
-            differences = []
-            for task in tasks:
-                pairs = [
+            task_pairs = [
+                [
                     (
                         lookup[task, repeat, left, state][key],
                         lookup[task, repeat, right, state][key],
                     )
                     for repeat in repeats
                 ]
-                differences.append(
-                    None
-                    if any(a is None or b is None for a, b in pairs)
-                    else fmean(a - b for a, b in pairs)
-                )
+                for task in tasks
+            ]
+            differences = [
+                None
+                if any(a is None or b is None for a, b in pairs)
+                else fmean(a - b for a, b in pairs)
+                for pairs in task_pairs
+            ]
             contrast[key] = {
                 "task_deltas": dict(zip(tasks, differences, strict=True)),
                 **_interval(differences, tasks, seed=seed, resamples=resamples),
             }
+            if qualifies and key in EFFICIENCY_METRICS:
+                efficiency[key] = _target_margin(task_pairs, tasks, seed=seed, resamples=resamples)
         destination[left + "-minus-" + right] = contrast
+        if state is None or not report["cache_start_targets"]["cache_and_verifier_verified"]:
+            continue
+        targets = report["cache_start_targets"]["cache_starts"][state]
+        if efficiency:
+            targets["efficiency_vs_no_loom"][left] = {
+                **efficiency,
+                "hidden_test_pass_rate_delta": contrast["quality"],
+                "all_observed_met": _efficiency_reached(
+                    [value["observed_met"] for value in efficiency.values()]
+                ),
+                "all_lower_bounds_met": _efficiency_reached(
+                    [value["lower_bound_met"] for value in efficiency.values()]
+                ),
+            }
+        if MEMORY_PEERS.get(left) == right:
+            hidden = contrast["quality"]
+            lesson_chars = [
+                lookup[task, repeat, left, state]["loom_lesson_chars_main"]
+                for task in tasks
+                for repeat in repeats
+            ]
+            targets["memory_vs_code_index"][left] = {
+                "code_only_arm": right,
+                "main_session_linked_lesson_attempts": sum(
+                    chars is not None and chars > 0 for chars in lesson_chars
+                ),
+                "main_session_lesson_evidence_missing": lesson_chars.count(None),
+                "hidden_test_pass_rate_delta": hidden,
+                "blind_fixed_rate_delta": contrast["blind_fixed"],
+                "regressions_per_attempt_delta": contrast["full_suite_regressions"],
+                "observed_hidden_test_lift": hidden["estimate"] > 0,
+                "hidden_test_lift_lower_bound": hidden["ci95"][0] > 0 if hidden["ci95"] else None,
+            }
     return report
