@@ -386,7 +386,7 @@ async def _grep_lines(
         and not truncated
         and not coverage.get("partial")
         and input.mode == "matches"
-        and not input.cursor
+        and offset == 0
         and not input.regex
     ):
         note = (
