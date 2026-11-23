@@ -91,19 +91,24 @@ class Lessons(NamedTuple):
 class UnscopedGrep(NamedTuple):
     """Positions of grep matches that lack an enclosing definition."""
 
-    commit: str
     by_path: dict[str, set[int]]
+    commits: dict[tuple[str, int], str]
 
     def excludes(self, link: code_links.LinkRow) -> bool:
         lines = self.by_path.get(link["path"])
         if not lines:
             return True
         start, end = link["start_line"], link["end_line"]
+        checked_commit = link["checked_commit"]
         return (
-            bool(self.commit)
-            and link["checked_commit"] == self.commit
+            bool(checked_commit)
             and 0 < start <= end
-            and not any(line <= 0 or start <= line <= end for line in lines)
+            and all(
+                self.commits.get((link["path"], line)) == checked_commit
+                and line > 0
+                and not start <= line <= end
+                for line in lines
+            )
         )
 
 

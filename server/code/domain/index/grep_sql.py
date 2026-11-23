@@ -58,11 +58,13 @@ def grep_chunks_sql(cond: str, prefix_clause: str, path_sql: str, extra_settings
     """mode=matches: whole chunk rows in (path, start_line) order, chunk_id
     breaking ties so the page edge is deterministic."""
     inner = newest_live(
-        "path, scope, symbol_ids, kind, start_line, end_line, content, chunk_id, embedding_model",
+        "path, scope, symbol_ids, kind, start_line, end_line, content, chunk_id, embedding_model, "
+        "indexed_commit",
         _where(cond, prefix_clause, path_sql),
     )
     return f"""
-            SELECT path, scope, symbol_ids, kind, start_line, end_line, content, embedding_model
+            SELECT path, scope, symbol_ids, kind, start_line, end_line, content,
+                   embedding_model, toString(indexed_commit) AS indexed_commit
             FROM {inner}
             ORDER BY path, start_line, chunk_id
             LIMIT {{limit:UInt32}}

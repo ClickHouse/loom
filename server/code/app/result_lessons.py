@@ -138,11 +138,9 @@ class WithLessons:
         symbols = None
         unscoped_grep = None
         if isinstance(input, CodeGrepInput) and input.mode == "matches":
-            symbols, lines = _grep_match_scopes(out)
-            # Grep cursors can retain lines after the live source has advanced.
+            symbols, lines = _grep_match_scopes(out.matches)
             if lines:
-                commit = "" if input.cursor else str(out.as_of.get("commit") or "")
-                unscoped_grep = path_lessons.UnscopedGrep(commit, lines)
+                unscoped_grep = path_lessons.UnscopedGrep(lines, out._match_commits)
         elif isinstance(input, CodeSearchInput):
             symbols = _search_match_symbols(out)
         found = await lessons_for(
@@ -157,11 +155,13 @@ class WithLessons:
         return out
 
 
-def _grep_match_scopes(out: Any) -> tuple[dict[str, set[str]], dict[str, set[int]]]:
+def _grep_match_scopes(
+    matches: Iterable[dict[str, Any]],
+) -> tuple[dict[str, set[str]], dict[str, set[int]]]:
     """Retain named definitions and the exact positions of unscoped matches."""
     symbols: dict[str, set[str]] = {}
     lines: dict[str, set[int]] = {}
-    for row in out.matches:
+    for row in matches:
         path = str(row.get("path") or "")
         if not path:
             continue

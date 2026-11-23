@@ -97,7 +97,16 @@ async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
 @pytest.mark.parametrize("namespace", ["code-repo", "code-branch"])
 @pytest.mark.parametrize(
     "op",
-    ["grep", "grep_mixed", "grep_overlap", "grep_stale", "grep_cursor", "search", "search_file"],
+    [
+        "grep",
+        "grep_mixed",
+        "grep_overlap",
+        "grep_stale",
+        "grep_mixed_commit",
+        "grep_cursor",
+        "search",
+        "search_file",
+    ],
 )
 async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
     monkeypatch: pytest.MonkeyPatch, namespace: str, op: str
@@ -161,11 +170,16 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
         ]
         if op != "grep":
             matches.append({"path": "a.py", "line": 24 if op == "grep_overlap" else 40})
-        return CodeGrepOutput(
+        out = CodeGrepOutput(
             matches=matches,
             chunks_matched=1,
             as_of={"commit": "a" * 40},
         )
+        if op not in {"grep", "grep_cursor"}:
+            out._match_commits = {
+                ("a.py", matches[1]["line"]): "b" * 40 if op == "grep_mixed_commit" else "a" * 40
+            }
+        return out
 
     async def search(_input: CodeSearchInput) -> CodeSearchOutput:
         unit = CodeUnit(

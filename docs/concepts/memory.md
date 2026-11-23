@@ -472,7 +472,7 @@ The links are read where the code is:
   returned definitions in a trunk file have a complete linked lesson.
   They count omitted lessons in `lessons_left_out`. When grep also finds a
   line with no enclosing definition, it keeps lessons with overlapping links
-  or unverified ranges at the answered revision.
+  or unverified ranges at the retained chunk's revision.
   File-wide notes, pending or uncertain links, nested definitions, decisions,
   constraints and pins remain eligible. Whole-file search hits, an unavailable
   live link check, or a configured lesson budget use file-level selection. Use

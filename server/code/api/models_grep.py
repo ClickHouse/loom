@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal
 from pydantic import (
     BaseModel,
     Field,
+    PrivateAttr,
     SerializerFunctionWrapHandler,
     field_validator,
     model_serializer,
@@ -152,6 +153,7 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
 class CodeGrepOutput(_LessonsOut):
     # File lessons omitted by symbol focus, a token budget, truncation or supersession.
     lessons_left_out: int = 0
+    _match_commits: dict[tuple[str, int], str] = PrivateAttr(default_factory=dict)
 
     @model_serializer(mode="wrap")
     def _drop_unfired_mode_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
