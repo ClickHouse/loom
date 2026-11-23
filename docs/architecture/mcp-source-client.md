@@ -27,7 +27,9 @@ and approving the endpoint through operator policy before constructing a client.
 
 The transport uses `server/core/webhooks.py` (`pinned_target`) to validate public DNS
 addresses and preserve the configured Host header and TLS server name while connecting
-to a validated address. Proxy environment variables do not select another route.
+to a validated address. Endpoint and credential-origin checks use the same HTTPX ASCII
+hostname as dispatch. The pinned Host header and TLS server name must match it exactly;
+trailing-dot aliases remain distinct. Proxy environment variables do not select another route.
 Requests outside the configured endpoint are refused. A server response cannot select
 a different server, credential or connection.
 
