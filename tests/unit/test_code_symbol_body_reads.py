@@ -89,6 +89,28 @@ def test_a_missing_or_partial_retained_span_returns_no_body() -> None:
     )
 
 
+@pytest.mark.parametrize(("symbol_id", "expected"), [("s1", "def run(): pass\n"), ("s2", "")])
+def test_single_line_python_body_requires_ownership_of_the_wider_chunk(
+    monkeypatch: pytest.MonkeyPatch, symbol_id: str, expected: str
+) -> None:
+    monkeypatch.setattr(settings, "embedding_model", "fake-ngram-1024")
+    sym = {"path": "cli.py", "symbol_id": symbol_id, "start_line": 2, "end_line": 2}
+
+    class Repo(CodeRepo):
+        async def source_chunks_for_span(self, org, ns, path, start, end, model):
+            return [
+                {
+                    "content": "@command()\ndef run(): pass\n",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "kind": "function",
+                    "symbol_ids": ["s1"],
+                }
+            ]
+
+    assert asyncio.run(symbol_body(Repo(), "o", "n", sym)) == expected
+
+
 @pytest.mark.parametrize("key_missing", [False, True], ids=["factory-error", "missing-key"])
 def test_retained_source_does_not_construct_an_unavailable_provider(
     monkeypatch: pytest.MonkeyPatch,

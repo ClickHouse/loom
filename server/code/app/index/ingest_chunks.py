@@ -29,6 +29,7 @@ from server.code.domain.extract.lang_reference import REFERENCE_LANG, reference_
 from server.code.domain.extract.lang_shell_islands import shell_units
 from server.code.domain.extract.lang_sql import sql_units
 from server.code.domain.extract.lang_sql_model import SQL_LANG, Facet
+from server.code.domain.extract.py_decorated_chunks import python_chunks
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.store.index import CodeRepo
 
@@ -218,7 +219,11 @@ def _chunks_for(
     lane = _lane_chunks(pf, path, source, max_chunk_chars)
     if lane is not None:
         return lane
-    chunks = chunk_file(pf, max_chars=max_chunk_chars)
+    chunks = (
+        python_chunks(pf, max_chars=max_chunk_chars)
+        if pf.lang == "python"
+        else chunk_file(pf, max_chars=max_chunk_chars)
+    )
     if pf.lang == "shell" and _shell_islands_on():
         # Coalesce the leftovers, lift the SQL islands; the island statements join the
         # parse's symbols so the symbol stage writes and key-diffs them like the shell

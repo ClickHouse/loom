@@ -283,7 +283,13 @@ def test_every_code_index_module_is_in_exactly_one_stage_or_declared_not_an_extr
 def test_stage_partition_is_pinned() -> None:
     assert STAGES == ("chunk", "symbol", "edge", "guard")
     assert STAGE_MODULES == {
-        "chunk": ("chunker.py", "context_text.py", "tokenize.py", "callee_outline.py"),
+        "chunk": (
+            "chunker.py",
+            "context_text.py",
+            "tokenize.py",
+            "callee_outline.py",
+            "py_decorated_chunks.py",
+        ),
         "symbol": (
             "treesitter.py",
             "lang_python.py",
@@ -326,6 +332,7 @@ def test_stage_partition_is_pinned() -> None:
         "edges_treesitter.py",
         "lang_bash.py",
         "lang_python.py",
+        "py_decorated_chunks.py",
         "py_layouts.py",
         "py_library_methods.py",
         "py_members.py",

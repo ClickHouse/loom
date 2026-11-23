@@ -88,3 +88,38 @@ async def test_all_requested_hits_are_read_beyond_one_structural_batch(monkeypat
     out = await definitions_for(CodeGrepInput(pattern="target", include_body=True), matches, None)
     assert list(map(len, calls)) == [50, 50, 20]
     assert len(out["definitions"]) == 120 and not out["definitions_partial"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wider_body_available", [True, False])
+async def test_decorator_and_body_hits_across_batches_share_the_wider_body(
+    monkeypatch, wider_body_available
+):
+    from server.code.app.symbol import enclosing
+
+    async def read(input):
+        results = []
+        for location in input.locations:
+            line = int(location.split(":")[1])
+            body = "def run(): pass"
+            if line == 50:
+                body = "@command()\n" + body if wider_body_available else ""
+            results.append(
+                {
+                    "path": "cli.py",
+                    "line": line,
+                    "symbol_id": "run" if line >= 50 else location,
+                    "start_line": line,
+                    "end_line": 51 if line >= 50 else line,
+                    "body": body,
+                }
+            )
+        return SimpleNamespace(results=results)
+
+    monkeypatch.setattr(enclosing, "handle_code_enclosing", read)
+    matches = [{"path": "cli.py", "line": line} for line in range(1, 52)]
+    out = await definitions_for(CodeGrepInput(pattern="run", include_body=True), matches, None)
+    assert out["definitions_partial"] is not wider_body_available
+    assert len(out["definitions"]) == 50
+    assert out["definitions"][-1]["lines"] == [50, 51]
+    assert out["definitions"][-1]["body"].startswith("@command()") is wider_body_available
