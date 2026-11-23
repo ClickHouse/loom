@@ -225,9 +225,9 @@ def _string(value: Any, maximum: int = 2048, *, empty: bool = False) -> str:
     return value
 
 
-def _origin(url: str) -> tuple[str, str, int]:
-    _string(url, 2048)
+def _endpoint_url(url: str) -> httpx.URL:
     try:
+        _string(url, 2048)
         parts = urlsplit(url)
         if (
             parts.scheme != "https"
@@ -243,9 +243,15 @@ def _origin(url: str) -> tuple[str, str, int]:
             or any(p in (".", "..") for p in parts.path.split("/"))
         ):
             raise MCPSourceError("config")
-        return parts.scheme, parts.hostname.encode("idna").decode().lower(), parts.port or 443
-    except (ValueError, UnicodeError):
+        # HTTPX must authorize the same ASCII hostname that it sends on the wire.
+        return httpx.URL(url)
+    except (httpx.InvalidURL, ValueError, UnicodeError):
         raise MCPSourceError("config") from None
+
+
+def _origin(url: str) -> tuple[str, str, int]:
+    endpoint = _endpoint_url(url)
+    return endpoint.scheme, endpoint.raw_host.decode("ascii"), endpoint.port or 443
 
 
 # This subset has no references, regular expressions or combinatorial validators.
@@ -365,7 +371,7 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         *,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        self.endpoint = httpx.URL(config.endpoint)
+        self.endpoint = _endpoint_url(config.endpoint)
         self.credential, self.deadline, self.limits = credential, deadline, config.limits
         self.validate_access = validate_access
         self.inner = (
@@ -411,7 +417,11 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                             refusal, pinned, host, sni = await pinned_target(
                                 str(self.endpoint), schemes=("https",)
                             )
-                            if refusal or not host or not sni:
+                            if (
+                                refusal
+                                or host != self.endpoint.netloc.decode("ascii")
+                                or sni != self.endpoint.raw_host.decode("ascii")
+                            ):
                                 raise MCPSourceError("denied")
                             self.target = pinned, host, sni
                 pinned, host, sni = self.target

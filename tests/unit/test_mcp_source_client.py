@@ -997,3 +997,228 @@ async def test_status_cursor_schema_admitted_string_still_has_normalized_bound(
         with pytest.raises(source.MCPSourceError, match="limit"):
             await remote.search("alpha")
         assert state["calls"][-1][0] == "find"
+
+
+@pytest.mark.parametrize(
+    "endpoint,audience",
+    [
+        ("https://faß.example/mcp", "https://fass.example/mcp"),
+        ("https://fass.example/mcp", "https://faß.example/mcp"),
+        ("https://ς.example/mcp", "https://σ.example/mcp"),
+        ("https://σ.example/mcp", "https://ς.example/mcp"),
+        ("https://xn--fa-hia.example/mcp", "https://fass.example/mcp"),
+        ("https://source.example/mcp", "https://other.example/mcp"),
+        ("https://source.example./mcp", "https://source.example/mcp"),
+        ("https://source.example/mcp", "https://source.example./mcp"),
+        ("https://source.example:444/mcp", "https://source.example:443/mcp"),
+        ("https://[2001:db8::1]/mcp", "https://[2001:db8::2]/mcp"),
+        ("https://[2001:0db8:0:0::1]/mcp", "https://[2001:db8::1]/mcp"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_origin_wire_distinct_hosts_refuse_before_pin_or_dispatch(
+    monkeypatch: pytest.MonkeyPatch, endpoint: str, audience: str
+) -> None:
+    calls = []
+
+    async def pin(*args: Any, **kw: Any) -> tuple[str, str, str, str]:
+        calls.append("pin")
+        raise AssertionError("invalid binding reached DNS pin")
+
+    async def reply(request: httpx.Request) -> httpx.Response:
+        calls.append("http")
+        raise AssertionError("invalid binding reached HTTP")
+
+    monkeypatch.setattr(source, "pinned_target", pin)
+    async with httpx.MockTransport(reply) as transport:
+        with pytest.raises(source.MCPSourceError, match="^MCP source config$") as refused:
+            source.MCPSourceClient(
+                source.MCPSourceConfig(endpoint, audience),
+                source.MCPBearer(SECRET, audience),
+                validate_access=access,
+                _transport=transport,
+            )
+    assert SECRET not in str(refused.value)
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "endpoint,audience,ascii_host,host_header",
+    [
+        (ENDPOINT, ENDPOINT, "source.example", "source.example"),
+        ("https://SOURCE.EXAMPLE:443/mcp", ENDPOINT, "source.example", "source.example"),
+        (
+            "https://faß.example/mcp",
+            "https://xn--fa-hia.example/mcp",
+            "xn--fa-hia.example",
+            "xn--fa-hia.example",
+        ),
+        (
+            "https://XN--FA-HIA.EXAMPLE/mcp",
+            "https://faß.example/mcp",
+            "xn--fa-hia.example",
+            "xn--fa-hia.example",
+        ),
+        (
+            "https://ς.example/mcp",
+            "https://xn--3xa.example/mcp",
+            "xn--3xa.example",
+            "xn--3xa.example",
+        ),
+        (
+            "https://σ.example/mcp",
+            "https://XN--4XA.EXAMPLE/mcp",
+            "xn--4xa.example",
+            "xn--4xa.example",
+        ),
+        (
+            "https://BÜCHER.example/mcp",
+            "https://xn--bcher-kva.example/mcp",
+            "xn--bcher-kva.example",
+            "xn--bcher-kva.example",
+        ),
+        (
+            "https://source.example:8443/mcp",
+            "https://SOURCE.EXAMPLE:8443/profile",
+            "source.example",
+            "source.example:8443",
+        ),
+        (
+            "https://[2001:db8::1]:443/mcp",
+            "https://[2001:db8::1]/mcp",
+            "2001:db8::1",
+            "[2001:db8::1]",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_origin_canonical_binding_matches_pin_and_actual_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    audience: str,
+    ascii_host: str,
+    host_header: str,
+) -> None:
+    from server.core import webhooks
+
+    pins = []
+    resolutions = []
+    requests = []
+    existing_pin = source.pinned_target
+
+    async def resolve(host: str, **kw: Any) -> tuple[str, str]:
+        resolutions.append((host, kw))
+        return "", "93.184.216.34"
+
+    async def pin(url: str, **kw: Any) -> tuple[str, str, str, str]:
+        pins.append(url)
+        assert httpx.URL(url).raw_host == ascii_host.encode("ascii")
+        assert url.isascii()
+        return await existing_pin(url, **kw)
+
+    async def reply(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert pins and resolutions
+        assert request.headers["host"] == host_header
+        assert request.extensions["sni_hostname"] == ascii_host
+        assert request.headers["authorization"] == "Bearer " + SECRET
+        assert request.url.raw_host == b"93.184.216.34"
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=b": ok\n\n"
+        )
+
+    monkeypatch.setattr(webhooks, "vet_host", resolve)
+    monkeypatch.setattr(source, "pinned_target", pin)
+    conf = source.MCPSourceConfig(endpoint, audience)
+    credential = source.MCPBearer(SECRET, audience)
+    admitted = source.MCPSourceClient(conf, credential, validate_access=access)
+    assert source._origin(endpoint) == ("https", ascii_host, httpx.URL(endpoint).port or 443)
+    transport = source._PinnedTransport(
+        admitted.config,
+        admitted.credential,
+        asyncio.get_running_loop().time() + 5,
+        access,
+        transport=httpx.MockTransport(reply),
+    )
+    async with httpx.AsyncClient(transport=transport, trust_env=False) as http:
+        response = await http.get(endpoint)
+        assert response.content == b": ok\n\n"
+    assert pins == [str(httpx.URL(endpoint))]
+    assert resolutions == [(ascii_host, {"allow_private": False, "name_address": False})]
+    assert len(requests) == 1
+    assert admitted.config.endpoint == endpoint
+    assert admitted.config.bearer_audience == audience
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://\ud800.example/mcp",
+        "https://☃.example/mcp",
+        "https://[broken]/mcp",
+        "https://source.example:bad/mcp",
+        "https://source.example:65536/mcp",
+        "https://source.example:0/mcp",
+        "https://@source.example/mcp",
+        "https://source.example/mcp?private",
+        "https://source.example/mcp#private",
+        "https://source.example/./mcp",
+        "https://source.example/%2e/mcp",
+        "https://source.example/white space",
+        "https://source.example/\tprivate",
+        "https://source.example/\x7fprivate",
+    ],
+)
+def test_origin_bad_urls_have_only_fixed_private_failures(endpoint: str) -> None:
+    with pytest.raises(source.MCPSourceError) as refused:
+        source.MCPSourceClient(
+            source.MCPSourceConfig(endpoint, endpoint),
+            source.MCPBearer(SECRET, endpoint),
+            validate_access=access,
+        )
+    assert str(refused.value) in {"MCP source " + code for code in ("config", "schema", "limit")}
+    assert SECRET not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "endpoint,pinned_host,pinned_sni",
+    [
+        (ENDPOINT, "other.example", "source.example"),
+        (ENDPOINT, "source.example", "other.example"),
+        (ENDPOINT, "source.example:444", "source.example"),
+        ("https://source.example./mcp", "source.example", "source.example"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_origin_pin_alias_refuses_before_credential_dispatch(
+    monkeypatch: pytest.MonkeyPatch, endpoint: str, pinned_host: str, pinned_sni: str
+) -> None:
+    requests = []
+    pins = []
+
+    async def pin(url: str, **kw: Any) -> tuple[str, str, str, str]:
+        pins.append(url)
+        return "", "https://93.184.216.34/mcp", pinned_host, pinned_sni
+
+    async def reply(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"})
+
+    monkeypatch.setattr(source, "pinned_target", pin)
+    conf = source.MCPSourceConfig(endpoint, endpoint)
+    credential = source.MCPBearer(SECRET, endpoint)
+    admitted = source.MCPSourceClient(conf, credential, validate_access=access)
+    assert source._origin(endpoint)[1] == httpx.URL(endpoint).raw_host.decode("ascii")
+    transport = source._PinnedTransport(
+        admitted.config,
+        admitted.credential,
+        asyncio.get_running_loop().time() + 5,
+        access,
+        transport=httpx.MockTransport(reply),
+    )
+    async with httpx.AsyncClient(transport=transport, trust_env=False) as http:
+        with pytest.raises(source.MCPSourceError, match="^MCP source denied$"):
+            await http.get(endpoint)
+    assert pins == [str(httpx.URL(endpoint))]
+    assert requests == []
+    assert transport.failure == "denied"
