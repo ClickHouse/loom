@@ -85,6 +85,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           if [[ "$RELEASE_TAG" == n8n-v* ]]; then
             [[ "$RELEASE_TAG" == "n8n-v$VERSION" ]]
           else
