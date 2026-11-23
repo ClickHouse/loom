@@ -1548,7 +1548,7 @@ One ClickHouse setting, the four places that define it: its declaration and tier
 
 ## `code.symbol`
 
-Exact symbol lookup: definition, signature, doc comment, and body of a function/class/enum by (qualified) name — compiler-grade where available (tier='scip'), resolved across C++ overloads…
+Find an exact definition by name or path:line.
 
 `POST /v1/code.symbol` · MCP `loom_code_symbol` · role `viewer` · read
 
