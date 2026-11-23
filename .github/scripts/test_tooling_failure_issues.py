@@ -38,6 +38,7 @@ def fake_api(
     runs: list[dict],
     issues: list[dict] | None = None,
     alerts: list[dict] | None = None,
+    jobs: list[dict] | None = None,
 ) -> Mock:
     def request(path: str, *, payload: dict | None = None) -> dict | list:
         if payload is not None:
@@ -49,6 +50,8 @@ def fake_api(
             params = parse_qs(urlsplit(path).query)
             assert params["ref"] == ["refs/heads/main"] and params["state"] == ["open"]
             return alerts or []
+        if "/jobs?" in path:
+            return {"jobs": jobs or []}
         if path.startswith("issues?"):
             return issues or []
         if "missing.yml" in path:
@@ -150,6 +153,18 @@ class ToolingIssuesTests(unittest.TestCase):
                 event = {"workflow_run": {**run(2), "path": f".github/workflows/{path}.yml"}}
                 self.assertEqual(select_workflows("workflow_run", event), [f"{path}.yml"])
                 self.assertIn(f"{path}.yml", workflows)
+
+    def test_dedicated_publisher_owns_the_issue_when_it_succeeds(self) -> None:
+        issues: list[dict] = []
+        publisher = {"name": "Record trusted HTTP contract failures", "conclusion": "success"}
+        api = fake_api([run(2)], issues, jobs=[publisher])
+        self.assertEqual(report_failures(api, ["http-contract.yml"]), 0)
+        self.assertEqual(issues, [])
+        publisher["conclusion"] = "skipped"
+        self.assertEqual(report_failures(api, ["http-contract.yml"]), 1)
+        self.assertEqual(
+            issues[0]["title"], "[tooling-ci:http-contract] HTTP schema contract failed on main"
+        )
 
     def test_shared_ci_only_reports_targeted_jobs_and_steps(self) -> None:
         jobs = [

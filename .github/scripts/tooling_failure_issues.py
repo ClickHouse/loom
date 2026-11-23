@@ -38,6 +38,12 @@ WORKFLOWS = {
     "zizmor.yml": ("workflow-audit", "Workflow security audit execution"),
 }
 SHARED_WORKFLOWS = ("ci.yml", "docker-smoke.yml")
+ISSUE_PUBLISHERS = {
+    "contributor-lab.yml": "Record trusted source-lab failures",
+    "http-contract.yml": "Record trusted HTTP contract failures",
+    "identity-testing.yml": "Record trusted probe maintenance",
+    "sdk-native.yml": "Record trusted SDK failures",
+}
 SCANNERS = {"CodeQL": "codeql-alerts", "Scorecard": "scorecard-alerts"}
 SECURITY_URL = f"https://github.com/{REPO}/security/code-scanning"
 CI_STEPS = {
@@ -167,15 +173,19 @@ def collect_failures(api: Api, workflows: list[str]) -> dict[str, Finding]:
         run_id = run["id"]
         if type(run_id) is not int or run_id <= 0:
             raise ValueError("Expected a positive workflow run ID")
+        jobs_path = f"actions/runs/{run_id}/jobs?filter=latest"
+        publisher = ISSUE_PUBLISHERS.get(workflow)
+        if publisher and any(
+            job["name"] == publisher and job["conclusion"] == "success"
+            for job in list_rows(api, jobs_path, field="jobs")
+        ):
+            continue
         if workflow in WORKFLOWS:
             checks = {WORKFLOWS[workflow]}
         else:
             # The run jobs endpoint includes the latest result of every job, including
             # successful jobs retained when GitHub reruns only the failures.
-            checks = shared_failures(
-                workflow,
-                list_rows(api, f"actions/runs/{run_id}/jobs?filter=latest", field="jobs"),
-            )
+            checks = shared_failures(workflow, list_rows(api, jobs_path, field="jobs"))
         for key, label in checks:
             failures[key] = Finding(
                 run_id,
