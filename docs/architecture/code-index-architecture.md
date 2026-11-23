@@ -535,6 +535,14 @@ index tokenizer. The score counts only whole app lexemes and rejects partial mat
 from the gate. Underscore-only lexemes use the exact score within the same tenant,
 model and path scope because the text index has no token for them.
 
+After relevance ranking, per-file saturation spreads broad search results across
+files. It is skipped for an explicit path, a symbol route, test intent, or a
+code-shaped identifier named in the query that matches a qualified symbol
+component in the relevance window. This keeps related definitions together for
+questions about a named identifier. An unmatched identifier does not disable
+saturation. Per-symbol deduplication still removes repeated chunks of one definition,
+and continuation pages retain the final served order.
+
 ### Symbol bodies
 
 Literal hits, rendered-message matches and symbol mentions use the same retained-source

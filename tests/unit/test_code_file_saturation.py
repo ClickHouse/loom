@@ -88,6 +88,36 @@ def test_window_counter_and_skip_reasons() -> None:
     )
 
 
+def test_inline_identifier_in_relevance_window_skips_saturation() -> None:
+    head = [_u("src/router.py", 0.04, symbol="pkg.router::RouterState::register_route")]
+    for query in (
+        "how does RouterState register a route",
+        "register_route name option duplicate route",
+        "what calls RouterState::register_route",
+    ):
+        assert (
+            _saturation_skip_reason(route="hybrid", path_prefix="", query=query, head=head)
+            == "named_symbol"
+        )
+
+
+def test_unmatched_identifier_or_plain_word_keeps_saturation() -> None:
+    head = [_u("src/router.py", 0.04, symbol="pkg.router::RouterState::register_route")]
+    for query in (
+        "how does MissingState register a route",
+        "how does RouterStateExtra register a route",
+        "how is router state registered",
+        "how is register routed",
+    ):
+        assert _saturation_skip_reason(route="hybrid", path_prefix="", query=query, head=head) == ""
+    assert (
+        _saturation_skip_reason(
+            route="hybrid", path_prefix="", query="how does RouterState register", head=[]
+        )
+        == ""
+    )
+
+
 class _Repo:
     """Two legs that both put three chunks of one file ahead of one other file."""
 
@@ -200,3 +230,26 @@ def test_cursor_pool_keeps_the_served_order_after_file_saturation(monkeypatch: A
     assert continuation == ["a3"]
     assert set(served).isdisjoint(continuation)
     assert set(served + continuation) == {"a1", "a2", "a3", "b1"}
+
+
+def test_named_symbol_query_preserves_relevance_and_cursor_order(monkeypatch: Any) -> None:
+    from server.code.app.search import search
+
+    monkeypatch.setattr(settings, "code_search_file_saturation", 0.5)
+    monkeypatch.setattr(settings, "code_fusion_signals", False)
+    repo = _Repo()
+    repo.rows[0]["scope"] = "RouterState::register_route"
+    result = asyncio.run(
+        search(
+            repo,
+            "o",
+            "n",
+            query="how does register_route handle duplicate names",
+            top_k=3,
+            bodies="none",
+        )
+    )
+    assert [u.unit_id for u in result.units] == ["a1", "a2", "a3"]
+    assert [u.unit_id for u in result.pool] == ["a1", "a2", "a3", "b1"]
+    assert "saturation=skipped(named_symbol)" in result.score_explanation
+    assert "saturation_moved" not in result.retrieval_work
