@@ -70,6 +70,62 @@ def test_reader_filters_and_collection_targets_are_not_stamped() -> None:
     assert '&["namespace", "org"], &[]' in extraction
 
 
+def test_namespace_targets_and_nullable_rollups_have_distinct_defaults() -> None:
+    from scripts.codegen.rust_identity import NAMESPACE_FILTERS
+    from server.operations.registry import ALL_OPERATIONS
+
+    facts = gen.operation_facts().splitlines()
+    for op in ALL_OPERATIONS:
+        if "namespace" not in op.input_model.model_fields:
+            continue
+        if not op.name.startswith("namespace.") and op.name not in NAMESPACE_FILTERS:
+            continue
+        line = next(line for line in facts if line.startswith(f'("{op.name}",'))
+        stamped = line.split("&[", 1)[1].split("]", 1)[0]
+        assert '"namespace"' not in stamped, op.name
+        if op.name in NAMESPACE_FILTERS:
+            assert line.endswith("&[]),"), op.name
+        elif (
+            op.name not in {"namespace.delete", "namespace.rollback"}
+            and op.input_model.model_fields["namespace"].is_required()
+        ):
+            assert line.endswith('&["namespace"]),'), op.name
+
+
+def test_memory_selection_fields_are_defaults_instead_of_overrides() -> None:
+    from scripts.codegen.rust_identity import PROCEDURE_TARGETS, TARGETED_MEMORY
+
+    facts = gen.operation_facts().splitlines()
+    for name in TARGETED_MEMORY | PROCEDURE_TARGETS:
+        line = next(line for line in facts if line.startswith(f'("{name}",'))
+        assert '&["namespace", "org"], &[' in line, name
+    for name in ("memory.recall", "memory.brief"):
+        line = next(line for line in facts if line.startswith(f'("{name}",'))
+        assert '&["namespace", "org"], &["agent"]' in line
+
+
+def test_unclassified_memory_operations_and_namespace_filters_refuse_generation() -> None:
+    from types import SimpleNamespace
+
+    from scripts.codegen.rust_identity import validate_roles
+    from server.memory.api.models_common import _Identity
+    from server.operations.registry import ALL_OPERATIONS
+
+    with pytest.raises(ValueError, match="memory identity census changed"):
+        validate_roles(
+            [*ALL_OPERATIONS, SimpleNamespace(name="memory.unclassified", input_model=_Identity)]
+        )
+
+    class Rollup(BaseModel):
+        org: str
+        namespace: str | None = None
+
+    with pytest.raises(ValueError, match="namespace filter census changed"):
+        validate_roles(
+            [*ALL_OPERATIONS, SimpleNamespace(name="cost.unclassified", input_model=Rollup)]
+        )
+
+
 def test_unknown_factory_is_refused_without_executing_it() -> None:
     def refuse() -> list[str]:
         raise AssertionError("must not execute arbitrary factories")

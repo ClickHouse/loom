@@ -413,8 +413,15 @@ println!("{} attempts={}", result.data, result.metadata.attempts);
 ```
 
 Known operations use generated identity and retry policies.
-Bound org and namespace override declared request identity;
-optional reader filters keep their explicit values. Unknown operations receive
+Bound org, write scope and authorship override their declared request fields.
+Namespace operations preserve explicit targets and default omitted required
+namespaces to the client's namespace. Collection creation can leave its name
+to the server; collection deletion requires an explicit target.
+Nullable namespace filters, including cost and audit rollups, preserve explicit
+values, null and omission. Memory row selectors preserve explicit agent, user,
+session and run values, with client defaults for omitted personal-view fields.
+`memory.recall` and `memory.brief` default only their required agent; optional
+filters use server defaults. Unknown operations receive
 bound org and namespace only and retry connection failures before dispatch.
 They do not retry HTTP errors, timeouts, incomplete responses or 429 responses.
 The server validates fields and authorizes every operation.

@@ -134,7 +134,9 @@ async fn facades_and_generated_sends_share_declared_identity_and_metadata() {
         let request = server.request().await;
         assert_eq!(request.line, format!("POST /v1/{op} HTTP/1.1"));
         assert_eq!(request.body["org"], "org");
-        if op != "ops.capabilities" {
+        if op == "ops.health" {
+            assert_eq!(request.body["namespace"], Value::Null);
+        } else if op != "ops.capabilities" {
             assert_eq!(request.body["namespace"], "ns");
         } else {
             assert!(request.body.get("namespace").is_none());
@@ -142,8 +144,8 @@ async fn facades_and_generated_sends_share_declared_identity_and_metadata() {
         match op {
             "context.pack" => {
                 for (key, value) in [
-                    ("agent", "bot"),
-                    ("user_id", "user"),
+                    ("agent", "other"),
+                    ("user_id", "other"),
                     ("session_id", "session"),
                     ("run_id", "run"),
                 ] {

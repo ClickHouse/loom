@@ -44,7 +44,7 @@ async fn generated_send_methods_share_transport_identity_and_metadata() {
     let get = server.request().await;
     assert_eq!(get.body["org"], "org");
     assert_eq!(get.body["namespace"], "ns");
-    assert_eq!(get.body["agent"], "bot");
+    assert_eq!(get.body["agent"], "other");
     assert_eq!(get.body["fields"], json!(["value"]));
     assert_eq!(get.headers["x-request-id"], "get");
     SearchRequest::new("query")

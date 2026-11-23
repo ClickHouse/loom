@@ -23,7 +23,7 @@ async def test_rust_sdk_live_contracts(control_plane_url: str, mint_test_token: 
         "LOOM_RUST_LIVE_BASE_URL": control_plane_url,
         "LOOM_RUST_LIVE_ORG": org,
         "LOOM_RUST_LIVE_ADMIN_TOKEN": mint_test_token(
-            org=org, namespaces=["rust-live"], roles=["admin"], subject="rust-admin"
+            org=org, namespaces=["*"], roles=["admin"], subject="rust-admin"
         ),
         "LOOM_RUST_LIVE_WRITER_TOKEN": mint_test_token(
             org=org, namespaces=["rust-live"], subject="rust-writer"
@@ -39,6 +39,10 @@ async def test_rust_sdk_live_contracts(control_plane_url: str, mint_test_token: 
         str(ROOT / "sdk/rust/Cargo.toml"),
         "--test",
         "live",
+        "--test",
+        "live_identity",
+        "--features",
+        "blocking",
         "--",
         "--ignored",
         "--nocapture",

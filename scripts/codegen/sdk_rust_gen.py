@@ -21,6 +21,12 @@ if str(ROOT) not in sys.path:  # run as a file
     sys.path.insert(0, str(ROOT))
 
 from scripts.codegen.common import GeneratedFile, OpFacts, pascal  # noqa: E402
+from scripts.codegen.rust_identity import (  # noqa: E402
+    NAMESPACE_FILTERS,
+    PROCEDURE_TARGETS,
+    memory_tuple_policy,
+    validate_roles,
+)
 
 COMMAND = "python scripts/codegen/sdk_rust_gen.py"
 TARGET = ROOT / "sdk/rust/src/wire_models.rs"
@@ -620,12 +626,17 @@ def operation_facts() -> str:
     from server.operations.registry import ALL_OPERATIONS
     from server.tasks.api.models_task import _Caller
 
+    validate_roles(ALL_OPERATIONS)
     facts = []
     for op in ALL_OPERATIONS:
         keys = set(op.input_model.model_fields)
         identity = keys & {"org", "namespace"}
+        defaults = set()
         fact = OpFacts.of(op)
-        if issubclass(op.input_model, (_Identity, _CodeIdentity, _Caller)):
+        if issubclass(op.input_model, _Identity):
+            stamped, defaults = memory_tuple_policy(op)
+            identity |= stamped
+        if issubclass(op.input_model, (_CodeIdentity, _Caller)):
             identity |= keys & {"agent", "user_id", "session_id", "run_id"}
         # These models declare authorship directly rather than through a base.
         if op.name in {
@@ -647,54 +658,35 @@ def operation_facts() -> str:
             "cost.record_turns",
             "procedure.add",
             "procedure.record_run",
-            "procedure.evolve",
-            "procedure.revise",
             "procedure.fork",
         } or op.name.startswith("conversation."):
             identity |= keys & {"agent", "user_id", "session_id"}
+        if op.name in PROCEDURE_TARGETS:
+            defaults = keys & {"agent", "user_id", "session_id"}
         if op.name in {
-            "memory.set",
-            "memory.pin",
             "memory.update",
-            "memory.set_from_messages",
-            "memory.bulk_set",
             "memory.link",
             "decision.record",
             "observe.record",
-            "working_memory.set",
-            "working_memory.append",
         }:
             identity |= keys & {"run_id"}
-        if op.name in {
-            "memory.search",
-            "memory.search_trace",
-            "memory.ask",
-            "memory.list",
-            "memory.extraction_status",
-        }:
-            identity.discard("run_id")
-        if op.name in {
-            "memory.ask",
-            "memory.search",
-            "memory.search_trace",
-            "memory.extraction_status",
-        }:
-            identity -= {"agent", "user_id", "session_id"}
-        if op.name == "memory.digests":
-            identity.discard("session_id")
-        defaults = set()
-        # These namespaces name the object to change, not the client's write scope.
-        if op.name in {
-            "namespace.delete",
-            "namespace.rollback",
-            "collection.create",
-            "collection.move",
-            "collection.delete",
-        }:
+        if op.name.startswith(("namespace.", "collection.")):
             identity.discard("namespace")
-        if op.name == "memory.list":
-            identity -= {"agent", "user_id", "session_id"}
-            defaults = keys & {"agent", "user_id", "session_id"}
+            if (
+                op.name
+                not in {
+                    "namespace.delete",
+                    "namespace.rollback",
+                    "collection.create",
+                    "collection.move",
+                    "collection.delete",
+                }
+                and "namespace" in keys
+                and op.input_model.model_fields["namespace"].is_required()
+            ):
+                defaults.add("namespace")
+        if op.name in NAMESPACE_FILTERS:
+            identity.discard("namespace")
         if op.name.startswith("conversation.") and fact.read_only:
             identity -= {"agent", "user_id", "session_id"}
             defaults = {
