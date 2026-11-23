@@ -247,19 +247,32 @@ class BootstrapTests(unittest.TestCase):
                 bootstrap.validate_source_scope(changed, files, "a" * 40)
 
     def test_compiler_tree_contains_only_public_source_and_explicit_configuration(self):
-        source = Mock(commit="a" * 40)
-        source.files.return_value = {"src/flask/example.py": "x = 1\n"}
-        with tempfile.TemporaryDirectory() as directory:
+        source = Mock(commit="a" * 40, mirror=Path("public.git"))
+        files = {
+            "src/flask/example.py": "x = 1\n",
+            "tests/test_example.py": "def test_example(): pass\n",
+            "docs/design.rst": "Public design\n",
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(bootstrap, "source_files", return_value=files) as exported,
+        ):
             target = Path(directory) / "compiler"
             result = bootstrap.stage_compiler_source(source, target)
-            source.files.assert_called_once_with("src/flask")
+            exported.assert_called_once_with(
+                source.mirror, source.commit, ["src/flask", "tests", "docs"]
+            )
             paths = {
                 str(p.relative_to(target / "source"))
                 for p in (target / "source").rglob("*")
                 if p.is_file()
             }
-            self.assertEqual(paths, {"src/flask/example.py", "pyrightconfig.json"})
-            self.assertEqual(result["source_sha256"], digest(source.files.return_value))
+            self.assertEqual(paths, {*files, "pyrightconfig.json"})
+            self.assertEqual(
+                json.loads((target / "source/pyrightconfig.json").read_text())["include"],
+                ["src/flask", "tests", "docs"],
+            )
+            self.assertEqual(result["source_sha256"], digest(files))
             self.assertEqual(json.loads((target / "environment.json").read_text()), [])
 
 

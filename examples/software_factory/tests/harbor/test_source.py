@@ -71,3 +71,39 @@ class SourceIdentity(unittest.TestCase):
             self.assertRaises(PermissionError),
         ):
             source.server_identity(self.root, "owned", "/runtime")
+
+    def test_index_roots_include_original_tests_and_docs_but_skip_binary_fixtures(self):
+        from examples.software_factory.harbor.source_tree import source_files
+
+        files = {
+            "tests/test_original.py": b"def test_original(): pass\n",
+            "docs/design.rst": b"Public design\n",
+            "tests/icon.bin": b"\0data",
+            "tests/image.bin": b"\xffdata",
+            "tests/.env": b"PRIVATE_ENV_SENTINEL",
+        }
+        for name, content in files.items():
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        source._git(self.root, "add", ".")
+        source._git(
+            self.root,
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            "Public index roots",
+        )
+        commit = source._git(self.root, "rev-parse", "HEAD").decode().strip()
+        actual = source_files(self.root, commit, ["server", "tests", "docs"])
+        self.assertEqual(
+            actual,
+            {
+                "server/app.py": "initial\n",
+                "tests/test_original.py": "def test_original(): pass\n",
+                "docs/design.rst": "Public design\n",
+            },
+        )

@@ -22,7 +22,7 @@ class ProfileContracts(unittest.TestCase):
     def test_suite_is_repo_first_and_explicitly_selects_its_language_adapter(self):
         suite = json.loads((ROOT / "evals/flask/suite.lock.json").read_text())
         self.assertEqual(suite["languages"], ["python"])
-        self.assertEqual(suite["source_roots"], ["src/flask"])
+        self.assertEqual(suite["source_roots"], ["src/flask", "tests", "docs"])
         self.assertEqual(suite["title"], "Python E2E evaluation: Flask")
         self.assertIs(load_profile({"suite": suite}), profile)
         with self.assertRaises(ValueError):

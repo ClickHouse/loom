@@ -11,6 +11,7 @@ from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.live_support import schedule
 from examples.software_factory.harbor.planning import freeze_plan
 from examples.software_factory.harbor.runtime import read, write
+from examples.software_factory.harbor.source_tree import source_files
 
 
 def inputs(assets: Path, materialization: dict, output: Path) -> dict:
@@ -50,7 +51,7 @@ def inputs(assets: Path, materialization: dict, output: Path) -> dict:
         else:
             config["dependency_task_id"] = task_id
             source = FrozenSource(Path(config["source_git"]), row["base_commit"])
-            files = source.files("src/flask")
+            files = source_files(source.mirror, source.commit, lock["source_roots"])
             fixture = output / (task_id + ".json")
             write(
                 fixture,

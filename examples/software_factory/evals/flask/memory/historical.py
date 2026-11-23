@@ -10,9 +10,11 @@ from pathlib import Path
 
 import httpx
 
+from examples.software_factory.evals.flask.bootstrap import LOCK
 from examples.software_factory.evals.flask.historical import FrozenSource, git
 from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.runtime import write
+from examples.software_factory.harbor.source_tree import source_files
 
 HERE = Path(__file__).resolve().parent
 CASES = HERE / "historical_cases.json"
@@ -129,6 +131,7 @@ def materialize_cases(assets_path, output_path):
     assets, output = Path(assets_path), Path(output_path)
     _require(not output.exists(), "Historical materialization requires a fresh directory")
     manifest, catalog = json.loads(CASES.read_text()), json.loads(CATALOG.read_text())
+    roots = json.loads(LOCK.read_text())["source_roots"]
     receipt = json.loads((assets / "assets.json").read_text())
     public = json.loads((assets / "historical.json").read_text())["tasks"]
     cases = {case["case_id"]: case for case in manifest["cases"]}
@@ -159,9 +162,9 @@ def materialize_cases(assets_path, output_path):
         case = cases[task["task_id"]]
         _require(case["base_commit"] == task["base_commit"], "Historical task base changed")
         source = FrozenSource(Path(receipt["source_git"]), task["base_commit"])
-        files = source.files("src/flask")
+        files = source_files(source.mirror, source.commit, roots)
         earlier = FrozenSource(Path(receipt["source_git"]), case["history_base_commit"])
-        initial_files = earlier.files("src/flask")
+        initial_files = source_files(earlier.mirror, earlier.commit, roots)
         validate_catalog(catalog, case, files)
         events, documents = [], {}
         for row in catalog["records"]:

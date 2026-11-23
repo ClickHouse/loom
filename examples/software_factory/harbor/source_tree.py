@@ -36,7 +36,7 @@ def source_files(repo, commit, roots):
         or not roots
         or not all(ordinary(root) for root in roots)
     ):
-        raise PermissionError("Pin the public commit and implementation roots")
+        raise PermissionError("Pin the public commit and index roots")
     if git(repo, "rev-parse", commit + "^{commit}").decode().strip() != commit:
         raise PermissionError("Git source commit differs")
     output = {}
@@ -50,12 +50,18 @@ def source_files(repo, commit, roots):
         if not ordinary(path):
             continue
         if mode not in {"100644", "100755"} or kind != "blob":
-            raise PermissionError("Nonregular implementation source")
+            raise PermissionError("Nonregular indexed source")
         size = int(git(repo, "cat-file", "-s", oid))
         total += size
         if size > 1024 * 1024 or total > 20 * 1024 * 1024:
             raise ValueError("Public source exceeds preparation bounds")
-        output[path] = git(repo, "cat-file", "blob", oid).decode("utf-8")
+        raw = git(repo, "cat-file", "blob", oid)
+        if b"\0" in raw:
+            continue
+        try:
+            output[path] = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue  # Binary fixtures stay in the checkout, outside the text index.
     if not output:
-        raise PermissionError("Implementation tree is empty")
+        raise PermissionError("Indexed text tree is empty")
     return output

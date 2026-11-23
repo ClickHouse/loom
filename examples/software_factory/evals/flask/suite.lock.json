@@ -3,7 +3,7 @@
   "title": "Python E2E evaluation: Flask",
   "repository": "pallets/flask",
   "languages": ["python"],
-  "source_roots": ["src/flask"],
+  "source_roots": ["src/flask", "tests", "docs"],
   "adapter": "examples.software_factory.evals.flask.profile",
   "schema_version": 1,
   "dataset": {

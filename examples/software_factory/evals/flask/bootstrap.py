@@ -22,6 +22,7 @@ from examples.software_factory.harbor.source import (
     command,
     sha,
 )
+from examples.software_factory.harbor.source_tree import source_files
 
 HERE = Path(__file__).resolve().parent
 LOCK = HERE / "suite.lock.json"
@@ -250,15 +251,16 @@ def create_assets(output: Path) -> Path:
 
 
 def stage_compiler_source(source: FrozenSource, target: Path) -> dict:
-    """SCIP receives the exact public implementation, without evaluator files or Git objects."""
-    files = source.files("src/flask")
+    """SCIP receives the pinned public text roots, without evaluator files or Git objects."""
+    roots = read(LOCK)["source_roots"]
+    files = source_files(source.mirror, source.commit, roots)
     target.mkdir(parents=True, exist_ok=False)
     tree = target / "source"
     for name, content in files.items():
         path = tree / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content.encode())
-    write(tree / "pyrightconfig.json", {"include": ["src/flask"], "pythonVersion": "3.11"})
+    write(tree / "pyrightconfig.json", {"include": roots, "pythonVersion": "3.11"})
     write(target / "environment.json", [])
     (target / "allowed-paths.txt").write_text("".join(name + "\n" for name in sorted(files)))
     receipt = {

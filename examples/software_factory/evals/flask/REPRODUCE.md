@@ -51,6 +51,13 @@ arms have private writable memory namespaces; they replay history from
 2.0.0rc2, observe changed links at the task base, then revise one source-backed
 fact and verify that its anchor becomes fresh again.
 
+The indexed text roots are `src/flask`, `tests` and `docs`, for every Loom arm.
+They contain only the original Git revision; evaluator patches are absent.
+Non-text fixtures remain in the local checkout. The compiler uses the same public
+roots, and native receipts disclose files its parsers decline. Candidate grading
+continues to accept implementation changes under `src/flask` only. Expanding index
+coverage defines a separate cohort from implementation-only indexes.
+
 ## Execution and artifacts
 
 Three repeats of five arms plus six separate A/A controls produce 51 attempts.
