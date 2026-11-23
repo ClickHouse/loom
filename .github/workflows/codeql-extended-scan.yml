@@ -1,0 +1,67 @@
+name: Scan with CodeQL extended security
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: Upload SARIF to GitHub Security
+        type: boolean
+        required: true
+
+jobs:
+  analyze:
+    name: CodeQL extended (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+          config: |
+            paths:
+              - server/
+              - sdk/typescript/src/
+              - frontend/src/
+            paths-ignore:
+              - "**/tests/**"
+              - "**/*.test.ts"
+              - "**/*.test.tsx"
+              - "**/*.test-d.ts"
+              - frontend/src/test/**
+      - id: scan
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /suite:security-extended/language:${{ matrix.language }}
+          upload: ${{ inputs.publish && 'always' || 'never' }}
+          upload-database: false
+      - name: Report findings by rule
+        shell: bash
+        env:
+          SARIF_DIR: ${{ steps.scan.outputs.sarif-output }}
+        run: |
+          test -d "$SARIF_DIR"
+          jq -s -r -e '
+            if length == 0 or any(.[]; (.runs | type) != "array" or (.runs | length) == 0)
+            then error("Expected at least one SARIF run in each report")
+            else
+              [.[].runs[].results[]?] as $results
+              | "Findings: \($results | length)", "",
+                ($results | group_by(.ruleId)[] | "- \(.[0].ruleId): \(length)")
+            end
+          ' "$SARIF_DIR"/*.sarif | tee "$RUNNER_TEMP/codeql-rule-counts.txt" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: '!inputs.publish'
+        with:
+          name: codeql-extended-${{ matrix.language }}-counts
+          path: ${{ runner.temp }}/codeql-rule-counts.txt
+          if-no-files-found: error
+          retention-days: 7
