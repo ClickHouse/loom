@@ -80,7 +80,7 @@ class _FakeRepo:
         self.calls.append(list(paths))
         return [r for r in ROWS if r["path"] in paths]
 
-    async def types_for_paths(self, org, ns, paths, *, limit=400, revisions=None):
+    async def types_for_paths(self, org, ns, paths, *, limit=400, with_revision=False):
         self.type_calls = getattr(self, "type_calls", []) + [list(paths)]
         return [r for r in TYPE_ROWS if r["path"] in paths]
 

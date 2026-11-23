@@ -282,12 +282,19 @@ class FilesMixin(CodeRepoBase):
         embedding_model: str,
         *,
         with_revision: bool = False,
+        owner: tuple[str, list[str]] | None = None,
     ) -> list[dict[str, Any]]:
         """Bounded live raw chunks overlapping a definition under one served label.
 
         The extra row detects a capped read; the caller never treats it as complete.
         """
         revision_sql = ", toString(indexed_commit) AS indexed_commit" if with_revision else ""
+        span_sql = "start_line <= {end:UInt32} AND end_line >= {start:UInt32}"
+        if owner is not None:
+            span_sql = (
+                f"(({span_sql}) OR (kind = 'function' AND "
+                "(scope = {owner_scope:String} OR hasAny(symbol_ids, {owner_ids:Array(String)}))))"
+            )
         return await self._ch.query_all(
             f"""
             SELECT DISTINCT start_line, end_line, content, kind, scope, symbol_ids{revision_sql}
@@ -295,7 +302,7 @@ class FilesMixin(CodeRepoBase):
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND path = {{path:String}}
               AND embedding_model = {{model:String}}
-              AND start_line <= {{end:UInt32}} AND end_line >= {{start:UInt32}}
+              AND {span_sql}
               AND kind != 'class_skeleton'
               AND tombstoned_at IS NULL
             ORDER BY start_line, end_line LIMIT 401
@@ -307,6 +314,7 @@ class FilesMixin(CodeRepoBase):
                 "start": start,
                 "end": end,
                 "model": embedding_model,
+                **({"owner_scope": owner[0], "owner_ids": owner[1]} if owner is not None else {}),
             },
         )
 

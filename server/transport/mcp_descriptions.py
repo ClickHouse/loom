@@ -2183,12 +2183,11 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "elision disclosures; use local tools for changed or unindexed code."
     ),
     "code.grep": (
-        "Find exact text or several literal alternatives in indexed source. "
+        "Find exact text using a stable literal fragment or several literal alternatives. "
         "`include_body: true` adds enclosing definitions in the same call. "
-        "Use code.search to find behavior when the exact text is unknown. "
+        "Use code.search for behavior. Use `context_lines` for a short excerpt. "
         "`regex: true` uses one RE2 string. "
         "Scope with `path_prefix`, `path_globs` or `langs`. "
-        "`context_lines` adds nearby source. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
     ),
     # The coding tier lists blast radius with the sentences a coding session

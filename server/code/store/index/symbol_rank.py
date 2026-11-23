@@ -247,6 +247,8 @@ def _prefer_scip(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if s_start == t_start or (t_start <= s_start <= t_end):
                 if int(s.get("end_line") or 0) <= s_start < t_end:
                     s["end_line"] = t_end
+                    if "extent_commit" in t and s.get("extent_commit") != t["extent_commit"]:
+                        s["extent_commit"] = ""
                 # The parser id survives on the compiler row: parser-tier
                 # edges point at it, and a graph walk seeded by the compiler
                 # id alone would lose the callers only the parser saw.
@@ -266,6 +268,8 @@ def _carry_extent(keep: dict[str, Any], other: dict[str, Any]) -> None:
     o_start, o_end = int(other.get("start_line") or 0), int(other.get("end_line") or 0)
     if k_end <= k_start and o_end > o_start and (k_start == o_start or o_start <= k_start <= o_end):
         keep["start_line"], keep["end_line"] = o_start, o_end
+        if "extent_commit" in other:
+            keep["extent_commit"] = other["extent_commit"]
 
 
 def _bare(row: dict[str, Any]) -> str:

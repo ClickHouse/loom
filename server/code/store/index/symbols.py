@@ -371,7 +371,7 @@ class SymbolsMixin(CodeRepoBase):
         kinds: tuple[str, ...] = ("function", "method", "fixture"),
         with_extent_only: bool = False,
         per_statement: int = 20,
-        revisions: dict[str, str] | None = None,
+        with_revision: bool = False,
     ) -> list[dict[str, Any]]:
         """Live function/method symbols defined in the given paths, both
         tiers (scip preferred). Powers code.ask mechanism expansion: match
@@ -392,31 +392,21 @@ class SymbolsMixin(CodeRepoBase):
         # alone has hundreds of methods).
         rows: list[dict[str, Any]] = []
         step = max(1, int(per_statement))
-        revision_clause = (
-            "  AND (path, toString(indexed_commit)) IN {revisions:Array(Tuple(String, String))}\n"
-            if revisions is not None
-            else ""
-        )
+        revision_col = ", toString(indexed_commit) AS extent_commit" if with_revision else ""
         for i in range(0, len(paths[:200]), step):
             batch = paths[i : i + step]
-            revision_args = (
-                {"revisions": [(path, revisions[path]) for path in batch if path in revisions]}
-                if revisions is not None
-                else {}
-            )
             rows.extend(
                 await self._ch.query_all(
-                    """
+                    f"""
                 SELECT symbol_id, qualified_name, name, signature, path,
-                       start_line, end_line, tier, kind
+                       start_line, end_line, tier, kind{revision_col}
                 FROM loom.code_symbols FINAL
-                WHERE org = {org:String} AND namespace = {ns:String}
-                  AND path IN {paths:Array(String)}
-                  AND kind IN {kinds:Array(String)}
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND path IN {{paths:Array(String)}}
+                  AND kind IN {{kinds:Array(String)}}
                   AND tombstoned_at IS NULL
                 """
                     + ("  AND end_line > start_line\n" if with_extent_only else "")
-                    + revision_clause
                     + """
                 ORDER BY tier DESC, end_line - start_line DESC, path, start_line, symbol_id
                 LIMIT {limit:UInt32}
@@ -427,7 +417,6 @@ class SymbolsMixin(CodeRepoBase):
                         "paths": batch,
                         "kinds": list(kinds),
                         "limit": max(limit, 300 * len(batch)),
-                        **revision_args,
                     },
                 )
             )
@@ -551,7 +540,7 @@ class SymbolsMixin(CodeRepoBase):
         paths: list[str],
         *,
         limit: int = 400,
-        revisions: dict[str, str] | None = None,
+        with_revision: bool = False,
     ) -> list[dict[str, Any]]:
         """Class / struct / enum rows WITH a body extent in the given paths —
         the fallback scope for a line that sits in no function (a member
@@ -579,7 +568,7 @@ class SymbolsMixin(CodeRepoBase):
                 "macro",
             ),
             with_extent_only=True,
-            revisions=revisions,
+            with_revision=with_revision,
         )
 
     async def chunk_hashes_for_symbols(

@@ -29,13 +29,22 @@ async def extend_decorated_spans(
     candidates: dict[tuple[str, str], tuple[dict[str, Any], set[int]]] = {}
     for path, line in locations:
         rows = by_path.get(path, [])
-        if not path.lower().endswith((".py", ".pyi", ".pyw")) or _innermost(rows, line):
+        if not path.lower().endswith((".py", ".pyi", ".pyw")):
             continue
-        candidate = min(
-            (row for row in rows if row.get("symbol_id") and int(row["start_line"]) > line),
-            key=lambda row: int(row["start_line"]),
-            default=None,
-        )
+        candidate = _innermost(rows, line)
+        if candidate is not None:
+            # An older declaration can be current, but the match revision
+            # needs its owning chunk's start, including any decorators.
+            if revisions is None or str(candidate.get("extent_commit") or "").rstrip("\0") == (
+                revisions.get(path)
+            ):
+                continue
+        else:
+            candidate = min(
+                (row for row in rows if row.get("symbol_id") and int(row["start_line"]) > line),
+                key=lambda row: int(row["start_line"]),
+                default=None,
+            )
         if candidate is not None:
             key = (path, str(candidate["symbol_id"]))
             candidates.setdefault(key, (candidate, set()))[1].add(line)

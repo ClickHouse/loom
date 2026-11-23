@@ -75,7 +75,12 @@ async def handle_code_enclosing(
     with code_span("enclosing.symbols", paths=len(paths)) as sp:
         # a SQL test's line encloses a statement record
         rows = await repo.functions_for_paths(
-            org, ns, paths, limit=2000, kinds=ENCLOSING_KINDS, revisions=body_revisions
+            org,
+            ns,
+            paths,
+            limit=2000,
+            kinds=ENCLOSING_KINDS,
+            with_revision=body_revisions is not None,
         )
         span_attrs(sp, rows=len(rows))
     by_path = _by_path(rows)
@@ -101,7 +106,7 @@ async def handle_code_enclosing(
     if unresolved_paths:
         with code_span("enclosing.types", paths=len(unresolved_paths)) as sp:
             trows = await repo.types_for_paths(
-                org, ns, unresolved_paths, limit=2000, revisions=body_revisions
+                org, ns, unresolved_paths, limit=2000, with_revision=body_revisions is not None
             )
             span_attrs(sp, rows=len(trows))
         types_by_path = _by_path(trows)
@@ -164,6 +169,11 @@ async def handle_code_enclosing(
                 "kind": str(hit.get("kind") or "function"),
                 "start_line": int(hit.get("start_line") or 0),
                 "end_line": int(hit.get("end_line") or 0),
+                **(
+                    {"_extent_commit": hit.get("extent_commit"), "_tier_ids": hit.get("tier_ids")}
+                    if body_revisions is not None
+                    else {}
+                ),
             }
         )
 
@@ -353,6 +363,8 @@ async def _attach_enclosing_bodies(
     returned = elided = 0
     for r in results:
         sid = str(r.get("symbol_id") or "")
+        r.pop("_extent_commit", None)
+        r.pop("_tier_ids", None)
         body, signature = served.get(sid, ("", symbol_signature(r)))
         r["signature"] = signature
         if not sid:

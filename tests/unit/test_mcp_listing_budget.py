@@ -399,9 +399,11 @@ def test_the_compact_profile_keeps_the_tool_names():
 def test_compact_coding_grep_advertises_single_call_bodies_and_literal_alternatives():
     tools = {t["name"]: t for t in _listing("coding", True, "compact")}
     description = tools["loom_code_grep"]["description"]
+    assert "stable literal fragment" in description
     assert "literal alternatives" in description
     assert "`include_body: true` adds enclosing definitions in the same call" in description
     assert "loom_code_search" in description
+    assert "`context_lines` for a short excerpt" in description
 
 
 # ---------------------------------------------------------------- one revision policy

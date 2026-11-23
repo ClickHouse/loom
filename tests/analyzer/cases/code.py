@@ -69,6 +69,9 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
     await repo.grep_chunks(ORG, NS, "needle", regex=regex, path_prefix=prefix, scope=scope)
     await repo.grep_source_chunks_for_span(ORG, NS, "src/a.py", 1, 20, MODEL)
     await repo.source_chunks_for_span(ORG, NS, "src/a.py", 1, 20, MODEL, with_revision=True)
+    await repo.source_chunks_for_span(
+        ORG, NS, "src/a.py", 1, 20, MODEL, with_revision=True, owner=("a::f", ["symbol-id"])
+    )
     if regex:
         # An alternation gets the needle guard in front of match()
         await repo.grep_chunks(ORG, NS, "needle|other", regex=True, path_prefix=prefix, scope=scope)
@@ -318,7 +321,7 @@ async def _point_readers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await repo.functions_for_paths(ORG, NS, ["src/a.py"], with_extent_only=tests_flag)
     revisions = {"src/a.py": "a" * 40}
     await repo.functions_for_paths(
-        ORG, NS, ["src/a.py"], with_extent_only=tests_flag, revisions=revisions
+        ORG, NS, ["src/a.py"], with_extent_only=tests_flag, with_revision=True
     )
     await repo.function_chunk_starts(
         ORG, NS, MODEL, [("src/a.py", "symbol-id", 2)], revisions=revisions
