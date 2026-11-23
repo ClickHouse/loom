@@ -240,7 +240,7 @@ MCP tool loading. Omitting it loads the MCP schemas into context up front; it do
 show whether the task needed those tools. `--allowedTools` controls permission and
 cannot restore a tool omitted from `--tools`. See [Claude Code tool search](https://code.claude.com/docs/en/mcp#configure-tool-search).
 
-The server requests upfront loading for `loom_search`, `loom_code_search`,
+The server requests upfront loading for `loom_search`, `loom_code_search`, `loom_code_grep`,
 `loom_code_symbol` where listed, and `loom_op`. These entrypoints support search,
 definition lookup and operation discovery without a
 preliminary tool-search call. Other schemas remain deferred on clients that use tool

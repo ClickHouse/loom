@@ -1361,7 +1361,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Find literal text or RE2 regex in indexed source. Hits include source lines, "
         "enclosing symbols and spans. Pass `pattern`; `regex: true` selects regex. "
         "Narrow with `path_prefix`, `path_globs` or `langs`. For several hit bodies, "
-        "use code.enclosing(locations: [path:line, ...], include_body: true) in one call. "
+        "use code.enclosing with locations [path:line, ...] and include_body=true. "
         "`neighbours: true` adds callers, callees, tests and citing docs. "
         "`next_cursor` pages remaining matches. A regex-shaped literal with no match "
         "is retried as regex and disclosed. `mode: 'message'` matches rendered errors "
@@ -2201,7 +2201,7 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Read a named definition or path:line, with retained source and linked "
         "project lessons. Pass `name` or `symbol_id`; code.search finds unknown "
         "implementations. For several known locations, use "
-        "code.enclosing(locations: [...], include_body: true) in one call. "
+        "code.enclosing with locations [...] and include_body=true. "
         "`uses_brief: true` adds a compact caller summary for one resolved definition; "
         "code.callers reads a larger graph. `uses: true` adds the full mention list. "
         "`near_paths` or `pr_number` rank ambiguous definitions. Check freshness and "
@@ -2212,7 +2212,7 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "symbols. Pass `pattern`; `regex: true` selects regex. For behavior questions "
         "use code.search. Narrow with `path_prefix`, `path_globs` or `langs`; "
         "`next_cursor` pages remaining matches. For several hit bodies, use "
-        "code.enclosing(locations: [path:line, ...], include_body: true) in one call. "
+        "code.enclosing with locations [path:line, ...] and include_body=true. "
         "Coverage disclosures distinguish absent matches from incomplete indexed source."
     ),
     # The coding tier lists blast radius with the sentences a coding session

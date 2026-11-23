@@ -56,6 +56,12 @@ It runs your lab code against your Loom, prints `PASS` or `FAIL` for each check 
 reason, and exits non-zero while any check fails. On a laptop it finds the stack in
 `~/.loom`; if you installed it elsewhere, set `LOOM_INSTALL_DIR` to that directory.
 
+A student step that is still waiting after 60 seconds fails that check (the line names
+the check and the budget), and the later checks still run. Set `LOOM_GRADE_STEP_TIMEOUT`
+to another positive number of seconds to change the budget. The deadline applies to a
+cooperative async wait, such as waiting on an event or a future. It does not stop
+blocking synchronous code, a CPU loop, or a coroutine that ignores cancellation.
+
 Every push runs the same checks on GitHub Actions, on a fresh Loom: open the **Actions**
 tab, then the latest **Grade** run, whose summary lists each check.
 

@@ -2689,7 +2689,7 @@ class McpSettings(BaseModel):
     mcp_schema_profile: Annotated[Literal["standard", "full", "compact"], CaseFolded] = "standard"
     # Comma-separated operations or synthetic tools requesting upfront schema loading.
     # Defaults cover search and discovery; empty leaves loading to the host.
-    mcp_always_load_tools: str = "search.query,code.search,code.symbol,loom_op"
+    mcp_always_load_tools: str = "search.query,code.search,code.symbol,code.grep,loom_op"
     # Seconds without a tool call after which the mcp_session_run_sweep worker
     # closes an MCP session's implicit run (one per token and `Mcp-Session-Id`,
     # begun on the first run-scoped tool call); with no background workers
