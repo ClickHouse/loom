@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -209,8 +210,16 @@ class Gateway:
                     if response.headers.get("request-id"):
                         self.send_header("request-id", response.headers["request-id"])
                 except Exception as error:  # noqa: BLE001 — errors must not expose prompts, provider payloads or credentials
-                    body = json.dumps({"error": {"type": type(error).__name__}}).encode()
                     self.send_response(503)
+                    details: dict[str, str | int] = {"type": type(error).__name__}
+                    if isinstance(error, httpx.HTTPStatusError):
+                        details["upstream_status"] = error.response.status_code
+                        identifier = error.response.headers.get("request-id", "")
+                        if re.fullmatch(
+                            r"[A-Za-z0-9_.-]{1,128}", identifier
+                        ) and not gateway.contains_credential(identifier):
+                            self.send_header("request-id", identifier)
+                    body = json.dumps({"error": details}).encode()
                     self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()

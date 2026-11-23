@@ -205,6 +205,27 @@ class SpendingContracts(unittest.TestCase):
             gateway.forward({**self.payload, "model": "other-model"}, self.headers)
         self.assertFalse(any(row["event"] == "reserved" for row in self.journal.rows))
 
+    def test_gateway_reports_upstream_failure_metadata_without_settling_usage(self):
+        gateway = self.gateway(
+            lambda _: httpx.Response(
+                429,
+                headers={"request-id": "provider-failure"},
+                json={"error": {"message": "private upstream detail"}},
+            )
+        )
+        port = gateway.start(host="127.0.0.1")
+        with httpx.Client(trust_env=False) as client:
+            response = client.post(
+                f"http://127.0.0.1:{port}/v1/messages", json=self.payload, headers=self.headers
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["request-id"], "provider-failure")
+        self.assertEqual(
+            response.json(), {"error": {"type": "HTTPStatusError", "upstream_status": 429}}
+        )
+        self.assertTrue(self.journal.blocked)
+        self.assertEqual(self.journal.rows[-1]["event"], "unknown")
+
     def test_concurrent_requests_cannot_reserve_more_than_the_allowance(self):
         self.journal.reserve({**self.payload, "max_tokens": 128000}, role="solver")
         self.journal.reserve({**self.payload, "max_tokens": 128000}, role="solver")
