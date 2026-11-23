@@ -55,9 +55,13 @@ def _content_counts(body, seen):
         ] += 1
         key = lesson.get("namespace"), lesson.get("memory_key")
         excerpt = lesson.get("excerpt")
-        if all(isinstance(part, str) and part for part in key):
-            identity = (*key, json.dumps(lesson, sort_keys=True, separators=(",", ":")))
-            if identity in seen and isinstance(excerpt, str):
+        if (
+            isinstance(excerpt, str)
+            and excerpt
+            and all(isinstance(part, str) and part for part in key)
+        ):
+            identity = (*key, " ".join(excerpt.split()))
+            if identity in seen:
                 repeated += len(excerpt)
             seen.add(identity)
     return {

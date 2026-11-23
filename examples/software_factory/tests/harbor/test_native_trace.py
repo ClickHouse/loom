@@ -16,7 +16,7 @@ class NativeTrace(unittest.TestCase):
             lesson = {
                 "namespace": "private",
                 "memory_key": "secret",
-                "excerpt": "note",
+                "excerpt": "note\ntext",
                 "code_state": "fresh",
             }
             events = [
@@ -48,13 +48,19 @@ class NativeTrace(unittest.TestCase):
                                 "type": "tool_result",
                                 "tool_use_id": "one",
                                 "content": json.dumps(
-                                    {"definitions": [{"body": "abc"}], "lessons": [lesson]}
+                                    {"definitions": [{"body": "abc", "lessons": [lesson]}]}
                                 ),
                             },
                             {
                                 "type": "tool_result",
                                 "tool_use_id": "two",
-                                "content": json.dumps({"lessons": [lesson]}),
+                                "content": json.dumps(
+                                    {
+                                        "lessons": [
+                                            {**lesson, "path": "file.py", "excerpt": "note text"}
+                                        ]
+                                    }
+                                ),
                             },
                         ]
                     },
@@ -73,8 +79,8 @@ class NativeTrace(unittest.TestCase):
             self.assertEqual(metrics["parallel_tool_groups_main"], 1)
             self.assertEqual(metrics["tool_calls_main"], 2)
             self.assertEqual(metrics["loom_source_chars_main"], 3)
-            self.assertEqual(metrics["loom_lesson_chars_main"], 8)
-            self.assertEqual(metrics["loom_repeated_lesson_chars_main"], 4)
+            self.assertEqual(metrics["loom_lesson_chars_main"], 18)
+            self.assertEqual(metrics["loom_repeated_lesson_chars_main"], 9)
             self.assertEqual(metrics["claude_api_time_s"], 2)
             self.assertNotIn("secret", json.dumps(result))
             self.assertNotIn("private", json.dumps(result))

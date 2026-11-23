@@ -5,6 +5,12 @@ contains 45 primary attempts and six baseline controls using stock Claude Code.
 All 36 Loom attempts invoke Loom, but no arm meets the combined quality, cost and
 time target. Historical memory does not improve quality in this cohort.
 
+The [native CLI option-order pilot](native-cli-order-pilot/README.md) records
+five matched attempts on a separate upstream issue. All pass the hidden and
+blind grades. Tree-sitter and SCIP with memory meet the observed cost and
+agent-time targets. The cost result is sensitive to initial cache pricing,
+and the memory arms tie their code-only peers on quality.
+
 The [native search lessons pilot](native-search-lessons-pilot/README.md) records
 five matched attempts on the multi-mount blueprint issue. Scoped search keeps
 the registration lesson and omits notes linked to other methods. All five miss

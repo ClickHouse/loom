@@ -69,6 +69,10 @@ change agent execution. API duration includes model, network and queuing time.
 The remainder of CLI time includes client and tool work; it is not isolated Loom
 server latency. Character counts are not billed provider tokens.
 
+Repeated lesson characters compare excerpts for the same memory key and namespace
+after collapsing whitespace. A later result can repeat the text with different
+whitespace or fields.
+
 Per-response usage records pair prompt, output, cache-read and cache-write tokens
 with the native tool call IDs. The first measured response establishes usage before
 any tool has returned. Compare later responses with the tool trace to see where
