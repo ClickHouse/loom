@@ -2,7 +2,7 @@
 
 Run these examples from a Loom checkout with Cargo against a running Loom server.
 The three basic examples below write, read and delete their own memory keys and knowledge URIs. Installation
-and client configuration are covered in the [SDK README](../README.md).
+and client configuration are covered in the [SDK README](../README.md#install).
 
 | Example                        | Client   | Demonstrates                                                                           |
 | ------------------------------ | -------- | -------------------------------------------------------------------------------------- |
