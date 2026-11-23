@@ -126,6 +126,8 @@ def test_an_expanded_body_is_not_mapped_as_a_source_chunk(granularity: str) -> N
             "(self, token: str, /, *, retry=(1, 2))",
         ),
         ("def validate(): pass\n", "()"),
+        ("def validate(a) -> lambda: None: pass\n", "(a)"),
+        ("def validate(a)\n", ""),
         (
             '    def validate(value="""start\n        middle\n    end"""):\n        return value\n',
             "(value='start\\n        middle\\n    end')",

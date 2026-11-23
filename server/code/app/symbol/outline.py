@@ -63,12 +63,12 @@ def _is_large_container(row: dict[str, Any]) -> bool:
 
 def outline_entry(row: dict[str, Any]) -> dict[str, Any]:
     """A declaration's source location and readable metadata."""
-    from server.code.domain.units import readable_signature
+    from server.code.domain.units import symbol_signature
 
     return {
         "kind": str(row.get("kind") or "function"),
         "qualified_name": str(row.get("qualified_name") or ""),
-        "signature": readable_signature(row),
+        "signature": symbol_signature(row),
         "start_line": int(row.get("start_line") or 0),
         "end_line": int(row.get("end_line") or 0),
         "tier": str(row.get("tier") or ""),

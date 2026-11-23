@@ -255,11 +255,15 @@ def unit_from_chunk(row: dict[str, Any], *, score: float = 0.0) -> CodeUnit:
 _SCIP_PLACEHOLDER_SIG = re.compile(r"^\(scip:[0-9a-f]+\)$")
 
 
-def readable_signature(row: dict[str, Any], *, body: str = "") -> str:
+def readable_signature(value: object) -> str:
+    """Display a signature without the compiler's overload identity."""
+    sig = str(value or "")[:300]
+    return "" if _SCIP_PLACEHOLDER_SIG.match(sig) else sig
+
+
+def symbol_signature(row: dict[str, Any], *, body: str = "") -> str:
     """Display source parameters when the compiler identity supplies no signature."""
-    sig = str(row.get("signature") or "")[:300]
-    if _SCIP_PLACEHOLDER_SIG.match(sig):
-        return ""
+    sig = readable_signature(row.get("signature"))
     if not (
         sig == "()"
         and row.get("signature_tier", row.get("tier")) == "scip"
@@ -290,17 +294,23 @@ def _python_parameters(body: str, name: str) -> str:
 
         header = [(tokenize.NAME, "def"), (tokenize.NAME, "_")]
         depth = 0
+        parameters_started = False
         for token in tokens:
             if token.type in {tokenize.NEWLINE, tokenize.ENDMARKER}:
                 break
-            if token.type == tokenize.OP:
-                if token.string == ":" and depth == 0:
-                    statement = ast.parse(tokenize.untokenize(header) + ": pass").body[0]
-                    if isinstance(statement, ast.FunctionDef):
-                        return f"({ast.unparse(statement.args)})"
-                    break
-                depth += int(token.string in "([{") - int(token.string in ")]}")
             header.append((token.type, token.string))
+            if token.type != tokenize.OP:
+                continue
+            if token.string == "(" and depth == 0:
+                parameters_started = True
+            depth += int(token.string in "([{") - int(token.string in ")]}")
+            if parameters_started and depth == 0:
+                if next(tokens).string not in {":", "->"}:
+                    break
+                statement = ast.parse(tokenize.untokenize(header) + ": pass").body[0]
+                if isinstance(statement, ast.FunctionDef):
+                    return f"({ast.unparse(statement.args)})"
+                break
     except (StopIteration, SyntaxError, tokenize.TokenError, ValueError, RecursionError):
         # The retained source can use syntax newer than the server interpreter.
         return ""
@@ -315,7 +325,7 @@ def unit_from_symbol(row: dict[str, Any], *, body: str = "") -> CodeUnit:
         end_line=int(row.get("end_line") or 0),
         symbol=str(row.get("qualified_name") or ""),
         kind="symbol",
-        signature=readable_signature(row, body=body),
+        signature=symbol_signature(row, body=body),
         body=body,
         description=str(row.get("doc_comment") or "")[:500],
         tier=str(row.get("tier") or ""),

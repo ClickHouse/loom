@@ -20,7 +20,7 @@ from server.code.app.common import (
 from server.code.app.spans import code_span, set_code_span_attributes, span_attrs
 from server.code.app.symbol.neighbours import _attach_enclosing_neighbours
 from server.code.app.symbol.resolve import _innermost, symbol_body
-from server.code.domain.units import readable_signature
+from server.code.domain.units import symbol_signature
 from server.code.store.index import CodeRepo
 
 logger = logging.getLogger(__name__)
@@ -156,7 +156,7 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
         )
     else:
         for row in results:
-            row["signature"] = readable_signature(row)
+            row["signature"] = symbol_signature(row)
 
     want_neighbours = bool(input.neighbours)  # unset = off
     neighbours: list[dict[str, Any]] = []
@@ -316,8 +316,8 @@ async def _attach_enclosing_bodies(
     for r, body in zip(fetch, bodies, strict=True):
         if not body:
             continue
-        signature = readable_signature(r, body=body)
-        extra = estimate_tokens(signature) - estimate_tokens(readable_signature(r))
+        signature = symbol_signature(r, body=body)
+        extra = estimate_tokens(signature) - estimate_tokens(symbol_signature(r))
         cost = estimate_tokens(body) + max(0, extra)
         if not token_budget or used + cost <= token_budget:
             used += cost
@@ -326,7 +326,7 @@ async def _attach_enclosing_bodies(
     returned = elided = 0
     for r in results:
         sid = str(r.get("symbol_id") or "")
-        body, signature = served.get(sid, ("", readable_signature(r)))
+        body, signature = served.get(sid, ("", symbol_signature(r)))
         r["signature"] = signature
         if not sid:
             continue
