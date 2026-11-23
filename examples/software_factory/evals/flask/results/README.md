@@ -1,5 +1,10 @@
 # Flask evaluation results
 
+The [native CLI cache-pair pilot](native-cli-cache-pairs/README.md) measures
+cold and warm provider starts for every arm. All ten pass the hidden and blind
+grades. The best cold cost reduction is 3.4%, and every warm Loom arm costs
+more than warm No Loom.
+
 The [native source-routing cohort](native-instructed-source-routing/README.md)
 contains 45 primary attempts and six baseline controls using stock Claude Code.
 All 36 Loom attempts invoke Loom, but no arm meets the combined quality, cost and
