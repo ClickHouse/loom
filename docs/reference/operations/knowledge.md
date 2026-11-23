@@ -1045,7 +1045,7 @@ Retire a registered document source: its registry row goes inactive and its cred
 
 ## `knowledge.source.rotate`
 
-Replace a registered document source's credential.
+Replace a shared recording source's credential.
 
 `POST /v1/knowledge.source.rotate` · MCP `loom_knowledge_source_rotate` · role `admin` · write · audited · not listed under the MCP `all` toolset
 

@@ -232,7 +232,7 @@ class KnowledgeSourceCheckOutput(BaseModel):
 
 
 class KnowledgeSourceRotateInput(PrivateSourceInput):
-    """Replace a registered document source's credential. A namespace admin may;
+    """Replace a shared recording source's credential. A namespace admin may;
     the new credential is probed first, and a probe that fails stores nothing."""
 
     org: str = Field(..., description="The org.")

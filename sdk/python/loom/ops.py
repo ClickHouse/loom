@@ -12433,7 +12433,7 @@ class KnowledgeSourceRemoveOutput(TypedDict, total=False):
 
 
 class KnowledgeSourceRotateInput(TypedDict, total=False):
-    "Replace a registered document source's credential. A namespace admin may;"
+    "Replace a shared recording source's credential. A namespace admin may;"
 
     org: Required[str]
     namespace: Required[str]
@@ -12442,7 +12442,7 @@ class KnowledgeSourceRotateInput(TypedDict, total=False):
 
 
 class KnowledgeSourceRotateBody(TypedDict, total=False):
-    "Replace a registered document source's credential. A namespace admin may;"
+    "Replace a shared recording source's credential. A namespace admin may;"
 
     org: NotRequired[str]
     namespace: NotRequired[str]

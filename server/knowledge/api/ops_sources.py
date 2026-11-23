@@ -63,8 +63,7 @@ knowledge_source_add = Operation(
     audit=True,
     audit_subject=source_add_audit_subject,
 )
-# No store request and nothing written: a reader may preview what links name.
-# The owner may probe their connection; other callers need namespace administration.
+# Shared recording probes require namespace administration inside the handler.
 knowledge_source_check = Operation(
     name="knowledge.source.check",
     maturity="experimental",

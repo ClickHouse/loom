@@ -23,6 +23,11 @@ on:
       - server/main.py
       - sdk/python/**
       - sdk/ruby/**
+      - sdk/typescript/**
+      - sdk/rust/**
+      - sdk/go/**
+      - sdk/java/**
+      - sdk/dotnet/**
       - schemas/**
       - dev/ci_start_clickhouse.sh
       - dev/ci_start_postgres.sh
@@ -44,6 +49,207 @@ env:
   UV_VERSION: "0.12.19"
 
 jobs:
+  source-contracts:
+    name: MCP generated SDK contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LOOM_ENV_FILE: ""
+      LOOM_LLM_PROVIDER: fake
+      LOOM_EMBEDDING_MODEL: fake-ngram-1024
+    steps:
+      - name: Validate a dispatched commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: '[[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/*/
+            /server/
+            /scripts/
+            /sdk/
+            /extractor/
+            /schemas/
+            /tests/
+            !/tests/unit/test_term_leg.py
+            !/tests/integration/test_term_leg.py
+            !/tests/unit/test_session_proof_request_correlation.py
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Install the locked generator dependencies
+        id: install
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Check generated SDK contracts
+        id: contracts
+        run: |
+          python -m scripts.codegen.sdk_py_gen --check
+          python -m scripts.codegen.sdk_py_client_gen --check
+          python -m scripts.codegen.sdk_py_admin_gen --check
+          python -m scripts.codegen.sdk_rb_gen --check
+          python -m scripts.codegen.sdk_ts_gen --check
+      - name: Render actual candidates after a contract failure
+        if: failure() && steps.contracts.outcome == 'failure'
+        run: |
+          python -m scripts.codegen.sdk_py_gen
+          python -m scripts.codegen.sdk_py_client_gen
+          python -m scripts.codegen.sdk_py_admin_gen
+          python -m scripts.codegen.sdk_rb_gen
+          python -m scripts.codegen.sdk_ts_gen
+      - name: Export only generated SDK candidates
+        if: failure() && steps.contracts.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mcp-generated-sdk-candidates
+          path: |
+            sdk/python/loom/ops.py
+            sdk/python/loom/client.py
+            sdk/python/loom/admin_routes.py
+            sdk/ruby/lib/clickhouse/loom/generated/
+            sdk/typescript/src/generated/ops.ts
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Install the built SDK for the public API contract
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        id: sdk-install
+        run: |
+          uv build --wheel sdk/python --out-dir "$RUNNER_TEMP/mcp-contract-sdk"
+          uv pip install --no-deps "$RUNNER_TEMP"/mcp-contract-sdk/*.whl
+      - name: Check the maintained SDK public API snapshot
+        if: ${{ !cancelled() && steps.sdk-install.outcome == 'success' }}
+        id: sdk-snapshot
+        run: python -m pytest -q tests/unit/test_sdk_surface_contract.py::test_public_api_matches_the_snapshot
+      - name: Render the actual SDK public API candidate
+        if: failure() && steps.sdk-snapshot.outcome == 'failure'
+        env:
+          LOOM_UPDATE_SNAPSHOT: "1"
+        run: python -m pytest -q tests/unit/test_sdk_surface_contract.py::test_public_api_matches_the_snapshot
+      - name: Export only the SDK public API candidate
+        if: failure() && steps.sdk-snapshot.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mcp-sdk-public-api-candidate
+          path: tests/unit/snapshots/sdk_public_api.json
+          if-no-files-found: error
+          retention-days: 7
+
+  go-client:
+    name: Go protected source client (${{ matrix.go }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.22.x", "1.27.4"]
+    defaults:
+      run:
+        working-directory: sdk/go
+    steps:
+      - name: Validate a dispatched commit
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: ${{ github.workspace }}
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: '[[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: /sdk/go/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - name: Check Go formatting
+        id: go-format
+        run: test -z "$(gofmt -l *.go)"
+      - name: Render the actual Go format candidate
+        if: failure() && steps.go-format.outcome == 'failure'
+        run: |
+          gofmt -w *.go
+          git diff -- '*.go' > "$RUNNER_TEMP/go-format.patch"
+      - name: Export only the Go format candidate
+        if: failure() && steps.go-format.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mcp-go-format-${{ matrix.go }}
+          path: ${{ runner.temp }}/go-format.patch
+          if-no-files-found: error
+          retention-days: 7
+      - name: Build, vet and exercise owned HTTP protection fixtures
+        run: |
+          go build ./...
+          go vet ./...
+          go test -race -count=1 -timeout=180s ./...
+
+  java-client:
+    name: Java protected source client (17)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sdk/java
+    steps:
+      - name: Validate a dispatched commit
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: ${{ github.workspace }}
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: '[[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: /sdk/java/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Compile and exercise owned HTTP protection fixtures
+        run: mvn --batch-mode --no-transfer-progress -DfailIfNoTests=true verify
+
+  dotnet-client:
+    name: .NET protected source client (8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sdk/dotnet
+    steps:
+      - name: Validate a dispatched commit
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: ${{ github.workspace }}
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: '[[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout: /sdk/dotnet/
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: "8.0.x"
+      - name: Compile and exercise owned HTTP protection fixtures
+        run: dotnet test ClickHouse.Loom.sln --configuration Release
+
   ruby-client:
     name: Ruby protected source client
     runs-on: ubuntu-latest

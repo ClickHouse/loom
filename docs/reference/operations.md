@@ -455,7 +455,7 @@ Fields for every `knowledge` op: [operations/knowledge.md](operations/knowledge.
 | [`knowledge.source.mcp_resume`](operations/knowledge.md#knowledgesourcemcp_resume) |  | writer | write | no | yes |
 | [`knowledge.source.mcp_update`](operations/knowledge.md#knowledgesourcemcp_update) |  | writer | write | no | yes |
 | [`knowledge.source.remove`](operations/knowledge.md#knowledgesourceremove) | Retire a registered document source: its registry row goes inactive and its credential is cleared. | writer | write | no | yes |
-| [`knowledge.source.rotate`](operations/knowledge.md#knowledgesourcerotate) | Replace a registered document source's credential. | admin | write | no | yes |
+| [`knowledge.source.rotate`](operations/knowledge.md#knowledgesourcerotate) | Replace a shared recording source's credential. | admin | write | no | yes |
 | [`knowledge.source.sync_now`](operations/knowledge.md#knowledgesourcesync_now) | Record a request to sync one document source in its sync state: the sync worker starts its next pass with it. | writer | idempotent | no | yes |
 | [`knowledge.synthesize`](operations/knowledge.md#knowledgesynthesize) | Complete a task over WHOLE documents, not a search slice: every active chunk of the named documents is read in order, in windows that respect section boundaries, each window is noted once, and the… | viewer | idempotent | no | yes |
 | [`knowledge.update_metadata`](operations/knowledge.md#knowledgeupdate_metadata) | Edit doc-level metadata (title, description, tags). | writer | idempotent | no | yes |
