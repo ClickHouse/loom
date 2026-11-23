@@ -188,20 +188,32 @@ class CodeUnit(BaseModel):
         return f"{self.path}:{self.start_line}-{self.end_line}"
 
 
-_PYTHON_CLASS_WITH_DOCSTRING = re.compile(
-    r"(?m)^[ \t]*class[ \t]+(?P<name>\w+)[^\n]*:[ \t]*\n[ \t]+(?P<quote>['\"])(?P=quote){2}"
+_PYTHON_CLASS_HEADER = re.compile(r"(?m)^(?P<indent>[ \t]*)class[ \t]+(?P<name>\w+)\b")
+_PYTHON_CLASS_DOCSTRING = re.compile(
+    r"[^\n]*:[ \t]*\n(?P<indent>[ \t]+)(?P<quote>['\"])(?P=quote){2}"
 )
 
 
 def _python_class_without_doc_prefix(unit: CodeUnit) -> CodeUnit:
     """Keep the skeleton from its class header when its docstring repeats the preface."""
-    match = _PYTHON_CLASS_WITH_DOCSTRING.search(unit.body)
-    if match is None or match["name"] != unit.symbol.rsplit("::", 1)[-1]:
+    if unit.body.startswith("# … continued from "):
         return unit
-    prefix = unit.body[: match.start()].removesuffix("\n")
+    header = _PYTHON_CLASS_HEADER.search(unit.body)
+    if header is None or header["name"] != unit.symbol.rsplit("::", 1)[-1]:
+        return unit
+    prefix = unit.body[: header.start()].removesuffix("\n")
+    if not prefix:
+        return unit
+    match = _PYTHON_CLASS_DOCSTRING.match(unit.body, header.end())
+    if (
+        match is None
+        or not match["indent"].startswith(header["indent"])
+        or match["indent"] == header["indent"]
+    ):
+        return unit
     docstring, closing, _ = unit.body[match.end() :].partition(match["quote"] * 3)
-    if prefix and closing and docstring.strip("\"' \n").startswith(prefix):
-        return unit.model_copy(update={"body": unit.body[match.start() :]})
+    if closing and docstring.strip("\"' \n").startswith(prefix):
+        return unit.model_copy(update={"body": unit.body[header.start() :]})
     return unit
 
 

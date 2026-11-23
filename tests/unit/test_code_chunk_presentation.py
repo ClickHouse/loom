@@ -51,6 +51,29 @@ def test_python_class_skeleton_keeps_its_source_docstring(quote: str, prefix: st
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        'class Router:\n    class Router:\n        """class Router:"""\n',
+        "# … continued from class Router:\n    class Router:\n"
+        '        """# … continued from class Router:"""\n',
+    ],
+)
+def test_nested_class_docstring_keeps_its_outer_context(source: str) -> None:
+    unit = unit_from_chunk(
+        {
+            "path": "routes.py",
+            "scope": "routes::Router",
+            "kind": "class_skeleton",
+            "start_line": 1,
+            "end_line": 3,
+            "content": source,
+        }
+    )
+    served, _ = budget_units([unit], 0)
+    assert served[0].body == source
+
+
+@pytest.mark.parametrize(
     "prefix",
     ["# … continued from def route():\n", "The route belongs to the public API.\n", ""],
 )
