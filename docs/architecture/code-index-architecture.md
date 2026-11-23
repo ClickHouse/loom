@@ -27,6 +27,11 @@ a missing one (or `loom code init` does, ahead of time) and fetches it on every 
 `server/code/app/index/gitrepo.py` shells out to `git`; it has no working tree and writes
 nothing except `fetch`. Branches of one repository share the mirror.
 
+CLI backfills resolve sibling imports and re-exports from the mirror at the pinned
+backfill commit, including their edge reconciliation pass. Search chunks can carry
+doc comments and overlapping context, so their concatenation is not authoritative
+source text for parsing a sibling module.
+
 A history read (`blame_range`, bisect, `first_build`, a lesson's code check) on a host
 without the mirror clones it once in the background
 (`server/code/app/index/mirrors.py`, `history_dir`). A read that names its op waits up
