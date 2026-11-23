@@ -359,6 +359,10 @@ async def _source_or_404(org: str, namespace: str, name: str) -> KnowledgeSource
         raise NotFoundError(
             f"no document source {domain.shown(name)} in {namespace!r}", code="SOURCE_NOT_FOUND"
         )
+    if domain.opaque_payload(
+        kind=src.kind, mode=src.credential_mode, version=src.source_contract_version
+    ):
+        _require_served(src)
     return src
 
 
@@ -402,6 +406,10 @@ def _sync(src: KnowledgeSource, state: dict[str, str] | None) -> KnowledgeSource
 
 
 async def _details_allowed(src: KnowledgeSource) -> bool:
+    if domain.opaque_payload(
+        kind=src.kind, mode=src.credential_mode, version=src.source_contract_version
+    ):
+        return False
     if src.credential_mode == "shared":
         return True
     if src.credential_mode != "connected" or not request_work.mark_mirrored():
@@ -1021,6 +1029,10 @@ async def handle_knowledge_source_remove(
                     f"no document source {domain.shown(name)} in {input.namespace!r}",
                     code="SOURCE_NOT_FOUND",
                 )
+            if domain.opaque_payload(
+                kind=src.kind, mode=src.credential_mode, version=src.source_contract_version
+            ):
+                _require_served(src)
             if src.credential_mode == "connected":
                 from server.knowledge.app.connected_sources import require_operator
 

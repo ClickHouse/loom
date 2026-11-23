@@ -1,4 +1,4 @@
-"""Offline retirement of restored connection authority, before serving any copy."""
+"""Retirement of connection history under account-before-source leases."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
-from server.auth import claims
+from server.auth import aliases, claims
 from server.core import ch as ch_module
 from server.core.ch import set_query_tag
 from server.core.secrets_at_rest import unseal
@@ -17,7 +17,12 @@ from server.erasure.app.connected_accounts import require_restore_erased
 from server.knowledge.app import connected_accounts as accounts
 from server.knowledge.app import source_push
 from server.knowledge.app import sources as source_ops
-from server.knowledge.domain.connected_accounts import CREDENTIAL_PURPOSE, KINDS, ConnectedAccount
+from server.knowledge.domain.connected_accounts import (
+    CREDENTIAL_PURPOSE,
+    ConnectedAccount,
+    known_account_kind,
+    source_account_key,
+)
 from server.knowledge.domain.sources import KnowledgeSource
 from server.knowledge.store import connected_accounts as account_store
 from server.knowledge.store import sources as source_store
@@ -44,13 +49,10 @@ def _include(
     groups: dict[Owner, set[str]], prefixes: dict[str, Owner], rows: list[Registration]
 ) -> None:
     for org, subject, kind, connection in rows:
-        if (
-            any(
-                not isinstance(value, str) or not value or value != value.strip()
-                for value in (org, subject, kind, connection)
-            )
-            or kind not in KINDS
-        ):
+        if any(
+            not isinstance(value, str) or not value or value != value.strip()
+            for value in (org, subject, kind, connection)
+        ) or not known_account_kind(kind):
             raise accounts.unavailable()
         key = accounts._fence_key(connection)
         if connection.partition("/")[2][0] not in "01":
@@ -60,6 +62,16 @@ def _include(
             raise accounts.unavailable()
         prefixes[key] = owner
         groups[owner].add(connection)
+
+
+def _source_binding(source: KnowledgeSource) -> Owner | None:
+    return source_account_key(
+        org=source.org,
+        owner=source.owner_subject,
+        kind=source.kind,
+        mode=source.credential_mode,
+        slot=source.connection_slot,
+    )
 
 
 async def _metadata(
@@ -73,7 +85,10 @@ async def _metadata(
             for value in (source.namespace, source.name, source.source_id)
         ):
             raise accounts.unavailable()
-        keys.append((source.org, source.owner_subject, source.kind, source.connection_id))
+        binding = _source_binding(source)
+        if binding is None:
+            raise accounts.unavailable()
+        keys.append((*binding, source.connection_id))
     if owner is not None and any(row[:3] != owner for row in keys):
         raise accounts.unavailable()
     return keys, sources
@@ -92,6 +107,8 @@ async def _stop_key(connection: str, ch: Any) -> str:
         if observed is not None and observed.partition("/")[2].startswith("0")
         else accounts._next_connection(connection, inactive=True)
     )
+    if ended == observed:
+        return ended
     landed = await claims.swap(ch, key, observed, ended, accounts._FENCE_EXPIRY)
     if landed != ended:
         raise accounts.unavailable()
@@ -101,6 +118,9 @@ async def _stop_key(connection: str, ch: Any) -> str:
 async def _retire_history(sources: list[KnowledgeSource], ch: Any) -> None:
     seen = set()
     for source in sources:
+        binding = _source_binding(source)
+        if binding is None:
+            raise accounts.unavailable()
         identity = source.org, source.namespace, source.source_id
         if identity in seen:
             continue
@@ -114,9 +134,7 @@ async def _retire_history(sources: list[KnowledgeSource], ch: Any) -> None:
             if (
                 current is not None
                 and current.source_id == source.source_id
-                and current.credential_mode == "connected"
-                and current.owner_subject == source.owner_subject
-                and current.kind == source.kind
+                and _source_binding(current) == binding
             ):
                 await source_store.insert_source(
                     dataclasses.replace(
@@ -131,23 +149,35 @@ async def _retire_history(sources: list[KnowledgeSource], ch: Any) -> None:
 
 
 async def _restore_owner(
-    owner: Owner, groups: dict[Owner, set[str]], prefixes: dict[str, Owner], ch: Any
+    owner: Owner,
+    groups: dict[Owner, set[str]],
+    prefixes: dict[str, Owner],
+    ch: Any,
+    *,
+    respect_cutoff: bool = False,
+    revoke: bool = True,
 ) -> tuple[ConnectedAccount, str] | None:
     async with accounts.account_lease(*owner, ch=ch):
-        keys, sources = await _metadata(ch, owner)
         current = await account_store.get(*owner, ch=ch)
+        if current is not None and (current.org, current.subject, current.kind) != owner:
+            raise accounts.unavailable()
+        if respect_cutoff and not await accounts._owner_cutoff_allows(owner, current):
+            return None
+        keys, sources = await _metadata(ch, owner)
         if current is not None:
             keys.append((current.org, current.subject, current.kind, current.connection_id))
-            if (current.org, current.subject, current.kind) != owner:
-                raise accounts.unavailable()
         _include(groups, prefixes, keys)
+        if len(prefixes) > settings.knowledge_connected_registry_scan_limit:
+            raise accounts.unavailable()
+        if not groups[owner]:
+            return None
         stopped: dict[str, str] = {}
         for connection in sorted(groups[owner]):
             key = accounts._fence_key(connection)
             if key not in stopped:
                 stopped[key] = await _stop_key(connection, ch)
         credential = ""
-        if current is not None and current.credential_enc:
+        if revoke and current is not None and current.credential_enc:
             try:
                 credential = unseal(CREDENTIAL_PURPOSE, current.credential_enc, warn=False) or ""
             except Exception:  # noqa: BLE001 — local deletion never depends on recovering a remote secret
@@ -161,6 +191,58 @@ async def _restore_owner(
         await _retire_history(sources, ch)
         await accounts._erase_locked(ended, keep_marker=False)
         return (current, credential) if current is not None else None
+
+
+async def _erasure_owners(
+    subjects: list[str], *, org: str | None, respect_cutoff: bool, ch: Any
+) -> set[Owner]:
+    found = await account_store.owned(subjects, org=org, ch=ch)
+    sources = await source_store.connected_owners(
+        None if respect_cutoff else subjects, org=org, ch=ch
+    )
+    owners = {(row.org, row.subject, row.kind) for row in found}
+    owners.update(owner for owner in sources if owner[1] in subjects)
+    if respect_cutoff:
+        identities = set(await account_store.owner_identities(org=org, ch=ch))
+        identities.update(owner[:2] for owner in sources)
+        if len(identities) > settings.knowledge_connected_registry_scan_limit:
+            raise accounts.unavailable()
+        for owner_org, subject in sorted(identities):
+            if subject in subjects:
+                continue
+            spellings = await aliases.verified_spellings(owner_org, subject)
+            if set(subjects).intersection(spellings):
+                owners.update(owner for owner in sources if owner[:2] == (owner_org, subject))
+                found = await account_store.owned([subject], org=owner_org, ch=ch)
+                owners.update((row.org, row.subject, row.kind) for row in found)
+    if len(owners) > settings.knowledge_connected_registry_scan_limit:
+        raise accounts.unavailable()
+    if org is not None and any(owner[0] != org for owner in owners):
+        raise accounts.unavailable()
+    return owners
+
+
+async def erase_subjects(
+    subjects: list[str], *, org: str | None, respect_cutoff: bool, revoke: bool, ch: Any
+) -> list[tuple[ConnectedAccount, str]]:
+    """Owner-deletion callers authorize only their selected identities, never global restore."""
+    if not subjects:
+        return []
+    owners = await _erasure_owners(subjects, org=org, respect_cutoff=respect_cutoff, ch=ch)
+    groups: dict[Owner, set[str]] = defaultdict(set)
+    prefixes: dict[str, Owner] = {}
+    for owner in sorted(owners):
+        keys, _sources = await _metadata(ch, owner)
+        _include(groups, prefixes, keys)
+        if len(prefixes) > settings.knowledge_connected_registry_scan_limit:
+            raise accounts.unavailable()
+    ended = []
+    for owner in sorted(owners):
+        if account := await _restore_owner(
+            owner, groups, prefixes, ch, respect_cutoff=respect_cutoff, revoke=revoke
+        ):
+            ended.append(account)
+    return ended
 
 
 async def restore_all(*, apply: bool, ch: Any) -> None:

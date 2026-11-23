@@ -1,0 +1,157 @@
+name: MCP source lifecycle
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/mcp-source-lifecycle.yml
+      - scripts/gates/mcp_source_lifecycle.py
+      - server/knowledge/**
+      - server/erasure/app/connected_accounts.py
+      - server/erasure/store/census.py
+      - server/auth/claims.py
+      - server/core/**
+      - server/cli/_ch.py
+      - schemas/**
+      - dev/ci_start_clickhouse.sh
+      - dev/ci_start_postgres.sh
+      - dev/clickhouse_release.sh
+      - tests/integration/test_mcp_source_lifecycle_ch.py
+      - pyproject.toml
+      - uv.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.12.19"
+
+jobs:
+  clickhouse:
+    name: Resolve the ClickHouse release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: /dev/clickhouse_release.sh
+          sparse-checkout-cone-mode: false
+      - id: resolve
+        run: |
+          image=$(bash dev/clickhouse_release.sh)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+  restore:
+    name: Offline source restore (${{ matrix.authority }})
+    needs: clickhouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - authority: clickhouse
+            pg_dsn: ""
+          - authority: postgres
+            pg_dsn: postgres://loom:loomdev@127.0.0.1:5432/loom
+    env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
+      LOOM_CH_CONTAINER: loom-mcp-lifecycle-ch
+      LOOM_CH_HOST: 127.0.0.1
+      LOOM_CH_PORT: "8123"
+      LOOM_CH_USER: loom
+      LOOM_CH_READER_USER: loom_reader
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_CH_SECURE: "false"
+      LOOM_PG_CONTAINER: loom-mcp-lifecycle-pg
+      LOOM_PG_IMAGE: postgres:16
+      LOOM_PG_STANDBY: "1"
+      LOOM_PG_DSN: ${{ matrix.pg_dsn }}
+      LOOM_STORAGE_AUTHORITY: ${{ matrix.authority }}
+      LOOM_AUTH_REQUIRED: "false"
+      LOOM_JWT_SECRET: ci-only-mcp-lifecycle-fixture
+      LOOM_LLM_PROVIDER: fake
+      LOOM_EMBEDDING_MODEL: fake-ngram-1024
+      LOOM_BACKGROUND_WORKERS: "off"
+      LOOM_BOOT_MIGRATE: "true"
+      LOOM_ENV_FILE: ""
+      LOOM_MCP_SOURCE_LIFECYCLE_FIXTURE: offline-isolated
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            server
+            scripts
+            schemas
+            dev
+            deploy
+            sdk
+            extractor
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked development dependencies
+        run: |
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Refuse preexisting fixture containers
+        run: |
+          for container in "$LOOM_CH_CONTAINER" "$LOOM_PG_CONTAINER" "$LOOM_PG_CONTAINER-standby"; do
+            if docker container inspect "$container" >/dev/null 2>&1; then
+              echo "fixture container already exists"
+              exit 1
+            fi
+          done
+      - name: Start the owned ClickHouse with Keeper
+        id: clickhouse
+        run: bash dev/ci_start_clickhouse.sh
+      - name: Start the owned synchronous Postgres fixture
+        id: postgres
+        if: matrix.authority == 'postgres'
+        run: bash dev/ci_start_postgres.sh
+      - name: Apply the normal ClickHouse migration journal
+        run: python -m server.core.schema.migrate
+      # The script initializes/verifies the selected authority; it starts no service or worker.
+      - name: Qualify full offline source restoration
+        run: >-
+          python -m scripts.gates.mcp_source_lifecycle --isolated-fixture
+          --result "$RUNNER_TEMP/mcp-source-lifecycle-${{ matrix.authority }}.json"
+      - name: Upload the bounded redacted qualification result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mcp-source-lifecycle-${{ matrix.authority }}
+          path: ${{ runner.temp }}/mcp-source-lifecycle-${{ matrix.authority }}.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop only this job's fixture containers
+        if: always()
+        run: |
+          cleanup_status=0
+          stop_owned() {
+            if docker container inspect "$1" >/dev/null 2>&1; then
+              docker stop --time 10 "$1" || cleanup_status=1
+            elif [ "$2" = 'success' ]; then
+              cleanup_status=1
+            fi
+          }
+          if [ '${{ steps.clickhouse.outcome }}' != 'skipped' ] && [ '${{ steps.clickhouse.outcome }}' != '' ]; then
+            stop_owned "$LOOM_CH_CONTAINER" '${{ steps.clickhouse.outcome }}'
+          fi
+          if [ '${{ steps.postgres.outcome }}' != 'skipped' ] && [ '${{ steps.postgres.outcome }}' != '' ]; then
+            stop_owned "$LOOM_PG_CONTAINER-standby" '${{ steps.postgres.outcome }}'
+            stop_owned "$LOOM_PG_CONTAINER" '${{ steps.postgres.outcome }}'
+          fi
+          exit "$cleanup_status"
