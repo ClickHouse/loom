@@ -1,0 +1,110 @@
+name: Synthetic memory load
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/service-load.yml"
+      - "tests/performance/memory.js"
+  schedule:
+    - cron: "41 5 * * 6"
+
+permissions:
+  contents: read
+
+jobs:
+  memory-load:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      LOOM_ENV_FILE: ""
+      LOOM_CH_CONTAINER: loom-ch-perf
+      LOOM_CH_HOST: "127.0.0.1"
+      LOOM_CH_PORT: "8123"
+      LOOM_CH_USER: loom
+      LOOM_CH_READER_USER: loom_reader
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_CH_SECURE: "false"
+      LOOM_AUTH_REQUIRED: "false"
+      LOOM_EMBEDDING_MODEL: fake-ngram-1024
+      LOOM_LLM_PROVIDER: fake
+      LOOM_BACKGROUND_WORKERS: "off"
+      LOOM_LATENCY_BUDGET_MULTIPLIER: "10"
+      LOOM_INSTANCE_LABEL: "ci:memory-load"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+      - name: Install k6
+        working-directory: ${{ runner.temp }}
+        run: |
+          archive=k6-v2.4.0-linux-amd64.tar.gz
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://github.com/grafana/k6/releases/download/v2.4.0/$archive" -o "$archive"
+          echo "5a5ecf23529ccf93135bc7e5b0c1cd5126ecf5f2672e22eed1556a0ab74abb87  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" --strip-components=1 k6-v2.4.0-linux-amd64/k6
+      - name: Start a disposable stack and measure memory traffic
+        run: |
+          uv sync --locked --python 3.12 --extra dev --extra code
+          export PATH="$PWD/.venv/bin:$PATH"
+          LOOM_CLICKHOUSE_IMAGE=$(bash dev/clickhouse_release.sh)
+          export LOOM_CLICKHOUSE_IMAGE
+          bash dev/ci_start_clickhouse.sh
+          python -m server.core.schema.migrate
+          LOOM_JWT_SECRET=$(openssl rand -hex 32)
+          export LOOM_JWT_SECRET
+          LOOM_WEB_WORKERS=1 sh scripts/serve.sh > "$RUNNER_TEMP/loom-perf.log" 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            curl -fsS --max-time 2 http://127.0.0.1:7777/v1/health >/dev/null && break
+            kill -0 "$server"
+            sleep 1
+          done
+          curl -fsS --max-time 2 http://127.0.0.1:7777/v1/health >/dev/null
+          {
+            echo "Runner filesystem usage before the test (KiB)"
+            echo
+            echo "~~~"
+            df -Pk "$RUNNER_TEMP"
+            echo "~~~"
+          } >> "$GITHUB_STEP_SUMMARY"
+          result=0
+          "$RUNNER_TEMP/k6" run --quiet tests/performance/memory.js || result=$?
+          {
+            echo
+            echo "Loom process RSS after the test (KiB)"
+            echo
+            echo '~~~'
+            ps -o rss= -p "$server"
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$result"
+      - name: Publish measured results
+        if: always()
+        run: |
+          if [ -s load-summary.md ]; then
+            cat load-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          {
+            echo
+            echo 'Runner filesystem usage after the test (KiB)'
+            echo
+            echo '~~~'
+            df -Pk "$RUNNER_TEMP"
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove the disposable database
+        if: always()
+        run: |
+          if docker container inspect "$LOOM_CH_CONTAINER" >/dev/null 2>&1; then
+            docker container stop "$LOOM_CH_CONTAINER"
+            docker container rm --volumes "$LOOM_CH_CONTAINER"
+          fi
