@@ -553,7 +553,11 @@ def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
         assert f"`{name}` {purpose}" in coding
     assert "ToolSearch" in coding
     assert "linked lessons" in coding
+    assert "`code_state`" in coding
+    assert "`uses_brief: true`" in coding
+    assert "before a local lookup for the same evidence" in coding
     assert "uncommitted or unindexed" in coding
+    assert "evidence Loom cannot supply" in coding
     assert "current context already answers" in coding
 
 

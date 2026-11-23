@@ -573,20 +573,15 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         else ""
     )
     code = (
-        "\n\nInvestigating or fixing code (`loom_code_*`): retrieve missing repository "
-        "context in Loom before exploring file by file. Code answers combine indexed "
-        "implementation with linked lessons and project decisions when available; "
-        "that knowledge can explain constraints beyond the source text. Use "
+        "\n\nFor missing repository context, use "
         + "; ".join(routes)
-        + ". Discover a deferred tool by its name (ToolSearch in Claude Code). "
+        + ". Discover deferred tools by name with ToolSearch in Claude Code. "
         + caller_hint
-        + "Read a Loom result before scheduling equivalent local searches or reads; "
-        "do not duplicate that lookup in parallel. Use returned code and linked lessons; "
-        "retrieve only missing evidence. Use local tools for uncommitted or unindexed "
-        "code, explicit local-tool requests, or an unavailable or abstaining index. "
-        "Check source freshness and memory `code_state` before relying on a saved lesson. "
-        "Edit and test in the checkout. "
-        "Skip retrieval when current context already answers the question."
+        + "Read Loom's result before a local lookup for the same evidence. Reuse returned "
+        "source, linked lessons and project decisions. Check source freshness and lesson "
+        "`code_state`. Use local tools for edits, tests, uncommitted or unindexed code, "
+        "explicit local-tool requests, and evidence Loom cannot supply. "
+        "Skip retrieval when current context already answers."
         if routes
         else ""
     )
