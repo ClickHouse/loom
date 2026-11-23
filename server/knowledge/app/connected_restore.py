@@ -62,6 +62,9 @@ def _include(
             raise accounts.unavailable()
         prefixes[key] = owner
         groups[owner].add(connection)
+    # Many historical generations can share one fence prefix.
+    if sum(map(len, groups.values())) > settings.knowledge_connected_registry_scan_limit:
+        raise accounts.unavailable()
 
 
 def _source_binding(source: KnowledgeSource) -> Owner | None:
@@ -167,8 +170,6 @@ async def _restore_owner(
         if current is not None:
             keys.append((current.org, current.subject, current.kind, current.connection_id))
         _include(groups, prefixes, keys)
-        if len(prefixes) > settings.knowledge_connected_registry_scan_limit:
-            raise accounts.unavailable()
         if not groups[owner]:
             return None
         stopped: dict[str, str] = {}
@@ -234,8 +235,6 @@ async def erase_subjects(
     for owner in sorted(owners):
         keys, _sources = await _metadata(ch, owner)
         _include(groups, prefixes, keys)
-        if len(prefixes) > settings.knowledge_connected_registry_scan_limit:
-            raise accounts.unavailable()
     ended = []
     for owner in sorted(owners):
         if account := await _restore_owner(

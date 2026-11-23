@@ -2319,7 +2319,9 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_sources
     `access` LowCardinality(String) DEFAULT 'namespace',
     `credential_mode` LowCardinality(String) DEFAULT 'shared',
     `owner_subject` String DEFAULT '',
-    `connection_id` String DEFAULT ''
+    `connection_id` String DEFAULT '',
+    `connection_slot` String DEFAULT '',
+    `source_contract_version` UInt16 DEFAULT 0
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)
