@@ -110,11 +110,22 @@ jobs:
       # server/operations/reach_manifest.py are generated too; the unit suite
       # checks them, this step fails faster.
       - name: docs reference and reach manifest are current
+        id: generated-references
         run: |
           python scripts/codegen/settings_reference.py --check
           python scripts/codegen/settings_schema.py --check
           python scripts/codegen/docs_reference.py --check
           python scripts/codegen/op_reach_census.py --check
+      - name: Render reach manifest candidate after a generated-reference failure
+        if: failure() && steps.generated-references.outcome == 'failure'
+        run: python scripts/codegen/op_reach_census.py --write-manifest
+      - name: Upload reach manifest candidate
+        if: failure() && steps.generated-references.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-reach-manifest
+          path: server/operations/reach_manifest.py
+          if-no-files-found: error
       # The SDK ships py.typed: it is type-checked strictly
       # on its own, apart from the server's ratchet below.
       - name: mypy --strict on the Python SDK
