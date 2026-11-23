@@ -79,6 +79,14 @@ class TraceCapture(unittest.TestCase):
         with self.observed([self.row], []):
             first = capture(self.protocol, self.order)
         self.assertEqual(first["request_ledger_missing_trace_run_ids"], ["run-1"])
+        with patch(
+            "examples.software_factory.harbor.trace_capture.subprocess.run",
+            side_effect=OSError("private error payload"),
+        ):
+            delayed = capture(self.protocol, self.order)
+        self.assertTrue(delayed["complete"])
+        self.assertEqual(delayed["missing_trace_run_ids"], [])
+        self.assertEqual(delayed["request_ledger_missing_trace_run_ids"], ["run-1"])
         with self.observed([], [self.request]):
             second = capture(self.protocol, self.order)
         self.assertEqual(second["rows"], [self.row])

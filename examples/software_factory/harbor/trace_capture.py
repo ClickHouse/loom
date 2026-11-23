@@ -146,6 +146,7 @@ def _capture(protocol, order, ids, receipt):
         receipt["missing_trace_run_ids"] = sorted(
             set(ids) - {row["trace_run_id"] for row in receipt["rows"]}
         )
+        receipt["complete"] = not receipt["missing_trace_run_ids"]
         receipt["request_ledger_missing_trace_run_ids"] = sorted(
             set(ids) - {row["trace_run_id"] for row in receipt["request_ledger"]}
         )
