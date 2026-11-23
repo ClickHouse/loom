@@ -27,6 +27,7 @@ from server.knowledge.app import mcp_connections, mcp_profiles, sources, writes
 from server.knowledge.app import mcp_source_authority as authority
 from server.knowledge.app import source_sync as sync
 from server.knowledge.app import source_sync_mcp as engine
+from server.knowledge.app.mcp_read_receipt import require_read_receipt
 from server.knowledge.domain import access_list
 from server.knowledge.domain.connected_accounts import ConnectedAccount
 from server.knowledge.domain.mcp_identity import resource_uri
@@ -48,6 +49,7 @@ MIRROR = "acl-" + "a" * 24
 RESOURCE = "selected://document/one"
 SECOND = "selected://document/two"
 BINARY = "selected://document/binary"
+JSON_TEXT = "selected://document/json-text"
 TOOL_INPUT = {
     "type": "object",
     "properties": {"resource_id": {"type": "string"}},
@@ -109,7 +111,7 @@ class Harness:
         self.source = replace(self.source, generic_config_json=config, generic_items_json=items)
 
 
-def _catalog(tool: bool) -> mcp_profiles.MCPProfileCatalog:
+def _catalog(tool: str) -> mcp_profiles.MCPProfileCatalog:
     config: dict[str, Any] = {"endpoint": "https://selected.example/mcp"}
     if tool:
         config.update(
@@ -121,6 +123,10 @@ def _catalog(tool: bool) -> mcp_profiles.MCPProfileCatalog:
                 "output_schema": TOOL_OUTPUT,
             },
         )
+        if tool == "text":
+            config["read"].update(
+                result_format="text", output_schema={"type": "string"}, require_output_schema=False
+            )
     return mcp_profiles.MCPProfileCatalog.parse(
         json.dumps(
             {
@@ -166,7 +172,7 @@ def test_authority_reads_the_actual_opaque_store_representation(harness: Harness
 
 @pytest.fixture
 def harness(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Harness:
-    catalog = _catalog(getattr(request, "param", "") == "tool")
+    catalog = _catalog(getattr(request, "param", ""))
     profile = catalog.get("org", "approved")
     slot, generation = "mcp:" + "a" * 32, "a" * 32 + "/1" + "b" * 31
     contract = SourceContract(
@@ -321,6 +327,11 @@ async def upstream(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> AsyncIt
         harness.reads.append(BINARY)
         return b"\x00\x01"
 
+    @server.resource(JSON_TEXT, mime_type="application/json")
+    async def json_text() -> str:
+        harness.reads.append(JSON_TEXT)
+        return '{"selected": "text"}'
+
     _tools(server, harness)
     app = server.streamable_http_app()
     original_builder = authority.build_mcp_source_client
@@ -360,14 +371,30 @@ async def upstream(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> AsyncIt
 
 
 def _tools(server: FastMCP, h: Harness) -> None:
+    config = json.loads(h.source.generic_config_json)
+    # The envelope profile determines the wire schema, not the selected document.
+    plain = (
+        _catalog("text").get("org", "approved").metadata.profile_sha256 == config["profile_sha256"]
+    )
+
     @server._mcp_server.list_tools()
     async def listed() -> list[types.Tool]:
-        return [types.Tool(name="read_selected", inputSchema=TOOL_INPUT, outputSchema=TOOL_OUTPUT)]
+        return [
+            types.Tool(
+                name="read_selected",
+                inputSchema=TOOL_INPUT,
+                outputSchema=None if plain else TOOL_OUTPUT,
+            )
+        ]
 
     @server._mcp_server.call_tool()
     async def called(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
         assert name == "read_selected" and arguments == {"resource_id": RESOURCE}
         h.reads.append("tool:" + arguments["resource_id"])
+        if plain:
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="Plain selected text. λ")]
+            )
         value = {
             "id": RESOURCE,
             "title": "Selected",
@@ -396,6 +423,7 @@ def storage(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> Harness:
     monkeypatch.setattr(chunks, "count_active_for_doc", AsyncMock(return_value=0))
     monkeypatch.setattr(chunks, "count_matching_chunk_hashes", AsyncMock(return_value=0))
     monkeypatch.setattr(documents, "get_one", AsyncMock(return_value=None))
+    monkeypatch.setattr(documents, "get_many_by_uris", AsyncMock(return_value=[]))
     monkeypatch.setattr(writes, "_drop_own_chunks", AsyncMock())
 
     async def blob(org: str, namespace: str, raw: bytes, **kwargs: Any) -> str:
@@ -414,6 +442,15 @@ def storage(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> Harness:
     monkeypatch.setattr(blobs, "put", blob)
     monkeypatch.setattr(chunks, "insert_chunks", insert_chunks)
     monkeypatch.setattr(documents, "insert_one", insert_document)
+
+    async def insert_many(rows: list[Any], *, over: dict[str, int]) -> int:
+        assert h.locks == ["account", "namespace"]
+        for row in rows:
+            assert row["version"] > over[row["source_uri"]]
+        h.doc_rows.extend(rows)
+        return len(rows)
+
+    monkeypatch.setattr(documents, "insert_many", insert_many)
     return h
 
 
@@ -717,13 +754,13 @@ async def test_actual_receipt_rejects_tampering_and_unselected_reads(
     client = bound.client()
     async with client:
         evidence = await client.read(RESOURCE)
-        assert engine._receipt(client, RESOURCE, evidence) == evidence.receipt.content_sha256
+        assert require_read_receipt(client, RESOURCE, evidence) == evidence.receipt.content_sha256
         with pytest.raises(MCPSourceError):
-            engine._receipt(client, RESOURCE, replace(evidence, text="injected"))
+            require_read_receipt(client, RESOURCE, replace(evidence, text="injected"))
         with pytest.raises(MCPSourceError):
-            engine._receipt(client, SECOND, evidence)
+            require_read_receipt(client, SECOND, evidence)
         with pytest.raises(MCPSourceError):
-            engine._receipt(client, RESOURCE, replace(evidence, receipt=None))
+            require_read_receipt(client, RESOURCE, replace(evidence, receipt=None))
         assert evidence.receipt is not None
         for receipt in (
             replace(evidence.receipt, identity_verified=False),
@@ -731,7 +768,7 @@ async def test_actual_receipt_rejects_tampering_and_unselected_reads(
             replace(evidence.receipt, config_sha256="0" * 64),
         ):
             with pytest.raises(MCPSourceError):
-                engine._receipt(client, RESOURCE, replace(evidence, receipt=receipt))
+                require_read_receipt(client, RESOURCE, replace(evidence, receipt=receipt))
         with pytest.raises(MCPSourceError):
             await client.read(SECOND)
     assert harness.reads == [RESOURCE]

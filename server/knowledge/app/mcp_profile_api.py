@@ -50,6 +50,7 @@ async def handle_mcp_profiles(input: MCPProfilesInput) -> MCPProfilesOutput:
                     id=item.id,
                     label=item.label,
                     auth=item.auth,
+                    endpoint_origin=item.endpoint_origin,
                     profile_sha256=item.profile_sha256,
                     approved_tools=list(item.approved_tools),
                     allow_collection_copy=item.allow_collection_copy,

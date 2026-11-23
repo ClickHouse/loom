@@ -17,6 +17,7 @@ import pytest
 from server.knowledge.api.models_mcp_sources import (
     MCPSourceAddInput,
     MCPSourceInput,
+    MCPSourceInspectInput,
     MCPSourceListInput,
     MCPSourceRemoveInput,
     MCPSourceUpdateInput,
@@ -317,9 +318,11 @@ async def test_foreign_owner_has_no_metadata_or_existence(io):
     entry = (await ops.handle_mcp_source_add(add_input())).source
     io.owner = "another-person"
     listing = await ops.handle_mcp_source_list(MCPSourceListInput(org=ORG, namespace=NS))
-    found = await ops.handle_mcp_source_inspect(source_input(entry))
+    found = await ops.handle_mcp_source_inspect(
+        MCPSourceInspectInput(**source_input(entry).model_dump())
+    )
     missing = await ops.handle_mcp_source_inspect(
-        MCPSourceInput(org=ORG, namespace=NS, name="absent")
+        MCPSourceInspectInput(org=ORG, namespace=NS, name="absent")
     )
     assert listing.sources == [] and found == missing
     with pytest.raises(ops._Refused) as foreign:
@@ -339,7 +342,11 @@ async def test_self_service_disabled_blocks_add_before_discovery_but_not_existin
     monkeypatch.setattr(ops.connections, "handle_mcp_discover", discovery)
     with pytest.raises(ops._Refused):
         await ops.handle_mcp_source_add(add_input())
-    assert (await ops.handle_mcp_source_inspect(source_input(entry))).found
+    assert (
+        await ops.handle_mcp_source_inspect(
+            MCPSourceInspectInput(**source_input(entry).model_dump())
+        )
+    ).found
     assert (
         len((await ops.handle_mcp_source_list(MCPSourceListInput(org=ORG, namespace=NS))).sources)
         == 1
@@ -419,7 +426,9 @@ async def test_unknown_contract_is_inspectable_and_retirable_without_decoding(io
     raw = io.rows[(ORG, NS, entry.name)]
     raw["source_contract_version"] = 2
     raw["config_json"] = '{"version":2,"private":"opaque"}'
-    result = await ops.handle_mcp_source_inspect(source_input(entry))
+    result = await ops.handle_mcp_source_inspect(
+        MCPSourceInspectInput(**source_input(entry).model_dump())
+    )
     assert result.source.state == "unsupported" and result.source.resource_ids == []
     await ops.handle_mcp_source_remove(
         MCPSourceRemoveInput(
@@ -640,3 +649,33 @@ async def test_list_pages_are_owner_namespace_bound_and_omit_resource_ids(io):
         )
     empty = await ops.handle_mcp_source_list(MCPSourceListInput(org=ORG, namespace=NS))
     assert empty.sources == [] and empty.next_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_uncertain_add_is_reconciled_by_original_owner_slot_and_uuid(io):
+    added = (await ops.handle_mcp_source_add(add_input())).source
+    query = MCPSourceInspectInput(org=ORG, namespace=NS, slot=SLOT, request_id=NONCE)
+    inspected = await ops.handle_mcp_source_inspect(query)
+    assert inspected.found and inspected.source.source_id == added.source_id
+    io.owner = "another-person"
+    assert not (await ops.handle_mcp_source_inspect(query)).found
+    io.owner = OWNER
+    with pytest.raises(ops._Refused):
+        await ops.handle_mcp_source_inspect(query.model_copy(update={"name": added.name}))
+    missing = query.model_copy(update={"request_id": "00000000-0000-4000-8000-000000000999"})
+    assert not (await ops.handle_mcp_source_inspect(missing)).found
+
+
+def test_inspect_operation_uses_the_request_reconciliation_contract():
+    from server.knowledge.api.ops_mcp_sources import OPERATIONS
+
+    operation = next(op for op in OPERATIONS if op.name == "knowledge.source.mcp_inspect")
+    query = operation.input_model.model_validate(
+        {
+            "org": ORG,
+            "namespace": NS,
+            "slot": SLOT,
+            "request_id": NONCE,
+        }
+    )
+    assert isinstance(query, MCPSourceInspectInput) and query.name == ""

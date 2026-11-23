@@ -9,7 +9,9 @@ machinery. The automatic personal namespace cannot hold these sources.
 
 Connect an account, discover its configured read capabilities, choose exact
 resource IDs and a destination, then preview the access rule before registration.
-Connecting, listing and previewing import no documents. Registration discovers
+Connecting, listing and previewing import no documents. Approved profile responses
+include the exact ASCII HTTPS credential-destination origin. A display label is
+not a verified remote account identity. Registration discovers
 whether the configured resources or reviewed read mapping are available. An
 action-only server cannot pass this check. Discovery does not read the selection
 or prove that the owner can read each document.
@@ -26,7 +28,9 @@ canonical owner, connection slot and request UUID. Labels are bounded display
 metadata. Retrying a lost response returns only the exact active registration
 with the same binding, selection, mode, audience and label. Changed arguments,
 a stopped connection, a paused or retired source, or a replacement connection
-refuse. A replacement binding requires a separate registration and consent;
+refuse. `knowledge.source.mcp_inspect` can reconcile the original owned slot and
+request UUID without repeating the mutation. A replacement binding requires a
+separate registration and consent;
 existing copies, history and checkpoints keep their identity.
 
 ## Modes and access
@@ -55,10 +59,21 @@ administrator authority and explicit confirmation of publication authority over
 the exact selected material. The handler creates a versioned consent record
 binding the authenticated publisher, destination and hash of the ordered exact
 IDs. The caller cannot supply this proof. An update of a collection copy requires
-fresh confirmation. Consent cannot authorize live sharing, a different audience
-or a wider selection. Admission still requires the execution authority helper to
-accept the entire proposed row. The current execution authority refuses
-collection copies; confirmation alone cannot register one.
+fresh confirmation. Every later read also requires current source, connection,
+profile and destination authority. Publication audience is immutable for a
+registration: a private-to-team change requires a new source and fresh upstream
+reads. Existing private document history is never republished through an update.
+Live sharing is unsupported.
+
+Every stored document carries the scope digest and server time of its actual
+successful selected read. Reads require the current selected URI and digest,
+within the reported `read_evidence_stale_seconds` bound. Selection and mode
+changes advance a server-controlled `scope_revision`; removing and re-adding an
+identity cannot reuse old read proof. Labels and pause preserve this revision.
+A snapshot stops automatic refresh, so its read access expires until an explicit
+refresh renews evidence. Bytes remain stored. Neither source-level completion
+nor retained bytes grant read access. Both reader policies use protected mirrors;
+collection grants alone cannot bypass the source checks.
 
 ## Lifecycle controls
 
@@ -66,7 +81,7 @@ collection copies; confirmation alone cannot register one.
 | --- | --- |
 | `knowledge.source.mcp_list` | Lists only the caller's registrations in the requested destination |
 | `knowledge.source.mcp_inspect` | Returns only an owned source; a foreign ID answers as missing |
-| `knowledge.source.mcp_update` | Replaces the fixed selection, mode, audience and label; retained IDs keep source document identity |
+| `knowledge.source.mcp_update` | Replaces selection, mode and label; the audience is fixed, and retained IDs keep source document identity |
 | `knowledge.source.mcp_pause` | Sets contract pause state; retains registration, copies and checkpoints |
 | `knowledge.source.mcp_resume` | Revalidates the original connection binding before clearing pause |
 | `knowledge.source.mcp_refresh` | Requests an explicit import attempt for a copy mode through existing source state |
@@ -97,8 +112,9 @@ Generic source rows carry `generic_config_json`, `generic_items_json`,
 `connection_slot` and a contract version. The ordinary `config` and `items`
 projections remain empty. Application codecs apply deployment limits to the
 stored opaque columns. Source changes retain the registration UUID and use the
-existing store's complete version-row writes; no separate source database or
-worker framework is introduced.
+existing store's complete version-row writes. The common source worker dispatches
+supported selected copies to the MCP engine; live and paused sources do not
+schedule imports. No separate source database or worker framework is introduced.
 
 Refresh requests merge into existing state without clearing checkpoints. A
 selection marker prevents a label-only change from requesting another snapshot.
@@ -106,3 +122,28 @@ Mutation audit subjects omit private source labels, resource IDs and counts.
 
 See [document sources](document-sources.md) for the shared document, retirement
 and erasure lifecycle.
+
+
+## Live retrieval and retention
+
+The existing protected live-search route uses an explicitly approved search
+mapping. It intersects one bounded candidate page with the saved selection, then
+performs an actual selected read for each retained result. Search snippets and
+resource listings carry no read proof. A resource-only server supports direct
+selected live reads; it does not thereby expose a search operation. Neither path
+imports content or saves a memory. Returned citations use the stable source
+resource URI, not an untrusted result link.
+
+Protected publication rechecks the requesting reader, source and connection and
+repeats retained reads before release. Changed content, schema drift or lost
+authority drops the result. A configured preissued bearer is sent only to the
+approved upstream origin; Loom credentials are never forwarded. Interactive
+OAuth enrollment, refresh, local commands and legacy SSE are unsupported.
+
+The host holds live content while the request runs. Protected-result handling,
+private diagnostics, session protection and the existing publication machinery
+still apply; this is not a promise of zero host, client or conversation retention.
+Imports persist ordinary documents, originals and chunks under the existing
+storage authority and erasure rules. Pausing, disconnecting, removing a selection
+or retiring a source retains those bytes unless the writer explicitly requests
+erasure. No upgrade deletes content or infers a replacement service endpoint.

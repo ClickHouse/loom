@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,6 +14,10 @@ from server.auth.jwt import AuthInfo
 from server.auth.reader_identity import ReaderIdentity
 from server.knowledge.app import mcp_source_authority as authority
 from server.knowledge.app import source_access
+from server.knowledge.app.mcp_contracts import encode_source
+from server.knowledge.domain.access_list import AccessList, to_json
+from server.knowledge.domain.mcp_identity import resource_uri
+from server.knowledge.domain.mcp_read_evidence import ReadProof
 from server.operations.base import Role
 from tests.unit.test_mcp_source_sync import MIRROR, Harness
 from tests.unit.test_mcp_source_sync import harness as harness
@@ -147,7 +151,116 @@ async def test_read_plan_admits_only_the_personal_source_reader(
     }
     await source_access._prepare(plan, [row], auth.subject)
     if other:
-        assert not plan.sources and not plan._connected_pins and not plan._mcp_uris
+        assert not plan.sources and not plan._connected_pins and not plan._mcp_scopes
     else:
         assert plan.sources == {(MIRROR, harness.source.source_id): "collection"}
-        assert len(plan._mcp_uris[("collection", harness.source.source_id)]) == 1
+        assert len(plan._mcp_scopes[(MIRROR, harness.source.source_id)].selected_uris) == 1
+
+
+async def installed_plan(reader, harness, monkeypatch, *, mode="connected"):
+    row = {
+        "namespace": "collection",
+        "name": harness.source.name,
+        "source_id": harness.source.source_id,
+        "source_kind": "mcp",
+        "source_contract_version": 1,
+        "credential_mode": mode,
+    }
+    monkeypatch.setattr(
+        authority.source_store, "latest_source", AsyncMock(side_effect=lambda *a: harness.source)
+    )
+    monkeypatch.setattr(
+        source_access.mirrors_repo, "mirrors_of", AsyncMock(return_value={MIRROR: "collection"})
+    )
+    monkeypatch.setattr(source_access, "resolve_reader", authority.resolve_reader)
+    monkeypatch.setattr(source_access.store, "listings", AsyncMock(return_value=[]))
+    monkeypatch.setattr(source_access.store, "active_sources", AsyncMock(return_value=[row]))
+    monkeypatch.setattr(source_access.pg, "enabled", lambda: False)
+    monkeypatch.setattr(source_access, "canonical_subject", AsyncMock(side_effect=lambda org, s: s))
+    plan = source_access.ReadPlan("org", _auth=reader.auth, _reader_subject=reader.auth.subject)
+    await source_access._prepare(plan, [row], reader.auth.subject)
+    plan._bindings = tuple(
+        (mirror, sid, original) for (mirror, sid), original in plan.sources.items()
+    )
+    return plan
+
+
+def checked_document(harness):
+    return {
+        "org": "org",
+        "namespace": MIRROR,
+        "source_uri": resource_uri(harness.source.source_id, harness.contract.resources[0].id),
+        "tags": ["source-id:" + harness.source.source_id],
+        "revision": 1,
+        "version": 1,
+        "access_json": to_json(AccessList(owner="owner")),
+        "mcp_scope_sha256": authority.source_scope_sha256(harness.source, harness.contract),
+        "mcp_read_at": datetime.now(UTC).isoformat(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_mcp_shared_mode_header_cannot_bypass_owner_checks(reader, harness, monkeypatch):
+    plan = await installed_plan(reader, harness, monkeypatch, mode="shared")
+    assert not plan.sources and not plan._mcp_scopes
+    authority.source_store.latest_source.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_selected_document_requires_its_own_current_read_not_a_listing(
+    reader, harness, monkeypatch
+):
+    plan = await installed_plan(reader, harness, monkeypatch)
+    doc = checked_document(harness)
+    monkeypatch.setattr(source_access.store, "metadata", AsyncMock(return_value=[doc]))
+    candidates = [{"namespace": MIRROR, "source_uri": doc["source_uri"]}]
+    assert not plan.listing_starts
+    admitted = await plan.check(candidates)
+    assert len(admitted) == 1 and plan.current(admitted[0])
+    evidence = source_access.AccessEvidence.from_admitted(admitted[0])
+    assert evidence.mcp_proof == ReadProof.from_row(doc)
+    assert "content" not in vars(evidence)
+    for mutation in (
+        {"mcp_read_at": ""},
+        {"mcp_scope_sha256": "f" * 64},
+        {"mcp_read_at": (datetime.now(UTC) - timedelta(days=365)).isoformat()},
+        {"mcp_read_at": (datetime.now(UTC) + timedelta(days=1)).isoformat()},
+    ):
+        altered = {**doc, **mutation}
+        monkeypatch.setattr(source_access.store, "metadata", AsyncMock(return_value=[altered]))
+        assert await plan.check(candidates) == []
+    assert not plan.failed
+
+
+@pytest.mark.asyncio
+async def test_removed_identity_and_aba_scope_cannot_reuse_published_evidence(
+    reader, harness, monkeypatch
+):
+    plan = await installed_plan(reader, harness, monkeypatch)
+    doc = checked_document(harness)
+    monkeypatch.setattr(source_access.store, "metadata", AsyncMock(return_value=[doc]))
+    candidates = [{"namespace": MIRROR, "source_uri": doc["source_uri"]}]
+    admitted = await plan.check(candidates)
+    retained = source_access.AccessEvidence.from_admitted(admitted[0])
+    assert plan.current_evidence(retained)
+    harness.contract = harness.contract.model_copy(update={"scope_revision": 3})
+    config, items = encode_source(harness.contract)
+    harness.source = replace(harness.source, generic_config_json=config, generic_items_json=items)
+    assert await plan.check(candidates) == []
+    assert not plan.current_evidence(retained)
+    # A new request also refuses the historical proof, despite the identical selected ID.
+    new_plan = await installed_plan(reader, harness, monkeypatch)
+    assert await new_plan.check(candidates) == []
+    doc["mcp_scope_sha256"] = authority.source_scope_sha256(harness.source, harness.contract)
+    assert len(await new_plan.check(candidates)) == 1
+
+
+@pytest.mark.asyncio
+async def test_unselected_uri_does_not_borrow_another_selected_read_proof(
+    reader, harness, monkeypatch
+):
+    plan = await installed_plan(reader, harness, monkeypatch)
+    doc = checked_document(harness)
+    doc["source_uri"] = resource_uri(harness.source.source_id, "not-selected")
+    monkeypatch.setattr(source_access.store, "metadata", AsyncMock(return_value=[doc]))
+    assert await plan.check([{"namespace": MIRROR, "source_uri": doc["source_uri"]}]) == []

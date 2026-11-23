@@ -20,11 +20,13 @@ from server.knowledge.api.models_mcp_sources import (
     MCPSourceAddInput,
     MCPSourceEntry,
     MCPSourceInput,
+    MCPSourceInspectInput,
     MCPSourceInspectOutput,
     MCPSourceListInput,
     MCPSourceListOutput,
     MCPSourceOutput,
     MCPSourceRemoveInput,
+    MCPSourceSummary,
     MCPSourceUpdateInput,
 )
 from server.knowledge.app import connected_accounts as accounts
@@ -94,10 +96,10 @@ async def _locks(org: str, namespace: str, owner: str, slot: str) -> AsyncIterat
                 yield
 
 
-def _identity(input: MCPSourceAddInput, owner: str) -> tuple[str, str]:
-    nonce = str(UUID(input.request_id))
+def _identity(org: str, namespace: str, owner: str, slot: str, request_id: str) -> tuple[str, str]:
+    nonce = str(UUID(request_id))
     key = json.dumps(
-        [input.org, input.namespace, owner, input.slot, nonce],
+        [org, namespace, owner, slot, nonce],
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -198,7 +200,7 @@ async def _proposed(input: MCPSourceAddInput, owner: str) -> KnowledgeSource:
         resources=(ResourceIdentity(type="resource", id=input.resource_ids[0]),),
     )
     contract = await _selection(input, owner, binding)
-    name, source_id = _identity(input, owner)
+    name, source_id = _identity(input.org, input.namespace, owner, input.slot, input.request_id)
     return _with_contract(
         KnowledgeSource(
             org=input.org,
@@ -233,6 +235,7 @@ def _entry(src: KnowledgeSource) -> MCPSourceEntry:
         namespace=src.namespace,
         state="unsupported" if src.active else "retired",
         sync_enabled=bool(settings.knowledge_source_sync_enabled),
+        read_evidence_stale_seconds=settings.knowledge_source_acl_stale_seconds,
         refresh_state="unsupported" if src.active else "retired",
         pending_erasure=src.pending_delete,
     )
@@ -364,7 +367,9 @@ async def handle_mcp_source_list(input: MCPSourceListInput) -> MCPSourceListOutp
             limit=input.limit + 1,
         )
         entries = [
-            await _checked_entry(src)
+            MCPSourceSummary.model_validate(
+                (await _checked_entry(src)).model_dump(exclude={"resource_ids"})
+            )
             for src in rows[: input.limit]
             if _owned(src, input.org, input.namespace, owner)
         ]
@@ -377,10 +382,26 @@ async def handle_mcp_source_list(input: MCPSourceListInput) -> MCPSourceListOutp
         )
 
 
-async def handle_mcp_source_inspect(input: MCPSourceInput) -> MCPSourceInspectOutput:
+async def handle_mcp_source_inspect(input: MCPSourceInspectInput) -> MCPSourceInspectOutput:
     async with _private():
         owner = await _caller(input.org, input.namespace)
-        src = await store.latest_source(input.org, input.namespace, input.name)
+        name = input.name
+        expected_id = ""
+        if name:
+            if input.slot or input.request_id:
+                raise _Refused()
+        else:
+            connections._check_slot(input.slot)
+            name, expected_id = _identity(
+                input.org, input.namespace, owner, input.slot, input.request_id
+            )
+        src = await store.latest_source(input.org, input.namespace, name)
+        if (
+            src
+            and expected_id
+            and (src.source_id != expected_id or src.connection_slot != input.slot)
+        ):
+            raise _Refused()
         entry = (
             await _checked_entry(src)
             if _owned(src, input.org, input.namespace, owner) and src

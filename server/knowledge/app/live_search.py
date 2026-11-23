@@ -1,4 +1,4 @@
-"""Request-owned native search over the asker's connected registrations."""
+"""Request-owned MCP lookup over the asker's selected live registrations."""
 
 from __future__ import annotations
 
@@ -9,47 +9,32 @@ from dataclasses import dataclass
 from server.auth.answer_tokens import is_answer_token
 from server.auth.context import current_auth
 from server.auth.session_protection import protected_for
-from server.clients._checked_access import CheckedAccess
 from server.core import request_tail, request_work
 from server.core.ch import set_query_tag
 from server.core.diagnostics import private_work
-from server.knowledge.app import connected_accounts, live_provider_search, session_admission
+from server.knowledge.app import connected_accounts, mcp_live, session_admission
 from server.knowledge.domain.sources import MIRRORED_ACCESS
 from server.knowledge.store import sources as source_store
 from server.settings import settings
 
 
-@dataclass(frozen=True, repr=False)
-class Contribution:
-    authority: connected_accounts.SourceAuthority
-    hits: tuple[live_provider_search.LiveProviderHit, ...]
-
-
 @dataclass(repr=False)
 class LiveResult:
-    contributions: tuple[Contribution, ...]
+    contributions: tuple[mcp_live.Contribution, ...]
     deadline: float
     _checked: bool = False
 
     @property
-    def hits(self) -> tuple[live_provider_search.LiveProviderHit, ...]:
+    def hits(self) -> tuple[mcp_live.LiveHit, ...]:
         return tuple(hit for part in self.contributions for hit in part.hits)
 
     async def check(self) -> None:
-        """Renew the original account/source and each selected remote membership."""
+        """Recheck current authority and each retained successful selected read."""
         self._checked = False
         with private_work():
             async with asyncio.timeout_at(self.deadline):
                 for part in self.contributions:
-
-                    async def verify(access: CheckedAccess, part: Contribution = part) -> None:
-                        for hit in part.hits:
-                            if not await live_provider_search.revalidate(
-                                part.authority.source, access, hit, deadline=self.deadline
-                            ):
-                                raise RuntimeError("Live search unavailable")
-
-                    await part.authority.run(verify)
+                    await part.check()
                 self._checked = True
 
     def fresh(self) -> bool:
@@ -89,7 +74,7 @@ async def search(org: str, namespaces: list[str], query: str, *, top_k: int) -> 
                     and source.credential_mode == "connected"
                     and source.owner_subject == subject
                     and source.access == MIRRORED_ACCESS
-                    and source.kind in ("gdrive", "notion")
+                    and mcp_live.is_live_source(source)
                 ][: settings.knowledge_live_search_max_sources]
                 if not selected:
                     return None
@@ -98,29 +83,10 @@ async def search(org: str, namespaces: list[str], query: str, *, top_k: int) -> 
                 contributions = []
                 remaining = min(top_k, settings.knowledge_live_search_max_hits)
                 for source in selected:
-                    authority = await connected_accounts.resolve(
-                        org,
-                        source.namespace,
-                        source.name,
-                        deadline=deadline,
-                        expected_source_id=source.source_id,
-                    )
-                    if authority.source != source:
-                        continue  # a changed registration cannot widen the discovered corpus
-
-                    async def native(
-                        access: CheckedAccess,
-                        authority: connected_accounts.SourceAuthority = authority,
-                        remaining: int = remaining,
-                    ) -> list[live_provider_search.LiveProviderHit]:
-                        return await live_provider_search.search(
-                            authority.source, access, query, top_k=remaining, deadline=deadline
-                        )
-
-                    hits = tuple(await authority.run(native))[:remaining]
-                    if hits:
-                        contributions.append(Contribution(authority, hits))
-                        remaining -= len(hits)
+                    part = await mcp_live.search(source, auth, query, limit=remaining)
+                    if part is not None:
+                        contributions.append(part)
+                        remaining -= len(part.hits)
                     if not remaining:
                         break
                 return LiveResult(tuple(contributions), deadline) if contributions else None

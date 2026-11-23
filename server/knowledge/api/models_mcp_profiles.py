@@ -1,4 +1,4 @@
-"""Operator approval metadata; no endpoint, credential or publication authority."""
+"""Operator approval metadata; no credential or publication authority."""
 
 from typing import Literal
 
@@ -36,6 +36,9 @@ class MCPProfileEntry(BaseModel):
     id: str
     label: str
     auth: Literal["none", "bearer"]
+    endpoint_origin: str = Field(
+        description="The approved HTTPS credential destination origin in ASCII form."
+    )
     profile_sha256: str
     approved_tools: list[str]
     allow_collection_copy: bool = Field(

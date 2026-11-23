@@ -49,6 +49,7 @@ class MCPSourcePreviewOutput(BaseModel):
     refresh_state: Literal["not_applicable", "enabled", "disabled"]
     selected_count: int
     checked_at: str
+    read_evidence_stale_seconds: int
     preview_grants_authority: Literal[False] = False
     limitations: list[str]
 
@@ -99,6 +100,22 @@ class MCPSourceListInput(MCPSourceScopeInput):
 
 class MCPSourceInput(MCPSourceScopeInput):
     name: str = Field(max_length=64, description="The opaque source registry name returned by add.")
+
+
+class MCPSourceInspectInput(MCPSourceScopeInput):
+    name: str = Field(
+        default="",
+        max_length=64,
+        description="The exact source name, or empty for request reconciliation.",
+    )
+    slot: str = Field(
+        default="",
+        max_length=36,
+        description="The original owned connection slot for request reconciliation.",
+    )
+    request_id: str = Field(
+        default="", max_length=36, description="The original add UUID, with slot instead of name."
+    )
 
 
 class MCPSourceUpdateInput(MCPSourceInput):
@@ -156,6 +173,7 @@ class MCPSourceSummary(BaseModel):
     label: str | None = None
     selected_count: int | None = None
     sync_enabled: bool
+    read_evidence_stale_seconds: int
     refresh_state: Literal[
         "not_applicable", "enabled", "disabled", "paused", "retired", "unsupported"
     ]

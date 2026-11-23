@@ -92,6 +92,7 @@ async def handle_search(input: SearchInput) -> SearchOutput:
                             title=hit.title,
                             url=hit.url,
                             provider=hit.provider,
+                            resource_identity_verified=hit.resource_identity_verified,
                             content=hit.content if input.bodies != "none" else "",
                         )
                         for hit in result.hits

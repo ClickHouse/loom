@@ -114,10 +114,14 @@ async def handle_mcp_source_preview(input: MCPSourcePreviewInput) -> MCPSourcePr
             refresh_state=refresh,
             selected_count=len(input.resource_ids),
             checked_at=datetime.now(UTC).isoformat(),
+            read_evidence_stale_seconds=settings.knowledge_source_acl_stale_seconds,
             limitations=[
                 "Remote compatibility and selected-resource readability are unchecked.",
                 "No upstream ACL, complete enumeration, deletion or group evidence is available.",
                 "Only selected identities are included; future matching items are excluded.",
                 "Preview grants no authority; mutation and every later read revalidate access.",
+                "Stored copies require current source authority and fresh read evidence. "
+                "Snapshot access expires without an explicit refresh; bytes remain stored.",
+                "Pausing or disconnecting stops access and retains stored bytes until erasure.",
             ],
         )

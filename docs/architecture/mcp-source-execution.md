@@ -15,7 +15,8 @@ progress, and limits.
 - `validate_registration(source)`: checks a proposed row's supported contract,
   connection binding, owner writer grant, and destination. The caller authorizes
   the human and holds the subject, account, and namespace locks through insertion.
-  This helper refuses collection copying and grants no stored-source execution.
+  Collection copying requires exact stored copy consent, current operator profile
+  approval, and an owner administrator grant. This grants no stored-source execution.
 - `validate_source(source)`: requires the exact current active source row,
   supported contract version, selected resources, owner, connection generation,
   current writer grant, and allowed destination. It returns `SourceAuthority`.
@@ -36,8 +37,10 @@ relax foreground connection validation.
 `server/knowledge/app/source_sync_mcp.py` (`turn`) follows the existing `Pass`,
 `TurnResult`, pass deadline, stop checks, worker identity, and private accounting
 contracts. Its caller owns the normal source-turn lease and worker actor scope.
-The turn uses `ensure_mirror` under the account lease, `mirror_costs`, and an
-explicit owner access list.
+The turn uses `ensure_mirror` under the account lease and `mirror_costs`. Both
+reader policies publish into the protected mirror. Owner-only documents carry an
+owner access list; collection copies carry an anyone access list under the
+source's immutable audience and collection reader checks.
 
 ## Publication
 
@@ -46,23 +49,44 @@ otherwise the client uses `resources/read`. Tool descriptions never choose an
 operation. Discovery validates approved tool schemas without enumerating resources
 or changing the stored selection.
 
-Each accepted read has an identity-verified receipt matching the selected identity,
-operation, client configuration digest, and text hash. Only text MIME types are
-copied. Binary resources and plain tool text without verified result identity
-refuse publication. There is no conversion or extraction step in this turn.
+Each accepted read has a receipt matching the selected request identity, operation,
+client configuration digest, and text hash. Resources and structured tool results
+require verified result identity. An explicit tool read mapping with
+`result_format=text` may return an unverified result identity: its receipt still
+binds the actual selected request, body, configuration, and operation. Metadata
+records `mcp_identity_verified` truthfully.
+
+Bounded SDK text resource bodies are text even when their declared MIME type is
+`application/json`. Blob resource bodies remain unsupported. The original is
+stored as UTF-8 `text/plain`; `mcp_declared_mime_type` retains the upstream
+declaration in protected metadata. There is no conversion or extraction step.
 
 The address comes from `mcp_identity.resource_uri`, using the registered source ID
 and exact selected resource identity. Remote result URLs cannot change it. The
 same address identifies the document, its chunks, and citations. Metadata records
 the profile, generation, selection digest, read operation, and local text hash.
 The source revision is empty because no upstream revision guarantee is assumed.
+After each successful selected read, the server stamps `mcp_read_at` with its UTC
+read time and `mcp_scope_sha256` with the current bound scope. That digest includes
+the server-controlled scope revision and excludes the label and pause flag.
+`mcp_config_sha256` records the client configuration bound by the receipt.
 
-Publication calls the existing `source_sync.write_document` and knowledge upsert
-path, including original UTF-8 bytes, chunks, document metadata, indexing, imported
+New or changed content calls the existing `source_sync.write_document` and
+knowledge upsert path, including original UTF-8 bytes, chunks, document metadata, indexing, imported
 provenance, and source tags. The MCP commit guard is reacquired around original
 storage and around chunk/document commit after embedding. Both locks remain held
 through each storage boundary. A changed source, account, profile, owner standing,
 writer grant, or destination refuses the commit.
+
+Unchanged content uses the current document head and existing document row builder.
+The head must be active, published, owned by this source's sync worker, and match
+the exact mirror, selected URI, source ID, title, text, content digest, and original
+metadata. The MCP publication guard holds both leases while re-reading the head,
+validating authority, and inserting a row over its exact optimistic version. Only
+metadata, access, and row version change. Original fields, authorship, provenance,
+revision, ingestion fields, and chunks carry forward. No embedding runs. Unsafe
+or missing state uses the existing guarded upsert. A pending head never reports a
+successful refresh.
 
 ## Progress and invariants
 
@@ -77,17 +101,27 @@ mirror state. A failed or missing read leaves its index pending. A changed bindi
 or selection resets the index. A document bound holds new copies back while
 allowing already stored selected copies to refresh.
 
+An explicit per-item remote `MCPSourceError` invalidates only that selected prior
+owned copy under the MCP publication guard. A metadata-only row clears
+`mcp_read_at` and `mcp_scope_sha256` and sets access to `UNREAD`. Original bytes,
+history, revision, and other selected documents remain intact. A later successful
+read can refresh that same original. Cancellation, authority failures, and
+unexpected exceptions do not trigger this invalidation. Lost authority blocks
+reads and cannot be bypassed to write an invalidation.
+
 After every selected read and publication succeeds, with no pending publication,
 the turn records the existing protected listing timestamp under the commit guard.
-This timestamp covers only the registered selected set and its owner permission
-lists. `TurnResult.full` stays false. Selected-set completion proves no complete
-upstream enumeration, remote ACL synchronization, deletion, or revision ordering.
+This timestamp records progress only; it grants no document permission.
+Protected read admission requires the exact selected document URI, a scope digest
+equal to the current bound scope, and a server-controlled successful `mcp_read_at`
+within the existing ACL stale TTL. Partial progress may publish independently fresh
+selected documents. `TurnResult.full` stays false. Selected-set completion proves
+no complete upstream enumeration, remote ACL synchronization, deletion, or revision ordering.
 Absence, errors, partial results, and selection changes never delete documents.
 
-Without upstream ACL evidence, publication is owner-only. `collection_copy` is
-refused even when the current operator profile permits it: the stored contract
-does not prove durable writer consent for that publication. Admission must resolve
-that missing authority before exposing this policy.
+The audience is immutable for a source ID. Moving from a private audience to a
+collection audience requires another registration and an upstream read; a policy
+edit cannot republish a private copy as a collection copy.
 
 Source admission, worker dispatch, requesting-reader authorization, live result
 assembly, and source lifecycle routing are separate callers of these interfaces.

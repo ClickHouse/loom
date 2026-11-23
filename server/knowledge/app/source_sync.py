@@ -91,7 +91,7 @@ import functools
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, TypeGuard
@@ -427,8 +427,18 @@ async def _usable(found: list[KnowledgeSource]) -> list[KnowledgeSource]:
     # With auth off there is no reader a mirror's lists could be checked against.
     mirrors_on = settings.auth_actually_required()
     syncable = [s for s in found if served(s) or (mirror_synced(s) and mirrors_on)]
+    syncable = [s for s in syncable if s.kind != "mcp" or _mcp_syncable(s)]
     inactive = await store.inactive_namespaces(sorted({(s.org, s.namespace) for s in syncable}))
     return [s for s in syncable if (s.org, s.namespace) not in inactive]
+
+
+def _mcp_syncable(src: KnowledgeSource) -> bool:
+    from server.knowledge.app.mcp_source_authority import MCPAuthorityError, source_contract
+
+    try:
+        return source_contract(src).mode != "live"
+    except (MCPAuthorityError, ValueError, TypeError):
+        return False
 
 
 async def _states(found: list[KnowledgeSource]) -> dict[str, dict[str, str]]:
@@ -476,12 +486,10 @@ async def _sync_turn(
         async with _source_turn(src):
             try:
                 if src.credential_mode == "connected":
-                    from server.knowledge.app.source_sync_connected import ensure_current
-
-                    await ensure_current(src)
+                    await _connected_current(src)
                 turn = await _turn_of(src)(src, state, run)
                 if src.credential_mode == "connected":
-                    await ensure_current(src)
+                    await _connected_current(src)
             except SourceGone:
                 log.info("knowledge_source_sync: %s was removed during its turn", _cursor_of(src))
                 return None
@@ -524,6 +532,15 @@ async def _sync_turn(
     return turn
 
 
+async def _connected_current(src: KnowledgeSource) -> None:
+    if src.kind == "mcp":
+        await require_current(src)
+    else:
+        from server.knowledge.app.source_sync_connected import ensure_current
+
+        await ensure_current(src)
+
+
 def _mirror_failure(src: KnowledgeSource, result: PassResult) -> None:
     """Report the same code for every cause without exporting turn details."""
     result.errors.append(f"{_cursor_of(src)}: SYNC_FAILED")
@@ -534,6 +551,12 @@ def _turn_of(src: KnowledgeSource) -> Callable[..., Awaitable[TurnResult]]:
     """The turn function of a source; this module's `_turn` reads a folder, and a
     mirrored folder source writes into its namespace's mirror."""
     # Imported here: a kind's module builds on this one's helpers.
+    if src.kind == "mcp":
+        if not mirror_synced(src):
+            raise SourceGone(_cursor_of(src))
+        from server.knowledge.app import source_sync_mcp
+
+        return source_sync_mcp.turn
     if (
         src.credential_mode == "connected"
         and src.kind in {"notion", "linear"}
@@ -1261,6 +1284,11 @@ def ours(src: KnowledgeSource, doc: documents.DocumentRow) -> bool:
 async def require_current(src: KnowledgeSource) -> None:
     """SourceGone unless the source is still active as the registration this turn
     started with: a remove during the turn stops it before its next write."""
+    if src.kind == "mcp":
+        from server.knowledge.app.mcp_source_authority import validate_source
+
+        await validate_source(src)
+        return
     with sequential_reads():
         fresh = await store.get_source(src.org, src.namespace, src.name)
     if fresh is None or not fresh.active or fresh.source_id != src.source_id:
@@ -1277,7 +1305,12 @@ async def require_current(src: KnowledgeSource) -> None:
 
 @contextlib.asynccontextmanager
 async def publication_guard(src: KnowledgeSource) -> AsyncIterator[None]:
-    if src.credential_mode == "connected":
+    if src.kind == "mcp":
+        from server.knowledge.app import mcp_source_authority
+
+        async with mcp_source_authority.publication_guard(src):
+            yield
+    elif src.credential_mode == "connected":
         from server.knowledge.app import connected_accounts
 
         async with connected_accounts.publication_guard(src):
@@ -1405,7 +1438,11 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
             fresh = await store.get_source(src.org, src.namespace, src.name)
             states = await store.read_states(src.org, src.namespace, [src.name])
             mirror_row = await mirror_state(src, turn.mirror) if turn.mirror else {}
-        if fresh is None or fresh.source_id != src.source_id:
+        if (
+            fresh is None
+            or fresh.source_id != src.source_id
+            or (src.kind == "mcp" and replace(fresh, mirror=src.mirror) != src)
+        ):
             return
         current = states.get(src.name) or {}
         if mirror_synced(src):
@@ -1469,7 +1506,9 @@ async def _write_mirrored_state(
     last turn that returned recorded."""
     now = _now_iso()
     stored = json_object(current.get("detail", ""))
-    shown: dict[str, Any] = {k: stored[k] for k in ("requested_at", "full") if k in stored}
+    shown: dict[str, Any] = {
+        k: stored[k] for k in ("requested_at", "full", "mcp_selection") if k in stored
+    }
     asked = json_object(read.get("detail", "")).get("requested_at")
     shown.update(last_synced_at=now, status=turn.status)
     if turn.complete and shown.get("requested_at") == asked:

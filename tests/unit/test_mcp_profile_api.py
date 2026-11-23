@@ -174,11 +174,13 @@ async def test_two_org_users_only_see_eligible_safe_metadata(world: SimpleNamesp
         "label",
         "auth",
         "profile_sha256",
+        "endpoint_origin",
         "approved_tools",
         "allow_collection_copy",
     }
     serialized = first.model_dump_json()
-    for forbidden in ("allowed_orgs", "endpoint", "offline.invalid", "audience", "config", "total"):
+    assert first.profiles[0].endpoint_origin == "https://offline.invalid"
+    for forbidden in ("allowed_orgs", '"endpoint"', "/mcp", "audience", "config", "total"):
         assert forbidden not in serialized
     first.profiles[0].approved_tools.append("unapproved")
     current_auth_var.set(auth())

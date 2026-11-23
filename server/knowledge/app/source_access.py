@@ -20,6 +20,7 @@ from server.core.diagnostics import private_work
 from server.core.naming import is_mirror_name
 from server.knowledge.domain.access_list import UNREAD, AccessList, allows, from_json
 from server.knowledge.domain.document_access import fresh, source_id
+from server.knowledge.domain.mcp_read_evidence import ReadProof, ReadScope
 from server.knowledge.domain.serving import Serving
 from server.knowledge.domain.sources import KnowledgeSource, opaque_payload
 from server.knowledge.store import mirrors as mirrors_repo
@@ -52,6 +53,7 @@ class AccessEvidence:
     canonical_owner: str
     groups: tuple[tuple[str, datetime], ...]
     reader_emails: frozenset[str]
+    mcp_proof: ReadProof | None = None
 
     @classmethod
     def from_admitted(cls, item: Admitted) -> AccessEvidence:
@@ -63,6 +65,7 @@ class AccessEvidence:
             item.canonical_owner,
             item.groups,
             item.reader_emails,
+            ReadProof.from_row(doc),
         )
 
 
@@ -84,7 +87,7 @@ class ReadPlan:
     _connected_pins: dict[tuple[str, str], KnowledgeSource] = field(
         default_factory=dict, repr=False
     )
-    _mcp_uris: dict[tuple[str, str], frozenset[str]] = field(default_factory=dict, repr=False)
+    _mcp_scopes: dict[tuple[str, str], ReadScope] = field(default_factory=dict, repr=False)
 
     @property
     def discovery_sources(self) -> dict[tuple[str, str], str]:
@@ -105,7 +108,14 @@ class ReadPlan:
     def current_evidence(self, item: AccessEvidence) -> bool:
         """Evaluate retained permission evidence against the latest shared reader view."""
         at = now()
-        if not self.listing_current(item.namespace, item.source_id, at=at):
+        key = (item.namespace, item.source_id)
+        scope = self._mcp_scopes.get(key)
+        if scope is not None:
+            if not scope.admits(
+                item.mcp_proof, at=at, stale_seconds=settings.knowledge_source_acl_stale_seconds
+            ):
+                return False
+        elif item.mcp_proof is not None or not self.listing_current(*key, at=at):
             return False
         reader = self.reader
         return allows(
@@ -157,6 +167,7 @@ class ReadPlan:
             key: started for key, started in snapshot.listing_starts.items() if key in self.sources
         }
         self.reader = snapshot.reader
+        self._mcp_scopes = snapshot._mcp_scopes
 
     async def _check(self, candidates: list[dict[str, Any]], *, chunks: bool) -> list[Admitted]:
         await self._refresh_scope()
@@ -187,15 +198,10 @@ class ReadPlan:
             sid = source_id(doc["source_uri"], doc["tags"])
             key = (doc["namespace"], sid)
             original = self.sources.get(key)
-            if not self.listing_current(*key):
+            if key not in self._mcp_scopes and not self.listing_current(*key):
                 continue
             if not original or (pg.enabled() and not _head_serves(heads[pair], candidate, chunks)):
                 continue
-            pinned = self._connected_pins.get((original, sid))
-            if pinned is not None and pinned.kind == "mcp":
-                selected = self._mcp_uris.get((original, sid))
-                if selected is None or doc["source_uri"] not in selected:
-                    continue
             if chunks and not pg.enabled() and int(candidate["revision"]) != doc["revision"]:
                 continue
             access = permissions[pair]
@@ -315,7 +321,7 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
     from server.knowledge.store import sources as source_store
 
     eligible = []
-    mcp_uris: dict[tuple[str, str], frozenset[str]] = {}
+    mcp_scopes: dict[tuple[str, str], ReadScope] = {}
     for row in sources:
         key = row["namespace"], row["source_id"]
         mode = row.get("credential_mode", "shared")
@@ -324,6 +330,8 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
             mode=mode,
             version=int(row.get("source_contract_version") or 0),
         ):
+            continue
+        if row.get("source_kind") == "mcp" and mode != "connected":
             continue
         if mode == "shared":
             if key not in plan._connected_pins:
@@ -353,7 +361,7 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
                 continue
             if source.kind == "mcp":
                 bound = await validate_indexed_reader(source, plan._auth)
-                mcp_uris[key] = bound.selected_uris
+                mcp_scopes[key] = ReadScope(bound.scope_sha256, bound.selected_uris)
             else:
                 await validate_indexed(source, plan._auth)
             eligible.append(row)
@@ -362,7 +370,6 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
         except Exception:  # noqa: BLE001 — one unverifiable connection admits no private leg
             continue
     sources = eligible
-    plan._mcp_uris = mcp_uris
     names = sorted({s["namespace"] for s in sources})
     mirrors = await mirrors_repo.mirrors_of(plan.org, names, live_only=True)
     by_original: dict[str, list[str]] = {}
@@ -374,7 +381,12 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
         for s in sources
         if len(by_original.get(s["namespace"], [])) == 1
     }
-    rows = await store.listings(plan.org, list(pairs))
+    plan._mcp_scopes = {
+        key: mcp_scopes[(original, key[1])]
+        for key, original in pairs.items()
+        if (original, key[1]) in mcp_scopes
+    }
+    rows = await store.listings(plan.org, [key for key in pairs if key not in plan._mcp_scopes])
     plan.reader = await resolve_reader(plan.org, subject) if subject else None
     plan.listing_starts = {
         (r["namespace"], r["source_id"]): r["started_at"]
@@ -382,4 +394,4 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
         if (r["namespace"], r["source_id"]) in pairs
         and fresh(r["started_at"], now(), settings.knowledge_source_acl_stale_seconds)
     }
-    plan.sources = {key: pairs[key] for key in plan.listing_starts}
+    plan.sources = {key: pairs[key] for key in plan.listing_starts | plan._mcp_scopes}

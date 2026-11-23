@@ -102,7 +102,13 @@ def world(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
             SimpleNamespace(profile_id="approved", profile_sha256="d" * 64),
         ),
     )
-    monkeypatch.setattr(preview, "settings", SimpleNamespace(knowledge_source_sync_enabled=False))
+    monkeypatch.setattr(
+        preview,
+        "settings",
+        SimpleNamespace(
+            knowledge_source_sync_enabled=False, knowledge_source_acl_stale_seconds=300
+        ),
+    )
     state.input = MCPSourcePreviewInput(
         org="org-a",
         namespace="col-destination",

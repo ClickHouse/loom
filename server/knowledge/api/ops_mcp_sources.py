@@ -3,6 +3,7 @@
 from server.knowledge.api.models_mcp_sources import (
     MCPSourceAddInput,
     MCPSourceInput,
+    MCPSourceInspectInput,
     MCPSourceInspectOutput,
     MCPSourceListInput,
     MCPSourceListOutput,
@@ -76,7 +77,7 @@ OPERATIONS.extend(
         ),
         Operation(
             name="knowledge.source.mcp_inspect",
-            input_model=MCPSourceInput,
+            input_model=MCPSourceInspectInput,
             output_model=MCPSourceInspectOutput,
             handler=handle_mcp_source_inspect,
             idempotent=True,

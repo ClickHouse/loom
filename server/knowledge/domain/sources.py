@@ -587,6 +587,13 @@ def served(src: KnowledgeSource) -> bool:
 def mirror_synced(src: KnowledgeSource) -> bool:
     """Whether the sync worker writes `src` into its namespace's mirror: a mirrored
     folder-store source or a person's connected page/project source."""
+    if src.kind == "mcp":
+        return (
+            src.credential_mode == "connected"
+            and type(src.source_contract_version) is int
+            and src.source_contract_version == 1
+            and src.access == MIRRORED_ACCESS
+        )
     return (
         not opaque_payload(
             kind=src.kind, mode=src.credential_mode, version=src.source_contract_version

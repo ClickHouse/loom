@@ -10,6 +10,8 @@ from server.knowledge.domain.serving import Serving
 from server.knowledge.store.pg_documents import decode_row
 
 # Content and arbitrary metadata are read only after admission, at the checked version.
+# Only these content-free MCP proof fields are projected before admission.
+_MCP_PROOF_FIELDS = ("mcp_scope_sha256", "mcp_read_at")
 _METADATA = (
     "org",
     "namespace",
@@ -75,8 +77,12 @@ async def metadata(
 ) -> list[dict[str, Any]]:
     if not pairs:
         return []
+    fields = [
+        *_METADATA,
+        *(f"JSONExtractString(metadata, '{name}') AS {name}" for name in _MCP_PROOF_FIELDS),
+    ]
     return await (ch or _default_client()).query_all(
-        f"SELECT {', '.join(_METADATA)} FROM loom.documents FINAL "
+        f"SELECT {', '.join(fields)} FROM loom.documents FINAL "
         "WHERE org = {org:String} AND (namespace, source_uri) "
         "IN {pairs:Array(Tuple(String, String))} "
         "LIMIT {limit:UInt32}",
@@ -102,7 +108,15 @@ async def heads(org: str, pairs: list[tuple[str, str]]) -> dict[tuple[str, str],
     pairs = sorted({p for p in pairs if not pg.unstorable(p)})
     if not pairs or pg.unstorable(org):
         return {}
-    fields = ", ".join(f"'{col}', h.row -> '{col}'" for col in _METADATA)
+    fields = ", ".join(
+        [
+            *(f"'{col}', h.row -> '{col}'" for col in _METADATA),
+            *(
+                f"'{name}', NULLIF(h.row ->> 'metadata', '')::jsonb ->> '{name}'"
+                for name in _MCP_PROOF_FIELDS
+            ),
+        ]
+    )
     rows = await pg.fetch(
         f"SELECT h.namespace, h.source_uri, jsonb_build_object({fields}) AS row, "
         "h.deleted, h.revision, h.chunks_revision, h.chunks_version "

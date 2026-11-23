@@ -20,7 +20,13 @@ from server.knowledge.app.mcp_profiles import (
     MCPProfileError,
     build_mcp_source_client,
 )
-from server.knowledge.domain.mcp_sources import ConnectionEnvelope, SourceContract
+from server.knowledge.domain.mcp_sources import (
+    ConnectionEnvelope,
+    CopyConsent,
+    ResourceIdentity,
+    SourceContract,
+    selection_sha256,
+)
 
 SLOT = "mcp:" + "a" * 32
 GENERATION = "b" * 32 + "/0" + "c" * 31
@@ -465,11 +471,20 @@ def test_digest_is_canonical_and_changes_with_approval() -> None:
 
 
 def test_collection_copy_policy_is_separate_from_publication_grants() -> None:
+    consent = CopyConsent(
+        version=1,
+        publisher="owner-a",
+        namespace="collection",
+        resources_sha256=selection_sha256(
+            (ResourceIdentity(type="resource", id="doc://selected"),)
+        ),
+    )
+    changes = dict(reader_policy="collection_copy", mode="snapshot", copy_consent=consent)
     denied = catalog(row()).get("org-a", "approved")
     with pytest.raises(MCPProfileError):
-        client(denied, contract=selection(denied, reader_policy="collection_copy"))
+        client(denied, contract=selection(denied, **changes))
     approved = catalog(row(allow_collection_copy=True)).get("org-a", "approved")
-    opened = client(approved, contract=selection(approved, reader_policy="collection_copy"))
+    opened = client(approved, contract=selection(approved, **changes))
     assert opened.validate_access is access_check
     assert opened.config.approved_resource_ids == ("doc://selected",)
     with pytest.raises(MCPProfileError):

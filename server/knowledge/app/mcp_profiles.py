@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass, field, fields, replace
 from functools import lru_cache
 from typing import Any, Literal
 
+import httpx
+
 from server.clients.mcp_source import (
     MCPBearer,
     MCPLimits,
@@ -198,6 +200,7 @@ class MCPProfileMetadata:
     profile_sha256: str
     allow_collection_copy: bool
     approved_tools: tuple[str, ...]
+    endpoint_origin: str
 
 
 @dataclass(frozen=True, repr=False)
@@ -244,7 +247,13 @@ def _profile(value: Any) -> FrozenProfileDefinition:
     snapshot = _canonical(approval, MAX_PROFILE_BYTES)
     digest = hashlib.sha256(snapshot.encode()).hexdigest()
     metadata = MCPProfileMetadata(
-        identity, label, auth, digest, copy_allowed, config.approved_tools
+        identity,
+        label,
+        auth,
+        digest,
+        copy_allowed,
+        config.approved_tools,
+        "https://" + httpx.URL(config.endpoint).netloc.decode("ascii"),
     )
     return FrozenProfileDefinition(metadata, frozenset(orgs), snapshot)
 
