@@ -41,8 +41,9 @@ in the equal-cold estimate. The largest equal-warm cost reduction is 13.1%.
 The observed cost comparison reflects provider cache reuse.
 
 Both CLI cohorts run the arms in the same order. SCIP is first in both and
-records zero first-prompt cache reads. These repeats share the same order
-effect. The full schedule rotates treatment positions across task blocks.
+records zero first-prompt cache reads. The repeated order leaves position
+and treatment confounded. The full schedule rotates treatment positions
+across task blocks.
 
 ## End-to-end timing
 
