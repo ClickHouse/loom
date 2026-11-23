@@ -73,7 +73,6 @@ preserved. This scoped deletion path shares per-owner lifecycle primitives with
 restore; it never invokes deployment-wide offline restore. Remote revocation follows
 all local cleanup.
 
-
 The credential-free recovery marker retains an already inventoried registration
 generation: the current account's registration, or an exact-owner historical
 registration when no account survives. It stays inactive and contains no credential,
