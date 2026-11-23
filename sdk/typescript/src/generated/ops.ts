@@ -884,6 +884,8 @@ export interface CodeGrepInput {
   pattern: string;
   regex?: boolean;
   case_sensitive?: boolean;
+  /** Include distinct enclosing bodies in matches mode; default false. */
+  include_body?: boolean;
   path_prefix?: string;
   cursor?: string;
   exclude_unit_ids?: string[];
@@ -902,6 +904,9 @@ export interface CodeGrepOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
+  definitions?: Array<Record<string, unknown>>;
+  definitions_partial?: boolean;
+  definitions_note?: string;
   next_cursor?: string;
   has_more?: boolean;
   files?: Array<Record<string, unknown>>;

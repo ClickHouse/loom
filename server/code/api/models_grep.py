@@ -48,6 +48,10 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     regex: bool = False
     # False matches `pattern` regardless of letter case.
     case_sensitive: bool = True
+    include_body: bool = Field(
+        default=False,
+        description="Include distinct enclosing bodies in matches mode; default false.",
+    )
     # Only paths under this repo-relative prefix; '' = the whole index. A prefix outside
     # the indexed ones answers `not_covered`.
     path_prefix: str = ""
@@ -142,6 +146,12 @@ class CodeGrepOutput(_LessonsOut):
         # only when it ran, and the message fields only with a verdict
         data = _drop_empty_presence_keys(handler(self))
         data = _drop_unfired_symbol_blocks(data)
+        if not data.get("definitions"):
+            data.pop("definitions", None)
+        if not data.get("definitions_partial"):
+            data.pop("definitions_partial", None)
+        if not data.get("definitions_note"):
+            data.pop("definitions_note", None)
         if not data.get("verdict"):
             for k in ("verdict", "template", "error_code", "coverage"):
                 data.pop(k, None)
@@ -155,6 +165,12 @@ class CodeGrepOutput(_LessonsOut):
     # by `scope` (0/0 when the line sits in no unit) — enough to decide whether
     # to fetch the body, or to skip it when that unit is already on screen.
     matches: list[dict[str, Any]]
+    # include_body: distinct enclosing units, in hit order; `lines` names the matching
+    # lines each definition covers. Unavailable bodies retain the enclosing result's
+    # disclosure and next lookup. Empty without include_body or without matches.
+    definitions: list[dict[str, Any]] = Field(default_factory=list)
+    definitions_partial: bool = False
+    definitions_note: str = ""
     # Continuation: cursor for the next page of matching lines, "" when the extracted
     # set is exhausted. has_more mirrors it.
     next_cursor: str = ""

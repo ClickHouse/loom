@@ -1360,17 +1360,16 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.grep": (
         "Find literal text or RE2 regex in indexed source. Hits include source lines, "
         "enclosing symbols and spans. Pass `pattern`; `regex: true` selects regex. "
-        "Narrow with `path_prefix`, `path_globs` or `langs`. For several hit bodies, "
-        "use code.enclosing with locations [path:line, ...] and include_body=true. "
+        "Narrow with `path_prefix`, `path_globs` or `langs`. `include_body: true` "
+        "returns distinct enclosing definitions with the matches. "
         "`neighbours: true` adds callers, callees, tests and citing docs. "
         "`next_cursor` pages remaining matches. A regex-shaped literal with no match "
         "is retried as regex and disclosed. `mode: 'message'` matches rendered errors "
         "or logs to their source templates; code-shaped input falls back to literal. "
-        "`mode: 'presence'` with `namespaces` (up to eight) returns each branch's "
-        "present / absent / unknown verdict and a summary. Optional `deadline_ms` "
-        "returns hits found before expiry with `partial: true`. Coverage distinguishes "
-        "absent matches from incomplete indexed source. For paths use "
-        "code.files; this searches content. Use local tools for uncommitted source."
+        "`mode: 'presence'` with `namespaces` returns present / absent / unknown per "
+        "branch. Optional `deadline_ms` discloses partial results. Coverage distinguishes "
+        "absence from incomplete indexing. Use code.files for paths, "
+        "local tools for uncommitted source."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
@@ -2212,8 +2211,9 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "symbols. Pass `pattern`; regex=true uses RE2: escape literal code punctuation. "
         "For behavior questions "
         "use code.search. Narrow with `path_prefix`, `path_globs` or `langs`; "
-        "`next_cursor` pages remaining matches. For several hit bodies, use "
-        "code.enclosing with locations [path:line, ...] and include_body=true. "
+        "`next_cursor` pages remaining matches. Use `include_body: true` to read "
+        "distinct enclosing definitions in this call; no follow-up body lookup is needed "
+        "unless `definitions_partial` discloses unavailable source. "
         "Coverage disclosures distinguish absent matches from incomplete indexed source."
     ),
     # The coding tier lists blast radius with the sentences a coding session

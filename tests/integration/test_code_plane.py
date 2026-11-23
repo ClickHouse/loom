@@ -92,6 +92,36 @@ async def test_ingest_lifecycle(code_env) -> None:
     assert s3.symbols_new == 0 and s3.symbols_tombstoned == 0
 
 
+async def test_grep_can_return_distinct_retained_enclosing_bodies(ch_client, monkeypatch) -> None:
+    from server.code.api.models_grep import CodeGrepInput
+    from server.code.app.grep import handle_code_grep
+    from server.code.app.index.repo_registry import read_registry
+    from server.code.store.index import CodeRepo
+    from server.core.ch import get_client
+    from server.settings import settings
+    from tests.integration._resources import unique_org
+
+    await get_client().connect()
+    assert await read_registry(get_client())
+    org, ns = unique_org("grep-bodies"), "source"
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    await _ingest(CodeRepo(), org, ns)
+    plain = await handle_code_grep(CodeGrepInput(org=org, namespace=ns, pattern="squashImpl"))
+    rich = await handle_code_grep(
+        CodeGrepInput(
+            org=org,
+            namespace=ns,
+            pattern="squashImpl",
+            include_body=True,
+        )
+    )
+    assert rich.matches == plain.matches and rich.matches
+    assert not plain.definitions
+    assert not rich.definitions_partial
+    assert len(rich.definitions) == len({row["symbol_id"] for row in rich.definitions}) == 2
+    assert all("squashImpl" in row["body"] and not row["body_elided"] for row in rich.definitions)
+
+
 async def test_overloads_survive_engine_merge(code_env, ch_client) -> None:
     repo, org, ns = code_env
     await _ingest(repo, org, ns)

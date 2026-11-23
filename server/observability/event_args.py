@@ -80,6 +80,8 @@ IDENTIFIER_KEYS: frozenset[str] = frozenset(
         "path",
         "prefix",
         "pattern",
+        "include_body",
+        "definitions_partial",
         "source_uri",
         "source",
         "subject",

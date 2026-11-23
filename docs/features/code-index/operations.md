@@ -85,6 +85,18 @@ underscores. Toolsets: [MCP reference](../../reference/mcp.md#toolsets).
 | `code.map`       | you want an orientation map of the repository's modules                                                                                                                                           |
 | `code.trace`     | you have a stack trace: each frame resolved to its unit                                                                                                                                           |
 
+In matches mode, `code.grep(include_body=true)` returns the enclosing definitions
+beside the hit lines. Each definition appears once; its `lines` lists the matching
+locations. The same retained-source reader backs `code.enclosing`, including type
+and document-section fallback. No token budget is imposed on these bodies.
+
+The default remains matching lines only. Bodies are read only for the served page,
+and page reruns remove definitions belonging to earlier pages. If source cannot be
+read, matching lines remain available with `definitions_partial=true` and a
+`definitions_note`. Unresolved or elided definitions retain their structural
+disclosures and next lookup when available. Check those fields before treating a
+missing body as missing code. The flag is rejected outside matches mode.
+
 A caller with a clock of its own passes `deadline_ms` to `code.grep` or `code.search`
 (clamped to 200–60000; 0 means none, and unset takes `LOOM_CODE_SEARCH_DEADLINE_MS`):
 the request stops starting new work when the budget runs out and returns what it has,

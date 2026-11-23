@@ -18,6 +18,7 @@ from server.code.app.common import (
     resolve_code_identity,
     schedule_code_trace,
 )
+from server.code.app.grep_bodies import definitions_for, definitions_tokens, select_definitions
 from server.code.app.grep_source import recover_source_chunks
 from server.code.app.search.shared import (
     _not_covered_output,
@@ -61,6 +62,10 @@ async def _code_grep(input: CodeGrepInput) -> CodeGrepOutput:
     from server.observability.budget_shape import note_budget_shape
 
     require_code_intel()
+    if input.include_body and input.mode != "matches":
+        from server.core.errors import ValidationError
+
+        raise ValidationError("include_body on code.grep requires mode: 'matches'")
     # Presence on several namespaces: which of them contain the pattern, one row each. Unset:
     # matches / files on the one namespace.
     if input.mode == "presence":
@@ -274,6 +279,7 @@ async def _grep_lines(
     trace_run_id = new_trace_run_id()
     pool_matches = matches
     matches = matches[:limit]
+    bodies = await definitions_for(input, matches, budget)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
         repo, org, ns, input, matches, route, budget=budget
     )
@@ -304,7 +310,9 @@ async def _grep_lines(
         returned_paths=files,
         returned_scores=[],
         top_k=limit,
-        tokens_returned=sum(len(m["text"]) for m in matches) // 4 + neighbour_tokens,
+        tokens_returned=sum(len(m["text"]) for m in matches) // 4
+        + neighbour_tokens
+        + definitions_tokens(bodies),
         abstain=not matches,
         retrieval_risk="low" if matches else "abstain",
         embedding_model="",
@@ -340,6 +348,7 @@ async def _grep_lines(
         anchors=len(neighbours),
         anchors_capped=anchors_capped,
         neighbour_tokens=neighbour_tokens,
+        **bodies,
         **coverage,
     )
 
@@ -486,6 +495,7 @@ def _grep_trace_args(input: CodeGrepInput) -> dict[str, Any]:
         "exclude_unit_ids",
         "limit",
         "deadline_ms",
+        "include_body",
         paged=bool(input.cursor) or None,
     )
 
@@ -593,6 +603,9 @@ async def _serve_grep_page(
     files = list(dict.fromkeys(m["path"] for m in page))
     trace_run_id = new_trace_run_id()
     route = route + "+page"
+    bodies = await definitions_for(
+        input, page, code_deadline.start(input.deadline_ms, started=started)
+    )
     schedule_code_trace(
         org=org,
         ns=ns,
@@ -604,7 +617,8 @@ async def _serve_grep_page(
         returned_paths=files,
         returned_scores=[],
         top_k=limit,
-        tokens_returned=sum(len(str(m.get("text") or "")) for m in page) // 4,
+        tokens_returned=sum(len(str(m.get("text") or "")) for m in page) // 4
+        + definitions_tokens(bodies),
         abstain=not page,
         retrieval_risk="low" if page else "abstain",
         embedding_model="",
@@ -638,6 +652,7 @@ async def _serve_grep_page(
             trace_run_id=trace_run_id,
             partial=bool(payload.get("partial")),
             partial_reason=str(payload.get("partial_reason") or ""),
+            **bodies,
         ),
         "",
         offset,
@@ -653,6 +668,7 @@ async def _grep_page_by_rerun(input: CodeGrepInput, *, offset: int, reason: str)
     fresh = input.model_copy(update={"cursor": "", "limit": min(200, offset + limit)})
     out = await handle_code_grep(fresh)
     out.matches = out.matches[offset : offset + limit]
+    out.definitions = select_definitions(out.definitions, out.matches)
     out.as_of = paging.disclose(out.as_of, page_commit="", offset=offset, fallback=reason)
     if reason == "source_line_mapping_changed":
         out.partial = True
