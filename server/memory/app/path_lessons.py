@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
@@ -26,6 +28,9 @@ from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
 from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
 from server.memory.domain.lemmatize import snowball_stem_tokens
 from server.memory.domain.recall import query_tokens
+from server.memory.store import code_links
+
+logger = logging.getLogger(__name__)
 
 
 def _excerpt(hit: dict[str, Any]) -> str | None:
@@ -106,7 +111,11 @@ def _ordered_candidates(
 def _excludes_other_symbol(hit: dict[str, Any], path: str, symbols: set[str]) -> bool:
     if hit.get("pinned") or is_whole_row(hit.get("memory_type", ""), hit.get("tags") or []):
         return False
-    anchors = [local_name(name, path) for name in hit.get("code_symbols", [])]
+    return _outside_scope(hit.get("code_symbols", []), path, symbols)
+
+
+def _outside_scope(names: Sequence[str], path: str, symbols: set[str]) -> bool:
+    anchors = [local_name(name, path) for name in names]
     # A chunk can hold a nested declaration without naming it as its own scope.
     return bool(anchors) and all(
         name
@@ -131,6 +140,47 @@ def _focused_paths(
         and str(hit.get("memory_id")) not in superseded
         and not hit.get("value_truncated")
         and any(name and local_name(name, path) in symbols for name in hit.get("code_symbols", []))
+    }
+
+
+async def _confirmed_omissions(
+    org: str,
+    trunk_ns: str,
+    candidates: list[tuple[str, dict[str, Any]]],
+    symbols: dict[str, set[str]],
+    focused: set[str],
+    timeout_s: float | None,
+) -> set[tuple[str, str]]:
+    """Path reads miss pending links. Check only the rows being considered for omission."""
+    omitted = {
+        (path, mid)
+        for path, hit in candidates
+        if path in focused
+        and (mid := str(hit.get("memory_id") or ""))
+        and _excludes_other_symbol(hit, path, symbols[path])
+    }
+    if not omitted or not trunk_ns or (timeout_s is not None and timeout_s <= 0):
+        return set()
+    try:
+        async with asyncio.timeout(timeout_s):
+            links = await code_links.for_memories(org, sorted({mid for _, mid in omitted}))
+    except Exception as error:  # noqa: BLE001 — without confirmation, keep the lessons
+        logger.debug("Scope check unavailable for grep lessons: %s", type(error).__name__)
+        return set()
+    resolved: dict[tuple[str, str], list[str]] = defaultdict(list)
+    uncertain: set[str] = set()
+    for link in links:
+        if link["code_namespace"] != trunk_ns:
+            continue
+        if not link["complete"] or link["state"] not in ("fresh", "moved", "changed"):
+            uncertain.add(link["memory_id"])
+        else:
+            resolved[(link["path"], link["memory_id"])].append(link["qualified_name"])
+    return {
+        (path, mid)
+        for path, mid in omitted
+        if mid not in uncertain
+        and _outside_scope(resolved.get((path, mid), []), path, symbols[path])
     }
 
 
@@ -164,6 +214,7 @@ async def lessons_for_paths(
     there. File-wide or uncertain links, decisions, constraints and pins remain eligible."""
     if not namespaces or not paths:
         return Lessons([])
+    started = asyncio.get_running_loop().time()
     # memory.for_file takes two extra namespaces and follows code links only into the
     # trunk an extra one names: each read names the trunk and two caller namespaces.
     own = [ns for ns in namespaces if ns != trunk_ns] or [trunk_ns]
@@ -194,11 +245,15 @@ async def lessons_for_paths(
     ]
     symbols = (matched_symbols or {}) if not token_budget else {}
     focused = _focused_paths(candidates, symbols, superseded)
+    remaining = (
+        None if timeout_s is None else timeout_s - (asyncio.get_running_loop().time() - started)
+    )
+    omitted = await _confirmed_omissions(org, trunk_ns, candidates, symbols, focused, remaining)
     for path, hit in _ordered_candidates(candidates, query):
         key = (str(hit["namespace"]), str(hit["memory_key"]))
         if key in seen:
             continue
-        if path in focused and _excludes_other_symbol(hit, path, symbols[path]):
+        if (path, str(hit.get("memory_id") or "")) in omitted:
             left.add(key)
             continue
         stale = str(hit.get("memory_id")) in superseded

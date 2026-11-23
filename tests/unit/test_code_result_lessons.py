@@ -97,13 +97,14 @@ async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
 async def test_grep_preserves_lessons_with_uncertain_or_nested_links(
     monkeypatch: pytest.MonkeyPatch, namespace: str
 ) -> None:
-    rows = [_hit(k) for k in ("exact", "other", "nested", "incomplete", "file")]
+    rows = [_hit(k) for k in ("exact", "other", "nested", "incomplete", "pending", "file")]
     rows.append(_hit("constraint", tags=("constraint",)))
     names = {
         "exact": ("Thing::run", 1, "changed"),
         "other": ("Other::run", 1, "fresh"),
         "nested": ("Thing::run::inner", 1, "fresh"),
         "incomplete": ("Other::run", 0, "fresh"),
+        "pending": ("Other::run", 1, "fresh"),
         "constraint": ("Other::run", 1, "fresh"),
     }
     links = {
@@ -117,6 +118,23 @@ async def test_grep_preserves_lessons_with_uncertain_or_nested_links(
 
     async def linked(*_args: Any) -> dict[str, list[dict[str, Any]]]:
         return links
+
+    async def all_links(_org: str, ids: list[str]) -> list[dict[str, Any]]:
+        assert ids == ["mem-home/other", "mem-home/pending"]
+        return [
+            {**link, "code_namespace": "code-repo", "memory_id": mid, "path": "a.py"}
+            for mid in ids
+            for link in links[mid]
+        ] + [
+            {
+                "code_namespace": "code-repo",
+                "memory_id": "mem-home/pending",
+                "path": "",
+                "state": "pending",
+                "complete": 1,
+                "qualified_name": "a::Thing::run",
+            }
+        ]
 
     async def namespaces(*_args: Any) -> list[str]:
         return ["mem-home", "code-repo"]
@@ -133,6 +151,7 @@ async def test_grep_preserves_lessons_with_uncertain_or_nested_links(
     monkeypatch.setattr(for_file, "get_client", _Files)
     monkeypatch.setattr(for_file, "_linked", linked)
     monkeypatch.setattr(for_file, "_readable_extras", no_extra_reads)
+    monkeypatch.setattr(path_lessons.code_links, "for_memories", all_links)
     monkeypatch.setattr(code_plane_reads, "lesson_namespaces", namespaces)
     monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda *_: "code-repo")
     monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: False)
@@ -140,7 +159,7 @@ async def test_grep_preserves_lessons_with_uncertain_or_nested_links(
     wrapped = result_lessons.WithLessons(grep, result_lessons.grep_paths)
     answer = await wrapped(CodeGrepInput(org="acme", namespace=namespace, pattern="run"))
     focused = namespace == "code-repo"
-    expected = {"exact", "nested", "incomplete", "constraint", "file"}
+    expected = {"exact", "nested", "incomplete", "pending", "constraint", "file"}
     assert {row["memory_key"] for row in answer.lessons} == (
         expected if focused else expected | {"other"}
     )

@@ -386,7 +386,9 @@ The ranking uses the existing namespace-scoped candidates. On trunk, an uncapped
 grep response focuses a file's lessons on matched definitions when the returned
 scopes are known and an exact linked lesson is available. Broader file history
 remains available through `memory.for_file`. Superseded rows and unrelated paths
-remain excluded. Ranking and focusing add no model calls or storage reads.
+remain excluded. Before leaving out a lesson, grep checks its live link set
+for pending and uncertain links within the existing enrichment deadline.
+Ranking and focusing add no model calls.
 
 File and symbol lessons carry complete memory text, including source references.
 The internal file listing reads complete values; the pre-edit block keeps its own

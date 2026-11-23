@@ -471,9 +471,10 @@ The links are read where the code is:
 - `code.grep` in matches mode focuses inline lessons when every hit in a trunk file
   has an enclosing definition and a complete lesson links to one of those definitions.
   It leaves out ordinary lessons linked only to other declarations in the file and
-  counts them in `lessons_left_out`. File-wide notes, uncertain links, decisions,
-  constraints and pins remain eligible. A configured lesson budget keeps file-level
-  selection. Use `memory.for_file` to read the broader history for a file.
+  counts them in `lessons_left_out`. File-wide notes, pending or uncertain links,
+  nested definitions, decisions, constraints and pins remain eligible. If the
+  live link check is unavailable or a lesson budget is configured, grep keeps
+  file-level selection. Use `memory.for_file` to read the broader file history.
 - `memory.for_file` serves memories linked to code in the file beside those whose
   `files` name it. A line whose code changed, was not found again or went says so and
   names the first indexed commit at which it read so; `context.pack` decision lines
