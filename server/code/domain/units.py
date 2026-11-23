@@ -188,14 +188,30 @@ class CodeUnit(BaseModel):
         return f"{self.path}:{self.start_line}-{self.end_line}"
 
 
+_PYTHON_CLASS_WITH_DOCSTRING = re.compile(
+    r"(?m)^[ \t]*class[ \t]+(?P<name>\w+)[^\n]*:[ \t]*\n[ \t]+(?P<quote>['\"])(?P=quote){2}"
+)
+
+
+def _python_class_without_doc_prefix(unit: CodeUnit) -> CodeUnit:
+    """Keep the skeleton from its class header when its docstring repeats the preface."""
+    match = _PYTHON_CLASS_WITH_DOCSTRING.search(unit.body)
+    if match is None or match["name"] != unit.symbol.rsplit("::", 1)[-1]:
+        return unit
+    prefix = unit.body[: match.start()].removesuffix("\n")
+    docstring, closing, _ = unit.body[match.end() :].partition(match["quote"] * 3)
+    if prefix and closing and docstring.strip("\"' \n").startswith(prefix):
+        return unit.model_copy(update={"body": unit.body[match.start() :]})
+    return unit
+
+
 def _without_repeated_context(unit: CodeUnit) -> CodeUnit:
     """Keep retrieval context unless its entire text already occurs in the source."""
-    if (
-        unit.kind != "function"
-        or unit.granularity != "unit"
-        or unit.start_line < 1
-        or not unit.body
-    ):
+    if unit.granularity != "unit" or unit.start_line < 1 or not unit.body:
+        return unit
+    if unit.kind == "class_skeleton" and unit.path.endswith((".py", ".pyi")):
+        return _python_class_without_doc_prefix(unit)
+    if unit.kind != "function":
         return unit
     lines = retained_source_lines(
         {"content": unit.body, "start_line": unit.start_line, "end_line": unit.end_line}
