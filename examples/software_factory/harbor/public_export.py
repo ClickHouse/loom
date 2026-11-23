@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 from examples.software_factory.factory.model import digest
 
+from .native_environment import MCP_SCHEMA_PROFILES
 from .native_trace import COUNTERS as TRACE_COUNTERS
 from .native_trace import TIMINGS as TRACE_TIMINGS
 from .project_guidance import guidance
@@ -158,7 +159,7 @@ def public_metadata(value):
     if "loom_mcp" in value:
         mcp = value["loom_mcp"]
         profile = mcp["schema_profile"]
-        if profile not in {"standard", "compact"}:
+        if profile not in MCP_SCHEMA_PROFILES:
             raise ValueError("Invalid public Loom MCP schema profile")
         result["loom_mcp"] = {
             "schema_profile": profile,
@@ -283,7 +284,7 @@ def public_metadata(value):
     return result
 
 
-def export_public(protocol, output: Path, *, public_config=None, require_complete=False):
+def export_public(protocol, output: Path, *, require_complete=False):
     protocol = protocol if isinstance(protocol, dict) else read(protocol)
     verify(protocol)
     root, output = Path(protocol["output_root"]).resolve(), Path(output)
@@ -382,7 +383,7 @@ def export_public(protocol, output: Path, *, public_config=None, require_complet
         payload = {
             "kind": KIND,
             "complete": complete,
-            "metadata": public_metadata(public_config or protocol["public_reproduction"]),
+            "metadata": public_metadata(protocol["public_reproduction"]),
             "solver": protocol["solver"],
             "attempts": public,
             "native_artifact_sha256": hashes,
