@@ -79,7 +79,10 @@ measure for the same arm in the same cache state. A 20% margin is 0.8 times
 the No Loom mean minus the Loom mean. Missing cost evidence leaves the cost
 check unknown. Memory comparisons use the matching code-only index and retain
 hidden-test, blind-judge and regression deltas. Main-session linked-lesson
-counts show delivery. A pilot describes one issue without an uncertainty bound.
+counts show delivery. The trace compares the first fresh lesson response with
+the first edit, shell or delegated tool request in the main session. This
+records event order and treats shell reads as possible edits. A pilot describes
+one issue without an uncertainty bound.
 
 Harbor uses its built-in `claude-code` agent, pinned by
 [agent.json](../../harbor/agent.json). Every arm receives the original public

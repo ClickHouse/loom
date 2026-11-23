@@ -19,7 +19,15 @@ COUNTERS = (
     "loom_source_chars_main",
     "loom_lesson_chars_main",
     "loom_repeated_lesson_chars_main",
+    "loom_fresh_linked_lesson_rows_main",
+    "loom_nonfresh_linked_lesson_rows_main",
 )
+EVENTS = (
+    "first_fresh_linked_lesson_result_event_main",
+    "first_possible_edit_request_event_main",
+)
+POSSIBLE_EDIT_TOOLS = {"Agent", "Bash", "Edit", "MultiEdit", "NotebookEdit", "Task", "Write"}
+NONFRESH_LINK_STATES = {"moved", "changed", "unresolved", "missing"}
 TIMINGS = ("claude_cli_time_s", "claude_api_time_s")
 
 
@@ -45,16 +53,14 @@ def _content_counts(body, seen):
         for lesson in row["lessons"]
         if isinstance(lesson, dict)
     ]
-    repeated, states = 0, Counter()
+    repeated, states, usable_states = 0, Counter(), Counter()
     for lesson in lessons:
         state = lesson.get("code_state")
-        states[
-            state
-            if state in {"fresh", "moved", "changed", "unresolved", "missing"}
-            else "unclassified"
-        ] += 1
+        states[state if state == "fresh" or state in NONFRESH_LINK_STATES else "unclassified"] += 1
         key = lesson.get("namespace"), lesson.get("memory_key")
         excerpt = lesson.get("excerpt")
+        if isinstance(excerpt, str) and excerpt.strip() and isinstance(state, str):
+            usable_states[state] += 1
         if (
             isinstance(excerpt, str)
             and excerpt
@@ -76,12 +82,14 @@ def _content_counts(body, seen):
         ),
         "repeated_lesson_chars": repeated,
         "lesson_states": dict(states),
+        "fresh_linked_lesson_rows": usable_states["fresh"],
+        "nonfresh_linked_lesson_rows": sum(usable_states[state] for state in NONFRESH_LINK_STATES),
     }
 
 
 def summarize(trial):
     path = trial / "agent/claude-code.txt"
-    summary = {key: None for key in (*COUNTERS, *TIMINGS)}
+    summary = dict.fromkeys((*COUNTERS, *EVENTS, *TIMINGS))
     output = {
         "metrics": summary,
         "calls": [],
@@ -96,7 +104,7 @@ def summarize(trial):
     raw = path.read_bytes()
     output["source_sha256"] = hashlib.sha256(raw).hexdigest()
     calls, responses, replies, final = {}, set(), {}, None
-    for line in raw.decode().splitlines():
+    for event_index, line in enumerate(raw.decode().splitlines(), 1):
         try:
             event = json.loads(line)
         except ValueError:
@@ -115,20 +123,28 @@ def summarize(trial):
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "tool_use":
-                calls[block["id"]] = {
-                    "tool_call_id": block["id"],
-                    "tool": block["name"],
-                    "model_response_id": response_id,
-                }
+                calls.setdefault(
+                    block["id"],
+                    {
+                        "tool_call_id": block["id"],
+                        "tool": block["name"],
+                        "model_response_id": response_id,
+                        "request_event": event_index,
+                    },
+                )
             elif block.get("type") == "tool_result":
-                replies[block["tool_use_id"]] = block
+                replies.setdefault(block["tool_use_id"], (event_index, block))
     summary.update(dict.fromkeys(COUNTERS, 0))
     summary["model_turns_main"] = len(responses)
-    groups, seen = Counter(), set()
+    groups, seen, fresh_events = Counter(), set(), []
+    summary["first_possible_edit_request_event_main"] = next(
+        (call["request_event"] for call in calls.values() if call["tool"] in POSSIBLE_EDIT_TOOLS),
+        None,
+    )
     for identifier, call in calls.items():
         name = call["tool"]
         loom = name.startswith(("mcp__loom__", "mcp__plugin_loom_loom__"))
-        reply = replies.get(identifier)
+        result_event, reply = replies.get(identifier, (None, None))
         content = reply.get("content") if reply else None
         chars = (
             len(content)
@@ -140,6 +156,7 @@ def summarize(trial):
         observed = {
             **call,
             "result_observed": reply is not None,
+            "result_event": result_event,
             "is_error": bool(reply.get("is_error", False)) if reply else None,
             "result_chars": chars,
         }
@@ -151,19 +168,24 @@ def summarize(trial):
             summary["loom_errors_main"] += observed["is_error"] is True
             summary["loom_result_chars_main"] += chars or 0
             body = _body(content)
-            if body is not None:
+            if body is not None and not observed["is_error"]:
                 counted = _content_counts(body, seen)
+                if counted["fresh_linked_lesson_rows"]:
+                    fresh_events.append(result_event)
                 observed.update(counted)
                 for source, target in (
                     ("source_chars", "loom_source_chars_main"),
                     ("lesson_chars", "loom_lesson_chars_main"),
                     ("repeated_lesson_chars", "loom_repeated_lesson_chars_main"),
+                    ("fresh_linked_lesson_rows", "loom_fresh_linked_lesson_rows_main"),
+                    ("nonfresh_linked_lesson_rows", "loom_nonfresh_linked_lesson_rows_main"),
                 ):
                     summary[target] += counted[source]
                 trace_id = body.get("trace_run_id")
                 if isinstance(trace_id, str) and len(trace_id) <= 128:
                     observed["trace_run_id"] = trace_id
         output["calls"].append(observed)
+    summary["first_fresh_linked_lesson_result_event_main"] = min(fresh_events, default=None)
     summary["tool_calls_main"] = len(calls)
     summary["parallel_tool_groups_main"] = sum(size > 1 for size in groups.values())
     for source, target in (

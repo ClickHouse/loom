@@ -347,12 +347,18 @@ def _trace_table(record):
         ("Main-session Loom body characters", "loom_source_chars_main"),
         ("Main-session lesson characters", "loom_lesson_chars_main"),
         ("Main-session repeated lesson characters", "loom_repeated_lesson_chars_main"),
+        ("Fresh linked lesson rows", "loom_fresh_linked_lesson_rows_main"),
+        ("Other explicit link states", "loom_nonfresh_linked_lesson_rows_main"),
+        ("First fresh linked lesson stream event", "first_fresh_linked_lesson_result_event_main"),
+        ("First potential edit stream event", "first_possible_edit_request_event_main"),
     )
     rows = "\n".join(f"| {label} | {_number(record.get(key))} |" for label, key in fields)
     return (
         "\n| Diagnostic | Value |\n| --- | ---: |\n" + rows + "\n\n"
         "API time includes model, network and queuing. Concurrent tools can share one "
-        "model response. Character counts are observed content, not provider tokens.\n\n"
+        "model response. Character counts are observed content, not provider tokens. "
+        "Stream events are one-based JSONL line numbers. Shell and delegated tool requests "
+        "count as potential edits even when they only read.\n\n"
     )
 
 

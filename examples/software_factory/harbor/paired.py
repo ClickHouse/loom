@@ -65,6 +65,8 @@ def _metrics(result: dict) -> dict:
             "automatic_final_test_runs",
             "loom_tool_calls",
             "loom_lesson_chars_main",
+            "first_fresh_linked_lesson_result_event_main",
+            "first_possible_edit_request_event_main",
             "memory_rows_written",
             "model_selected_loom_requests",
             "provider_logical_requests",
@@ -360,10 +362,14 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
             }
         if MEMORY_PEERS.get(left) == right:
             hidden = contrast["quality"]
-            lesson_chars = [
-                lookup[task, repeat, left, state]["loom_lesson_chars_main"]
-                for task in tasks
-                for repeat in repeats
+            records = [lookup[task, repeat, left, state] for task in tasks for repeat in repeats]
+            lesson_chars = [record["loom_lesson_chars_main"] for record in records]
+            timing = [
+                (
+                    record["first_fresh_linked_lesson_result_event_main"],
+                    record["first_possible_edit_request_event_main"],
+                )
+                for record in records
             ]
             targets["memory_vs_code_index"][left] = {
                 "code_only_arm": right,
@@ -371,6 +377,13 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
                     chars is not None and chars > 0 for chars in lesson_chars
                 ),
                 "main_session_lesson_evidence_missing": lesson_chars.count(None),
+                "fresh_linked_lesson_before_potential_edit_attempts": sum(
+                    fresh is not None and edit is not None and fresh < edit
+                    for fresh, edit in timing
+                ),
+                "main_session_fresh_linked_lesson_attempts": sum(
+                    fresh is not None for fresh, _ in timing
+                ),
                 "hidden_test_pass_rate_delta": hidden,
                 "blind_fixed_rate_delta": contrast["blind_fixed"],
                 "regressions_per_attempt_delta": contrast["full_suite_regressions"],

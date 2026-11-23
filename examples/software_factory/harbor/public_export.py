@@ -15,6 +15,7 @@ from examples.software_factory.factory.model import digest
 
 from .native_environment import MCP_SCHEMA_PROFILES
 from .native_trace import COUNTERS as TRACE_COUNTERS
+from .native_trace import EVENTS as TRACE_EVENTS
 from .native_trace import TIMINGS as TRACE_TIMINGS
 from .project_guidance import guidance
 from .runtime import read, verify, write
@@ -68,6 +69,7 @@ NUMERIC = (
     *COUNTERS,
     *TOKEN_FIELDS,
     *TRACE_COUNTERS,
+    *TRACE_EVENTS,
     *TRACE_TIMINGS,
 )
 PUBLIC_HOSTS = {

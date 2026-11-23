@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from examples.software_factory.harbor.native_trace import COUNTERS, TIMINGS, summarize
+from examples.software_factory.harbor.native_trace import COUNTERS, EVENTS, TIMINGS, summarize
 
 
 class NativeTrace(unittest.TestCase):
@@ -81,6 +81,10 @@ class NativeTrace(unittest.TestCase):
             self.assertEqual(metrics["loom_source_chars_main"], 3)
             self.assertEqual(metrics["loom_lesson_chars_main"], 18)
             self.assertEqual(metrics["loom_repeated_lesson_chars_main"], 9)
+            self.assertEqual(metrics["loom_fresh_linked_lesson_rows_main"], 2)
+            self.assertEqual(metrics["first_fresh_linked_lesson_result_event_main"], 2)
+            self.assertIsNone(metrics["first_possible_edit_request_event_main"])
+            self.assertEqual(result["calls"][0]["request_event"], 1)
             self.assertEqual(metrics["claude_api_time_s"], 2)
             self.assertNotIn("secret", json.dumps(result))
             self.assertNotIn("private", json.dumps(result))
@@ -90,7 +94,10 @@ class NativeTrace(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.assertTrue(
-                all(summarize(root)["metrics"][key] is None for key in (*COUNTERS, *TIMINGS))
+                all(
+                    summarize(root)["metrics"][key] is None
+                    for key in (*COUNTERS, *EVENTS, *TIMINGS)
+                )
             )
             (root / "agent").mkdir()
             (root / "agent/claude-code.txt").write_text(
