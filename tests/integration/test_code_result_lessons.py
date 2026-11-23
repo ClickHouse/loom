@@ -218,7 +218,7 @@ async def test_lessons_match_the_result_file_by_path(
     response = await asyncio.to_thread(
         httpx.post,
         f"{control_plane_url}/v1/memory.get",
-        json={"org": org, "namespace": "dev", "memory_key": "notes/long"},
+        json={"org": org, "namespace": "dev", "agent": "claude-code", "memory_key": "notes/long"},
         headers={"Authorization": f"Bearer {token}"},
         timeout=10,
     )
