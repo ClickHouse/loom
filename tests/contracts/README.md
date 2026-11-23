@@ -16,7 +16,7 @@ validation remain unchanged. Unknown names have a separate fixed regression. The
 cross-org and cross-namespace refusal, and require missing or invalid tokens to fail
 before the backing store is called. Six fixed cases check invalid JSON types and
 limit bounds. A fixed Unicode-key case verifies the encoded header and unchanged JSON
-feedback. The output must contain ten executed tests without skips or errors.
+feedback. The output must contain ten executed tests without skips or errors. Failure annotations report only the declared source line and a static test phase. The verifier reports bounded aggregate counts or a static missing/invalid-report error; it never copies failure text or case parameters.
 
 The pilot uses the actual HTTP router, wire models, signed synthetic tokens,
 authorization gates and blacklist handler. The existing unit-test fixtures replace

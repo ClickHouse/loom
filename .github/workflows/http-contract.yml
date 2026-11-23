@@ -86,29 +86,18 @@ jobs:
         run: uv sync --locked --python 3.12 --extra dev --extra code --extra contract
       - name: Check the trusted publisher against a synthetic API
         run: uv run --no-sync python tests/contracts/test_probe_publisher.py
+      - name: Check value-free contract diagnostics
+        run: python3 -m unittest tests.contracts.test_ci_diagnostics
       - name: Generate bounded requests through the actual HTTP transport
         run: |
           timeout --signal=TERM --kill-after=10s 120s uv run --no-sync python -m pytest \
-            -p tests.unit.conftest tests/contracts/test_http_schema.py -v \
+            -p tests.unit.conftest -p tests.contracts.ci_diagnostics \
+            tests/contracts/test_http_schema.py -v \
             -o cache_dir="$RUNNER_TEMP/http-contract-cache" \
             --junitxml="$RUNNER_TEMP/http-contract.xml"
       - name: Require actual test execution
         if: always()
-        run: |
-          python3 - <<'PY'
-          import os, xml.etree.ElementTree as ET
-          from pathlib import Path
-          path = Path(os.environ["RUNNER_TEMP"]) / "http-contract.xml"
-          assert path.is_file(), "No HTTP contract report was produced"
-          assert path.stat().st_size <= 1024 * 1024
-          suites = ET.parse(path).getroot().findall(".//testsuite")
-          total = sum(int(suite.get("tests", "0")) for suite in suites)
-          skipped = sum(int(suite.get("skipped", "0")) for suite in suites)
-          failures = sum(int(suite.get("failures", "0")) + int(suite.get("errors", "0")) for suite in suites)
-          assert total == 10 and skipped == 0 and failures == 0, (total, skipped, failures)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
-              output.write(f"HTTP contract: {total} tests, {skipped} skipped, {failures} failures/errors. Three properties use max_examples=24; shrinking shares the subprocess time limit. Six fixed invalid-body cases and a Unicode-header regression also ran. Backing stores are synthetic; database isolation is not claimed.\n")
-          PY
+        run: python3 tests/contracts/ci_diagnostics.py
 
   maintenance:
     name: Record trusted HTTP contract failures
