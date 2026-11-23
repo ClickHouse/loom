@@ -18,7 +18,7 @@ from server.code.app.common import (
     resolve_code_identity,
     schedule_code_trace,
 )
-from server.code.app.grep_bodies import definitions_for, definitions_tokens, select_definitions
+from server.code.app.grep_bodies import definitions_for, definitions_tokens
 from server.code.app.grep_source import recover_source_chunks
 from server.code.app.search.shared import (
     _not_covered_output,
@@ -58,7 +58,13 @@ async def handle_code_grep(input: CodeGrepInput) -> CodeGrepOutput:
         return await _code_grep(input)
 
 
-async def _code_grep(input: CodeGrepInput) -> CodeGrepOutput:
+async def _code_grep(
+    input: CodeGrepInput,
+    *,
+    started: float | None = None,
+    offset: int = 0,
+    page_limit: int | None = None,
+) -> CodeGrepOutput:
     from server.observability.budget_shape import note_budget_shape
 
     require_code_intel()
@@ -75,7 +81,7 @@ async def _code_grep(input: CodeGrepInput) -> CodeGrepOutput:
     # Files and message are priced by their own p99 budgets
     # (Operation.shape_budgets_p99_ms); matches is the base budget.
     note_budget_shape("" if input.mode == "matches" else input.mode)
-    started = time.monotonic()
+    started = time.monotonic() if started is None else started
     start_stage_wall()
     org, ns = resolve_code_identity(input.org, input.namespace)
     route = "grep_regex" if input.regex else "grep_literal"
@@ -128,7 +134,7 @@ async def _code_grep(input: CodeGrepInput) -> CodeGrepOutput:
         page, fallback, offset = await _serve_grep_page(input, org, ns, repo, route, started)
         if page is not None:
             return page
-        return await _grep_page_by_rerun(input, offset=offset, reason=fallback)
+        return await _grep_page_by_rerun(input, offset=offset, reason=fallback, started=started)
     return await _grep_lines(
         repo,
         org,
@@ -139,6 +145,8 @@ async def _code_grep(input: CodeGrepInput) -> CodeGrepOutput:
         scope=scope,
         line_re=line_re,
         budget=budget,
+        offset=offset,
+        page_limit=page_limit,
     )
 
 
@@ -244,9 +252,12 @@ async def _grep_lines(
     scope: Any,
     line_re: Any,
     budget: code_deadline.Budget | None = None,
+    offset: int = 0,
+    page_limit: int | None = None,
 ) -> CodeGrepOutput:
     """mode=matches: matching lines with the enclosing unit's span."""
     limit = input.effective_limit
+    served_limit = page_limit or limit
     as_of = _as_of_early(repo, org, ns)  # Beside the reads
     with code_span("grep.chunks", route=route) as sp:
         # over-fetch chunks: several lines can match inside one chunk, and
@@ -278,7 +289,7 @@ async def _grep_lines(
     truncated = scan_capped or len(matches) > limit or matched_chunks >= min(200, limit * 3)
     trace_run_id = new_trace_run_id()
     pool_matches = matches
-    matches = matches[:limit]
+    matches = matches[offset : offset + served_limit]
     bodies = await definitions_for(input, matches, budget)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
         repo, org, ns, input, matches, route, budget=budget
@@ -289,7 +300,7 @@ async def _grep_lines(
         org,
         ns,
         pool_matches,
-        served=limit,
+        served=offset + served_limit,
         run_id=trace_run_id,
         chunks_matched=matched_chunks,
         truncated=truncated,
@@ -309,7 +320,7 @@ async def _grep_lines(
         returned_ids=files,
         returned_paths=files,
         returned_scores=[],
-        top_k=limit,
+        top_k=served_limit,
         tokens_returned=sum(len(m["text"]) for m in matches) // 4
         + neighbour_tokens
         + definitions_tokens(bodies),
@@ -659,16 +670,16 @@ async def _serve_grep_page(
     )
 
 
-async def _grep_page_by_rerun(input: CodeGrepInput, *, offset: int, reason: str) -> CodeGrepOutput:
+async def _grep_page_by_rerun(
+    input: CodeGrepInput, *, offset: int, reason: str, started: float
+) -> CodeGrepOutput:
     """The pool row is gone: run the grep again deep enough to reach the
     offset, serve the slice past it, disclose why."""
     from server.code.app import search_cursor as paging
 
     limit = input.effective_limit
     fresh = input.model_copy(update={"cursor": "", "limit": min(200, offset + limit)})
-    out = await handle_code_grep(fresh)
-    out.matches = out.matches[offset : offset + limit]
-    out.definitions = select_definitions(out.definitions, out.matches)
+    out = await _code_grep(fresh, started=started, offset=offset, page_limit=limit)
     out.as_of = paging.disclose(out.as_of, page_commit="", offset=offset, fallback=reason)
     if reason == "source_line_mapping_changed":
         out.partial = True

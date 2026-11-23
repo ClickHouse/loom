@@ -121,6 +121,46 @@ async def test_grep_can_return_distinct_retained_enclosing_bodies(ch_client, mon
     assert len(rich.definitions) == len({row["symbol_id"] for row in rich.definitions}) == 2
     assert all("squashImpl" in row["body"] and not row["body_elided"] for row in rich.definitions)
 
+    # A vanished continuation pool reruns lines, but must hydrate only its page.
+    from server.code.app import grep
+
+    first = await handle_code_grep(
+        CodeGrepInput(
+            org=org,
+            namespace=ns,
+            pattern="squashImpl",
+            limit=1,
+            include_body=True,
+        )
+    )
+    assert first.next_cursor
+    original = grep.definitions_for
+    hydrated = []
+
+    async def bodies(input, matches, budget):
+        hydrated.extend((row["path"], row["line"]) for row in matches)
+        return await original(input, matches, budget)
+
+    async def missing_pool(*args):
+        return None
+
+    monkeypatch.setattr(grep, "definitions_for", bodies)
+    monkeypatch.setattr(grep, "_read_pool_settling", missing_pool)
+    second = await handle_code_grep(
+        CodeGrepInput(
+            org=org,
+            namespace=ns,
+            pattern="squashImpl",
+            limit=1,
+            include_body=True,
+            cursor=first.next_cursor,
+        )
+    )
+    assert second.matches == rich.matches[1:2]
+    assert hydrated == [(row["path"], row["line"]) for row in second.matches]
+    assert not second.definitions_partial
+    assert len(second.definitions) == 1
+
 
 async def test_overloads_survive_engine_merge(code_env, ch_client) -> None:
     repo, org, ns = code_env

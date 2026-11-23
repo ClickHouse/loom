@@ -93,15 +93,3 @@ def _distinct(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def definitions_tokens(fields: dict[str, Any]) -> int:
     return sum(estimate_tokens(row.get("body") or "") for row in fields.get("definitions", []))
-
-
-def select_definitions(
-    definitions: list[dict[str, Any]], matches: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """A cursor rerun must not return bodies for the earlier pages it scanned."""
-    served = {(row["path"], row["line"]) for row in matches}
-    return [
-        {**row, "lines": lines}
-        for row in definitions
-        if (lines := [line for line in row["lines"] if (row["path"], line) in served])
-    ]

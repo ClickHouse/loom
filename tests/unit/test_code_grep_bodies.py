@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput
-from server.code.app.grep_bodies import definitions_for, select_definitions
+from server.code.app.grep_bodies import definitions_for
 
 
 @pytest.mark.asyncio
@@ -37,8 +37,6 @@ async def test_hits_share_one_definition_and_pages_keep_only_their_lines(monkeyp
     assert out["definitions"][0]["body"] == "complete body"
     assert out["definitions"][0]["lines"] == [3, 8]
     assert "line" not in out["definitions"][0]
-    assert select_definitions(out["definitions"], [matches[1]])[0]["lines"] == [8]
-    assert select_definitions(out["definitions"], [{"path": "other.py", "line": 3}]) == []
 
 
 @pytest.mark.asyncio
