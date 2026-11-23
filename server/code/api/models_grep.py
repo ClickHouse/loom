@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal
 from pydantic import (
     BaseModel,
     Field,
+    PrivateAttr,
     SerializerFunctionWrapHandler,
     field_validator,
     model_serializer,
@@ -54,6 +55,13 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     include_body: bool = Field(
         default=False,
         description="Include distinct enclosing bodies in matches mode; default false.",
+    )
+    include_lessons: bool = Field(
+        default=True,
+        description=(
+            "Include linked lessons (default true) or set false "
+            "when you already have the relevant notes."
+        ),
     )
     context_lines: int = Field(
         default=0, ge=0, le=20, description="Retained lines on each side of a match."
@@ -157,6 +165,7 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
 class CodeGrepOutput(_LessonsOut):
     # File lessons omitted by symbol focus, a token budget, truncation or supersession.
     lessons_left_out: int = 0
+    _match_commits: dict[tuple[str, int], str] = PrivateAttr(default_factory=dict)
 
     @model_serializer(mode="wrap")
     def _drop_unfired_mode_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:

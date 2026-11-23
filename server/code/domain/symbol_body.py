@@ -32,7 +32,12 @@ def retained_source_lines(row: dict[str, Any]) -> list[str] | None:
 
 
 def complete_source_span(
-    rows: list[dict[str, Any]], start: int, end: int, *, max_chars: int
+    rows: list[dict[str, Any]],
+    start: int,
+    end: int,
+    *,
+    max_chars: int,
+    own_declaration: bool = False,
 ) -> str:
     """The declared span without gaps or conflicting overlaps in its live chunks.
 
@@ -40,11 +45,15 @@ def complete_source_span(
     """
     if start <= 0 or end < start or (max_chars and end - start + 1 > max_chars):
         return ""
-    if start == end and not all(
-        int(r.get("start_line") or 0) == start
-        and int(r.get("end_line") or 0) == end
-        and r.get("kind") == "function"
-        for r in rows
+    if (
+        start == end
+        and not own_declaration
+        and not all(
+            int(r.get("start_line") or 0) == start
+            and int(r.get("end_line") or 0) == end
+            and r.get("kind") == "function"
+            for r in rows
+        )
     ):
         return ""
     by_line: dict[int, str] = {}

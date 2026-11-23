@@ -223,6 +223,40 @@ class FilesMixin(CodeRepoBase):
         )
         return [(str(r["kind"]), int(r["start_line"]), int(r["end_line"])) for r in rows]
 
+    async def function_chunk_starts(
+        self, org: str, ns: str, model: str, keys: list[tuple[str, str, int]]
+    ) -> dict[tuple[str, str, int], int]:
+        """The start of the chunk holding each selected definition's line."""
+        rows = await self._ch.query_all(
+            """
+            SELECT path, target.2 AS symbol_id, target.3 AS definition, min(start_line) AS start
+            FROM loom.code_chunks FINAL
+            ARRAY JOIN arrayFilter(
+                key -> key.1 = path AND has(symbol_ids, key.2)
+                    AND start_line <= key.3 AND key.3 <= end_line,
+                {keys:Array(Tuple(String, String, UInt32))}
+            ) AS target
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND embedding_model = {model:String} AND path IN {paths:Array(String)}
+              AND kind = 'function'
+              AND tombstoned_at IS NULL
+            GROUP BY path, symbol_id, definition
+            LIMIT {limit:UInt32}
+            """,
+            {
+                "org": org,
+                "ns": ns,
+                "model": model,
+                "paths": list(dict.fromkeys(path for path, _, _ in keys)),
+                "keys": keys,
+                "limit": len(keys),
+            },
+        )
+        return {
+            (str(r["path"]), str(r["symbol_id"]), int(r["definition"])): int(r["start"])
+            for r in rows
+        }
+
     async def source_chunks_for_span(
         self, org: str, ns: str, path: str, start: int, end: int, embedding_model: str
     ) -> list[dict[str, Any]]:
@@ -232,7 +266,7 @@ class FilesMixin(CodeRepoBase):
         """
         return await self._ch.query_all(
             """
-            SELECT DISTINCT start_line, end_line, content, kind
+            SELECT DISTINCT start_line, end_line, content, kind, scope, symbol_ids
             FROM loom.code_chunks FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
               AND path = {path:String}

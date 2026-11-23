@@ -56,7 +56,8 @@ class GrepMixin(CodeRepoBase):
         """
         return await self._ch.query_all(
             """
-            SELECT DISTINCT scope, symbol_ids, kind, start_line, end_line, content
+            SELECT DISTINCT scope, symbol_ids, kind, start_line, end_line, content,
+                   toString(indexed_commit) AS indexed_commit
             FROM loom.code_chunks FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
               AND path = {path:String} AND embedding_model = {model:String}

@@ -73,8 +73,8 @@ def test_the_openai_client_still_calls_openai(
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     asyncio.run(oa.OpenAILLMClient("gpt-x").complete("s", "u", max_tokens=10))
     ((url, headers, payload),) = _setup.calls
-    assert url == "https://api.openai.com/v1/chat/completions"
-    assert "max_completion_tokens" in payload and "max_tokens" not in payload
+    assert url == "https://api.openai.com/v1/responses"
+    assert "max_output_tokens" in payload and "messages" not in payload
     assert headers["Authorization"] == "Bearer k"
 
 

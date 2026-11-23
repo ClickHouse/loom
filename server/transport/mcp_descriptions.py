@@ -2200,11 +2200,12 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "elision disclosures; use local tools for changed or unindexed code."
     ),
     "code.grep": (
-        "Find text in indexed source, with lines and enclosing symbols. "
-        'Pass a `pattern` string or a list of literals like ["parse(", "load("]. '
-        "`regex: true` uses one RE2 string. For behavior use code.search. "
+        "Find exact text or several literal alternatives in indexed source. "
+        "`include_body: true` adds enclosing definitions in the same call. "
+        "Use code.search to find behavior when the exact text is unknown. "
+        "`regex: true` uses one RE2 string. "
         "Scope with `path_prefix`, `path_globs` or `langs`. "
-        "`context_lines` adds nearby source. `include_body` adds distinct definitions. "
+        "`context_lines` adds nearby source. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
     ),
     # The coding tier lists blast radius with the sentences a coding session

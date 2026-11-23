@@ -94,7 +94,9 @@ or file appears once.
 In matches mode, `code.grep(include_body=true)` returns the enclosing definitions
 beside the hit lines. Each definition appears once; its `lines` lists the matching
 locations. The same retained-source reader backs `code.enclosing`, including type
-and document-section fallback. No token budget is imposed on these bodies.
+and document-section fallback. The Python index keeps decorators in their
+owning function's source chunk, so a hit inside a decorator can return the
+complete definition. No token budget is imposed on these grep bodies.
 
 `code.grep(context_lines=3)` adds up to three retained lines on either side of
 each match in `contexts`. Each window gives its path, inclusive source line
@@ -156,6 +158,9 @@ located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes
 For `code.search` and `code.grep` in matches mode, pass the returned `next_cursor` as
 `cursor` with the original search arguments to get the next page. Omit `cursor`
 when starting a new search with a different query, pattern or filters.
+
+`code.grep` includes linked lessons when available. Set `include_lessons: false`
+for a follow-up lookup when the relevant notes are already in context.
 
 `code.search` has no response token cap by default. Set
 `LOOM_CODE_SEARCH_TOKEN_BUDGET` to a positive token count to set a deployment default;

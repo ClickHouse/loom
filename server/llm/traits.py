@@ -6,9 +6,10 @@ are learned from provider responses, once per model:
 * **Refused fields.** A 400 that names a field the request carried (OpenAI's
   `error.param`, or the field's name in the error message) means the model does
   not take it: the call is re-sent without it, and later calls leave it out.
-  That covers `temperature` on models that only sample at their default,
-  `reasoning_effort` on models without reasoning, and an output-cap field the
-  endpoint calls by its other name.
+  That covers `temperature` on models that only sample at their default, the
+  reasoning effort (`reasoning_effort`, the Responses API's `reasoning`) on
+  models without reasoning, and an output-cap field the endpoint calls by its
+  other name.
 * **Lowest effort.** A 400 that refuses a reasoning effort and lists the
   supported values sets the model's effort to the lowest of them.
 * **Hidden reasoning.** Reasoning and thinking tokens come out of the same
@@ -56,7 +57,12 @@ _PARTIAL_STOPS = frozenset(
 # (a 3-token judge) would otherwise grow by a few tokens per try.
 STARVED_FLOOR = 1024
 
-_EFFORT_REFUSED_RE = re.compile(r"reasoning_effort.{0,40}does not support '([a-z]+)'")
+# "'reasoning_effort' does not support 'none' with this model" (chat completions,
+# whose field the Responses API calls `reasoning.effort`), and "Unsupported value:
+# 'none' is not supported with the '<model>' model" under an effort `param`.
+_EFFORT_REFUSED_RE = re.compile(r"reasoning[._]effort.{0,40}does not support '([a-z]+)'")
+_VALUE_REFUSED_RE = re.compile(r"Unsupported value: '([a-z]+)' is not supported")
+_EFFORT_PARAMS = ("reasoning_effort", "reasoning.effort")
 _SUPPORTED_RE = re.compile(r"Supported values are:([^.]*)")
 # "max_tokens: 20000 > 8192, which is the maximum allowed ..." (Anthropic) and
 # "... supports at most 16384 completion tokens" (OpenAI).
@@ -147,10 +153,14 @@ def _error_text(body: Any) -> tuple[str, str]:
 
 
 def refused_field(body: Any, payload: dict[str, Any], optional: tuple[str, ...]) -> str | None:
-    """The optional request field a 400 body says the model does not take."""
+    """The optional request field a 400 body says the model does not take. A
+    `param` names a top-level field or a path into one (`reasoning.effort`);
+    one naming a field the request carried but cannot go without is no
+    refusal to learn, whatever the message mentions."""
     message, param = _error_text(body)
-    if param in optional and param in payload:
-        return param
+    named = re.split(r"[.\[]", param, maxsplit=1)[0]
+    if named in payload:
+        return named if named in optional else None
     for name in optional:
         if name in payload and re.search(rf"[`'\"]?\b{re.escape(name)}\b[`'\"]?", message):
             return name
@@ -186,8 +196,10 @@ def starved_error(body: Any) -> bool:
 def lower_effort(body: Any, sent: str) -> str | None:
     """The lowest effort a 400 says the model supports, or None when the 400 is
     not a refused effort."""
-    message, _ = _error_text(body)
+    message, param = _error_text(body)
     refused = _EFFORT_REFUSED_RE.search(message)
+    if not refused and param in _EFFORT_PARAMS:
+        refused = _VALUE_REFUSED_RE.search(message)
     if not refused:
         return None
     value = refused.group(1)

@@ -714,7 +714,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `include_lessons` | `bool` | `True` | Attach `lessons`: the memories about the answer's top files (for code.context_pack, a `task` briefing's only). |
+| `include_lessons` | `bool` | `True` | Include linked lessons (default true) or set false when you already have the relevant notes. |
 | `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces `lessons` reads besides the repository's team rules (over MCP the caller's memory home, filled in); one the caller cannot read is skipped. |
 | `org` | `str` | `''` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | `''` | The namespace the op reads or writes. |

@@ -90,9 +90,10 @@ class _Recorder:
         return httpx.Response(200, json=self.body, request=httpx.Request("POST", url))
 
 
-_CHAT = {
-    "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
-    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+_RESPONSE = {
+    "status": "completed",
+    "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
+    "usage": {"input_tokens": 1, "output_tokens": 1},
 }
 _MESSAGES = {
     "content": [{"type": "text", "text": "hi"}],
@@ -111,7 +112,7 @@ def test_chat_and_embedding_requests_carry_the_customer(metered, monkeypatch) ->
     _request("acme")
     sent: list[dict[str, str]] = []
 
-    chat = _Recorder(_CHAT)
+    chat = _Recorder(_RESPONSE)
     monkeypatch.setattr(chat_mod, "_http_client", lambda: chat)
     asyncio.run(chat_mod.OpenAILLMClient(model="gpt-4o-mini", api_key="k").complete("s", "u"))
     sent.append(chat.calls[0]["headers"])
@@ -189,7 +190,7 @@ def test_a_refused_call_sends_nothing(metered, monkeypatch) -> None:
     from server.llm import openai as chat_mod
 
     genai.set_worker_identity("extraction_queue", org="acme")  # a worker that named no org
-    chat = _Recorder(_CHAT)
+    chat = _Recorder(_RESPONSE)
     monkeypatch.setattr(chat_mod, "_http_client", lambda: chat)
     with pytest.raises(customer.Unattributed):
         asyncio.run(chat_mod.OpenAILLMClient(model="gpt-4o-mini", api_key="k").complete("s", "u"))
