@@ -34,5 +34,7 @@ contain only synthetic cases.
 
 PR runs have read-only permissions. Trusted main and weekly runs reconcile one
 maintenance task for a broken pilot, append only changed statuses and preserve human
-bodies and closed decisions. The issue task contains no request bodies or credentials.
+bodies and closed decisions while the task retains its original title or body marker.
+Removing both identifiers makes it unrecognizable to later runs. The issue task
+contains no request bodies or credentials.
 No artifact upload, paid account or extra credential is required.

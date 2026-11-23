@@ -178,7 +178,7 @@ jobs:
               issue = managed.get(key)
               if result not in {"success", "failure"} or (issue and issue["state"] == "closed"):
                   continue
-              text = f"<!-- loom-http-contract:v1 {key} -->\n<!-- loom-http-contract-state:v1 {result} -->\n\n### Company or project name\n\nClickHouse\n\nThe bounded HTTP contract check reports **{result}** on trusted main. [Read the bounded synthetic HTTP transport logs]({url}).\n\nReproduce the HTTP contract workflow using synthetic data. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
+              text = f"<!-- loom-http-contract:v1 {key} -->\n<!-- loom-http-contract-state:v1 {result} -->\n\n### Company or project name\n\nClickHouse\n\nThe bounded HTTP contract check reports **{result}** on trusted main. [Read the bounded synthetic HTTP transport logs]({url}).\n\nReproduce the HTTP contract workflow using synthetic data. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions for recognized tasks. Keep the original title or the tracking marker in the body so later runs can identify this task."
               if issue is None:
                   if result == "failure":
                       api("POST", repo, {"title": titles[key], "body": text})
