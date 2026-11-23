@@ -22,7 +22,7 @@ async def extend_decorated_spans(
     by_path: dict[str, list[dict[str, Any]]],
     *,
     revisions: dict[str, str] | None = None,
-) -> set[str]:
+) -> set[tuple[str, str]]:
     """A function chunk may start at its first Python decorator, before the symbol's def."""
     if not settings.embedding_model:
         return set()
@@ -66,7 +66,7 @@ async def extend_decorated_spans(
     except Exception:  # Optional ownership evidence can be absent while exact matches still work.
         logger.warning("code.enclosing could not read declaration extents", exc_info=True)
         return set()
-    widened: set[str] = set()
+    widened: set[tuple[str, str]] = set()
     for (path, _), (row, lines) in candidates.items():
         definition = int(row["start_line"])
         start = min(
@@ -75,5 +75,5 @@ async def extend_decorated_spans(
         )
         if 0 < start < definition and any(start <= line for line in lines):
             row["start_line"] = start
-            widened.add(str(row["symbol_id"]))
+            widened.add((path, str(row["symbol_id"])))
     return widened

@@ -14,6 +14,47 @@ def _verified(matches):
     return {(m["path"], m["line"]): COMMIT for m in matches}
 
 
+def test_current_extent_replaces_only_the_same_older_symbol():
+    from server.code.app.symbol import enclosing
+
+    stale = {"path": "a.cpp", "symbol_id": "run", "extent_commit": "b" * 40, "end_line": 1}
+    current = {**stale, "extent_commit": COMMIT, "end_line": 4}
+    other = {**stale, "symbol_id": "other"}
+    assert enclosing._by_path([stale, current, other], {"a.cpp": COMMIT}) == {
+        "a.cpp": [current, other]
+    }
+
+
+@pytest.mark.asyncio
+async def test_enclosing_bodies_keep_shared_symbol_ids_separate_by_file(monkeypatch):
+    from server.code.app.symbol import enclosing
+
+    paths = {"a.cpp": "a" * 40, "b.cpp": "b" * 40}
+    rows = [
+        {
+            "path": p,
+            "symbol_id": "one",
+            "qualified_name": "run",
+            "signature": "(old)" if p == "b.cpp" else "()",
+            "_extent_commit": "a" * 40,
+        }
+        for p in paths
+    ]
+    expected = {"a.cpp": "int run() { return 11; }", "b.cpp": "int run() { return 22; }"}
+
+    async def read(_repo, _org, _ns, row, *, expected_commit):
+        assert expected_commit == paths[row["path"]]
+        return expected[row["path"]]
+
+    monkeypatch.setattr(enclosing, "symbol_body", read)
+    count, elided, _ = await enclosing._attach_enclosing_bodies(
+        None, "org", "repo", rows, 0, set(), paths
+    )
+    assert (count, elided) == (2, 0)
+    assert {r["path"]: r["body"] for r in rows} == expected
+    assert [r["signature"] for r in rows] == ["()", ""]
+
+
 def test_saved_match_rows_leave_revisions_for_the_page_reader(monkeypatch):
     from server.code.app import grep, search_cursor
 
