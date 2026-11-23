@@ -17,11 +17,6 @@ from pydantic import (
     model_validator,
 )
 
-MAX_ENVELOPE_BYTES = 32 * 1024
-MAX_RESOURCES = 1000
-MAX_RESOURCE_BYTES = 2048
-_MAX_ITEMS_BYTES = MAX_RESOURCES * (2 * MAX_RESOURCE_BYTES + 64) + 2
-
 
 class MCPSourceContractError(ValueError):
     """A public codec failure contains no supplied payload or credential."""
@@ -33,7 +28,7 @@ class MCPSourceContractError(ValueError):
 def _identifier(value: str) -> str:
     if (
         not value.strip()
-        or len(value.encode("utf-8")) > MAX_RESOURCE_BYTES
+        or len(value.encode("utf-8")) > 2048
         or any(unicodedata.category(char) == "Cc" for char in value)
     ):
         raise ValueError("invalid identifier")
@@ -121,9 +116,7 @@ class SourceContract(_ContractModel):
     profile_sha256: _Digest
     mode: Literal["live", "snapshot", "selected_refresh"]
     reader_policy: Literal["owner_only", "collection_copy"]
-    resources: Annotated[
-        tuple[ResourceIdentity, ...], Field(min_length=1, max_length=MAX_RESOURCES)
-    ]
+    resources: Annotated[tuple[ResourceIdentity, ...], Field(min_length=1, max_length=1000)]
 
     @field_validator("resources")
     @classmethod
@@ -155,14 +148,14 @@ def encode_envelope(envelope: ConnectionEnvelope) -> str:
         payload = envelope.model_dump(mode="json")
         if envelope.bearer is not None:
             payload["bearer"] = envelope.bearer.get_secret_value()
-        return _encode(payload, MAX_ENVELOPE_BYTES)
+        return _encode(payload, 32768)
     except (ValueError, TypeError, RecursionError):
         raise MCPSourceContractError() from None
 
 
 def decode_envelope(plaintext: str) -> ConnectionEnvelope:
     try:
-        return ConnectionEnvelope.model_validate_json(_bounded_text(plaintext, MAX_ENVELOPE_BYTES))
+        return ConnectionEnvelope.model_validate_json(_bounded_text(plaintext, 32768))
     except (ValueError, TypeError, RecursionError):
         raise MCPSourceContractError() from None
 
@@ -199,7 +192,7 @@ def encode_source(contract: SourceContract) -> tuple[str, str]:
         contract = SourceContract.model_validate(contract)
         config = contract.model_dump(mode="json", exclude={"resources"})
         items = [resource.model_dump(mode="json") for resource in contract.resources]
-        return _encode(config, MAX_ENVELOPE_BYTES), _encode(items, _MAX_ITEMS_BYTES)
+        return _encode(config, 32768), _encode(items, 1000 * (2 * 2048 + 64) + 2)
     except (ValueError, TypeError, RecursionError):
         raise MCPSourceContractError() from None
 
@@ -207,8 +200,8 @@ def encode_source(contract: SourceContract) -> tuple[str, str]:
 def decode_source(config_json: str, items_json: str) -> SourceContract:
     """Join the two stored columns; this codec admits only the known contract version."""
     try:
-        config = json.loads(_bounded_text(config_json, MAX_ENVELOPE_BYTES))
-        items = json.loads(_bounded_text(items_json, _MAX_ITEMS_BYTES))
+        config = json.loads(_bounded_text(config_json, 32768))
+        items = json.loads(_bounded_text(items_json, 1000 * (2 * 2048 + 64) + 2))
         if not isinstance(config, dict) or not isinstance(items, list) or "resources" in config:
             raise ValueError("invalid source columns")
         return SourceContract.model_validate({**config, "resources": tuple(items)})

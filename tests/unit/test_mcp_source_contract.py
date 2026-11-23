@@ -10,7 +10,6 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from server.knowledge.domain.mcp_sources import (
-    MAX_ENVELOPE_BYTES,
     ConnectionEnvelope,
     MCPSourceContractError,
     ResourceIdentity,
@@ -153,7 +152,7 @@ def test_envelope_rejects_missing_or_truncated_input(raw: str) -> None:
 
 def test_envelope_plaintext_bytes_are_bounded_before_decoding_and_encoding() -> None:
     raw = encode_envelope(_decode())
-    boundary = raw + " " * (MAX_ENVELOPE_BYTES - len(raw.encode()))
+    boundary = raw + " " * (32768 - len(raw.encode()))
     assert decode_envelope(boundary).owner == "person-one"
     _assert_public_error(lambda: decode_envelope(boundary + " "))
     # Valid local field bounds can still exceed the wire bound after JSON escaping.
