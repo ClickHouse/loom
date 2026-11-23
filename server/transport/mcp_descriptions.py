@@ -1360,16 +1360,16 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.grep": (
         "Find literal text or RE2 regex in indexed source. Hits include source lines, "
         "enclosing symbols and spans. Pass `pattern`; `regex: true` selects regex. "
-        "Narrow with `path_prefix`, `path_globs` or `langs`. For several hit bodies, "
-        "use code.enclosing with locations [path:line, ...] and include_body=true. "
+        "Narrow with `path_prefix`, `path_globs` or `langs`. Read hit bodies with "
+        "code.enclosing: locations [path:line, ...], include_body=true. "
         "`neighbours: true` adds callers, callees, tests and citing docs. "
         "`next_cursor` pages remaining matches. A regex-shaped literal with no match "
         "is retried as regex and disclosed. `mode: 'message'` matches rendered errors "
         "or logs to their source templates; code-shaped input falls back to literal. "
         "`mode: 'presence'` with `namespaces` (up to eight) returns each branch's "
         "present / absent / unknown verdict and a summary. Optional `deadline_ms` "
-        "returns hits found before expiry with `partial: true`. Coverage disclosures "
-        "distinguish absent matches from incomplete indexed source. For paths use "
+        "returns hits found before expiry with `partial: true`. Coverage distinguishes "
+        "no match from incomplete source. For paths use "
         "code.files; this searches content. Use local tools for uncommitted source."
     ),
     "code.files": (
@@ -2211,9 +2211,9 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Find exact text or regex in indexed source, with source lines and enclosing "
         "symbols. Pass `pattern`; `regex: true` selects regex. For behavior questions "
         "use code.search. Narrow with `path_prefix`, `path_globs` or `langs`; "
-        "`next_cursor` pages remaining matches. For several hit bodies, use "
-        "code.enclosing with locations [path:line, ...] and include_body=true. "
-        "Coverage disclosures distinguish absent matches from incomplete indexed source."
+        "`next_cursor` pages remaining matches. Read hit bodies with "
+        "code.enclosing: locations [path:line, ...], include_body=true. "
+        "Coverage distinguishes no match from incomplete source."
     ),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.
