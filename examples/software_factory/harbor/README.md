@@ -24,6 +24,12 @@ Observed successes are reported immediately; a final success rate is available
 only when all expected attempts in that arm have completed. Unknown cost and
 tool counts remain unknown.
 
+A `--pilot-task` run has one task/repeat row and all five arm columns. It has no
+A/A attempts. Its paired deltas are descriptive; confidence intervals remain
+unknown because a single scenario cannot measure variation across scenarios.
+Hidden tests, full regression checks and blind fixed judgments use the same
+contracts as the full matrix.
+
 Native Harbor duration is the recorded trial finish minus its start. Full study
 end-to-end duration also includes the post-trial index audit. Reports retain both.
 Generation cost comes from native Claude Code, with Harbor's marked estimate

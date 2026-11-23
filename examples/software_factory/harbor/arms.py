@@ -44,9 +44,13 @@ def validate_schedule(rows):
     if not isinstance(rows, list) or not rows:
         raise ValueError("Freeze a nonempty five-arm schedule")
     tasks = sorted({row["task_id"] for row in rows})
-    expected = {(task, repeat, arm) for task in tasks for repeat in range(3) for arm in PRIMARY} | {
-        (task, "aa", arm) for task in tasks for arm in CONTROLS
-    }
+    pilot = any("pilot" in row for row in rows)
+    if pilot and (len(tasks) != 1 or any(row.get("pilot") is not True for row in rows)):
+        raise ValueError("A pilot requires one scenario and an explicit marker on every arm")
+    repeats = range(1 if pilot else 3)
+    expected = {(task, repeat, arm) for task in tasks for repeat in repeats for arm in PRIMARY}
+    if not pilot:
+        expected |= {(task, "aa", arm) for task in tasks for arm in CONTROLS}
     actual = [(row["task_id"], row["repeat"], row["arm"]) for row in rows]
     if len(actual) != len(expected) or set(actual) != expected:
         raise ValueError("Keep every scenario, three repeats, five arms and A/A pair")
@@ -59,6 +63,8 @@ def validate_schedule(rows):
             or any(row.get(key) != value for key, value in ALL[row["arm"]].identity().items())
         ):
             raise ValueError("Scheduled treatment identity or order differs")
+    if pilot:
+        return tasks
     global_positions = {arm: Counter() for arm in PRIMARY}
     for task in tasks:
         positions = {arm: Counter() for arm in PRIMARY}

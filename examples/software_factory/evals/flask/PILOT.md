@@ -10,6 +10,13 @@ pair per issue for 51 attempts. Freeze seed 741 and retain the interleaved arm
 blocks and balanced positions. Retain nonuse, failures, invalid rewards and
 unknown costs. Analyze paired task clusters and report A/A controls separately.
 
+For a five-attempt development check, pass `--pilot-task pallets__flask-4230` to
+`plan` and `run`. The selected issue runs once per arm with unchanged grading and
+history. Its task and marker are frozen in the launch and schedule; a truncated
+full schedule is rejected. A pilot has no A/A pair or confidence interval. Keep
+all pilot outcomes and hold the full matrix until the development target is met.
+These reused development issues are not held-out confirmation data.
+
 Task selection preceded solver outcomes on these three harder issues. Earlier
 development outcomes informed the harness. The report discloses both facts.
 Historical notes must have independent public provenance and precede the task's

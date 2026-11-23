@@ -48,6 +48,24 @@ def inputs():
 
 
 class PairedAnalysisContracts(unittest.TestCase):
+    def test_one_attempt_per_arm_pilot_has_no_aa_or_confidence_interval(self):
+        full, entries = inputs()
+        selected = [row for row in full["attempts"] if row["task_id"] == "a" and row["repeat"] == 0]
+        orders = {row["order"]: i for i, row in enumerate(selected)}
+        rows = [{**row, "order": orders[row["order"]], "pilot": True} for row in selected]
+        chosen = [
+            {**entry, "order": orders[entry["order"]]}
+            for entry in entries
+            if entry["order"] in orders
+        ]
+        report = analyze({"attempts": rows, "schedule_sha256": digest(rows)}, chosen, resamples=100)
+        self.assertTrue(report["complete"])
+        self.assertEqual(report["study_mode"], "pilot")
+        self.assertEqual(report["aa_reference"], {})
+        contrast = report["paired_deltas"]["loom-treesitter-minus-baseline"]["quality"]
+        self.assertEqual(contrast["estimate"], 0)
+        self.assertIsNone(contrast["ci95"])
+
     def test_memory_treatment_requires_boolean_identity_and_no_disabled_writes(self):
         order, entries = inputs()
         target = next(e for e in entries if e["result"]["arm"] == "baseline")

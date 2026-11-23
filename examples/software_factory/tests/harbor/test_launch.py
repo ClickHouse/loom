@@ -194,6 +194,16 @@ class PublicLauncher(unittest.TestCase):
         self.assertEqual(plan["embedding"]["revision"], "aa8f8b060edb00e03bfdd08813a2949946c8ba55")
         self.assertEqual(len(plan["embedding"]["files"]), 5)
 
+    def test_pilot_plan_declares_one_issue_and_five_attempts(self):
+        result = launch.plan(pilot_task="pallets__flask-4230")
+        self.assertEqual(result["study_mode"], "pilot")
+        self.assertEqual((result["cases"], result["repeats"], result["total_attempts"]), (1, 1, 5))
+        self.assertEqual(result["aa_attempts"], 0)
+        self.assertEqual(result["blind_judges"]["requests"], 1)
+        self.assertEqual(result["memory"]["memory_namespaces"], 2)
+        with self.assertRaises(launch.LaunchError):
+            launch.plan(pilot_task="unknown")
+
     def test_run_is_one_command_with_owned_images_and_identical_readonly_paths(self):
         docker = FakeDocker()
         self.assertEqual(launch.execute("run", self.output, "10", root=self.root, docker=docker), 0)

@@ -4,7 +4,8 @@ Run the Python E2E example with a local Docker daemon:
 
 ```bash
 python3 -m examples.software_factory plan
-ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --output ./factory-run
+python3 -m examples.software_factory plan --pilot-task pallets__flask-4230
+ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --pilot-task pallets__flask-4230 --output ./factory-pilot
 ```
 
 Harbor runs its built-in Claude Code agent in a normal checkout. Claude follows shared project instructions and chooses
@@ -45,6 +46,20 @@ There are three public issues, three repeats and five arms: 45 primary attempts.
 Six A/A attempts measure baseline variation separately. Six base/reference controls
 qualify the grader without model calls. Twelve blind judgments assess submitted
 fixes after coding; judgments do not provide feedback to the solver.
+
+`--pilot-task` runs one selected issue once in each of the five arms, with two
+base/reference controls and one blind judgment. It preserves the issue, historical
+facts, hidden tests and full regression checks. Only the selected task's native
+indexes and memory namespaces are prepared. A pilot has no A/A pair or meaningful
+confidence interval; its results are descriptive. Keep every pilot, including
+negative and failed attempts, and declare the task before running. Resume uses
+the selection frozen in the launch record.
+
+Omit `--pilot-task` to run the full matrix:
+
+```bash
+ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --output ./factory-run
+```
 
 Harbor's native trajectory supplies total tool calls, Loom tool calls, input,
 output and cache tokens, reported generation cost and agent time, including

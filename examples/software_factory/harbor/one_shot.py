@@ -228,6 +228,13 @@ def execute(args):
                 output / "inputs",
             ),
         )
+        if launch["pilot_task"] is not None:
+            from .pilot import select
+
+            prepared = phases.run(
+                "pilot-selection",
+                lambda: select(prepared, launch["pilot_task"], output / "pilot-inputs"),
+            )
         meter.set_phase("native-setup")
         setup = phases.run(
             "native-setup",

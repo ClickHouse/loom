@@ -119,7 +119,7 @@ def native_model(root):
     raise LaunchError("The native Anthropic model default is missing")
 
 
-def plan(root=ROOT, evaluation="flask"):
+def plan(root=ROOT, evaluation="flask", pilot_task=None):
     descriptor = load_evaluation(root, evaluation)
     locked, histories, memories = (
         read(descriptor["paths"][name])
@@ -127,8 +127,14 @@ def plan(root=ROOT, evaluation="flask"):
     )
     task_ids = {row["task_id"] for row in locked["tasks"]}
     history_ids = {row["case_id"] for row in histories["cases"]}
+    if pilot_task is not None:
+        if pilot_task not in task_ids | history_ids:
+            raise LaunchError("The pilot task must name a frozen evaluation scenario")
+        task_ids &= {pilot_task}
+        history_ids &= {pilot_task}
     cold, warm = len(task_ids - history_ids), len(history_ids)
-    cases, repeats = len(task_ids | history_ids), 3
+    cases, repeats = len(task_ids | history_ids), 1 if pilot_task else 3
+    aa_attempts = 0 if pilot_task else cases * 2
     memory_attempts = cases * repeats * sum(arm.memory_enabled for arm in PRIMARY.values())
     seeded_attempts = warm * repeats * sum(arm.history_seeded for arm in PRIMARY.values())
     records = memories["records"]
@@ -137,6 +143,8 @@ def plan(root=ROOT, evaluation="flask"):
         raise LaunchError("Public cases or project memory identities are invalid")
     return {
         "schema_version": 1,
+        "study_mode": "pilot" if pilot_task else "full",
+        "pilot_task": pilot_task,
         "evaluation": {
             key: descriptor[key] for key in ("id", "title", "adapter", "descriptor_sha256")
         },
@@ -148,12 +156,12 @@ def plan(root=ROOT, evaluation="flask"):
         "cases": cases,
         "repeats": repeats,
         "primary_attempts": cases * repeats * len(ARMS),
-        "aa_attempts": cases * 2,
-        "total_attempts": cases * (repeats * len(ARMS) + 2),
+        "aa_attempts": aa_attempts,
+        "total_attempts": cases * repeats * len(ARMS) + aa_attempts,
         "blind_judges": {
             "model": locked["model_id"],
             "fixed_only": True,
-            "requests": cases * (repeats + 1),
+            "requests": cases * (repeats + (0 if pilot_task else 1)),
         },
         "embedding": {"model": "local:bge-small", "provider": "local", **model_pin(root)},
         "memory": {
@@ -509,7 +517,9 @@ def output_lock(output):
         os.close(descriptor)
 
 
-def execute(action, output, amount=None, *, root=ROOT, docker=None, evaluation="flask"):
+def execute(
+    action, output, amount=None, *, root=ROOT, docker=None, evaluation="flask", pilot_task=None
+):
     if amount is not None:
         raise LaunchError("Native coding evaluations run without a spending cap")
     docker = docker or Docker()
@@ -519,6 +529,8 @@ def execute(action, output, amount=None, *, root=ROOT, docker=None, evaluation="
     output, root = requested.resolve(), Path(root).resolve()
     descriptor = load_evaluation(root, evaluation)
     if action == "run":
+        if pilot_task is not None:
+            plan(root=root, evaluation=evaluation, pilot_task=pilot_task)
         if not docker.key or any(c.isspace() for c in docker.key):
             raise LaunchError("Run requires ANTHROPIC_API_KEY")
         if output.exists():
@@ -534,14 +546,20 @@ def execute(action, output, amount=None, *, root=ROOT, docker=None, evaluation="
                 docker.proxy_host_url = tunnel.host_url
             try:
                 return _execute(
-                    action, output, amount, root=root, docker=docker, descriptor=descriptor
+                    action,
+                    output,
+                    amount,
+                    root=root,
+                    docker=docker,
+                    descriptor=descriptor,
+                    pilot_task=pilot_task,
                 )
             finally:
                 if tunnel is not None:
                     docker.proxy_url = docker.proxy_host_url = docker.proxy_token = None
 
 
-def _execute(action, output, amount, *, root, docker, descriptor):
+def _execute(action, output, amount, *, root, docker, descriptor, pilot_task=None):
     path = output / "launch.json"
     if action == "run":
         owner = uuid.uuid4().hex
@@ -550,6 +568,7 @@ def _execute(action, output, amount, *, root, docker, descriptor):
             kind="loom-factory-launch",
             owner=owner,
             evaluation=descriptor["id"],
+            pilot_task=pilot_task,
             source_root=str(root),
             output_root=str(output),
             source_sha256=source_hash(root, output),
@@ -564,6 +583,8 @@ def _execute(action, output, amount, *, root, docker, descriptor):
         save(path, record)
     else:
         record = read(path)
+        if pilot_task is not None and pilot_task != record["pilot_task"]:
+            raise LaunchError("Resume must keep the frozen pilot selection")
         if (
             record.get("kind") != "loom-factory-launch"
             or record.get("schema_version") != 1
@@ -636,15 +657,18 @@ def main(argv=None):
     free = sub.add_parser("plan", help="Describe the frozen evaluation without Docker or providers")
     free.add_argument("--json", action="store_true")
     free.add_argument("--eval", default="flask", dest="evaluation")
+    free.add_argument("--pilot-task", help="One frozen task, once per arm, without A/A attempts")
     for name in ("run", "resume", "cleanup"):
         child = sub.add_parser(name)
         child.add_argument("--output", required=True)
         child.add_argument("--eval", default="flask", dest="evaluation")
         if name != "cleanup":
             child.add_argument("--budget-usd", type=budget)
+        if name == "run":
+            child.add_argument("--pilot-task", help="One frozen task, once per arm")
     args = parser.parse_args(argv)
     if args.command == "plan":
-        description = plan(evaluation=args.evaluation)
+        description = plan(evaluation=args.evaluation, pilot_task=args.pilot_task)
         if args.json:
             print(json.dumps(description, indent=2))
         else:
@@ -664,7 +688,11 @@ def main(argv=None):
         for kind in (signal.SIGINT, signal.SIGTERM):
             previous[kind] = signal.signal(kind, interrupted)
         return execute(
-            args.command, args.output, getattr(args, "budget_usd", None), evaluation=args.evaluation
+            args.command,
+            args.output,
+            getattr(args, "budget_usd", None),
+            evaluation=args.evaluation,
+            pilot_task=getattr(args, "pilot_task", None),
         )
     except (LaunchError, OSError, ValueError) as error:
         print(f"Factory launcher refused ({type(error).__name__}): {error}", file=sys.stderr)

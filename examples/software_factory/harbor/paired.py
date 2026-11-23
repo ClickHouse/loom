@@ -106,6 +106,12 @@ def _metrics(result: dict) -> dict:
 def _interval(values: list, tasks: list[str], *, seed: int, resamples: int) -> dict:
     if None in values:
         return {"estimate": None, "ci95": None, "reason": "unknown metric retained"}
+    if len(tasks) < 2:
+        return {
+            "estimate": fmean(values),
+            "ci95": None,
+            "reason": "one scenario is descriptive only",
+        }
     result = paired_bootstrap(values, clusters=tasks, seed=seed, resamples=resamples)
     return {"estimate": result.mean, "ci95": [result.lb, result.ub]}
 
@@ -160,6 +166,7 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
         if identity
         else None,
         "exploratory_only": True,
+        "study_mode": "pilot" if rows[0].get("pilot") is True else "full",
         "cluster_count": len(tasks),
         "seed": seed,
         "resamples": resamples,
@@ -195,9 +202,14 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     if missing:
         return report  # Missing attempts are visible; no partial-cohort selection.
     lookup = {(r["task_id"], r["repeat"], r["arm"]): metrics[r["order"]] for r in rows}
+    pilot = rows[0].get("pilot") is True
+    report["study_mode"] = "pilot" if pilot else "full"
     comparisons = [
-        (report["paired_deltas"], left, right, range(3)) for left, right in contrasts()
-    ] + [(report["aa_reference"], "baseline-b", "baseline-a", ["aa"])]
+        (report["paired_deltas"], left, right, range(1 if pilot else 3))
+        for left, right in contrasts()
+    ]
+    if not pilot:
+        comparisons.append((report["aa_reference"], "baseline-b", "baseline-a", ["aa"]))
     for destination, left, right, repeats in comparisons:
         contrast = {}
         for key in next(iter(metrics.values())):

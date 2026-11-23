@@ -9,6 +9,29 @@ from examples.software_factory.harbor.live_support import schedule
 
 
 class TreatmentContracts(unittest.TestCase):
+    def test_explicit_pilot_requires_exactly_one_task_and_all_five_arms(self):
+        full = schedule(["a", "b", "c"], seed=741)
+        rows = [
+            {**row, "order": i, "pilot": True}
+            for i, row in enumerate(r for r in full if r["task_id"] == "a" and r["repeat"] == 0)
+        ]
+        self.assertEqual(validate_schedule(rows), ["a"])
+        for bad in (
+            rows[:-1],
+            rows + [rows[0]],
+            [{k: v for k, v in r.items() if k != "pilot"} for r in rows],
+        ):
+            with self.assertRaises(ValueError):
+                validate_schedule(bad)
+        altered = copy.deepcopy(rows)
+        altered[0]["task_id"] = "b"
+        with self.assertRaises(ValueError):
+            validate_schedule(altered)
+        altered = copy.deepcopy(rows)
+        altered[0]["pilot"] = 1
+        with self.assertRaises(ValueError):
+            validate_schedule(altered)
+
     def test_six_families_keep_all_arms_repeats_and_controls(self):
         tasks = [f"scenario-{i}" for i in range(6)]
         rows = schedule(tasks, seed=741)
