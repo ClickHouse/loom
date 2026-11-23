@@ -1,8 +1,12 @@
 # Flask evaluation results
 
-These development cohorts used the custom coding loop at their linked source
-revisions. They do not measure the native Claude Code execution used by the
-current entry point. Their results remain separate from native-agent cohorts.
+The [native source-routing cohort](native-instructed-source-routing/README.md)
+contains 45 primary attempts and six baseline controls using stock Claude Code.
+All 36 Loom attempts invoke Loom, but no arm meets the combined quality, cost and
+time target. Historical memory does not improve quality in this cohort.
+
+The older cohorts below use a custom coding loop at their linked source revisions.
+Their results remain separate from native-agent cohorts.
 
 The [public-evidence cohort](historical-issues-public-evidence-review/README.md)
 contains all 51 attempts: 45 primary attempts and six baseline A/A controls on three
