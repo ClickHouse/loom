@@ -105,6 +105,8 @@ async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
         "grep_stale",
         "grep_mixed_commit",
         "grep_cursor",
+        "grep_stale_named",
+        "grep_cursor_named",
         "search",
         "search_file",
     ],
@@ -116,9 +118,10 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
     rows.append(_hit("constraint", tags=("constraint",)))
     if has_exact_lesson:
         rows.append(_hit("exact"))
+    renamed = op in {"grep_stale_named", "grep_cursor_named"}
     names = {
         "exact": ("Thing::run", 1, "changed"),
-        "other": ("Other::run", 1, "fresh"),
+        "other": ("Thing::renamed_run", 1, "moved") if renamed else ("Other::run", 1, "fresh"),
         "nested": ("Thing::run::inner", 1, "fresh"),
         "incomplete": ("Other::run", 0, "fresh"),
         "pending": ("Other::run", 1, "fresh"),
@@ -146,7 +149,8 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
                 "path": "a.py",
                 "start_line": 20,
                 "end_line": 30,
-                "checked_commit": "b" * 40 if op == "grep_stale" else "a" * 40,
+                "checked_commit": "b" * 40 if op == "grep_stale" or renamed else "a" * 40,
+                "anchored_name": "a::Thing::run" if renamed else link["qualified_name"],
             }
             for mid in ids
             for link in links[mid]
@@ -171,16 +175,17 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
         matches: list[dict[str, Any]] = [
             {"path": "a.py", "line": 5, "scope": "Thing::run", "scope_start_line": 1}
         ]
-        if op != "grep":
+        if op != "grep" and not renamed:
             matches.append({"path": "a.py", "line": 24 if op == "grep_overlap" else 40})
         out = CodeGrepOutput(
             matches=matches,
             chunks_matched=1,
             as_of={"commit": "a" * 40},
         )
-        if op not in {"grep", "grep_cursor"}:
+        if op not in {"grep_cursor", "grep_cursor_named"}:
             out._match_commits = {
-                ("a.py", matches[1]["line"]): "b" * 40 if op == "grep_mixed_commit" else "a" * 40
+                ("a.py", row["line"]): "b" * 40 if op == "grep_mixed_commit" and i else "a" * 40
+                for i, row in enumerate(matches)
             }
         return out
 
@@ -208,7 +213,7 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
                 org="acme",
                 namespace=namespace,
                 pattern="run",
-                cursor="saved-matches" if op == "grep_cursor" else "",
+                cursor="saved-matches" if op in {"grep_cursor", "grep_cursor_named"} else "",
             )
         )
     else:

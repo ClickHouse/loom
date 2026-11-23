@@ -387,12 +387,13 @@ The remaining file-lesson reads retain path and listing order.
 The ranking uses the existing namespace-scoped candidates. On trunk, uncapped
 grep responses focus lessons on the definitions their matches name. Search
 focuses a file's lessons when a returned definition has an exact linked lesson.
-Whole-file search hits use file-level selection. For grep, a match outside a named
-definition keeps any candidate whose link overlaps the line or lacks a verified
-range at that retained chunk's revision. Read the broader file history with
-`memory.for_file`. Before omitting a lesson by scope, the enrichment checks its
-live link set for pending and uncertain links within the request's enrichment
-deadline. Ranking and focusing add no model calls.
+Whole-file search hits use file-level selection. Grep omits a candidate by scope
+only if its link was checked at the same revision as the matched chunks. Matches
+outside a named definition also keep candidates with overlapping or unverified
+link ranges. Read the broader file history with `memory.for_file`. Before
+omitting a lesson by scope, the enrichment checks its live link set for pending
+and uncertain links within the request's enrichment deadline. Ranking and
+focusing add no model calls.
 
 File and symbol lessons carry complete memory text, including source references.
 The internal file listing reads complete values; the pre-edit block keeps its own

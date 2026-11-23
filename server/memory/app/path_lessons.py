@@ -88,27 +88,24 @@ class Lessons(NamedTuple):
 
 
 class GrepMatchLines(NamedTuple):
-    """Line and revision evidence for grep matches outside named definitions."""
+    """Retained revisions of all grep matches and line numbers of unscoped matches."""
 
     unscoped: dict[str, set[int]]
-    commits: dict[tuple[str, int], str]
+    revisions: dict[str, set[str]]
 
     def excludes(self, link: code_links.LinkRow) -> bool:
-        lines = self.unscoped.get(link["path"])
+        path = link["path"]
+        revisions = self.revisions.get(path)
+        if revisions is None:
+            return True
+        checked_commit = link["checked_commit"]
+        if not checked_commit or revisions != {checked_commit}:
+            return False
+        lines = self.unscoped.get(path)
         if not lines:
             return True
         start, end = link["start_line"], link["end_line"]
-        checked_commit = link["checked_commit"]
-        return (
-            bool(checked_commit)
-            and 0 < start <= end
-            and all(
-                self.commits.get((link["path"], line)) == checked_commit
-                and line > 0
-                and not start <= line <= end
-                for line in lines
-            )
-        )
+        return 0 < start <= end and all(line > 0 and not start <= line <= end for line in lines)
 
 
 def _ordered_candidates(

@@ -138,8 +138,7 @@ class WithLessons:
         symbols = None
         grep_lines = None
         if isinstance(input, CodeGrepInput) and input.mode == "matches":
-            symbols, lines = _grep_match_scopes(out.matches)
-            grep_lines = path_lessons.GrepMatchLines(lines, out._match_commits)
+            symbols, grep_lines = _grep_match_scopes(out.matches, out._match_commits)
         elif isinstance(input, CodeSearchInput):
             symbols = _search_match_symbols(out)
         found = await lessons_for(
@@ -156,20 +155,24 @@ class WithLessons:
 
 def _grep_match_scopes(
     matches: Iterable[dict[str, Any]],
-) -> tuple[dict[str, set[str]], dict[str, set[int]]]:
-    """Retain named definitions and the exact positions of unscoped matches."""
+    commits: dict[tuple[str, int], str],
+) -> tuple[dict[str, set[str]], path_lessons.GrepMatchLines]:
+    """Retain named definitions, unscoped positions and each hit's retained revision."""
     symbols: dict[str, set[str]] = {}
     lines: dict[str, set[int]] = {}
+    revisions: dict[str, set[str]] = {}
     for row in matches:
         path = str(row.get("path") or "")
         if not path:
             continue
+        line = int(row.get("line") or 0)
+        revisions.setdefault(path, set()).add(commits.get((path, line), ""))
         scope = local_name(str(row.get("scope") or ""), path) if row.get("scope_start_line") else ""
         if scope:
             symbols.setdefault(path, set()).add(scope)
         else:
-            lines.setdefault(path, set()).add(int(row.get("line") or 0))
-    return symbols, lines
+            lines.setdefault(path, set()).add(line)
+    return symbols, path_lessons.GrepMatchLines(lines, revisions)
 
 
 def _search_match_symbols(out: CodeSearchOutput) -> dict[str, set[str]]:
