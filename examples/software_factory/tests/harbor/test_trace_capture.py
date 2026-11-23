@@ -36,11 +36,24 @@ class TraceCapture(unittest.TestCase):
             "op": "code.grep",
             "stage_ms": {"chunks": 12, "bodies": 7},
         }
+        self.request = {
+            "org": "org",
+            "namespace": "code",
+            "trace_run_id": "run-1",
+            "request_id": "request-1",
+            "operation": "code.grep",
+            "latency_ms": 34,
+            "stage_ms": "chunks=12,lessons=10,bodies=7",
+        }
 
-    def observed(self, rows):
+    def observed(self, rows, requests=None):
+        if requests is None:
+            requests = [self.request] if rows else []
         return patch(
             "examples.software_factory.harbor.trace_capture.subprocess.run",
-            return_value=SimpleNamespace(stdout=json.dumps(rows)),
+            return_value=SimpleNamespace(
+                stdout=json.dumps({"rows": rows, "requests": requests, "ledger_error": None})
+            ),
         )
 
     def test_complete_capture_retains_stage_evidence_and_needs_no_live_server_again(self):
@@ -51,6 +64,8 @@ class TraceCapture(unittest.TestCase):
         self.assertTrue(receipt["complete"])
         self.assertEqual(receipt["rows"], [self.row])
         self.assertEqual(receipt["missing_trace_run_ids"], [])
+        self.assertEqual(receipt["request_ledger"], [self.request])
+        self.assertEqual(receipt["request_ledger_missing_trace_run_ids"], [])
 
     def test_missing_async_rows_stay_partial_and_can_be_captured_later(self):
         with self.observed([]):
@@ -59,6 +74,16 @@ class TraceCapture(unittest.TestCase):
         self.assertEqual(first["missing_trace_run_ids"], ["run-1"])
         with self.observed([self.row]):
             self.assertTrue(capture(self.protocol, self.order)["complete"])
+
+    def test_complete_search_trace_is_retried_for_delayed_ledger_evidence(self):
+        with self.observed([self.row], []):
+            first = capture(self.protocol, self.order)
+        self.assertEqual(first["request_ledger_missing_trace_run_ids"], ["run-1"])
+        with self.observed([], [self.request]):
+            second = capture(self.protocol, self.order)
+        self.assertEqual(second["rows"], [self.row])
+        self.assertEqual(second["request_ledger"], [self.request])
+        self.assertEqual(second["request_ledger_missing_trace_run_ids"], [])
 
     def test_other_scope_or_unrequested_ids_never_enter_the_saved_rows(self):
         for changed in ({"org": "other"}, {"namespace": "other"}, {"trace_run_id": "other"}):
@@ -81,6 +106,7 @@ class TraceCapture(unittest.TestCase):
         ):
             receipt = capture(self.protocol, self.order)
         self.assertEqual(receipt["rows"], [self.row])
+        self.assertEqual(receipt["request_ledger"], [self.request])
         self.assertFalse(receipt["complete"])
         self.assertEqual(receipt["missing_trace_run_ids"], ["run-2"])
         self.assertNotIn("private error payload", json.dumps(receipt))

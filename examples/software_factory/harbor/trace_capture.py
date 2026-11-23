@@ -80,7 +80,7 @@ def capture(protocol, order):
         and any(saved.get(key) != value for key, value in identity.items())
     ):
         raise PermissionError("Saved code traces belong to different runtime evidence")
-    if saved and saved["complete"]:
+    if saved and saved["complete"] and saved.get("request_ledger_missing_trace_run_ids") == []:
         return saved
     receipt = {
         **identity,
@@ -125,8 +125,10 @@ def _capture(protocol, order, ids, receipt):
             check=True,
         )
         captured = json.loads(observed.stdout)
-        rows = _scoped_rows(captured["rows"], binding, ids)
-        requests = _scoped_rows(captured["requests"], binding, ids)
+        rows = _merge_rows(receipt["rows"], _scoped_rows(captured["rows"], binding, ids))
+        requests = _merge_rows(
+            receipt["request_ledger"], _scoped_rows(captured["requests"], binding, ids)
+        )
         receipt["rows"] = rows
         missing = sorted(set(ids) - {row["trace_run_id"] for row in rows})
         receipt.update(
@@ -144,6 +146,9 @@ def _capture(protocol, order, ids, receipt):
         receipt["missing_trace_run_ids"] = sorted(
             set(ids) - {row["trace_run_id"] for row in receipt["rows"]}
         )
+        receipt["request_ledger_missing_trace_run_ids"] = sorted(
+            set(ids) - {row["trace_run_id"] for row in receipt["request_ledger"]}
+        )
 
 
 def _scoped_rows(rows, binding, ids):
@@ -155,4 +160,9 @@ def _scoped_rows(rows, binding, ids):
         for row in rows
     ):
         raise PermissionError("Code trace scope differs from the attempt")
-    return sorted(rows, key=lambda row: (row["trace_run_id"], row.get("request_id", "")))
+    return rows
+
+
+def _merge_rows(previous, current):
+    rows = {(row["trace_run_id"], row.get("request_id", "")): row for row in [*previous, *current]}
+    return [rows[key] for key in sorted(rows)]
