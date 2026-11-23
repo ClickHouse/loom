@@ -5,6 +5,16 @@ contains 45 primary attempts and six baseline controls using stock Claude Code.
 All 36 Loom attempts invoke Loom, but no arm meets the combined quality, cost and
 time target. Historical memory does not improve quality in this cohort.
 
+The [native literal-alternatives pilot](native-literal-alternatives-pilot/README.md)
+contains five matched attempts on the same issue. All pass the hidden verifier
+and blind judge. Both SCIP configurations meet the agent-time and cost targets
+for this issue. The memory arms tie their code-only peers on quality.
+
+The [native grep body and scoped lesson pilot](native-grep-body-pilot/README.md)
+contains five matched attempts on one issue. One arm meets the agent-time target
+and no arm meets the cost target. The report records a disagreement between the
+original hidden test and the blind judge over teardown ordering.
+
 The older cohorts below use a custom coding loop at their linked source revisions.
 Their results remain separate from native-agent cohorts.
 
