@@ -22,10 +22,16 @@ assistant can still miss a required change after reading its definition.
 
 In the retained callback pilot, both memory arms receive six file-level lessons
 once, totaling 1,364 excerpt characters. One excerpt names a matched definition;
-the other five discuss methods outside that matched set. This follows the current
-file-level contract. Evaluate the precision of code-linked context separately
-from whether the server delivered every row. A narrower read must preserve
-applicable constraints and keep broader file context accessible.
+the other five discuss methods outside that matched set. Across 24 retained
+responses, an initial projection omitted 12,333 of 31,595 excerpt characters
+while keeping direct symbol matches. The certificates do not record pending or
+incomplete links. Measure the policy on live responses before attributing any
+cost, time or quality change to it.
+
+Grep checks live link sets before omitting an unrelated symbol lesson. Pending
+links can have no path, and an enclosing chunk can contain a nested definition.
+The focus rule keeps both cases, along with constraints, decisions, pins and broad
+file notes. Use `memory.for_file` to retrieve the full file context.
 
 The original upstream hidden callback test also exercises teardown ordering.
 The public issue names four earlier callback types. Keep that grading scope
