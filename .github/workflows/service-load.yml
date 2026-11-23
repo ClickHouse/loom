@@ -86,6 +86,9 @@ jobs:
             ps -o rss= -p "$server"
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$result" -eq 0 ]; then
+            test -s load-summary.md
+          fi
           exit "$result"
       - name: Publish measured results
         if: always()
