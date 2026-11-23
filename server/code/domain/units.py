@@ -254,11 +254,12 @@ def unit_from_chunk(row: dict[str, Any], *, score: float = 0.0) -> CodeUnit:
 
 
 _SCIP_PLACEHOLDER_SIG = re.compile(r"^\(scip:[0-9a-f]+\)$")
+_SIGNATURE_MAX_CHARS = 300
 
 
 def readable_signature(value: object) -> str:
     """Display a signature without the compiler's overload identity."""
-    sig = str(value or "")[:300]
+    sig = str(value or "")[:_SIGNATURE_MAX_CHARS]
     return "" if _SCIP_PLACEHOLDER_SIG.match(sig) else sig
 
 
@@ -273,7 +274,8 @@ def symbol_signature(row: dict[str, Any], *, body: str = "") -> str:
     ):
         return sig
     name = str(row.get("qualified_name") or "").rsplit("::", 1)[-1]
-    return _python_parameters(body, name) if body and name else ""
+    parameters = _python_parameters(body, name) if body and name else ""
+    return parameters if len(parameters) <= _SIGNATURE_MAX_CHARS else ""
 
 
 def _python_parameters(body: str, name: str) -> str:

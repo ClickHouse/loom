@@ -158,3 +158,24 @@ def test_python_compiler_signature_requires_retained_declaration(body: str, sign
     assert row["signature"] == "()"
     assert unit_from_symbol({**row, "tier": "treesitter"}).signature == "()"
     assert unit_from_symbol({**row, "path": "src/cli.go"}).signature == "()"
+
+
+def test_long_derived_parameters_leave_room_for_the_source_pointer() -> None:
+    default = "x" * 10_000
+    body = f"def validate(value={default!r}):\n    return value\n"
+    row = {
+        "path": "src/cli.py",
+        "qualified_name": "src.cli::validate",
+        "kind": "function",
+        "symbol_id": "compiler-id",
+        "signature": "()",
+        "tier": "scip",
+        "start_line": 1,
+        "end_line": 2,
+    }
+    unit = unit_from_symbol(row, body=body)
+    assert unit.body == body
+    served, _ = budget_units([unit], 1000)
+    (card,) = served
+    assert card.elided and not card.signature
+    assert (card.path, card.start_line, card.end_line) == ("src/cli.py", 1, 2)
