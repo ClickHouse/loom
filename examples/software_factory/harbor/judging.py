@@ -71,13 +71,22 @@ def parse_verdict(response, labels):
     return value
 
 
+def _diff_path(path: str) -> str:
+    # Git reads C-quoted paths, including filenames with tabs or newlines.
+    quoted = "".join(
+        chr(byte) if 32 <= byte < 127 and byte not in b'"\\' else f"\\{byte:03o}"
+        for byte in os.fsencode(path)
+    )
+    return f'"{quoted}"'
+
+
 def _file_patch(path: str, before: str | None, after: str | None) -> dict[str, str]:
     change = "added" if before is None else "deleted" if after is None else "modified"
     lines = difflib.unified_diff(
         io.StringIO(before or "").readlines(),
         io.StringIO(after or "").readlines(),
-        fromfile="/dev/null" if before is None else "a/" + path,
-        tofile="/dev/null" if after is None else "b/" + path,
+        fromfile="/dev/null" if before is None else _diff_path("a/" + path),
+        tofile="/dev/null" if after is None else _diff_path("b/" + path),
     )
     patch = "".join(
         line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines

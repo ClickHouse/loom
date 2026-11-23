@@ -10,7 +10,12 @@ from unittest.mock import Mock, patch
 from examples.software_factory.evals.flask.grading import validate_candidate
 from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.arms import PRIMARY
-from examples.software_factory.harbor.judging import blind_input, parse_verdict, run_judging
+from examples.software_factory.harbor.judging import (
+    _file_patch,
+    blind_input,
+    parse_verdict,
+    run_judging,
+)
 
 
 class BlindJudging(unittest.TestCase):
@@ -103,6 +108,11 @@ class BlindJudging(unittest.TestCase):
             self.assertEqual(patch["change"], "modified")
             self.assertIn("-value = 1\n", patch["patch"])
             self.assertIn("+" + before[entry["order"]]["files"][path], patch["patch"])
+
+    def test_diff_keeps_special_path_characters_in_quoted_headers(self):
+        patch = _file_patch("src/flask/with\ttab\nnewline.py", "x = 1\n", "x = 2\n")
+        self.assertIn(r'--- "a/src/flask/with\011tab\012newline.py"', patch["patch"])
+        self.assertIn(r'+++ "b/src/flask/with\011tab\012newline.py"', patch["patch"])
 
     def test_structured_verdict_preserves_unknown_and_rejects_nonboolean_or_multiple(self):
         self.assertIsNone(parse_verdict(self.response(), "ABCDE")["fixed"]["B"])
