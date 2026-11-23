@@ -14,8 +14,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: n8n-workflow-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
+    name: Check the n8n package
+    outputs:
+      package_version: ${{ steps.package-version.outputs.version }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -24,6 +31,14 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
+      - name: Read the package version for publication
+        id: package-version
+        if: github.event_name == 'push' && (startsWith(github.ref_name, 'n8n-v') || !contains(github.ref_name, '-'))
+        working-directory: integrations/n8n
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Install the locked package manager
         run: |
           npm ci --prefix .github/pnpm --ignore-scripts --no-fund --no-audit
@@ -43,13 +58,19 @@ jobs:
           node -e 'for (const path of ["Loom/Loom.node", "LoomMemory/LoomMemory.node"]) require("@clickhouse/n8n-nodes-loom/dist/nodes/" + path + ".js")'
 
   publish:
+    name: Publish the n8n package
     if: github.event_name == 'push' && (startsWith(github.ref_name, 'n8n-v') || !contains(github.ref_name, '-'))
     needs: check
+    concurrency:
+      group: n8n-package-${{ needs.check.outputs.package_version }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: npm-n8n
+    env:
+      VERSION: ${{ needs.check.outputs.package_version }}
     permissions:
       contents: read
-      id-token: write
+      id-token: write # Authenticate trusted npm publication.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,8 +85,6 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          VERSION=$(node -p 'require("./package.json").version')
-          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           if [[ "$RELEASE_TAG" == n8n-v* ]]; then
             [[ "$RELEASE_TAG" == "n8n-v$VERSION" ]]
           else
@@ -82,7 +101,6 @@ jobs:
       - name: Publish using the registered npm trusted publisher
         working-directory: integrations/n8n
         run: |
-          VERSION=$(node -p 'require("./package.json").version')
           if npm view "@clickhouse/n8n-nodes-loom@$VERSION" version >/dev/null 2>&1; then
             echo "Package version is already published"
             exit 0
