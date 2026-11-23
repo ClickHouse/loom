@@ -45,6 +45,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from urllib.parse import quote
 
+from server.code.app.index.repo_modes import SHARED_LOCK_MODE
 from server.core import leases
 from server.settings import settings
 
@@ -114,7 +115,7 @@ async def _acquire(path: Path, *, wait: bool) -> int | None:
     """Open and lock `path`; the fd, or None when non-blocking and held. A wait
     polls, so a cancelled one holds nothing."""
     await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o664)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, SHARED_LOCK_MODE)
     try:
         while True:
             try:
