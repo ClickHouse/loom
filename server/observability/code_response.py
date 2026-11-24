@@ -19,8 +19,10 @@ def code_response_counts(result: dict[str, Any], *, op_name: str = "") -> dict[s
         if isinstance(values := result.get(field), list):
             rows.extend(value for value in values if isinstance(value, dict))
     related = result.get("related") if op_name == "code.grep" else None
-    if isinstance(related, dict) and isinstance(definitions := related.get("definitions"), list):
-        rows.extend(row for row in definitions if isinstance(row, dict))
+    if isinstance(related, dict):
+        for field in ("definitions", "dependencies"):
+            if isinstance(values := related.get(field), list):
+                rows.extend(value for value in values if isinstance(value, dict))
     bodies = [row["body"] for row in rows if isinstance(row.get("body"), str) and row["body"]]
     lessons = [
         lesson

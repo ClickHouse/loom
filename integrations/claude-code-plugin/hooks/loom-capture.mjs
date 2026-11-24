@@ -206,6 +206,7 @@ export function codeResponsePaths(body) {
   take(body.matches); // grep
   take(body.related?.matches);
   take(body.related?.definitions);
+  take(body.related?.dependencies);
   take(body.evidence); // verify
   take(body.frames); // trace (resolved frames)
   take(body.paths, null); // history (plain strings)
