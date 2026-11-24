@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.codegen.page_summary import LEAD_PAGES
+from scripts.docs_site.redirect_pages import redirect_pages
 
 ROOT = Path(__file__).resolve().parents[2]
 _SPEC = importlib.util.spec_from_file_location(
@@ -21,6 +22,43 @@ _SPEC.loader.exec_module(hooks)
 
 
 _CONFIG = {"site_url": "https://example.com/loom/"}
+
+
+def test_legacy_exports_cite_and_link_to_the_published_docs(tmp_path: Path) -> None:
+    legacy = _CONFIG["site_url"]
+    canonical = "https://loom.clickhouse.com/docs"
+    for page in ("index.html", "guides/index.html", "ja/guides/index.html"):
+        out = tmp_path / page
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("old HTML")
+
+    markdown = tmp_path / "guides/index.md"
+    markdown.write_text(
+        f"# Guides\n\n> Source: {legacy}guides/ (Markdown: {legacy}guides/index.md)\n\n"
+        f"[Japanese guide]({legacy}ja/guides/index.html.md?view=plain#setup)\n"
+        f"[Runbook]({legacy}llms-install.md)\n"
+        f"![Original screenshot]({legacy}assets/screenshot.webp)\n\n"
+        f"Keep `{legacy}guides/` in this example.\n\n"
+        f"```text\n{legacy}guides/index.md\n```\n"
+    )
+    index = tmp_path / "llms.txt"
+    index.write_text(f"# Docs\n\n- [Guide]({legacy}guides/index.md)\n")
+    full = tmp_path / "llms-full.txt"
+    full.write_text(f"# Docs\n\n{legacy}llms.txt lists the pages.\n")
+
+    redirect_pages(tmp_path, legacy)
+
+    assert markdown.read_text() == (
+        f"# Guides\n\n> Source: {canonical}/guides (Markdown: {canonical}/guides.md)\n\n"
+        f"[Japanese guide]({canonical}/ja/guides.md?view=plain#setup)\n"
+        f"[Runbook]({canonical}/llms-install.md)\n"
+        f"![Original screenshot]({legacy}assets/screenshot.webp)\n\n"
+        f"Keep `{legacy}guides/` in this example.\n\n"
+        f"```text\n{legacy}guides/index.md\n```\n"
+    )
+    assert f"[Guide]({canonical}/guides.md)" in index.read_text()
+    assert f"{canonical}/llms.txt lists the pages" in full.read_text()
+    assert f'content="0; url={canonical}"' in (tmp_path / "index.html").read_text()
 
 
 @pytest.mark.parametrize("homepage", [True, False])

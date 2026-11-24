@@ -23,6 +23,10 @@ export default defineConfig({
   },
   lastModified: "frontmatter",
   agents: {
+    llmsTxt: {
+      details:
+        "Use the [MCP installation runbook](https://loom.clickhouse.com/docs/llms-install.md) to install Loom for Cline or another MCP client.",
+    },
     mcp: {
       enabled: true,
     },

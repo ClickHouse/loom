@@ -32,6 +32,7 @@ publishSiteDiscovery(new URL("static/", output), {
   root: [...publicPages.keys()],
   aliases: [...publicPages.values()],
 });
+copyFileSync(new URL("../llms-install.md", docs), new URL("static/docs/llms-install.md", output));
 
 if (process.env.VERCEL_TARGET_ENV === "production") {
   const revision = process.env.VERCEL_GIT_COMMIT_SHA;
