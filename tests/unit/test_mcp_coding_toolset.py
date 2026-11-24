@@ -527,9 +527,8 @@ def test_the_primers_drop_the_collections_clause_when_search_does_not_span_them(
     assert "and the collections you can read" in full
 
 
-def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -> None:
-    """A default memory workspace enables the task pack; the full primer and the
-    generated tool summary keep the hook exception and the one-fact search."""
+def test_memory_scoped_primers_set_the_task_pack_order() -> None:
+    """The primer owns session order, and both discovery surfaces describe the task pack."""
     from scripts.codegen.page_summary import first_sentence  # the docs generator, kept lazy
 
     coding = mcp_primer._coding_instructions("coding", {"namespace": "project"})
@@ -543,12 +542,8 @@ def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -
     assert f"Skip it when {FIRST_STEP_HOOK}." in rules
     assert "For one fact, rule 2's search alone is enough." in rules
     summary = first_sentence(TOOL_DESCRIPTIONS["context.pack"])
-    assert summary.startswith("Task context: call first with a default memory namespace")
-    # loom_op's help catalog shows its own cut of the same sentence
-    assert mcp_op._purpose(OPERATIONS_BY_NAME["context.pack"]).endswith(
-        f"unless {FIRST_STEP_HOOK}."
-    )
-    assert summary.endswith(f"unless {FIRST_STEP_HOOK}.")
+    assert summary == "Retrieve task context by passing the task as `query`."
+    assert mcp_op._purpose(OPERATIONS_BY_NAME["context.pack"]) == summary
 
 
 def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:

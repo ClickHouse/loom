@@ -121,10 +121,9 @@ def test_compact_coding_catalog_describes_the_task_pack_without_ordering() -> No
         tools = await _tools_descriptor(toolset="coding", schema_profile=profile)
         return next(tool["description"] for tool in tools if tool["name"] == "loom_context_pack")
 
-    assert "call first" in asyncio.run(describe("standard"))
+    assert "call first" not in asyncio.run(describe("standard"))
     compact = asyncio.run(describe("compact"))
-    assert "call first" not in compact
-    assert "prior decisions" in compact
+    assert compact == "Retrieve task context by passing the task as `query`."
 
 
 def test_code_scope_precedes_a_long_memory_workspace_notice(monkeypatch) -> None:

@@ -1190,8 +1190,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # ---- Context pack ----
     "context.pack": (
-        "Task context: call first with a default memory namespace, unless "
-        f"{FIRST_STEP_HOOK}. Pass the task as `query` for memories, decisions, procedures, "
+        "Retrieve task context by passing the task as `query`. "
+        "It returns memories, decisions, procedures, "
         "working memory and the profile; `include_knowledge` / `include_conversations` "
         "add docs and chats. "
         "`include_runs=true` lists recent sessions and runs "

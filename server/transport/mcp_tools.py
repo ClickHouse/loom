@@ -50,10 +50,10 @@ from server.transport.mcp_descriptions import (
 from server.transport.mcp_descriptions import (
     CODING_TOOL_DESCRIPTIONS as _CODING_TOOL_DESCRIPTIONS,
 )
-from server.transport.mcp_descriptions import FIRST_STEP_HOOK, coding_search_description
 from server.transport.mcp_descriptions import (
     TOOL_DESCRIPTIONS as _TOOL_DESCRIPTIONS,
 )
+from server.transport.mcp_descriptions import coding_search_description
 from server.transport.mcp_op import DESCRIPTOR as LOOM_OP_DESCRIPTOR
 from server.transport.mcp_op import (
     LOOM_OP_TOOL_NAME,
@@ -595,14 +595,7 @@ async def _tools_descriptor(
     for d in descriptors:
         if d["name"] == LOOM_OP_TOOL_NAME:  # built for this listing already
             continue
-        description = d["description"]
-        if profile == "compact" and toolset == "coding" and d["name"] == "loom_context_pack":
-            description = (
-                "Retrieve relevant memory, prior decisions, and procedures for a task. "
-                "Pass the task as `query`. "
-                f"Skip it when {FIRST_STEP_HOOK}."
-            )
-        d["description"] = name_ops_for_listing(description, listed, writes=writes)
+        d["description"] = name_ops_for_listing(d["description"], listed, writes=writes)
         for schema in schemas:
             if schema in d:
                 d[schema] = _name_ops_in_fields(d[schema], listed, writes=writes)
