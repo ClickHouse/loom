@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+from collections import defaultdict
 from dataclasses import replace
 from typing import Any
 
@@ -357,20 +358,25 @@ async def _grep_lines(
     coverage = await asyncio.to_thread(_line_coverage_fields, chunks, budget)
     prefix_related = None
     if not (related_pattern or offset or truncated or coverage.get("partial")):
-        prefix_related = await _related_prefix_excerpts(
-            repo,
-            org,
-            ns,
-            input,
-            scope=scope,
-            matches=matches,
-            match_commits=match_commits,
-            limit=served_limit,
-            budget=budget,
-        )
+        try:
+            prefix_related, prefix_coverage = await _related_prefix_excerpts(
+                repo,
+                org,
+                ns,
+                input,
+                scope=scope,
+                matches=matches,
+                match_commits=match_commits,
+                limit=served_limit,
+                budget=budget,
+            )
+        except Exception as error:  # noqa: BLE001 — preserve exact evidence on optional read failure
+            logger.debug("related call prefix scan failed: %s", type(error).__name__)
+            coverage.update(partial=True, partial_reason="related call prefix scan failed")
+        else:
+            coverage.update(prefix_coverage)
         if prefix_related is not None:
             route += "+related_call_prefix"
-        coverage.update(_partial_fields(budget))
     next_cursor = ""
     if not related_pattern:
         next_cursor = _issue_grep_cursor(
@@ -392,7 +398,7 @@ async def _grep_lines(
     returned = matches + (prefix_related.matches if prefix_related is not None else [])
     files = list(dict.fromkeys(m["path"] for m in returned))
     risk = "low" if returned else "abstain"
-    if (matches and related_pattern) or prefix_related is not None:
+    if (matches and related_pattern) or (prefix_related and prefix_related.matches):
         risk = "medium"
     related_tokens = (
         sum(len(row["text"]) for row in prefix_related.contexts) // 4 if prefix_related else 0
@@ -449,7 +455,7 @@ async def _grep_lines(
             "a pattern list, code.symbol for a known name, or code.search for behavior."
         )
     related = prefix_related
-    if prefix_related is not None:
+    if prefix_related and prefix_related.matches:
         note = "Related source shows the call prefix's argument in other scopes."
         if not matches:
             note = "No exact match in the indexed scope. " + note
@@ -521,11 +527,15 @@ async def _read_line_matches(
     return chunks, matches, commits, capped
 
 
-def _grep_match_scope(match: dict[str, Any]) -> tuple[str, int, int]:
-    return (
-        match["path"],
-        match["scope_start_line"] or match["line"],
-        match["scope_end_line"] or match["line"],
+def _shares_grep_scope(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Two scans can derive different windows for the same retained definition."""
+    return bool(
+        left["scope"]
+        and left["scope"] == right["scope"]
+        and left["scope_start_line"]
+        and right["scope_start_line"]
+        and left["scope_start_line"] <= right["scope_end_line"]
+        and right["scope_start_line"] <= left["scope_end_line"]
     )
 
 
@@ -540,12 +550,12 @@ async def _related_prefix_excerpts(
     match_commits: dict[tuple[str, int], str],
     limit: int,
     budget: code_deadline.Budget | None,
-) -> RelatedGrepEvidence | None:
+) -> tuple[RelatedGrepEvidence | None, dict[str, Any]]:
     if not input.related_on_prefix or input.regex or not isinstance(input.pattern, str):
-        return None
+        return None, {}
     call = _QUALIFIED_ARGUMENT_PREFIX.fullmatch(input.pattern.strip())
     if call is None or not _second_scan_allowed(budget, "related call prefix scan"):
-        return None
+        return None, _partial_fields(budget)
     argument = call[1]
     scan_limit = min(200, limit * 3)
     kw = {"scope": scope} if scope.has_path_filters else {}
@@ -570,25 +580,41 @@ async def _related_prefix_excerpts(
     chunks, candidates, commits, capped = await _read_line_matches(
         repo, org, ns, chunks, input, line_re, limit + _GREP_POOL_EXTRA, budget
     )
-    exact_scopes = {_grep_match_scope(match) for match in matches}
-    exact_paths = {match["path"] for match in matches}
+    exact_by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for match in matches:
+        exact_by_path[match["path"]].append(match)
     exact_lines = {(match["path"], match["line"]) for match in matches}
-    revisions = match_revisions(matches, match_commits)
-    related = [
+    exact_revisions = match_revisions(matches, match_commits)
+    related_revisions = match_revisions(candidates, commits)
+    other_sites = [
         match
         for match in candidates
         if (match["path"], match["line"]) not in exact_lines
-        and _grep_match_scope(match) not in exact_scopes
+        and not any(_shares_grep_scope(match, hit) for hit in exact_by_path.get(match["path"], ()))
+    ]
+    related = [
+        match
+        for match in other_sites
+        if match["path"] in related_revisions
         and (
-            match["path"] not in exact_paths
-            or (
-                revisions.get(match["path"])
-                and revisions[match["path"]] == commits.get((match["path"], match["line"]))
-            )
+            match["path"] not in exact_by_path
+            or exact_revisions.get(match["path"]) == related_revisions[match["path"]]
         )
     ]
-    if not related:
-        return None
+    coverage = await asyncio.to_thread(_line_coverage_fields, chunks, budget)
+    if len(related) != len(other_sites):
+        coverage.update(
+            partial=True,
+            partial_reason=_notes(
+                str(coverage.get("partial_reason", "")),
+                "related source omitted where its revision could not be verified",
+            ),
+        )
+    truncated = (
+        capped or len(related) > limit or scanned >= scan_limit or bool(coverage.get("partial"))
+    )
+    if not related and not truncated:
+        return None, coverage
     page = related[:limit]
     radius = (
         input.context_lines
@@ -596,7 +622,7 @@ async def _related_prefix_excerpts(
         else RELATED_GREP_CONTEXT_LINES
     )
     context = {}
-    if radius:
+    if radius and page:
         source = await asyncio.to_thread(
             collect_contexts, chunks, page, radius, _LINE_SCAN_MAX_CHARS, match_commits=commits
         )
@@ -605,11 +631,8 @@ async def _related_prefix_excerpts(
         {key: commits[key] for match in page if (key := (match["path"], match["line"])) in commits}
     )
     return RelatedGrepEvidence(
-        pattern=argument,
-        matches=page,
-        truncated=capped or len(related) > limit or scanned >= scan_limit,
-        **context,
-    )
+        pattern=argument, matches=page, truncated=truncated, **context
+    ), coverage
 
 
 async def _grep_neighbours(
