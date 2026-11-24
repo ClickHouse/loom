@@ -153,7 +153,7 @@ def _parse_settings(raw: bytes) -> _Settings:
             ):
                 raise ValueError("invalid profile scope")
             audience = profile.config.bearer_audience
-            if audience is not None and not _https_origin(audience):
+            if audience is not None and not _visible_ascii(audience, 2048):
                 raise ValueError("invalid profile audience")
             credential = MCPBearer("profile-validation", audience) if audience is not None else None
             client = MCPSourceClient(

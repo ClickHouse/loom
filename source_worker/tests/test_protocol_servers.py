@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import time
+from collections.abc import AsyncIterator, Callable
+from dataclasses import asdict
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -12,7 +15,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from loom_source_worker import direct_backend, mcp_client
 from loom_source_worker.credential_store import CredentialRecord
-from loom_source_worker.direct_backend import ApprovedProfile, DirectBackend
+from loom_source_worker.direct_backend import DirectBackend
+from loom_source_worker.main import _parse_settings
 from loom_source_worker.mcp_client import MCPSourceConfig, MCPToolMapping
 from loom_source_worker.protocol import ConnectionBinding, ReadBinding, ReadGrant, issue_read_grant
 from loom_source_worker.read_service import ReadFailure, ReadLimits, ReadService
@@ -41,6 +45,7 @@ _OUTPUT = {
 class _SyntheticAccounts:
     def __init__(self, binding: ReadBinding) -> None:
         self.records: dict[UUID, CredentialRecord] = {}
+        self.reads = 0
         self.add(binding, "synthetic-alice")
 
     def add(self, binding: ReadBinding, token: str) -> None:
@@ -61,10 +66,33 @@ class _SyntheticAccounts:
         )
 
     async def get(self, connection_id: UUID) -> CredentialRecord:
+        self.reads += 1
         return self.records[connection_id]
 
 
-def _resource_server() -> StreamableHTTPSessionManager:
+class _Fragments(httpx.AsyncByteStream):
+    def __init__(self, stream: httpx.AsyncByteStream) -> None:
+        self._stream = stream
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        async for body in self._stream:
+            for offset in range(0, len(body), 4):
+                yield body[offset : offset + 4]
+
+    async def aclose(self) -> None:
+        await self._stream.aclose()
+
+
+class _FragmentedASGI(httpx.ASGITransport):
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        response = await super().handle_async_request(request)
+        assert isinstance(response.stream, httpx.AsyncByteStream)
+        return httpx.Response(
+            response.status_code, headers=response.headers, stream=_Fragments(response.stream)
+        )
+
+
+def _resource_server(on_read: Callable[[], None]) -> StreamableHTTPSessionManager:
     server: Server[Any, Any] = Server("synthetic-resources")
 
     @server.list_resources()
@@ -74,12 +102,13 @@ def _resource_server() -> StreamableHTTPSessionManager:
     @server.read_resource()
     async def read_resource(uri: AnyUrl) -> str:
         assert str(uri) == _DOC
+        on_read()
         return "resource fixture body"
 
     return StreamableHTTPSessionManager(app=server, json_response=False, stateless=True)
 
 
-def _tool_server() -> StreamableHTTPSessionManager:
+def _tool_server(on_read: Callable[[], None]) -> StreamableHTTPSessionManager:
     server: Server[Any, Any] = Server("synthetic-mapped-tool")
 
     @server.list_tools()
@@ -90,6 +119,7 @@ def _tool_server() -> StreamableHTTPSessionManager:
     async def read_tool(name: str, arguments: dict[str, Any]) -> dict[str, str]:
         assert name == "read"
         assert arguments == {"id": _DOC}
+        on_read()
         return {"id": _DOC, "title": "Mapped", "uri": _DOC, "text": "tool fixture body"}
 
     return StreamableHTTPSessionManager(app=server, json_response=True, stateless=True)
@@ -98,11 +128,20 @@ def _tool_server() -> StreamableHTTPSessionManager:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["resource", "tool"])
 async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    revoke: UUID | None = None
+
+    def on_read() -> None:
+        if revoke is not None:
+            record = accounts.records[revoke]
+            accounts.records[revoke] = record.model_copy(
+                update={"binding": record.binding.model_copy(update={"generation": 2})}
+            )
+
     if mode == "resource":
-        manager = _resource_server()
+        manager = _resource_server(on_read)
         config = MCPSourceConfig(endpoint=_ENDPOINT, bearer_audience=_ENDPOINT)
     else:
-        manager = _tool_server()
+        manager = _tool_server(on_read)
         config = MCPSourceConfig(
             endpoint=_ENDPOINT,
             bearer_audience=_ENDPOINT,
@@ -118,6 +157,7 @@ async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.M
             await send({"type": "http.response.start", "status": 403, "headers": []})
             await send({"type": "http.response.body", "body": b""})
             return
+
         await manager.handle_request(scope, receive, send)
 
     async def synthetic_pin(host: str) -> ipaddress.IPv6Address:
@@ -129,14 +169,41 @@ async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.M
             config,
             credential,
             validate_access=validate_access,
-            _transport=httpx.ASGITransport(app=app),
+            _transport=_FragmentedASGI(app=app),
         )
 
     monkeypatch.setattr(mcp_client, "resolve_public_address", synthetic_pin)
     monkeypatch.setattr(direct_backend, "MCPSourceClient", routed_client)
-    profile = ApprovedProfile(config, ("org",))
+    worker_id = uuid4()
+    settings = _parse_settings(
+        json.dumps(
+            {
+                "transport": "tls_proxy_unix",
+                "worker_id": str(worker_id),
+                "issuer": "loom",
+                "vault": {"origin": "https://vault.example.test", "mount": "connections"},
+                "read_limits": {
+                    "concurrent": 4,
+                    "concurrent_per_org": 2,
+                    "timeout_seconds": 5,
+                    "content_bytes": 2048,
+                },
+                "profiles": [
+                    {
+                        "config": {
+                            key: value
+                            for key, value in asdict(config).items()
+                            if key != "approved_resource_ids"
+                        },
+                        "organizations": ["org"],
+                    }
+                ],
+            }
+        ).encode()
+    )
+    [profile] = settings.profiles
     binding = ReadBinding(
-        worker_id=uuid4(),
+        worker_id=worker_id,
         org="org",
         namespace="team",
         source_id=uuid4(),
@@ -171,9 +238,13 @@ async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.M
         result = await service.execute(grant(binding, "live"), "live")
         assert result.document is not None
         assert result.document.text == f"{mode} fixture body"
+        assert accounts.reads <= 32
         with pytest.raises(ReadFailure, match="^denied$"):
             await service.execute(grant(bob, "check_access"), "check_access")
         allowed.add(b"Bearer synthetic-bob")
         proof = await service.execute(grant(bob, "check_access"), "check_access")
         assert proof.document is None
         assert proof.content_sha256 == result.content_sha256
+        revoke = bob.connection_id
+        with pytest.raises(ReadFailure, match="^denied$"):
+            await service.execute(grant(bob, "live"), "live")

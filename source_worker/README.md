@@ -21,16 +21,17 @@ The worker verifies an issuer-pinned, short-lived Ed25519 grant in the
 authorization header, scoped to the worker, operation, requester, connection,
 tenant and selected resource. Do not forward this grant to an upstream server.
 
-| Path                                                | Purpose                                         |
-| --------------------------------------------------- | ----------------------------------------------- |
-| `/etc/loom-source-worker/config.json`               | Worker identity, issuer, profiles and limits    |
-| `/etc/loom-source-worker/grant-verifier.pem`         | Ed25519 public key used to verify Loom grants    |
-| `/etc/loom-source-worker/vault-ca.pem`               | Optional CA roots for the credential service     |
-| `/run/loom-source-worker/credentials/vault-token`     | Worker-only credential service token            |
-| `/run/loom-source-worker/socket/worker.sock`         | Local socket mounted only by worker and proxy    |
+Mount these files and directories in the worker:
 
-The image runs as UID and GID `10001`. Give it a socket directory it owns with
-mode `0700`. Share only the socket directory with the proxy. Keep the
+- `/etc/loom-source-worker/config.json`: identity, issuer, profiles and limits.
+- `/etc/loom-source-worker/grant-verifier.pem`: public key used to verify grants.
+- `/etc/loom-source-worker/vault-ca.pem`: optional credential service CA roots.
+- `/run/loom-source-worker/credentials/vault-token`: credential service token.
+- `/run/loom-source-worker/socket`: directory mounted by the worker and proxy.
+
+Run the proxy and worker under the same numeric UID, `10001` in the image.
+The worker requires an owned `0700` directory and creates the socket with
+mode `0600`. Share only the socket directory with the proxy. Keep the
 credential mount out of the proxy and Loom containers. Give the worker token
 read access only to its dedicated KV v2 connection prefix. Store each record
 under the worker UUID and opaque connection UUID; the record binds the owner,
@@ -42,9 +43,15 @@ the approved credential, DNS and upstream endpoints.
 The required configuration fields are `transport` (`tls_proxy_unix`),
 `worker_id`, `issuer`, `vault`, `read_limits` and `profiles`. A profile names the
 permitted organizations, optional HTTPS citation origins and the approved
-client configuration. Keep the signer and worker profile digest in agreement.
+client configuration. A mapped read must return the exact selected identity.
+Keep the signer and worker profile digest in agreement.
 Any account, profile, selection or authority change requires a current grant.
 An access check returns a content digest and fetch time without the body.
+
+A grant is reusable until its expiry for the same read, within the worker's
+capacity limits. It never authorizes a stored write. The issuer must check
+selection and requester authority before issuing it and before delivering a
+result. The worker rechecks its connection during the read and before reply.
 
 The hosted package test uses owned SDK resource and mapped-tool servers with
 synthetic accounts. It does not qualify production credential infrastructure

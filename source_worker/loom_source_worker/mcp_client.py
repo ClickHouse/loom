@@ -546,12 +546,12 @@ def _tool_value(
 
 def _check_tool_schema(tool: types.Tool, mapping: MCPToolMapping, policy: MCPDataPolicy) -> None:
     _schema(tool.inputSchema, policy)
-    if tool.inputSchema != mapping.input_schema:
+    if _json(tool.inputSchema, 16_384) != _json(mapping.input_schema, 16_384):
         raise MCPSourceError("schema")
     if tool.outputSchema is not None:
         _schema(tool.outputSchema, policy)
     expected = mapping.output_schema if mapping.require_output_schema else None
-    if tool.outputSchema != expected:
+    if _json(tool.outputSchema, 16_384) != _json(expected, 16_384):
         raise MCPSourceError("schema")
 
 
@@ -586,7 +586,7 @@ class _LimitedStream(httpx.AsyncByteStream):
                     self.owner.received += len(chunk)
                     if self.owner.received > self.owner.limits.max_wire_bytes:
                         raise MCPSourceError("limit")
-                    await self.owner._authorize()
+                    self.owner._check_state()
                     yield chunk
         except Exception as error:  # noqa: BLE001 — only fixed diagnostics cross the transport boundary
             self.owner.failure = self.owner.failure or _error_code(error)
@@ -594,7 +594,7 @@ class _LimitedStream(httpx.AsyncByteStream):
 
     async def aclose(self) -> None:
         # The SDK cancels its task group before joining HTTP stream finalizers.
-        with anyio.CancelScope(shield=True):
+        with anyio.move_on_after(1, shield=True):
             await self.stream.aclose()
 
 
@@ -711,11 +711,12 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         finally:
             if response is not None and not handed_off:
                 # Leave the deadline scope before joining an unclaimed response's finalizer.
-                with anyio.CancelScope(shield=True):
+                with anyio.move_on_after(1, shield=True):
                     await response.aclose()
 
     async def aclose(self) -> None:
-        await self.inner.aclose()
+        with anyio.move_on_after(1, shield=True):
+            await self.inner.aclose()
 
 
 _T = TypeVar("_T")
@@ -777,7 +778,8 @@ class MCPSourceClient:
         self._operation_failure: ErrorCode | None = None
         self._deadline = 0.0
         self._discovery: MCPDiscovery | None = None
-        self._schema_changed = False
+        self._tool_epoch = 0
+        self._discovered_epoch = -1
         self._pages, self._results = 0, 0
         self._issued_cursors: set[tuple[tuple[str, str], str]] = set()
         self._used_cursors: set[tuple[tuple[str, str], str]] = set()
@@ -969,7 +971,7 @@ class MCPSourceClient:
         if isinstance(message, types.ServerNotification) and isinstance(
             message.root, types.ToolListChangedNotification
         ):
-            self._schema_changed = True
+            self._tool_epoch += 1
 
     async def _run(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
         with private_work():
@@ -1010,6 +1012,7 @@ class MCPSourceClient:
     async def discover(self) -> MCPDiscovery:
         async def action(session: ClientSession) -> MCPDiscovery:
             approved = set(self._config.approved_tools)
+            epoch = self._tool_epoch
             found: set[str] = set()
             cursor: str | None = None
             seen: set[str] = set()
@@ -1040,9 +1043,11 @@ class MCPSourceClient:
                     raise MCPSourceError("limit")
                 if found != approved:
                     raise MCPSourceError("unsupported")
+                if epoch != self._tool_epoch:
+                    raise MCPSourceError("schema")
             assert self._discovery is not None
             self._discovery = MCPDiscovery(self._discovery.resources, tuple(sorted(found)))
-            self._schema_changed = False
+            self._discovered_epoch = epoch
             return self._discovery
 
         return await self._run(action)
@@ -1095,7 +1100,7 @@ class MCPSourceClient:
     ) -> Any:
         await self.discover()
         if (
-            self._schema_changed
+            self._tool_epoch != self._discovered_epoch
             or self._discovery is None
             or mapping.name not in self._discovery.tools
         ):
@@ -1116,7 +1121,7 @@ class MCPSourceClient:
             ),
             types.CallToolResult,
         )
-        if self._schema_changed:
+        if self._tool_epoch != self._discovered_epoch:
             raise MCPSourceError("schema")
         return _tool_value(result, mapping, self._config.limits, self._config.data_policy)
 

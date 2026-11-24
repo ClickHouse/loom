@@ -67,6 +67,7 @@ class _Source(httpx.MockTransport):
         self.redirect = False
         self.content_encoding = "identity"
         self.resource_text = "synthetic text"
+        self.change_tools_during_discovery = False
 
     async def aclose(self) -> None:
         self.closed = True
@@ -118,6 +119,20 @@ class _Source(httpx.MockTransport):
                 },
             )
         elif method == "tools/list":
+            if self.change_tools_during_discovery:
+                if not body.get("params", {}).get("cursor"):
+                    return _json_response(body["id"], {"tools": [self.tool], "nextCursor": "next"})
+                notification = {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+                answer = {"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}}
+                frames = "".join(
+                    f"event: message\ndata: {json.dumps(item)}\n\n"
+                    for item in (notification, answer)
+                )
+                return httpx.Response(
+                    200,
+                    stream=_Body(frames.encode()),
+                    headers={"content-type": "text/event-stream"},
+                )
             result = {"tools": [self.tool]}
         elif method == "tools/call":
             result = self.tool_result
@@ -280,6 +295,32 @@ async def test_mapping_snapshots_approved_schemas_and_refuses_drift(pin: list[st
         with pytest.raises(MCPSourceError, match="^MCP source schema$"):
             await client.read(_DOCUMENT)
     assert sum(method == "tools/call" for _, method in source.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_list_notification_invalidates_an_inflight_discovery(pin: list[str]) -> None:
+    source, mapping = _mapped_source()
+    source.change_tools_during_discovery = True
+    async with _client(source, approved_tools=("read",), read=mapping) as client:
+        with pytest.raises(MCPSourceError, match="^MCP source schema$"):
+            await client.discover()
+    assert sum(method == "tools/list" for _, method in source.calls) == 2
+    assert not any(method == "tools/call" for _, method in source.calls)
+
+
+@pytest.mark.asyncio
+async def test_advertised_schema_cannot_replace_a_boolean_with_a_number(pin: list[str]) -> None:
+    source, mapping = _mapped_source()
+    approved = {**mapping.input_schema, "properties": {"id": {"const": True}}}
+    changed = {**mapping.input_schema, "properties": {"id": {"const": 1}}}
+    assert source.tool is not None
+    source.tool["inputSchema"] = changed
+    async with _client(
+        source, approved_tools=("read",), read=replace(mapping, input_schema=approved)
+    ) as client:
+        with pytest.raises(MCPSourceError, match="^MCP source schema$"):
+            await client.discover()
+    assert not any(method == "tools/call" for _, method in source.calls)
 
 
 @pytest.mark.parametrize(

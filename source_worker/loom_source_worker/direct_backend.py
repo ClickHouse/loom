@@ -26,6 +26,8 @@ class ApprovedProfile:
     def __post_init__(self) -> None:
         if self.config.approved_resource_ids or not self.organizations:
             raise ValueError("profile must scope the tenant without selecting resources")
+        if self.config.read is not None and self.config.read.result_format == "text":
+            raise ValueError("mapped read must return its selected resource identity")
         if any(_link_origin(value) != value for value in self.link_origins):
             raise ValueError("invalid approved link origin")
 

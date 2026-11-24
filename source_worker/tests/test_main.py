@@ -70,7 +70,7 @@ def test_resource_profile_and_transport_settings(config):
 def test_mapped_read_profile_is_validated_at_startup(config):
     source = config["profiles"][0]["config"]
     source.update(
-        bearer_audience="https://mcp.example",
+        bearer_audience="https://mcp.example/rpc",
         approved_tools=["read_document"],
         read={
             "name": "read_document",
@@ -93,9 +93,27 @@ def test_mapped_read_profile_is_validated_at_startup(config):
         },
     )
     settings = _parse_settings(json.dumps(config).encode())
+    assert settings.profiles[0].config.bearer_audience == "https://mcp.example/rpc"
     assert settings.profiles[0].config.read.id_path == ("id",)
     assert len(settings.profiles[0].digest) == 64
     source["read"]["argument_nam"] = "id"
+    with pytest.raises(StartupError, match="^invalid worker configuration$"):
+        _parse_settings(json.dumps(config).encode())
+
+
+def test_plain_text_mapping_cannot_prove_selection_identity(config):
+    source = config["profiles"][0]["config"]
+    source.update(
+        approved_tools=["read"],
+        read={
+            "name": "read",
+            "argument_name": "id",
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "string"},
+            "result_format": "text",
+            "require_output_schema": False,
+        },
+    )
     with pytest.raises(StartupError, match="^invalid worker configuration$"):
         _parse_settings(json.dumps(config).encode())
 

@@ -126,7 +126,10 @@ class ReadService:
                 if time.time() >= expires_at:
                     raise ReadFailure("timeout")
                 current = await self._backend.current(binding)
-                current.authorize(grant)
+                try:
+                    current.authorize(grant)
+                except ReadGrantRefused:
+                    raise ReadFailure("denied") from None
                 if time.time() >= expires_at:
                     raise ReadFailure("timeout")
 
