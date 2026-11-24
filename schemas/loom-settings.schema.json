@@ -3780,7 +3780,7 @@
         "mcp_always_load_tools": {
           "default": "auto",
           "type": "string",
-          "description": "\"auto\" selects upfront tools by toolset. A comma-separated list overrides it; empty leaves loading to the host."
+          "description": "\"auto\" loads source lookups upfront for the coding toolset. A comma-separated list overrides the toolset defaults. Empty leaves loading to the host."
         },
         "mcp_auth_mode": {
           "default": "required",

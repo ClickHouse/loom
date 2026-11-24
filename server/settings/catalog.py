@@ -2687,8 +2687,8 @@ class McpSettings(BaseModel):
     # "full" (+ outputSchema) or "compact" (first paragraph, argument tree).
     # Per request: `?schema_profile=`.
     mcp_schema_profile: Annotated[Literal["standard", "full", "compact"], CaseFolded] = "standard"
-    # "auto" selects upfront tools by toolset. A comma-separated list overrides it;
-    # empty leaves loading to the host.
+    # "auto" loads source lookups upfront for the coding toolset. A comma-separated
+    # list overrides the toolset defaults. Empty leaves loading to the host.
     mcp_always_load_tools: str = "auto"
     # Seconds without a tool call after which the mcp_session_run_sweep worker
     # closes an MCP session's implicit run (one per token and `Mcp-Session-Id`,

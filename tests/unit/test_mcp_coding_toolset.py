@@ -391,13 +391,8 @@ def test_coding_search_and_definition_tools_load_upfront_by_default(monkeypatch,
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
     assert len(tools) == 21
     flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
-    assert flagged == {
-        "loom_search",
-        "loom_code_search",
-        "loom_code_symbol",
-        "loom_code_grep",
-    }
-    assert any(tool["name"] == "loom_op" for tool in tools)
+    assert flagged == {"loom_code_search", "loom_code_symbol", "loom_code_grep"}
+    assert {"loom_op", "loom_search"} <= {tool["name"] for tool in tools}
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding+tracker"])
