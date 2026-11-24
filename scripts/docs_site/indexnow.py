@@ -4,18 +4,21 @@ IndexNow search engines share one endpoint: it takes a list of changed URLs and 
 ownership against a key file served on the site. The key file is the one `.txt` file in
 docs/ whose name is its own content; it is public by design.
 
-Usage: indexnow.py <changed path>...   (paths relative to the repository root)
+Usage: indexnow.py [--previous-public-pages MAP] <changed path>...
 A changed or deleted Markdown or Astro page maps to its canonical URL. Changes to
-shared render inputs submit the pages that use them.
+shared render inputs submit the pages that use them. The previous map retains public
+routes that a change to the map removes.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
 import urllib.parse
 import urllib.request
+from collections.abc import Iterable
 from pathlib import Path
 
 ORIGIN = "https://loom.clickhouse.com"
@@ -27,9 +30,10 @@ if str(ROOT) not in sys.path:
 from scripts.docs_site.paths import page_path  # noqa: E402
 
 DOCS = ROOT / "docs"
+PUBLIC_PAGES_PATH = "docs/scripts/public-pages.json"
 PUBLIC_PAGE_URLS = {
     f"docs/pages/{destination.removeprefix('/docs/')}.astro": ORIGIN + route
-    for route, destination in json.loads((DOCS / "scripts/public-pages.json").read_text()).items()
+    for route, destination in json.loads((ROOT / PUBLIC_PAGES_PATH).read_text()).items()
 }
 SITE_BUILD_INPUTS = (
     "docs/blume.config.ts",
@@ -42,9 +46,10 @@ SITE_BUILD_INPUTS = (
 PUBLIC_BUILD_INPUTS = (
     *SITE_BUILD_INPUTS,
     "docs/components/",
-    "docs/lib/",
+    "docs/lib/adoption-data.mjs",
+    "docs/lib/adoption-view.mjs",
     "docs/scripts/mount-site-pages.mjs",
-    "docs/scripts/public-pages.json",
+    PUBLIC_PAGES_PATH,
 )
 BUILD_INPUTS = (
     *SITE_BUILD_INPUTS,
@@ -99,7 +104,7 @@ def every_page() -> list[str]:
     return sorted([*english, *localized])
 
 
-def urls_for(paths: list[str]) -> list[str]:
+def urls_for(paths: list[str], previous_public_routes: Iterable[str] = ()) -> list[str]:
     from scripts.docs_site.locales import LANGUAGES, localized_page_path
 
     changed = {u for p in paths if (u := page_url(p))}
@@ -120,6 +125,8 @@ def urls_for(paths: list[str]) -> list[str]:
         changed.update(every_page())
     if _changed_build_input(paths, PUBLIC_BUILD_INPUTS):
         changed.update(PUBLIC_PAGE_URLS.values())
+    if PUBLIC_PAGES_PATH in paths:
+        changed.update(ORIGIN + route for route in previous_public_routes)
     return sorted(changed)
 
 
@@ -140,8 +147,13 @@ def payload(urls: list[str], k: str) -> dict:
     }
 
 
-def main(paths: list[str]) -> int:
-    urls = urls_for(paths)
+def main(paths: list[str], previous_public_pages: Path | None = None) -> int:
+    previous_routes = (
+        json.loads(previous_public_pages.read_text())
+        if previous_public_pages is not None and PUBLIC_PAGES_PATH in paths
+        else ()
+    )
+    urls = urls_for(paths, previous_routes)
     if not urls:
         print("indexnow: no public page changed")
         return 0
@@ -155,4 +167,8 @@ def main(paths: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--previous-public-pages", type=Path)
+    parser.add_argument("paths", nargs="*")
+    arguments = parser.parse_args()
+    sys.exit(main(arguments.paths, arguments.previous_public_pages))

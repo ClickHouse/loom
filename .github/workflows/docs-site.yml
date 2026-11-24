@@ -105,4 +105,11 @@ jobs:
           base=$(gh run list -R "$GITHUB_REPOSITORY" --workflow docs-site.yml --branch main \
             --event push --status success --limit 1 --json headSha --jq '.[0].headSha // empty')
           if [ -z "$base" ] || ! git merge-base --is-ancestor "$base" HEAD; then base=HEAD~1; fi
-          git diff -z --name-only --no-renames "$base" HEAD | xargs -0 python scripts/docs_site/indexnow.py
+          routes=docs/scripts/public-pages.json
+          args=()
+          if git cat-file -e "$base:$routes" 2>/dev/null; then
+            previous_routes="$RUNNER_TEMP/indexnow-previous-public-pages.json"
+            git show "$base:$routes" > "$previous_routes"
+            args=(--previous-public-pages "$previous_routes")
+          fi
+          git diff -z --name-only --no-renames "$base" HEAD | xargs -0 python scripts/docs_site/indexnow.py "${args[@]}" --

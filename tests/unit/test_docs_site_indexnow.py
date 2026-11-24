@@ -46,8 +46,20 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
         f"{ORIGIN}{route}" for route in ("/", "/adoption", "/enterprise", "/platform", "/telemetry")
     )
     assert indexnow.urls_for(["docs/components/SiteFrame.astro"]) == public_pages
+    assert indexnow.urls_for(["docs/lib/adoption-data.mjs"]) == public_pages
+    assert indexnow.urls_for(["docs/lib/adoption-data.test.mjs"]) == []
     assert indexnow.urls_for(["docs/scripts/public-pages.json"]) == public_pages
     assert indexnow.urls_for(["docs/theme.css"]) == sorted([*public_pages, *indexnow.every_page()])
+
+
+def test_renamed_and_deleted_public_routes_keep_their_previous_urls(monkeypatch) -> None:
+    monkeypatch.setattr(
+        indexnow, "PUBLIC_PAGE_URLS", {"docs/pages/product.astro": ORIGIN + "/product"}
+    )
+    assert indexnow.urls_for(
+        ["docs/pages/platform.astro", "docs/pages/product.astro", indexnow.PUBLIC_PAGES_PATH],
+        previous_public_routes={"/platform": "/docs/platform", "/retired": "/docs/retired"},
+    ) == [ORIGIN + "/platform", ORIGIN + "/product", ORIGIN + "/retired"]
 
 
 def test_full_submission_only_enumerates_documentation_sources(tmp_path, monkeypatch) -> None:
@@ -127,6 +139,10 @@ def test_main_posts_only_the_changed_pages_and_posts_nothing_when_none_changed(
     assert sent == []
     assert indexnow.main(["docs/a.md"]) == 0
     assert [s["urlList"] for s in sent] == [[SITE + "a"]]
+    previous = tmp_path / "previous-public-pages.json"
+    previous.write_text(json.dumps({"/retired": "/docs/retired"}))
+    assert indexnow.main([indexnow.PUBLIC_PAGES_PATH], previous) == 0
+    assert ORIGIN + "/retired" in sent[-1]["urlList"]
 
 
 def test_shared_language_route_mapping_is_a_render_input() -> None:
