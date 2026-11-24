@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { dump, load } from "js-yaml";
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -77,9 +78,9 @@ export function readContentDates(repository) {
 export function withContentDate(text, date) {
   if (!date) return text;
   const frontmatter = /^---\r?\n([\s\S]*?)^---[\t ]*(?:\r?\n|$)/m.exec(text);
-  const field = `lastModified: ${JSON.stringify(date)}\n`;
-  if (frontmatter?.index !== 0) return `---\n${field}---\n\n${text}`;
-  if (/^lastModified\s*:/m.test(frontmatter[1])) return text;
-  const start = text.indexOf("\n") + 1;
-  return text.slice(0, start) + field + text.slice(start);
+  if (frontmatter?.index !== 0) return `---\n${dump({ lastModified: date })}---\n\n${text}`;
+  const metadata = load(frontmatter[1]) ?? {};
+  if (typeof metadata !== "object" || Array.isArray(metadata) || Object.hasOwn(metadata, "lastModified")) return text;
+  const updated = dump({ lastModified: date, ...metadata }, { lineWidth: -1 });
+  return `---\n${updated}---\n${text.slice(frontmatter[0].length)}`;
 }
