@@ -695,7 +695,7 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                 )
                 await self._authorize()
                 response = await self.inner.handle_async_request(outgoing)
-                await self._authorize()
+                self._check_state()
                 _check_response(request.method, response)
                 # Reject compression so the wire budget bounds decoded protocol bytes.
                 if response.headers.get("content-encoding", "identity") != "identity":

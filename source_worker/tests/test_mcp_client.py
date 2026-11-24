@@ -410,6 +410,26 @@ async def test_revalidation_refusal_prevents_more_requests(pin: list[str]) -> No
 
 
 @pytest.mark.asyncio
+async def test_revocation_after_remote_read_is_reported_without_waiting_for_timeout(
+    pin: list[str],
+) -> None:
+    source = _Source()
+
+    async def validate_access() -> None:
+        if source.read_started.is_set():
+            raise MCPSourceError("denied")
+
+    config = MCPSourceConfig(_ENDPOINT, approved_resource_ids=(_DOCUMENT,))
+    async with (
+        asyncio.timeout(2),
+        MCPSourceClient(config, None, validate_access=validate_access, _transport=source) as client,
+    ):
+        with pytest.raises(MCPSourceError, match="^MCP source denied$"):
+            await client.read(_DOCUMENT)
+    assert source.closed
+
+
+@pytest.mark.asyncio
 async def test_session_deadline_cancels_stalled_read(pin: list[str]) -> None:
     source = _Source()
     source.stall = True
