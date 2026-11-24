@@ -52,6 +52,7 @@ def _row_binding(row: dict) -> ScheduleBinding:
         str(row["connection_id"]),
         str(row["worker_id"]),
         row["connection_generation"],
+        row["source_generation"],
         row["selection_generation"],
         row["worker_generation"],
     )
@@ -100,6 +101,7 @@ async def enqueue_demand_on(
         binding.connection_id,
         authority.destination_id,
         binding.connection_generation,
+        binding.source_generation,
         binding.selection_generation,
         binding.worker_generation,
         authority.profile_digest,

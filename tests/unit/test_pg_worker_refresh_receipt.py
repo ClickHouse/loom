@@ -24,7 +24,7 @@ from server.knowledge.store.pg_worker_refresh import (
 class TestRefreshReceipt(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         scope = RefreshScope(
-            "org", "team", "alice", "source", "connection", "copy", 2, 4, 5, "b" * 64
+            "org", "team", "alice", "source", "connection", "copy", 2, 11, 4, 5, "b" * 64
         )
         task = DocumentTask("job", scope, "urn:source:selected")
         self.lease = LiveLease(task, str(uuid4()), 3, datetime.now(UTC) - timedelta(seconds=2))
@@ -56,6 +56,16 @@ class TestRefreshReceipt(unittest.IsolatedAsyncioTestCase):
         for authority in (None, replace(self.authorize.return_value, user_id="bob")):
             self.authorize.return_value = authority
             self.assertFalse(await replay_completion(self.conn, self.completion))
+
+    async def test_terminal_receipt_refuses_a_new_source_generation(self) -> None:
+        old = self.lease.task
+        newer = replace(
+            old, scope=replace(old.scope, source_generation=old.scope.source_generation + 1)
+        )
+        self.authorize.return_value = replace(self.authorize.return_value, task=newer)
+        self.assertFalse(await replay_completion(self.conn, self.completion))
+        self.conn.execute.assert_not_awaited()
+        self.conn.fetchval.assert_not_awaited()
 
     async def test_same_fence_does_not_replay_a_changed_completion(self) -> None:
         changed = replace(self.receipt, observation=Observation(ObservationKind.PRESENT, "b" * 64))

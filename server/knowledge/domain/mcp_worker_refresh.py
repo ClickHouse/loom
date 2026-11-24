@@ -55,6 +55,7 @@ class RefreshScope:
     connection_id: str
     destination_id: str
     connection_generation: int
+    source_generation: int
     selection_generation: int
     approval_generation: int
     profile_digest: str
@@ -71,6 +72,7 @@ class RefreshScope:
             _require_identifier(identifier)
         for generation in (
             self.connection_generation,
+            self.source_generation,
             self.selection_generation,
             self.approval_generation,
         ):

@@ -13,7 +13,7 @@ from server.knowledge.domain.mcp_worker_schedule import (
     plan_scheduled_refresh,
 )
 
-_BINDING = ScheduleBinding("org", "namespace", "source", "connection", "worker", 2, 3, 4)
+_BINDING = ScheduleBinding("org", "namespace", "source", "connection", "worker", 2, 11, 3, 4)
 _DUE = datetime(2026, 1, 1, tzinfo=UTC)
 _SCHEDULE = PeriodicSchedule(_BINDING, 60, _DUE)
 
@@ -68,6 +68,7 @@ def test_periodic_pause_does_not_spend_the_cursor() -> None:
         {"source_id": "other-source"},
         {"connection_id": "other-connection"},
         {"connection_generation": 3},
+        {"source_generation": 12},
         {"selection_generation": 4},
         {"worker_id": "replacement-worker"},
         {"worker_generation": 5},

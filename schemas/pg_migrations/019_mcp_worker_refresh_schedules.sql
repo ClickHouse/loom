@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS loom.mcp_worker_refresh_schedules (
     connection_id uuid NOT NULL CHECK (connection_id <> '00000000-0000-0000-0000-000000000000'),
     worker_id uuid NOT NULL CHECK (worker_id <> '00000000-0000-0000-0000-000000000000'),
     connection_generation bigint NOT NULL CHECK (connection_generation > 0),
+    source_generation bigint NOT NULL CHECK (source_generation > 0),
     selection_generation bigint NOT NULL CHECK (selection_generation > 0),
     worker_generation bigint NOT NULL CHECK (worker_generation > 0),
     interval_seconds integer NOT NULL CHECK (interval_seconds BETWEEN 300 AND 86400),

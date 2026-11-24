@@ -15,6 +15,7 @@ _SCOPE = refresh.RefreshScope(
     connection_id="connection-one",
     destination_id="collection-one",
     connection_generation=5,
+    source_generation=11,
     selection_generation=7,
     approval_generation=2,
     profile_digest="b" * 64,
@@ -76,6 +77,7 @@ def test_refresh_plan_rejects_unbounded_or_invalid_selection(resources: tuple[st
         ("destination_id", "other-collection"),
         ("connection_id", "replacement-connection"),
         ("connection_generation", 6),
+        ("source_generation", 12),
         ("selection_generation", 8),
     ],
 )

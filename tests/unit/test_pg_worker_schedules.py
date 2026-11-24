@@ -10,7 +10,7 @@ from server.knowledge.domain.mcp_worker_schedule import ScheduleBinding, plan_ma
 from server.knowledge.store import pg_worker_schedules as store
 
 _DUE = datetime(2026, 1, 1, tzinfo=UTC)
-_BINDING = ScheduleBinding("org", "team", str(uuid4()), str(uuid4()), str(uuid4()), 2, 4, 5)
+_BINDING = ScheduleBinding("org", "team", str(uuid4()), str(uuid4()), str(uuid4()), 2, 11, 4, 5)
 _AUTH = store.ScheduleAuthority(
     _BINDING, "b" * 64, ("urn:document:selected",), "team", "alice", "alice", "agent", "-"
 )
@@ -33,6 +33,7 @@ def connection():
         "connection_id": _BINDING.connection_id,
         "worker_id": _BINDING.worker_id,
         "connection_generation": _BINDING.connection_generation,
+        "source_generation": _BINDING.source_generation,
         "selection_generation": _BINDING.selection_generation,
         "worker_generation": _BINDING.worker_generation,
         "user_id": "alice",
@@ -64,7 +65,8 @@ async def test_due_copy_uses_selection_and_advances_after_enqueue(enabled, conne
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "key,value", [("user_id", "bob"), ("paused", True), ("worker_generation", 6)]
+    "key,value",
+    [("user_id", "bob"), ("paused", True), ("source_generation", 12), ("worker_generation", 6)],
 )
 async def test_stale_or_paused_never_admits(enabled, connection, key, value):
     connection.fetchrow.return_value[key] = value

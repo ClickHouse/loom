@@ -48,6 +48,7 @@ class ScheduleBinding:
     connection_id: str
     worker_id: str
     connection_generation: int
+    source_generation: int
     selection_generation: int
     worker_generation: int
 
@@ -62,6 +63,7 @@ class ScheduleBinding:
             _require_identifier(identifier)
         for generation in (
             self.connection_generation,
+            self.source_generation,
             self.selection_generation,
             self.worker_generation,
         ):
