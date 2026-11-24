@@ -529,7 +529,10 @@ async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOut
             out.candidates = target.candidates
             out.ambiguous = len(target.candidates) > 1
         else:
-            out.resolved_by = "file_clues" if input.name else "repository_clues"
+            if target.recovered_argument:
+                out.resolved_by = "repository_argument"
+            else:
+                out.resolved_by = "file_clues" if input.name else "repository_clues"
             out.candidates = [
                 candidate
                 for candidate in target.candidates

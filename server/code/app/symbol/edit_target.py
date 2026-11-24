@@ -23,6 +23,7 @@ class EditTarget:
     rows: list[dict[str, Any]] = field(default_factory=list)
     matches: list[dict[str, Any]] = field(default_factory=list)
     grouped: bool = False
+    recovered_argument: bool = False
 
 
 async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
@@ -50,7 +51,8 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
         ),
         exact_path=path,
     )
-    matches = found.related.matches if found.related is not None else found.matches
+    related = found.related
+    matches = related.matches if related is not None else found.matches
     candidates = _scope_candidates(matches)
     if not path:
         paths = {match["path"] for match in matches}
@@ -58,7 +60,7 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
             return EditTarget(candidates=candidates)
         (path,) = paths
     revision = match_revisions(matches, found._match_commits).get(path)
-    truncated = found.related.truncated if found.related is not None else found.truncated
+    truncated = related.truncated if related is not None else found.truncated
     if not revision or found.has_more or truncated or found.partial:
         return EditTarget(candidates=candidates)
     from server.code.app.symbol.enclosing import ENCLOSING_KINDS
@@ -69,7 +71,14 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
     )
     targets = _matched_rows(rows, matches)
     if len(targets) == 1:
-        return EditTarget(f"{path}:{matches[0]['line']}", revision, candidates, targets, matches)
+        return EditTarget(
+            f"{path}:{matches[0]['line']}",
+            revision,
+            candidates,
+            targets,
+            matches,
+            recovered_argument=related is not None,
+        )
     lines = {m["line"] for m in matches}
     types = await repo.types_for_paths(org, ns, [path], with_revision=True)
     covering = sorted(
@@ -87,14 +96,24 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
         return EditTarget(candidates=candidates)
     name = f"{path}:{owner['qualified_name']}"
     if not _is_large_container(owner) and _indexed_commit(owner.get("extent_commit")) == revision:
-        return EditTarget(name, revision, candidates, [owner], matches)
+        return EditTarget(
+            name, revision, candidates, [owner], matches, recovered_argument=related is not None
+        )
     scoped = [m for m in matches if _contains(owner, m["line"])]
     members = _matched_rows(rows, scoped)
     if not members or any(
         not row["qualified_name"].startswith(owner["qualified_name"] + "::") for row in members
     ):
         return EditTarget(candidates=candidates)
-    return EditTarget(name, revision, candidates, members, scoped, grouped=True)
+    return EditTarget(
+        name,
+        revision,
+        candidates,
+        members,
+        scoped,
+        grouped=True,
+        recovered_argument=related is not None,
+    )
 
 
 def _matched_rows(
