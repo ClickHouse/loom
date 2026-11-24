@@ -69,26 +69,6 @@ def validate_catalog(catalog, case, paths):
             and set(row["source_ids"]) <= set(sources),
             "Historical note lacks short, source-scoped evidence",
         )
-        initial_sources = row.get("initial_source_ids", row["source_ids"])
-        initial_value = row.get("initial_value", row["value"])
-        _require(
-            initial_sources
-            and set(initial_sources) <= set(sources)
-            and isinstance(initial_value, str)
-            and 0 < len(initial_value) <= limits["max_chars"]
-            and len(initial_value.split()) <= limits["max_words"],
-            "Initial note lacks short, verified evidence",
-        )
-        if case.get("history_base_cutoff"):
-            _require(
-                all(
-                    _date(sources[key][field]) < _date(case["history_base_cutoff"])
-                    for key in initial_sources
-                    for field in ("published_at", "last_edited_at", "merged_at")
-                    if sources[key].get(field)
-                ),
-                "Initial memory source was not available at the historical revision",
-            )
 
 
 def verify_sources(sources):
@@ -142,73 +122,40 @@ def materialize_cases(assets_path, output_path):
     write(evidence, verify_sources(catalog["sources"]))
     fixtures = {}
     mirror = Path(receipt["source_git"])
-    heads = sorted(
-        {case["history_base_commit"] for case in cases.values()}
-        | {task["base_commit"] for task in public}
-    )
+    heads = sorted({task["base_commit"] for task in public})
     fetch = ["fetch", "--no-tags"]
     if git(mirror, "rev-parse", "--is-shallow-repository").strip() == b"true":
         fetch.append("--unshallow")
     git(mirror, *fetch, "https://github.com/pallets/flask.git", *heads)
     for task in public:
-        git(
-            mirror,
-            "merge-base",
-            "--is-ancestor",
-            cases[task["task_id"]]["history_base_commit"],
-            task["base_commit"],
-        )
-    for task in public:
         case = cases[task["task_id"]]
         _require(case["base_commit"] == task["base_commit"], "Historical task base changed")
         source = FrozenSource(Path(receipt["source_git"]), task["base_commit"])
         files = source_files(source.mirror, source.commit, roots)
-        earlier = FrozenSource(Path(receipt["source_git"]), case["history_base_commit"])
-        initial_files = source_files(earlier.mirror, earlier.commit, roots)
         validate_catalog(catalog, case, files)
         events, documents = [], {}
         for row in catalog["records"]:
-            value = _sourced(
-                catalog,
-                row.get("initial_value", row["value"]),
-                row.get("initial_source_ids", row["source_ids"]),
-            )
+            value = _sourced(catalog, row["value"], row["source_ids"])
+            documents[row["key"]] = value
             events.append(
                 dict(
                     sequence=len(events) + 1,
                     operation="set",
-                    revision="A",
+                    revision="B",
                     key=row["key"],
                     value=value,
                     files=row["files"],
-                    source_ids=row.get("initial_source_ids", row["source_ids"]),
+                    source_ids=row["source_ids"],
                 )
             )
-            documents[row["key"]] = _sourced(catalog, row["value"], row["source_ids"])
-        for row in catalog["records"]:
-            if row.get("initial_value") is not None:
-                events.append(
-                    dict(
-                        sequence=len(events) + 1,
-                        operation="update",
-                        revision="B",
-                        key=row["key"],
-                        value=documents[row["key"]],
-                        files=row["files"],
-                        source_ids=row["source_ids"],
-                    )
-                )
         fixture = {
             "schema_version": 1,
-            "kind": "historical-evolution",
+            "kind": "historical-snapshot",
             "case_id": task["task_id"],
             "dependency_task_id": task["task_id"],
             "source_git": receipt["source_git"],
-            "revisions": {
-                "A": {"commit": case["history_base_commit"]},
-                "B": {"commit": task["base_commit"]},
-            },
-            "source_sha256": {"A": digest(initial_files), "B": digest(files)},
+            "revisions": {"B": {"commit": task["base_commit"]}},
+            "source_sha256": {"B": digest(files)},
             "public_documents": documents,
             "public_documents_sha256": digest(documents),
             "history_events": events,
@@ -219,7 +166,7 @@ def materialize_cases(assets_path, output_path):
                 "setup_operations": len(events),
                 "code_linked_rows": catalog["requirements"]["code_linked"],
                 "unlinked_rows": catalog["requirements"]["unlinked"],
-                "revision_updates": sum(event["operation"] == "update" for event in events),
+                "revision_updates": 0,
             },
         }
         path = output / "public" / (task["task_id"] + ".json")

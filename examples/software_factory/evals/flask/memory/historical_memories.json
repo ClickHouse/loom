@@ -95,9 +95,7 @@
       "key": "history/component-recipe",
       "value": "`Blueprint.register` can nest a child, with parent prefixes on endpoint names and URLs. Parent callbacks apply to descendants. A parent error handler is tried only if the child cannot handle the exception.",
       "files": ["src/flask/blueprints.py"],
-      "source_ids": ["nested-blueprints"],
-      "initial_value": "`Blueprint.__init__` creates a reusable registration recipe, not an independent application.",
-      "initial_source_ids": ["blueprints"]
+      "source_ids": ["nested-blueprints"]
     },
     {
       "key": "history/endpoint-hook-coupling",

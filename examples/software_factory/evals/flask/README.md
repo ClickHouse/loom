@@ -43,13 +43,10 @@ project-note tools are disabled. This comparison measures the
 combined contribution of historical knowledge and its native retrieval. It does
 not isolate linking from the extra information; that needs a matched-facts ablation.
 
-The history is replayed at the public 2.0.0rc2 revision, then the index advances
-to each task's real buggy base. Native workers flag changed anchors. One memory
-is revised from an independently published later document using a checked
-version, and its link must become fresh again. This demonstrates a replayed
-lifecycle; it does not measure autonomous learning over elapsed months. Each arm uses the same
-current source revision as its paired code-only arm. No authored bug or synthetic
-source revision is added to the task set.
+Every arm starts from the same pre-fix Git commit. Setup writes the dated
+historical facts against that index and reads each one back. Each code-linked
+fact must have a fresh anchor within its declared files before any solver runs.
+This measures retrieval of accumulated project knowledge on current code.
 
 ## Verification and reporting
 

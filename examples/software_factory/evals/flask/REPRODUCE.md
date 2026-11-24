@@ -46,14 +46,11 @@ public sources; source hashes and chronology are checked before ingestion.
 Only history-seeded arms receive the 30 seeded facts. Neither the issue nor the
 source or test contract changes between arms. The study contains no authored
 replacement issues. Native links are checked at the task's actual indexed base.
-Every Loom arm exposes the same native coding tool roster. Only the two memory
-arms have private writable memory namespaces; they replay history from
-2.0.0rc2, observe changed links at the task base, then revise one source-backed
-fact and verify that its anchor becomes fresh again.
-Revision changes retire text paths removed from the verified Git source through
-Loom's native file-deletion path before backfilling the next revision. Source
-receipts record the exact paths and retirement counts; the complete index must
-still match the current source.
+Every Loom arm exposes the same native coding tool roster. The two memory
+arms write their dated notes into private namespaces after indexing the task
+base. Setup reads all 30 notes back and requires fresh anchors on the 14
+code-linked notes. The source receipt binds both index tiers and all note
+anchors to the pre-fix commit in the solver checkout.
 
 The indexed text roots are `src/flask`, `tests` and `docs`, for every Loom arm.
 They contain only the original Git revision; evaluator patches are absent.

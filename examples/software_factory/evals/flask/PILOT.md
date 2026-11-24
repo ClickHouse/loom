@@ -34,10 +34,8 @@ Each memory-enabled attempt has a private mutable memory namespace. Code-only an
 share their certified read-only source index for that case and tier. Parser and
 compiler tiers index the same source allowlist. Native memory writes, exact reads,
 current code links, source hashes and serving build must qualify before inference.
-The public source advances from an earlier real revision to the task base.
-Native workers must flag changed anchors before a source-backed memory revision
-relinks fresh. Code-only arms receive no memory namespace. This replays past knowledge
-and code evolution, rather than elapsed autonomous learning.
+Setup seeds the dated notes after indexing the task base. Every code-linked
+note must have a fresh anchor on that revision before a coding attempt starts.
 
 Freeze source, tasks, evaluator inputs, model, prices, images, schema exposure,
 prompts, provider limits and all namespace identities. Require base controls to

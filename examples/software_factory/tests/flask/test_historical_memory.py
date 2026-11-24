@@ -3,6 +3,9 @@
 import copy
 import json
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from examples.software_factory.evals.flask.memory import historical
 
@@ -19,6 +22,38 @@ class HistoricalCorpus(unittest.TestCase):
         self.assertEqual(sum(bool(row["files"]) for row in self.catalog["records"]), 14)
         for case in self.cases:
             historical.validate_catalog(self.catalog, case, self.paths)
+
+    def test_materialization_seeds_only_the_task_base(self):
+        tasks = [
+            {"task_id": case["case_id"], "base_commit": case["base_commit"]} for case in self.cases
+        ]
+        with TemporaryDirectory() as directory:
+            assets = Path(directory)
+            (assets / "assets.json").write_text(json.dumps({"source_git": str(assets)}))
+            (assets / "historical.json").write_text(json.dumps({"tasks": tasks}))
+            with (
+                patch.object(historical, "git", return_value=b"false"),
+                patch.object(historical, "source_files", return_value=sorted(self.paths)),
+                patch.object(historical, "verify_sources", return_value={}),
+            ):
+                result = historical.materialize_cases(assets, assets / "output")
+            for task in tasks:
+                path = Path(result["fixtures"][task["task_id"]]["fixture_file"])
+                fixture = json.loads(path.read_text())
+                self.assertEqual(fixture["kind"], "historical-snapshot")
+                self.assertEqual(fixture["revisions"], {"B": {"commit": task["base_commit"]}})
+                writes = fixture["history_events"]
+                self.assertEqual(len(writes), 30)
+                self.assertEqual(sum(bool(write["files"]) for write in writes), 14)
+                self.assertTrue(
+                    all(
+                        write["operation"] == "set" and write["revision"] == "B" for write in writes
+                    )
+                )
+                self.assertEqual(
+                    {write["key"]: write["value"] for write in writes},
+                    fixture["public_documents"],
+                )
 
     def test_observed_failure_and_target_solutions_are_not_memory_content(self):
         text = json.dumps([row["value"] for row in self.catalog["records"]])
