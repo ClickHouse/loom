@@ -1139,10 +1139,10 @@ Read inclusive, one-based indexed lines.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `ranges` | `list[str] \| list[CodeReadRangeInput \| str]` | *(computed)* | Keep an all-string list as a distinct shape for typed callers. |
-| `path` | `str \| None` | `None` |  |
-| `start_line` | `int \| None` | `None` |  |
-| `end_line` | `int \| None` | `None` |  |
+| `ranges` | `list[str] \| list[CodeReadRangeInput \| str]` | *(computed)* | Read several inclusive one-based ranges. |
+| `path` | `str \| None` | `None` | Repository-relative file for a single range. |
+| `start_line` | `int \| None` | `None` | First line of a single range, one-based. |
+| `end_line` | `int \| None` | `None` | Last line of a single range, inclusive. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

@@ -20,13 +20,17 @@ class CodeReadRangeInput(BaseModel):
 
 
 class CodeReadInput(_CodeIdentity):
-    # Keep an all-string list as a distinct shape for typed callers.
+    # Read several inclusive one-based ranges. Use objects with path, start_line,
+    # and optional end_line, or strings in path:start-end form.
     ranges: (
         Annotated[list[_RangeText], Field(max_length=32)]
         | Annotated[list[CodeReadRangeInput | _RangeText], Field(max_length=32)]
     ) = Field(default_factory=list)
+    # Repository-relative file for a single range.
     path: _FilePath | None = None
+    # First line of a single range, one-based.
     start_line: _SourceLine | None = None
+    # Last line of a single range, inclusive. Defaults to start_line.
     end_line: _SourceLine | None = None
 
 
