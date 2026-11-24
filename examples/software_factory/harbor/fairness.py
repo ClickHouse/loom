@@ -53,6 +53,8 @@ def attempt_evidence_verified(protocol, audit, field):
     return (
         audit.get("protocol_sha256") == digest(protocol)
         and len(audit["attempts"]) == len(protocol["schedule"])
+        and {row["order"] for row in audit["attempts"]}
+        == {slot["order"] for slot in protocol["schedule"]}
         and all(row.get(field) is True for row in audit["attempts"])
     )
 
