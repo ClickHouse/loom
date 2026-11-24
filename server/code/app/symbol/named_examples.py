@@ -7,26 +7,33 @@ import re
 from typing import Any
 
 from server.code.app.symbol.resolve import _indexed_commit
+from server.code.app.symbol_uses import TYPE_KINDS, single_declaration
 from server.code.domain.symbol_body import retained_source_lines, retained_source_window
 from server.code.store.index import CodeRepo
 from server.embedding.embedder import served_model_label
 from server.settings import settings
-
-_TYPE_REFERENCES = frozenset({"class", "struct", "interface", "enum", "trait", "type"})
 
 
 async def named_test_examples(
     repo: CodeRepo, org: str, ns: str, definition: dict[str, Any], radius: int
 ) -> list[dict[str, Any]]:
     """Read tests that mention a type in verified source, such as decorator arguments."""
-    if definition.get("kind") not in _TYPE_REFERENCES:
+    if definition.get("kind") not in TYPE_KINDS:
         return []  # routine names alone do not identify which declaration the test called
     name = str(definition.get("name") or "")
     if len(name) < 3 or not name.isidentifier() or not settings.embedding_model:
         return []
     reference = re.compile(rf"\b{re.escape(name)}\b")
     model = served_model_label(settings.embedding_model)
-    candidates = await repo.symbols_fuzzy(org, ns, name, tests_only=True, limit=6)
+    declarations, candidates = await asyncio.gather(
+        repo.symbols_by_name(org, ns, name),
+        repo.symbols_fuzzy(org, ns, name, tests_only=True, limit=6),
+    )
+    target = (definition.get("qualified_name"), definition.get("path"))
+    if not single_declaration(declarations) or {
+        (row.get("qualified_name"), row.get("path")) for row in declarations
+    } != {target}:
+        return []
 
     async def example(row: dict[str, Any]) -> dict[str, Any] | None:
         revision = _indexed_commit(row.get("indexed_commit"))
