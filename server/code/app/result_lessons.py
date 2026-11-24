@@ -138,7 +138,8 @@ class WithLessons:
         symbols = None
         grep_lines = None
         if isinstance(input, CodeGrepInput) and input.mode == "matches":
-            symbols, grep_lines = _grep_match_scopes(out.matches, out._match_commits)
+            rows = out.related.matches if out.related is not None else out.matches
+            symbols, grep_lines = _grep_match_scopes(rows, out._match_commits)
         elif isinstance(input, CodeSearchInput):
             symbols = _search_match_symbols(out)
         found = await lessons_for(
@@ -205,6 +206,8 @@ def grep_paths(input: Any, out: Any) -> list[str]:
     if input.mode == "presence" or out.not_covered:
         return []
     rows = out.files if input.mode == "files" else out.matches
+    if input.mode == "matches" and out.related is not None:
+        rows = out.related.matches
     return [str(row.get("path") or "") for row in rows]
 
 

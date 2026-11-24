@@ -70,6 +70,17 @@ def test_other_ops_and_non_dict_arguments_pass_through() -> None:
     assert mcp_default_arguments("code.index_status", None) is None
 
 
+def test_coding_grep_suggests_related_source_with_explicit_opt_out() -> None:
+    assert mcp_default_arguments("code.grep", {}, toolset="coding")["related_on_miss"]
+    assert "related_on_miss" not in mcp_default_arguments("code.grep", {}, toolset="core")
+    assert (
+        mcp_default_arguments("code.grep", {"related_on_miss": False}, toolset="coding")[
+            "related_on_miss"
+        ]
+        is False
+    )
+
+
 def test_coding_symbol_calls_include_test_source_by_default() -> None:
     args = mcp_default_arguments("code.symbol", {"name": "X"}, toolset="coding")
     assert args["test_examples_only"] is True

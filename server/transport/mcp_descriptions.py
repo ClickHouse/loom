@@ -2190,6 +2190,7 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.grep": (
         "Find text and enclosing bodies in one call. Scope with `path_prefix` or `path_globs`. "
+        "An absent call expression can return separately labeled related source and linked notes. "
         "Use a list of literals in `pattern` or one RE2 string with `regex: true`. "
         "Use `include_body: false` for locations or `context_lines` excerpts. "
         "For an edit in a known file, use code.edit_context with literal clues. "

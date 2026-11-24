@@ -50,6 +50,13 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         default=False,
         description="Use RE2 syntax without lookaround or backreferences when true.",
     )
+    related_on_miss: bool = Field(
+        default=False,
+        description=(
+            "If a literal call expression is absent, also find its qualified argument. "
+            "Default true on coding connections."
+        ),
+    )
     # False matches `pattern` regardless of letter case.
     case_sensitive: bool = True
     include_lessons: bool = Field(
@@ -162,6 +169,19 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         return min(self.limit or 20, 200)
 
 
+class RelatedGrepEvidence(BaseModel):
+    """Verified lines for a qualified argument inside a missing call expression."""
+
+    pattern: str
+    matches: list[dict[str, Any]]
+    contexts: list[dict[str, Any]] = Field(default_factory=list)
+    contexts_partial: bool = False
+    definitions: list[dict[str, Any]] = Field(default_factory=list)
+    definitions_partial: bool = False
+    definitions_note: str = ""
+    truncated: bool = False
+
+
 class CodeGrepOutput(_LessonsOut):
     # File lessons omitted by symbol focus, a token budget, truncation or supersession.
     lessons_left_out: int = 0
@@ -188,6 +208,8 @@ class CodeGrepOutput(_LessonsOut):
         for k in ("partial", "partial_reason", "fallback"):
             if not data.get(k):
                 data.pop(k, None)
+        if data.get("related") is None:
+            data.pop("related", None)
         return _drop_empty_lessons(data)
 
     # {path, line, text, scope, scope_start_line, scope_end_line} per matching
@@ -195,6 +217,8 @@ class CodeGrepOutput(_LessonsOut):
     # by `scope` (0/0 when the line sits in no unit) — enough to decide whether
     # to fetch the body, or to skip it when that unit is already on screen.
     matches: list[dict[str, Any]]
+    # On a literal miss, source for a qualified argument in the requested expression.
+    related: RelatedGrepEvidence | None = None
     # Exact retained source windows for this page, with inclusive line bounds.
     contexts: list[dict[str, Any]] = Field(default_factory=list)
     contexts_partial: bool = False

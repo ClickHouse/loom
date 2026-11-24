@@ -57,7 +57,7 @@ async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
                 "run",
                 1,
                 2,
-                "def run():\n    return callback()\n",
+                "def run():\n    return callback(payload.value)\n",
                 [0.0] * settings.embedding_dim,
                 1,
             ]
@@ -92,6 +92,20 @@ async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
         assert response.status_code == 200, response.text
         payload = response.json()
         assert "lessons" not in payload.get("data", payload)
+        body.update(pattern="other_call(payload.value)", include_body=False)
+        response = await client.post("/v1/code.grep", json=body)
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert not data["matches"] and "related" not in data
+        response = await client.post("/v1/code.grep", json={**body, "related_on_miss": True})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert not data["matches"] and not data.get("next_cursor")
+        assert data["related"]["pattern"] == "payload.value"
+        assert data["related"]["matches"][0]["text"] == "return callback(payload.value)"
+        assert {row["memory_key"] for row in data["lessons"]} == {"notes/allowed"}
 
 
 async def test_enclosing_attaches_only_authorized_resolved_file_lessons(

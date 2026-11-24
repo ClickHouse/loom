@@ -762,6 +762,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `pattern` | `str \| list[str]` | required | Literal text, a list of alternatives, or one RE2 expression with regex=true. |
 | `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
+| `related_on_miss` | `bool` | `False` | If a literal call expression is absent, also find its qualified argument. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `context_lines` | `int` | `0` | Retained lines on each side of a match. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
@@ -783,6 +784,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
 | `matches` | `list[dict[str, Any]]` | {path, line, text, scope, scope_start_line, scope_end_line} per matching LINE, path/line ordered. scope_* is the span of the enclosing unit named by `scope` (0/0 when the line sits in no unit) — enough to decide whether to fetch the body… |
+| `related` | `RelatedGrepEvidence \| None` | On a literal miss, source for a qualified argument in the requested expression. |
 | `contexts` | `list[dict[str, Any]]` | Exact retained source windows for this page, with inclusive line bounds. |
 | `contexts_partial` | `bool` |  |
 | `definitions` | `list[dict[str, Any]]` | include_body: distinct enclosing units, in hit order; `lines` names the matching lines each definition covers. |

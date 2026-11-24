@@ -49,6 +49,18 @@ def test_grep_reports_returned_lines_and_disclosed_lesson_omissions() -> None:
     assert "out_grep_match_lines" not in project_result(result, op_name="code.verify")
 
 
+def test_grep_counts_related_source_separately_from_exact_matches() -> None:
+    counts = code_response_counts(
+        {
+            "matches": [],
+            "related": {"matches": [{}, {}], "definitions": [{"body": "related"}]},
+        },
+        op_name="code.grep",
+    )
+    assert counts["grep_match_lines"] == 0 and counts["grep_related_lines"] == 2
+    assert counts["source_bodies"] == 1 and counts["source_chars"] == 7
+
+
 def test_symbol_lessons_and_empty_or_elided_bodies_keep_their_meaning() -> None:
     counts = code_response_counts(
         {

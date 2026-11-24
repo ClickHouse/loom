@@ -10,7 +10,7 @@ _LINK_STATES = ("fresh", "moved", "changed", "unresolved", "missing")
 def code_response_counts(result: dict[str, Any], *, op_name: str = "") -> dict[str, int]:
     """Count the source and lessons in the answer, including repeated returned rows.
 
-    Only the root and its definition/result rows carry bodies or lessons. Walking
+    Only known source containers carry bodies or lessons. Walking
     those known containers avoids treating examples or arbitrary metadata as source.
     Character counts use Python string length, not bytes or provider tokens.
     """
@@ -18,6 +18,9 @@ def code_response_counts(result: dict[str, Any], *, op_name: str = "") -> dict[s
     for field in ("definitions", "results"):
         if isinstance(values := result.get(field), list):
             rows.extend(value for value in values if isinstance(value, dict))
+    related = result.get("related") if op_name == "code.grep" else None
+    if isinstance(related, dict) and isinstance(definitions := related.get("definitions"), list):
+        rows.extend(row for row in definitions if isinstance(row, dict))
     bodies = [row["body"] for row in rows if isinstance(row.get("body"), str) and row["body"]]
     lessons = [
         lesson
@@ -44,6 +47,8 @@ def code_response_counts(result: dict[str, Any], *, op_name: str = "") -> dict[s
     }
     if op_name == "code.grep" and isinstance(matches := result.get("matches"), list):
         counts["grep_match_lines"] = len(matches)
+    if isinstance(related, dict) and isinstance(matches := related.get("matches"), list):
+        counts["grep_related_lines"] = len(matches)
     omitted = result.get("lessons_left_out")
     if type(omitted) is int and omitted >= 0:
         counts["lesson_rows_omitted"] = omitted
@@ -70,6 +75,7 @@ def record_response_counts(projected: dict[str, str]) -> None:
             "lesson_chars",
             "lesson_rows_omitted",
             "grep_match_lines",
+            "grep_related_lines",
             *("lesson_" + state for state in _LINK_STATES),
             "lesson_unclassified",
         )

@@ -91,6 +91,13 @@ the parentheses. All alternatives share a result limit, and each matching line
 or file appears once.
 `mode: "message"` and `regex: true` require a single string.
 
+When an exact call expression such as `convert(row.value)` is absent,
+`related_on_miss: true` looks for its qualified argument in the same scope.
+The `related` block names the argument and carries its verified lines and any
+requested excerpts or bodies. `matches` stays empty. Linked notes can accompany
+that source. Coding MCP connections enable this by default. HTTP and SDK callers
+can opt in.
+
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
 lines by default. Pass `include_body=false` for names, lines or locations only.
 Each definition appears once. Its `lines` lists the matching

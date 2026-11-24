@@ -24,6 +24,7 @@ Coding connections also default to indexed tests with source excerpts at the def
 `code.grep` over MCP answers ten matches a page (each with its enclosing
 function), the cursor for the rest: in paired runs an agent's grep through the
 index cost about three times the shell grep it stood in for.
+Coding connections also ask for related source when a call expression is absent.
 """
 
 from __future__ import annotations
@@ -39,19 +40,23 @@ MCP_DEFAULT_ARGUMENTS: dict[str, dict[str, Any]] = {
     "code.grep": {"limit": 10},
 }
 
-_CODING_SYMBOL_EXAMPLE_DEFAULTS = {
-    "test_examples_only": True,
-    "example_context_lines": EDIT_TEST_CONTEXT_LINES,
+_CODING_ARGUMENT_DEFAULTS: dict[str, dict[str, Any]] = {
+    "code.symbol": {
+        "test_examples_only": True,
+        "example_context_lines": EDIT_TEST_CONTEXT_LINES,
+    },
+    "code.grep": {"related_on_miss": True},
 }
 
 
 def mcp_argument_defaults(op_name: str, toolset: str | None = None) -> dict[str, Any]:
     defaults = MCP_DEFAULT_ARGUMENTS.get(op_name, {})
-    if op_name == "code.symbol":
+    coding_defaults = _CODING_ARGUMENT_DEFAULTS.get(op_name)
+    if coding_defaults:
         from server.settings import settings
 
         if "coding" in toolset_parts(resolve_toolset(toolset, settings.mcp_toolset)):
-            return {**defaults, **_CODING_SYMBOL_EXAMPLE_DEFAULTS}
+            return {**defaults, **coding_defaults}
     return defaults
 
 

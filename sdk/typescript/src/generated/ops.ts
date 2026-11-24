@@ -951,6 +951,8 @@ export interface CodeGrepInput {
   pattern: string | string[];
   /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
+  /** If a literal call expression is absent, also find its qualified argument. Default true on coding connections. */
+  related_on_miss?: boolean;
   case_sensitive?: boolean;
   /** Retained lines on each side of a match. */
   context_lines?: number;
@@ -971,10 +973,22 @@ export interface CodeGrepInput {
   deadline_ms?: number | null;
 }
 
+export interface RelatedGrepEvidence {
+  pattern: string;
+  matches: Array<Record<string, unknown>>;
+  contexts?: Array<Record<string, unknown>>;
+  contexts_partial?: boolean;
+  definitions?: Array<Record<string, unknown>>;
+  definitions_partial?: boolean;
+  definitions_note?: string;
+  truncated?: boolean;
+}
+
 export interface CodeGrepOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
+  related?: RelatedGrepEvidence | null;
   contexts?: Array<Record<string, unknown>>;
   contexts_partial?: boolean;
   definitions?: Array<Record<string, unknown>>;
