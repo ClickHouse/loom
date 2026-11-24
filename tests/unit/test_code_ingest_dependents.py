@@ -17,6 +17,7 @@ import pytest
 
 from server.code.app.index import dependents as d
 from server.code.app.index import ingest, ingest_parse
+from server.code.app.index.denylist import Denylist
 from server.settings import settings
 from tests.unit.code_fixtures import repo_config
 
@@ -418,8 +419,6 @@ def test_reader_repairs_defer_ready_work_at_the_pass_budget(monkeypatch) -> None
 
 
 def test_pending_repairs_keep_policy_and_retry_transient_errors() -> None:
-    from server.code.app.index.denylist import Denylist
-
     repo = _Repo()
     path = "contrib/pkg/reader.py"
     rules = Denylist(builtin=True, include_contrib=True)
@@ -779,6 +778,7 @@ async def test_worker_skips_dependents_when_both_settings_are_off(monkeypatch) -
             embedding_model="m",
             gitrepo=object(),
             ingest_file=object(),
+            denylist=Denylist(),
             result=result,
         )
     assert called == [] and result.errors == []
@@ -793,6 +793,7 @@ async def test_worker_counts_dependents_and_records_failures(monkeypatch) -> Non
     monkeypatch.setattr(settings, "code_closure_repair_enabled", True)
     monkeypatch.setattr(settings, "code_ingest_dependents_max_files", 7)
     result = ingest_budget.CodeIngestResult()
+    rules = Denylist(builtin=True, include_contrib=True)
     got: dict[str, Any] = {}
 
     async def fake_run(repo, org, ns, **kw):
@@ -817,9 +818,11 @@ async def test_worker_counts_dependents_and_records_failures(monkeypatch) -> Non
             embedding_model="m",
             gitrepo=_Git,
             ingest_file=object(),
+            denylist=rules,
             result=result,
         )
     assert got["max_files"] == 7 and got["delta"].names_added == {"x"}
+    assert got["denylist"] is rules
     assert got["delta"].touched_paths == {"src/t.cpp"} and got["show_file"] is _Git.show_file
     assert (
         result.closure_resolved,
@@ -844,6 +847,7 @@ async def test_worker_counts_dependents_and_records_failures(monkeypatch) -> Non
             embedding_model="m",
             gitrepo=_Git,
             ingest_file=object(),
+            denylist=rules,
             result=result,
         )
     assert result.errors == [f"{SHA[:12]} dependents: RuntimeError: ch down"]
@@ -886,8 +890,8 @@ async def test_reconcile_drains_the_queue_inside_the_heal_budget(monkeypatch) ->
         healed_paths.extend(paths)
         return _Healed()
 
-    async def drain(repo_, cfg, head, *, budget, embedding_model):
-        drain_kw.update(budget=budget, model=embedding_model)
+    async def drain(repo_, cfg, head, *, budget, embedding_model, stop_after):
+        drain_kw.update(budget=budget, model=embedding_model, stop_after=stop_after)
         return d.DrainResult(files=3, remaining=4)
 
     class _Emb:
@@ -900,7 +904,7 @@ async def test_reconcile_drains_the_queue_inside_the_heal_budget(monkeypatch) ->
         patch("server.embedding.embedder.get_embedder", new=lambda: _Emb()),
     ):
         await w._maybe_reconcile(repo, _Cfg(), SHA, result)
-    assert drain_kw == {"budget": 5, "model": "m"}
+    assert drain_kw == {"budget": 5, "model": "m", "stop_after": None}
     assert healed_paths == ["src/0.cpp", "src/1.cpp"], "heal gets the budget the drain left"
     assert result.dependents_drained == 3
     detail = json.loads(repo.state["reconcile"]["detail"])
