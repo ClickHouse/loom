@@ -19,7 +19,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Use cases
 
 - [Use cases](docs/use-cases/index.md): Each page answers one question people and agents ask when they look for a tool: what Loom does for that need and where to start.
-- [Memory for coding agents across sessions and tools](docs/use-cases/agent-memory.md): Loom is a self-hosted MCP server and HTTP API for coding agents that need to share project decisions, corrections and lessons across sessions and tools.
+- [Memory for coding agents across sessions and tools](docs/use-cases/agent-memory.md): Loom is a self-hosted MCP memory server and HTTP API for coding agents that need to share project decisions, corrections and lessons across sessions and tools.
 - [Memory, recall, audit and erasure for autonomous agents](docs/use-cases/autonomous-agents.md): Loom is a self-hosted backend for autonomous agents: memory they recall across runs, reusable procedures the agent executes, run records, an audit record of who wrote what, and scope-wide erasure.
 - [Code intelligence for C++, Python, TypeScript, Go, Rust, Java and infrastructure code](docs/use-cases/code-intelligence-by-language.md): Loom's code index answers a coding agent's structure questions in the languages a repository holds: where a symbol is defined, who calls it, and what a change touches.
 - [A code index for coding agents](docs/use-cases/code-intelligence.md): Loom gives coding agents a shared index of your git repositories, served over MCP, so an agent asks a structure question and gets the lines that answer it instead of reading whole files.
@@ -68,7 +68,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [The grep shim](docs/features/integrations/grep-shim.md): The grep shim is a `grep`/`rg` wrapper that appends each hit's enclosing function, from the code index, to the match line; it needs Node 18 or later, a viewer token and a repository in the code index.
 - [Langfuse](docs/features/integrations/langfuse.md): Needs `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; nothing is sent until both are set.
 - [LibreChat](docs/features/integrations/librechat.md): Needs LibreChat v0.8.8 (MIT), a Loom server that serves the assistant toolset, and one Loom `viewer` token per person.
-- [Connecting an MCP client](docs/features/integrations/mcp-clients.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
+- [Connect to Loom's MCP memory server](docs/features/integrations/mcp-clients.md): An MCP memory server lets AI agents save and retrieve durable facts through the Model Context Protocol.
 - [OKF bundles](docs/features/integrations/okf.md): A namespace can be rendered as an OKF (Open Knowledge Format) v0.2 bundle: one Markdown file per memory with YAML frontmatter, an `index.md` per directory listing each concept with a one-line description, and a `log.md` of changes.
 - [VS Code](docs/features/integrations/vscode.md): VS Code's agent mode (GitHub Copilot) connects to Loom as a remote MCP server over streamable HTTP.
 - [Conflicts and refusal](docs/features/memory/conflicts-and-refusal.md): Every memory write is judged against the facts the namespace already holds.

@@ -7,7 +7,7 @@ description: Choose and evaluate shared memory for coding agents with cross-sess
 
 <a id="long-term-and-shared-memory-for-ai-agents"></a>
 
-Loom is a self-hosted MCP server and HTTP API for coding agents that need to share
+Loom is a self-hosted MCP memory server and HTTP API for coding agents that need to share
 project decisions, corrections and lessons across sessions and tools. A fact saved by
 one authorized agent can be retrieved by another; a lesson linked to indexed code can
 surface with that code and carry a changed-source warning.
@@ -16,6 +16,8 @@ Use Loom when those agents need a shared service that your team operates. Keep r
 that belong in every checkout in version control. Connecting an MCP client supplies
 operations; automatic session capture depends on the client's integration and settings.
 [Connect a coding agent](../getting-started/connect-a-coding-agent.md) describes both paths.
+The [MCP memory check](../features/integrations/mcp-clients.md#verify-shared-memory-through-mcp)
+tests save and recall through separate client sessions.
 
 ## What is agentic memory?
 
