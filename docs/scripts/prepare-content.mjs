@@ -1,6 +1,6 @@
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, normalize, relative, resolve } from "node:path";
+import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const docs = dirname(fileURLToPath(import.meta.url));
@@ -8,6 +8,13 @@ const root = dirname(docs);
 const repository = dirname(root);
 const content = join(root, ".blume-content");
 const locales = ["es", "ja", "ko", "pt-BR", "zh-CN"];
+const agentMemorySeoTitles = {
+  es: "Memoria compartida para agentes de programación",
+  ja: "コーディングエージェントの共有メモリ",
+  ko: "코딩 에이전트를 위한 공유 메모리",
+  "pt-BR": "Memória compartilhada para agentes de código",
+  "zh-CN": "AI 编程智能体的共享记忆",
+};
 const excluded = new Set([
   ".blume",
   ".blume-content",
@@ -35,7 +42,9 @@ function prepareContent() {
 
   for (const file of contentFiles(content)) {
     const text = readFileSync(file, "utf8");
-    const prepared = normalizeTranslatedTitle(text);
+    const [locale, ...source] = relative(content, file).split(sep);
+    const seoTitle = source.join("/") === "use-cases/agent-memory.md" ? agentMemorySeoTitles[locale] : undefined;
+    const prepared = normalizeTranslatedTitle(text, seoTitle);
     if (prepared !== text) writeFileSync(file, prepared);
   }
 
@@ -68,7 +77,7 @@ function contentFiles(directory) {
 }
 
 /** Move a generated translation's title into front matter for Blume to render once. */
-export function normalizeTranslatedTitle(text) {
+export function normalizeTranslatedTitle(text, seoTitle) {
   if (!text.startsWith("<!-- i18n: source=")) return text;
 
   const lines = text.split("\n");
@@ -78,7 +87,8 @@ export function normalizeTranslatedTitle(text) {
   const title = lines[heading].replace(/^#\s+/, "").replace(/\s+#+\s*$/, "");
   lines.splice(heading, 1);
   if (lines[heading - 1] === "" && lines[heading] === "") lines.splice(heading, 1);
-  return `---\ntitle: ${JSON.stringify(title)}\n---\n\n${lines.join("\n")}`;
+  const seo = seoTitle ? `\nseo:\n  title: ${JSON.stringify(seoTitle)}` : "";
+  return `---\ntitle: ${JSON.stringify(title)}${seo}\n---\n\n${lines.join("\n")}`;
 }
 
 export function rewriteSourceLinks(text, from) {

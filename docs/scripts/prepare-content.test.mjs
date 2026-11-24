@@ -22,6 +22,20 @@ test("leaves English content unchanged", () => {
   assert.equal(normalizeTranslatedTitle(source), source);
 });
 
+test("sets the search title without changing the translated heading or body", () => {
+  const stamp = "<!-- i18n: source=docs/use-cases/agent-memory.md blob=abc model=test -->";
+  const prepared = normalizeTranslatedTitle(
+    `${stamp}\n\n# Memória de longo prazo e compartilhada\n\nTexto.\n`,
+    "Memória compartilhada para agentes de código",
+  );
+  assert.equal(
+    prepared,
+    '---\ntitle: "Memória de longo prazo e compartilhada"\n' +
+      'seo:\n  title: "Memória compartilhada para agentes de código"\n---\n\n' +
+      `${stamp}\n\nTexto.\n`,
+  );
+});
+
 test("keeps translated repository links outside the docs site", () => {
   const source = "[README](../../README.md)\n";
   const expected = "[README](https://github.com/ClickHouse/loom/blob/main/README.md)\n";
