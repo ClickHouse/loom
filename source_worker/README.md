@@ -53,6 +53,24 @@ capacity limits. It never authorizes a stored write. The issuer must check
 selection and requester authority before issuing it and before delivering a
 result. The worker rechecks its connection during the read and before reply.
 
+## Docker Compose
+
+`compose.yaml` starts the worker and its TLS proxy only when the `source-worker`
+profile is selected. Place the worker configuration and public grant verifier
+under `operator/worker/config`, the credential service token under
+`operator/worker/credentials`, and the TLS server chain, private key and trusted
+client CA under `operator/proxy`. Supply these files through deployment secret
+management and keep them out of the image and repository.
+
+The proxy is reachable only from the internal `worker-ingress` network. Attach
+the approved grant issuer to that network and configure it to verify the proxy
+certificate by name and present its own client certificate. The manifest does
+not publish a host port. Only the worker joins the egress network. Restrict that
+network to approved MCP hosts, DNS and the credential backend through host or
+infrastructure policy; Compose network membership alone does not allowlist
+outbound destinations.
+
 The hosted package test uses owned SDK resource and mapped-tool servers with
-synthetic accounts. It does not qualify production credential infrastructure
-or a particular external service.
+synthetic accounts. The separate deployment smoke uses the Compose image and
+proxy with synthetic certificates and a credential fixture. These tests do not
+qualify production credential infrastructure or a particular external service.

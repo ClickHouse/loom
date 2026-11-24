@@ -1,0 +1,94 @@
+services:
+  source-worker:
+    profiles: [source-worker]
+    build:
+      context: .
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 35s
+    networks: [worker-egress]
+    volumes:
+      - type: bind
+        source: ./operator/worker/config
+        target: /etc/loom-source-worker
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./operator/worker/credentials
+        target: /run/loom-source-worker/credentials
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: worker-socket
+        target: /run/loom-source-worker/socket
+        volume:
+          nocopy: true
+
+  source-worker-proxy:
+    profiles: [source-worker]
+    image: nginx:1.30.8-alpine@sha256:6437a63b5c529f0e06162b3f593c0154cff6fa2ea0f94fd7c27928cb399e022d
+    user: "10001:10001"
+    entrypoint: [nginx]
+    command: [-e, /dev/null, -g, "daemon off;", -c, /etc/nginx/nginx.conf]
+    depends_on: [source-worker]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: "none"
+    networks: [worker-ingress]
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=1m,mode=0700,uid=10001,gid=10001
+    volumes:
+      - type: bind
+        source: ./proxy.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./operator/proxy/server-chain.pem
+        target: /etc/nginx/tls/server-chain.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./operator/proxy/server-key.pem
+        target: /etc/nginx/tls/server-key.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./operator/proxy/client-ca.pem
+        target: /etc/nginx/tls/client-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: worker-socket
+        target: /run/loom-source-worker/socket
+        read_only: true
+        volume:
+          nocopy: true
+
+networks:
+  worker-ingress:
+    driver: bridge
+    internal: true
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  worker-egress:
+    driver: bridge
+
+volumes:
+  worker-socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=10001,gid=10001,mode=0700,size=64k,nosuid,nodev,noexec"

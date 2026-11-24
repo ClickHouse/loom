@@ -1,0 +1,28 @@
+name: MCP source worker deployment smoke
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/mcp-source-worker-deployment.yml
+      - source_worker/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: External worker and mTLS proxy on Docker Compose
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      QUALIFICATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.QUALIFICATION_SHA }}
+          persist-credentials: false
+          sparse-checkout: /source_worker/
+          sparse-checkout-cone-mode: false
+      - name: Qualify the exact checkout with synthetic credentials
+        run: python3 -IBu source_worker/qualification/compose_smoke.py
