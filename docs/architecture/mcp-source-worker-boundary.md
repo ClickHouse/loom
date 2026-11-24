@@ -131,11 +131,12 @@ The queue stores metadata for a selected resource, never its body. A schedule
 and a manual request derive the same kind of per-resource task. Reclaiming a
 lease assigns a new fence from a noncycling sequence without changing the task
 key. An old fence cannot return after a queue row is pruned. Changing the source,
-selection, account, or approval generation invalidates existing work. A worker
-can only claim the queue partition assigned to it. A claim page reports how
-many exhausted rows it retired so the worker can distinguish progress from an
-idle poll. The requester, destination, and exact selection still need to be
-rechecked at acceptance.
+selection, account, or approval generation invalidates existing work. The store
+filters claims by the supplied organization, namespace, and worker. The
+worker API must derive those fields from authenticated scope. A claim page
+reports how many exhausted rows it retired so the worker can distinguish
+progress from an idle poll. Recheck the requester, destination, and exact
+selection at acceptance.
 
 Admission serializes on the source, allows one unfinished batch of at most 64
 items, and keeps at most 128 queue entries. The next admission under a changed

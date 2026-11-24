@@ -64,7 +64,7 @@ async def _row(conn: Connection, entry: RefreshEntry) -> Record:
         """
         SELECT org, namespace, item_key, worker_id, source_uri, agent, user_id, session_id,
                admission_source_id,
-               actor, source_class, task, state, fence, claimable_at, receipt
+               actor, source_class, task, state, attempts, fence, claimable_at, receipt
         FROM loom.knowledge_source_refresh
         WHERE org = $1 AND namespace = $2 AND item_key = $3
         """,
@@ -96,6 +96,7 @@ async def _assert_pending(conn: Connection, entry: RefreshEntry) -> None:
         "source_class": "external",
         "task": {"version": 1, "task": asdict(entry.task)},
         "state": "pending",
+        "attempts": 0,
         "fence": 0,
         "claimable_at": entry.due,
         "receipt": None,
@@ -535,6 +536,63 @@ async def test_pruned_queue_identity_never_reuses_a_claim_fence(pg_conn: Connect
                         pg_conn, replace(first, expires_at=second.expires_at)
                     )
                 assert await refresh.lock_current(pg_conn, second) == second
+    finally:
+        await _cleanup(pg_conn, org)
+
+
+async def _assert_reclaimed_checkpoint(
+    conn: Connection, entry: RefreshEntry, first: LiveLease, second: LiveLease
+) -> None:
+    from server.knowledge.domain.mcp_worker_refresh import RefreshRejected
+    from server.knowledge.store import pg_worker_refresh as refresh
+
+    receipt = _receipt_for(second)
+    candidates = (replace(second, fence=first.fence), replace(second, expires_at=first.expires_at))
+    async with conn.transaction():
+        for stale in candidates:
+            with pytest.raises(RefreshRejected, match="no longer current"):
+                await refresh.checkpoint(conn, stale, receipt)
+            row = await _row(conn, entry)
+            assert row["state"] == "claimed" and row["receipt"] is None
+            assert row["fence"] == second.fence and row["claimable_at"] == second.expires_at
+        await refresh.checkpoint(conn, second, receipt)
+    row = await _row(conn, entry)
+    assert row["state"] == "completed" and row["attempts"] == 2
+    assert json.loads(row["receipt"]) == asdict(receipt)
+
+
+@pytest.mark.asyncio
+async def test_expired_claim_reuses_job_but_rejects_stale_checkpoint(pg_conn: Connection) -> None:
+    from server.knowledge.store import pg_worker_refresh as refresh
+
+    org = unique_org("worker-pg-reclaim")
+    try:
+        async with asyncio.timeout(15):
+            due = await pg_conn.fetchval("SELECT clock_timestamp() - interval '1 second'")
+            entry = _entry(org, "reclaim", due)
+            async with pg_conn.transaction():
+                assert await refresh.enqueue_batch_on(pg_conn, (entry,)) == 1
+            (first,) = (
+                await refresh.claim(
+                    org=org,
+                    namespace=entry.task.scope.namespace,
+                    worker_id=entry.worker_id,
+                    limit=1,
+                    lease_seconds=2,
+                )
+            ).leases
+            first_row = await _row(pg_conn, entry)
+            assert first_row["attempts"] == 1 and first_row["receipt"] is None
+            await pg_conn.fetchval(
+                "SELECT pg_sleep(GREATEST(0, extract(epoch FROM ($1::timestamptz - clock_timestamp()))))",
+                first.expires_at,
+            )
+            (second,) = (await _claim(entry, namespace=entry.task.scope.namespace)).leases
+            reclaimed = await _row(pg_conn, entry)
+            assert reclaimed["attempts"] == 2 and reclaimed["item_key"] == first_row["item_key"]
+            assert first.task == second.task == entry.task
+            assert second.fence > first.fence and second.expires_at > first.expires_at
+            await _assert_reclaimed_checkpoint(pg_conn, entry, first, second)
     finally:
         await _cleanup(pg_conn, org)
 
