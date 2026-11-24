@@ -48,7 +48,7 @@ def live_directory(routes: WorkerRoutes) -> LiveSourceDirectory:
     async def approval(
         org: str, namespace: str, worker: UUID, profile: str, mode: WorkerMode, team: bool
     ) -> int | None:
-        if not routes.permits(worker, org, profile):
+        if not routes.permits(worker, org, profile, mode, team):
             return None
         return await approvals.current_generation(org, namespace, worker, profile, mode, team)
 

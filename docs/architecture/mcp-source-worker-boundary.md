@@ -29,8 +29,9 @@ The operator mounts a worker routes file and sets
 `LOOM_KNOWLEDGE_SOURCE_WORKER_ROUTES_FILE` to its path. An empty setting leaves the
 worker directory disabled. Version 1 of the JSON file contains a `workers` list.
 Each entry names a `worker_id`, HTTPS `origin`, grant `issuer`, and a `profiles`
-map from exact organization names to permitted profile digests. A collection
-approval cannot name a different organization or profile at that worker.
+map from exact organization names to profile entries. Each entry lists a `digest`,
+approved `modes`, and optional `team_access`. A collection approval cannot add
+an organization, profile, mode or team permission that the operator did not allow.
 
 The `trust_ca_file`, `client_certificate_file` and `client_key_file` entries
 configure mutual TLS. `grant_key_file` names Loom's Ed25519 key for signing

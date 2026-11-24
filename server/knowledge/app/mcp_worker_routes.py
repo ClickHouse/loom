@@ -20,9 +20,33 @@ if TYPE_CHECKING:
         Ed25519PublicKey,
     )
 
+    from server.knowledge.domain.mcp_worker_setup import WorkerMode
+
 _MAX_WORKERS = 256
 _MAX_PROFILES_PER_WORKER = 4096
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
+_MODES = frozenset({"live", "snapshot", "selected_refresh"})
+
+
+@dataclass(frozen=True, repr=False)
+class WorkerProfile:
+    org: str
+    digest: str
+    modes: frozenset[WorkerMode]
+    team_access: bool = False
+
+    def _validate(self) -> None:
+        if not (
+            0 < len(self.org) <= 255
+            and self.org != "*"
+            and _DIGEST.fullmatch(self.digest)
+            and self.modes
+            and self.modes <= _MODES
+            and type(self.team_access) is bool
+        ):
+            raise ValueError("invalid source worker profile")
 
 
 @dataclass(frozen=True, repr=False)
@@ -33,7 +57,7 @@ class WorkerRoute:
     issuer: str
     grant_key: Ed25519PrivateKey
     enrollment_verifier: Ed25519PublicKey | None
-    profiles: frozenset[tuple[str, str]]
+    profiles: tuple[WorkerProfile, ...]
     max_live_requests: int
 
     def _validate(self) -> None:
@@ -45,10 +69,8 @@ class WorkerRoute:
             and self.issuer.isascii()
             and 0 < len(self.issuer) <= 255
             and 0 < len(self.profiles) <= _MAX_PROFILES_PER_WORKER
-            and all(
-                0 < len(org) <= 255 and org != "*" and _DIGEST.fullmatch(digest)
-                for org, digest in self.profiles
-            )
+            and len({(profile.org, profile.digest) for profile in self.profiles})
+            == len(self.profiles)
             and (
                 self.enrollment_verifier is None
                 or self.enrollment_verifier.public_bytes_raw()
@@ -56,18 +78,26 @@ class WorkerRoute:
             )
         ):
             raise ValueError("invalid source worker route")
+        for profile in self.profiles:
+            profile._validate()
 
 
 @dataclass(frozen=True, repr=False)
 class WorkerRoutes:
     _channels: Mapping[UUID, WorkerReadChannel]
-    _profiles: Mapping[UUID, frozenset[tuple[str, str]]]
+    _profiles: Mapping[tuple[UUID, str, str], WorkerProfile]
 
     def get(self, worker_id: UUID) -> WorkerReadChannel | None:
         return self._channels.get(worker_id)
 
-    def permits(self, worker_id: UUID, org: str, profile_digest: str) -> bool:
-        return (org, profile_digest) in self._profiles.get(worker_id, frozenset())
+    def profile(self, worker_id: UUID, org: str, profile_digest: str) -> WorkerProfile | None:
+        return self._profiles.get((worker_id, org, profile_digest))
+
+    def permits(
+        self, worker_id: UUID, org: str, profile_digest: str, mode: WorkerMode, team: bool
+    ) -> bool:
+        profile = self.profile(worker_id, org, profile_digest)
+        return profile is not None and mode in profile.modes and (not team or profile.team_access)
 
 
 @asynccontextmanager
@@ -93,5 +123,6 @@ async def open_worker_routes(routes: tuple[WorkerRoute, ...]) -> AsyncIterator[W
             )
             stack.push_async_callback(channel.close)
             channels[route.worker_id] = channel
-            profiles[route.worker_id] = route.profiles
+            for profile in route.profiles:
+                profiles[(route.worker_id, profile.org, profile.digest)] = profile
         yield WorkerRoutes(MappingProxyType(channels), MappingProxyType(profiles))

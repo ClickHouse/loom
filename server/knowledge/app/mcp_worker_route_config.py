@@ -12,13 +12,24 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
-from server.knowledge.app.mcp_worker_routes import WorkerRoute
+from server.knowledge.app.mcp_worker_routes import WorkerProfile, WorkerRoute
+from server.knowledge.domain.mcp_worker_setup import WorkerMode
 
 _MAX_CONFIG_BYTES = 262_144
 _MAX_KEY_BYTES = 8192
 _Org = Annotated[str, StringConstraints(min_length=1, max_length=255)]
 _Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-_Digests = Annotated[list[_Digest], Field(min_length=1, max_length=4096)]
+
+
+class _ProfileFile(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True, strict=True)
+
+    digest: _Digest
+    modes: Annotated[list[WorkerMode], Field(min_length=1, max_length=3)]
+    team_access: bool = False
+
+
+_Profiles = Annotated[list[_ProfileFile], Field(min_length=1, max_length=4096)]
 
 
 class _WorkerFile(BaseModel):
@@ -32,7 +43,7 @@ class _WorkerFile(BaseModel):
     client_key_file: Path
     grant_key_file: Path
     enrollment_verifier_file: Path | None = None
-    profiles: Annotated[dict[_Org, _Digests], Field(min_length=1, max_length=256)]
+    profiles: Annotated[dict[_Org, _Profiles], Field(min_length=1, max_length=256)]
     max_live_requests: Annotated[int, Field(ge=1, le=64)] = 8
 
 
@@ -84,7 +95,11 @@ def _build(root: Path, worker: _WorkerFile) -> WorkerRoute:
         worker.issuer,
         _grant_key(root / worker.grant_key_file),
         enrollment,
-        frozenset((org, digest) for org, digests in worker.profiles.items() for digest in digests),
+        tuple(
+            WorkerProfile(org, profile.digest, frozenset(profile.modes), profile.team_access)
+            for org, profiles in worker.profiles.items()
+            for profile in profiles
+        ),
         worker.max_live_requests,
     )
 

@@ -21,7 +21,7 @@ _ROUTE = {
     "client_certificate_file": "trust.pem",
     "client_key_file": "client.pem",
     "grant_key_file": "grant.pem",
-    "profiles": {"org": ["f" * 64]},
+    "profiles": {"org": [{"digest": "f" * 64, "modes": ["live"]}]},
 }
 
 
@@ -55,7 +55,7 @@ async def test_provision_operator_pins_trust_and_loads_only_loom_keys(tmp_path) 
     assert route.tls.cert_store_stats()["x509_ca"] == 1
     assert route.grant_key.public_key().public_bytes_raw() == grant.public_key().public_bytes_raw()
     async with open_worker_routes((route,)) as routes:
-        assert routes.permits(route.worker_id, "org", "f" * 64)
+        assert routes.permits(route.worker_id, "org", "f" * 64, "live", False)
     assert current_directory() is None
     async with source_worker_runtime(str(path)):
         directory = current_directory()
