@@ -18,7 +18,9 @@ HTTP and SDK shapes are unchanged; `explain=true` skips all trimming.
 
 from __future__ import annotations
 
+import ast
 import re
+from textwrap import dedent
 from typing import Any
 
 # Accounting counters and ranking internals no agent acts on.
@@ -275,19 +277,39 @@ _NO_DOC = "No documentation available."
 _DESCRIBED_HITS = 3
 _DOC_MARKUP = re.compile(
     r"(?<!`)(?::[A-Za-z][\w-]*:)?(?P<literal>(?P<ticks>`+)[^`]+(?P=ticks))(?!`)"
-    r"|\\_|(?:&nbsp;|\s)+"
+    r"|(?P<unmatched>`+)|\\_|&nbsp;"
 )
 
 
-def _fold_doc_markup(text: str) -> str:
+def _fold_doc_markup(text: str, *, rendered: bool) -> str | None:
     """Fold spacing and escapes from SCIP's rendered source documentation."""
+    uncertain = False
 
     def fold(match: re.Match[str]) -> str:
+        nonlocal uncertain
         if literal := match.group("literal"):
-            return literal
-        return "_" if match.group() == r"\_" else " "
+            uncertain |= len(literal.splitlines()) != 1
+            return match.group() if rendered else literal
+        if match.group("unmatched"):
+            uncertain = True
+        if rendered:
+            return "_" if match.group() == r"\_" else " "
+        return match.group()
 
-    return _DOC_MARKUP.sub(fold, text).strip()
+    folded = _DOC_MARKUP.sub(fold, text)
+    return None if uncertain else "\n".join(line.rstrip() for line in folded.splitlines())
+
+
+def _python_doc(body: str) -> str | None:
+    try:
+        declarations = ast.parse(dedent(body)).body
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    if len(declarations) != 1 or not isinstance(
+        declaration := declarations[0], (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        return None
+    return ast.get_docstring(declaration)
 
 
 def _description_repeats_body(description: str, body: str, *, scip: bool) -> bool:
@@ -296,16 +318,20 @@ def _description_repeats_body(description: str, body: str, *, scip: bool) -> boo
         return False
     if description in body:
         return True
-    if not scip or not description.startswith("```"):
+    if not scip or not description.startswith("```python\n"):
         return False
     header, closing, excerpt = description.partition("\n```\n")
     signature = header.partition("\n")[2].strip()
     if not closing or not signature or signature not in body:
         return False
-    if "```" in excerpt or "```" in body:
+    if "```" in excerpt or any(line.startswith(("    ", "\t")) for line in excerpt.splitlines()):
         return False
-    excerpt = _fold_doc_markup(excerpt)
-    return bool(excerpt) and excerpt in _fold_doc_markup(body)
+    doc = _python_doc(body)
+    if doc is None:
+        return False
+    folded_excerpt = _fold_doc_markup(excerpt, rendered=True)
+    source = _fold_doc_markup(doc, rendered=False)
+    return bool(folded_excerpt and source and source.startswith(folded_excerpt))
 
 
 def _lean_symbol(out: dict[str, Any]) -> None:

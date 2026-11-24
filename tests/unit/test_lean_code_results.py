@@ -61,17 +61,17 @@ def test_scip_symbol_drops_rendered_description_already_in_source() -> None:
 
 
 def test_scip_symbol_keeps_distinct_code_literals_in_docs() -> None:
-    body = 'def send():\n    """Send marker `"a  b"`."""\n    pass\n'
-    rendered = '```python\ndef send():\n```\nSend marker `"a b"`.'
-    out = lean_code(
-        "code.symbol",
-        {
-            "definitions": [
-                {"symbol": "send", "tier": "scip", "body": body, "description": rendered}
-            ]
-        },
+    descriptions = (
+        ('Send marker `"a  b"`.', 'Send marker `"a b"`.'),
+        ('Send marker ``"a  b`x"``.', 'Send marker ``"a b`x"``.'),
+        ('Example:\n\n        print("a  b")', 'Example:\n\n    print("a b")'),
     )
-    assert out["definitions"][0]["description"] == rendered
+    for doc, different_doc in descriptions:
+        body = f'def send():\n    """{doc}"""\n    pass\n'
+        rendered = f"```python\ndef send():\n```\n{different_doc}"
+        row = {"symbol": "send", "tier": "scip", "body": body, "description": rendered}
+        out = lean_code("code.symbol", {"definitions": [row]})
+        assert out["definitions"][0]["description"] == rendered
 
 
 FRESH = {
