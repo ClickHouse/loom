@@ -1128,7 +1128,7 @@ A PR draft asks whether a PR like it already exists.
 
 ## `code.read`
 
-Read exact indexed source lines.
+Read inclusive, one-based indexed lines.
 
 `POST /v1/code.read` · MCP `loom_code_read` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -1139,7 +1139,7 @@ Read exact indexed source lines.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `ranges` | `list[CodeReadRangeInput \| str]` | *(computed)* | Batch of inclusive one-based ranges. |
+| `ranges` | `list[str] \| list[CodeReadRangeInput \| str]` | *(computed)* | Keep an all-string list as a distinct shape for typed callers. |
 | `path` | `str \| None` | `None` |  |
 | `start_line` | `int \| None` | `None` |  |
 | `end_line` | `int \| None` | `None` |  |

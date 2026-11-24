@@ -1324,8 +1324,7 @@ export interface CodeReadInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Batch of inclusive one-based ranges. */
-  ranges?: Array<CodeReadRangeInput | string>;
+  ranges?: string[] | Array<CodeReadRangeInput | string>;
   path?: string | null;
   start_line?: number | null;
   end_line?: number | null;

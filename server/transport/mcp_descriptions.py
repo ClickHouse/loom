@@ -1370,9 +1370,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Check coverage. Use code.files for paths and local tools for uncommitted source."
     ),
     "code.read": (
-        "Read exact indexed source lines. For one range pass path and start_line. "
-        "For a batch pass ranges of {path, start_line, end_line} or path:start-end strings. "
-        "Omit end_line to read one line."
+        "Read inclusive, one-based indexed lines. Pass path, start_line, optional end_line "
+        "or ranges of such objects or path:start-end strings."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
