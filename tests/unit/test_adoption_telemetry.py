@@ -26,6 +26,13 @@ async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.Mo
     http.assert_not_called()
 
 
+def test_adoption_worker_uses_the_configured_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
+    monkeypatch.setattr(settings, "adoption_telemetry_interval_seconds", 120)
+    worker = next(worker for worker in enabled_workers() if worker.name == "adoption_telemetry")
+    assert worker.interval_seconds == 120
+
+
 async def test_missing_deployment_id_surfaces_status_without_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -47,8 +54,9 @@ async def test_missing_deployment_id_surfaces_status_without_delivery(
     [
         httpx.Response(302, headers={"Location": "https://other.example/adoption"}),
         httpx.Response(200, json={"stored": True, "window_start": "not-this-window"}),
+        httpx.Response(200, content=b"x" * 4097),
     ],
-    ids=["redirect", "wrong-acknowledgement"],
+    ids=["redirect", "wrong-acknowledgement", "oversized-acknowledgement"],
 )
 @pytest.mark.parametrize("share_domains", [False, True])
 async def test_delivery_retries_without_recounting_after_ack(

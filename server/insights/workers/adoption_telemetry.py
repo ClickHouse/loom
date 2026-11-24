@@ -19,6 +19,7 @@ from server.workers import pass_context
 
 _COLLECTOR_URL = "https://telemetry.loom.clickhouse.com/api/v1/adoption"
 _WINDOW = timedelta(hours=12)
+# not a setting: bounds reads of the collector acknowledgement record.
 _MAX_ACK_BYTES = 4096
 
 
@@ -54,7 +55,7 @@ async def run_pass() -> None:
             _COLLECTOR_URL,
             json=report,
             follow_redirects=False,
-            timeout=8.0,
+            timeout=8.0,  # not a setting: allows the collector's six-second insert budget.
         ) as response:
             await _require_acknowledgement(response, str(installation_id), cursor)
             pass_context.set_cursor(cursor)
