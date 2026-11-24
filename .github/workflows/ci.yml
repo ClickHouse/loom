@@ -320,7 +320,7 @@ jobs:
 
   unit-coverage-upload:
     name: Publish patch coverage (report only)
-    needs: unit-coverage
+    needs: [validate-ref, unit-coverage]
     if: >-
       vars.CODECOV_UPLOAD_ENABLED == 'true' &&
       github.repository == 'ClickHouse/loom' && github.event.repository.private == false &&
