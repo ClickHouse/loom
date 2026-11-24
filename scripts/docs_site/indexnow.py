@@ -100,8 +100,8 @@ def payload(urls: list[str], k: str) -> dict:
     return {
         "host": urllib.parse.urlsplit(SITE).hostname,
         "key": k,
-        "keyLocation": f"{SITE}{k}.txt",
-        "urlList": urls,
+        "keyLocation": urllib.parse.urljoin(SITE, f"/{k}.txt"),
+        "urlList": [url.rstrip("/") for url in urls],
     }
 
 

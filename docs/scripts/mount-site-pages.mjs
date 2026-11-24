@@ -30,5 +30,5 @@ config.routes = [...siteRoutes, ...config.routes.filter(({ src }) => !publicPath
 writeFileSync(manifest, `${JSON.stringify(config, null, "\t")}\n`);
 
 for (const file of readdirSync(docs).filter((name) => /^[0-9a-f]{32}\.txt$/.test(name))) {
-  copyFileSync(new URL(file, docs), new URL(`static/docs/${file}`, output));
+  copyFileSync(new URL(file, docs), new URL(`static/${file}`, output));
 }

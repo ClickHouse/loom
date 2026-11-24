@@ -36,8 +36,8 @@ def test_the_key_file_is_named_after_its_own_content_and_the_payload_points_at_i
     key = indexnow.key()
     assert (ROOT / "docs" / f"{key}.txt").read_text().strip() == key
     body = indexnow.payload([SITE], key)
-    assert body["keyLocation"] == f"{SITE}{key}.txt"
-    assert body["urlList"] == [SITE]
+    assert body["keyLocation"] == f"https://loom.clickhouse.com/{key}.txt"
+    assert body["urlList"] == [SITE.rstrip("/")]
 
 
 def test_a_change_to_the_build_submits_every_page() -> None:
@@ -98,7 +98,7 @@ def test_main_posts_only_the_changed_pages_and_posts_nothing_when_none_changed(
     assert indexnow.main(["README.md"]) == 0
     assert sent == []
     assert indexnow.main(["docs/a.md"]) == 0
-    assert [s["urlList"] for s in sent] == [[SITE + "a/"]]
+    assert [s["urlList"] for s in sent] == [[SITE + "a"]]
 
 
 def test_shared_language_route_mapping_is_a_render_input() -> None:
