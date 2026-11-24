@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
 
+from server.code.api.models_symbol import CodeSymbolInput
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.app.repo_scope import session_repo_tag
 from server.code.domain.scope import apply_code_scope, current_code_scope
@@ -802,6 +803,12 @@ def _validated_input(
         ):
             schedule_code_trace_validation_failure(op.name, arguments, errors)
         return _ok(req_id, tool_error(*feedback(op, arguments, errors)))
+    if (
+        isinstance(input_obj, CodeSymbolInput)
+        and not input_obj.include_body
+        and "example_context_lines" not in arguments
+    ):
+        input_obj.example_context_lines = 0
     return input_obj
 
 

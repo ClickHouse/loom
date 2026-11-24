@@ -87,6 +87,19 @@ def test_http_keeps_the_full_default() -> None:
     assert CodeIndexStatusInput().brief is None
 
 
+def test_coding_symbol_metadata_omits_example_source_unless_requested() -> None:
+    from server.code.api.models_symbol import CodeSymbolInput
+    from server.operations.registry import ALL_OPERATIONS
+    from server.transport.mcp_call import _validated_input
+
+    op = next(op for op in ALL_OPERATIONS if op.name == "code.symbol")
+    metadata = {"name": "X", "include_body": "false"}
+    result = _validated_input(1, op, metadata, "", toolset="coding")
+    assert isinstance(result, CodeSymbolInput) and result.example_context_lines == 0
+    result = _validated_input(1, op, {**metadata, "example_context_lines": 2}, "", toolset="coding")
+    assert isinstance(result, CodeSymbolInput) and result.example_context_lines == 2
+
+
 def test_the_mcp_validator_applies_the_defaults() -> None:
     src = (ROOT / "server/transport/mcp_call.py").read_text()
     assert "mcp_default_arguments(op.name, arguments, toolset=toolset)" in src

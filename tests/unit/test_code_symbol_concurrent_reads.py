@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -28,6 +28,15 @@ DEFS = [
     },
 ]
 DELAY = 0.05
+
+
+async def test_named_examples_require_type_references() -> None:
+    from server.code.app.symbol.named_examples import named_test_examples
+
+    repo = AsyncMock()
+    examples = await named_test_examples(repo, "o", "n", DEFS[0], 10)
+    assert not examples
+    repo.symbols_fuzzy.assert_not_awaited()
 
 
 class _Clock:

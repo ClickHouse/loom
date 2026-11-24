@@ -12,11 +12,15 @@ from server.code.store.index import CodeRepo
 from server.embedding.embedder import served_model_label
 from server.settings import settings
 
+_TYPE_REFERENCES = frozenset({"class", "struct", "interface", "enum", "trait", "type"})
+
 
 async def named_test_examples(
     repo: CodeRepo, org: str, ns: str, definition: dict[str, Any], radius: int
 ) -> list[dict[str, Any]]:
-    """Read named tests that mention the identifier in verified indexed source."""
+    """Read tests that mention a type in verified source, such as decorator arguments."""
+    if definition.get("kind") not in _TYPE_REFERENCES:
+        return []  # routine names alone do not identify which declaration the test called
     name = str(definition.get("name") or "")
     if len(name) < 3 or not name.isidentifier() or not settings.embedding_model:
         return []
