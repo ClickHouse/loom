@@ -111,6 +111,7 @@ class CodeClient:
         limit: int | None = None,
         context_lines: int = 0,
         include_body: bool | None = None,
+        related_on_miss: bool = False,
         mode: str = "matches",
         path_globs: list[str] | None = None,
         exclude_globs: list[str] | None = None,
@@ -124,6 +125,8 @@ class CodeClient:
         already shown. Matches include distinct enclosing bodies by default.
         Pass `include_body=False` for names or locations only.
         `context_lines` adds nearby retained source in matches mode.
+        Pass `related_on_miss=True` to find the qualified argument of a missing
+        call expression under `related`.
         `mode="files"` answers "which files
         mention X" (no line text) — use it for coverage questions. `limit`
         defaults per mode: 20 lines, or the 500-file ceiling, so a files
@@ -152,6 +155,8 @@ class CodeClient:
             body["context_lines"] = context_lines
         if include_body is not None:
             body["include_body"] = include_body
+        if related_on_miss:
+            body["related_on_miss"] = True
         if path_globs:
             body["path_globs"] = list(path_globs)
         if exclude_globs:

@@ -1215,7 +1215,14 @@ async def _message_literal_fallback(
         repo,
         org,
         ns,
-        input.model_copy(update={"mode": "matches", "regex": False, "neighbours": None}),
+        input.model_copy(
+            update={
+                "mode": "matches",
+                "regex": False,
+                "neighbours": None,
+                "related_on_miss": False,
+            }
+        ),
         route=route + "+literal_fallback",
         started=started,
         scope=scope,
