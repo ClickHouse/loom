@@ -30,6 +30,10 @@ Query parameters on the URL select what `tools/list` shows for that connection:
   `full` (adds `outputSchema`) or `compact` (the first paragraph and the
   argument tree).
 
+With the automatic loading policy, compact coding connections load `code.symbol`
+and `code.grep` up front. Clients can discover `code.search` when they need it.
+An explicit `LOOM_MCP_ALWAYS_LOAD_TOOLS` list controls loading on every profile.
+
 An unknown value for either falls back to the deployment default, so a typo
 never widens or narrows a listing silently. The `?toolset=` value also shapes the
 session primer (`initialize` instructions, `server/discover`, the `loom` prompt,

@@ -1254,8 +1254,14 @@ export interface CodeReadInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Repo-relative path:start-end ranges with inclusive one-based line numbers. */
-  ranges: string[];
+  /** Batch of repo-relative path:start-end ranges with inclusive one-based lines. */
+  ranges?: string[];
+  /** File for a single range. */
+  path?: string | null;
+  /** First line of the single range, one-based. */
+  start_line?: number | null;
+  /** Last line, inclusive. Defaults to start_line. */
+  end_line?: number | null;
 }
 
 export interface CodeReadRange {

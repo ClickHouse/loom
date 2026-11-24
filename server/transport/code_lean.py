@@ -283,17 +283,25 @@ def _lean_symbol(out: dict[str, Any]) -> None:
     for d in defs:
         if d.get("body") and d.get("outline"):
             d.pop("outline")
-        if d.get("description") == _NO_DOC:
+    if defs and defs[0].get("granularity") == "skeleton" and defs[0].get("body"):
+        owner = str(defs[0].get("symbol") or "")
+        for d in defs[1:]:
+            sym = str(d.get("symbol") or "")
+            if owner and sym.startswith(owner + "::") and d.get("body"):
+                d.pop("body")
+                d["elided"] = True
+                d["next"] = f"code.symbol name={sym}"
+    for d in defs:
+        description = d.get("description")
+        body = d.get("body")
+        if description == _NO_DOC or (
+            isinstance(description, str)
+            and bool(description.strip())
+            and isinstance(body, str)
+            and description.strip() in body
+            and not (d.get("elided") or d.get("granularity") == "skeleton")
+        ):
             d.pop("description")
-    if not defs or defs[0].get("granularity") != "skeleton" or not defs[0].get("body"):
-        return
-    owner = str(defs[0].get("symbol") or "")
-    for d in defs[1:]:
-        sym = str(d.get("symbol") or "")
-        if owner and sym.startswith(owner + "::") and d.get("body"):
-            d.pop("body")
-            d["elided"] = True
-            d["next"] = f"code.symbol name={sym}"
 
 
 _PER_OP = {

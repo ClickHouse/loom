@@ -222,6 +222,8 @@ async def symbol_body(
 
 
 def _indexed_commit(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("ascii", "replace").rstrip("\0")
     return str(value or "").rstrip("\0")
 
 

@@ -389,14 +389,17 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
-def test_coding_search_and_definition_tools_load_upfront_by_default(monkeypatch, profile) -> None:
+def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None:
     default = Settings.model_fields["mcp_always_load_tools"].get_default()
     monkeypatch.setattr(settings, "mcp_always_load_tools", default)
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
     assert len(tools) == 22
     flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
-    assert flagged == {"loom_code_search", "loom_code_symbol", "loom_code_grep"}
-    assert {"loom_op", "loom_search"} <= {tool["name"] for tool in tools}
+    expected = {"loom_code_symbol", "loom_code_grep"}
+    if profile != "compact":
+        expected.add("loom_code_search")
+    assert flagged == expected
+    assert {"loom_op", "loom_search", "loom_code_search"} <= {tool["name"] for tool in tools}
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding+tracker"])

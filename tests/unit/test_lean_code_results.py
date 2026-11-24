@@ -9,6 +9,25 @@ from typing import Any
 import server.transport.lean_results as lr
 from server.transport.code_lean import lean_code
 
+
+def test_symbol_drops_only_descriptions_repeated_in_the_returned_body() -> None:
+    body = 'def f():\n    """Compute the total."""\n    return 1\n'
+    out = lean_code(
+        "code.symbol",
+        {
+            "definitions": [
+                {"symbol": "f", "body": body, "description": "Compute the total."},
+                {"symbol": "g", "body": body, "description": "Additional context."},
+                {"symbol": "h", "description": "Compute the total."},
+            ]
+        },
+    )
+    f, g, h = out["definitions"]
+    assert f["body"] == body and "description" not in f
+    assert g["description"] == "Additional context."
+    assert h["description"] == "Compute the total."
+
+
 FRESH = {
     "branch": "main",
     "commit": "c15ee82f1020ed8261a2add694a46519457e2d2a",

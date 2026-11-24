@@ -502,11 +502,13 @@ def listed_ops(toolset: str | None) -> list[Operation]:
     return out
 
 
-def _upfront_tools(configured: str, toolset: str) -> set[str]:
+def _upfront_tools(configured: str, toolset: str, profile: str) -> set[str]:
     if configured.strip().casefold() != "auto":
         return {name.strip() for name in configured.split(",") if name.strip()}
     names = {"code.search", "code.symbol", "code.grep"}
-    if toolset != "coding":
+    if toolset == "coding" and profile == "compact":
+        names.remove("code.search")
+    elif toolset != "coding":
         names.update({"search.query", LOOM_OP_TOOL_NAME})
     return names
 
@@ -536,7 +538,6 @@ async def _tools_descriptor(
     from server.settings import settings
 
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
-    always_load = _upfront_tools(settings.mcp_always_load_tools, toolset)
     descriptors: list[dict[str, Any]] = []
     ops = listed_ops(toolset)
     listed = _tool_names(ops, toolset)
@@ -577,7 +578,6 @@ async def _tools_descriptor(
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
-    _with_loading_hints(descriptors, always_load)
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,
@@ -590,6 +590,9 @@ async def _tools_descriptor(
     profile = str(schema_profile or default).lower()
     if profile not in SCHEMA_PROFILES:
         profile = default  # an unknown request value never widens or narrows silently
+    _with_loading_hints(
+        descriptors, _upfront_tools(settings.mcp_always_load_tools, toolset, profile)
+    )
     # only the full profile sends output schemas
     schemas = ("inputSchema", "outputSchema") if profile == "full" else ("inputSchema",)
     for d in descriptors:

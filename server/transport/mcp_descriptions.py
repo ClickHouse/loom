@@ -1371,7 +1371,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.read": (
         "Read exact ranges from indexed files in one call. "
-        'Pass a list such as ["src/app.py:40-70", "src/lib.py:12-19"]. '
+        "Pass `path`, `start_line`, and optional `end_line` for one range. "
+        'Batch several with `ranges`, for example ["src/app.py:40-70", "src/lib.py:12-19"]. '
         "Loom verifies source at its indexed revision against the local Git mirror."
     ),
     "code.files": (
@@ -2181,7 +2182,8 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.symbol": (
         "Read a definition by name, path:symbol, or path:line with source and linked lessons. "
-        "Name the class for related methods. Set `test_examples_only: true` and "
+        "Name the method for a local change or the class for related methods. "
+        "Set `test_examples_only: true` and "
         "`example_context_lines` to read nearby test code with the definition.\n\n"
         "Use code.read for exact line ranges or code.search for unknown implementations. "
         "`example_context_lines` adds source near recorded usage sites. Use code.enclosing with "

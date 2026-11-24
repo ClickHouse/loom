@@ -128,6 +128,10 @@ async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
         assert result.windows[0].text == "".join(
             source_lines[result.start_line - 1 : result.end_line]
         )
+    single = await read.handle_code_read(
+        CodeReadInput(org=org, namespace=ns, path="src/S.cpp", start_line=5, end_line=6)
+    )
+    assert single.results == response.results[:1]
 
 
 async def test_read_verifies_mirror_blob_after_incremental_ingest(code_env, monkeypatch) -> None:
@@ -481,6 +485,38 @@ async def test_symbol_reads_test_examples_with_the_definition(code_env, monkeypa
     (example,) = definition.examples
     assert example["path"] == path
     assert example["context"]["text"].strip() == call
+
+
+async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
+    code_env, monkeypatch
+) -> None:
+    from server.code.api.models_symbol import CodeSymbolInput
+    from server.code.app.symbol import handle_code_symbol
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    await _ingest(repo, org, ns, source=b"class EntryPoint:\n    pass\n", path="src/cli.py")
+    path = "tests/test_cli.py"
+    source = b"from src.cli import EntryPoint\n\ndef test_entrypoint():\n    @register(cls=EntryPoint)\n    def cli():\n        pass\n"
+    await _ingest(repo, org, ns, source=source, path=path)
+    response = await handle_code_symbol(
+        CodeSymbolInput(
+            org=org,
+            namespace=ns,
+            name="src/cli.py:EntryPoint",
+            test_examples_only=True,
+            example_context_lines=2,
+            include_history=False,
+            include_lessons=False,
+        )
+    )
+    (example,) = response.definitions[0].examples
+    assert (example["path"], example["line"], example["evidence"]) == (path, 4, "name_reference")
+    assert example["context"]["commit"] == "a" * 40
+    assert "@register(cls=EntryPoint)" in example["context"]["text"]
 
 
 async def test_deletion_tombstones_everything(code_env) -> None:

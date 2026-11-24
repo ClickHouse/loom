@@ -9,6 +9,7 @@ from typing import Any
 
 from clickhouse_connect.driver.binding import format_bind_value
 
+from server.code.domain.index.test_gate import TEST_PATH_PATTERN
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched, _hex, like_contains
 from server.code.store.index.symbol_rank import (
@@ -686,7 +687,14 @@ class SymbolsMixin(CodeRepoBase):
         return out
 
     async def symbols_fuzzy(
-        self, org: str, ns: str, needle: str, *, limit: int = 25, path: str = ""
+        self,
+        org: str,
+        ns: str,
+        needle: str,
+        *,
+        limit: int = 25,
+        path: str = "",
+        tests_only: bool = False,
     ) -> list[dict[str, Any]]:
         """Symbols whose name contains `needle`, case-insensitively.
 
@@ -706,6 +714,7 @@ class SymbolsMixin(CodeRepoBase):
               AND tombstoned_at IS NULL
             """
             + ("AND path = {path:String}\n" if path else "")
+            + ("AND match(path, {test_path_pattern:String})\n" if tests_only else "")
             + """
             ORDER BY tier DESC, length(name), qualified_name
             LIMIT {limit:UInt32}
@@ -717,6 +726,7 @@ class SymbolsMixin(CodeRepoBase):
                 "like": like_contains(needle.lower()),
                 "limit": limit,
                 "path": path,
+                **({"test_path_pattern": TEST_PATH_PATTERN} if tests_only else {}),
             },
         )
         return _prefer_scip(rows)
