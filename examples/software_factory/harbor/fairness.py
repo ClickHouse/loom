@@ -10,7 +10,7 @@ from examples.software_factory.factory.model import digest
 
 from .index import select_snapshot
 from .memory import validate_history_certificate
-from .native_environment import mcp_settings
+from .native_environment import CLAUDE_CACHE_ENV, mcp_settings
 from .project_guidance import agent_image
 from .runtime import read, verify, write
 from .scopes import selected_scopes
@@ -90,6 +90,20 @@ def audit_fairness(protocol, entries, *, billing=None):
             ),
             "loom_source_used": slot["mode"] == "baseline"
             or type(result.get("first_loom_source_result_event_main")) is int,
+            "prompt_cache_disabled": all(
+                (agent.get("env") or {}).get(name) == value
+                for name, value in CLAUDE_CACHE_ENV.items()
+            )
+            and result.get("solver_token_source") == "anthropic-reported"
+            and all(
+                type(result.get(key)) is int and result[key] == 0
+                for key in (
+                    "first_cache_read_tokens",
+                    "first_cache_write_tokens",
+                    "model_cache_read_tokens",
+                    "model_cache_write_tokens",
+                )
+            ),
             "mcp_treatment": servers
             == tomllib.loads(mcp_settings(protocol, slot))
             .get("environment", {})

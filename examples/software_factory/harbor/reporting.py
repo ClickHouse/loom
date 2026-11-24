@@ -464,7 +464,14 @@ def _table(arms):
     return "\n".join(lines) + "\n"
 
 
-def generate_reports(protocol, entries, *, job_name="live", loom_source_verified=None):
+def generate_reports(
+    protocol,
+    entries,
+    *,
+    job_name="live",
+    loom_source_verified=None,
+    prompt_cache_disabled_verified=None,
+):
     """Regenerate aggregates and add each finalized trial's native assets once.
 
     Protocol `reporting` optionally sets viewer_jobs_root, viewer_base_url and
@@ -477,11 +484,29 @@ def generate_reports(protocol, entries, *, job_name="live", loom_source_verified
     with (output / "reporting.lock").open("a") as guard:
         fcntl.flock(guard, fcntl.LOCK_EX)
         return _generate(
-            protocol, entries, output, jobs, base, names, job_name, loom_source_verified
+            protocol,
+            entries,
+            output,
+            jobs,
+            base,
+            names,
+            job_name,
+            loom_source_verified,
+            prompt_cache_disabled_verified,
         )
 
 
-def _generate(protocol, entries, output, jobs, base, names, job_name, loom_source_verified):
+def _generate(
+    protocol,
+    entries,
+    output,
+    jobs,
+    base,
+    names,
+    job_name,
+    loom_source_verified,
+    prompt_cache_disabled_verified,
+):
     from examples.software_factory.harbor.charts import generate_charts
 
     schedule = protocol["schedule"]
@@ -529,6 +554,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name, loom_sourc
         "links": links,
         "observed_attempts": len(observed),
         "loom_source_verified": loom_source_verified,
+        "prompt_cache_disabled_verified": prompt_cache_disabled_verified,
         "complete": len(observed) == len(schedule),
         "evaluation_complete": len(observed) == len(schedule)
         and (output / "provider-costs.json").exists()
@@ -702,6 +728,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name, loom_sourc
         "expected_attempts": len(schedule),
         "observed_attempts": len(observed),
         "loom_source_verified": loom_source_verified,
+        "prompt_cache_disabled_verified": prompt_cache_disabled_verified,
         "pending_orders": sorted(set(slots_by_order) - set(observed)),
         "scenario_count": len(scenarios),
         "expected_primary_pair_rows": len(rows),
@@ -734,6 +761,8 @@ def _generate(protocol, entries, output, jobs, base, names, job_name, loom_sourc
         "Historical issues and authored experiments are reported separately. "
         "Native Harbor comparison links include all scenarios.\n\n"
     )
+    if prompt_cache_disabled_verified is False:
+        text += "Zero provider cache reads and writes could not be verified.\n\n"
     if loom_source_verified is False:
         text += "At least one Loom session lacked indexed source evidence.\n\n"
     text += _table(primary) + "\n"

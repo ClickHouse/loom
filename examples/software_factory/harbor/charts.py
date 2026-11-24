@@ -169,7 +169,8 @@ def chart_data(protocol, entries, views_manifest):
     evaluation_complete = complete and views_manifest.get("evaluation_complete", complete)
     loom_source_verified = views_manifest.get("loom_source_verified")
     default_status = "complete" if evaluation_complete else "grading" if complete else "partial"
-    if loom_source_verified is False:
+    prompt_cache_disabled_verified = views_manifest.get("prompt_cache_disabled_verified")
+    if loom_source_verified is False or prompt_cache_disabled_verified is False:
         default_status = "unqualified"
     return {
         "schema_version": 1,
@@ -192,6 +193,7 @@ def chart_data(protocol, entries, views_manifest):
         "interruption_reason": views_manifest.get("interruption_reason", ""),
         "evaluation_complete": evaluation_complete,
         "loom_source_verified": loom_source_verified,
+        "prompt_cache_disabled_verified": prompt_cache_disabled_verified,
         "comparison_url": views_manifest.get("links", {}).get("comparison"),
         "target_reduction": EFFICIENCY_TARGET,
     }

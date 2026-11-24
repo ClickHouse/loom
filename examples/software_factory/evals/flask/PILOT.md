@@ -7,7 +7,7 @@ schemas. Every arm uses the same native coding agent, issue, model and test capa
 
 Three issues, five arms and three repeats produce 45 attempts. Freeze seed 741
 and retain the interleaved arm blocks and balanced positions. Each attempt starts
-a fresh Claude Code session with normal provider caching. Retain nonuse, failures,
+a fresh Claude Code session with prompt caching disabled. Retain nonuse, failures,
 invalid rewards and unknown costs. Analyze paired task clusters.
 
 For a five-attempt development check, pass `--pilot-task pallets__flask-4230` to

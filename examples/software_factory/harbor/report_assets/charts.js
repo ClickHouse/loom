@@ -229,6 +229,7 @@ function chart(rows, plannedRows) {
     metric.kind === "rate"
       ? 1
       : data.loom_source_verified === true &&
+          data.prompt_cache_disabled_verified === true &&
           data.complete &&
           rows.length === plannedRows.length &&
           matched(rows) &&
@@ -362,7 +363,7 @@ function render() {
     {
       interrupted: "Stopped (not running)",
       failed: "Failed",
-      unqualified: "Loom source unverified",
+      unqualified: "Comparison unqualified",
       complete: "Complete",
       grading: "Judging",
       running: "Running",
@@ -376,7 +377,9 @@ function render() {
   byId("run-notice").hidden = !["interrupted", "failed", "unqualified"].includes(status);
   byId("run-notice").textContent =
     status === "unqualified"
-      ? "At least one Loom session lacked indexed source evidence."
+      ? (data.prompt_cache_disabled_verified === false
+          ? "Zero provider cache reads and writes could not be verified."
+          : "At least one Loom session lacked indexed source evidence.")
       : data.interruption_reason || "This run stopped before the planned comparison completed. Results are partial.";
   byId("issues-count").textContent =
     `${new Set(complete.map((row) => row.task)).size} / ${new Set(rows.map((row) => row.task)).size}`;

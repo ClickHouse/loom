@@ -162,6 +162,7 @@ def plan(
         "model": locked["model_id"],
         "project_guidance": guidance(locked["source_roots"]),
         "native_provider": "anthropic",
+        "prompt_caching": "disabled",
         "native_model": native_model(root),
         "arms": list(ARMS),
         "cases": cases,

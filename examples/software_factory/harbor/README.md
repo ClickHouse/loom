@@ -21,7 +21,7 @@ The output directory contains:
 
 With three scenarios, three repeats and five arms, the primary comparison has
 45 attempts in nine task/repeat rows and five columns. Each attempt starts a
-fresh Claude Code session with normal provider caching. Missing attempts have
+fresh Claude Code session with prompt caching disabled. Missing attempts have
 null metrics and explicit pending counts.
 Observed successes are reported immediately; a final success rate is available
 only when all expected attempts in that arm have completed. Unknown cost and
