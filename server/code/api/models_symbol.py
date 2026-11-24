@@ -33,6 +33,15 @@ from server.code.api.models_common import (
 from server.code.domain.units import CodeUnit
 from server.operations.base import MCP_HIDDEN
 
+EDIT_TEST_CONTEXT_LINES = 10
+
+
+class CodeEditContextInput(_CodeIdentity, _ResultLessons):
+    name: str = Field(
+        min_length=1, description="Definition name, path:symbol, or path:line inside a function."
+    )
+
+
 # ============================================================
 # code.symbol
 # ============================================================

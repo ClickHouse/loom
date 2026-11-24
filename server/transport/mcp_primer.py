@@ -230,6 +230,7 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
         "mentor.guide",
         "collection.list",
         "code.symbol",
+        "code.edit_context",
         "code.search",
         "code.grep",
         "code.read",
@@ -568,11 +569,11 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         if tool[name]
     ]
     definition_hint = (
-        f"Start with {tool['code.symbol']} for a named definition or enclosing class. "
-        "Add `uses_brief: true` for callers. "
-        if tool["code.symbol"]
+        "Before editing a named definition, read its source and tests with "
+        f"{tool['code.edit_context']}. "
+        if tool["code.edit_context"]
         else ""
-    )
+    ) + (f"Inspect a definition with {tool['code.symbol']}. " if tool["code.symbol"] else "")
     route_hint = "Use " + "; ".join(routes) + ". " if routes else ""
     code = (
         "\n\nUse Loom first to search and read unchanged indexed source, including tests. "

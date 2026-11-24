@@ -52,6 +52,10 @@ indexed file and 79% for BM25 over `.py` files only; the `.py`-only gap is withi
 
 ## A coding agent that reads the definition it needs
 
+For an edit to a known definition, [`code.edit_context`](../reference/operations/code.md#codeedit_context)
+reads the implementation, indexed test excerpts, and linked lessons together.
+Use the returned source revision and each lesson's code state when applying it.
+
 Start with a repository you trust. On the released stack, follow the
 [operator-configured index steps](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack);
 the dashboard's add-repository flow needs a sandbox that stack does not enable. Connect

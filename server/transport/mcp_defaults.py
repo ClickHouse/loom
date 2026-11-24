@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.code.api.models_symbol import EDIT_TEST_CONTEXT_LINES
 from server.operations.toolsets import resolve_toolset, toolset_parts
 
 MCP_DEFAULT_ARGUMENTS: dict[str, dict[str, Any]] = {
@@ -38,7 +39,10 @@ MCP_DEFAULT_ARGUMENTS: dict[str, dict[str, Any]] = {
     "code.grep": {"limit": 10},
 }
 
-_CODING_SYMBOL_EXAMPLE_DEFAULTS = {"test_examples_only": True, "example_context_lines": 10}
+_CODING_SYMBOL_EXAMPLE_DEFAULTS = {
+    "test_examples_only": True,
+    "example_context_lines": EDIT_TEST_CONTEXT_LINES,
+}
 
 
 def mcp_argument_defaults(op_name: str, toolset: str | None = None) -> dict[str, Any]:

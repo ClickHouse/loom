@@ -490,8 +490,8 @@ async def test_symbol_reads_test_examples_with_the_definition(code_env, monkeypa
 async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     code_env, monkeypatch
 ) -> None:
-    from server.code.api.models_symbol import CodeSymbolInput
-    from server.code.app.symbol import handle_code_symbol
+    from server.code.api.models_symbol import CodeEditContextInput, CodeSymbolInput
+    from server.code.app.symbol import handle_code_edit_context, handle_code_symbol
     from server.embedding.fake import fake_model_name
     from server.settings import settings
 
@@ -517,6 +517,15 @@ async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     assert (example["path"], example["line"], example["evidence"]) == (path, 4, "name_reference")
     assert example["context"]["commit"] == "a" * 40
     assert "@register(cls=EntryPoint)" in example["context"]["text"]
+    edit = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name="src/cli.py:EntryPoint", include_lessons=False
+        )
+    )
+    assert edit.definitions[0].body == response.definitions[0].body
+    (bundled,) = edit.definitions[0].examples
+    assert bundled["context"]["commit"] == "a" * 40
+    assert "@register(cls=EntryPoint)" in bundled["context"]["text"]
 
 
 async def test_deletion_tombstones_everything(code_env) -> None:

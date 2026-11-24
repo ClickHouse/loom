@@ -575,6 +575,44 @@ Is this already tested?
 | `measured` | `dict[str, Any]` | Imported execution evidence, {} when none exists: measured, executed, paths, hits, commit (empty for mixed commits), commits, index_commit, run_current, files (per-path commit, indexed_commit, symbol_commits, freshness), freshness… |
 | `trace_run_id` | `str` | Id of this call's row in `loom.code_search_trace`. |
 
+## `code.edit_context`
+
+Read implementation, relevant indexed tests, and linked lessons before editing.
+
+`POST /v1/code.edit_context` · MCP `loom_code_edit_context` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `include_lessons` | `bool` | `True` | Attach `lessons`: the memories about the answer's top files (for code.context_pack, a `task` briefing's only). |
+| `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces `lessons` reads besides the repository's team rules (over MCP the caller's memory home, filled in); one the caller cannot read is skipped. |
+| `org` | `str` | `''` | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | `''` | The namespace the op reads or writes. |
+| `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
+| `name` | `str` | required | Definition name, path:symbol, or path:line inside a function. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `definitions` | `list[CodeUnit]` | The resolved definitions (at most 10), fitted to `token_budget`; empty when nothing resolved (see `candidates`) or on a presence answer. |
+| `lessons_left_out` | `int` | Whole linked lessons omitted to preserve definitions within an explicit request budget. |
+| `ambiguous` | `bool` | True when the served definitions carry more than one distinct name/signature pair. |
+| `hierarchy` | `dict[str, list[dict[str, Any]]]` | For a class / interface / enum definition, its type hierarchy from the `inherits` edges of both tiers, folded by qualified name: {"supertypes": [...], "subtypes": [...]} of {symbol, kind, via (extends \| implements), tier, confidence, path… |
+| `candidates` | `list[dict[str, Any]]` | When nothing resolved: cheap fuzzy candidates (names + paths only). |
+| `tokens_returned` | `int` | Estimated tokens of the answer: definitions, uses, cited documents, neighbours and hierarchy blocks together. |
+| `trace_run_id` | `str` | Id of this call's trace row; pass it to `code.outcome`. |
+| `uses` | `list[dict[str, Any]] \| dict[str, Any]` | uses=true: {path, line, text, scope, scope_start_line, scope_end_line, kind} per line mentioning the symbol's bare name, path/line ordered, the definition span(s) excluded. |
+| `uses_truncated` | `bool` | True when `uses_limit` shortened the list or the token cap withheld `uses_brief`. |
+| `uses_tokens` | `int` | Estimated tokens the compact `uses` block cost out of `token_budget`. |
+| `picked_by` | `str` | Which context key ranked the definitions when `near_paths` / `pr_number` was given — same_file \| same_dir \| co_change \| path_distance \| none. "" and off the wire when no context was given. |
+| `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` \| `file_symbol` when a read-side name form bound; "" and off the wire for an exact hit. |
+| `documented_in` | `list[dict[str, Any]]` | The document sections that cite the definition (the Markdown lane's `reads` edges) — section qualified name, path, line; at most five distinct sections, first by confidence. |
+| `neighbours` | `list[dict[str, Any]]` | The neighbours graph block on the definitions (one entry per definition anchor); empty unless `neighbours` ran. |
+| `anchors` | `int` | How many definitions the `neighbours` block was built for; 0 when it is off. |
+| `neighbour_tokens` | `int` | Estimated tokens the `neighbours` block cost (counted in `tokens_returned`). |
+| `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
+| `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
+
 ## `code.enclosing`
 
 Batched `path:line` -> enclosing function.

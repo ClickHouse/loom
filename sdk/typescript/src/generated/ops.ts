@@ -760,6 +760,70 @@ export interface CodeCoverageClaimOutput {
   trace_run_id?: string;
 }
 
+export interface CodeEditContextInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
+  org?: string;
+  namespace?: string;
+  agent?: string;
+  user_id?: string;
+  consumer?: string;
+  /** Definition name, path:symbol, or path:line inside a function. */
+  name: string;
+}
+
+export interface CodeUnit {
+  unit_id?: string;
+  path: string;
+  start_line?: number;
+  end_line?: number;
+  symbol?: string;
+  kind?: string;
+  signature?: string;
+  body?: string;
+  elided?: boolean;
+  body_hash?: string;
+  description?: string;
+  tier?: string;
+  score?: number;
+  recent_prs?: Array<Record<string, unknown>>;
+  examples?: Array<Record<string, unknown>>;
+  lessons?: Array<Record<string, unknown>>;
+  churn?: number;
+  amp?: number;
+  tested?: boolean;
+  callees?: Array<Record<string, unknown>>;
+  granularity?: string;
+  next?: string;
+  outline?: Array<Record<string, unknown>>;
+  fan_in?: number;
+  via?: string;
+  lexical_rank?: number;
+  vector_rank?: number;
+  namespace?: string;
+}
+
+export interface CodeSymbolOutput {
+  definitions: CodeUnit[];
+  lessons_left_out?: number;
+  ambiguous?: boolean;
+  hierarchy?: Record<string, Array<Record<string, unknown>>>;
+  candidates?: Array<Record<string, unknown>>;
+  tokens_returned?: number;
+  trace_run_id?: string;
+  uses?: Array<Record<string, unknown>> | Record<string, unknown>;
+  uses_truncated?: boolean;
+  uses_tokens?: number;
+  picked_by?: string;
+  resolved_by?: string;
+  documented_in?: Array<Record<string, unknown>>;
+  neighbours?: Array<Record<string, unknown>>;
+  anchors?: number;
+  neighbour_tokens?: number;
+  presence?: Array<Record<string, unknown>>;
+  summary?: Record<string, string[]>;
+}
+
 export interface CodeEnclosingInput {
   include_lessons?: boolean;
   lesson_namespaces?: string[];
@@ -1643,37 +1707,6 @@ export interface CodeSearchInput {
   namespaces?: string[];
 }
 
-export interface CodeUnit {
-  unit_id?: string;
-  path: string;
-  start_line?: number;
-  end_line?: number;
-  symbol?: string;
-  kind?: string;
-  signature?: string;
-  body?: string;
-  elided?: boolean;
-  body_hash?: string;
-  description?: string;
-  tier?: string;
-  score?: number;
-  recent_prs?: Array<Record<string, unknown>>;
-  examples?: Array<Record<string, unknown>>;
-  lessons?: Array<Record<string, unknown>>;
-  churn?: number;
-  amp?: number;
-  tested?: boolean;
-  callees?: Array<Record<string, unknown>>;
-  granularity?: string;
-  next?: string;
-  outline?: Array<Record<string, unknown>>;
-  fan_in?: number;
-  via?: string;
-  lexical_rank?: number;
-  vector_rank?: number;
-  namespace?: string;
-}
-
 export interface CodeSearchOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
@@ -1761,27 +1794,6 @@ export interface CodeSymbolInput {
   presence?: boolean;
   neighbours?: boolean | null;
   neighbour_k?: number;
-}
-
-export interface CodeSymbolOutput {
-  definitions: CodeUnit[];
-  lessons_left_out?: number;
-  ambiguous?: boolean;
-  hierarchy?: Record<string, Array<Record<string, unknown>>>;
-  candidates?: Array<Record<string, unknown>>;
-  tokens_returned?: number;
-  trace_run_id?: string;
-  uses?: Array<Record<string, unknown>> | Record<string, unknown>;
-  uses_truncated?: boolean;
-  uses_tokens?: number;
-  picked_by?: string;
-  resolved_by?: string;
-  documented_in?: Array<Record<string, unknown>>;
-  neighbours?: Array<Record<string, unknown>>;
-  anchors?: number;
-  neighbour_tokens?: number;
-  presence?: Array<Record<string, unknown>>;
-  summary?: Record<string, string[]>;
 }
 
 export interface CodeSymbolHistoryInput {
@@ -10591,6 +10603,7 @@ export type OpName =
   | "code.coverage.unwatch"
   | "code.coverage.watch"
   | "code.coverage_claim"
+  | "code.edit_context"
   | "code.enclosing"
   | "code.examples"
   | "code.files"
@@ -10971,6 +10984,7 @@ export interface OpMap {
   "code.coverage.unwatch": { input: CodeCoverageUnwatchInput; output: CodeCoverageUnwatchOutput };
   "code.coverage.watch": { input: CodeCoverageWatchInput; output: CodeCoverageWatchOutput };
   "code.coverage_claim": { input: CodeCoverageClaimInput; output: CodeCoverageClaimOutput };
+  "code.edit_context": { input: CodeEditContextInput; output: CodeSymbolOutput };
   "code.enclosing": { input: CodeEnclosingInput; output: CodeEnclosingOutput };
   "code.examples": { input: CodeExamplesInput; output: CodeExamplesOutput };
   "code.files": { input: CodeFilesInput; output: CodeFilesOutput };
@@ -11351,6 +11365,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "code.coverage.unwatch", group: "code", method: "coverageUnwatch", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 500, audit: false, readOnly: false },
   { name: "code.coverage.watch", group: "code", method: "coverageWatch", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: false },
   { name: "code.coverage_claim", group: "code", method: "coverageClaim", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1200, audit: false, readOnly: true },
+  { name: "code.edit_context", group: "code", method: "editContext", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: true },
   { name: "code.enclosing", group: "code", method: "enclosing", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "code.examples", group: "code", method: "examples", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "code.files", group: "code", method: "files", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
@@ -11710,4 +11725,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 377;
+export const GENERATED_OP_COUNT = 378;

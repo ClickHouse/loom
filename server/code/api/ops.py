@@ -105,6 +105,7 @@ from server.code.api.models_status import (
 from server.code.api.models_symbol import (
     CodeCallersInput,
     CodeCallersOutput,
+    CodeEditContextInput,
     CodeImpactInput,
     CodeImpactOutput,
     CodeSymbolInput,
@@ -181,6 +182,7 @@ from server.code.app.settings import handle_code_setting_facts
 from server.code.app.symbol import (
     handle_code_callees,
     handle_code_callers,
+    handle_code_edit_context,
     handle_code_enclosing,
     handle_code_examples,
     handle_code_history,
@@ -218,6 +220,16 @@ OPERATIONS: list[Operation] = [
         input_model=CodeSymbolInput,
         output_model=CodeSymbolOutput,
         handler=handle_code_symbol,
+        idempotent=True,
+        required_role=Role.VIEWER,
+    ),
+    Operation(
+        name="code.edit_context",
+        maturity="experimental",
+        session_content=True,
+        input_model=CodeEditContextInput,
+        output_model=CodeSymbolOutput,
+        handler=handle_code_edit_context,
         idempotent=True,
         required_role=Role.VIEWER,
     ),

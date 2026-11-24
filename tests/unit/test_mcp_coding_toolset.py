@@ -97,6 +97,7 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
         "code.pr_check",
         "code.impact",
         "code.read",
+        "code.edit_context",
     }
     # The QA-plane ops a coding session asks for are
     # listed on coding without joining core
@@ -108,7 +109,10 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
     }
     # the scratchpad is coding's own; the memory verbs are core's
     assert (
-        _MCP_CODING_OPS - tracker_on_coding - {"working_memory.set", "code.read"} <= _MCP_CORE_OPS
+        _MCP_CODING_OPS
+        - tracker_on_coding
+        - {"working_memory.set", "code.read", "code.edit_context"}
+        <= _MCP_CORE_OPS
     )
     assert not (_MCP_CODING_OPS & _MCP_HIDDEN_OPS)
     assert len(_MCP_CODE_CORE_OPS) == 8
@@ -140,7 +144,7 @@ def test_coding_listing_is_its_roster_plus_the_code_tools_regardless_of_the_flag
     for code in (False, True):
         tools = _listing("coding", code)
         names = _names(tools)
-        assert len(tools) == len(_MCP_CODING_OPS | _MCP_CODE_CORE_OPS) + len(SYNTHETIC) == 22
+        assert len(tools) == len(_MCP_CODING_OPS | _MCP_CODE_CORE_OPS) + len(SYNTHETIC) == 23
         assert "loom_code_read" in names
         assert SYNTHETIC <= names
         assert {TOOL_TO_OP[n] for n in names - SYNTHETIC} == _MCP_CODING_OPS | _MCP_CODE_CORE_OPS
@@ -180,7 +184,7 @@ def test_toolset_is_selectable_per_deployment_and_per_request():
     assert resolve_toolset(None, "bogus") == "core", "an unknown configured value is core"
     assert resolve_toolset("", None) == "core"
     # the per-request override on a `core` deployment is the coding listing
-    assert len(_listing("core", True, requested="coding")) == 22
+    assert len(_listing("core", True, requested="coding")) == 23
     assert (
         len(_listing("core", True, requested="bogus"))
         == len(_MCP_CORE_OPS | _MCP_CODE_CORE_OPS) + 3
@@ -393,13 +397,18 @@ def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None
     default = Settings.model_fields["mcp_always_load_tools"].get_default()
     monkeypatch.setattr(settings, "mcp_always_load_tools", default)
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
-    assert len(tools) == 22
+    assert len(tools) == 23
     flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
-    expected = {"loom_code_symbol", "loom_code_grep"}
-    if profile != "compact":
-        expected.add("loom_code_search")
+    expected = (
+        {"loom_code_edit_context", "loom_code_grep"}
+        if profile == "compact"
+        else {"loom_code_symbol", "loom_code_grep", "loom_code_search"}
+    )
     assert flagged == expected
     assert {"loom_op", "loom_search", "loom_code_search"} <= {tool["name"] for tool in tools}
+    edit = next(tool for tool in tools if tool["name"] == "loom_code_edit_context")
+    assert edit["inputSchema"]["required"] == ["name"]
+    assert edit["annotations"]["readOnlyHint"]
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding+tracker"])
@@ -545,7 +554,8 @@ def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -
 def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     coding = mcp_primer._coding_instructions("coding")
     assert "Use Loom first to search and read unchanged indexed source, including tests" in coding
-    assert "Start with `loom_code_symbol` for a named definition or enclosing class" in coding
+    assert "read its source and tests with `loom_code_edit_context`" in coding
+    assert "Inspect a definition with `loom_code_symbol`" in coding
     for name, purpose in (
         ("loom_code_search", "for behavior or an issue"),
         ("loom_code_grep", "for exact text or an error"),

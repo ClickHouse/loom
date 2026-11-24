@@ -9,7 +9,12 @@ import logging
 import time
 from typing import Any
 
-from server.code.api.models_symbol import CodeSymbolInput, CodeSymbolOutput
+from server.code.api.models_symbol import (
+    EDIT_TEST_CONTEXT_LINES,
+    CodeEditContextInput,
+    CodeSymbolInput,
+    CodeSymbolOutput,
+)
 from server.code.app import symbol_uses as _uses_brief
 from server.code.app.common import (
     answer_args,
@@ -393,7 +398,21 @@ def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any],
     return kept, tokens, left_out
 
 
-async def handle_code_symbol(input: CodeSymbolInput) -> CodeSymbolOutput:
+async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
+    return await handle_code_symbol(
+        CodeSymbolInput(
+            **input.model_dump(),
+            include_history=False,
+            test_examples_only=True,
+            example_context_lines=EDIT_TEST_CONTEXT_LINES,
+        ),
+        op_name="code.edit_context",
+    )
+
+
+async def handle_code_symbol(
+    input: CodeSymbolInput, *, op_name: str = "code.symbol"
+) -> CodeSymbolOutput:
     from server.code.app import fan_in as code_fan_in
 
     require_code_intel()
@@ -546,6 +565,7 @@ async def handle_code_symbol(input: CodeSymbolInput) -> CodeSymbolOutput:
         budgeted,
         tokens,
         started,
+        op_name=op_name,
         args=answer_args(
             input,
             "pr_number",
@@ -601,6 +621,7 @@ def _symbol_trace(
     tokens: int,
     started: float,
     *,
+    op_name: str = "code.symbol",
     args: dict[str, Any] | None = None,
 ) -> str:
     """The code.symbol trace row; returns its run id. `args` are the knobs that shaped the
@@ -611,7 +632,7 @@ def _symbol_trace(
     schedule_code_trace(
         org=org,
         ns=ns,
-        op="code.symbol",
+        op=op_name,
         query=input.name or input.symbol_id,
         route=route,
         args=args or None,

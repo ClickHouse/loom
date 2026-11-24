@@ -30,8 +30,10 @@ Query parameters on the URL select what `tools/list` shows for that connection:
   `full` (adds `outputSchema`) or `compact` (the first paragraph and the
   argument tree).
 
-With the automatic loading policy, compact coding connections load `code.symbol`
-and `code.grep` up front. Clients can discover `code.search` when they need it.
+With the automatic loading policy, compact coding connections load
+`code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
+definition name or location to read implementation, indexed tests, and linked
+lessons together. Clients can discover `code.symbol` and `code.search` as needed.
 An explicit `LOOM_MCP_ALWAYS_LOAD_TOOLS` list controls loading on every profile.
 
 On coding connections, `code.symbol` includes related indexed tests and nearby

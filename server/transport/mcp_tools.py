@@ -506,10 +506,10 @@ def listed_ops(toolset: str | None) -> list[Operation]:
 def _upfront_tools(configured: str, toolset: str, profile: str) -> set[str]:
     if configured.strip().casefold() != "auto":
         return {name.strip() for name in configured.split(",") if name.strip()}
-    names = {"code.search", "code.symbol", "code.grep"}
     if toolset == "coding" and profile == "compact":
-        names.remove("code.search")
-    elif toolset != "coding":
+        return {"code.edit_context", "code.grep"}
+    names = {"code.search", "code.symbol", "code.grep"}
+    if toolset != "coding":
         names.update({"search.query", LOOM_OP_TOOL_NAME})
     return names
 

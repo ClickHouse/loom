@@ -1443,6 +1443,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`resolved_by` names an alternate binding such as an anonymous namespace, "
         "omitted qualification or SQL registration. `documented_in` lists citing sections."
     ),
+    "code.edit_context": (
+        "Read implementation, relevant indexed tests, and linked lessons before editing. "
+        "Use a definition name, path:symbol, or a line inside a function."
+    ),
     "code.backport_gap": (
         "Which release branches still carry the bug a merged fix removed, "
         "and the exact PR to cherry-pick there. Give `pr_number` (the merged "
@@ -2181,15 +2185,9 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 # derived from core text so revision and memory guidance stay consistent.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.symbol": (
-        "Read a definition by name, path:symbol, or path:line with source, relevant tests, "
-        "and linked lessons. Name the method for a local change. "
-        "Use the returned test excerpts for regression checks. "
-        "Set `include_examples: false` when you already have the tests.\n\n"
-        "Use code.read for ranges, code.search for concepts, "
-        "or code.enclosing with `include_body: true` for several locations. "
-        "`uses_brief: true` summarizes callers; `uses: true` lists mentions. "
-        "`near_paths` or `pr_number` rank ambiguous matches. Check freshness and source elision. "
-        "Use local tools for changed or unindexed files."
+        "Inspect a definition by name, path:symbol, or path:line. Includes source and links. "
+        "For an edit, use code.edit_context. Set `include_examples: false` to omit examples. "
+        "`uses_brief: true` summarizes callers. Check freshness and source elision."
     ),
     "code.grep": (
         "Find text and enclosing bodies in one call. Scope with `path_prefix` or `path_globs`. "

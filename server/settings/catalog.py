@@ -6260,6 +6260,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # one excerpt read, one grep count — gathered
     "code.setting_facts": 1200,
     "code.symbol": 250,
+    "code.edit_context": 250,
     # symbol resolve + two loom reads gathered + items + up to three
     # bounded tracker reads (300 ms each, two gathered)
     "code.symbol_history": 1800,
