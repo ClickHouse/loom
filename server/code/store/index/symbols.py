@@ -91,14 +91,14 @@ class SymbolsMixin(CodeRepoBase):
 
     async def declared_types_for_symbols(
         self, org: str, ns: str, keys: list[tuple[str, str]]
-    ) -> dict[tuple[str, str], str]:
+    ) -> dict[tuple[str, str], tuple[str, str]]:
         """Declared types of the exact live parser-tier definitions selected by a binding."""
-        out: dict[tuple[str, str], str] = {}
+        out: dict[tuple[str, str], tuple[str, str]] = {}
         for batch in _batched(keys, 500):
             key_match, key_params = _reconcile_key_match(batch)
             rows = await self._ch.query_all(
                 f"""
-                SELECT qualified_name, symbol_id, return_type
+                SELECT qualified_name, symbol_id, path, return_type
                 FROM loom.code_symbols FINAL
                 WHERE org = {{org:String}} AND namespace = {{ns:String}}
                   AND tier = 'treesitter' AND {key_match}
@@ -108,7 +108,10 @@ class SymbolsMixin(CodeRepoBase):
             )
             out.update(
                 {
-                    (str(r["qualified_name"]), str(r["symbol_id"])): str(r["return_type"])
+                    (str(r["qualified_name"]), str(r["symbol_id"])): (
+                        str(r["path"]),
+                        str(r["return_type"]),
+                    )
                     for r in rows
                 }
             )

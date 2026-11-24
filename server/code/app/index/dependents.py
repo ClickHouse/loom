@@ -50,6 +50,8 @@ from server.code.domain.extract.edges_treesitter import (
     REPO_WIDE_CONFIDENCE,
     candidates_for_call,
 )
+from server.code.domain.extract.py_member_reads import READ_DEPENDENCY
+from server.code.domain.extract.treesitter import file_symbol_id
 from server.code.store.index import CodeRepo, build_row
 
 logger = logging.getLogger("loom.code_index.dependents")
@@ -83,6 +85,12 @@ class CommitDelta:
     @property
     def empty(self) -> bool:
         return not (self.names_added or self.names_removed or self.symbols_tombstoned)
+
+    @property
+    def python_binding_files(self) -> list[str]:
+        return [
+            file_symbol_id(p) for p in sorted(self.touched_paths) if p.endswith((".py", ".pyi"))
+        ]
 
 
 @dataclass
@@ -395,7 +403,8 @@ async def run_for_commit(
     otherwise re-extract), then the bounded dependents re-extraction. Every
     read is a key read: misses by callee_name, edges by to_symbol_id,
     definitions by name."""
-    if delta.empty or not (dependents_enabled or closure_enabled):
+    binding_files = delta.python_binding_files if dependents_enabled else []
+    if (delta.empty and not binding_files) or not (dependents_enabled or closure_enabled):
         return None, None
 
     # the same per-commit cap on each side: a generated file that adds
@@ -473,7 +482,7 @@ async def run_for_commit(
         if (str(m["callee_name"]), str(m["path"]), int(m["line"]), str(m["from_symbol_id"]))
         not in resolved_keys
     ]
-    tomb_ids = sorted(delta.symbols_tombstoned)
+    tomb_ids = sorted(delta.symbols_tombstoned) + binding_files
     tomb_paths = (
         [
             str(r["path"])
@@ -481,7 +490,7 @@ async def run_for_commit(
                 org,
                 ns,
                 tomb_ids,
-                edge_kinds=["calls", "inherits", "fixture_use", "reads"],
+                edge_kinds=["calls", "inherits", "fixture_use", "reads", READ_DEPENDENCY],
             )
         ]
         if tomb_ids

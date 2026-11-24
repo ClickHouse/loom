@@ -285,9 +285,22 @@ def test_dependents_follow_tombstoned_targets_and_ambiguous_names() -> None:
     ]
     # (b) any grade, every dependent edge kind; (d) only the repo-wide grade
     kinds = {c[2]: c[3] for c in repo.calls if c[0] == "edges_to"}
-    assert kinds[("calls", "inherits", "fixture_use", "reads")] is None
+    assert kinds[("calls", "inherits", "fixture_use", "reads", "uses_type")] is None
     assert kinds[("calls",)] == 0.65
     assert not repo.state, "nothing queued under the cap"
+
+
+def test_python_type_module_change_repairs_reader_without_symbol_tombstone() -> None:
+    from server.code.domain.extract.treesitter import file_symbol_id
+
+    provider = "src/pkg/provider.py"
+    reader = "src/pkg/reader.py"
+    provider_id = file_symbol_id(provider)
+    repo = _Repo(edges_to={provider_id: [_edge(reader, provider_id, 1.0, kind="uses_type")]})
+    delta = d.CommitDelta(touched_paths={provider})
+    (closure, deps), seen = _run(repo, delta, closure_enabled=False)
+    assert delta.empty and closure is None and deps.reingested == 1
+    assert [path for path, _ in seen] == [reader]
 
 
 def test_cap_queues_overflow_merges_and_bounds_the_pending_queue() -> None:

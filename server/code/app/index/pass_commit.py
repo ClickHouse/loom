@@ -469,7 +469,7 @@ async def _resolve_dependents(
     from server.code.app.index.dependents import CommitDelta, run_for_commit
 
     delta = CommitDelta.from_stats(file_stats, touched)
-    if delta.empty:
+    if delta.empty and not (settings.code_ingest_dependents_enabled and delta.python_binding_files):
         return
     try:
         closure, deps = await run_for_commit(

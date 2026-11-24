@@ -47,25 +47,37 @@ def reassigned(client: Other):
     value = client.option
     client = object()
     return value
+
+def imported_over_parameter(client: Other):
+    import sys as client
+    return client.option
+
+from .shadow import Client
 """,
     )
+    other = parse_python("src/pkg/shadow.py", b"class Client:\n    option = 3\n")
     names: dict[str, list[tuple[str, str, str]]] = {}
-    for pf in (context, reader):
+    for pf in (context, reader, other):
         for symbol in pf.symbols:
             names.setdefault(symbol.name, []).append(
                 (symbol.id, symbol.qualified_name, symbol.kind)
             )
-    lane_context = {"py_present": {context.path, reader.path}, "py_roots": ("src",)}
+    lane_context = {"py_present": {context.path, reader.path, other.path}, "py_roots": ("src",)}
+    texts = {context.path: context.source.decode("utf-8")}
     sites = read_sites(reader)
     targets = receiver_targets(reader, sites, names, lane_context)
     declaration = next(s for s in context.symbols if s.name == "client")
     key = (declaration.qualified_name, declaration.id)
     assert targets == {"default_client": key}
-    edges = read_edges(reader, sites, names, targets, {key: "Client"}, lane_context)
-    assert [(e.edge_kind, e.line, e.to_qualified_name) for e in edges] == [
+    edges = read_edges(
+        reader, sites, names, targets, {key: (context.path, "Client")}, texts, lane_context
+    )
+    assert [
+        (e.edge_kind, e.line, e.to_qualified_name) for e in edges if e.edge_kind == "reads"
+    ] == [
         ("reads", 9, "src.pkg.context::client"),
         ("reads", 9, "src.pkg.context::Client::option"),
         ("reads", 12, "src.pkg.reader::Other::option"),
     ]
-    unresolved = read_edges(reader, sites, names, targets, {}, lane_context)
+    unresolved = read_edges(reader, sites, names, targets, {}, texts, lane_context)
     assert [(e.line, e.to_symbol_id) for e in unresolved if e.line == 9] == [(9, declaration.id)]

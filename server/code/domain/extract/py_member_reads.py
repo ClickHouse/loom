@@ -1,19 +1,22 @@
-"""Resolve Python member reads through the same receiver types as calls."""
+"""Resolve typed Python member reads in the scope that declares the type."""
 
 from __future__ import annotations
 
-from ast import ImportFrom
-from ast import parse as parse_ast
-from collections import defaultdict
+import ast
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from symtable import SymbolTable, symtable
 from typing import Any
 
 from server.code.domain.extract.edges_treesitter import Edge, _caller_spans, _CallResolver
+from server.code.domain.extract.lang_python import (
+    first_present_candidate,
+    import_candidates,
+    module_scope,
+)
 from server.code.domain.extract.py_members import KIND_CONST
-from server.code.domain.extract.py_receivers import type_name_of
 from server.code.domain.extract.spans import last_span_at
-from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
+from server.code.domain.extract.treesitter import ParsedFile, Symbol, file_symbol_id, node_text
 
 _GROUPING = frozenset(
     {
@@ -26,6 +29,7 @@ _GROUPING = frozenset(
     }
 )
 _WRITE_TARGETS = frozenset({"assignment", "augmented_assignment", "for_statement", "for_in_clause"})
+READ_DEPENDENCY = "uses_type"
 
 
 @dataclass(frozen=True)
@@ -90,7 +94,7 @@ def read_sites(pf: ParsedFile) -> list[MemberRead]:
         binding = scope.lookup(receiver)
         if binding.is_global() and receiver in imports and (origin := direct.get(receiver)):
             sites.append(MemberRead(line, receiver, member, imported=origin))
-        elif binding.is_parameter() and not binding.is_assigned():
+        elif binding.is_parameter() and not (binding.is_assigned() or binding.is_imported()):
             if receiver_type := owner.annotations.get(receiver):
                 sites.append(MemberRead(line, receiver, member, receiver_type))
     return sites
@@ -115,7 +119,8 @@ def _global_rebindings(children: list[SymbolTable]) -> set[str]:
 def _annotations(parameters: Any, source: bytes) -> dict[str, str]:
     types: dict[str, str] = {}
     for parameter in parameters.named_children if parameters is not None else ():
-        if not (name_type := type_name_of(parameter.child_by_field_name("type"), source)):
+        annotation = parameter.child_by_field_name("type")
+        if annotation is None or not (name_type := _simple_type(node_text(annotation, source))):
             continue
         name = parameter.child_by_field_name("name") or next(
             (child for child in parameter.named_children if child.type == "identifier"), None
@@ -180,15 +185,13 @@ def _resolver(
 
 
 def _direct_imports(pf: ParsedFile) -> dict[str, tuple[str, str] | None]:
+    return _from_imports(list(ast.parse(pf.source.decode("utf-8")).body))
+
+
+def _from_imports(nodes: list[ast.AST]) -> dict[str, tuple[str, str] | None]:
     imports: dict[str, tuple[str, str] | None] = {}
-    for node in pf.tree.root_node.named_children:
-        if node.type != "import_from_statement":
-            continue
-        try:
-            statement = parse_ast(node_text(node, pf.source)).body[0]
-        except SyntaxError:
-            continue
-        if not isinstance(statement, ImportFrom):
+    for statement in nodes:
+        if not isinstance(statement, ast.ImportFrom):
             continue
         module = "." * statement.level + (statement.module or "")
         for alias in statement.names:
@@ -197,6 +200,104 @@ def _direct_imports(pf: ParsedFile) -> dict[str, tuple[str, str] | None]:
             if imports.setdefault(local, binding) != binding:
                 imports[local] = None
     return imports
+
+
+def _simple_type(text: str) -> str:
+    name = text.strip().strip("'\"")
+    return name if name.isidentifier() else ""
+
+
+def _module_nodes(root: ast.Module) -> list[ast.AST]:
+    nodes: list[ast.AST] = list(root.body)
+    for node in nodes:
+        if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            nodes.extend(ast.iter_child_nodes(node))
+    return nodes
+
+
+@dataclass
+class _ModuleTypes:
+    path: str
+    local: set[str]
+    imports: dict[str, tuple[str, str] | None]
+    annotations: dict[str, str]
+
+
+def _module_types(path: str, source: str) -> _ModuleTypes | None:
+    try:
+        root = ast.parse(source)
+    except (SyntaxError, RecursionError):
+        return None
+    nodes = _module_nodes(root)
+    imports = _from_imports(nodes)
+    if "*" in imports:
+        return None
+    # Assignments or competing definitions can change the meaning of a bare type.
+    rebound = {
+        node.id
+        for node in nodes
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+    }
+    rebound.update(
+        node.name for node in nodes if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    rebound.update(
+        alias.asname or alias.name.split(".", 1)[0]
+        for node in nodes
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    )
+    classes = Counter(node.name for node in nodes if isinstance(node, ast.ClassDef))
+    direct = {node.name for node in root.body if isinstance(node, ast.ClassDef)}
+    local = {
+        name
+        for name in direct
+        if name not in imports and name not in rebound and classes[name] == 1
+    }
+    imports = {
+        name: origin
+        for name, origin in imports.items()
+        if name not in rebound and name not in classes
+    }
+    annotations = {
+        node.target.id: _annotation_name(node.annotation)
+        for node in root.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    }
+    return _ModuleTypes(path, local, imports, annotations)
+
+
+def _annotation_name(annotation: ast.expr) -> str:
+    if isinstance(annotation, ast.Name):
+        return annotation.id
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        return _simple_type(annotation.value)
+    return ""
+
+
+def _dependency_paths(path: str, spec: str, context: dict[str, Any]) -> list[str]:
+    present = context.get("py_present", set())
+    roots = context.get("py_roots", ())
+    if bound := first_present_candidate(path, spec, present, roots):
+        return [bound]
+    return import_candidates(path, spec, roots) if spec.startswith(".") else []
+
+
+def _type_owner(
+    module: _ModuleTypes,
+    name: str,
+    context: dict[str, Any],
+    dependencies: set[str],
+) -> str:
+    if name in module.local:
+        return f"{module_scope(module.path)}::{name}"
+    if origin := module.imports.get(name):
+        spec, declared = origin
+        paths = _dependency_paths(module.path, spec, context)
+        dependencies.update(paths)
+        if len(paths) == 1 and paths[0] in context.get("py_present", set()):
+            return f"{module_scope(paths[0])}::{declared}"
+    return ""
 
 
 def receiver_targets(
@@ -226,34 +327,47 @@ def read_edges(
     sites: list[MemberRead],
     name_table: dict[str, list[tuple[str, str, str]]],
     targets: dict[str, tuple[str, str]],
-    types: dict[tuple[str, str], str],
+    types: dict[tuple[str, str], tuple[str, str]],
+    sources: dict[str, str],
     lane_context: dict[str, Any] | None,
 ) -> list[Edge]:
     """Record binding reads and the member each declared type can resolve."""
-    resolver = _resolver(pf, name_table, lane_context)
+    context = lane_context or {}
+    modules = {
+        path: module for path, text in sources.items() if (module := _module_types(path, text))
+    }
+    if current := _module_types(pf.path, pf.source.decode("utf-8")):
+        modules[pf.path] = current
     functions = [s for s in pf.symbols if s.kind in {"function", "test"} and s.has_body]
     owner_at = last_span_at(_caller_spans(pf, functions))
     out: dict[tuple[str, str, int], Edge] = {}
+    dependencies: set[str] = set()
     for site in sites:
         owner = owner_at(site.line)
         if owner is None:
             continue
         target = targets.get(site.receiver) if site.imported is not None else None
+        if site.imported:
+            dependencies.update(_dependency_paths(pf.path, site.imported[0], context))
         if target is not None:
             target_name, target_id = target
-            # A declaration can change even when both member definitions stay live.
             out[(owner.id, target_id, site.line)] = Edge(
-                "reads", owner.id, target_id, owner.qualified_name, target_name,
-                pf.path, site.line, 1.0,
+                "reads",
+                owner.id,
+                target_id,
+                owner.qualified_name,
+                target_name,
+                pf.path,
+                site.line,
+                1.0,
             )
-        receiver_type = site.receiver_type or (types.get(target) if target is not None else None)
-        if not receiver_type:
-            continue
-        bound = resolver._named_type_target(
-            receiver_type,
-            site.member,
-            resolver.candidates(site.member, site.member),
-            site.receiver,
+        declaration = (
+            (*types[target], target[0].rsplit("::", 1)[-1])
+            if target is not None and target in types
+            else None
+        )
+        bound = _member_target(
+            site, pf.path, declaration, name_table, modules, context, dependencies
         )
         if bound is None:
             continue
@@ -268,4 +382,44 @@ def read_edges(
             site.line,
             0.8,
         )
-    return list(out.values())
+    return [*out.values(), *_dependency_edges(pf.path, dependencies)]
+
+
+def _member_target(
+    site: MemberRead,
+    path: str,
+    declaration_type: tuple[str, str, str] | None,
+    name_table: dict[str, list[tuple[str, str, str]]],
+    modules: dict[str, _ModuleTypes],
+    context: dict[str, Any],
+    dependencies: set[str],
+) -> tuple[str, str] | None:
+    type_name = site.receiver_type
+    if declaration_type is not None:
+        path, type_name, declaration = declaration_type
+        dependencies.add(path)
+        if path not in modules or modules[path].annotations.get(declaration) != type_name:
+            return None
+    if not type_name or path not in modules:
+        return None
+    if not (type_owner := _type_owner(modules[path], type_name, context, dependencies)):
+        return None
+    qualified = f"{type_owner}::{site.member}"
+    candidates = {sid for sid, name, _ in name_table.get(site.member, ()) if name == qualified}
+    return (next(iter(candidates)), qualified) if len(candidates) == 1 else None
+
+
+def _dependency_edges(path: str, dependencies: set[str]) -> list[Edge]:
+    return [
+        Edge(
+            READ_DEPENDENCY,
+            file_symbol_id(path),
+            file_symbol_id(target),
+            path,
+            target,
+            path,
+            1,
+            1.0,
+        )
+        for target in sorted(dependencies - {path})
+    ]

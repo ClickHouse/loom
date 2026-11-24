@@ -26,6 +26,7 @@ from server.code.app.index.ingest_parse import (
 from server.code.app.index.ingest_resolve import (
     _LIVE_PATHS_CACHE,
     _barrel_targets_of,
+    _git_text,
     _go_module_index,
     _live_paths,
     _package_json_text,
@@ -46,6 +47,7 @@ from server.code.domain.extract.lang_sql_model import SQL_LANG
 from server.code.domain.extract.name_scope import drop_test_local_shell_defs, gate_name_table
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.store.index import CodeRepo
+from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.ingest")
 
@@ -215,8 +217,21 @@ async def _python_read_edges(
         if targets
         else {}
     )
+    paths = sorted({path for path, _ in types.values()} - {pf.path})
+    # Reconstructed chunks can contain summaries and gaps, which can change Python scope.
+    texts = await asyncio.gather(
+        *(_git_text(org, ns, path, settings.code_ingest_max_file_bytes) for path in paths)
+    )
+    sources = {path: text for path, text in zip(paths, texts, strict=True) if text}
     return await asyncio.to_thread(
-        py_member_reads.read_edges, pf, names.member_sites, names.reads, targets, types, context
+        py_member_reads.read_edges,
+        pf,
+        names.member_sites,
+        names.reads,
+        targets,
+        types,
+        sources,
+        context,
     )
 
 
