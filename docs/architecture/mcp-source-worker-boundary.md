@@ -126,6 +126,17 @@ same access check; derived memory and cached results cannot extend it.
 
 ## Refresh and retirement
 
+The queue stores metadata for a selected resource, never its body. A schedule
+and a manual request derive the same kind of per-resource task. Reclaiming a
+lease advances its fence without changing the task key. Changing the source,
+selection, account, or approval generation invalidates existing work. A worker
+can only claim the queue partition assigned to it. The requester, destination,
+and exact selection still need to be rechecked at acceptance.
+
+The queue does not yet have a worker-facing API or a runner. Its lease and
+checkpoint tests perform no document writes. Treat the upload, copy acceptance,
+and cutover described below as requirements for enabling refresh.
+
 Loom schedules and claims bounded refresh jobs. Each claim targets one worker and
 the approved source revision, with a lease and a monotonically fenced attempt.
 The worker uploads an idempotent completion for the exact claim. The server
