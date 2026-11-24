@@ -70,6 +70,18 @@ def test_other_ops_and_non_dict_arguments_pass_through() -> None:
     assert mcp_default_arguments("code.index_status", None) is None
 
 
+def test_coding_symbol_calls_include_test_source_by_default() -> None:
+    args = mcp_default_arguments("code.symbol", {"name": "X"}, toolset="coding")
+    assert args["test_examples_only"] is True
+    assert args["example_context_lines"] == 10
+    choices = {"test_examples_only": False, "example_context_lines": 0, "include_examples": False}
+    assert mcp_default_arguments("code.symbol", choices, toolset="coding") == {
+        "include_history": False,
+        **choices,
+    }
+    assert "test_examples_only" not in mcp_default_arguments("code.symbol", {}, toolset="core")
+
+
 def test_http_keeps_the_full_default() -> None:
     # the op's own default is None (= brief only with `commit`); only MCP flips it
     assert CodeIndexStatusInput().brief is None
@@ -77,4 +89,4 @@ def test_http_keeps_the_full_default() -> None:
 
 def test_the_mcp_validator_applies_the_defaults() -> None:
     src = (ROOT / "server/transport/mcp_call.py").read_text()
-    assert "op.input_model.model_validate(mcp_default_arguments(op.name, arguments))" in src
+    assert "mcp_default_arguments(op.name, arguments, toolset=toolset)" in src

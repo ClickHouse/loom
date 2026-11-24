@@ -281,7 +281,7 @@ async def _call_tool(
     client_idem_key = _pop_idempotency_key(op, arguments)
 
     validated = _validated_input(
-        req_id, op, gates.with_resolved_org(op, arguments, auth), request_id
+        req_id, op, gates.with_resolved_org(op, arguments, auth), request_id, toolset=toolset
     )
     if isinstance(validated, dict):
         return validated  # misspelled-argument refusal, or VALIDATION_FAILED
@@ -766,7 +766,12 @@ async def _idempotency_gate(
 
 
 def _validated_input(
-    req_id: Any, op: Operation, arguments: dict[str, Any], request_id: str
+    req_id: Any,
+    op: Operation,
+    arguments: dict[str, Any],
+    request_id: str,
+    *,
+    toolset: str | None = None,
 ) -> BaseModel | dict[str, Any]:
     """Phase 4 of `_call_tool`: the misspelled-argument refusal, then
     Pydantic validation. Returns the input model, or the refusal response
@@ -782,7 +787,9 @@ def _validated_input(
 
     # Validate input via Pydantic
     try:
-        input_obj = op.input_model.model_validate(mcp_default_arguments(op.name, arguments))
+        input_obj = op.input_model.model_validate(
+            mcp_default_arguments(op.name, arguments, toolset=toolset)
+        )
     except ValidationError as e:
         # The failing field on the row, and a code.* trace row (each once a batch).
         errors = _validation_errors(e)

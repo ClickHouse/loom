@@ -2181,10 +2181,10 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 # derived from core text so revision and memory guidance stay consistent.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.symbol": (
-        "Read a definition by name, path:symbol, or path:line with source and linked lessons. "
-        "Name the method for a local change or the class for related methods. "
-        "Set `test_examples_only: true` and "
-        "`example_context_lines` to read nearby test code with the definition.\n\n"
+        "Read a definition by name, path:symbol, or path:line with source, relevant tests, "
+        "and linked lessons. Name the method for a local change. "
+        "Use the returned test excerpts for regression checks. "
+        "Set `include_examples: false` when you already have the tests.\n\n"
         "Use code.read for ranges, code.search for concepts, "
         "or code.enclosing with `include_body: true` for several locations. "
         "`uses_brief: true` summarizes callers; `uses: true` lists mentions. "

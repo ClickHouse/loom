@@ -40,6 +40,7 @@ from server.transport.mcp_config import (
     _LOOM_SEARCH_TOOL_NAME,
     _READ_SHAPED_VERBS,
 )
+from server.transport.mcp_defaults import mcp_argument_defaults
 from server.transport.mcp_descriptions import (
     ASSISTANT_TOOL_DESCRIPTIONS as _ASSISTANT_TOOL_DESCRIPTIONS,
 )
@@ -568,6 +569,11 @@ async def _tools_descriptor(
                 input_schema, set(ASSISTANT_FORCED_ARGS.get(op.name, {})) | ASSISTANT_DROPPED_ARGS
             )
             input_schema = _with_identity(input_schema, op)
+        if defaults := mcp_argument_defaults(op.name, toolset):
+            fields = input_schema.get("properties", {})
+            for field, value in defaults.items():
+                if field in fields:
+                    fields[field] = {**fields[field], "default": value}
         descriptor: dict[str, Any] = {
             "name": op.mcp_tool_name,
             "description": desc,
