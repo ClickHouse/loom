@@ -19,11 +19,11 @@ and sends one event per completed 12-hour UTC window.
 
 ### Where telemetry is sent
 
-The background worker posts `loom_self_hosted_telemetry` events to the EU PostHog
-capture endpoint at `https://eu.i.posthog.com/i/v0/e/`. The event's distinct ID
-is the installation UUID. Person-profile and geographic enrichment are disabled.
-Delivery uses the release's public project capture key. A build with an empty
-`LOOM_ADOPTION_TELEMETRY_CAPTURE_KEY` skips delivery.
+The background worker posts to
+`https://telemetry.loom.clickhouse.com/api/v1/adoption`. The collector validates
+the report and acknowledges the installation UUID and window after writing to
+the analytics ClickHouse service. The warehouse deduplicates retries and expires
+reports 400 days after receipt.
 
 The worker derives a stable reporting UUID from the storage authority's deployment ID.
 Replicas sharing that authority report under one UUID. If the worker detail shows
@@ -42,7 +42,7 @@ the application.
 | `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                           |
 | `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                            |
 | `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                  |
-| `user_domains`                                                                                                         | Up to 30 verified contact email domains and distinct address counts across the installation. Restricted namespaces and private mirrors are excluded.                                    |
+| `user_domains`                                                                                                         | Empty by default. With domain sharing enabled, up to 30 verified email domains and distinct address counts. Restricted namespaces and private mirrors are excluded.                     |
 | `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                             |
 | `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace. |
 | `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                 |
@@ -62,14 +62,15 @@ Set `LOOM_ADOPTION_TELEMETRY_ENABLED=false` on every server and worker replica.
 With a settings file, set `adoption_telemetry_enabled: false`. In the Helm chart, put
 that setting under `settingsFile`.
 
+Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=true` to share domain counts with the
+aggregate report. Domain sharing is off by default.
+
 ### Warehouse and Hex
 
-Export the event properties to the warehouse as `loom_adoption_windows`. Keep version
-1, parse `day` as a date and `window_start` as a UTC timestamp, and deduplicate on
-`(installation_id, window_start)`. Retries use the same event UUID. Store
-`user_domains` as `Array(Tuple(domain String, user_count UInt64))`. The daily
-rollup adds request counts and uses the peak half-day distinct count for each
-installation.
+The [collector deployment guide](../../../deploy/telemetry/README.md) covers the
+warehouse and dashboard setup. `loom_adoption_windows` contains one report per
+`(installation_id, window_start)`. The daily rollup adds request counts and
+uses the peak half-day distinct count for each installation.
 
 Maintain a separate, access-controlled `loom_adoption_enrollments` dataset with one row per
 installation. An enrolling operator can find the reporting UUID in the

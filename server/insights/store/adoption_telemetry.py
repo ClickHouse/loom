@@ -81,7 +81,7 @@ async def window_report(
     end: datetime,
     installation_id: UUID,
     *,
-    restricted: set[tuple[str, str]],
+    restricted: set[tuple[str, str]] | None,
     ch: CHClient,
 ) -> dict[str, Any]:
     params = {
@@ -93,10 +93,15 @@ async def window_report(
     report = await ch.query_one(ADOPTION_SQL, params)
     if report is None:
         raise RuntimeError("adoption aggregation returned no row")
+    domains = (
+        await ch.query_all(DOMAINS_SQL, {"restricted": sorted(restricted)})
+        if restricted is not None
+        else []
+    )
     return {
         **report,
         "day": start.date().isoformat(),
         "window_start": start.isoformat(),
         "window_end": end.isoformat(),
-        "user_domains": await ch.query_all(DOMAINS_SQL, {"restricted": sorted(restricted)}),
+        "user_domains": domains,
     }

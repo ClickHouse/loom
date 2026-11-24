@@ -304,10 +304,11 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
         end + timedelta(days=2),
         end + timedelta(days=2, hours=12),
         installation_id,
-        restricted=set(),
+        restricted=None,
         ch=ch,
     )
     assert idle["requests"] == 0
+    assert idle["user_domains"] == []
 
 
 async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient) -> None:

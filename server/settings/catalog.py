@@ -4423,8 +4423,8 @@ class ObservabilitySettings(BaseModel):
 
     # Self-hosted adoption reports. Set false to stop all adoption reporting.
     adoption_telemetry_enabled: bool = True
-    # Public event capture key for the adoption telemetry project. Empty skips delivery.
-    adoption_telemetry_capture_key: str = ""
+    # Share verified email domain counts in adoption reports. Off by default.
+    adoption_telemetry_share_domains: bool = False
     # Seconds between adoption checks and retries. A report covers 12 hours.
     adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 

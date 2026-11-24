@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "functions": {
+    "api/v1/adoption.mjs": { "maxDuration": 10 }
+  }
+}
