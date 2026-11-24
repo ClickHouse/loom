@@ -35,7 +35,7 @@ each agent access to the namespaces it needs and register sources for the docume
 that change outside Loom. A search hit gives the agent a passage, source and revision
 to check against the question. Store a decision an agent makes while applying a
 policy in [shared agent memory](agent-memory.md) so future agents can find it alongside
-the original evidence.
+the original evidence. Follow the [knowledge factory guide](knowledge-factory.md) to review and publish answers to recurring gaps.
 
 ## Measured
 

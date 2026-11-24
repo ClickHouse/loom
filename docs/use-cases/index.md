@@ -7,6 +7,7 @@ does for that need and where to start.
 | -------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | Memory across sessions and tools for coding agents and other AI agents           | [Agent memory](agent-memory.md)                            |
 | Knowledge and document search for agents (RAG)                                   | [Document search](document-search.md)                      |
+| Turn sources and agent lessons into reusable knowledge                           | [Knowledge factory](knowledge-factory.md)                  |
 | A code index and code intelligence for coding agents                             | [Code index](code-intelligence.md)                         |
 | What the code index gives per language (C++, Python, TypeScript, Go, Rust, Java) | [Code index by language](code-intelligence-by-language.md) |
 | Memory linked to the code it is about, flagged when the code changes             | [Memory linked to code](memory-linked-to-code.md)          |
