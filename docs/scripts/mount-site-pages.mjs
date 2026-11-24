@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const output = new URL("../.vercel/output/", import.meta.url);
+const docs = new URL("../", import.meta.url);
 const manifest = new URL("config.json", output);
 const config = JSON.parse(readFileSync(manifest, "utf8"));
 const staticRoutes = [
@@ -27,3 +28,7 @@ const siteRoutes = [{ src: "^/adoption/?$", dest: adoption.dest }, ...staticRout
 const publicPaths = new Set(siteRoutes.map(({ src }) => src));
 config.routes = [...siteRoutes, ...config.routes.filter(({ src }) => !publicPaths.has(src))];
 writeFileSync(manifest, `${JSON.stringify(config, null, "\t")}\n`);
+
+for (const file of readdirSync(docs).filter((name) => /^[0-9a-f]{32}\.txt$/.test(name))) {
+  copyFileSync(new URL(file, docs), new URL(`static/docs/${file}`, output));
+}

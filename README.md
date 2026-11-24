@@ -26,7 +26,7 @@
   <a href="#get-started">Get started</a> ·
   <a href="#why-loom">Capabilities</a> ·
   <a href="#integrations">Integrations</a> ·
-  <a href="https://clickhouse.github.io/loom/">Documentation</a>
+  <a href="https://loom.clickhouse.com/docs/">Documentation</a>
 </p>
 
 <p>
@@ -308,12 +308,12 @@ and the full protocols, models and artifacts.
 ## Documentation and contributing
 
 For shared agent context, code intelligence and permissioned retrieval, start with the
-[documentation](https://clickhouse.github.io/loom/). For deployment requirements, see the
+[documentation](https://loom.clickhouse.com/docs/). For deployment requirements, see the
 [prerequisites](./docs/getting-started/overview.md#prerequisites).
 
 [Deployment](./docs/operations/deployment.md) · [FAQ](./docs/faq.md) ·
 [Contributing](./CONTRIBUTING.md) · [Security reporting](./SECURITY.md) ·
-[`llms.txt`](https://clickhouse.github.io/loom/llms.txt) ·
-[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt)
+[`llms.txt`](https://loom.clickhouse.com/docs/llms.txt) ·
+[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt)
 
 Apache-2.0 · [License](./LICENSE) · [Notice](./NOTICE)

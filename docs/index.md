@@ -197,5 +197,5 @@ For contributors: [repository guide](development/repository-guide.md) ·
 
 [Glossary](glossary.md): Loom's terms, defined once. [FAQ](faq.md): the first questions, one
 paragraph each. [`llms.txt`](../llms.txt): a generated index of the docs for agents;
-[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt) holds, in one file, the
+[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt) holds, in one file, the
 pages that say what Loom is and how to start.

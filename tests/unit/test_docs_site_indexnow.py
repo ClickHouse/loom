@@ -13,7 +13,7 @@ assert _SPEC and _SPEC.loader
 indexnow = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(indexnow)
 
-SITE = "https://clickhouse.github.io/loom/"
+SITE = "https://loom.clickhouse.com/docs/"
 
 
 def test_a_changed_page_maps_to_the_url_the_site_serves_it_at() -> None:

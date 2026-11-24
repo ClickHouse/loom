@@ -21,7 +21,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-SITE = "https://clickhouse.github.io/loom/"
+SITE = "https://loom.clickhouse.com/docs/"
 ENDPOINT = "https://api.indexnow.org/indexnow"
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
