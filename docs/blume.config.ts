@@ -4,6 +4,7 @@ import { vercel } from "blume/deploy";
 export default defineConfig({
   title: "ClickHouse Loom",
   logo: {
+    href: "https://loom.clickhouse.com/",
     image: "/loom.svg",
     text: "ClickHouse Loom",
   },
@@ -41,7 +42,6 @@ export default defineConfig({
     radius: "sm",
   },
   navigation: {
-    actions: [{ label: "Website", href: "https://loom.clickhouse.com/" }],
     tabs: [
       { label: "Get started", path: "/getting-started" },
       { label: "Guides", path: "/guides" },

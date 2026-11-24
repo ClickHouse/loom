@@ -49,16 +49,19 @@ const workflows = [
     title: "Sessions and runs",
     detail: "Recover context from recorded conversations, pick up a session, and trace what an agent run did.",
     href: "/docs/use-cases/runs-and-pr-history",
+    cta: "Explore sessions and runs",
   },
   {
     title: "Tasks and decisions",
     detail: "Hand off work and record decisions with the context other agents need to act on them.",
     href: "/docs/features/tasks-and-decisions",
+    cta: "Explore tasks and decisions",
   },
   {
     title: "Tracker and pull request history",
     detail: "Connect issues, related pull requests, and review history to the repositories your agents work on.",
     href: "/docs/features/tracker/overview",
+    cta: "Explore tracker and PR history",
   },
 ];
 ---
@@ -94,11 +97,11 @@ const workflows = [
       <p>Use the same system to follow agent activity, recover earlier context, and hand work from one agent or tool to another.</p>
     </div>
     <div class="site-grid">
-      {workflows.map(({ title, detail, href }) => (
+      {workflows.map(({ title, detail, href, cta }) => (
         <article class="site-panel">
           <h3>{title}</h3>
           <p>{detail}</p>
-          <a href={href} aria-label={`Read about ${title.toLowerCase()}`}>Read the guide <span aria-hidden="true">↗</span></a>
+          <a href={href}>{cta} <span aria-hidden="true">↗</span></a>
         </article>
       ))}
     </div>
