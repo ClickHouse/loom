@@ -1,0 +1,27 @@
+enabled: true
+images:
+  worker: registry.example/loom/source-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  proxy: nginx:1.30.8-alpine@sha256:6437a63b5c529f0e06162b3f593c0154cff6fa2ea0f94fd7c27928cb399e022d
+inputs:
+  workerConfigMap: source-worker-config-v1
+  vaultTokenSecret: source-worker-vault-token
+  proxyTlsSecret: source-worker-proxy-tls-v1
+network:
+  callers:
+    - namespace: issuer-test
+      matchLabels:
+        app.kubernetes.io/name: approved-issuer
+  dns:
+    nameservers: [192.0.2.53]
+    pods:
+      - namespace: kube-system
+        matchLabels:
+          k8s-app: kube-dns
+  httpsPods:
+    - namespace: credentials-test
+      matchLabels:
+        app.kubernetes.io/name: test-vault
+      port: 8200
+  httpsCidrs:
+    - cidr: 192.0.2.44/32
+      port: 443
