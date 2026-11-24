@@ -1,6 +1,6 @@
 ---
 title: Build a knowledge factory for AI agents
-description: Use Loom to collect source documents, review what agents learn, and reuse cited knowledge across agents and sessions.
+description: Build a knowledge factory with Loom. Publish a runbook, retrieve a cited revision, and check whether a saved lesson still points to the current source.
 ---
 
 # Build a knowledge factory for AI agents
@@ -44,6 +44,84 @@ rollback. Use the question to test the workflow end to end:
    answer. Require the cited passage and revision, and open the source to confirm
    it supports the answer. Check separately that an agent outside the intended
    namespace cannot read it.
+
+## Run a knowledge factory walkthrough
+
+Use a disposable namespace on a [Loom server with authentication enabled](../getting-started/quickstart.md#2-open-the-dashboard),
+and have `curl` and `jq` installed. Set `LOOM_BASE_URL`, `LOOM_ORG` and
+`LOOM_NAMESPACE` to that server and scope. Set `LOOM_WRITER_TOKEN` and
+`LOOM_READER_TOKEN` to tokens with writer and viewer access to the namespace,
+respectively. Use the same shell for the commands below.
+[Create scoped tokens](../guides/tokens-and-grants.md#mint-a-token)
+
+### Check what the reader can find
+
+```sh
+call() {
+  jq -cn --arg org "$LOOM_ORG" --arg ns "$LOOM_NAMESPACE" \
+    --argjson request "$3" '$request + {org: $org, namespace: $ns}' |
+    curl -fsS "$LOOM_BASE_URL/v1/$2" -H "Authorization: Bearer $1" \
+      -H 'Content-Type: application/json' --data-binary @-
+}
+
+source_uri='urn:loom:example:rollout-runbook'
+find_rule() {
+  call "$LOOM_READER_TOKEN" knowledge.search "$(jq -cn --arg uri "$source_uri" '{
+    query: "deployment rollback threshold", uri_prefix: [$uri],
+    namespace_scope: "this", search_mode: "hybrid", rerank: "none"
+  }')"
+}
+
+find_rule | jq -e '.results | length == 0'
+```
+
+On an empty namespace this prints `true`. Treat the gap as a question for the
+runbook owner. In this example the owner approves a rule based on failed health checks.
+
+### Publish the approved rule and save a lesson
+
+```sh
+publish_rule() {
+  call "$LOOM_WRITER_TOKEN" knowledge.upsert "$(jq -cn \
+    --arg uri "$source_uri" --arg rule "$1" '{
+      source_uri: $uri, title: "Deployment runbook",
+      content: ("# Deployment rollback threshold\n\n" + $rule)
+    }')"
+}
+
+rule='Roll back the deployment if at least 5 health checks fail within 60 seconds.'
+reviewed_doc_id=$(publish_rule "$rule" | jq -er .doc_id)
+find_rule | jq -e '.results[0] | select(.revision == 1) | {source_uri, section, revision, content}'
+
+lesson='{"agent":"curator","memory_key":"example/rollback-threshold"}'
+call "$LOOM_WRITER_TOKEN" memory.set "$(jq -cn --argjson lesson "$lesson" \
+  --arg rule "$rule" --arg doc_id "$reviewed_doc_id" \
+  '$lesson + {value: $rule, source_resource_id: $doc_id}')" | jq -e .memory_id
+```
+
+The reader's search returns the approved passage at revision `1`. The memory
+stores a short lesson with the ID of the document version the curator reviewed.
+
+### Check the lesson after a runbook change
+
+```sh
+publish_rule 'Roll back the deployment if at least 3 health checks fail within 60 seconds.' |
+  jq -e .doc_id
+find_rule | jq -e '.results[0] | select(.revision == 2) | {source_uri, section, revision, content}'
+
+current_doc_id=$(call "$LOOM_READER_TOKEN" knowledge.get \
+  "$(jq -cn --arg uri "$source_uri" '{source_uri: $uri}')" | jq -er .doc_id)
+lesson_doc_id=$(call "$LOOM_READER_TOKEN" memory.provenance "$lesson" | jq -er .source_resource_id)
+test -n "$current_doc_id" && test "$lesson_doc_id" = "$reviewed_doc_id" &&
+  test "$lesson_doc_id" != "$current_doc_id"
+```
+
+Search now returns revision `2` under the same URI. The final check confirms
+that the lesson still points to the version the curator reviewed. The curator
+reviews the current passage and revises the lesson separately.
+
+Repeat `find_rule` with a token whose viewer access is scoped to a different
+namespace. Expect HTTP 403 and no passage from the runbook.
 
 ## Keep the knowledge current
 
