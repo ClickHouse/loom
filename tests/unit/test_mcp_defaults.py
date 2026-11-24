@@ -70,9 +70,7 @@ def test_other_ops_and_non_dict_arguments_pass_through() -> None:
     assert mcp_default_arguments("code.index_status", None) is None
 
 
-@pytest.mark.parametrize(
-    "option", ["related_on_miss", "related_on_prefix", "include_dependencies"]
-)
+@pytest.mark.parametrize("option", ["related_on_miss", "related_on_prefix", "include_dependencies"])
 def test_coding_grep_suggests_related_source_with_explicit_opt_out(option: str) -> None:
     assert mcp_default_arguments("code.grep", {}, toolset="coding")[option]
     assert option not in mcp_default_arguments("code.grep", {}, toolset="core")
