@@ -160,6 +160,34 @@ def test_no_deadline_in_files_and_message_mode_is_unbounded_too() -> None:
     assert all(bound is None for *_, bound in repo.calls + repo2.calls)
 
 
+def test_call_prefix_span_read_obeys_the_remaining_deadline() -> None:
+    exact = _chunk("src/a.py", 1, "run", "def run():\n    return process(row.value, 0)\n")
+    first_window = _chunk("src/b.py", 5, "other", "def other():\n    value = row.value\n")
+    first_window["symbol_ids"] = ["other-id"]
+    last_window = _chunk("src/b.py", 7, "other", "    return row.value\n")
+
+    class SlowSpans(_Repo):
+        async def grep_chunks(self, org, ns, pattern, *, regex=False, **kw):
+            if pattern == "row.value":
+                return [first_window, last_window]
+            return [exact]
+
+        async def symbol_spans_by_ids(self, org, ns, ids):
+            await asyncio.sleep(0.8)
+            return []
+
+    out, _ = _grep(
+        SlowSpans(),
+        pattern="process(row.value",
+        related_on_prefix=True,
+        deadline_ms=500,
+        include_body=False,
+    )
+    assert [hit["path"] for hit in out.matches] == ["src/a.py"]
+    assert out.related is None
+    assert out.partial and out.partial_reason == "related call prefix scan timed out"
+
+
 # --------------------------------------------------------------- the bound
 
 
