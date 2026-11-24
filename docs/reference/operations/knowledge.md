@@ -711,7 +711,7 @@ The document sources registered on a namespace, with each one's sync state.
 
 Read one selected resource through the caller's current worker connection.
 
-`POST /v1/knowledge.source.live` · MCP `loom_knowledge_source_live` · role `viewer` · read
+`POST /v1/knowledge.source.live` · MCP `loom_knowledge_source_live` · role `viewer` · read · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |

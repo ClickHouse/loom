@@ -217,7 +217,24 @@ async def current_reader_account(
     if not pg.enabled():
         return None
     async with pg.connection() as conn:
-        row = await conn.fetchrow(_CURRENT_READER, org, owner, worker_id, connection_id)
+        return await reader_account_on(conn, org, owner, worker_id, connection_id)
+
+
+async def reader_account_on(
+    conn: Connection,
+    org: str,
+    owner: str,
+    worker_id: UUID,
+    connection_id: UUID,
+    *,
+    lock: bool = False,
+) -> tuple[str, AccountState] | None:
+    if not pg.enabled():
+        return None
+    if lock:
+        _require_transaction(conn)
+    query = _CURRENT_READER + " FOR SHARE NOWAIT" if lock else _CURRENT_READER
+    row = await conn.fetchrow(query, org, owner, worker_id, connection_id)
     if row is None:
         return None
     return row["profile_digest"], AccountState(

@@ -22,9 +22,12 @@ from server.knowledge.app.mcp_worker_authority import (
     RequestedResource,
 )
 from server.knowledge.app.mcp_worker_live import LiveDocument, ResolveWorker, read_selected_live
-from server.knowledge.app.mcp_worker_read import WorkerReadRefused
+from server.knowledge.app.mcp_worker_read import WorkerReadRefused, WorkerReadScope
 from server.operations.base import Role
 from server.settings import settings
+
+Deliver = Callable[[], Awaitable[None]]
+FenceDelivery = Callable[[WorkerReadScope, Deliver, float], Awaitable[None]]
 
 
 @dataclass(frozen=True, repr=False)
@@ -34,6 +37,7 @@ class LiveSourceDirectory:
     enrollment: GetEnrollment
     worker: ResolveWorker
     worker_approval: GetWorkerApproval
+    fence_delivery: FenceDelivery | None = None
 
 
 def _require_context(org: str, auth: AuthInfo) -> None:
@@ -48,7 +52,9 @@ def _require_context(org: str, auth: AuthInfo) -> None:
         raise WorkerReadRefused("denied")
 
 
-async def _retain(auth: AuthInfo, check: Callable[[], Awaitable[None]], deadline: float) -> None:
+async def _retain(
+    auth: AuthInfo, check: Deliver, fence: request_tail.PublicationFence, deadline: float
+) -> None:
     loop = asyncio.get_running_loop()
     checked = False
 
@@ -67,7 +73,7 @@ async def _retain(auth: AuthInfo, check: Callable[[], Awaitable[None]], deadline
         return checked and loop.time() < deadline
 
     await validate()
-    if not fresh() or not request_tail.retain_publication(validate, validate, fresh):
+    if not fresh() or not request_tail.retain_publication(validate, validate, fresh, fence=fence):
         raise WorkerReadRefused("denied")
 
 
@@ -79,6 +85,9 @@ async def protected_live_read(
         if auth is None or not request_tail.required_active():
             raise WorkerReadRefused("denied")
         _require_context(request.org, auth)
+        fence_delivery = directory.fence_delivery
+        if fence_delivery is None:
+            raise WorkerReadRefused("unavailable")
         if not request_work.mark_mirrored():
             raise WorkerReadRefused("denied")
 
@@ -100,8 +109,13 @@ async def protected_live_read(
             "live",
         )
 
-        async def retain(check: Callable[[], Awaitable[None]], retain_until: float) -> None:
-            await _retain(auth, check, retain_until)
+        async def retain(scope: WorkerReadScope, check: Deliver, retain_until: float) -> None:
+            async def fence(deliver: Deliver) -> None:
+                _require_context(scope.org, auth)
+                with private_work():
+                    await fence_delivery(scope, deliver, retain_until)
+
+            await _retain(auth, check, fence, retain_until)
 
         return await read_selected_live(
             resolve=current.resolve, worker=directory.worker, retain=retain, deadline=deadline

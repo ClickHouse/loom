@@ -2704,7 +2704,7 @@ OPS: dict[str, OpSpec] = {
         "KnowledgeSourceLiveOutput",
         True,
         "viewer",
-        "stable",
+        "experimental",
         8000,
         False,
         True,

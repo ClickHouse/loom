@@ -164,4 +164,5 @@ class CurrentRead:
             approval_generation=approval,
             enrollment_generation=enrollment_generation,
             resource_id=requested.resource_id,
+            source_owner=owner_account.binding,
         )

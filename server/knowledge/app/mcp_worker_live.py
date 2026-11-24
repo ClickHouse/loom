@@ -16,7 +16,9 @@ from server.knowledge.domain.mcp_identity import resource_uri
 
 ResolveScope = Callable[[], Awaitable[WorkerReadScope]]
 ResolveWorker = Callable[[UUID], WorkerReadChannel | None]
-RetainPublication = Callable[[Callable[[], Awaitable[None]], float], Awaitable[None]]
+RetainPublication = Callable[
+    [WorkerReadScope, Callable[[], Awaitable[None]], float], Awaitable[None]
+]
 
 
 @dataclass(frozen=True, repr=False)
@@ -67,7 +69,7 @@ async def read_selected_live(
                         raise WorkerReadRefused("denied")
 
                 await validate()
-                await retain(validate, deadline)
+                await retain(scope, validate, deadline)
                 return LiveDocument(
                     scope.source_id,
                     scope.resource_id,

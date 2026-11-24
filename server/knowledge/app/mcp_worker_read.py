@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
 from server.core.diagnostics import private_work
+from server.knowledge.domain.mcp_worker_permissions import ReaderConnection
 
 WorkerOperation = Literal["live", "check_access"]
 WorkerFailure = Literal[
@@ -57,6 +58,7 @@ class WorkerReadScope:
     approval_generation: int
     resource_id: str
     enrollment_generation: int = 0
+    source_owner: ReaderConnection | None = None
 
 
 @dataclass(frozen=True, repr=False)
@@ -82,7 +84,7 @@ def _issue(
     expires_at = issued_at + lifetime_seconds
     binding = asdict(scope)
     # Loom rechecks these local authority generations before delivery.
-    del binding["approval_generation"], binding["enrollment_generation"]
+    del binding["approval_generation"], binding["enrollment_generation"], binding["source_owner"]
     for field in ("worker_id", "source_id", "connection_id"):
         binding[field] = str(binding[field])
     token = jwt.encode(

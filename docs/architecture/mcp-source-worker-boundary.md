@@ -27,7 +27,8 @@ authority without erasing a copy or moving it to another account.
 
 The operator mounts a worker routes file and sets
 `LOOM_KNOWLEDGE_SOURCE_WORKER_ROUTES_FILE` to its path. An empty setting leaves the
-worker directory disabled. Version 1 of the JSON file contains a `workers` list.
+worker directory disabled. Live reads and worker metadata also require Postgres
+knowledge authority so the store that serves the metadata erases it. Version 1 of the JSON file contains a `workers` list.
 Each entry names a `worker_id`, HTTPS `origin`, grant `issuer`, and a `profiles`
 map from exact organization names to profile entries. Each entry lists a `digest`,
 approved `modes`, and optional `team_access`. A collection approval cannot add
@@ -65,7 +66,15 @@ realm before the reader can request access to the selected identity.
 
 The worker validates the current connection before upstream use and before
 return. Loom checks current source, selection, connection and reader standing
-again before delivering a result. A live request lives with its API request;
+again before delivering a result. It locks the exact approval, account and team
+link rows for the bounded handoff of each response frame. A revocation that has
+committed before the handoff prevents that frame; revocation cannot recall bytes
+already handed off. No upstream call happens while these locks are held.
+
+`knowledge.source.live` is experimental. It requires a protected session, an
+approved route and a current source selection. This change does not enable user
+registration, so it does not establish a usable live setup on its own.
+A live request lives with its API request;
 it has a separate deadline and admission limit from refresh work and no durable
 payload queue. Denial, reconnect, saturation, unavailable and timeout are distinct
 outcomes. An authorized stored copy can be offered after timeout or worker outage

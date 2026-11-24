@@ -68,7 +68,16 @@ async def current(key: LinkKey) -> Link | None:
     if not pg.enabled():
         return None
     async with pg.connection() as conn:
-        row = await conn.fetchrow(_GET, *key.parameters())
+        return await current_on(conn, key)
+
+
+async def current_on(conn: Connection, key: LinkKey, *, lock: bool = False) -> Link | None:
+    if not pg.enabled():
+        return None
+    if lock and not conn.is_in_transaction():
+        raise RuntimeError("source reader lock requires an authority transaction")
+    query = _GET + " FOR SHARE NOWAIT" if lock else _GET
+    row = await conn.fetchrow(query, *key.parameters())
     if row is None:
         return None
     return Link(

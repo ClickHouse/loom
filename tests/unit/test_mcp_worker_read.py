@@ -142,7 +142,7 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
         tail = []
         route = channel
 
-        async def retain(validate, deadline) -> None:
+        async def retain(scope, validate, deadline) -> None:
             await validate()
             tail.append(validate)
 

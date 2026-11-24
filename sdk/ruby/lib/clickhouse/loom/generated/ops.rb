@@ -170,7 +170,7 @@ module ClickHouse
         "knowledge.source.check" => OpSpec.new("knowledge.source.check", "knowledge", "source_check", true, false, "writer", "experimental", %w[org namespace name].freeze, %w[org namespace name].freeze),
         "knowledge.source.inspect" => OpSpec.new("knowledge.source.inspect", "knowledge", "source_inspect", true, true, "viewer", "experimental", %w[org namespace name].freeze, %w[org namespace name].freeze),
         "knowledge.source.list" => OpSpec.new("knowledge.source.list", "knowledge", "source_list", true, true, "viewer", "experimental", %w[org namespace].freeze, %w[org namespace].freeze),
-        "knowledge.source.live" => OpSpec.new("knowledge.source.live", "knowledge", "source_live", true, true, "viewer", "stable", %w[org namespace source resource_id].freeze, %w[org namespace source resource_id].freeze),
+        "knowledge.source.live" => OpSpec.new("knowledge.source.live", "knowledge", "source_live", true, true, "viewer", "experimental", %w[org namespace source resource_id].freeze, %w[org namespace source resource_id].freeze),
         "knowledge.source.parse_links" => OpSpec.new("knowledge.source.parse_links", "knowledge", "source_parse_links", true, true, "viewer", "experimental", %w[org namespace links].freeze, %w[org namespace links].freeze),
         "knowledge.source.push_configure" => OpSpec.new("knowledge.source.push_configure", "knowledge", "source_push_configure", false, false, "admin", "experimental", %w[org namespace name enabled agent user_id session_id].freeze, %w[org namespace name].freeze),
         "knowledge.source.push_confirm" => OpSpec.new("knowledge.source.push_confirm", "knowledge", "source_push_confirm", false, false, "admin", "experimental", %w[org namespace name generation challenge_fingerprint signing_secret].freeze, %w[org namespace name generation].freeze),
@@ -1471,7 +1471,7 @@ module ClickHouse
           call_op("knowledge.source.list", body, fields, request_options)
         end
 
-        # `knowledge.source.live` (viewer, read-only).
+        # `knowledge.source.live` (viewer, read-only, experimental).
         # Read one selected resource through the caller's current worker connection.
         # Required: org, namespace, source, resource_id.
         def source_live(body = nil, request_options: nil, **fields)

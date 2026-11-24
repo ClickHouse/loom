@@ -279,7 +279,9 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
                 channel=channel, current=authority, revision=revision, max_age_seconds=15
             )
 
-    async def _live_publication(self, *, revoke_for_publication: bool) -> tuple[list, list]:
+    async def _live_publication(
+        self, *, revoke_for_publication: bool = False, unlink_during_body: bool = False
+    ) -> tuple[list, list]:
         from unittest.mock import AsyncMock, patch
 
         import jwt
@@ -338,8 +340,33 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
             _transport=httpx.MockTransport(answer),
         )
         self.addAsyncCleanup(channel.close)
+
+        body = False
+
+        async def connection(org, owner, worker_id, connection_id):
+            record = await self._connection(org, owner, worker_id, connection_id)
+            if body and unlink_during_body and owner == "bob":
+                # The ordinary check already read the link and now sees a valid account.
+                self.bob_enrollment = None
+            return record
+
+        async def fence_delivery(scope, deliver, deadline) -> None:
+            assert scope.requester == "bob"
+            assert deadline > asyncio.get_running_loop().time()
+            link = await self._enrollment(
+                scope.org, scope.namespace, scope.source_id, scope.requester
+            )
+            if link is None or link.link_generation != scope.enrollment_generation:
+                raise WorkerReadRefused("denied")
+            await deliver()
+
         directory = protected.LiveSourceDirectory(
-            self._source, self._connection, self._enrollment, lambda _: channel, self._approval
+            self._source,
+            connection,
+            self._enrollment,
+            lambda _: channel,
+            self._approval,
+            fence_delivery,
         )
         auth = AuthInfo(
             subject="bob",
@@ -350,6 +377,7 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         )
 
         async def downstream(scope, _receive, send) -> None:
+            nonlocal body
             with request_declaration(scope), request_work.http_owner(scope):
                 set_current_auth(auth)
                 try:
@@ -361,6 +389,7 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
                     if revoke_for_publication:
                         self.connections["bob"] = replace(self.connections["bob"], active=False)
                     await send({"type": "http.response.start", "status": 200, "headers": []})
+                    body = True
                     await send(
                         {
                             "type": "http.response.body",
@@ -384,7 +413,7 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
                 protected.connected_accounts, "own_subject", AsyncMock(return_value=("org", "bob"))
             ),
         ):
-            if revoke_for_publication:
+            if revoke_for_publication or unlink_during_body:
                 with self.assertRaises(request_tail.RequiredTailError):
                     await middleware(scope, None, send)
             else:
@@ -405,3 +434,10 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         attempts, published = await self._live_publication(revoke_for_publication=True)
         self.assertEqual(len(attempts), 1)
         self.assertEqual(published, [])
+
+    async def test_team_unlink_during_body_recheck_cannot_publish_document(self) -> None:
+        attempts, published = await self._live_publication(unlink_during_body=True)
+        self.assertEqual(len(attempts), 1)
+        self.assertNotIn("source_owner", attempts[0]["binding"])
+        self.assertIsNone(self.bob_enrollment)
+        self.assertEqual([frame["type"] for frame in published], ["http.response.start"])

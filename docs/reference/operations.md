@@ -447,7 +447,7 @@ Fields for every `knowledge` op: [operations/knowledge.md](operations/knowledge.
 | [`knowledge.source.check`](operations/knowledge.md#knowledgesourcecheck) | Probe a registered document source with its stored credential now (a check of every item, or of the 20 added last, and a listing), nothing written. | writer | idempotent | no |  |
 | [`knowledge.source.inspect`](operations/knowledge.md#knowledgesourceinspect) | One registered document source: its items, its sync state and the documents it wrote (the 200 most recently ingested). | viewer | read | no |  |
 | [`knowledge.source.list`](operations/knowledge.md#knowledgesourcelist) | The document sources registered on a namespace, with each one's sync state. | viewer | read | no |  |
-| [`knowledge.source.live`](operations/knowledge.md#knowledgesourcelive) | Read one selected resource through the caller's current worker connection. | viewer | read | yes |  |
+| [`knowledge.source.live`](operations/knowledge.md#knowledgesourcelive) | Read one selected resource through the caller's current worker connection. | viewer | read | no |  |
 | [`knowledge.source.parse_links`](operations/knowledge.md#knowledgesourceparse_links) | Read pasted links as a source's items, with no request to any store and nothing written: each link answers its kind and item, or why it is unreadable. | viewer | read | no |  |
 | [`knowledge.source.push_configure`](operations/knowledge.md#knowledgesourcepush_configure) | Enable provider sync hints for an existing source, or disable its setup. | admin | write | no | yes |
 | [`knowledge.source.push_confirm`](operations/knowledge.md#knowledgesourcepush_confirm) | Activate the exact pending setup. | admin | write | no | yes |
