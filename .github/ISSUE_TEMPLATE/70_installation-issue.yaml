@@ -8,12 +8,13 @@ body:
         > Run `loom doctor` first: it prints each problem it finds with its fix. [Troubleshooting](https://github.com/ClickHouse/loom/blob/main/docs/operations/troubleshooting.md) covers the common ones.
         > **Never paste tokens, API keys, JWTs, passwords or customer data.** `loom report` output is safe to paste: it records only whether each secret is set.
         > A security issue goes to security@clickhouse.com, not here ([SECURITY.md](https://github.com/ClickHouse/loom/blob/main/SECURITY.md)).
-  - type: textarea
+  - type: input
+    id: company
     attributes:
-      label: Company or project name
-      description: Optional. Put your company name or project description here.
+      label: Company
+      description: Your company or organization. Enter "Independent" if filing personally.
     validations:
-      required: false
+      required: true
   - type: dropdown
     id: install-path
     attributes:

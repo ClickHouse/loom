@@ -371,6 +371,7 @@ class SymbolsMixin(CodeRepoBase):
         kinds: tuple[str, ...] = ("function", "method", "fixture"),
         with_extent_only: bool = False,
         per_statement: int = 20,
+        with_revision: bool = False,
     ) -> list[dict[str, Any]]:
         """Live function/method symbols defined in the given paths, both
         tiers (scip preferred). Powers code.ask mechanism expansion: match
@@ -391,17 +392,18 @@ class SymbolsMixin(CodeRepoBase):
         # alone has hundreds of methods).
         rows: list[dict[str, Any]] = []
         step = max(1, int(per_statement))
+        revision_col = ", toString(indexed_commit) AS extent_commit" if with_revision else ""
         for i in range(0, len(paths[:200]), step):
             batch = paths[i : i + step]
             rows.extend(
                 await self._ch.query_all(
-                    """
+                    f"""
                 SELECT symbol_id, qualified_name, name, signature, path,
-                       start_line, end_line, tier, kind
+                       start_line, end_line, tier, kind{revision_col}
                 FROM loom.code_symbols FINAL
-                WHERE org = {org:String} AND namespace = {ns:String}
-                  AND path IN {paths:Array(String)}
-                  AND kind IN {kinds:Array(String)}
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND path IN {{paths:Array(String)}}
+                  AND kind IN {{kinds:Array(String)}}
                   AND tombstoned_at IS NULL
                 """
                     + ("  AND end_line > start_line\n" if with_extent_only else "")
@@ -532,7 +534,13 @@ class SymbolsMixin(CodeRepoBase):
         return {str(r["path"]) for r in rows}
 
     async def types_for_paths(
-        self, org: str, ns: str, paths: list[str], *, limit: int = 400
+        self,
+        org: str,
+        ns: str,
+        paths: list[str],
+        *,
+        limit: int = 400,
+        with_revision: bool = False,
     ) -> list[dict[str, Any]]:
         """Class / struct / enum rows WITH a body extent in the given paths —
         the fallback scope for a line that sits in no function (a member
@@ -560,6 +568,7 @@ class SymbolsMixin(CodeRepoBase):
                 "macro",
             ),
             with_extent_only=True,
+            with_revision=with_revision,
         )
 
     async def chunk_hashes_for_symbols(

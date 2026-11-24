@@ -110,7 +110,7 @@
     "check": "npm run lint && npm run type-check && npm run check:version && npm run check:readme && npm run test",
     "check:dist": "npm run build && npm run test:dist && npm run check:package",
     "prepublishOnly": "npm run check && npm run check:dist",
-    "docs": "typedoc"
+    "docs": "npm ci --prefix ../../.github/pnpm --ignore-scripts --no-audit --no-fund && node ../../.github/pnpm/node_modules/pnpm/bin/pnpm.cjs --dir ../../.github/sdk-docs install --frozen-lockfile --ignore-scripts && node ../../.github/sdk-docs/node_modules/typedoc/bin/typedoc"
   },
   "keywords": [
     "loom",
@@ -185,12 +185,12 @@
     "ai": "7.0.172",
     "publint": "^0.3.24",
     "tsdown": "^0.23.0",
-    "typedoc": "^0.28.20",
     "typescript": "^5.6.0",
     "vitest": "^4.1.12",
     "zod": "4.6.7"
   },
   "overrides": {
+    "glob": "14.0.2",
     "gaxios@6.7.1": {
       "uuid": "11.1.1"
     }

@@ -228,6 +228,8 @@ export interface RecordedCalls {
   knowledge: Record<string, unknown>[];
   /** Every `audit.list` body — the Audit log page asks for the four fields its rows read. */
   audit: Record<string, unknown>[];
+  /** Every `namespace.browse` body — a search over a full page goes to the server. */
+  browse: Record<string, unknown>[];
   other: string[];
 }
 
@@ -946,6 +948,7 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
     list: [],
     knowledge: [],
     audit: [],
+    browse: [],
     other: [],
   };
   // The tracker sources and the caller's standing on each namespace; a join, a withdrawal
@@ -1070,9 +1073,17 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
       case "/v1/audit.list":
         calls.audit.push(body);
         return json({ rows: auditRowsFixture(options.auditRows ?? 0), next_cursor: null });
-      case "/v1/namespace.browse":
+      case "/v1/namespace.browse": {
+        calls.browse.push(body);
         if (!options.browseRows) break;
-        return json({ rows: browseRowsFixture(options.browseRows) });
+        // As the server answers: a substring of the name or description, then the limit.
+        const q = typeof body.query === "string" ? body.query.toLowerCase() : "";
+        const limit = typeof body.limit === "number" ? body.limit : 50;
+        const rows = browseRowsFixture(options.browseRows).filter(
+          (r) => !q || `${r.namespace}\n${r.description}`.toLowerCase().includes(q),
+        );
+        return json({ rows: rows.slice(0, limit) });
+      }
       case "/v1/ui.vitals":
         return json({ recorded: true, route: body.route ?? "" });
       case "/v1/memory.list":

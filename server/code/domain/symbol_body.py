@@ -31,8 +31,48 @@ def retained_source_lines(row: dict[str, Any]) -> list[str] | None:
     return lines[-span:]
 
 
+def retained_source_window(
+    rows: list[dict[str, Any]], start: int, end: int, *, anchor: int, revision: str
+) -> tuple[int, int, str] | None:
+    """Keep the contiguous retained lines around the anchor at its indexed revision."""
+    by_line: dict[int, str] = {}
+    gaps: set[int] = set()
+    for row in rows:
+        row_start, row_end = int(row["start_line"]), int(row["end_line"])
+        span = range(max(start, row_start), min(end, row_end) + 1)
+        if not span:
+            continue
+        lines = (
+            retained_source_lines(row)
+            if str(row.get("indexed_commit") or "").rstrip("\0") == revision
+            else None
+        )
+        if lines is None:
+            gaps.update(span)
+            continue
+        for line in span:
+            text = lines[line - row_start]
+            if by_line.setdefault(line, text) != text:
+                gaps.add(line)
+    for line in gaps:
+        by_line.pop(line, None)
+    if anchor not in by_line:
+        return None
+    start = end = anchor
+    while by_line.get(start - 1, "").endswith("\n"):
+        start -= 1
+    while by_line[end].endswith("\n") and end + 1 in by_line:
+        end += 1
+    return start, end, "".join(by_line[line] for line in range(start, end + 1))
+
+
 def complete_source_span(
-    rows: list[dict[str, Any]], start: int, end: int, *, max_chars: int
+    rows: list[dict[str, Any]],
+    start: int,
+    end: int,
+    *,
+    max_chars: int,
+    own_declaration: bool = False,
 ) -> str:
     """The declared span without gaps or conflicting overlaps in its live chunks.
 
@@ -40,11 +80,15 @@ def complete_source_span(
     """
     if start <= 0 or end < start or (max_chars and end - start + 1 > max_chars):
         return ""
-    if start == end and not all(
-        int(r.get("start_line") or 0) == start
-        and int(r.get("end_line") or 0) == end
-        and r.get("kind") == "function"
-        for r in rows
+    if (
+        start == end
+        and not own_declaration
+        and not all(
+            int(r.get("start_line") or 0) == start
+            and int(r.get("end_line") or 0) == end
+            and r.get("kind") == "function"
+            for r in rows
+        )
     ):
         return ""
     by_line: dict[int, str] = {}

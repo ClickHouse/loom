@@ -109,6 +109,8 @@ class CodeClient:
         regex: bool = False,
         path_prefix: str = "",
         limit: int | None = None,
+        context_lines: int = 0,
+        include_body: bool | None = None,
         mode: str = "matches",
         path_globs: list[str] | None = None,
         exclude_globs: list[str] | None = None,
@@ -119,7 +121,10 @@ class CodeClient:
         carries its enclosing symbol (`scope`) and that unit's span
         (`scope_start_line` / `scope_end_line`, 0 outside any unit), so a
         caller can skip `enclosing()` for a hit inside a function it has
-        already shown. `mode="files"` answers "which files
+        already shown. Matches include distinct enclosing bodies by default.
+        Pass `include_body=False` for names or locations only.
+        `context_lines` adds nearby retained source in matches mode.
+        `mode="files"` answers "which files
         mention X" (no line text) — use it for coverage questions. `limit`
         defaults per mode: 20 lines, or the 500-file ceiling, so a files
         answer is complete unless `truncated` says otherwise. `not_covered:
@@ -143,6 +148,10 @@ class CodeClient:
             body["namespaces"] = list(namespaces)
         if limit is not None:
             body["limit"] = limit
+        if context_lines:
+            body["context_lines"] = context_lines
+        if include_body is not None:
+            body["include_body"] = include_body
         if path_globs:
             body["path_globs"] = list(path_globs)
         if exclude_globs:
@@ -236,6 +245,7 @@ class CodeClient:
         include_body: bool = True,
         include_history: bool = True,
         include_examples: bool = True,
+        example_context_lines: int = 0,
         include_lessons: bool = True,
         token_budget: int = 0,
         uses: bool | None = None,
@@ -250,6 +260,8 @@ class CodeClient:
         ("src/Foo.cpp:123"), which returns the innermost function containing
         that line — compiler-grade where available, enriched with recent
         PRs, tested usage examples, and lessons from the memory plane.
+
+        Set `example_context_lines` to include retained source around usage examples.
 
         `uses_brief=True` makes a lookup that resolves to
         one definition carry a compact `uses` block: `count`, `files`, the
@@ -291,6 +303,8 @@ class CodeClient:
                 body["uses_limit"] = uses_limit
         if uses_brief:
             body["uses_brief"] = True
+        if example_context_lines:
+            body["example_context_lines"] = example_context_lines
         if near_paths:
             body["near_paths"] = list(near_paths)
         if pr_number:

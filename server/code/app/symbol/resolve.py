@@ -143,7 +143,13 @@ async def near_misses(
 
 
 async def symbol_body(
-    repo: CodeRepo, org: str, ns: str, sym: dict[str, Any], *, model: str | None = None
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    sym: dict[str, Any],
+    *,
+    model: str | None = None,
+    expected_commit: str | None = None,
 ) -> str:
     """The whole retained definition, or no body when completeness is not established."""
     path = str(sym["path"])
@@ -156,10 +162,67 @@ async def symbol_body(
         if not settings.embedding_model:
             return ""
         model = served_model_label(settings.embedding_model)
-    rows = await repo.source_chunks_for_span(org, ns, path, start, end, model)
+    owner = None
+    if (
+        expected_commit is not None
+        and _indexed_commit(sym.get("_extent_commit")) != expected_commit
+    ):
+        owner = [str(sym["symbol_id"]), *(sym.get("_tier_ids") or [])]
+    if expected_commit is None:
+        rows = await repo.source_chunks_for_span(org, ns, path, start, end, model)
+    else:
+        rows = await repo.source_chunks_for_span(
+            org, ns, path, start, end, model, with_revision=True, owner=owner
+        )
     if len(rows) > 400:
         return ""
-    return complete_source_span(rows, start, end, max_chars=0)
+    if expected_commit is not None:
+        rows = (
+            _owned_span_rows(rows, owner, start, end, expected_commit)
+            if owner is not None
+            else [
+                row for row in rows if _indexed_commit(row.get("indexed_commit")) == expected_commit
+            ]
+        )
+    # A one-line Python def may be the last line of its own decorated function
+    # chunk. A mere compiler location inside a different unit still proves no body.
+    own_declaration = (
+        start == end
+        and path.lower().endswith((".py", ".pyi", ".pyw"))
+        and (
+            len(rows) == 1
+            and rows[0].get("kind") == "function"
+            and int(rows[0]["end_line"]) == end
+            and (
+                str(sym.get("symbol_id") or "") in (rows[0].get("symbol_ids") or [])
+                or bool(rows[0].get("scope") and rows[0]["scope"] == sym.get("qualified_name"))
+            )
+        )
+    )
+    return complete_source_span(rows, start, end, max_chars=0, own_declaration=own_declaration)
+
+
+def _indexed_commit(value: Any) -> str:
+    return str(value or "").rstrip("\0")
+
+
+def _owned_span_rows(
+    rows: list[dict[str, Any]], owner: list[str], start: int, end: int, revision: str
+) -> list[dict[str, Any]]:
+    """An unchanged symbol can predate the newly indexed text it still describes."""
+    owned = [
+        row
+        for row in rows
+        if row.get("kind") == "function" and set(row.get("symbol_ids") or []).intersection(owner)
+    ]
+    if (
+        not owned
+        or any(_indexed_commit(row.get("indexed_commit")) != revision for row in owned)
+        or min(int(row["start_line"]) for row in owned) != start
+        or max(int(row["end_line"]) for row in owned) != end
+    ):
+        return []
+    return owned
 
 
 async def _file_row(repo: CodeRepo, org: str, ns: str, path: str) -> dict[str, Any] | None:

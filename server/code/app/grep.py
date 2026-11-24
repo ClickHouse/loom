@@ -19,7 +19,13 @@ from server.code.app.common import (
     schedule_code_trace,
 )
 from server.code.app.grep_bodies import definitions_for, definitions_tokens
-from server.code.app.grep_source import recover_source_chunks
+from server.code.app.grep_source import (
+    GREP_MATCH_TEXT_CHARS,
+    ContextSource,
+    collect_contexts,
+    page_contexts,
+    recover_source_chunks,
+)
 from server.code.app.search.shared import (
     _not_covered_output,
     _partial_fields,
@@ -288,15 +294,34 @@ async def _grep_lines(
     spans = await _unit_spans(repo, org, ns, chunks)
     # extract past the page: the extra lines become the continuation pool. Off the event
     # loop: a scan of 200 chunks must not stall every other request on this worker.
+    match_commits: dict[tuple[str, int], str] = {}
     matches, scan_capped = await asyncio.to_thread(
-        _matching_lines, chunks, spans, input, line_re, limit + _GREP_POOL_EXTRA
+        _matching_lines,
+        chunks,
+        spans,
+        input,
+        line_re,
+        limit + _GREP_POOL_EXTRA,
+        match_commits=match_commits,
     )
 
     truncated = scan_capped or len(matches) > limit or matched_chunks >= min(200, limit * 3)
     trace_run_id = new_trace_run_id()
     pool_matches = matches
     matches = matches[offset : offset + served_limit]
-    bodies = await definitions_for(input, matches, budget)
+    context: dict[str, Any] = {}
+    context_source: ContextSource = {}
+    if input.context_lines:
+        context_source = await asyncio.to_thread(
+            collect_contexts,
+            chunks,
+            pool_matches,
+            input.context_lines,
+            _LINE_SCAN_MAX_CHARS,
+            match_commits=match_commits,
+        )
+        context = page_contexts(context_source, matches, input.context_lines)
+    bodies = await definitions_for(input, matches, budget, match_commits=match_commits)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
         repo, org, ns, input, matches, route, budget=budget
     )
@@ -312,6 +337,8 @@ async def _grep_lines(
         truncated=truncated,
         partial=bool(coverage.get("partial")),
         partial_reason=str(coverage.get("partial_reason") or ""),
+        context_source=context_source,
+        match_commits=match_commits,
     )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
     # so the outcome fold skips this op; the paths still feed opened_file)
@@ -328,6 +355,7 @@ async def _grep_lines(
         returned_scores=[],
         top_k=served_limit,
         tokens_returned=sum(len(m["text"]) for m in matches) // 4
+        + _context_tokens(context)
         + neighbour_tokens
         + definitions_tokens(bodies),
         abstain=not matches,
@@ -352,7 +380,20 @@ async def _grep_lines(
         retrieval_risk="low" if matches else "abstain",
         consumer=input.consumer,
     )
-    return CodeGrepOutput(
+    if (
+        not matches
+        and not note
+        and not truncated
+        and not coverage.get("partial")
+        and input.mode == "matches"
+        and offset == 0
+        and not input.regex
+    ):
+        note = (
+            "No exact match in the indexed scope. Try shorter known fragments together in "
+            "a pattern list, code.symbol for a known name, or code.search for behavior."
+        )
+    output = CodeGrepOutput(
         matches=matches,
         next_cursor=next_cursor,
         has_more=bool(next_cursor),
@@ -366,8 +407,11 @@ async def _grep_lines(
         anchors_capped=anchors_capped,
         neighbour_tokens=neighbour_tokens,
         **bodies,
+        **context,
         **coverage,
     )
+    output._match_commits = match_commits
+    return output
 
 
 async def _grep_neighbours(
@@ -449,6 +493,8 @@ def _matching_lines(
     input: CodeGrepInput,
     line_re: Any,
     keep: int,
+    *,
+    match_commits: dict[tuple[str, int], str] | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """(matching lines, capped): the lines of `chunks` the pattern matches, stopping past
     `keep` lines or `_LINE_SCAN_MAX_CHARS` of text (capped=True). Pure; runs in a thread."""
@@ -491,6 +537,10 @@ def _matching_lines(
             if not hit:
                 continue
             key = (str(c["path"]), int(c["start_line"] or 1) + off)
+            if match_commits is not None:
+                commit = str(c.get("indexed_commit") or "").rstrip("\0")
+                if match_commits.setdefault(key, commit) != commit:
+                    match_commits[key] = ""
             if key in seen:
                 continue  # the same span indexed twice (re-parse race)
             seen.add(key)
@@ -498,7 +548,7 @@ def _matching_lines(
                 {
                     "path": key[0],
                     "line": key[1],
-                    "text": line.strip()[:300],
+                    "text": line.strip()[:GREP_MATCH_TEXT_CHARS],
                     "scope": scope,
                     "scope_start_line": span[0],
                     "scope_end_line": span[1],
@@ -521,6 +571,10 @@ def _grep_trace_query(input: CodeGrepInput) -> str:
     )
 
 
+def _context_tokens(context: dict[str, Any]) -> int:
+    return sum(len(row["text"]) for row in context.get("contexts", ())) // 4
+
+
 def _grep_trace_args(input: CodeGrepInput) -> dict[str, Any]:
     """The grep arguments that change the answer, for the trace row, so a flip between two
     same-second calls (0 -> N matches) can be pinned on the argument that differed."""
@@ -536,6 +590,7 @@ def _grep_trace_args(input: CodeGrepInput) -> dict[str, Any]:
         "limit",
         "deadline_ms",
         "include_body",
+        "context_lines",
         paged=bool(input.cursor) or None,
     )
 
@@ -543,13 +598,15 @@ def _grep_trace_args(input: CodeGrepInput) -> dict[str, Any]:
 def _grep_params_hash(input: CodeGrepInput) -> str:
     import hashlib
 
-    parts = {
+    parts: dict[str, Any] = {
         "pattern": input.pattern,
         "regex": input.regex,
         "case_sensitive": input.case_sensitive,
         "path_prefix": input.path_prefix,
         "mode": input.mode,
     }
+    if input.context_lines:
+        parts["context_lines"] = input.context_lines
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -565,6 +622,8 @@ def _issue_grep_cursor(
     truncated: bool,
     partial: bool = False,
     partial_reason: str = "",
+    context_source: ContextSource | None = None,
+    match_commits: dict[tuple[str, int], str],
 ) -> str:
     """Store every extracted line (served ones included, so offsets are
     pool positions) and return the cursor for the page after `served`;
@@ -583,11 +642,13 @@ def _issue_grep_cursor(
             "kind": "g",
             "params": ph,
             "matches": matches,
+            "match_commits": [match_commits.get((m["path"], m["line"]), "") for m in matches],
             "chunks_matched": chunks_matched,
             "truncated": truncated,
             "line_mapping": _GREP_LINE_MAPPING_VERSION,
             "partial": partial,
             "partial_reason": partial_reason,
+            **({"context_source": context_source} if context_source else {}),
         },
         indexed_commit="",
         route="grep",
@@ -616,15 +677,19 @@ async def _serve_grep_page(
     if payload.get("line_mapping") != _GREP_LINE_MAPPING_VERSION:
         return None, "source_line_mapping_changed", offset
     pool = [dict(m) for m in (payload.get("matches") or [])]
+    pool_commits = payload.get("match_commits") or []
     limit = input.effective_limit
     excluded = set(input.exclude_unit_ids)
     page: list[dict[str, Any]] = []
+    match_commits: dict[tuple[str, int], str] = {}
     i = offset
     while i < len(pool) and len(page) < limit:
         m = pool[i]
+        commit = pool_commits[i] if i < len(pool_commits) else ""
         i += 1
         if str(m.get("path") or "") in excluded:
             continue
+        match_commits[(m["path"], m["line"])] = str(commit or "")
         page.append(m)
     has_more = i < len(pool)
     next_cursor = (
@@ -640,10 +705,16 @@ async def _serve_grep_page(
         else ""
     )
     files = list(dict.fromkeys(m["path"] for m in page))
+    context: dict[str, Any] = {}
+    if input.context_lines:
+        context = page_contexts(payload.get("context_source") or {}, page, input.context_lines)
     trace_run_id = new_trace_run_id()
     route = route + "+page"
     bodies = await definitions_for(
-        input, page, code_deadline.start(input.deadline_ms, started=started)
+        input,
+        page,
+        code_deadline.start(input.deadline_ms, started=started),
+        match_commits=match_commits,
     )
     schedule_code_trace(
         org=org,
@@ -657,6 +728,7 @@ async def _serve_grep_page(
         returned_scores=[],
         top_k=limit,
         tokens_returned=sum(len(str(m.get("text") or "")) for m in page) // 4
+        + _context_tokens(context)
         + definitions_tokens(bodies),
         abstain=not page,
         retrieval_risk="low" if page else "abstain",
@@ -692,6 +764,7 @@ async def _serve_grep_page(
             partial=bool(payload.get("partial")),
             partial_reason=str(payload.get("partial_reason") or ""),
             **bodies,
+            **context,
         ),
         "",
         offset,

@@ -37,8 +37,9 @@ class _Recorder:
     async def post(self, url: str, **kw: Any) -> httpx.Response:
         self.calls.append({"url": url, **kw})
         body = {
-            "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
         }
         return httpx.Response(200, json=body, request=httpx.Request("POST", url))
 
@@ -58,7 +59,8 @@ def test_a_switched_off_orgs_request_call_is_refused_before_anything_is_sent(mon
     _request("acme")
     with pytest.raises(customer.ModelCallsDisabled):
         _chat(monkeypatch)
-    assert "openai:chat" not in provider_health.status().get("providers", {})  # not its failure
+    # Not the provider's failure.
+    assert "openai:responses" not in provider_health.status().get("providers", {})
 
 
 def test_other_orgs_and_the_deployments_own_calls_go_on(monkeypatch) -> None:
@@ -619,7 +621,8 @@ def test_no_refusal_and_no_unreadable_switch_is_a_provider_failure(
     genai._identity.set(None)
     with pytest.raises(customer.Unattributed):
         asyncio.run(client.complete("s", "u"))
-    assert sent.calls == [] and "openai:chat" not in provider_health.status().get("providers", {})
+    assert sent.calls == []
+    assert "openai:responses" not in provider_health.status().get("providers", {})
 
 
 def test_a_failed_read_waits_its_turn_and_the_copy_serves_until_too_old(switch: _Switch) -> None:

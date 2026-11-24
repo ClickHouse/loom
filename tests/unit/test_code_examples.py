@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from server.code.api.models_navigation import CodeExamplesInput
+from server.code.app.enrich import _example_context
 from server.code.app.symbol import examples as h
 from server.code.store.index import CodeRepo
 from server.core.errors import NotFoundError, PreconditionFailedError
@@ -58,9 +59,10 @@ class _Repo:
         return [s for s in self.seeds if s["qualified_name"] == name]
 
     async def edges_for_symbols(
-        self, org: str, ns: str, ids: list[str], *, direction: str, limit: int
+        self, org: str, ns: str, ids: list[str], *, direction: str, limit: int, with_revision: bool
     ) -> list[dict[str, Any]]:
         assert direction == "callers"
+        assert not with_revision
         self.edge_reads.append(list(ids))
         return self.edges
 
@@ -127,6 +129,60 @@ def test_top_k_bounds_the_sites(
     repo = _Repo(seeds=[SEED], edges=[_edge(f"src/f{i}.cpp", i + 1) for i in range(6)])
     out = _run(monkeypatch, repo, name="DB::parseQuery", top_k=2)
     assert [e["path"] for e in out.examples] == ["src/f0.cpp", "src/f1.cpp"]
+
+
+@pytest.mark.parametrize(
+    ("revisions", "extra", "expected"),
+    [
+        (("head", "head", "head"), None, (8, 12)),
+        (("old", "head", "head"), None, (10, 12)),
+        (("head", "old", "head"), None, None),
+        (("head", "head", "head"), (8, "prefix … line continues\n"), (9, 12)),
+        (("head", "head", "head"), (11, "conflicting text\n"), (8, 10)),
+    ],
+)
+def test_example_context_joins_adjacent_chunks_at_the_caller_revision(
+    revisions: tuple[str, ...], extra: tuple[int, str] | None, expected: tuple[int, int] | None
+) -> None:
+    class Repo:
+        async def source_chunks_for_span(self, *args: object, with_revision: bool) -> Any:
+            assert with_revision
+            rows = [
+                {
+                    "start_line": start,
+                    "end_line": end,
+                    "indexed_commit": revision,
+                    "content": "".join(f"line {n}\n" for n in range(start, end + 1)),
+                }
+                for (start, end), revision in zip(
+                    ((8, 9), (10, 10), (11, 12)), revisions, strict=True
+                )
+            ]
+            if extra is not None:
+                line, text = extra
+                rows.append(
+                    {
+                        "start_line": line,
+                        "end_line": line,
+                        "indexed_commit": "head",
+                        "content": text,
+                    }
+                )
+            return rows
+
+    site = {"path": "src/cli.py", "line": 10}
+    repo: Any = Repo()
+    result = asyncio.run(_example_context(repo, "o", "n", site, 2, "model", "head"))
+    if expected is None:
+        assert result == site
+    else:
+        start, end = expected
+        assert result["context"] == {
+            "commit": "head",
+            "start_line": start,
+            "end_line": end,
+            "text": "".join(f"line {n}\n" for n in range(start, end + 1)),
+        }
 
 
 def test_a_symbol_nobody_calls_abstains_with_an_empty_answer(

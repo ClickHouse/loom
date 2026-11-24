@@ -873,6 +873,7 @@ export interface CodeFirstBuildOutput {
 }
 
 export interface CodeGrepInput {
+  /** Include linked lessons (default true) or set false when you already have the relevant notes. */
   include_lessons?: boolean;
   lesson_namespaces?: string[];
   org?: string;
@@ -885,13 +886,15 @@ export interface CodeGrepInput {
   /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
   case_sensitive?: boolean;
-  /** Include distinct enclosing bodies in matches mode; default false. */
-  include_body?: boolean;
+  /** Retained lines on each side of a match. */
+  context_lines?: number;
   path_prefix?: string;
   /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";
+  /** Return bodies by default in matches mode, or set false for lines only. */
+  include_body?: boolean;
   limit?: number | null;
   path_globs?: string[];
   exclude_globs?: string[];
@@ -906,6 +909,8 @@ export interface CodeGrepOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
+  contexts?: Array<Record<string, unknown>>;
+  contexts_partial?: boolean;
   definitions?: Array<Record<string, unknown>>;
   definitions_partial?: boolean;
   definitions_note?: string;
@@ -1701,6 +1706,8 @@ export interface CodeSymbolInput {
   include_body?: boolean;
   include_history?: boolean;
   include_examples?: boolean;
+  /** Retained source lines on each side of a usage example. Default 0 omits text. */
+  example_context_lines?: number;
   include_lessons?: boolean;
   lesson_namespaces?: string[];
   token_budget?: number;
