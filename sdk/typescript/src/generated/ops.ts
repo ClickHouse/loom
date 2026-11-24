@@ -1248,6 +1248,36 @@ export interface CodePrCheckOutput {
   trace_run_id?: string;
 }
 
+export interface CodeReadInput {
+  org?: string;
+  namespace?: string;
+  agent?: string;
+  user_id?: string;
+  consumer?: string;
+  /** Repo-relative path:start-end ranges with inclusive one-based line numbers. */
+  ranges: string[];
+}
+
+export interface CodeReadRange {
+  path: string;
+  start_line: number;
+  end_line: number;
+  status: "complete" | "partial" | "not_indexed" | "out_of_range" | "unavailable";
+  indexed_commit?: string;
+  windows?: CodeReadWindow[];
+}
+
+export interface CodeReadWindow {
+  start_line: number;
+  end_line: number;
+  text: string;
+}
+
+export interface CodeReadOutput {
+  results: CodeReadRange[];
+  as_of: Record<string, unknown>;
+}
+
 export interface CodeRecentCommitsInput {
   org?: string;
   namespace?: string;
@@ -10567,6 +10597,7 @@ export type OpName =
   | "code.outline"
   | "code.path_guards"
   | "code.pr_check"
+  | "code.read"
   | "code.recent_commits"
   | "code.refresh"
   | "code.reindex"
@@ -10946,6 +10977,7 @@ export interface OpMap {
   "code.outline": { input: CodeOutlineInput; output: CodeOutlineOutput };
   "code.path_guards": { input: CodePathGuardsInput; output: CodePathGuardsOutput };
   "code.pr_check": { input: CodePrCheckInput; output: CodePrCheckOutput };
+  "code.read": { input: CodeReadInput; output: CodeReadOutput };
   "code.recent_commits": { input: CodeRecentCommitsInput; output: CodeRecentCommitsOutput };
   "code.refresh": { input: CodeRefreshInput; output: CodeRefreshOutput };
   "code.reindex": { input: CodeReindexInput; output: CodeReindexOutput };
@@ -11325,6 +11357,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "code.outline", group: "code", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "code.path_guards", group: "code", method: "pathGuards", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "code.pr_check", group: "code", method: "prCheck", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 600, audit: false, readOnly: true },
+  { name: "code.read", group: "code", method: "read", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "code.recent_commits", group: "code", method: "recentCommits", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "code.refresh", group: "code", method: "refresh", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 1000, audit: true, readOnly: false },
   { name: "code.reindex", group: "code", method: "reindex", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
@@ -11669,4 +11702,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 376;
+export const GENERATED_OP_COUNT = 377;

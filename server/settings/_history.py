@@ -134,8 +134,8 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         old="search.query,code.search,code.symbol,code.grep,loom_op",
         new="auto",
         why=(
-            "Keep the named search and code tools upfront on the coding toolset and "
-            "defer the generic dispatcher to discovery. Other toolsets retain their "
+            "Keep source lookups upfront on the coding toolset. General search and the "
+            "dispatcher are available through discovery. Other toolsets retain their "
             "entrypoints. Explicit lists and empty values retain their meaning."
         ),
     ),

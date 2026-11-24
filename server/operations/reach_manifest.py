@@ -109,6 +109,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.outline": ("sdk_method",),
     "code.path_guards": ("sdk_method",),
     "code.pr_check": ("sdk_method",),
+    "code.read": ("sdk_method",),
     "code.recent_commits": (
         "sdk_method",
         "dashboard",

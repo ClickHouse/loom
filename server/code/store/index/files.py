@@ -383,16 +383,18 @@ class FilesMixin(CodeRepoBase):
     async def file_rows_for_paths(
         self, org: str, ns: str, paths: list[str]
     ) -> dict[str, dict[str, Any]]:
-        """path -> {lang, loc, indexed_commit} for the paths the index holds
-        a live file row for (a cited path exists, and a
-        cited line beyond `loc` is dead by an exact count). Point reads on
+        """Path to indexed revision, blob hash, line count, and source chunk count.
+
+        A result requires a live file record. A cited line beyond `loc`
+        is outside that file. Point reads on
         the (org, namespace, path) key, 200 paths per statement."""
         out: dict[str, dict[str, Any]] = {}
         wanted = list(dict.fromkeys(p for p in paths if p))
         for i in range(0, len(wanted), 200):
             rows = await self._ch.query_all(
                 """
-                SELECT path, lang, loc, indexed_commit FROM loom.code_files FINAL
+                SELECT path, lang, loc, indexed_commit, blob_sha, chunk_count
+                FROM loom.code_files FINAL
                 WHERE org = {org:String} AND namespace = {ns:String}
                   AND path IN {paths:Array(String)} AND tombstoned_at IS NULL
                 """,
@@ -403,6 +405,8 @@ class FilesMixin(CodeRepoBase):
                     "lang": str(r.get("lang") or ""),
                     "loc": int(r.get("loc") or 0),
                     "indexed_commit": _hex(r.get("indexed_commit")),
+                    "blob_sha": _hex(r.get("blob_sha")),
+                    "chunk_count": int(r.get("chunk_count") or 0),
                 }
         return out
 

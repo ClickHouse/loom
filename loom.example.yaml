@@ -3142,8 +3142,8 @@ settings:
   # `?schema_profile=`. [restart]
   # mcp_schema_profile: "standard"
 
-  # "auto" selects upfront tools by toolset. A comma-separated list overrides it; empty
-  # leaves loading to the host. [restart]
+  # "auto" loads source lookups upfront for the coding toolset. A comma-separated list
+  # overrides the toolset defaults. Empty leaves loading to the host. [restart]
   # mcp_always_load_tools: "auto"
 
   # Seconds without a tool call after which the mcp_session_run_sweep worker closes an

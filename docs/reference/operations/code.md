@@ -1088,6 +1088,26 @@ A PR draft asks whether a PR like it already exists.
 | `draft` | `dict[str, Any]` | what the draft became: title_tokens, paths, symbols, issues |
 | `trace_run_id` | `str` | Id of this call's trace row; pass it to `code.outcome`. |
 
+## `code.read`
+
+Read exact ranges from indexed files in one call.
+
+`POST /v1/code.read` · MCP `loom_code_read` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | `''` | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | `''` | The namespace the op reads or writes. |
+| `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
+| `ranges` | `list[str]` | required | Repo-relative path:start-end ranges with inclusive one-based line numbers. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `results` | `list[CodeReadRange]` |  |
+| `as_of` | `dict[str, Any]` |  |
+
 ## `code.recent_commits`
 
 List the most recently indexed commits of a repository, decorated with subject and time from the clone.

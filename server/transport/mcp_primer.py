@@ -232,6 +232,7 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
         "code.symbol",
         "code.search",
         "code.grep",
+        "code.read",
         "code.callers",
         "code.impact",
         "code.context_pack",
@@ -560,6 +561,7 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
             ("code.search", "for an issue, task or conceptual question"),
             ("code.symbol", "for a named definition"),
             ("code.grep", "for exact text or an error"),
+            ("code.read", "to read known line ranges together"),
             ("code.callers", "for callers"),
             ("code.impact", "for change effects"),
             ("code.context_pack", "for a task briefing"),
@@ -572,8 +574,16 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         if tool["code.symbol"]
         else ""
     )
+    definition_hint = (
+        f"Start with {tool['code.symbol']} when the task names the class, function or method "
+        "you need to read, before searching for text inside it. "
+        if tool["code.symbol"]
+        else ""
+    )
     code = (
-        "\n\nUse Loom first to search and read unchanged indexed source. Use "
+        "\n\nUse Loom first to search and read unchanged indexed source. "
+        + definition_hint
+        + "Use "
         + "; ".join(routes)
         + ". Discover deferred tools by name with ToolSearch in Claude Code. "
         + caller_hint
@@ -595,8 +605,8 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         else ""
     )
     return name_ops_for_toolset(
-        "**Loom: memory and code for this session.**\n\n"
-        + _tool_routing(toolset)
+        "Loom provides indexed source and project memory. Find other operations with "
+        '`loom_op` (`op="help"`, `query="<goal>"`). Writes need user intent and permission.'
         + code
         + context
         + "\n\n"

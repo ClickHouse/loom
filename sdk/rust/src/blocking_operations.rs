@@ -4968,6 +4968,23 @@ impl crate::blocking::Client {
     ) -> Result<crate::CallResult<crate::CodeGrepOutput>, crate::CallFailure> {
         self.call("code.grep", &request, options)
     }
+    /// Call `code.read`.
+    pub fn code_read(
+        &self,
+        request: crate::CodeReadInput,
+    ) -> Result<crate::CodeReadOutput, crate::Error> {
+        self.code_read_with_options(request, crate::CallOptions::default())
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+    /// Call `code.read` with per-request options and metadata.
+    pub fn code_read_with_options(
+        &self,
+        request: crate::CodeReadInput,
+        options: crate::CallOptions,
+    ) -> Result<crate::CallResult<crate::CodeReadOutput>, crate::CallFailure> {
+        self.call("code.read", &request, options)
+    }
     /// Call `code.tests_for`.
     pub fn code_tests_for(
         &self,

@@ -10324,6 +10324,16 @@ fn code_grep() {
     );
 }
 #[test]
+fn code_read() {
+    let value: clickhouse_loom::CodeReadInput = serde_json::from_str("{\"ranges\":[]}").unwrap();
+    let encoded = serde_json::to_value(value).unwrap();
+    assert!(encoded.is_object());
+    let value: clickhouse_loom::CodeReadOutput =
+        serde_json::from_str("{\"results\":[],\"as_of\":{}}").unwrap();
+    let encoded = serde_json::to_value(value).unwrap();
+    assert!(encoded.is_object());
+}
+#[test]
 fn code_tests_for() {
     let value: clickhouse_loom::CodeTestsForInput =
         serde_json::from_str("{\"facets\":[]}").unwrap();
