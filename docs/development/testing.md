@@ -419,8 +419,9 @@ bodies remain intact. Keep the task identity in its title or body; removing both
 markers removes its association with the check. Security-sensitive reports use
 [the private reporting route](../../SECURITY.md).
 
-The publisher permits forty API calls, ten issue pages and a hundred comments per
-task, with a five-minute job limit. It refuses exhausted pagination or comment
-history instead of guessing a prior state. At most four tasks or status comments
-can be written in one run. These bounds can defer diagnosis until the publisher's
-own error is resolved; a successful SDK check does not close an issue automatically.
+The publisher permits forty API calls, ten issue pages and fewer than a hundred
+comments per task, with a five-minute job limit. It refuses exhausted pagination or
+comment history instead of guessing a prior state. At most four tasks or status
+comments can be written in one run. These bounds can defer diagnosis until the
+publisher's own error is resolved; a successful SDK check does not close an issue
+automatically.
