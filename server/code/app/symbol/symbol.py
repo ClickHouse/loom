@@ -33,6 +33,7 @@ from server.code.app.spans import (
     span_attrs,
     start_stage_wall,
 )
+from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
 from server.code.app.symbol.hierarchy import _symbol_hierarchy
 from server.code.app.symbol.named_examples import named_test_examples, owning_type
 from server.code.app.symbol.neighbours import (
@@ -162,8 +163,9 @@ class _SymbolLegs:
         rows: list[dict[str, Any]],
         *,
         include_owner: bool,
+        matched_members: bool,
     ) -> None:
-        head = rows[:10]
+        head = rows if matched_members else rows[:10]
         self.hashes = asyncio.ensure_future(_chunk_hashes(repo, org, ns, head))
         # uses leg: the grep for the name's mentions runs beside the body reads, never
         # after them; additive, never fatal.
@@ -189,7 +191,15 @@ class _SymbolLegs:
             else None
         )
         self.enrich = asyncio.ensure_future(
-            _enrichment(repo, org, ns, input, head, include_owner=include_owner)
+            _enrichment(
+                repo,
+                org,
+                ns,
+                input,
+                head,
+                include_owner=include_owner,
+                matched_members=matched_members,
+            )
         )
         self.documented_in = asyncio.ensure_future(
             _staged("symbol.documented_in", _soft(documented_in_for(repo, org, ns, rows), []))
@@ -334,6 +344,7 @@ async def _enrichment(
     head: list[dict[str, Any]],
     *,
     include_owner: bool = False,
+    matched_members: bool = False,
 ) -> dict[str, Any]:
     """Enrichment of the first definition (recent PRs, usage examples, lessons), the
     three reads gathered, each bounded and degradable; {} when not asked. Keyed on the
@@ -353,9 +364,24 @@ async def _enrichment(
     async def lessons() -> list[dict[str, Any]]:
         if request_narrowed():
             return []  # a token that may not read every user's lessons
-        return await code_enrich.lessons_for_symbol(
-            org, ns, symbol_name=symbol, paths=paths, extra_namespaces=input.lesson_namespaces
-        )
+
+        async def read(name: str) -> list[dict[str, Any]]:
+            return await code_enrich.lessons_for_symbol(
+                org, ns, symbol_name=name, paths=paths, extra_namespaces=input.lesson_namespaces
+            )
+
+        if not matched_members:
+            return await read(symbol)
+        names = list(dict.fromkeys(row["qualified_name"] for row in head))
+        groups = await asyncio.gather(*(read(name) for name in names))
+        notes: dict[tuple[str, str], dict[str, Any]] = {}
+        for name, group in zip(names, groups, strict=True):
+            for note in group:
+                linked = notes.setdefault(
+                    (note["namespace"], note["memory_key"]), {**note, "linked_symbols": []}
+                )
+                linked["linked_symbols"].append(name)
+        return list(notes.values())
 
     async def examples_for_definition() -> list[dict[str, Any]]:
         callers = code_enrich.usage_examples(
@@ -403,7 +429,7 @@ async def _enrichment(
         out["examples"] = examples
     if lessons_out is not None:
         out["lessons"] = lessons_out
-    if include_owner and _uses_brief.single_declaration(head):
+    if include_owner and (matched_members or _uses_brief.single_declaration(head)):
         with code_span("enrich.owner_context"):
             out.update(
                 await code_enrich.bounded(_owner_context(repo, org, ns, input, head[0], out), {})
@@ -463,33 +489,34 @@ def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any],
 
 
 async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
-    from server.code.app.symbol.edit_target import locate_edit_target
-
-    name, revision = input.name, None
-    if input.clues:
-        name, revision, candidates = await locate_edit_target(input)
-        if not name:
-            return CodeSymbolOutput(
-                definitions=[], ambiguous=len(candidates) > 1, candidates=candidates
-            )
+    target = await locate_edit_target(input) if input.clues else EditTarget(name=input.name)
+    if not target.name:
+        return CodeSymbolOutput(
+            definitions=[], ambiguous=len(target.candidates) > 1, candidates=target.candidates
+        )
     out = await handle_code_symbol(
         CodeSymbolInput(
             **input.model_dump(exclude={"name", "clues"}),
-            name=name,
+            name=target.name,
             include_history=False,
             test_examples_only=True,
             example_context_lines=EDIT_TEST_CONTEXT_LINES,
         ),
         op_name="code.edit_context",
-        expected_commit=revision,
+        expected_commit=target.revision,
+        matched_rows=target.members,
     )
-    if revision is not None and out.definitions:
+    if target.revision is not None and out.definitions:
         out.resolved_by = "file_clues"
     return out
 
 
 async def handle_code_symbol(
-    input: CodeSymbolInput, *, op_name: str = "code.symbol", expected_commit: str | None = None
+    input: CodeSymbolInput,
+    *,
+    op_name: str = "code.symbol",
+    expected_commit: str | None = None,
+    matched_rows: list[dict[str, Any]] | None = None,
 ) -> CodeSymbolOutput:
     from server.code.app import fan_in as code_fan_in
 
@@ -506,7 +533,9 @@ async def handle_code_symbol(
     repo = CodeRepo()
 
     with code_span("symbol.resolve") as sp:
-        rows = await _resolve_symbols(repo, org, ns, symbol_id=input.symbol_id, name=input.name)
+        rows = matched_rows or await _resolve_symbols(
+            repo, org, ns, symbol_id=input.symbol_id, name=input.name
+        )
         if expected_commit is not None:
             rows = [
                 row
@@ -563,8 +592,16 @@ async def handle_code_symbol(
     # hashes, the uses legs, the enrichment, the citing documents and the neighbours
     # block) and the bodies are read side by side too, so none of them waits on the
     # bodies. Each leg stays fail-open on its own.
-    head = rows[:10]
-    legs = _SymbolLegs(repo, org, ns, input, rows, include_owner=op_name == "code.edit_context")
+    head = rows if matched_rows else rows[:10]
+    legs = _SymbolLegs(
+        repo,
+        org,
+        ns,
+        input,
+        rows,
+        include_owner=op_name == "code.edit_context",
+        matched_members=bool(matched_rows),
+    )
     try:
         with code_span("symbol.bodies", results=len(head)):
             bodies = await _symbol_bodies(
@@ -624,7 +661,7 @@ async def handle_code_symbol(
     if documented_in:
         tokens += estimate_json_tokens(documented_in)
     tokens += block_tokens
-    ambiguous = len({(u.symbol, u.signature) for u in budgeted}) > 1
+    ambiguous = not matched_rows and len({(u.symbol, u.signature) for u in budgeted}) > 1
     uses: list[dict[str, Any]] | dict[str, Any]
     uses, uses_truncated = uses_pair
     uses_truncated |= brief_omitted
@@ -637,6 +674,8 @@ async def handle_code_symbol(
         if input.uses
         else ("symbol_exact+uses_brief" if brief else "symbol_exact")
     )
+    if matched_rows:
+        route = "edit_context_members"
     # The shape this call served prices its budget and is written on the trace row, so the
     # ranked lookup's own p99 is measurable.
 

@@ -183,8 +183,8 @@ class CodeSymbolOutput(BaseModel):
             data.pop("lessons_left_out", None)
         return data
 
-    # The resolved definitions (at most 10), fitted to `token_budget`; empty when
-    # nothing resolved (see `candidates`) or on a presence answer.
+    # Up to 10 name matches, or the members matched by file clues, fitted to
+    # `token_budget`. Empty when only candidates or presence were found.
     definitions: list[CodeUnit]
     # Whole linked lessons omitted to preserve definitions within an explicit request budget.
     # Absent when none were omitted; the deployment lesson budget is applied separately.

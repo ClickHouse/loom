@@ -600,6 +600,38 @@ async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     }
 
 
+async def test_edit_context_reads_matched_members_of_large_type(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.code.app.symbol.outline import AUTO_OUTLINE_MIN_LINES
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    path = "src/large.py"
+    source = (
+        b"class Group:\n"
+        b"    def first(self):\n        return 'match first'\n"
+        b"    def second(self):\n        return 'match second'\n"
+        b"    def unrelated(self):\n"
+        + b"        # A long unrelated implementation.\n" * AUTO_OUTLINE_MIN_LINES
+        + b"        return 'unrelated'\n"
+    )
+    await _ingest(repo, org, ns, source=source, path=path)
+    result = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=path, clues=["match "], include_lessons=False
+        )
+    )
+    assert result.resolved_by == "file_clues" and not result.ambiguous
+    assert {unit.symbol.rsplit("::", 1)[-1] for unit in result.definitions} == {"first", "second"}
+    assert all(
+        "match " in unit.body and "unrelated" not in unit.body for unit in result.definitions
+    )
+
+
 async def test_deletion_tombstones_everything(code_env) -> None:
     from server.code.app.index.ingest import tombstone_file
     from server.embedding.fake import fake_model_name
