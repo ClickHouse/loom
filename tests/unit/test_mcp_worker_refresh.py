@@ -35,10 +35,9 @@ def _validate(
     lease: refresh.LiveLease | None = _LEASE,
     authority: refresh.WriteAuthority | None = _AUTHORITY,
     now: datetime = _NOW,
-    prior: refresh.CompletionReceipt | None = None,
 ) -> refresh.CompletionDecision:
     return refresh.validate_completion(
-        completion, worker_id=worker_id, lease=lease, authority=authority, now=now, prior=prior
+        completion, worker_id=worker_id, lease=lease, authority=authority, now=now
     )
 
 
@@ -134,39 +133,21 @@ def test_reclaimed_lease_refuses_old_fence_even_for_same_worker() -> None:
     )
 
 
-def test_reclaimed_lease_replays_a_committed_receipt_on_the_new_worker() -> None:
-    receipt = refresh.CompletionReceipt(_TASK.idempotency_key, _PRESENT)
-    lease = replace(_LEASE, worker_id="worker-two", fence=_LEASE.fence + 1)
-    authority = replace(_AUTHORITY, worker_id=lease.worker_id)
-    with pytest.raises(refresh.RefreshRejected, match="lease"):
-        _validate(lease=lease, authority=authority, prior=receipt)
-    completion = replace(_COMPLETE, fence=lease.fence)
-    assert _validate(
-        completion, worker_id=lease.worker_id, lease=lease, authority=authority, prior=receipt
-    ) == refresh.CompletionDecision(refresh.CompletionAction.REPLAY)
-
-
 @pytest.mark.parametrize("fence", [0, -1, True, 1 << 32])
 def test_invalid_fences_do_not_pass_even_if_lease_matches(fence: int) -> None:
     with pytest.raises(refresh.RefreshRejected, match="lease"):
         _validate(replace(_COMPLETE, fence=fence), lease=replace(_LEASE, fence=fence))
 
 
-def test_receipt_is_idempotent_not_publication_authority() -> None:
+def test_proposed_receipt_requires_current_authority_and_deadline() -> None:
     receipt = refresh.CompletionReceipt(_TASK.idempotency_key, _PRESENT)
     assert _validate() == refresh.CompletionDecision(refresh.CompletionAction.UPSERT, receipt)
-    assert _validate(prior=receipt) == refresh.CompletionDecision(refresh.CompletionAction.REPLAY)
     with pytest.raises(refresh.RefreshRejected, match="deadline"):
-        _validate(prior=receipt, now=_LEASE.expires_at)
+        _validate(now=_LEASE.expires_at)
     with pytest.raises(refresh.RefreshRejected, match="authority"):
-        _validate(prior=receipt, authority=None)
+        _validate(authority=None)
     with pytest.raises(refresh.RefreshRejected, match="idempotency key"):
         _validate(replace(_COMPLETE, idempotency_key=_OTHER_TASK.idempotency_key))
-    with pytest.raises(refresh.RefreshRejected, match="receipt conflicts"):
-        _validate(prior=replace(receipt, idempotency_key=_OTHER_TASK.idempotency_key))
-    with pytest.raises(refresh.RefreshRejected, match="receipt conflicts"):
-        changed = replace(_PRESENT, content_sha256="b" * 64)
-        _validate(replace(_COMPLETE, observation=changed), prior=receipt)
 
 
 @pytest.mark.parametrize(
@@ -178,23 +159,9 @@ def test_receipt_is_idempotent_not_publication_authority() -> None:
         refresh.ObservationKind.AMBIGUOUS_ABSENCE,
     ],
 )
-def test_non_observations_do_not_retire_or_checkpoint(kind: refresh.ObservationKind) -> None:
+def test_non_observations_do_not_checkpoint(kind: refresh.ObservationKind) -> None:
     incomplete = replace(_COMPLETE, observation=refresh.Observation(kind))
-    authority = replace(_AUTHORITY, deletion_verified=True)
-    assert _validate(incomplete, authority=authority) == refresh.CompletionDecision(
-        refresh.CompletionAction.RETRY
-    )
-
-
-def test_confirmed_deletion_requires_specific_current_evidence() -> None:
-    deletion = refresh.Observation(refresh.ObservationKind.CONFIRMED_DELETED)
-    completion = replace(_COMPLETE, observation=deletion)
-    with pytest.raises(refresh.RefreshRejected, match="deletion is not verified"):
-        _validate(completion)
-    authority = replace(_AUTHORITY, deletion_verified=True)
-    assert _validate(completion, authority=authority) == refresh.CompletionDecision(
-        refresh.CompletionAction.RETIRE, refresh.CompletionReceipt(_TASK.idempotency_key, deletion)
-    )
+    assert _validate(incomplete) == refresh.CompletionDecision(refresh.CompletionAction.RETRY)
 
 
 def test_observation_does_not_accept_a_body_or_a_digest_for_an_incomplete_read() -> None:

@@ -2,7 +2,7 @@ import json
 import unittest
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 from server.knowledge.domain.mcp_worker_refresh import (
@@ -17,6 +17,8 @@ from server.knowledge.domain.mcp_worker_refresh import (
 from server.knowledge.store.pg_worker_refresh import (
     CompletionAuthority,
     WorkerCompletion,
+    checkpoint,
+    lock_current,
     replay_completion,
 )
 
@@ -31,7 +33,7 @@ class TestRefreshReceipt(unittest.IsolatedAsyncioTestCase):
         self.receipt = CompletionReceipt(
             task.idempotency_key, Observation(ObservationKind.PRESENT, "a" * 64)
         )
-        self.conn = AsyncMock()
+        self.conn = AsyncMock(is_in_transaction=Mock(return_value=True))
         self.conn.fetchrow.return_value = {
             "task": json.dumps({"version": 1, "task": asdict(task)}),
             "receipt": json.dumps(asdict(self.receipt)),
@@ -39,7 +41,7 @@ class TestRefreshReceipt(unittest.IsolatedAsyncioTestCase):
             "claimable_at": self.lease.expires_at,
         }
         self.authorize = AsyncMock(
-            return_value=CompletionAuthority(task, self.lease.worker_id, "copy", "alice")
+            return_value=CompletionAuthority(task, self.lease.worker_id, "alice")
         )
         self.completion = WorkerCompletion(self.lease, self.receipt, self.authorize)
         enabled = patch("server.knowledge.store.pg_worker_refresh.pg.enabled", return_value=True)
@@ -71,3 +73,22 @@ class TestRefreshReceipt(unittest.IsolatedAsyncioTestCase):
         changed = replace(self.receipt, observation=Observation(ObservationKind.PRESENT, "b" * 64))
         with self.assertRaisesRegex(RefreshRejected, "receipt conflicts"):
             await replay_completion(self.conn, replace(self.completion, receipt=changed))
+
+    async def test_other_destination_cannot_replay_terminal_receipt(self) -> None:
+        task = self.lease.task
+        different = replace(task, scope=replace(task.scope, destination_id="other-copy"))
+        self.authorize.return_value = replace(self.authorize.return_value, task=different)
+        self.assertFalse(await replay_completion(self.conn, self.completion))
+
+    async def test_autocommit_cannot_lock_or_settle_work(self) -> None:
+        self.conn.is_in_transaction.return_value = False
+        expected = "requires Postgres authority transaction"
+        with self.assertRaisesRegex(RefreshRejected, expected):
+            await lock_current(self.conn, self.lease)
+        with self.assertRaisesRegex(RefreshRejected, expected):
+            await checkpoint(self.conn, self.lease, self.receipt)
+        with self.assertRaisesRegex(RefreshRejected, expected):
+            await replay_completion(self.conn, self.completion)
+        self.conn.fetchrow.assert_not_awaited()
+        self.conn.fetchval.assert_not_awaited()
+        self.authorize.assert_not_awaited()

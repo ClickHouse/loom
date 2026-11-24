@@ -113,8 +113,14 @@ async def _claim(entry: RefreshEntry, *, namespace: str) -> tuple[LiveLease, ...
 async def _assert_checkpoint_rolls_back(
     pg_conn: Connection, entry: RefreshEntry, lease: LiveLease, receipt: CompletionReceipt
 ) -> None:
+    from server.knowledge.domain.mcp_worker_refresh import RefreshRejected
     from server.knowledge.store import pg_worker_refresh as refresh
 
+    rejection = "requires Postgres authority transaction"
+    with pytest.raises(RefreshRejected, match=rejection):
+        await refresh.lock_current(pg_conn, lease)
+    with pytest.raises(RefreshRejected, match=rejection):
+        await refresh.checkpoint(pg_conn, lease, receipt)
     with pytest.raises(_RollbackCheckpoint):
         async with pg_conn.transaction():
             current = await refresh.lock_current(pg_conn, lease)

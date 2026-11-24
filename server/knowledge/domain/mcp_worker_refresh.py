@@ -133,20 +133,14 @@ class LiveLease:
 
 @dataclass(frozen=True, slots=True)
 class WriteAuthority:
-    """Current job membership, selection, actor delegation and worker authorization.
-
-    Construct only when those checks succeed. Deletion verification refers to explicit
-    evidence for this exact task, never merely the profile's advertised capabilities.
-    """
+    """Current job membership, selection, actor delegation and worker authorization."""
 
     task: DocumentTask
     worker_id: str
-    deletion_verified: bool = False
 
 
 class ObservationKind(StrEnum):
     PRESENT = "present"
-    CONFIRMED_DELETED = "confirmed_deleted"
     TIMEOUT = "timeout"
     OMITTED = "omitted"
     INCOMPLETE = "incomplete"
@@ -190,9 +184,7 @@ class CompletionReceipt:
 
 class CompletionAction(StrEnum):
     UPSERT = "upsert"
-    RETIRE = "retire"
     RETRY = "retry"
-    REPLAY = "replay"
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,14 +232,9 @@ def validate_completion(
     lease: LiveLease | None,
     authority: WriteAuthority | None,
     now: datetime,
-    prior: CompletionReceipt | None = None,
 ) -> CompletionDecision:
-    """Return a proposed effect; only committing it may write the proposed receipt.
-
-    A retry with a matching receipt under a current lease has no write effect.
-    An expired or released claimant cannot use a receipt as publication authority.
-    """
-    current = validate_lease(
+    """Propose an upsert under a live lease. Only the store may replay terminal work."""
+    validate_lease(
         completion.task,
         worker_id=worker_id,
         fence=completion.fence,
@@ -258,19 +245,7 @@ def validate_completion(
     key = completion.task.idempotency_key
     if completion.idempotency_key != key:
         raise RefreshRejected("refresh idempotency key does not match")
-    observation = completion.observation
-    receipt = CompletionReceipt(key, observation)
-    if prior is not None:
-        if prior != receipt or observation.kind not in (
-            ObservationKind.PRESENT,
-            ObservationKind.CONFIRMED_DELETED,
-        ):
-            raise RefreshRejected("refresh receipt conflicts")
-        return CompletionDecision(CompletionAction.REPLAY)
-    if observation.kind is ObservationKind.PRESENT:
+    if completion.observation.kind is ObservationKind.PRESENT:
+        receipt = CompletionReceipt(key, completion.observation)
         return CompletionDecision(CompletionAction.UPSERT, receipt)
-    if observation.kind is ObservationKind.CONFIRMED_DELETED:
-        if current.deletion_verified is not True:
-            raise RefreshRejected("refresh deletion is not verified")
-        return CompletionDecision(CompletionAction.RETIRE, receipt)
     return CompletionDecision(CompletionAction.RETRY)

@@ -91,9 +91,10 @@ class RefreshEntry:
 
 @dataclass(frozen=True, repr=False)
 class CompletionAuthority:
+    """Current owner and worker for the exact task, including its copy destination."""
+
     task: DocumentTask
     worker_id: str
-    copy_namespace: str
     user_id: str
 
 
@@ -133,10 +134,14 @@ def _task(value: str) -> DocumentTask:
         raise RefreshRejected("invalid refresh queue metadata") from None
 
 
-async def enqueue(conn: Connection, entry: RefreshEntry) -> bool:
-    """Insert while the caller holds the scheduling and source authority locks."""
+def _require_transaction(conn: Connection) -> None:
     if not pg.enabled() or not conn.is_in_transaction():
         raise RefreshRejected("source refresh requires Postgres authority transaction")
+
+
+async def enqueue(conn: Connection, entry: RefreshEntry) -> bool:
+    """Insert while the caller holds the scheduling and source authority locks."""
+    _require_transaction(conn)
     scope = entry.task.scope
     metadata = _metadata(entry)
     key = (scope.org, scope.namespace, entry.task.idempotency_key)
@@ -222,6 +227,7 @@ def _lease_params(lease: LiveLease) -> tuple[Any, ...]:
 
 async def lock_current(conn: Connection, lease: LiveLease) -> LiveLease:
     """Lock the exact lease in the transaction that commits the document head."""
+    _require_transaction(conn)
     result = await conn.fetchrow(_LOCK, *_lease_params(lease))
     if result is None or _task(result["task"]) != lease.task:
         raise RefreshRejected("refresh lease is no longer current")
@@ -230,6 +236,7 @@ async def lock_current(conn: Connection, lease: LiveLease) -> LiveLease:
 
 async def checkpoint(conn: Connection, lease: LiveLease, receipt: CompletionReceipt) -> None:
     """Recheck the database clock and settle only inside the document transaction."""
+    _require_transaction(conn)
     if (
         receipt.idempotency_key != lease.task.idempotency_key
         or receipt.observation.kind is not ObservationKind.PRESENT
@@ -242,7 +249,8 @@ async def checkpoint(conn: Connection, lease: LiveLease, receipt: CompletionRece
 
 async def cancel(conn: Connection, task: DocumentTask, *, user_id: str) -> bool:
     """The authorized owner's stop fences unfinished work without touching its copies."""
-    if not pg.enabled() or not user_id or user_id == "-":
+    _require_transaction(conn)
+    if not user_id or user_id == "-":
         raise RefreshRejected("source refresh cancellation unavailable")
     scope = task.scope
     return (
@@ -253,8 +261,7 @@ async def cancel(conn: Connection, task: DocumentTask, *, user_id: str) -> bool:
 
 async def replay_completion(conn: Connection, completion: WorkerCompletion) -> bool:
     """An exact terminal retry reads a receipt after fresh authority, without writing a copy."""
-    if not pg.enabled():
-        raise RefreshRejected("source refresh receipt unavailable")
+    _require_transaction(conn)
     lease = completion.lease
     row = await conn.fetchrow(_TERMINAL, *_lease_params(lease))
     if row is None or _task(row["task"]) != lease.task:
