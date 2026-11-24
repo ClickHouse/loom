@@ -1,6 +1,9 @@
 """Read opaque source worker authority from the deployment's Postgres store."""
 
+from __future__ import annotations
+
 import asyncio
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from server.knowledge.app.mcp_worker_authority import CurrentConnection, ReaderEnrollment
@@ -13,6 +16,9 @@ from server.knowledge.store import pg_mcp_worker_approvals as approvals
 from server.knowledge.store import pg_mcp_worker_enrollment as accounts
 from server.knowledge.store import pg_mcp_worker_readers as readers
 from server.knowledge.store.sources import get_source
+
+if TYPE_CHECKING:
+    from asyncpg import Connection
 
 
 async def current_connection(
@@ -42,6 +48,20 @@ async def current_enrollment(
         row.connection_generation,
         row.link_generation,
     )
+
+
+async def _account_space(
+    conn: Connection, scope: WorkerReadScope, subject: str, connection: UUID, generation: int
+) -> str | None:
+    row = await accounts.reader_account_on(
+        conn, scope.org, subject, scope.worker_id, connection, lock=True
+    )
+    if row is None:
+        raise WorkerReadRefused("denied")
+    profile, account = row
+    if profile != scope.profile_digest or not account.active or account.generation != generation:
+        raise WorkerReadRefused("denied")
+    return account.resource_space
 
 
 async def fence_live_delivery(scope: WorkerReadScope, deliver: Deliver, deadline: float) -> None:
@@ -84,27 +104,14 @@ async def fence_live_delivery(scope: WorkerReadScope, deliver: Deliver, deadline
         ):
             raise WorkerReadRefused("denied")
 
-        async def account_space(subject: str, connection: UUID, generation: int) -> str | None:
-            row = await accounts.reader_account_on(
-                conn, scope.org, subject, scope.worker_id, connection, lock=True
-            )
-            if row is None:
-                raise WorkerReadRefused("denied")
-            profile, account = row
-            if (
-                profile != scope.profile_digest
-                or not account.active
-                or account.generation != generation
-            ):
-                raise WorkerReadRefused("denied")
-            return account.resource_space
-
-        space = await account_space(owner.owner, owner.connection_id, owner.connection_generation)
+        space = await _account_space(
+            conn, scope, owner.owner, owner.connection_id, owner.connection_generation
+        )
         if team and (
             not space
             or space
-            != await account_space(
-                scope.requester, scope.connection_id, scope.connection_generation
+            != await _account_space(
+                conn, scope, scope.requester, scope.connection_id, scope.connection_generation
             )
         ):
             raise WorkerReadRefused("denied")
