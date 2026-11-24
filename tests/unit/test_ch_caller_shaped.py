@@ -203,7 +203,7 @@ async def test_code_grep_and_a_patterned_code_search_run_caller_shaped(
 
     seen: list[bool] = []
 
-    async def _record(_input: Any) -> Any:
+    async def _record(_input: Any, **_kwargs: Any) -> Any:
         seen.append(ch.caller_shaped_var.get())
 
     monkeypatch.setattr(grep_mod, "_code_grep", _record)

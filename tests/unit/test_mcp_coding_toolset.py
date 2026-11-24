@@ -604,12 +604,12 @@ def test_coding_connections_without_a_memory_home_do_not_request_a_memory_pack(d
     assert "Recall before answering from memory" in coding
 
 
-def test_coding_tool_listing_conditions_the_memory_pack_on_a_default_workspace() -> None:
+def test_coding_tool_listing_describes_task_pack_inputs_and_results() -> None:
     tools = asyncio.run(mt._tools_descriptor(toolset="coding"))
     description = next(t["description"] for t in tools if t["name"] == "loom_context_pack")
-    assert "call first with a default memory namespace" in description
-    assert "call it first in each task" not in description
-    assert "Pass the task as `query`" in description
+    assert description.startswith("Retrieve task context by passing the task as `query`.")
+    assert "memories, decisions, procedures, working memory and the profile" in description
+    assert "`include_runs=true` lists recent sessions and runs" in description
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding", "tasks", "tracker", "atomic", "readonly"])

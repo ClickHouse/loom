@@ -503,6 +503,7 @@ def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any],
 async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
     from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
 
+    require_code_intel()
     if not input.name and not input.clues:
         raise ValidationError("code.edit_context requires a name or literal clues")
     target = await locate_edit_target(input) if input.clues else EditTarget(name=input.name)
