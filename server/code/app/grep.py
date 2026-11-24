@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import replace
 from typing import Any
 
 from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput
@@ -51,7 +52,7 @@ from server.settings import settings
 logger = logging.getLogger(__name__)
 
 
-async def handle_code_grep(input: CodeGrepInput) -> CodeGrepOutput:
+async def handle_code_grep(input: CodeGrepInput, *, exact_path: str = "") -> CodeGrepOutput:
     """Exact literal / RE2 regex over indexed chunks, per-line results with the enclosing
     symbol attached. Matching lines are extracted app-side from the chunk content (line =
     chunk.start_line + offset).
@@ -63,7 +64,7 @@ async def handle_code_grep(input: CodeGrepInput) -> CodeGrepOutput:
     The caller's pattern shapes every scan, so they all run under the caller-shaped
     ClickHouse ceilings."""
     with caller_shaped():
-        return await _code_grep(input)
+        return await _code_grep(input, exact_path=exact_path)
 
 
 async def _code_grep(
@@ -72,6 +73,7 @@ async def _code_grep(
     started: float | None = None,
     offset: int = 0,
     page_limit: int | None = None,
+    exact_path: str = "",
 ) -> CodeGrepOutput:
     from server.observability.budget_shape import note_budget_shape
 
@@ -122,6 +124,8 @@ async def _code_grep(
 
     # rg -g / -t style file filters; unset = no SQL added
     scope = _scope_of(input)
+    if exact_path:
+        scope = replace(scope, exact_path=exact_path)
     if scope.has_path_filters:
         route += "+scoped"
     # a path_prefix narrows the statement's read to that key range: the route says so and the

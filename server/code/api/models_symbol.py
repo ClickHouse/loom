@@ -591,8 +591,8 @@ class CodeImpactOutput(_LessonsOut):
     # True when `impacted_symbols` is a page of the radius (per_hop_limit /
     # offset sliced it, or the per-hop edge read hit its cap).
     truncated: bool = False
-    # Which name form bound, or `file_clues` when edit context located the target
-    # from literal text. Empty for an exact symbol name.
+    # `anonymous_namespace` | `tail` | `python_module` | `registration` | `file_symbol` when a
+    # read-side name form bound; "" and off the wire for an exact hit.
     resolved_by: str = ""
     # Why the radius is empty, '' when it is not. Answers:
     # `no_indexed_paths` (the change names no path the symbol table holds

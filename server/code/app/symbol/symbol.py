@@ -25,6 +25,7 @@ from server.code.app.common import (
     schedule_code_trace,
     tier_of,
 )
+from server.code.app.grep_source import GREP_MATCH_TEXT_CHARS
 from server.code.app.index.symbol_forms import resolved_by_of
 from server.code.app.spans import (
     code_span,
@@ -43,7 +44,6 @@ from server.code.app.symbol.neighbours import (
 )
 from server.code.app.symbol.outline import _container_skeleton, _is_large_container
 from server.code.app.symbol.resolve import (
-    _indexed_commit,
     _parse_location,
     _resolve_symbols,
     _seed_ids_of,
@@ -257,7 +257,11 @@ async def _symbol_bodies(
         if input.include_body:
             if not input.token_budget or not _is_large_container(r):
                 row = (
-                    {**r, "_extent_commit": r.get("extent_commit") or r.get("indexed_commit")}
+                    {
+                        **r,
+                        "_extent_commit": r.get("extent_commit") or r.get("indexed_commit"),
+                        "_tier_ids": r.get("tier_ids"),
+                    }
                     if expected_commit is not None
                     else r
                 )
@@ -374,12 +378,17 @@ async def _enrichment(
             return await read(symbol)
         names = list(dict.fromkeys(row["qualified_name"] for row in head))
         groups = await asyncio.gather(*(read(name) for name in names))
-        notes: dict[tuple[str, str], dict[str, Any]] = {}
+        notes: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
         for name, group in zip(names, groups, strict=True):
             for note in group:
-                linked = notes.setdefault(
-                    (note["namespace"], note["memory_key"]), {**note, "linked_symbols": []}
+                key = (
+                    note["namespace"],
+                    note["memory_key"],
+                    note.get("code_state") or "",
+                    note.get("changed_since") or "",
+                    note.get("suggestion") or "",
                 )
+                linked = notes.setdefault(key, {**note, "linked_symbols": []})
                 linked["linked_symbols"].append(name)
         return list(notes.values())
 
@@ -504,11 +513,29 @@ async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOut
         ),
         op_name="code.edit_context",
         expected_commit=target.revision,
-        matched_rows=target.members,
+        matched_rows=target.rows,
+        matched_members=target.grouped,
     )
-    if target.revision is not None and out.definitions:
+    if target.revision is not None:
+        if not out.definitions or not all(
+            _matches_source(unit, target.matches) for unit in out.definitions
+        ):
+            return CodeSymbolOutput(
+                definitions=[], ambiguous=len(target.candidates) > 1, candidates=target.candidates
+            )
         out.resolved_by = "file_clues"
     return out
+
+
+def _matches_source(unit: Any, matches: list[dict[str, Any]]) -> bool:
+    """A resolved span must contain a literal match at its original source line."""
+    lines = unit.body.splitlines()
+    return any(
+        match["path"] == unit.path
+        and 0 <= (offset := match["line"] - unit.start_line) < len(lines)
+        and lines[offset].strip()[:GREP_MATCH_TEXT_CHARS] == match["text"]
+        for match in matches
+    )
 
 
 async def handle_code_symbol(
@@ -517,6 +544,7 @@ async def handle_code_symbol(
     op_name: str = "code.symbol",
     expected_commit: str | None = None,
     matched_rows: list[dict[str, Any]] | None = None,
+    matched_members: bool = False,
 ) -> CodeSymbolOutput:
     from server.code.app import fan_in as code_fan_in
 
@@ -536,13 +564,6 @@ async def handle_code_symbol(
         rows = matched_rows or await _resolve_symbols(
             repo, org, ns, symbol_id=input.symbol_id, name=input.name
         )
-        if expected_commit is not None:
-            rows = [
-                row
-                for row in rows
-                if _indexed_commit(row.get("extent_commit") or row.get("indexed_commit"))
-                == expected_commit
-            ]
         span_attrs(sp, results=len(rows), tier=tier_of(rows))
     if not rows:
         # candidates by fuzzy name so a typo'd lookup still orients the
@@ -592,7 +613,7 @@ async def handle_code_symbol(
     # hashes, the uses legs, the enrichment, the citing documents and the neighbours
     # block) and the bodies are read side by side too, so none of them waits on the
     # bodies. Each leg stays fail-open on its own.
-    head = rows if matched_rows else rows[:10]
+    head = rows if matched_members else rows[:10]
     legs = _SymbolLegs(
         repo,
         org,
@@ -600,7 +621,7 @@ async def handle_code_symbol(
         input,
         rows,
         include_owner=op_name == "code.edit_context",
-        matched_members=bool(matched_rows),
+        matched_members=matched_members,
     )
     try:
         with code_span("symbol.bodies", results=len(head)):
@@ -661,7 +682,7 @@ async def handle_code_symbol(
     if documented_in:
         tokens += estimate_json_tokens(documented_in)
     tokens += block_tokens
-    ambiguous = not matched_rows and len({(u.symbol, u.signature) for u in budgeted}) > 1
+    ambiguous = not matched_members and len({(u.symbol, u.signature) for u in budgeted}) > 1
     uses: list[dict[str, Any]] | dict[str, Any]
     uses, uses_truncated = uses_pair
     uses_truncated |= brief_omitted
@@ -674,7 +695,7 @@ async def handle_code_symbol(
         if input.uses
         else ("symbol_exact+uses_brief" if brief else "symbol_exact")
     )
-    if matched_rows:
+    if matched_members:
         route = "edit_context_members"
     # The shape this call served prices its budget and is written on the trace row, so the
     # ranked lookup's own p99 is measurable.

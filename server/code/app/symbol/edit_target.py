@@ -20,7 +20,9 @@ class EditTarget:
     name: str = ""
     revision: str | None = None
     candidates: list[dict[str, Any]] = field(default_factory=list)
-    members: list[dict[str, Any]] = field(default_factory=list)
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    matches: list[dict[str, Any]] = field(default_factory=list)
+    grouped: bool = False
 
 
 async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
@@ -40,25 +42,33 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
             path_prefix=path,
             include_body=False,
             include_lessons=False,
-        )
+        ),
+        exact_path=path,
     )
-    matches = [m for m in found.matches if m["path"] == path]
+    matches = found.matches
     candidates = _scope_candidates(matches)
     revision = match_revisions(matches, found._match_commits).get(path)
     if not revision or found.has_more or found.truncated or found.partial:
         return EditTarget(candidates=candidates)
-    if len(candidates) == 1 and all(m["scope_start_line"] for m in matches):
-        return EditTarget(f"{path}:{matches[0]['line']}", revision, candidates)
+    from server.code.app.symbol.enclosing import ENCLOSING_KINDS
 
-    lines = {m["line"] for m in matches}
     repo = CodeRepo()
+    rows = await repo.functions_for_paths(
+        org, ns, [path], limit=2000, kinds=ENCLOSING_KINDS, with_revision=True
+    )
+    if len(candidates) == 1:
+        targets = [row for row in rows if _row_key(row) == _match_key(matches[0])]
+        if len(targets) == 1:
+            return EditTarget(
+                f"{path}:{matches[0]['line']}", revision, candidates, targets, matches
+            )
+    lines = {m["line"] for m in matches}
     types = await repo.types_for_paths(org, ns, [path], with_revision=True)
     covering = sorted(
         (
             row
             for row in types
-            if _indexed_commit(row.get("extent_commit")) == revision
-            and 2 * sum(row["start_line"] <= line <= row["end_line"] for line in lines) > len(lines)
+            if 2 * sum(row["start_line"] <= line <= row["end_line"] for line in lines) > len(lines)
         ),
         key=_span,
     )
@@ -66,24 +76,27 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
         return EditTarget(candidates=candidates)
     owner = covering[0]
     name = f"{path}:{owner['qualified_name']}"
-    if not _is_large_container(owner):
-        return EditTarget(name, revision, candidates)
-    matched_spans = {
-        (m["scope_start_line"], m["scope_end_line"])
-        for m in matches
-        if owner["start_line"] <= m["line"] <= owner["end_line"]
-    }
+    if not _is_large_container(owner) and _indexed_commit(owner.get("extent_commit")) == revision:
+        return EditTarget(name, revision, candidates, [owner], matches)
+    scoped = [m for m in matches if owner["start_line"] <= m["line"] <= owner["end_line"]]
+    wanted = {_match_key(m) for m in scoped}
     members = [
         row
-        for row in await repo.functions_for_paths(org, ns, [path], with_revision=True)
-        if (row["start_line"], row["end_line"]) in matched_spans
-        and _indexed_commit(row.get("extent_commit")) == revision
+        for row in rows
+        if _row_key(row) in wanted
         and row["qualified_name"].startswith(owner["qualified_name"] + "::")
     ]
-    spans = {(row["start_line"], row["end_line"]) for row in members}
-    if not spans or spans != matched_spans or len(members) != len(spans):
+    if not members or {_row_key(row) for row in members} != wanted or len(members) != len(wanted):
         return EditTarget(candidates=candidates)
-    return EditTarget(name, revision, candidates, members)
+    return EditTarget(name, revision, candidates, members, scoped, grouped=True)
+
+
+def _row_key(row: dict[str, Any]) -> tuple[str, int, int]:
+    return row["qualified_name"], row["start_line"], row["end_line"]
+
+
+def _match_key(match: dict[str, Any]) -> tuple[str, int, int]:
+    return match["scope"], match["scope_start_line"], match["scope_end_line"]
 
 
 def _span(row: dict[str, Any]) -> int:

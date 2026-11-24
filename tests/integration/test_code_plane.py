@@ -632,6 +632,51 @@ async def test_edit_context_reads_matched_members_of_large_type(code_env, monkey
     )
 
 
+async def test_edit_clues_bind_the_exact_file_and_read_its_new_body(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.index.ingest import ingest_file
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    path = "src/ordered read.cpp"
+    source = b"namespace scope {\nint probe(int x) {\n  return x + 101;\n}\n}\n"
+    sibling = (
+        b"namespace scope {\nint probe(double x) {\n"
+        + b"  x += 101;\n" * 32
+        + b"  return x;\n}\n}\n"
+    )
+    await _ingest(repo, org, ns, source=source, path=path)
+    await _ingest(repo, org, ns, source=sibling, path=path + ".extra.cpp")
+
+    async def lookup(clue: str) -> str:
+        out = await handle_code_edit_context(
+            CodeEditContextInput(
+                org=org, namespace=ns, name=path, clues=[clue], include_lessons=False
+            )
+        )
+        (definition,) = out.definitions
+        assert out.resolved_by == "file_clues" and definition.path == path
+        return definition.body
+
+    assert "return x + 101;" in await lookup("101")
+    await ingest_file(
+        repo,
+        org,
+        ns,
+        path=path,
+        source=source.replace(b"101", b"202"),
+        commit_sha="c" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    assert "return x + 202;" in await lookup("202")
+
+
 async def test_deletion_tombstones_everything(code_env) -> None:
     from server.code.app.index.ingest import tombstone_file
     from server.embedding.fake import fake_model_name
