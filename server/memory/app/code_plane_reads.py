@@ -56,6 +56,16 @@ def _named(qualified_name: str, defs: list[Definition]) -> list[Definition]:
     return [d for n, d in ends if n == best]
 
 
+def _could_name_symbol(link: LinkRow, name: str) -> bool:
+    # Keep anchors and former names for branches that still have them. The
+    # source check below decides which qualified identity the link matches.
+    return (
+        bare_name(link["qualified_name"]) == name
+        or bare_name(link["anchored_name"]) == name
+        or any(bare_name(former["name"]) == name for former in link["former"])
+    )
+
+
 async def lessons_for_symbol(
     org: str,
     code_namespace: str,
@@ -80,11 +90,15 @@ async def lessons_for_symbol(
         ),
         code.indexed_head(org, code_namespace),
     )
-    links = [
+    name = bare_name(qualified_name)
+    candidates = [
         a
-        for a in await current_links(org, stored)
-        if a["state"] != "pending" and a["qualified_name"]
+        for a in stored
+        if a["state"] != "pending" and a["qualified_name"] and _could_name_symbol(a, name)
     ]
+    if not candidates:
+        return []
+    links = await current_links(org, candidates)
     if not links:
         return []
     here = await _definitions_at(org, code_namespace, head, paths, qualified_name)
