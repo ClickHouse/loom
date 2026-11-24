@@ -63,6 +63,7 @@ def test_scip_symbol_drops_rendered_description_already_in_source() -> None:
 def test_scip_symbol_keeps_distinct_code_literals_in_docs() -> None:
     descriptions = (
         ('Send marker `"a  b"`.', 'Send marker `"a b"`.'),
+        ('Send marker `"a\\tb"`.', 'Send marker `"a b"`.'),
         ('Send marker ``"a  b`x"``.', 'Send marker ``"a b`x"``.'),
         ('Example:\n\n        print("a  b")', 'Example:\n\n    print("a b")'),
     )

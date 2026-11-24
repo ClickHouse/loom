@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import re
+from inspect import cleandoc
 from textwrap import dedent
 from typing import Any
 
@@ -315,7 +316,8 @@ def _python_doc(body: str, signature: str) -> str | None:
     header = source.splitlines()[declaration.lineno - 1 : declaration.body[0].lineno - 1]
     if "\n".join(header).strip() != signature:
         return None
-    return ast.get_docstring(declaration)
+    doc = ast.get_docstring(declaration, clean=False)
+    return cleandoc(doc) if doc is not None and "\t" not in doc else None
 
 
 def _description_repeats_body(description: str, body: str, *, scip: bool) -> bool:
