@@ -81,6 +81,22 @@ every Ruby object has takes a trailing underscore (`memory.inspect` is
 
 `client.search` with no argument is the `search.*` group (`client.search.query(...)`).
 
+### Pagination
+
+`client.paginate` walks a cursor-paginated op (`knowledge.list`, `conversation.list`,
+`audit.list`, `code.search`) and returns a lazy `Enumerator` of its rows, as `paginate` does
+in the TypeScript SDK. The block fetches one page for the cursor it is given (`nil` for the
+first page):
+
+```ruby
+docs = client.paginate { |cursor| client.knowledge.list(limit: 50, cursor: cursor) }
+docs.first(200)   # fetches only the pages it needs
+docs.each { |doc| puts doc["source_uri"] }
+```
+
+A page's rows are its `rows`, else its `results`. Reading stops when a page has no
+`next_cursor`, hands back the cursor it was fetched with, or after `max_pages:` pages.
+
 ### Memory shorthands
 
 The typed memory calls of the first version of the gem remain:
