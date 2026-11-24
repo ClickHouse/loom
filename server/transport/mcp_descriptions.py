@@ -2168,9 +2168,10 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`uses_brief: true` summarizes callers. Check freshness and source elision."
     ),
     "code.grep": (
-        "Find text and enclosing bodies. For edits, use code.edit_context with literal clues. "
+        "Find text and enclosing bodies. Keep bodies for edits. "
+        "For code and tests, use code.edit_context with clues. "
         "Batch literals or use `regex: true` for RE2. Scope by path. "
-        "`include_body: false` omits enclosing bodies. `context_lines: 0` gives locations. "
+        "For locations only, set `include_body: false` and `context_lines: 0`. "
         "Use code.search for behavior.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
         "Call prefixes and absent call expressions can return related source and linked notes. "
