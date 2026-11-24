@@ -1,3 +1,8 @@
+---
+title: Auditable memory for autonomous agents
+description: Give autonomous agents long-term recall and reusable procedures. Audit who wrote each fact and erase data within a defined scope.
+---
+
 # Memory, recall, audit and erasure for autonomous agents
 
 Loom is a self-hosted backend for autonomous agents: memory they recall across runs,

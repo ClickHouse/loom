@@ -8,23 +8,177 @@ const root = dirname(docs);
 const repository = dirname(root);
 const content = join(root, ".blume-content");
 const locales = ["es", "ja", "ko", "pt-BR", "zh-CN"];
-const agentMemorySeoTitles = {
-  es: "Memoria compartida para agentes de programación",
-  ja: "コーディングエージェントの共有メモリ",
-  ko: "코딩 에이전트를 위한 공유 메모리",
-  "pt-BR": "Memória compartilhada para agentes de código",
-  "zh-CN": "AI 编程智能体的共享记忆",
-};
-const landingSeoDescriptions = {
+const localizedSeo = {
   "index.md": {
-    ja: "AIエージェント向けの共有メモリ、文書検索、コードインデックスを備えたセルフホスト型MCPサーバー。",
-    ko: "AI 에이전트를 위한 공유 메모리, 문서 검색, 코드 인덱스를 제공하는 자체 호스팅 MCP 서버.",
-    "pt-BR":
-      "Memória compartilhada, busca em documentos e índice de código para agentes de IA em um servidor MCP auto-hospedado.",
-    "zh-CN": "面向 AI 智能体的自托管 MCP 服务器，提供共享记忆、文档检索和代码索引。",
+    ja: {
+      description: "AIエージェント向けの共有メモリ、文書検索、コードインデックスを備えたセルフホスト型MCPサーバー。",
+    },
+    ko: { description: "AI 에이전트를 위한 공유 메모리, 문서 검색, 코드 인덱스를 제공하는 자체 호스팅 MCP 서버." },
+    "pt-BR": {
+      description:
+        "Memória compartilhada, busca em documentos e índice de código para agentes de IA em um servidor MCP auto-hospedado.",
+    },
+    "zh-CN": { description: "面向 AI 智能体的自托管 MCP 服务器，提供共享记忆、文档检索和代码索引。" },
   },
   "use-cases/index.md": {
-    es: "Casos de uso de Loom para agentes de IA: memoria compartida, búsqueda de documentos e índice de código.",
+    es: {
+      description:
+        "Casos de uso de Loom para agentes de IA: memoria compartida, búsqueda de documentos e índice de código.",
+    },
+  },
+  "use-cases/agent-memory.md": {
+    es: {
+      title: "Memoria compartida para agentes de programación",
+      description:
+        "Comparte decisiones y lecciones entre agentes de programación y sesiones con un servidor MCP autoalojado y permisos por espacio de nombres.",
+    },
+    ja: {
+      title: "コーディングエージェントの共有メモリ",
+      description:
+        "セルフホスト型MCPサーバーで、開発チームの判断や教訓をエージェントとセッションの間で共有し、名前空間ごとにアクセスを管理します。",
+    },
+    ko: {
+      title: "코딩 에이전트를 위한 공유 메모리",
+      description:
+        "자체 호스팅 MCP 서버에서 코딩 에이전트와 세션 간에 결정과 교훈을 공유하고 네임스페이스별로 접근을 관리합니다.",
+    },
+    "pt-BR": {
+      title: "Memória compartilhada para agentes de código",
+      description:
+        "Compartilhe decisões e aprendizados entre agentes de programação e sessões com um servidor MCP auto-hospedado e permissões por namespace.",
+    },
+    "zh-CN": {
+      title: "AI 编程智能体的共享记忆",
+      description: "通过自托管 MCP 服务器，在编程智能体和会话之间共享决策与经验，并按命名空间管理访问权限。",
+    },
+  },
+  "use-cases/multi-agent.md": {
+    es: {
+      title: "Memoria y traspaso de tareas entre agentes",
+      description:
+        "Coordina el trabajo entre agentes con memoria compartida, colas de tareas persistentes y registros de decisiones que indican quién escribió cada dato.",
+    },
+    ja: {
+      title: "マルチエージェントの共有メモリとタスク引き継ぎ",
+      description:
+        "共有メモリ、永続的なタスクキュー、決定の記録を使い、複数のエージェント間で作業とその背景を引き継ぎます。",
+    },
+    ko: {
+      title: "멀티 에이전트 공유 메모리와 작업 인계",
+      description: "공유 메모리, 영속 작업 큐, 결정 기록으로 여러 에이전트가 맥락을 보존하면서 작업을 인계합니다.",
+    },
+    "pt-BR": {
+      title: "Memória e passagem de tarefas entre agentes",
+      description:
+        "Passe tarefas de um agente para outro com memória compartilhada, filas persistentes e registros que identificam quem tomou cada decisão.",
+    },
+    "zh-CN": {
+      title: "多智能体的共享记忆与任务交接",
+      description: "借助共享记忆、持久任务队列和决策记录，在多个智能体之间交接任务并保留工作背景。",
+    },
+  },
+  "use-cases/autonomous-agents.md": {
+    es: {
+      title: "Memoria auditable para agentes autónomos",
+      description:
+        "Los agentes autónomos pueden recuperar hechos versionados, reutilizar procedimientos, auditar su origen y borrar datos dentro de un ámbito definido.",
+    },
+    ja: {
+      title: "自律型エージェントの長期メモリと監査",
+      description:
+        "自律型エージェントが履歴付きの事実を検索し、手順を再利用できるメモリです。書き込みの監査と範囲を指定したデータ消去にも対応します。",
+    },
+    ko: {
+      title: "자율 에이전트를 위한 장기 메모리와 감사",
+      description:
+        "자율 에이전트가 변경 이력이 있는 사실을 검색하고 절차를 재사용합니다. 기록의 출처를 감사하고 지정된 범위의 데이터를 삭제할 수 있습니다.",
+    },
+    "pt-BR": {
+      title: "Memória auditável para agentes autônomos",
+      description:
+        "Agentes autônomos podem recuperar fatos versionados, reutilizar procedimentos, auditar quem registrou cada fato e excluir dados por escopo.",
+    },
+    "zh-CN": {
+      title: "自主智能体的长期记忆与审计",
+      description: "自主智能体可以检索带版本的事实、复用流程、审计写入来源，并删除指定范围内的数据。",
+    },
+  },
+  "use-cases/memory-linked-to-code.md": {
+    es: {
+      title: "Memoria vinculada al código para agentes de IA",
+      description:
+        "Vincula las lecciones de los agentes a funciones, clases y archivos. Consulta su estado cuando el código cambia, se mueve o se elimina.",
+    },
+    ja: {
+      title: "コードの変更を追跡するエージェントメモリ",
+      description:
+        "エージェントの教訓を関数、クラス、ファイルに紐づけ、リファクタリングやコードの変更・削除に応じて状態を確認できます。",
+    },
+    ko: {
+      title: "코드 변경을 추적하는 에이전트 메모리",
+      description:
+        "에이전트의 교훈을 함수, 클래스, 파일에 연결하고 리팩터링이나 코드 변경·삭제 이후 연결 상태를 확인합니다.",
+    },
+    "pt-BR": {
+      title: "Memória de agentes vinculada ao código",
+      description:
+        "Vincule decisões e aprendizados a funções, classes e arquivos. Verifique as referências quando o código mudar, for movido ou for removido.",
+    },
+    "zh-CN": {
+      title: "跟踪代码变化的智能体记忆",
+      description: "将智能体积累的经验关联到函数、类和文件，在重构、代码变更或删除后检查关联状态。",
+    },
+  },
+  "use-cases/self-hosted-clickhouse.md": {
+    es: {
+      title: "Memoria de agentes con SQL en ClickHouse",
+      description:
+        "Despliega Loom en tu infraestructura con Docker o Kubernetes y consulta con SQL la memoria de los agentes almacenada en ClickHouse.",
+    },
+    ja: {
+      title: "ClickHouseでSQL検索できるエージェントメモリ",
+      description:
+        "DockerまたはKubernetesでLoomをセルフホストし、ClickHouseに保存したエージェントメモリをSQLで検索できます。",
+    },
+    ko: {
+      title: "ClickHouse에서 SQL로 조회하는 에이전트 메모리",
+      description:
+        "Docker 또는 Kubernetes로 Loom을 자체 호스팅하고 ClickHouse에 저장된 에이전트 메모리를 SQL로 조회합니다.",
+    },
+    "pt-BR": {
+      title: "Memória de agentes com SQL no ClickHouse",
+      description:
+        "Hospede o Loom na sua infraestrutura com Docker ou Kubernetes e consulte em SQL a memória dos agentes armazenada no ClickHouse.",
+    },
+    "zh-CN": {
+      title: "用 SQL 查询 ClickHouse 中的智能体记忆",
+      description: "通过 Docker 或 Kubernetes 自托管 Loom，并使用 SQL 查询 ClickHouse 中存储的智能体记忆。",
+    },
+  },
+  "use-cases/code-intelligence.md": {
+    es: {
+      title: "Búsqueda de código con MCP para agentes",
+      description:
+        "Busca en repositorios Git indexados por MCP, identifica definiciones y llamadas y comprueba la revisión del código que respalda la respuesta.",
+    },
+    ja: {
+      title: "MCPによるコーディングエージェントのコード検索",
+      description:
+        "MCPでインデックス済みのGitリポジトリを検索し、定義や呼び出し元、回答の根拠となるコードのリビジョンを確認できます。",
+    },
+    ko: {
+      title: "코딩 에이전트를 위한 MCP 코드 검색",
+      description: "MCP로 인덱싱된 Git 저장소를 검색하고 정의, 호출 위치, 답변의 근거가 된 코드 리비전을 확인합니다.",
+    },
+    "pt-BR": {
+      title: "Busca de código via MCP para agentes",
+      description:
+        "Pesquise repositórios Git indexados por MCP e confira definições, chamadas e a revisão do código que fundamenta a resposta.",
+    },
+    "zh-CN": {
+      title: "面向编程智能体的 MCP 代码搜索",
+      description: "通过 MCP 搜索已建立索引的 Git 仓库，查看定义、调用方，以及为回答提供依据的代码版本。",
+    },
   },
 };
 const excluded = new Set([
@@ -56,10 +210,7 @@ function prepareContent() {
     const text = readFileSync(file, "utf8");
     const [locale, ...source] = relative(content, file).split(sep);
     const sourcePath = source.join("/");
-    const prepared = normalizeTranslatedTitle(text, {
-      title: sourcePath === "use-cases/agent-memory.md" ? agentMemorySeoTitles[locale] : undefined,
-      description: landingSeoDescriptions[sourcePath]?.[locale],
-    });
+    const prepared = normalizeTranslatedTitle(text, localizedSeo[sourcePath]?.[locale]);
     if (prepared !== text) writeFileSync(file, prepared);
   }
 

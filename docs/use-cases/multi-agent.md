@@ -1,5 +1,5 @@
 ---
-title: Shared memory for a software factory and multi-agent workflows
+title: Shared memory for AI software factories
 description: Evaluate software-factory memory for coding-agent handoffs, source-linked lessons and reported outcomes, with a runnable evidence-handoff reference.
 ---
 

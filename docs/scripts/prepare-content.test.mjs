@@ -22,15 +22,17 @@ test("leaves English content unchanged", () => {
   assert.equal(normalizeTranslatedTitle(source), source);
 });
 
-test("sets the search title without changing the translated heading or body", () => {
+test("sets localized search metadata without changing the translated heading or body", () => {
   const stamp = "<!-- i18n: source=docs/use-cases/agent-memory.md blob=abc model=test -->";
   const prepared = normalizeTranslatedTitle(`${stamp}\n\n# Memória de longo prazo e compartilhada\n\nTexto.\n`, {
     title: "Memória compartilhada para agentes de código",
+    description: "Compartilhe decisões e aprendizados entre agentes de programação.",
   });
   assert.equal(
     prepared,
     '---\ntitle: "Memória de longo prazo e compartilhada"\n' +
-      'seo:\n  title: "Memória compartilhada para agentes de código"\n---\n\n' +
+      'seo:\n  title: "Memória compartilhada para agentes de código"\n' +
+      '  description: "Compartilhe decisões e aprendizados entre agentes de programação."\n---\n\n' +
       `${stamp}\n\nTexto.\n`,
   );
 });
