@@ -424,12 +424,18 @@ async def _grep_lines(
     related, note = _label_related(
         related_pattern, matches, bodies, context, scan, prefix_related, note
     )
-    missing = (
-        ""
-        if coverage.get("partial")
-        else await add_dependencies(
-            repo, org, ns, input, related, scope, scan.match_commits, budget
-        )
+    related, missing = await _related_dependencies(
+        repo,
+        org,
+        ns,
+        input,
+        scope,
+        scan,
+        matches,
+        related,
+        budget=budget,
+        incomplete=bool(coverage.get("partial")),
+        whole_page=not offset and len(matches) == len(scan.matches),
     )
     if missing:
         coverage.update(
@@ -566,6 +572,55 @@ _CALL_PREFIX = (
 )
 _QUALIFIED_ARGUMENT = re.compile(_CALL_PREFIX + r"\)")
 _QUALIFIED_ARGUMENT_PREFIX = re.compile(_CALL_PREFIX)
+
+
+def _batch_dependency_argument(input: CodeGrepInput) -> str:
+    if input.regex or not isinstance(input.pattern, list):
+        return ""
+    arguments = set()
+    for raw in input.pattern:
+        pattern = raw.strip()
+        if input.related_on_miss and (call := _QUALIFIED_ARGUMENT.fullmatch(pattern)):
+            arguments.add(call[1])
+        if input.related_on_prefix and (call := _QUALIFIED_ARGUMENT_PREFIX.fullmatch(pattern)):
+            arguments.add(call[1])
+    return next(iter(arguments)) if len(arguments) == 1 else ""
+
+
+async def _related_dependencies(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    input: CodeGrepInput,
+    scope: Any,
+    scan: _GrepLineScan,
+    matches: list[dict[str, Any]],
+    related: RelatedGrepEvidence | None,
+    *,
+    budget: code_deadline.Budget | None,
+    incomplete: bool,
+    whole_page: bool,
+) -> tuple[RelatedGrepEvidence | None, str]:
+    if incomplete or not input.include_dependencies:
+        return related, ""
+    if related is not None:
+        return related, await add_dependencies(
+            repo, org, ns, input, related, scope, scan.match_commits, budget
+        )
+    if not matches or not whole_page or scan.truncated:
+        return None, ""
+    argument = _batch_dependency_argument(input)
+    if not argument:
+        return None, ""
+    evidence = RelatedGrepEvidence(pattern=argument, matches=matches)
+    reason = await add_dependencies(
+        repo, org, ns, input, evidence, scope, scan.match_commits, budget
+    )
+    if not evidence.dependencies:
+        return None, reason
+    # The exact batch results already carry these witnesses.
+    evidence.matches = []
+    return evidence, reason
 
 
 def _related_grep_pattern(input: CodeGrepInput) -> str:

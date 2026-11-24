@@ -121,6 +121,8 @@ argument to one target, and the retained bodies must share the hit's revision
 and satisfy the request's path filters. HTTP and SDK callers can set
 `include_dependencies: true` with `related_on_miss` or `related_on_prefix`.
 Set `include_dependencies: false` or `context_lines: 0` to omit these definitions.
+A literal batch can include the same definitions when its call expressions
+refer to one argument and the exact matches contain its use.
 
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
 lines by default. Pass `include_body=false` to omit bodies and `context_lines=0`

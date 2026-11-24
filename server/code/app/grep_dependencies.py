@@ -6,6 +6,7 @@ import asyncio
 import io
 import logging
 import tokenize
+from collections import Counter
 from typing import Any
 
 from server.code.api.models_grep import CodeGrepInput, GrepDependency, RelatedGrepEvidence
@@ -209,7 +210,14 @@ async def _one_helper(
     )
     if len(edges) > 200:
         return None
+    return await asyncio.to_thread(_match_helper, edges, source, revision)
+
+
+def _match_helper(
+    edges: list[dict[str, Any]], source: GrepDependency, revision: str
+) -> dict[str, Any] | None:
     lines = source.body.split("\n")
+    invocations: dict[int, set[str]] = {}
     called = []
     for edge in edges:
         offset = edge["line"] - source.start_line
@@ -221,8 +229,15 @@ async def _one_helper(
             or not 0 <= offset < len(lines)
         ):
             continue
-        tokens = _code_tokens(lines[offset])
+        if offset not in invocations:
+            tokens = _code_tokens(lines[offset])
+            counts = Counter(tokens)
+            invocations[offset] = {
+                token
+                for token, following in zip(tokens, tokens[1:], strict=False)
+                if following == "(" and counts[token] == 1
+            }
         name = edge["to_qualified_name"].rsplit("::", 1)[-1]
-        if tokens.count(name) == 1 and (name, "(") in zip(tokens, tokens[1:], strict=False):
+        if name in invocations[offset]:
             called.append(edge)
     return _one_target(called)

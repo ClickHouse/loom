@@ -151,3 +151,13 @@ def use(client: Client):
     locations = await handle_code_grep(args.model_copy(update={"context_lines": 0}))
     assert locations.related and locations.related.matches == out.related.matches
     assert not locations.related.dependencies
+    batch = args.model_copy(update={"pattern": ["consume(client.option)", "client.option"]})
+    exact_batch = await handle_code_grep(batch.model_copy(update={"include_dependencies": False}))
+    enriched_batch = await handle_code_grep(batch)
+    assert enriched_batch.matches == exact_batch.matches == out.related.matches
+    assert enriched_batch.related and not enriched_batch.related.matches
+    assert enriched_batch.related.dependencies == out.related.dependencies
+    ambiguous = await handle_code_grep(
+        batch.model_copy(update={"pattern": [*batch.pattern, "consume(other.option)"]})
+    )
+    assert ambiguous.matches == exact_batch.matches and ambiguous.related is None
