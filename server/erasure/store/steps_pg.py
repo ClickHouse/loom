@@ -395,6 +395,8 @@ _PG_WORKER_METADATA = (
     "loom.mcp_worker_accounts",
     "loom.mcp_worker_approvals",
     "loom.mcp_worker_source_readers",
+    "loom.mcp_worker_refresh_schedules",
+    "loom.knowledge_source_refresh",
 )
 
 
@@ -524,6 +526,10 @@ async def _lock_user_knowledge(conn: Any, org: str, user_id: str) -> None:
                 "UNION SELECT namespace FROM loom.mcp_worker_approvals "
                 "WHERE org = $1 AND user_id = $2 "
                 "UNION SELECT namespace FROM loom.mcp_worker_source_readers "
+                "WHERE org = $1 AND user_id = $2 "
+                "UNION SELECT namespace FROM loom.knowledge_source_refresh "
+                "WHERE org = $1 AND user_id = $2 "
+                "UNION SELECT namespace FROM loom.mcp_worker_refresh_schedules "
                 "WHERE org = $1 AND user_id = $2",
                 org,
                 user_id,
@@ -601,6 +607,8 @@ PG_CENSUS: dict[str, str] = {
     "pg:loom.mcp_worker_accounts": "pg_knowledge.delete",
     "pg:loom.mcp_worker_approvals": "pg_knowledge.delete",
     "pg:loom.mcp_worker_source_readers": "pg_knowledge.delete",
+    "pg:loom.knowledge_source_refresh": "pg_knowledge.delete",
+    "pg:loom.mcp_worker_refresh_schedules": "pg_knowledge.delete",
     "pg:loom.knowledge_datasets": "pg_knowledge.delete",
 }
 # The Postgres tables that hold none, with the reason.
