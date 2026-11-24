@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack
 from dataclasses import FrozenInstanceError, replace
 from typing import Any
 
@@ -721,3 +722,50 @@ async def test_established_failure_rechecks_authority_after_sdk_cleanup(pin: lis
             await read
     assert after_drain
     assert [method for _, method in source.calls].count("resources/read") == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_session_delete_rechecks_authority_after_close(pin: list[str]) -> None:
+    revoked = False
+
+    class FailingTermination(_Source):
+        async def respond(self, request: httpx.Request) -> httpx.Response:
+            if request.method == "DELETE":
+                self.calls.append((request, request.method))
+                return httpx.Response(500)
+            return await super().respond(request)
+
+        async def aclose(self) -> None:
+            nonlocal revoked
+            revoked = True
+            await super().aclose()
+
+    source = FailingTermination()
+    after_drain = False
+
+    async def current_authority() -> None:
+        nonlocal after_drain
+        if revoked:
+            after_drain = source.closed
+            raise MCPSourceError("denied")
+
+    config = MCPSourceConfig(_ENDPOINT, _AUDIENCE, approved_resource_ids=(_DOCUMENT,))
+    async with AsyncExitStack() as stack:
+        client = await stack.enter_async_context(
+            MCPSourceClient(
+                config,
+                MCPBearer("synthetic", _AUDIENCE),
+                validate_access=current_authority,
+                _transport=source,
+            )
+        )
+        assert (await client.read(_DOCUMENT)).text == source.resource_text
+        with pytest.raises(MCPSourceError, match="^MCP source denied$"):
+            await stack.aclose()
+
+    assert after_drain
+    assert [
+        (method, request.headers.get("mcp-session-id"))
+        for request, method in source.calls
+        if method in {"resources/read", "DELETE"}
+    ] == [("resources/read", "synthetic-session"), ("DELETE", "synthetic-session")]

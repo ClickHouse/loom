@@ -1043,7 +1043,7 @@ class MCPSourceClient:
             await self._close()
             failure = self._owner_failure
             if error is None and failure is not None and self._operation_failure is None:
-                raise MCPSourceError(failure)
+                raise MCPSourceError(await self._recheck_after_close(failure))
         finally:
             self._leave_private()
 
