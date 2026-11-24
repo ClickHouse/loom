@@ -419,6 +419,10 @@
               "body",
               "options"
             ],
+            "read": [
+              "body",
+              "options"
+            ],
             "recent_commits": [
               "body",
               "options"
