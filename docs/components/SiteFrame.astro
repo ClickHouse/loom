@@ -1,4 +1,6 @@
 ---
+import loomLogo from "../public/loom.svg?raw";
+
 interface Props {
   title: string;
   description: string;
@@ -22,12 +24,12 @@ const { title, description, path } = Astro.props;
     <a class="skip" href="#content">Skip to content</a>
     <header class="shell">
       <a class="brand" href="/">
-        <img src="/docs/loom.svg" width="32" height="32" alt="" />
+        <span class="brand-mark" aria-hidden="true" set:html={loomLogo} />
         <span>ClickHouse Loom</span>
       </a>
       <nav aria-label="Main navigation">
         <a href="/docs">Docs</a>
-        <a href="/telemetry" aria-current={path === "/telemetry" ? "page" : undefined}>Telemetry</a>
+        <a href="/adoption" aria-current={path === "/adoption" ? "page" : undefined}>Adoption</a>
         <a href="https://github.com/ClickHouse/loom">GitHub</a>
       </nav>
     </header>
@@ -61,6 +63,11 @@ const { title, description, path } = Astro.props;
   }
   .brand, nav { display: flex; align-items: center; gap: 0.85rem; }
   .brand { font-weight: 700; text-decoration: none; }
+  .brand-mark { display: block; width: 2rem; height: 2rem; }
+  .brand-mark svg { display: block; width: 100%; height: 100%; }
+  .brand-mark .loom-logo-mark[stroke] { stroke: var(--accent); }
+  .brand-mark .loom-logo-mark[fill] { fill: var(--accent); }
+  .brand-mark .loom-logo-cutout { fill: #141413; }
   nav { flex-wrap: wrap; gap: 1.25rem; font-size: 0.95rem; }
   nav a { text-decoration: none; color: var(--muted); }
   nav a:hover, nav a[aria-current] { color: var(--accent); }

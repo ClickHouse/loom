@@ -10,6 +10,13 @@ from server import __version__
 from server.core.ch import CHClient
 from server.core.naming import not_mirror_sql
 
+_REQUEST_SCOPE = f"""
+ts >= {{start:DateTime('UTC')}} AND ts < {{end:DateTime('UTC')}}
+  AND kind = 'request' AND slo_class != ''
+  AND traffic_class NOT IN ('bench', 'background')
+  AND mirror_marked = 0 AND {not_mirror_sql()}
+"""
+
 ADOPTION_SQL = f"""
 SELECT
     1::UInt8 AS schema_version,
@@ -41,18 +48,17 @@ SELECT
     sum(output_tokens) AS output_tokens,
     sum(embedding_tokens) AS embedding_tokens
 FROM loom.agent_events
-WHERE ts >= {{start:DateTime('UTC')}} AND ts < {{end:DateTime('UTC')}}
-  AND kind = 'request' AND slo_class != ''
-  AND traffic_class NOT IN ('bench', 'background')
-  AND mirror_marked = 0 AND {not_mirror_sql()}
+WHERE {_REQUEST_SCOPE}
 SETTINGS optimize_move_to_prewhere_if_final = 0
 """
 
-# Count an address once across the deployment. Only verified contacts contribute.
+# Attribute requests to the verified contact of their namespace.
 DOMAINS_SQL = f"""
-SELECT domain, uniqExact(email) AS user_count
+SELECT contacts.domain, uniqExact(contacts.email) AS user_count,
+       sum(activity.requests) AS successful_requests
 FROM (
     SELECT
+        org, namespace,
         lowerUTF8(trimBoth(contact_email)) AS email,
         extract(email, '^[^@[:space:]]+@([a-z0-9.-]+)$') AS domain
     FROM loom.namespaces FINAL
@@ -65,12 +71,18 @@ FROM (
               SELECT org, namespace, email FROM loom.sso_links FINAL WHERE linked = 1
           )
       )
-)
-WHERE length(domain) <= 253
-  AND match(domain, concat('^(?:[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?[.])+',
+) AS contacts
+LEFT JOIN (
+    SELECT org, namespace, count() AS requests
+    FROM loom.agent_events
+    WHERE {_REQUEST_SCOPE} AND status_class = 'ok'
+    GROUP BY org, namespace
+) AS activity USING (org, namespace)
+WHERE length(contacts.domain) <= 253
+  AND match(contacts.domain, concat('^(?:[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?[.])+',
                            '(?:[a-z]{{2,63}}|xn--[a-z0-9](?:[a-z0-9-]{{0,57}}[a-z0-9])?)$'))
-GROUP BY domain
-ORDER BY user_count DESC, domain
+GROUP BY contacts.domain
+ORDER BY successful_requests DESC, user_count DESC, contacts.domain
 LIMIT 30
 SETTINGS optimize_move_to_prewhere_if_final = 0
 """
@@ -94,7 +106,9 @@ async def window_report(
     if report is None:
         raise RuntimeError("adoption aggregation returned no row")
     domains = (
-        await ch.query_all(DOMAINS_SQL, {"restricted": sorted(restricted)})
+        await ch.query_all(
+            DOMAINS_SQL, {"start": start, "end": end, "restricted": sorted(restricted)}
+        )
         if restricted is not None
         else []
     )

@@ -30,7 +30,7 @@ const report = {
   input_tokens: 4,
   output_tokens: 2,
   embedding_tokens: 0,
-  user_domains: [{ domain: "example.xn--p1ai", user_count: 2 }],
+  user_domains: [{ domain: "example.xn--p1ai", user_count: 2, successful_requests: 1 }],
 };
 
 const env = {
@@ -74,7 +74,7 @@ test("rejects extra fields, malformed identities and windows, and oversized requ
   const invalid = [
     { ...report, prompt: "private text" },
     { ...report, installation_id: "host.example" },
-    { ...report, user_domains: [{ domain: "person@example.test", user_count: 1 }] },
+    { ...report, user_domains: [{ domain: "person@example.test", user_count: 1, successful_requests: 1 }] },
     { ...report, window_end: "2026-06-02T12:00:00+00:00" },
     { ...report, day: "2026-06-02" },
   ];

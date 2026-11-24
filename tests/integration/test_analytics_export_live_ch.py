@@ -15,6 +15,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from functools import partial
 from typing import Any
 
 import pytest
@@ -207,17 +208,18 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
     day = start.date()
     org = unique_org("adoption")
     stamp = f"{day} 06:00:00"
+    event = partial(_event, org, namespace="duplicate-one")
     await ch.insert(
         "loom.agent_events",
         [
-            _event(org, stamp, llm_calls=1, input_tokens=7, output_tokens=3, embedding_tokens=5),
-            _event(org, stamp, operation="code.ask", transport="mcp", agent="b"),
-            _event(org, stamp, success=False, status_class="server"),
-            _event(org, stamp, traffic_class="bench"),
-            _event(org, stamp, traffic_class="background"),
+            event(stamp, llm_calls=1, input_tokens=7, output_tokens=3, embedding_tokens=5),
+            event(stamp, operation="code.ask", transport="mcp", agent="b"),
+            event(stamp, success=False, status_class="server"),
+            event(stamp, traffic_class="bench"),
+            event(stamp, traffic_class="background"),
             _event(org, stamp, kind="worker"),
             _event(org, stamp, slo_class=""),
-            _event(org, f"{day} 00:00:00", traffic_class="production", operation="knowledge.get"),
+            event(f"{day} 00:00:00", traffic_class="production", operation="knowledge.get"),
             _event(org, "2001-10-08 23:59:59.999"),
             _event(org, f"{day} 12:00:00"),
         ],
@@ -267,8 +269,8 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
         start, end, installation_id, restricted={(org, "configured-restricted")}, ch=ch
     )
     domains = report.pop("user_domains")
-    assert {"domain": domain, "user_count": 2} in domains
-    assert {"domain": idn, "user_count": 1} in domains
+    assert {"domain": domain, "user_count": 2, "successful_requests": 3} in domains
+    assert {"domain": idn, "user_count": 1, "successful_requests": 0} in domains
     assert report.pop("total_namespaces") >= 5
     version = await ch.query_one("SELECT version() AS version")
     assert version is not None

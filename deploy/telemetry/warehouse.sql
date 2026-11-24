@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS loom_product_analytics.adoption_reports
     input_tokens UInt64,
     output_tokens UInt64,
     embedding_tokens UInt64,
-    user_domains Array(Tuple(domain String, user_count UInt64)),
+    user_domains Array(Tuple(domain String, user_count UInt64, successful_requests UInt64)),
     received_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(received_at)
@@ -108,3 +108,200 @@ FROM loom_product_analytics.loom_adoption_daily
 WHERE installation_id NOT IN (
     SELECT installation_id FROM loom_product_analytics.loom_adoption_enrollments WHERE is_internal = 1
 );
+
+CREATE VIEW IF NOT EXISTS loom_product_analytics.loom_adoption_domain_daily AS
+SELECT
+    installation_id,
+    day,
+    counts.domain AS domain,
+    sum(counts.successful_requests) AS requests,
+    argMax(counts.user_count, window_start) AS accounts
+FROM loom_product_analytics.loom_adoption_windows
+ARRAY JOIN user_domains AS counts
+WHERE installation_id NOT IN (
+    SELECT installation_id FROM loom_product_analytics.loom_adoption_enrollments WHERE is_internal = 1
+)
+GROUP BY installation_id, day, domain;
+
+-- Domain attribution is available only to analysts with warehouse access.
+CREATE VIEW IF NOT EXISTS loom_product_analytics.loom_adoption_top_domains_30d AS
+SELECT domain, sum(instance_requests) AS successful_requests, countIf(instance_requests > 0) AS installations,
+       sum(latest_accounts) AS accounts
+FROM (
+    SELECT domain, installation_id, sum(requests) AS instance_requests,
+           argMax(accounts, day) AS latest_accounts
+    FROM loom_product_analytics.loom_adoption_domain_daily
+    WHERE day >= toDate(now('UTC')) - 30 AND day < toDate(now('UTC'))
+    GROUP BY domain, installation_id
+)
+GROUP BY domain
+HAVING successful_requests > 0
+ORDER BY successful_requests DESC, domain
+LIMIT 50;
+
+-- The public website reads these aggregate views with a separate read-only user.
+CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_daily
+SQL SECURITY DEFINER AS
+SELECT
+    day,
+    count() AS reporting,
+    countIf(successful_requests > 0) AS active,
+    sum(successful_requests) AS operations
+FROM loom_product_analytics.loom_external_adoption_daily
+WHERE day >= toDate(now('UTC')) - 30 AND day < toDate(now('UTC'))
+GROUP BY day;
+
+CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_totals
+SQL SECURITY DEFINER AS
+SELECT
+    uniqExact(daily.installation_id) AS reporting,
+    uniqExactIf(daily.installation_id, daily.successful_requests > 0) AS active,
+    uniqExactIf(enrolled.company_id, enrolled.company_id != '' AND daily.successful_requests > 0)
+        AS verified_companies,
+    sum(daily.successful_requests) AS operations,
+    sum(daily.requests) AS requests,
+    sum(daily.server_errors) AS server_errors,
+    quantileExactOrNullIf(0.5)(daily.active_namespaces, daily.successful_requests > 0) AS median_namespaces,
+    quantileExactOrNullIf(0.5)(daily.active_agents, daily.successful_requests > 0) AS median_agents,
+    quantileExactOrNullIf(0.5)(daily.active_sessions, daily.successful_requests > 0) AS median_sessions,
+    sum(daily.memory_requests) AS memory_requests,
+    sum(daily.code_requests) AS code_requests,
+    sum(daily.knowledge_requests) AS knowledge_requests,
+    sum(daily.conversation_requests) AS conversation_requests,
+    sum(daily.tracker_requests) AS tracker_requests,
+    sum(daily.task_requests) AS task_requests,
+    sum(daily.mcp_requests) AS mcp_requests,
+    sum(daily.http_requests) AS http_requests,
+    sum(daily.llm_calls) AS llm_calls,
+    sum(daily.input_tokens) AS input_tokens,
+    sum(daily.output_tokens) AS output_tokens,
+    sum(daily.embedding_tokens) AS embedding_tokens
+FROM loom_product_analytics.loom_external_adoption_daily AS daily
+LEFT JOIN loom_product_analytics.loom_adoption_enrollments AS enrolled USING (installation_id)
+WHERE daily.day >= toDate(now('UTC')) - 30 AND daily.day < toDate(now('UTC'));
+
+CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_versions
+SQL SECURITY DEFINER AS
+SELECT loom_version, clickhouse_version, count() AS installations
+FROM (
+    SELECT installation_id,
+           argMax(loom_version, day) AS loom_version,
+           argMax(clickhouse_version, day) AS clickhouse_version
+    FROM loom_product_analytics.loom_external_adoption_daily
+    WHERE day >= toDate(now('UTC')) - 30 AND day < toDate(now('UTC'))
+    GROUP BY installation_id
+)
+GROUP BY loom_version, clickhouse_version;
+
+CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_retention
+SQL SECURITY DEFINER AS
+WITH
+    toStartOfWeek(toDate(now('UTC')), 1) AS current_week,
+    activity AS (
+        SELECT installation_id, toStartOfWeek(day, 1) AS week
+        FROM loom_product_analytics.loom_external_adoption_daily
+        WHERE day < current_week AND successful_requests > 0
+        GROUP BY installation_id, week
+    ),
+    first_seen AS (
+        SELECT installation_id, min(week) AS first_week FROM activity GROUP BY installation_id
+    ),
+    observations AS (
+        SELECT installation_id, first_week, age, first_week + toIntervalWeek(age) AS observed_week
+        FROM first_seen
+        ARRAY JOIN range(1, 5) AS age
+        WHERE first_week >= current_week - INTERVAL 13 WEEK AND observed_week < current_week
+    )
+SELECT observations.age AS age, count() AS eligible, countIf(activity.week IS NOT NULL) AS active
+FROM observations
+LEFT JOIN activity
+    ON observations.installation_id = activity.installation_id
+    AND observations.observed_week = activity.week
+GROUP BY observations.age
+SETTINGS join_use_nulls = 1;
+
+CREATE VIEW IF NOT EXISTS loom_product_analytics.public_oss_adoption
+SQL SECURITY DEFINER AS
+SELECT day, source, artifact, metric, value
+FROM loom_product_analytics.loom_oss_metrics_daily
+WHERE day >= toDate(now('UTC')) - 400 AND day < toDate(now('UTC'))
+  AND (source, artifact, metric) IN (
+      ('github', 'ClickHouse/loom', 'stars'),
+      ('github', 'ClickHouse/loom', 'forks'),
+      ('github', 'ClickHouse/loom', 'release_asset_downloads_total'),
+      ('pypi', 'clickhouse-loom', 'sdk_downloads'),
+      ('npm', '@clickhouse/loom', 'sdk_downloads'),
+      ('ghcr', 'ghcr.io/clickhouse/loom', 'container_pulls_total')
+  );
+
+CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_activity
+SQL SECURITY DEFINER AS
+WITH
+    toDate(now('UTC')) AS today_utc,
+    (SELECT minOrNull(day)
+     FROM loom_product_analytics.loom_external_adoption_daily WHERE day < today_utc) AS first_report
+SELECT
+    grain,
+    if(grain = 'week', toStartOfWeek(day, 1), toStartOfMonth(day)) AS period,
+    uniqExactIf(installation_id, successful_requests > 0) AS active,
+    sum(successful_requests) AS operations,
+    if(grain = 'week', addWeeks(period, 1), addMonths(period, 1)) AS period_end,
+    period >= first_report AS forecast_eligible
+FROM loom_product_analytics.loom_external_adoption_daily
+ARRAY JOIN ['week', 'month'] AS grain
+WHERE day >= addMonths(toStartOfMonth(today_utc), -11) AND day < today_utc
+GROUP BY grain, period
+HAVING period >= first_report OR period_end > today_utc;
+
+CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_lifecycle
+SQL SECURITY DEFINER AS
+WITH
+    toDate(now('UTC')) AS today_utc,
+    entity_activity AS (
+        SELECT 'deployment' AS entity, installation_id AS identity, day, successful_requests AS requests
+        FROM loom_product_analytics.loom_external_adoption_daily
+        UNION ALL
+        SELECT 'domain' AS entity, domain AS identity, day, sum(requests) AS requests
+        FROM loom_product_analytics.loom_adoption_domain_daily
+        GROUP BY domain, day
+    ),
+    active_periods AS (
+        SELECT
+            entity, identity, grain, min_requests,
+            if(grain = 'week', toStartOfWeek(day, 1), toStartOfMonth(day)) AS period
+        FROM entity_activity
+        ARRAY JOIN ['week', 'month'] AS grain
+        ARRAY JOIN if(entity = 'domain', [0, 1000000], [0]) AS min_requests
+        WHERE day < today_utc
+        GROUP BY entity, identity, grain, min_requests, period
+        HAVING sum(requests) > min_requests
+           AND if(grain = 'week', addWeeks(period, 1), addMonths(period, 1)) <= today_utc
+    ),
+    transitions AS (
+        SELECT
+            entity, grain, min_requests, period,
+            lagInFrame(period) OVER ordered AS previous,
+            leadInFrame(period) OVER ordered AS following,
+            if(grain = 'week', addWeeks(period, -1), addMonths(period, -1)) AS previous_period,
+            if(grain = 'week', addWeeks(period, 1), addMonths(period, 1)) AS next_period
+        FROM active_periods
+        WINDOW ordered AS (
+            PARTITION BY entity, identity, grain, min_requests ORDER BY period
+            ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        )
+    )
+SELECT
+    entity, grain, min_requests,
+    if(state = 'inactive', next_period, period) AS bucket,
+    countIf(state = 'new') AS new,
+    countIf(state = 'retained') AS retained,
+    countIf(state = 'reactivated') AS reactivated,
+    countIf(state = 'inactive') AS inactive
+FROM transitions
+ARRAY JOIN arrayConcat(
+    [multiIf(previous = toDate(0), 'new', previous = previous_period, 'retained', 'reactivated')],
+    if(following != next_period, ['inactive'], [])
+) AS state
+WHERE bucket >= addMonths(toStartOfMonth(today_utc), -11)
+  AND if(grain = 'week', addWeeks(bucket, 1), addMonths(bucket, 1)) <= today_utc
+GROUP BY entity, grain, min_requests, bucket;

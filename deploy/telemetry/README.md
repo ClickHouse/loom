@@ -8,11 +8,11 @@ succeeds. The insert token and warehouse view deduplicate retries.
 ## Provision the warehouse
 
 1. Apply [warehouse.sql](warehouse.sql) to the analytics ClickHouse service. It creates
-   the report table, the enrollment and distribution tables, and the views used by the
-   dashboard queries. The report table expires rows 400 days after receipt.
+   the report, enrollment, and distribution tables and the aggregate views for the
+   adoption site. The report table expires rows 400 days after receipt.
 2. Create a collector user with `INSERT` on
-   `loom_product_analytics.adoption_reports`. Give the analytics connection read access
-   to the views it queries.
+   `loom_product_analytics.adoption_reports` and
+   `loom_product_analytics.oss_metrics`.
 3. Load verified enrollment records into `adoption_enrollments` and registry metrics
    into `oss_metrics`. The collector records self-reported installation activity.
    Keep company account verification in the enrollment workflow.
@@ -28,7 +28,10 @@ runtime region and set these server-side environment variables:
 | `LOOM_TELEMETRY_CLICKHOUSE_USER`     | Collector's insert-only user                      |
 | `LOOM_TELEMETRY_CLICKHOUSE_PASSWORD` | Credential for that user                          |
 
-Attach `telemetry.loom.clickhouse.com` to the collector project. Set a request rate
+Attach `telemetry.loom.clickhouse.com` to the collector project. Set `CRON_SECRET` in the
+collector project's production environment. Vercel calls `/api/oss-snapshot`
+daily to save GitHub star and fork counts. The metric row key makes repeated
+runs on the same UTC day replace that day's snapshot. Set a request rate
 limit on `/api/v1/adoption` in the deployment firewall. Send a synthetic report to
 the deployed receiver, confirm that the matching acknowledgement follows a warehouse
 write, then resend it and confirm a single row in `loom_adoption_windows`. Do this
@@ -36,12 +39,31 @@ before releasing the worker that sends to the collector.
 
 Run `npm --prefix deploy/telemetry test` to exercise the receiver locally.
 
-## Publish the dashboard
+## Publish adoption metrics
 
-Point the analytics workspace connection at `loom_product_analytics`. Put each
-SELECT from [self-hosted adoption](../dashboards/self_hosted_adoption.sql) in a SQL
-cell on the Self-hosted tab and each SELECT from [OSS adoption](../dashboards/oss_adoption.sql)
-on the OSS tab. Restrict the published app to readers authorized to see company data.
+The Loom site's Vercel project serves the Self-hosted and OSS tabs at
+`/adoption`. Give its build a separate ClickHouse user with `SELECT` on these
+views in `loom_product_analytics`:
+
+- `public_adoption_daily`
+- `public_adoption_totals`
+- `public_adoption_versions`
+- `public_adoption_retention`
+- `public_adoption_activity`
+- `public_adoption_lifecycle`
+- `public_oss_adoption`
+
+The views run with the schema owner's privileges. Give the website user access
+only to the aggregate views. Use `LOOM_ADOPTION_PUBLIC_CLICKHOUSE_URL`,
+`LOOM_ADOPTION_PUBLIC_CLICKHOUSE_USER`, and `LOOM_ADOPTION_PUBLIC_CLICKHOUSE_PASSWORD`
+as server-side environment variables. The URL must use HTTPS. Vercel caches
+the aggregate page for an hour. The site fetches repository and release counts
+from GitHub and SDK downloads from PyPI Stats and npm. It shows unavailable
+metrics until their sources return data.
+
+Grant the restricted `loom_adoption_top_domains_30d` view only to authorized
+analytics staff. Its rows contain opt-in domain names and attributed counts.
+The site's user needs only the listed public views.
 
 ## Edit the public site
 
@@ -52,4 +74,4 @@ public path in [mount-site-pages.mjs](../../docs/scripts/mount-site-pages.mjs), 
 and serves the site pages at their public paths.
 
 For local editing, run `npm --prefix docs run dev` and open the page under the
-Blume base path, such as `/docs/home` or `/docs/telemetry`.
+Blume base path, such as `/docs/home` or `/docs/adoption`.

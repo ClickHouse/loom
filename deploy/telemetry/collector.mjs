@@ -72,18 +72,21 @@ function isReport(report, now) {
     return false;
 
   const domains = report.user_domains;
+  if (!Array.isArray(domains) || domains.length > 30) return false;
+  const validDomains = domains.every(
+    (row) =>
+      isObject(row) &&
+      Object.keys(row).length === 3 &&
+      matches(domainPattern, row.domain) &&
+      row.domain.length <= 253 &&
+      isCount(row.user_count) &&
+      row.user_count > 0 &&
+      isCount(row.successful_requests),
+  );
   return (
-    Array.isArray(domains) &&
-    domains.length <= 30 &&
-    domains.every(
-      (row) =>
-        isObject(row) &&
-        Object.keys(row).length === 2 &&
-        matches(domainPattern, row.domain) &&
-        row.domain.length <= 253 &&
-        isCount(row.user_count) &&
-        row.user_count > 0,
-    )
+    validDomains &&
+    new Set(domains.map(({ domain }) => domain)).size === domains.length &&
+    domains.reduce((count, row) => count + row.successful_requests, 0) <= report.successful_requests
   );
 }
 
