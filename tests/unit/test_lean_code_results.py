@@ -316,6 +316,42 @@ def test_grep_scope_drops_its_own_path_and_enclosing_drops_the_repeated_name() -
     assert e["resolved"] == 1 and "took_ms" not in e
 
 
+def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:
+    match = {
+        "path": "server/a.py",
+        "line": 3,
+        "text": "item.value",
+        "scope": "server.a::inspect",
+        "scope_start_line": 2,
+        "scope_end_line": 4,
+    }
+    related = {
+        "pattern": "item.value",
+        "matches": [match],
+        "contexts": [{"path": "server/a.py", "start_line": 3, "text": "item.value"}],
+        "definitions": [
+            {"path": "server/a.py", "symbol_id": name, "kind": "function", "body": name}
+            for name in ("inspect", "count", "update")
+        ],
+        "definitions_partial": True,
+        "truncated": True,
+    }
+    out = lean_code("code.grep", {"matches": [], "related": related, "trace_run_id": "trace"})
+    assert out["matches"] == [] and out["trace_run_id"] == "trace"
+    assert out["related"] == lean_code("code.grep", related)
+    assert out["related"]["matches"][0]["scope"] == "inspect"
+    assert match["scope"] == "server.a::inspect"
+    assert out["related"]["contexts"] == related["contexts"]
+    assert out["related"]["definitions_partial"] is True and out["related"]["truncated"] is True
+    assert out["related"]["defaults"] == {"kind": "function"}
+    assert [row["body"] for row in out["related"]["definitions"]] == ["inspect", "count", "update"]
+    assert [row["symbol_id"] for row in out["related"]["definitions"]] == [
+        "inspect",
+        "count",
+        "update",
+    ]
+
+
 def test_symbol_keeps_ids_only_when_several_definitions_answer() -> None:
     one = lean_code(
         "code.symbol",
