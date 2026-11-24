@@ -15,6 +15,18 @@ const agentMemorySeoTitles = {
   "pt-BR": "Memória compartilhada para agentes de código",
   "zh-CN": "AI 编程智能体的共享记忆",
 };
+const landingSeoDescriptions = {
+  "index.md": {
+    ja: "AIエージェント向けの共有メモリ、文書検索、コードインデックスを備えたセルフホスト型MCPサーバー。",
+    ko: "AI 에이전트를 위한 공유 메모리, 문서 검색, 코드 인덱스를 제공하는 자체 호스팅 MCP 서버.",
+    "pt-BR":
+      "Memória compartilhada, busca em documentos e índice de código para agentes de IA em um servidor MCP auto-hospedado.",
+    "zh-CN": "面向 AI 智能体的自托管 MCP 服务器，提供共享记忆、文档检索和代码索引。",
+  },
+  "use-cases/index.md": {
+    es: "Casos de uso de Loom para agentes de IA: memoria compartida, búsqueda de documentos e índice de código.",
+  },
+};
 const excluded = new Set([
   ".blume",
   ".blume-content",
@@ -43,8 +55,11 @@ function prepareContent() {
   for (const file of contentFiles(content)) {
     const text = readFileSync(file, "utf8");
     const [locale, ...source] = relative(content, file).split(sep);
-    const seoTitle = source.join("/") === "use-cases/agent-memory.md" ? agentMemorySeoTitles[locale] : undefined;
-    const prepared = normalizeTranslatedTitle(text, seoTitle);
+    const sourcePath = source.join("/");
+    const prepared = normalizeTranslatedTitle(text, {
+      title: sourcePath === "use-cases/agent-memory.md" ? agentMemorySeoTitles[locale] : undefined,
+      description: landingSeoDescriptions[sourcePath]?.[locale],
+    });
     if (prepared !== text) writeFileSync(file, prepared);
   }
 
@@ -77,7 +92,7 @@ function contentFiles(directory) {
 }
 
 /** Move a generated translation's title into front matter for Blume to render once. */
-export function normalizeTranslatedTitle(text, seoTitle) {
+export function normalizeTranslatedTitle(text, seo = {}) {
   if (!text.startsWith("<!-- i18n: source=")) return text;
 
   const lines = text.split("\n");
@@ -87,8 +102,11 @@ export function normalizeTranslatedTitle(text, seoTitle) {
   const title = lines[heading].replace(/^#\s+/, "").replace(/\s+#+\s*$/, "");
   lines.splice(heading, 1);
   if (lines[heading - 1] === "" && lines[heading] === "") lines.splice(heading, 1);
-  const seo = seoTitle ? `\nseo:\n  title: ${JSON.stringify(seoTitle)}` : "";
-  return `---\ntitle: ${JSON.stringify(title)}${seo}\n---\n\n${lines.join("\n")}`;
+  const searchFields = Object.entries(seo)
+    .filter(([, value]) => value)
+    .map(([name, value]) => `  ${name}: ${JSON.stringify(value)}`);
+  const searchMetadata = searchFields.length ? `\nseo:\n${searchFields.join("\n")}` : "";
+  return `---\ntitle: ${JSON.stringify(title)}${searchMetadata}\n---\n\n${lines.join("\n")}`;
 }
 
 export function rewriteSourceLinks(text, from) {

@@ -24,15 +24,28 @@ test("leaves English content unchanged", () => {
 
 test("sets the search title without changing the translated heading or body", () => {
   const stamp = "<!-- i18n: source=docs/use-cases/agent-memory.md blob=abc model=test -->";
-  const prepared = normalizeTranslatedTitle(
-    `${stamp}\n\n# Memória de longo prazo e compartilhada\n\nTexto.\n`,
-    "Memória compartilhada para agentes de código",
-  );
+  const prepared = normalizeTranslatedTitle(`${stamp}\n\n# Memória de longo prazo e compartilhada\n\nTexto.\n`, {
+    title: "Memória compartilhada para agentes de código",
+  });
   assert.equal(
     prepared,
     '---\ntitle: "Memória de longo prazo e compartilhada"\n' +
       'seo:\n  title: "Memória compartilhada para agentes de código"\n---\n\n' +
       `${stamp}\n\nTexto.\n`,
+  );
+});
+
+test("sets a search description on a translated docs homepage", () => {
+  const stamp = "<!-- i18n: source=docs/index.md blob=abc model=test -->";
+  const prepared = normalizeTranslatedTitle(`${stamp}\n\n# ClickHouse Loom 문서\n\n문서 본문.\n`, {
+    description: "AI 에이전트를 위한 공유 메모리와 코드 인덱스.",
+  });
+
+  assert.equal(
+    prepared,
+    '---\ntitle: "ClickHouse Loom 문서"\n' +
+      'seo:\n  description: "AI 에이전트를 위한 공유 메모리와 코드 인덱스."\n---\n\n' +
+      `${stamp}\n\n문서 본문.\n`,
   );
 });
 
