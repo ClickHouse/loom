@@ -363,6 +363,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.outline": _CODE_LESSONS,
     "code.path_guards": _CODE_INDEX,
     "code.pr_check": _CODE_INDEX,
+    "code.read": _CODE_INDEX,
     "code.recent_commits": _CODE_INDEX,
     "code.refresh": _CODE_INDEX,
     "code.reindex": _CODE_INDEX,
