@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -381,6 +382,78 @@ def test_drain_pending_respects_budget_and_writes_the_rest_back() -> None:
         )
     )
     assert res0.files == 0 and res0.remaining == 1
+
+
+def test_reader_repairs_defer_ready_work_at_the_pass_budget(monkeypatch) -> None:
+    import time
+
+    started: list[str] = []
+    now = 0.0
+    monkeypatch.setattr(d, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
+    monkeypatch.setattr(settings, "code_ingest_dependents_concurrency", 1)
+    _, show_file, _ = _fakes()
+
+    async def ingest_file(*_args, path, **_kwargs):
+        nonlocal now
+        started.append(path)
+        now += 1
+        return SimpleNamespace()
+
+    result = asyncio.run(
+        d.reextract_paths(
+            _Repo(),
+            "o",
+            "n",
+            ["a.py", "b.py", "c.py"],
+            commit_sha=SHA,
+            git_dir="/g",
+            show_file=show_file,
+            ingest_file=ingest_file,
+            embedding_model="m",
+            stop_after=0.5,
+        )
+    )
+    assert started == ["a.py"]
+    assert result.reingested == 1 and result.retry_paths == ["b.py", "c.py"]
+
+
+def test_pending_repairs_keep_policy_and_retry_transient_errors() -> None:
+    from server.code.app.index.denylist import Denylist
+
+    repo = _Repo()
+    path = "contrib/pkg/reader.py"
+    rules = Denylist(builtin=True, include_contrib=True)
+    _, show_file, _ = _fakes()
+    seen: list[str] = []
+
+    async def load_rules():
+        return rules
+
+    async def ingest_file(*_args, path, denylist, **_kwargs):
+        assert denylist is rules and not rules.refusal(path, b"x = 1")
+        seen.append(path)
+        if len(seen) == 1:
+            raise ConnectionError("transient write failure")
+        return SimpleNamespace()
+
+    async def replay():
+        await d.write_pending(repo, "o", "n", [path], head=SHA)
+        options = dict(
+            head=SHA,
+            git_dir="/g",
+            budget=1,
+            show_file=show_file,
+            ingest_file=ingest_file,
+            embedding_model="m",
+            load_rules=load_rules,
+        )
+        first = await d.drain_pending(repo, "o", "n", **options)
+        assert first.errors == 1 and first.remaining == 1
+        second = await d.drain_pending(repo, "o", "n", **options)
+        assert second.files == 1 and not second.remaining
+
+    asyncio.run(replay())
+    assert seen == [path, path]
 
 
 # ---- ingest_file(edges_only=True) ------------------------------------------------

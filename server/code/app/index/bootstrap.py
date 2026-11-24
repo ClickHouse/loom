@@ -637,7 +637,9 @@ async def index_slice(
         stop_after=stop_after,
     )
     done = start + attempted
-    await _repair_slice_bindings(cfg, repo, head, slice_paths[:attempted], model_name, stop_after)
+    await _repair_slice_bindings(
+        cfg, repo, head, slice_paths[:attempted], model_name, denylist, stop_after
+    )
     await repo.set_state(org, ns, CURSOR_KEY, str(done))
     rate = counters["files"] / max(time.monotonic() - started, 1e-9)
     _note_embed_outcome(cfg, embedder, counters)
@@ -671,6 +673,7 @@ async def _repair_slice_bindings(
     head: str,
     paths: list[str],
     embedding_model: str,
+    denylist: Any,
     stop_after: float | None,
 ) -> None:
     """A provider indexed in this slice can resolve readers from earlier slices."""
@@ -702,6 +705,8 @@ async def _repair_slice_bindings(
             pending_max=settings.code_ingest_dependents_pending_max,
             closure_max_names=settings.code_closure_repair_max_names,
             closure_max_sites=settings.code_closure_repair_max_sites,
+            denylist=denylist,
+            stop_after=stop_after,
         )
         if repaired is not None:
             remaining = max(0, remaining - repaired.candidates)
