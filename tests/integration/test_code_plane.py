@@ -49,7 +49,7 @@ async def code_env(ch_client):
     yield CodeRepo(), "test-org", ns
 
 
-async def _ingest(repo, org, ns, source=_SRC, sha="a" * 40):
+async def _ingest(repo, org, ns, source=_SRC, sha="a" * 40, *, path="src/S.cpp"):
     from server.code.app.index.ingest import ingest_file
     from server.embedding.fake import FakeNGramEmbedder
     from server.settings import settings
@@ -59,7 +59,7 @@ async def _ingest(repo, org, ns, source=_SRC, sha="a" * 40):
         repo,
         org,
         ns,
-        path="src/S.cpp",
+        path=path,
         source=source,
         commit_sha=sha,
         embedding_model=embedder.model_name,
@@ -450,6 +450,37 @@ async def test_read_ops_and_abstain(code_env, monkeypatch) -> None:
     )
     assert limited.definitions[0].body == plain_definition.body
     assert limited.definitions[0].examples == plain
+
+
+async def test_symbol_reads_test_examples_with_the_definition(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeSymbolInput
+    from server.code.app.symbol import handle_code_symbol
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    await _ingest(repo, org, ns)
+    call = "void test_work() { DB::doWork(); }"
+    path = "test/test_work.cpp"
+    await _ingest(repo, org, ns, source=(call + "\n").encode(), path=path)
+    result = await handle_code_symbol(
+        CodeSymbolInput(
+            org=org,
+            namespace=ns,
+            name="DB::doWork",
+            test_examples_only=True,
+            example_context_lines=2,
+            include_history=False,
+            include_lessons=False,
+        )
+    )
+    (definition,) = result.definitions
+    assert definition.body.strip() == "void doWork() { }"
+    (example,) = definition.examples
+    assert example["path"] == path
+    assert example["context"]["text"].strip() == call
 
 
 async def test_deletion_tombstones_everything(code_env) -> None:

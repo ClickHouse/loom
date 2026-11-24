@@ -17,8 +17,10 @@ Which suite a test belongs in, what each suite needs to run, how tests skip when
 | Python SDK adapters whose framework is an extra | `sdk/python/tests/`                                                  | `uv`; installs each adapter extra in its own venv under `.venv-sdk-adapters/` | `make test-sdk-adapters`                                       | `sdk-python-adapters`                                          |
 | TypeScript SDK                                  | `sdk/typescript/`                                                    | Node                                                                          | `npm --prefix sdk/typescript run check`                        | `sdk-typescript`                                               |
 | Rust SDK                                        | `sdk/rust/`                                                          | Rust and Cargo                                                                | `cargo test --manifest-path sdk/rust/Cargo.toml`               | `sdk-rust`, Rust 1.84.1 and stable                             |
-| Go SDK                                          | `sdk/go/`                                                            | Go                                                                            | `cd sdk/go && go test ./...`                                   | none                                                           |
-| .NET SDK                                        | `sdk/dotnet/`                                                        | .NET 8 SDK                                                                    | `cd sdk/dotnet && dotnet test`                                 | none                                                           |
+| Go SDK                                          | `sdk/go/`                                                            | Go                                                                            | `cd sdk/go && go test ./...`                                   | `native SDK packages`: build, vet and race tests               |
+| .NET SDK                                        | `sdk/dotnet/`                                                        | .NET LTS SDK                                                                  | `cd sdk/dotnet && DOTNET_ROLL_FORWARD=Major dotnet test`       | `native SDK packages`: tests and installed package             |
+| Java SDK core                                   | `sdk/java/`                                                          | Java and Maven                                                                | `mvn -f sdk/java verify`                                       | `native SDK packages`: tests and jar consumer                  |
+| Ruby SDK                                        | `sdk/ruby/`                                                          | Ruby and Bundler                                                              | `cd sdk/ruby && bundle install && bundle exec rake test`       | `native SDK packages`: tests and installed gem                 |
 | Benchmarks and gates                            | `bench/*.py`, `make bench-*`                                         | a server with **real** providers                                              | [running benchmarks](../benchmarks/running.md)                 | never (the CI embedder is fake)                                |
 
 **Why benchmarks stay out of CI.** CI runs with `LOOM_EMBEDDING_MODEL=fake-ngram-1024`
@@ -48,6 +50,31 @@ or the embedder.
 Keep CI's system tools beside the locked Python environment. Release-script tests, for
 example, call `jq`. Record missing tools or an unsupported platform separately from a
 failure introduced by the diff.
+
+### Generated memory-domain checks
+
+`tests/unit/test_memory_domain_generated.py` uses the dev-only Hypothesis dependency
+for bounded checks over the real rollback and provenance helpers. Timestamp properties
+compare integer nanoseconds with a separate calendar-based oracle, including dates
+before the epoch, datetime boundaries, naive UTC and equivalent offset representations.
+The lifecycle state machine compares plans with versioned snapshots through writes,
+tombstones, hard-erased heads and rollbacks. Repeated keys vary agent, user and session
+identity. Caller declarations can lower provenance but cannot claim a server class.
+
+The generated examples are deterministic, the example database is disabled and failures
+print a minimized example with a replay blob. The lifecycle run has 35 examples of at
+most 25 steps; other properties have at most 60 examples. These checks require no service,
+provider, network call or account. Run only this module with the locked dev environment:
+
+```bash
+uv run --extra dev python -m unittest tests.unit.test_memory_domain_generated
+```
+
+Keep the failing example as an explicit regression. To replay a reported blob during a
+repair, use Hypothesis's printed `@reproduce_failure` decorator with the same locked
+Hypothesis version. The state machine receives already scoped rows: it tests identity
+preservation and erased-head safety, not transport authorization or database isolation.
+Those contracts still require the existing integration suites.
 
 ### Native worker diagnostics
 
@@ -384,3 +411,115 @@ those PR checks from starting. Inspect mergeability when no checks follow a push
 - [Local development](./local-development.md), [code generation](./code-generation.md),
   [migrations](./migrations.md)
 - [Benchmarks methodology](../benchmarks/methodology.md)
+
+## Native SDK package checks
+
+The `native SDK packages` workflow runs the Go, Java core, .NET and Ruby SDK suites
+on pull requests, main pushes and a weekly schedule. Each job requires executed tests
+and writes their count to its summary. The Go job builds, vets and runs the HTTP tests
+with the race detector. The other jobs build their package and load or compile an
+independent consumer outside the source tree. Java adapter modules have their own
+requirements and are not part of the core job.
+
+The Go job also runs the pinned vulnerability analyzer on production packages under
+the selected Linux toolchain. Before scanning the SDK, it requires detection of a
+known vulnerable call and its absence after that dependency is fixed in a temporary
+control module. No control program is executed or added to the SDK dependencies.
+The scan covers known reachable calls for that build; reflection, other build tags
+and other supported Go versions need separate qualification.
+
+The .NET job builds the unchanged target assembly and runs it on the supported LTS
+runtime with explicit major-version roll-forward. Its isolated installation verifies
+the selected SDK and runtime, without using preinstalled runner versions. This does not qualify the older
+runtime or change the package target. Toolchains are selected in the workflow;
+checks do not certify every SDK's declared minimum version or a published registry
+package. Tests use their existing handler fakes or owned loopback servers. They need
+no running Loom, database, provider credentials or paid service.
+
+Pull requests have read-only tokens. A separate trusted-main job can create a failure
+task for each SDK and append a comment when its success/failure state changes. A new
+run alone does not add a comment. It executes no checked-out project code, publishes
+no raw failure text and links to the native logs. Closed decisions and human-edited
+bodies remain intact. Keep the task identity in its title or body; removing both
+markers removes its association with the check. Security-sensitive reports use
+[the private reporting route](../../SECURITY.md).
+
+The publisher permits forty API calls, ten issue pages and fewer than a hundred
+comments per task, with a five-minute job limit. It refuses exhausted pagination or
+comment history instead of guessing a prior state. At most four tasks or status
+comments can be written in one run. These bounds can defer diagnosis until the
+publisher's own error is resolved; a successful SDK check does not close an issue
+automatically.
+
+## Workflow audit reporting
+
+The workflow security findings workflow runs a bounded audit on pull requests, main
+and release-branch pushes, and a weekly schedule. Pull-request jobs have read-only
+contents access. Findings appear in the job summary and the escaped report log.
+
+The scanner is pinned with a verified archive checksum. It checks workflow and
+dependency-update configuration with the auditor persona, strict collection, no
+configuration overrides and no ignored findings. Its offline mode disables scanner
+network-context lookups; the job itself runs on GitHub. That mode does not establish
+remote action identity, branch protection or every repository security setting.
+
+The audit is report only. Findings do not make its exit status fail; scanner, collection
+and reporting errors do. A green audit is not evidence that the repository has no
+vulnerabilities. Ordinary repository checks still gate each change.
+
+### Automatic maintenance tasks
+
+Trusted main pushes and the weekly schedule automatically reconcile maintenance issues.
+No manual triage or dispatch is required. The job uses its own trusted checkout and a
+fresh scan. It publishes only when the audited commit is still the default-branch head. Its token
+has contents read and issues write permissions. Pull-request jobs receive no issue
+write permission.
+
+Only low or informational observations from these maintenance rules can become public
+issues:
+
+| Rule                       | Task                                                          |
+| -------------------------- | ------------------------------------------------------------- |
+| `anonymous-definition`     | Name workflow and job definitions to clarify audit locations. |
+| `superfluous-actions`      | Review an action that duplicates a runner tool.               |
+| `undocumented-permissions` | Explain why an explicit permission is needed.                 |
+
+Other rules and higher severity observations remain in the complete audit and are sent
+by a separate trusted job to the existing code scanning view. That job has contents
+read and security-events write permissions, without issue write access. The public
+issue selector is not a scanner ignore or a claim that other findings are harmless.
+Security-sensitive reports follow [the security policy](../../SECURITY.md); automation does not
+send emails, publish exploit payloads or promise a bounty.
+
+Issue snapshots include up to a hundred recent comment timeline entries per task. The
+reporter reduces the page or comment window when the response exceeds its byte limit. It
+defers a task if its last automated status is outside that window. If an edit removes
+the only saved status, the reporter waits until a scan confirms the finding is absent.
+Status follows comment creation time, with its full numeric identifier breaking ties;
+a human edit to an older status cannot make it the latest automated state. Each task has a stable rule-and-path fingerprint. Line shifts, commit hashes and new
+run links do not create another task or status comment. A changed observation count
+or determination adds one status comment; absence and later reappearance also update
+the latest status. Titles and issue bodies are never rewritten, issues are never
+closed or reopened automatically, and an existing closed decision is preserved.
+The complete identity fingerprint is retained in the title and body, including when a
+finding disappears. Keep one marker when editing a managed task.
+Removing both markers removes its association with the audit.
+
+Publication uses one trusted concurrency group without canceling a running trusted
+workflow. A newer pending main run can replace an older pending run; the remaining run
+reconciles its complete current report. Each execution permits at most ten issue or
+comment writes and forty API calls. The client stops starting requests after three
+minutes; individual socket operations have ten-second timeouts, and each job has a
+five-minute limit. Responses are bounded. Deferred work is counted in the job summary
+and reconsidered automatically on the next trusted run. API refusals and incomplete
+pagination fail the job; there is no retry or alternate credential.
+
+### Audit qualification
+
+Focused controls use an in-memory API to check deduplication, status transitions,
+human edits, closed decisions, sensitive metadata exclusion, failure propagation,
+write deferral and the trusted event/permission boundaries. They do not prove a live
+token grant or native scheduler execution. The first merged trusted run must verify
+actual issue and code scanning publication. Standard public runners and public-repository
+code scanning use GitHub's included services; this workflow adds no app, account,
+paid runner or provider.

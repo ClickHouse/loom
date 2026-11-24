@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.code.domain.index.test_gate import TEST_PATH_PATTERN
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched
 
@@ -417,6 +418,7 @@ class EdgesMixin(CodeRepoBase):
         min_confidence: float = 0.0,
         per_match: int | None = None,
         with_revision: bool = False,
+        tests_only: bool = False,
     ) -> list[dict[str, Any]]:
         """One hop of live edges. Both tiers returned with tier marked; the
         service layer prefers scip edges per (from,to) pair.
@@ -452,7 +454,10 @@ class EdgesMixin(CodeRepoBase):
         class method, 0.6 unique repo-wide name match; scip is always 1.0).
         On the ClickHouse repository about 12% of parser call edges sit at
         0.6, and those are where `parse`/`check`-style name collisions live;
-        graph expansion that ignores edge confidence ranks worse."""
+        graph expansion that ignores edge confidence ranks worse.
+
+        `tests_only` filters call-site paths before LIMIT so production callers
+        cannot crowd out test examples."""
         if not symbol_ids:
             return []
         match_col = "to_symbol_id" if direction == "callers" else "from_symbol_id"
@@ -461,6 +466,7 @@ class EdgesMixin(CodeRepoBase):
         revision_sql = (
             ", toString(argMax(indexed_commit, version)) AS indexed_commit" if with_revision else ""
         )
+        tests_sql = "AND match(path, {test_path_pattern:String})" if tests_only else ""
         rows = await self._ch.query_all(
             f"""
             SELECT tier, edge_kind, to_symbol_id, from_symbol_id, path, line,
@@ -472,6 +478,7 @@ class EdgesMixin(CodeRepoBase):
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND {match_col} IN {{ids:Array(String)}}
               AND edge_kind IN {{kinds:Array(String)}}
+              {tests_sql}
             GROUP BY tier, edge_kind, to_symbol_id, from_symbol_id, path, line
             HAVING is_live = 1 AND confidence >= {{minc:Float32}}
             ORDER BY tier DESC, confidence DESC, path, line, to_qualified_name, from_qualified_name,
@@ -486,6 +493,7 @@ class EdgesMixin(CodeRepoBase):
                 "kinds": kinds,
                 "limit": limit,
                 "minc": float(min_confidence),
+                **({"test_path_pattern": TEST_PATH_PATTERN} if tests_only else {}),
                 **({"per_match": int(per_match)} if per_match else {}),
             },
         )

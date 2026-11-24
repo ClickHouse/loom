@@ -304,7 +304,12 @@ async def _enrichment(
                 "enrich.examples",
                 _soft(
                     code_enrich.usage_examples(
-                        repo, org, ns, sids, context_lines=input.example_context_lines
+                        repo,
+                        org,
+                        ns,
+                        sids,
+                        context_lines=input.example_context_lines,
+                        tests_only=input.test_examples_only,
                     ),
                     None,
                 ),
@@ -532,6 +537,9 @@ async def handle_code_symbol(input: CodeSymbolInput) -> CodeSymbolOutput:
             "pr_number",
             "uses_brief",
             "uses",
+            test_examples_only=(
+                True if input.include_examples and input.test_examples_only else None
+            ),
             example_context_lines=(
                 (input.example_context_lines or None) if input.include_examples else None
             ),

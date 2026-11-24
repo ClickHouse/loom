@@ -558,8 +558,7 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
     routes = [
         f"{tool[name]} {purpose}"
         for name, purpose in (
-            ("code.search", "for an issue, task or conceptual question"),
-            ("code.symbol", "for a named definition"),
+            ("code.search", "for behavior or an issue"),
             ("code.grep", "for exact text or an error"),
             ("code.read", "to read known line ranges together"),
             ("code.callers", "for callers"),
@@ -568,32 +567,22 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         )
         if tool[name]
     ]
-    caller_hint = (
-        "For a definition and its callers together, pass `uses_brief: true` to "
-        f"{tool['code.symbol']}. "
-        if tool["code.symbol"]
-        else ""
-    )
     definition_hint = (
-        f"Start with {tool['code.symbol']} when the task names the class, function or method "
-        "you need to read, before searching for text inside it. "
+        f"Start with {tool['code.symbol']} for a named definition or enclosing class. "
+        "Add `uses_brief: true` for callers. "
         if tool["code.symbol"]
         else ""
     )
+    route_hint = "Use " + "; ".join(routes) + ". " if routes else ""
     code = (
-        "\n\nUse Loom first to search and read unchanged indexed source. "
+        "\n\nUse Loom first to search and read unchanged indexed source, including tests. "
         + definition_hint
-        + "Use "
-        + "; ".join(routes)
-        + ". Discover deferred tools by name with ToolSearch in Claude Code. "
-        + caller_hint
-        + "Read Loom's result before a local lookup for the same evidence. Reuse returned "
-        "source, linked lessons and project decisions. Check source freshness and lesson "
-        "`code_state`. Use local tools for edits and tests. For source retrieval, "
-        "use Bash, Grep, Read or Glob only for uncommitted or unindexed code, "
-        "explicit local-tool requests, or evidence Loom cannot supply. "
-        "Skip retrieval when current context already answers."
-        if routes
+        + route_hint
+        + "Batch related matches or ranges. In Claude Code, find deferred tools with ToolSearch. "
+        "Reuse source and linked lessons already in context. Check revision and `code_state`. "
+        "Use local tools to edit, run tests, and inspect Git. Read locally for working-copy "
+        "changes, unindexed paths, explicit requests, or evidence Loom cannot supply."
+        if routes or definition_hint
         else ""
     )
     # A code-only token can have no default memory workspace.
@@ -604,15 +593,13 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         if defaults and defaults.get("namespace") and tool["context.pack"]
         else ""
     )
-    return name_ops_for_toolset(
-        "Loom provides indexed source and project memory. Find other operations with "
-        '`loom_op` (`op="help"`, `query="<goal>"`). Writes need user intent and permission.'
-        + code
-        + context
-        + "\n\n"
-        + memory,
-        toolset,
+    discovery = (
+        "Find saved knowledge, documents, code, issues, tasks and records with `loom_op` "
+        '(`op="help"`, `query="<goal>"`). Writes need user intent and permission. '
+        "Use `loom_op` for unlisted operations; never invent an unlisted tool name, "
+        "and make only calls needed for the task."
     )
+    return name_ops_for_toolset(discovery + code + context + "\n\n" + memory, toolset)
 
 
 async def _mentor_line(

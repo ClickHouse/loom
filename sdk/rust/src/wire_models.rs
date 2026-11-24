@@ -14582,6 +14582,12 @@ pub struct CodeSymbolInput {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present_value"
     )]
+    pub test_examples_only: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
     pub example_context_lines: Option<Integer>,
     #[serde(
         default,
@@ -14686,6 +14692,7 @@ impl CodeSymbolInput {
             include_body: None,
             include_history: None,
             include_examples: None,
+            test_examples_only: None,
             example_context_lines: None,
             include_lessons: None,
             lesson_namespaces: None,
@@ -14741,6 +14748,10 @@ impl CodeSymbolInput {
     }
     pub fn include_examples(mut self, include_examples: bool) -> Self {
         self.include_examples = Some(include_examples);
+        self
+    }
+    pub fn test_examples_only(mut self, test_examples_only: bool) -> Self {
+        self.test_examples_only = Some(test_examples_only);
         self
     }
     pub fn example_context_lines(mut self, example_context_lines: impl Into<Integer>) -> Self {

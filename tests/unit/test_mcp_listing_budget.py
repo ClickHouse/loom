@@ -399,12 +399,12 @@ def test_the_compact_profile_keeps_the_tool_names():
 def test_compact_coding_grep_advertises_body_default_and_literal_alternatives():
     tools = {t["name"]: t for t in _listing("coding", True, "compact")}
     description = tools["loom_code_grep"]["description"]
-    assert "list of stable literal fragments in `pattern`" in description
-    assert "search alternatives in one call" in description
-    assert "Matches include enclosing bodies by default" in description
-    assert "`include_body: false` for names, locations or short excerpts" in description
+    assert "list of literals in `pattern`" in description
+    assert "enclosing bodies in one call" in description
+    assert "`include_body: false` for locations or `context_lines` excerpts" in description
     assert "loom_code_search" in description
-    assert "short excerpts with `context_lines`" in description
+    assert "one RE2 string with `regex: true`" in description
+    assert "Scope with `path_prefix` or `path_globs`" in description
 
 
 # ---------------------------------------------------------------- one revision policy

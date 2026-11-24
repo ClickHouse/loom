@@ -541,25 +541,26 @@ def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -
 
 def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     coding = mcp_primer._coding_instructions("coding")
-    assert "Use Loom first to search and read unchanged indexed source" in coding
+    assert "Use Loom first to search and read unchanged indexed source, including tests" in coding
+    assert "Start with `loom_code_symbol` for a named definition or enclosing class" in coding
     for name, purpose in (
-        ("loom_code_symbol", "for a named definition"),
-        ("loom_code_search", "for an issue, task or conceptual question"),
+        ("loom_code_search", "for behavior or an issue"),
         ("loom_code_grep", "for exact text or an error"),
+        ("loom_code_read", "to read known line ranges together"),
         ("loom_code_callers", "for callers"),
         ("loom_code_impact", "for change effects"),
         ("loom_code_context_pack", "for a task briefing"),
     ):
         assert f"`{name}` {purpose}" in coding
-    assert "ToolSearch" in coding
+    assert "In Claude Code, find deferred tools with ToolSearch" in coding
     assert "linked lessons" in coding
     assert "`code_state`" in coding
     assert "`uses_brief: true`" in coding
-    assert "before a local lookup for the same evidence" in coding
-    assert "use Bash, Grep, Read or Glob only for uncommitted or unindexed code" in coding
-    assert "uncommitted or unindexed" in coding
+    assert "Batch related matches or ranges" in coding
+    assert "Use local tools to edit, run tests, and inspect Git" in coding
+    assert "Read locally for working-copy changes, unindexed paths, explicit requests" in coding
     assert "evidence Loom cannot supply" in coding
-    assert "current context already answers" in coding
+    assert "Reuse source and linked lessons already in context" in coding
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact"])
