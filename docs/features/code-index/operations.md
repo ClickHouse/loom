@@ -105,8 +105,9 @@ When an exact call expression such as `convert(row.value)` is absent,
 The `related` block names the argument and carries its verified lines and any
 excerpts or bodies. It includes six lines of surrounding source when full
 bodies are disabled and `context_lines` is omitted. Set `context_lines: 0` for
-matching lines only. `matches` stays empty. Linked notes can accompany that
-source. Coding MCP connections enable recovery by default. HTTP and SDK
+matching lines only. `matches` stays empty. Linked notes can accompany the
+related hits and their resolved dependency definitions. Coding MCP
+connections enable recovery by default. HTTP and SDK
 callers can opt in.
 
 A literal call prefix such as `convert(row.value` can also show where

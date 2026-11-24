@@ -189,9 +189,11 @@ async def _load(
     body = await symbol_body(repo, org, ns, extent, expected_commit=revision)
     if not body:
         return None
-    return row, GrepDependency(
+    source = GrepDependency(
         qualified_name=name, path=path, start_line=start, end_line=end, body=body
     )
+    source._indexed_commit = revision
+    return row, source
 
 
 async def _one_helper(

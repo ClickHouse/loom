@@ -193,6 +193,7 @@ class GrepDependency(BaseModel):
     start_line: int
     end_line: int
     body: str
+    _indexed_commit: str = PrivateAttr(default="")
 
 
 class RelatedGrepEvidence(BaseModel):
