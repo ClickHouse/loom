@@ -11,6 +11,82 @@ Loom reports on itself in three layers:
 All three share the request id. The [audit log](./audit.md) is a separate record of who
 changed what, with tamper evidence.
 
+## Self-hosted adoption
+
+Loom enables self-hosted adoption telemetry by default. It measures deployment and
+feature usage to inform product development. The server aggregates activity locally
+and sends one event per completed 12-hour UTC window.
+
+### Where telemetry is sent
+
+The background worker posts `loom_self_hosted_telemetry` events to the EU PostHog
+capture endpoint at `https://eu.i.posthog.com/i/v0/e/`. The event's distinct ID
+is the installation UUID. Person-profile and geographic enrichment are disabled.
+Delivery uses the release's public project capture key. A build with an empty
+`LOOM_ADOPTION_TELEMETRY_CAPTURE_KEY` skips delivery.
+
+The worker derives a stable reporting UUID from the storage authority's deployment ID.
+Replicas sharing that authority report under one UUID. Windows start at midnight
+and noon UTC. The worker allows an hour for ledger rows to arrive before reporting.
+It reports idle windows and retries an unsuccessful delivery while that window is
+still the most recent completed one. An unreachable collector does not interrupt
+the application.
+
+### What is sent
+
+| Columns                                                                                                                | Meaning                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`, `installation_id`, `day`                                                                             | Report format version, installation UUID and UTC usage date                                                                                                                             |
+| `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                           |
+| `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                            |
+| `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                  |
+| `user_domains`                                                                                                         | Up to 30 verified contact email domains and distinct address counts across the installation. Restricted namespaces and private mirrors are excluded.                                    |
+| `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                             |
+| `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace. |
+| `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                 |
+| `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                        |
+| `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                |
+
+The report excludes private mirror events, benchmark traffic, background traffic, and
+unclassified routes. It contains no full email addresses, names, operation strings,
+actor identifiers, customer content, or credentials. Email domains come from active
+accounts provisioned through verified OIDC or explicitly linked through SSO. A domain
+can help identify a company for follow-up. A reporting installation with zero
+successful requests is idle for that window. A missing report leaves its activity unknown.
+
+### Can I disable telemetry?
+
+Set `LOOM_ADOPTION_TELEMETRY_ENABLED=false` on every server and worker replica.
+With a settings file, set `adoption_telemetry_enabled: false`. In the Helm chart, put
+that setting under `settingsFile`.
+
+### Warehouse and Hex
+
+Export the event properties to the warehouse as `loom_adoption_windows`. Keep version
+1, parse `day` as a date and `window_start` as a UTC timestamp, and deduplicate on
+`(installation_id, window_start)`. Retries use the same event UUID. Store
+`user_domains` as `Array(Tuple(domain String, user_count UInt64))`. The daily
+rollup adds request counts and uses the peak half-day distinct count for each
+installation.
+
+Maintain a separate, access-controlled `loom_adoption_enrollments` dataset with one row per
+installation. An enrolling operator can find the reporting UUID in the
+`adoption_telemetry` worker's detail at `/v1/admin/workers.status`. The warehouse uses these
+columns:
+
+| Column                                | Meaning                                                                                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `installation_id` (String)            | The reporting UUID the operator provides at enrollment                                                                                |
+| `company_id`, `company_name` (String) | Verified company account and display name when the operator opts in to attribution. Use empty strings for unattributed installations. |
+| `is_internal` (UInt8)                 | 1 for internal or test installations                                                                                                  |
+| `managed_stage` (UInt8)               | 0 for no request, 1 for requested, 2 for qualified, 3 for evaluating, 4 for committed                                                 |
+
+Track the managed stage from pilot requests and conversations with the company. A company
+can enroll several installations under one company ID. The
+[Hex queries](../../../deploy/dashboards/self_hosted_adoption.sql) chart reporting coverage,
+activity, usage by feature, versions, weekly retention, and the named company's pilot
+stage beside its self-hosted usage. Coverage describes participating deployments.
+
 ## The ledger
 
 `loom.agent_events` has one row per operation: `operation`, the identity columns (`org`,
