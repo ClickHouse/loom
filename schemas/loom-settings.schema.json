@@ -36,6 +36,22 @@
           "type": "boolean",
           "description": "Derive the similarity gates from this embedder's cosine distribution at boot (server/memory/app/embedder_calibration.py). False pins the scalar defaults (tuned for text-embedding-3-small) — re-bench after an embedder change. Fake embedders and probe failures always use the scalars."
         },
+        "adoption_telemetry_enabled": {
+          "default": true,
+          "type": "boolean",
+          "description": "Self-hosted adoption reports. Set false to stop all adoption reporting."
+        },
+        "adoption_telemetry_interval_seconds": {
+          "default": 3600,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Seconds between adoption checks and retries. A report covers 12 hours."
+        },
+        "adoption_telemetry_share_domains": {
+          "default": false,
+          "type": "boolean",
+          "description": "Share verified email domain counts in adoption reports. Off by default."
+        },
         "allow_insecure": {
           "default": false,
           "type": "boolean",

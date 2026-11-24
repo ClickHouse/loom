@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "npm run prepare-content && blume dev",
     "prepare-content": "node scripts/prepare-content.mjs",
-    "build": "npm run prepare-content && blume build && node scripts/add-preview-root-redirect.mjs",
+    "build": "npm run prepare-content && blume build && node scripts/mount-site-pages.mjs",
     "preview": "blume preview",
     "check": "blume check",
     "validate": "npm run prepare-content && blume validate --strict"

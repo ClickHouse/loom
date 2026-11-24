@@ -9,6 +9,82 @@ from typing import Any
 import server.transport.lean_results as lr
 from server.transport.code_lean import lean_code
 
+
+def test_symbol_drops_only_descriptions_repeated_in_the_returned_body() -> None:
+    body = 'def f():\n    """Compute the total."""\n    return 1\n'
+    out = lean_code(
+        "code.symbol",
+        {
+            "definitions": [
+                {"symbol": "f", "body": body, "description": "Compute the total."},
+                {"symbol": "g", "body": body, "description": "Additional context."},
+                {"symbol": "h", "description": "Compute the total."},
+            ]
+        },
+    )
+    f, g, h = out["definitions"]
+    assert f["body"] == body and "description" not in f
+    assert g["description"] == "Additional context."
+    assert h["description"] == "Compute the total."
+
+
+def test_scip_symbol_drops_rendered_description_already_in_source() -> None:
+    body = '''class Group(Base):
+    """Extend :class:`Base`.
+
+    :param load_defaults: Load the high priority
+        options on startup.
+    """
+'''
+    rendered = (
+        "```python\nclass Group(Base):\n```\nExtend `Base`.\n\n"
+        r":param load\_defaults: Load the high priority"
+        "  \n&nbsp;&nbsp;&nbsp;&nbsp;options on startup."
+    )
+    source = {"symbol": "Group", "tier": "scip", "body": body, "description": rendered}
+    out = lean_code(
+        "code.symbol",
+        {
+            "definitions": [
+                source,
+                {**source, "description": rendered + " Bypass startup on empty input."},
+                {**source, "description": rendered.replace("class Group", "class Other")},
+                {**source, "elided": True},
+            ]
+        },
+    )
+    repeated, extra, other, elided = out["definitions"]
+    assert repeated["body"] == body and "description" not in repeated
+    assert extra["description"] == rendered + " Bypass startup on empty input."
+    assert other["description"] == rendered.replace("class Group", "class Other")
+    assert elided["description"] == rendered
+
+
+def test_scip_symbol_keeps_distinct_code_literals_in_docs() -> None:
+    descriptions = (
+        ('Send marker `"a  b"`.', 'Send marker `"a b"`.'),
+        ('Send marker `"a\\tb"`.', 'Send marker `"a b"`.'),
+        ('Send marker ``"a  b`x"``.', 'Send marker ``"a b`x"``.'),
+        ('Example:\n\n        print("a  b")', 'Example:\n\n    print("a b")'),
+    )
+    for doc, different_doc in descriptions:
+        body = f'def send():\n    """{doc}"""\n    pass\n'
+        rendered = f"```python\ndef send():\n```\n{different_doc}"
+        row = {"symbol": "send", "tier": "scip", "body": body, "description": rendered}
+        out = lean_code("code.symbol", {"definitions": [row]})
+        assert out["definitions"][0]["description"] == rendered
+
+
+def test_scip_symbol_keeps_short_or_nested_descriptions() -> None:
+    body = 'def send():\n    """Returns success=False after persisting."""\n    def resolve():\n        pass\n'
+    excerpt = "```python\ndef send():\n```\nReturns success"
+    nested = "```python\ndef resolve():\n```\nReturns success=False after persisting."
+    row = {"symbol": "send", "tier": "scip", "body": body}
+    for description in (excerpt, nested):
+        out = lean_code("code.symbol", {"definitions": [{**row, "description": description}]})
+        assert out["definitions"][0]["description"] == description
+
+
 FRESH = {
     "branch": "main",
     "commit": "c15ee82f1020ed8261a2add694a46519457e2d2a",

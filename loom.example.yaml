@@ -4970,6 +4970,15 @@ settings:
   # worker.<name>.pass, kind='worker'); loom.worker_status records every pass. [restart]
   # worker_ledger_rows: true
 
+  # Self-hosted adoption reports. Set false to stop all adoption reporting. [restart]
+  # adoption_telemetry_enabled: true
+
+  # Share verified email domain counts in adoption reports. Off by default. [restart]
+  # adoption_telemetry_share_domains: false
+
+  # Seconds between adoption checks and retries. A report covers 12 hours. [restart]
+  # adoption_telemetry_interval_seconds: 3600
+
   # Master switch for OTel emission. `init_otel()` also refuses under pytest regardless:
   # server/main.py calls it at import, and a test run must never ship rows into
   # production observability tables. [restart]

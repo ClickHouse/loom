@@ -7112,7 +7112,10 @@ class CodeReadInput(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    ranges: Required[list[str]]
+    ranges: NotRequired[list[str]]
+    path: NotRequired[Optional[str]]
+    start_line: NotRequired[Optional[int]]
+    end_line: NotRequired[Optional[int]]
 
 
 class CodeReadBody(TypedDict, total=False):
@@ -7121,7 +7124,10 @@ class CodeReadBody(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    ranges: Required[list[str]]
+    ranges: NotRequired[list[str]]
+    path: NotRequired[Optional[str]]
+    start_line: NotRequired[Optional[int]]
+    end_line: NotRequired[Optional[int]]
 
 
 class CodeReadOutput(TypedDict, total=False):

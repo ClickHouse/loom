@@ -4,6 +4,7 @@ import { vercel } from "blume/deploy";
 export default defineConfig({
   title: "ClickHouse Loom",
   logo: {
+    href: "https://loom.clickhouse.com/",
     image: "/loom.svg",
     text: "ClickHouse Loom",
   },

@@ -1371,7 +1371,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.read": (
         "Read exact ranges from indexed files in one call. "
-        'Pass a list such as ["src/app.py:40-70", "src/lib.py:12-19"]. '
+        "Pass `path`, `start_line`, and optional `end_line` for one range. "
+        'Batch several with `ranges`, for example ["src/app.py:40-70", "src/lib.py:12-19"]. '
         "Loom verifies source at its indexed revision against the local Git mirror."
     ),
     "code.files": (
@@ -2181,36 +2182,30 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.symbol": (
         "Read a definition by name, path:symbol, or path:line with source and linked lessons. "
-        "Name the class for related methods. Set `test_examples_only: true` and "
+        "Name the method for a local change or the class for related methods. "
+        "Set `test_examples_only: true` and "
         "`example_context_lines` to read nearby test code with the definition.\n\n"
-        "Use code.read for exact line ranges or code.search for unknown implementations. "
-        "`example_context_lines` adds source near recorded usage sites. Use code.enclosing with "
-        "include_body=true for several known locations. "
-        "`uses_brief: true` adds a compact caller summary for one resolved definition; "
-        "code.callers reads a larger graph. `uses: true` adds the full mention list. "
-        "`near_paths` or `pr_number` rank ambiguous definitions. Check freshness and "
-        "elision disclosures; use local tools for changed or unindexed code."
+        "Use code.read for ranges, code.search for concepts, "
+        "or code.enclosing with `include_body: true` for several locations. "
+        "`uses_brief: true` summarizes callers; `uses: true` lists mentions. "
+        "`near_paths` or `pr_number` rank ambiguous matches. Check freshness and source elision. "
+        "Use local tools for changed or unindexed files."
     ),
     "code.grep": (
         "Find text and enclosing bodies in one call. Scope with `path_prefix` or `path_globs`. "
         "Use a list of literals in `pattern` or one RE2 string with `regex: true`. "
         "Use `include_body: false` for locations or `context_lines` excerpts. "
         "Use code.search for behavior.\n\n"
-        "Use code.symbol for the full class or code.read for exact line ranges. "
-        "Use `langs` to filter by language. "
+        "Use code.symbol for a class or code.read for exact lines. Filter with `langs`. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
     ),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.
     "code.impact": (
-        "Blast radius of changing a symbol or a diff: reverse call edges (depth<=2), "
-        "the tests mapped to the impacted files, and files that historically co-change "
-        "with them in merged PRs. `epistemic` ('exact' | 'lower_bound' + `causes`) says "
-        "whether the radius is the whole answer; `risk: 'unknown'` means grep before "
-        "deleting or renaming. An empty radius carries a `verdict`: 'no_indexed_paths' "
-        "(with `paths_seen` classing every touched path — all-test = a test-only change), "
-        "'no_seeds_in_hunks', 'no_static_callers' are answers; 'not_covered' / 'no_match' "
-        "abstain. Pass `pr_number` for an open PR to seed from its own range."
+        "Change impact for a symbol or diff: callers up to two hops, mapped tests, "
+        "and files that co-change. `epistemic` distinguishes exact and lower-bound results. "
+        "Grep before deleting or renaming when `risk` is 'unknown'. Empty results carry a "
+        "`verdict` and `paths_seen` classifies touched paths. Pass `pr_number` for an open PR."
     ),
     # The chat client's routing sentence between two memories goes: on the
     # coding tier the scratchpad is the listed working_memory.set. Every

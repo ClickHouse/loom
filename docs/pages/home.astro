@@ -1,0 +1,117 @@
+---
+import { Image } from "astro:assets";
+import SiteFrame from "../components/SiteFrame.astro";
+import dashboard from "../assets/screenshots/memory-linked-code.webp";
+
+const capabilities = [
+  {
+    title: "Shared memory",
+    detail:
+      "Carry decisions, constraints, and lessons into future sessions. Give people and agents a common place to review and update what they know.",
+    href: "/platform#memory",
+    link: "Explore memory",
+  },
+  {
+    title: "Document search",
+    detail:
+      "Find the policy, runbook, or reference that answers a question. Open the cited passage and its document revision.",
+    href: "/platform#documents",
+    link: "Explore documents",
+  },
+  {
+    title: "Code intelligence",
+    detail:
+      "Find symbols, trace callers, and link memories to the code they describe. See when the source has changed since a memory was recorded.",
+    href: "/platform#code",
+    link: "Explore code intelligence",
+  },
+];
+---
+
+<SiteFrame
+  title="ClickHouse Loom | Shared knowledge for AI agents"
+  description="Give agents shared memory, cited document search, and code intelligence in an open-source service you can self-host on ClickHouse."
+  path="/"
+>
+  <section class="hero" aria-labelledby="home-title">
+    <div class="hero-content">
+      <p class="deployment">Open source · Self-hosted on ClickHouse</p>
+      <h1 id="home-title">Shared knowledge for AI agents.</h1>
+      <p class="lead">Loom connects what your agents learn with your team’s documents and source code. The next agent can pick up the decision, check its evidence, and keep working.</p>
+      <div class="site-actions">
+        <a class="primary" href="/docs/getting-started/quickstart">Run Loom</a>
+        <a class="secondary" href="/platform">Explore the product</a>
+      </div>
+      <p class="interfaces"><a href="/docs/getting-started/connect-a-coding-agent">Connect coding agents</a><span aria-hidden="true">·</span><a href="/docs/getting-started/first-agent">Build with the SDKs</a></p>
+    </div>
+    <figure class="preview">
+      <Image
+        src={dashboard}
+        format="webp"
+        loading="eager"
+        alt="Loom dashboard showing a payment decision linked to its function and a warning when related code has changed"
+        fetchpriority="high"
+        decoding="async"
+      />
+      <figcaption>A saved decision points to the code it applies to.</figcaption>
+    </figure>
+  </section>
+
+  <section class="site-section" aria-labelledby="product-title">
+    <div class="section-copy">
+      <h2 id="product-title">The context behind the next answer</h2>
+      <p>Agents can retrieve all three kinds of context through MCP, HTTP, or the Python and TypeScript SDKs.</p>
+    </div>
+    <div class="site-grid">
+      {capabilities.map(({ title, detail, href, link }) => (
+        <article class="site-panel">
+          <h3>{title}</h3>
+          <p>{detail}</p>
+          <a href={href}>{link} <span aria-hidden="true">↗</span></a>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="site-section evaluation" aria-labelledby="evaluation-title">
+    <div class="section-copy">
+      <h2 id="evaluation-title">Evaluate Loom for your team</h2>
+      <p>Review self-hosting, access controls, and operating requirements for a shared deployment.</p>
+    </div>
+    <div class="site-actions">
+      <a class="secondary" href="/enterprise">Review deployment options</a>
+      <a class="text-link" href="/adoption">View adoption data</a>
+    </div>
+  </section>
+</SiteFrame>
+
+<style>
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.16fr);
+    gap: clamp(1.6rem, 4vw, 5rem);
+    align-items: center;
+  }
+  .deployment { color: var(--accent); font-size: 0.87rem; font-weight: 650; margin-bottom: 1rem; }
+  .hero h1 { max-width: 15ch; font-size: clamp(2.85rem, 4.95vw, 5.6rem); text-wrap: balance; }
+  .hero .lead { max-width: 37rem; }
+  .interfaces { display: flex; flex-wrap: wrap; gap: 0.4rem 0.75rem; margin-top: 1rem; font-size: 0.88rem; }
+  .interfaces a:hover { color: var(--accent); }
+  .preview {
+    min-width: 0;
+    margin: 0;
+    padding: clamp(0.65rem, 1.6vw, 1.35rem);
+    border: 1px solid #494438;
+    border-radius: 0.85rem;
+    background: radial-gradient(ellipse at 80% 0, #4d4125, transparent 68%), #222019;
+    box-shadow: 0 1.4rem 3.2rem #0005;
+  }
+  .preview img { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 0.45rem; }
+  .preview figcaption { margin-top: 0.8rem; font-size: 0.86rem; color: var(--muted); }
+  .evaluation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.2rem 2rem; }
+  .evaluation .site-actions { margin-top: 0; }
+  @media (max-width: 63rem) {
+    .hero { grid-template-columns: minmax(0, 1fr); }
+    .hero h1 { max-width: 16ch; }
+  }
+</style>

@@ -28,6 +28,7 @@ from server.code.app.spans import (
     start_stage_wall,
 )
 from server.code.app.symbol.hierarchy import _symbol_hierarchy
+from server.code.app.symbol.named_examples import named_test_examples
 from server.code.app.symbol.neighbours import (
     _attach_enclosing_neighbours,
     _soft,
@@ -292,6 +293,29 @@ async def _enrichment(
             org, ns, symbol_name=symbol, paths=paths, extra_namespaces=input.lesson_namespaces
         )
 
+    async def examples_for_definition() -> list[dict[str, Any]]:
+        callers = code_enrich.usage_examples(
+            repo,
+            org,
+            ns,
+            sids,
+            context_lines=input.example_context_lines,
+            tests_only=input.test_examples_only,
+        )
+        if not (input.test_examples_only and _uses_brief.single_declaration(head)):
+            return await callers
+        named, sites = await asyncio.gather(
+            code_enrich.bounded(
+                named_test_examples(repo, org, ns, head[0], input.example_context_lines), []
+            ),
+            callers,
+        )
+        by_line = {(site["path"], site["line"]): site for site in sites}
+        named = [by_line.pop((site["path"], site["line"]), site) for site in named]
+        if by_line and all(site.get("evidence") == "name_reference" for site in named):
+            named = named[:2]
+        return (named + list(by_line.values()))[:3]
+
     with code_span("symbol.enrich"):
         # Each enrichment read is its own stage, so a regression names the read (one
         # `symbol.enrich` wall would hide which of the three grew).
@@ -302,17 +326,7 @@ async def _enrichment(
             else none(),
             _staged(
                 "enrich.examples",
-                _soft(
-                    code_enrich.usage_examples(
-                        repo,
-                        org,
-                        ns,
-                        sids,
-                        context_lines=input.example_context_lines,
-                        tests_only=input.test_examples_only,
-                    ),
-                    None,
-                ),
+                _soft(examples_for_definition(), None),
             )
             if input.include_examples
             else none(),

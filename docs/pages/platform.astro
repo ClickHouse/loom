@@ -1,0 +1,131 @@
+---
+import { Image } from "astro:assets";
+import SiteFrame from "../components/SiteFrame.astro";
+import memories from "../assets/screenshots/memories.webp";
+import documents from "../assets/screenshots/document-search.webp";
+import callers from "../assets/screenshots/code-callers.webp";
+
+const capabilities = [
+  {
+    id: "memory",
+    title: "Shared memory",
+    outcome: "Keep the decision and the reason behind it",
+    detail:
+      "Save what an agent learned as a fact, decision, or procedure. Retrieve it in later sessions, see why a memory changed, and review conflicts before your team relies on them.",
+    example: "A reviewer can check an earlier release decision and the evidence behind it.",
+    image: memories,
+    alt: "Loom memory dashboard showing saved facts, a pinned memory, and a flagged conflict",
+    href: "/docs/use-cases/agent-memory",
+    cta: "Explore agent memory",
+  },
+  {
+    id: "documents",
+    title: "Document search",
+    outcome: "Find an answer you can check",
+    detail:
+      "Search connected documents and retrieve passages with citations. People and agents can open the document revision behind an answer and verify the passage in context.",
+    example: "An agent can retrieve an approval policy and cite the passage that sets the limit.",
+    image: documents,
+    alt: "Loom document search results with citations to document revisions and line ranges",
+    href: "/docs/use-cases/document-search",
+    cta: "Explore document search",
+  },
+  {
+    id: "code",
+    title: "Code intelligence",
+    outcome: "See how a change travels through code",
+    detail:
+      "Index your repositories to find definitions, callers, and affected code. Attach memories to files and symbols and check whether the source they describe has changed.",
+    example: "An agent can find who calls a function and recover a decision about its behavior before editing.",
+    image: callers,
+    alt: "Loom repository explorer showing a function definition and its callers",
+    href: "/docs/use-cases/code-intelligence",
+    cta: "Explore code intelligence",
+  },
+];
+
+const workflows = [
+  {
+    title: "Sessions and runs",
+    detail: "Recover context from recorded conversations, pick up a session, and trace what an agent run did.",
+    href: "/docs/use-cases/runs-and-pr-history",
+    cta: "Explore sessions and runs",
+  },
+  {
+    title: "Tasks and decisions",
+    detail: "Hand off work and record decisions with the context other agents need to act on them.",
+    href: "/docs/features/tasks-and-decisions",
+    cta: "Explore tasks and decisions",
+  },
+  {
+    title: "Tracker and pull request history",
+    detail: "Connect issues, related pull requests, and review history to the repositories your agents work on.",
+    href: "/docs/features/tracker/overview",
+    cta: "Explore tracker and PR history",
+  },
+];
+---
+
+<SiteFrame
+  title="Product | ClickHouse Loom"
+  description="Explore Loom's shared agent memory, cited document search, code intelligence, and workflows across sessions."
+  path="/platform"
+>
+  <h1>What Loom does</h1>
+  <p class="lead">Loom gives people and agents a shared place to find decisions, source documents, and code context. Connect through MCP, HTTP, or the Python and TypeScript SDKs.</p>
+  <nav class="jump-links" aria-label="Product capabilities">
+    {capabilities.map(({ id, title }) => <a href={`#${id}`}>{title}</a>)}
+    <a href="#workflows">Agent workflows</a>
+  </nav>
+
+  {capabilities.map(({ id, title, outcome, detail, example, image, alt, href, cta }) => (
+    <section class="site-section capability" id={id} aria-labelledby={`${id}-title`}>
+      <div class="section-copy">
+        <p class="capability-label">{title}</p>
+        <h2 id={`${id}-title`}>{outcome}</h2>
+        <p>{detail}</p>
+        <p class="example">{example}</p>
+        <div class="site-actions"><a class="text-link" href={href}>{cta} <span aria-hidden="true">↗</span></a></div>
+      </div>
+      <Image src={image} format="webp" alt={alt} loading="lazy" decoding="async" />
+    </section>
+  ))}
+
+  <section class="site-section" id="workflows" aria-labelledby="workflows-title">
+    <div class="section-copy">
+      <h2 id="workflows-title">Coordinate work across agents</h2>
+      <p>Use the same system to follow agent activity, recover earlier context, and hand work from one agent or tool to another.</p>
+    </div>
+    <div class="site-grid">
+      {workflows.map(({ title, detail, href, cta }) => (
+        <article class="site-panel">
+          <h3>{title}</h3>
+          <p>{detail}</p>
+          <a href={href}>{cta} <span aria-hidden="true">↗</span></a>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="site-section" aria-labelledby="connect-title">
+    <div class="section-copy">
+      <h2 id="connect-title">Connect your tools</h2>
+      <p>Connect a coding agent through its plugin or MCP, or add Loom to your application with an SDK.</p>
+    </div>
+    <div class="site-actions">
+      <a class="primary" href="/docs/getting-started/connect-a-coding-agent">Connect a coding agent</a>
+      <a class="secondary" href="/docs/getting-started/first-agent">Build with an SDK</a>
+      <a class="text-link" href="/docs/features/integrations">Browse integrations</a>
+    </div>
+  </section>
+</SiteFrame>
+
+<style>
+  .jump-links { margin-top: 1.6rem; padding: 0.8rem 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .jump-links + .capability { margin-top: 2rem; border-top: 0; }
+  .capability { display: grid; grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr); align-items: center; gap: clamp(1.5rem, 5vw, 5rem); scroll-margin-top: 1.5rem; }
+  .capability img { min-width: 0; display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 0.7rem; }
+  .capability-label { color: var(--accent); font-size: 0.88rem; font-weight: 650; margin-bottom: 0.7rem; }
+  .section-copy .example { border-left: 2px solid #5a5747; padding-left: 0.85rem; margin-top: 1.05rem; }
+  @media (max-width: 55rem) { .capability { grid-template-columns: minmax(0, 1fr); } }
+</style>

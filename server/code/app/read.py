@@ -43,6 +43,18 @@ def _parse_range(value: str) -> tuple[str, int, int]:
     return path, start, end
 
 
+def _request_ranges(input: CodeReadInput) -> list[tuple[str, int, int]]:
+    single = input.path is not None or input.start_line is not None or input.end_line is not None
+    if single:
+        if input.ranges or input.path is None or input.start_line is None:
+            raise ValidationError("Provide ranges or path and start_line with optional end_line")
+        end = input.end_line if input.end_line is not None else input.start_line
+        return [_parse_range(f"{input.path}:{input.start_line}-{end}")]
+    if not input.ranges:
+        raise ValidationError("Provide at least one source range")
+    return [_parse_range(value) for value in input.ranges]
+
+
 async def _verified_blob(git_dir: str, path: str, commit: str, expected: str) -> bytes | None:
     limit = min(
         settings.code_ingest_max_file_bytes or _SOURCE_BYTES_PER_REQUEST, _SOURCE_BYTES_PER_REQUEST
@@ -96,7 +108,7 @@ def _fill_ranges(raw: bytes, ranges: list[CodeReadRange], remaining: int) -> int
 async def handle_code_read(input: CodeReadInput) -> CodeReadOutput:
     require_code_intel()
     org, ns = resolve_code_identity(input.org, input.namespace)
-    requested = [_parse_range(value) for value in input.ranges]
+    requested = _request_ranges(input)
     cfg = repo_for_namespace(org, ns)
     prefixes = cfg.path_prefixes if cfg is not None else ()
     results = [

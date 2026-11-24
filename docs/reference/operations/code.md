@@ -1101,7 +1101,10 @@ Read exact ranges from indexed files in one call.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `ranges` | `list[str]` | required | Repo-relative path:start-end ranges with inclusive one-based line numbers. |
+| `ranges` | `list[str]` | *(computed)* | Batch of repo-relative path:start-end ranges with inclusive one-based lines. |
+| `path` | `str \| None` | `None` | File for a single range. |
+| `start_line` | `int \| None` | `None` | First line of the single range, one-based. |
+| `end_line` | `int \| None` | `None` | Last line, inclusive. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
