@@ -412,7 +412,7 @@ def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None
     assert {"name", "clues"} <= schema["properties"].keys()
     assert edit["annotations"]["readOnlyHint"]
     grep = next(tool for tool in tools if tool["name"] == "loom_code_grep")
-    assert "use loom_code_edit_context with literal clues" in grep["description"]
+    assert "For code and tests, use loom_code_edit_context with clues" in grep["description"]
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding+tracker"])

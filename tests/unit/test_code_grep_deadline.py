@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 from unittest.mock import patch
 
@@ -24,6 +25,7 @@ from server.code.app.ttl_cache import clear_all
 from server.code.domain import deadline as code_deadline
 from server.code.domain.index import grep_sql
 from server.settings import settings
+from tests.unit.clock_fake import ManualClock
 
 CONVERT_FIELD = """    if (!parsed)
         throw Exception(ErrorCodes::TYPE_MISMATCH, "Cannot convert string {} to type {}",
@@ -189,6 +191,7 @@ def test_call_prefix_span_read_obeys_the_remaining_deadline() -> None:
 
 
 def test_dependency_deadline_keeps_exact_and_related_source() -> None:
+    clock = ManualClock(t=time.monotonic())
     exact = _chunk("src/a.py", 1, "run", "def run():\n    return process(row.value, 0)\n")
     related = _chunk("src/b.py", 1, "read", "def read():\n    return row.value\n")
     for chunk in (exact, related):
@@ -199,17 +202,21 @@ def test_dependency_deadline_keeps_exact_and_related_source() -> None:
             return [related] if pattern == "row.value" else [exact]
 
         async def member_edges_at_locations(self, org, ns, sites, member):
-            await asyncio.sleep(0.8)
+            clock.advance(1)
+            # Yield for the event loop to run the expired timer and deliver cancellation.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
             return []
 
-    out, _ = _grep(
-        SlowDependencies(),
-        pattern="process(row.value",
-        related_on_prefix=True,
-        include_dependencies=True,
-        include_body=False,
-        deadline_ms=300,
-    )
+    with patch.object(time, "monotonic", new=clock.monotonic):
+        out, _ = _grep(
+            SlowDependencies(),
+            pattern="process(row.value",
+            related_on_prefix=True,
+            include_dependencies=True,
+            include_body=False,
+            deadline_ms=500,
+        )
     assert [hit["path"] for hit in out.matches] == ["src/a.py"]
     assert out.related and out.related.matches and not out.related.dependencies
     assert out.partial and "related definition lookup timed out" in out.partial_reason
