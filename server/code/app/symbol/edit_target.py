@@ -56,12 +56,9 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
     rows = await repo.functions_for_paths(
         org, ns, [path], limit=2000, kinds=ENCLOSING_KINDS, with_revision=True
     )
-    if len(candidates) == 1:
-        targets = [row for row in rows if _row_key(row) == _match_key(matches[0])]
-        if len(targets) == 1:
-            return EditTarget(
-                f"{path}:{matches[0]['line']}", revision, candidates, targets, matches
-            )
+    targets = _matched_rows(rows, matches)
+    if len(targets) == 1:
+        return EditTarget(f"{path}:{matches[0]['line']}", revision, candidates, targets, matches)
     lines = {m["line"] for m in matches}
     types = await repo.types_for_paths(org, ns, [path], with_revision=True)
     covering = sorted(
@@ -79,24 +76,31 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
     if not _is_large_container(owner) and _indexed_commit(owner.get("extent_commit")) == revision:
         return EditTarget(name, revision, candidates, [owner], matches)
     scoped = [m for m in matches if owner["start_line"] <= m["line"] <= owner["end_line"]]
-    wanted = {_match_key(m) for m in scoped}
-    members = [
-        row
-        for row in rows
-        if _row_key(row) in wanted
-        and row["qualified_name"].startswith(owner["qualified_name"] + "::")
-    ]
-    if not members or {_row_key(row) for row in members} != wanted or len(members) != len(wanted):
+    members = _matched_rows(rows, scoped)
+    if not members or any(
+        not row["qualified_name"].startswith(owner["qualified_name"] + "::") for row in members
+    ):
         return EditTarget(candidates=candidates)
     return EditTarget(name, revision, candidates, members, scoped, grouped=True)
 
 
-def _row_key(row: dict[str, Any]) -> tuple[str, int, int]:
-    return row["qualified_name"], row["start_line"], row["end_line"]
-
-
-def _match_key(match: dict[str, Any]) -> tuple[str, int, int]:
-    return match["scope"], match["scope_start_line"], match["scope_end_line"]
+def _matched_rows(
+    rows: list[dict[str, Any]], matches: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Bind every hit by its own line. Overloads can share a grep scope name."""
+    targets: dict[str, dict[str, Any]] = {}
+    for match in matches:
+        choices = [
+            row
+            for row in rows
+            if row["qualified_name"] == match["scope"]
+            and row["start_line"] <= match["line"] <= row["end_line"]
+        ]
+        if len(choices) != 1:
+            return []
+        row = choices[0]
+        targets[row["symbol_id"]] = row
+    return list(targets.values())
 
 
 def _span(row: dict[str, Any]) -> int:
@@ -106,7 +110,7 @@ def _span(row: dict[str, Any]) -> int:
 def _scope_candidates(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candidates: dict[tuple[str, int], dict[str, Any]] = {}
     for match in matches:
-        start = match["scope_start_line"] or match["line"]
+        start = match["line"]
         candidates.setdefault(
             (match["scope"], start),
             {"path": match["path"], "qualified_name": match["scope"], "start_line": start},

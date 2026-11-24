@@ -34,7 +34,6 @@ from server.code.app.spans import (
     span_attrs,
     start_stage_wall,
 )
-from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
 from server.code.app.symbol.hierarchy import _symbol_hierarchy
 from server.code.app.symbol.named_examples import named_test_examples, owning_type
 from server.code.app.symbol.neighbours import (
@@ -376,6 +375,8 @@ async def _enrichment(
 
         if not matched_members:
             return await read(symbol)
+        from server.memory.app.code_plane_reads import fit_symbol_lessons
+
         names = list(dict.fromkeys(row["qualified_name"] for row in head))
         groups = await asyncio.gather(*(read(name) for name in names))
         notes: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
@@ -390,7 +391,7 @@ async def _enrichment(
                 )
                 linked = notes.setdefault(key, {**note, "linked_symbols": []})
                 linked["linked_symbols"].append(name)
-        return list(notes.values())
+        return fit_symbol_lessons(list(notes.values()))
 
     async def examples_for_definition() -> list[dict[str, Any]]:
         callers = code_enrich.usage_examples(
@@ -498,6 +499,8 @@ def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any],
 
 
 async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
+    from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
+
     target = await locate_edit_target(input) if input.clues else EditTarget(name=input.name)
     if not target.name:
         return CodeSymbolOutput(
@@ -515,21 +518,20 @@ async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOut
         expected_commit=target.revision,
         matched_rows=target.rows,
         matched_members=target.grouped,
+        match_witnesses=target.matches,
     )
     if target.revision is not None:
-        if not out.definitions or not all(
-            _matches_source(unit, target.matches) for unit in out.definitions
-        ):
-            return CodeSymbolOutput(
-                definitions=[], ambiguous=len(target.candidates) > 1, candidates=target.candidates
-            )
-        out.resolved_by = "file_clues"
+        if not out.definitions:
+            out.candidates = target.candidates
+            out.ambiguous = len(target.candidates) > 1
+        else:
+            out.resolved_by = "file_clues"
     return out
 
 
 def _matches_source(unit: Any, matches: list[dict[str, Any]]) -> bool:
     """A resolved span must contain a literal match at its original source line."""
-    lines = unit.body.splitlines()
+    lines = unit.body.split("\n")
     return any(
         match["path"] == unit.path
         and 0 <= (offset := match["line"] - unit.start_line) < len(lines)
@@ -545,6 +547,7 @@ async def handle_code_symbol(
     expected_commit: str | None = None,
     matched_rows: list[dict[str, Any]] | None = None,
     matched_members: bool = False,
+    match_witnesses: list[dict[str, Any]] | None = None,
 ) -> CodeSymbolOutput:
     from server.code.app import fan_in as code_fan_in
 
@@ -630,6 +633,18 @@ async def handle_code_symbol(
             )
         hashes = await legs.hashes
         units = [_unit_with_body(r, b, hashes) for r, b in zip(head, bodies, strict=True)]
+        if match_witnesses and not all(_matches_source(u, match_witnesses) for u in units):
+            legs.cancel()
+            route = "file_clues_unverified"
+            trace_id = _symbol_trace(input, org, ns, route, [], 0, started, op_name=op_name)
+            set_code_span_attributes(
+                route=route,
+                results=0,
+                abstain=True,
+                retrieval_risk="abstain",
+                consumer=input.consumer,
+            )
+            return CodeSymbolOutput(definitions=[], trace_run_id=trace_id)
 
         # symbol fan-in: one point read on the stats table's ORDER BY; the field rides on
         # every definition when the weekly stats are enabled, and an explicit filter/sort

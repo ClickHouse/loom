@@ -677,6 +677,27 @@ async def test_edit_clues_bind_the_exact_file_and_read_its_new_body(code_env, mo
     assert "return x + 202;" in await lookup("202")
 
 
+async def test_edit_clues_distinguish_overload_locations(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    path = "src/overloaded.cpp"
+    source = (
+        b"int probe(int x) {\n  return x + 101;\n}\n\nint probe(double x) {\n  return x + 101;\n}\n"
+    )
+    await _ingest(repo, org, ns, source=source, path=path)
+    result = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, name=path, clues=["101"], include_lessons=False)
+    )
+    assert result.ambiguous and not result.definitions
+    assert {candidate["start_line"] for candidate in result.candidates} == {2, 6}
+
+
 async def test_deletion_tombstones_everything(code_env) -> None:
     from server.code.app.index.ingest import tombstone_file
     from server.embedding.fake import fake_model_name

@@ -126,12 +126,17 @@ async def lessons_for_symbol(
             },
         )
     ranked = [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
+    return fit_symbol_lessons(ranked)
+
+
+def fit_symbol_lessons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep whole lesson rows within the configured aggregate budget."""
     budget = settings.code_result_lessons_tokens
     if not budget:
-        return ranked
+        return rows
     kept: list[dict[str, Any]] = []
     spent = 0
-    for lesson in ranked:
+    for lesson in rows:
         cost = len(json.dumps(lesson, ensure_ascii=False)) // 4 + 1
         if spent + cost <= budget:
             kept.append(lesson)
