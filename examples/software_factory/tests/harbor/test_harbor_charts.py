@@ -74,7 +74,7 @@ class HarborCharts(unittest.TestCase):
         self.assertEqual(data["attempts"][1]["state"], "pending")
         self.assertEqual(self.entries, before)
         self.assertEqual(data["observed"], 1)
-        self.assertEqual(data["scheduled"], 6)
+        self.assertEqual(data["scheduled"], 5)
         self.assertFalse(data["complete"])
         self.assertEqual(data["run_status"], "partial")
 
@@ -132,7 +132,7 @@ class HarborCharts(unittest.TestCase):
             "authored": {"scenario_family": "authored-simulated-memory-history"},
         }
         self.protocol["schedule"].append(
-            {"order": 6, "task_id": "authored", "repeat": 0, "arm": "baseline"}
+            {"order": 5, "task_id": "authored", "repeat": 0, "arm": "baseline"}
         )
         data = chart_data(self.protocol, self.entries, self.views)
         self.assertEqual(data["cohorts"]["default"], "historical-issue")
@@ -181,7 +181,7 @@ class HarborCharts(unittest.TestCase):
         self.assertEqual(data["interruption_reason"], "Setup evidence changed")
         self.assertFalse(data["complete"])
         self.assertEqual(data["observed"], 1)
-        self.assertEqual(data["scheduled"], 6)
+        self.assertEqual(data["scheduled"], 5)
         self.assertIsNone(data["attempts"][1]["resolved"])
         self.protocol["reporting"]["publish_charts"] = False
         html = Path(generate_charts(self.protocol, self.entries, self.views)["html"]).read_text()
@@ -221,9 +221,13 @@ class HarborCharts(unittest.TestCase):
         self.assertFalse(rows[0]["resolved"])
 
     def test_raw_attempts_remain_visible_while_only_complete_blocks_are_compared(self):
+        first_block = self.protocol["schedule"][:]
+        self.protocol["schedule"].extend(
+            {**slot, "order": slot["order"] + len(first_block), "repeat": 1} for slot in first_block
+        )
         entries = [
             {"order": slot["order"], "result": copy.deepcopy(self.entries[0]["result"])}
-            for slot in self.protocol["schedule"][:5]
+            for slot in first_block
         ]
         entries[1]["result"]["resolved"] = False
         data = chart_data(self.protocol, entries[:-1], self.views)
@@ -231,7 +235,10 @@ class HarborCharts(unittest.TestCase):
         self.assertFalse(any(row["comparison_included"] for row in data["attempts"]))
         self.assertEqual(data["attempts"][0]["cost"], 0.02)
         data = chart_data(self.protocol, entries, self.views)
-        self.assertTrue(all(row["comparison_included"] for row in data["attempts"]))
+        self.assertEqual(
+            {row["order"] for row in data["attempts"] if row["comparison_included"]},
+            set(range(len(first_block))),
+        )
         self.assertFalse(data["attempts"][1]["resolved"])
         self.assertFalse(data["complete"])
 

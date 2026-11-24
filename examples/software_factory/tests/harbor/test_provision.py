@@ -211,7 +211,7 @@ class ProvisioningContracts(unittest.TestCase):
         rows = schedule(list(tasks), seed=741)
         groups, bindings = self.provision._layout(tasks, rows, fixtures)
         self.assertEqual(len(groups), 12)
-        self.assertEqual(len(bindings), 102)
+        self.assertEqual(len(bindings), 90)
         memories = [
             (value["org"], value["memory_namespace"])
             for value in bindings.values()

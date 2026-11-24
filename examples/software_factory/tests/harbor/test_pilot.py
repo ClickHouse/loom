@@ -43,7 +43,7 @@ class PilotSelection(unittest.TestCase):
                 json.loads(Path(selected["reference_controls_file"]).read_text()), [reference[1]]
             )
             self.assertEqual(hashes, {str(path): sha(path) for path in (manifest, controls)})
-            self.assertEqual(len(prepared["schedule"]), 34)
+            self.assertEqual(len(prepared["schedule"]), 30)
             self.assertEqual(len(selected["schedule"]), 5)
             for path, digest in selected["public_inputs"].items():
                 self.assertEqual(sha(Path(path)), digest)

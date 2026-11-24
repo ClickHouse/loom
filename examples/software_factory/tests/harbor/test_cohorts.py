@@ -58,8 +58,8 @@ class CohortComparisons(unittest.TestCase):
         self.assertEqual(historical["cluster_count"], 1)
         self.assertTrue(historical["complete"])
         self.assertEqual(historical["arms"]["baseline"]["resolved"], 0)
-        self.assertEqual(historical["arms"]["baseline"]["total_cost_usd"], 6)
-        self.assertEqual(len(historical["original_orders"]), 17)
+        self.assertEqual(historical["arms"]["baseline"]["claude_cost_usd"], 6)
+        self.assertEqual(len(historical["original_orders"]), 15)
         self.assertEqual(
             sum(len(c["original_orders"]) for c in report["cohorts"].values()), len(rows)
         )

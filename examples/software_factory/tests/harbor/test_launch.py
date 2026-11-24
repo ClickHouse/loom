@@ -384,7 +384,7 @@ class PublicLauncher(unittest.TestCase):
     def test_another_profile_inherits_the_same_planner_without_flask_file_names(self):
         description = launch.plan(self.root, evaluation="sample")
         self.assertEqual(description["evaluation"]["id"], "sample")
-        self.assertEqual(description["total_attempts"], 34)
+        self.assertEqual(description["total_attempts"], 30)
         self.assertEqual(description["blind_judges"]["requests"], 8)
         self.assertEqual(description["memory"]["project_records"], 2)
         self.assertEqual(description["arms"], list(PRIMARY))

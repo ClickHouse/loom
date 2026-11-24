@@ -157,7 +157,7 @@ class PairedAnalysisContracts(unittest.TestCase):
         self.assertFalse(report["complete"])
         self.assertEqual(report["missing_orders"], [missing])
         self.assertEqual(report["paired_deltas"], {})
-        self.assertEqual(sum(a["observed"] for a in report["arms"].values()), 50)
+        self.assertEqual(sum(a["observed"] for a in report["arms"].values()), 44)
 
     def test_duplicates_scope_changes_and_baseline_exposure_refuse(self):
         order, entries = inputs()
