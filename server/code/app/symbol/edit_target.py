@@ -62,20 +62,22 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
     lines = {m["line"] for m in matches}
     types = await repo.types_for_paths(org, ns, [path], with_revision=True)
     covering = sorted(
-        (
-            row
-            for row in types
-            if 2 * sum(row["start_line"] <= line <= row["end_line"] for line in lines) > len(lines)
-        ),
+        (row for row in types if 2 * sum(_contains(row, line) for line in lines) > len(lines)),
         key=_span,
     )
     if not covering or (len(covering) > 1 and _span(covering[0]) == _span(covering[1])):
         return EditTarget(candidates=candidates)
     owner = covering[0]
+    if any(
+        (row["end_line"] < owner["start_line"] or owner["end_line"] < row["start_line"])
+        and any(_contains(row, line) for line in lines)
+        for row in types
+    ):
+        return EditTarget(candidates=candidates)
     name = f"{path}:{owner['qualified_name']}"
     if not _is_large_container(owner) and _indexed_commit(owner.get("extent_commit")) == revision:
         return EditTarget(name, revision, candidates, [owner], matches)
-    scoped = [m for m in matches if owner["start_line"] <= m["line"] <= owner["end_line"]]
+    scoped = [m for m in matches if _contains(owner, m["line"])]
     members = _matched_rows(rows, scoped)
     if not members or any(
         not row["qualified_name"].startswith(owner["qualified_name"] + "::") for row in members
@@ -93,14 +95,17 @@ def _matched_rows(
         choices = [
             row
             for row in rows
-            if row["qualified_name"] == match["scope"]
-            and row["start_line"] <= match["line"] <= row["end_line"]
+            if row["qualified_name"] == match["scope"] and _contains(row, match["line"])
         ]
         if len(choices) != 1:
             return []
         row = choices[0]
         targets[row["symbol_id"]] = row
     return list(targets.values())
+
+
+def _contains(row: dict[str, Any], line: int) -> bool:
+    return row["start_line"] <= line <= row["end_line"]
 
 
 def _span(row: dict[str, Any]) -> int:

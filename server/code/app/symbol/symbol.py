@@ -375,8 +375,6 @@ async def _enrichment(
 
         if not matched_members:
             return await read(symbol)
-        from server.memory.app.code_plane_reads import fit_symbol_lessons
-
         names = list(dict.fromkeys(row["qualified_name"] for row in head))
         groups = await asyncio.gather(*(read(name) for name in names))
         notes: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
@@ -391,7 +389,7 @@ async def _enrichment(
                 )
                 linked = notes.setdefault(key, {**note, "linked_symbols": []})
                 linked["linked_symbols"].append(name)
-        return fit_symbol_lessons(list(notes.values()))
+        return list(notes.values())
 
     async def examples_for_definition() -> list[dict[str, Any]]:
         callers = code_enrich.usage_examples(
@@ -444,6 +442,10 @@ async def _enrichment(
             out.update(
                 await code_enrich.bounded(_owner_context(repo, org, ns, input, head[0], out), {})
             )
+    if out.get("lessons"):
+        from server.memory.app.code_plane_reads import fit_symbol_lessons
+
+        out["lessons"] = fit_symbol_lessons(out["lessons"])
     return out
 
 

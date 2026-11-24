@@ -698,6 +698,32 @@ async def test_edit_clues_distinguish_overload_locations(code_env, monkeypatch) 
     assert {candidate["start_line"] for candidate in result.candidates} == {2, 6}
 
 
+async def test_edit_clues_keep_candidates_for_competing_types(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    path = "src/competing.py"
+    source = (
+        b"class First:\n    def choose(self):\n"
+        b"        option = 1\n        option += 2\n        return option\n\n"
+        b"class Second:\n    def choose(self):\n"
+        b"        option = 3\n        return option\n"
+    )
+    await _ingest(repo, org, ns, source=source, path=path)
+    result = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=path, clues=["option"], include_lessons=False
+        )
+    )
+    assert result.ambiguous and not result.definitions
+    assert len({candidate["qualified_name"] for candidate in result.candidates}) == 2
+
+
 async def test_deletion_tombstones_everything(code_env) -> None:
     from server.code.app.index.ingest import tombstone_file
     from server.embedding.fake import fake_model_name
