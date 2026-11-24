@@ -60,6 +60,10 @@ class CodeSymbolInput(_CodeIdentity):
     include_history: bool = True
     # Attach `examples` (call sites that use the symbol) to the first definition.
     include_examples: bool = True
+    test_examples_only: bool = Field(
+        default=False,
+        description="Use indexed test examples. Set example_context_lines to include their source.",
+    )
     example_context_lines: int = Field(
         default=0,
         ge=0,

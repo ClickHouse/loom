@@ -61,12 +61,19 @@ async def usage_examples(
     *,
     limit: int = 3,
     context_lines: int = 0,
+    tests_only: bool = False,
 ) -> list[dict[str, Any]]:
-    """Call sites of the symbol, test-covered callers first, newest first."""
+    """Call sites of the symbol, optionally restricted to indexed tests."""
     with_context = bool(context_lines and settings.embedding_model)
     edges = await bounded(
         repo.edges_for_symbols(
-            org, ns, symbol_ids, direction="callers", limit=50, with_revision=with_context
+            org,
+            ns,
+            symbol_ids,
+            direction="callers",
+            limit=50,
+            with_revision=with_context,
+            tests_only=tests_only,
         ),
         [],
     )

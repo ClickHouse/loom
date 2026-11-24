@@ -2181,7 +2181,8 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.symbol": (
         "Read a definition by name, path:symbol, or path:line with source and linked lessons. "
-        "Name the class to read related methods together.\n\n"
+        "Name the class for related methods. Set `test_examples_only: true` and "
+        "`example_context_lines` to read nearby test code with the definition.\n\n"
         "Use code.read for exact line ranges or code.search for unknown implementations. "
         "`example_context_lines` adds source near recorded usage sites. Use code.enclosing with "
         "include_body=true for several known locations. "
