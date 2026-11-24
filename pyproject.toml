@@ -353,6 +353,7 @@ exclude = [
   "server/code/domain/extract/py_decorated_chunks.py",
   "server/code/domain/extract/py_layouts.py",
   "server/code/domain/extract/py_library_methods.py",
+  "server/code/domain/extract/py_member_reads.py",
   "server/code/domain/extract/py_members.py",
   "server/code/domain/extract/py_receivers.py",
   "server/code/domain/extract/registration.py",

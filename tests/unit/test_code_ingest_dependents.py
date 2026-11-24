@@ -285,7 +285,8 @@ def test_dependents_follow_tombstoned_targets_and_ambiguous_names() -> None:
     ]
     # (b) any grade, every dependent edge kind; (d) only the repo-wide grade
     kinds = {c[2]: c[3] for c in repo.calls if c[0] == "edges_to"}
-    assert kinds[("calls", "inherits", "fixture_use")] is None and kinds[("calls",)] == 0.65
+    assert kinds[("calls", "inherits", "fixture_use", "reads")] is None
+    assert kinds[("calls",)] == 0.65
     assert not repo.state, "nothing queued under the cap"
 
 

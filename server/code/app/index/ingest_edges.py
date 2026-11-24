@@ -9,6 +9,7 @@ import logging
 import posixpath
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from server.code.app.index.ingest_headers import HEADER_EXTS, forget_header, header_context
@@ -32,6 +33,7 @@ from server.code.app.index.ingest_resolve import (
     _resolve_lane_includes,
 )
 from server.code.app.index.ingest_stats import FileIngestStats, error_text
+from server.code.domain.extract import py_member_reads
 from server.code.domain.extract.edges_treesitter import (
     Edge,
     HeaderDecls,
@@ -42,6 +44,7 @@ from server.code.domain.extract.lang_py_islands import py_sql_units
 from server.code.domain.extract.lang_shell_islands import drop_program_misses
 from server.code.domain.extract.lang_sql_model import SQL_LANG
 from server.code.domain.extract.name_scope import drop_test_local_shell_defs, gate_name_table
+from server.code.domain.extract.py_receivers import NAME_PREFIX
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.store.index import CodeRepo
 
@@ -169,6 +172,59 @@ async def _py_class_bases(
     return out
 
 
+@dataclass
+class _EdgeNames:
+    calls: dict[str, list[tuple[str, str, str]]]
+    reads: dict[str, list[tuple[str, str, str]]]
+    member_sites: list[py_member_reads.MemberRead]
+    chains: dict[str, tuple[str, str]]
+
+
+async def _edge_names(
+    repo: CodeRepo, org: str, ns: str, pf: ParsedFile, header: HeaderDecls | None
+) -> _EdgeNames:
+    member_sites = (
+        await asyncio.to_thread(py_member_reads.read_sites, pf) if pf.lang == "python" else []
+    )
+    names = collect_call_names(pf, header)
+    chains = await _reexport_chains(repo, org, ns, pf)
+    names.update(declared for _module, declared in chains.values())
+    requested = names | {name for site in member_sites for name in (site.receiver, site.member)}
+    rows = await repo.name_candidates(org, ns, sorted(requested)) if requested else {}
+    # A site binds within its language class. A shell program can share a name with C++.
+    rows = gate_name_table(rows, pf.lang)
+    calls = {name: hits for name, hits in rows.items() if name in names}
+    if pf.lang == "shell":
+        calls = drop_test_local_shell_defs(calls, pf.path)
+    return _EdgeNames(calls, rows, member_sites, chains)
+
+
+async def _python_read_edges(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    pf: ParsedFile,
+    names: _EdgeNames,
+    context: dict[str, Any] | None,
+    callee_returns: dict[str, str],
+) -> list[Edge]:
+    targets = await asyncio.to_thread(
+        py_member_reads.receiver_targets, pf, names.member_sites, names.reads, context
+    )
+    type_rows = (
+        await repo.return_types_for_qualified(org, ns, sorted(set(targets.values())))
+        if targets
+        else {}
+    )
+    types = {
+        name: value for name, value in callee_returns.items() if not name.startswith(NAME_PREFIX)
+    }
+    types.update({name: type_rows[q] for name, q in targets.items() if q in type_rows})
+    return await asyncio.to_thread(
+        py_member_reads.read_edges, pf, names.member_sites, names.reads, types, context
+    )
+
+
 async def _derive_edges(
     repo: CodeRepo,
     org: str,
@@ -192,15 +248,8 @@ async def _derive_edges(
 
     async def _run() -> tuple[list[Edge], list[Any]]:
         await _resolve_lane_includes(repo, org, ns, pf)
-        names = collect_call_names(pf, header)
-        chains = await _reexport_chains(repo, org, ns, pf)
-        names |= {declared for _m, declared in chains.values()}
-        name_table = await repo.name_candidates(org, ns, sorted(names)) if names else {}
-        # A call site binds only within its language class — a bash `seq` must never
-        # resolve to a C++ method of that name.
-        name_table = gate_name_table(name_table, pf.lang)
-        if pf.lang == "shell":
-            name_table = drop_test_local_shell_defs(name_table, path)
+        names = await _edge_names(repo, org, ns, pf, header)
+        name_table, chains = names.calls, names.chains
         lane_context = await _go_lane_context(repo, org, ns, pf, name_table)
         lane_context = await _py_lane_context(repo, org, ns, pf, lane_context, name_table)
         callee_returns = await _ts_callee_returns(
@@ -221,6 +270,10 @@ async def _derive_edges(
             lane_context,
             chains,
         )
+        if names.member_sites:
+            edges.extend(
+                await _python_read_edges(repo, org, ns, pf, names, lane_context, callee_returns)
+            )
         if pf.lang == "shell":
             misses = drop_program_misses(misses)  # A program is a facet
         if pf.lang in TS_LANGS:

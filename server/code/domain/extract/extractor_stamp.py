@@ -86,6 +86,7 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
         "registration.py",
         "ts_receivers.py",
         "py_receivers.py",
+        "py_member_reads.py",
         "py_library_methods.py",
         "ts_config.py",
         "ts_reexports.py",
@@ -290,6 +291,7 @@ EVERY_LANGUAGE = "*"
 MODULE_LANGUAGES: dict[str, str] = {
     "lang_python.py": "python",
     "py_receivers.py": "python",
+    "py_member_reads.py": "python",
     "cpp_receivers.py": "cpp",
     "py_library_methods.py": "python",
     "py_members.py": "python",

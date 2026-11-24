@@ -481,7 +481,7 @@ async def run_for_commit(
                 org,
                 ns,
                 tomb_ids,
-                edge_kinds=["calls", "inherits", "fixture_use"],
+                edge_kinds=["calls", "inherits", "fixture_use", "reads"],
             )
         ]
         if tomb_ids
