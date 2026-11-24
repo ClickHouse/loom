@@ -406,7 +406,7 @@ use serde_json::{json, Value};
 
 let result = bot.call::<Value>(
     "memory.pin",
-    &json!({"memory_key": "deploy_window"}),
+    &json!({"memory_key": "deploy_window", "value": "Deploy on weekdays"}),
     CallOptions::default(),
 ).await?;
 println!("{} attempts={}", result.data, result.metadata.attempts);

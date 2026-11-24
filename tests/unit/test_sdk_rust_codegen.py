@@ -36,19 +36,21 @@ def test_projection_and_secret_metadata_reach_nested_models() -> None:
     assert secret["properties"]["verification_token"]["_rust_secret"]
 
 
-def test_collection_delete_requires_target_namespace() -> None:
-    from server.identity.api.models_collections import CollectionDeleteInput
-
+@pytest.mark.parametrize(
+    "name",
+    ["namespace.delete", "namespace.rollback", "collection.move", "collection.delete"],
+)
+def test_destructive_namespace_operations_require_target_namespace(name: str) -> None:
+    op = gen.selected_operations((name,))[0]
+    model = gen.operation_type(op, request=True)
     emitter = gen.Emitter()
     emitter.model(
-        "CollectionDeleteInput",
-        gen.schema_for(CollectionDeleteInput),
+        model,
+        gen.schema_for(op.input_model),
         request=True,
-        operation=("collection.delete", "CollectionDeleteOutput"),
+        operation=(name, gen.operation_type(op, request=False)),
     )
-    assert (
-        "pub fn new(namespace: impl Into<String>)" in emitter.declarations["CollectionDeleteInput"]
-    )
+    assert "pub fn new(namespace: impl Into<String>" in emitter.declarations[model]
 
 
 def test_reader_filters_and_collection_targets_are_not_stamped() -> None:

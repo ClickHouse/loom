@@ -33,9 +33,15 @@ async fn seed(namespace: &str) -> (Client, Client) {
     let target = client(namespace, "target", "target-user", "target-session");
     for (writer, marker) in [(&bound, "bound"), (&target, "target")] {
         for key in ["read", "delete", "version", "lock"] {
+            let input = MemorySetInput::new(key, json!(format!("{marker} {key} orchid evidence")));
+            let input = if key == "read" {
+                input.tags(["identity-read"])
+            } else {
+                input
+            };
             writer
                 .memory_set(
-                    MemorySetInput::new(key, json!(format!("{marker} {key} orchid evidence")))
+                    input
                         .agent("forged")
                         .user_id("forged")
                         .session_id("forged")
@@ -98,15 +104,23 @@ async fn memory_targets_and_filters_select_stored_rows() {
     for op in ["memory.search", "memory.ask", "memory.brief"] {
         let mut body = target_body("read");
         body["query"] = json!("orchid evidence");
-        body["search_mode"] = json!("lexical");
-        body["allow_synthesis"] = json!(false);
-        body["reinforce"] = json!(false);
+        if op == "memory.brief" {
+            body.as_object_mut().unwrap().remove("memory_key");
+            body["tags"] = json!(["identity-read"]);
+        } else {
+            body["search_mode"] = json!("lexical");
+            body["allow_synthesis"] = json!(false);
+            body["reinforce"] = json!(false);
+        }
         let result = call(&bound, op, body).await;
         assert!(
             result.to_string().contains("target read orchid evidence"),
             "{op}: {result}"
         );
-        assert!(!result.to_string().contains("bound read orchid evidence"));
+        assert!(
+            !result.to_string().contains("bound read orchid evidence"),
+            "{op}: {result}"
+        );
     }
     let deleted = MemoryDeleteInput::new("delete")
         .agent("target")

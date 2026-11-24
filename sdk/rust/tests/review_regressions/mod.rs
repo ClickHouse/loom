@@ -66,19 +66,23 @@ async fn generic_namespace_targets_and_derived_collection_names_survive() {
 
 #[tokio::test]
 async fn namespace_and_collection_requests_preserve_targets() {
+    assert!(serde_json::from_value::<NamespaceDeleteInput>(json!({})).is_err());
+    assert!(serde_json::from_value::<NamespaceRollbackInput>(
+        json!({"as_of": "2020-01-01T00:00:00Z"})
+    )
+    .is_err());
+    assert!(serde_json::from_value::<CollectionMoveInput>(json!({})).is_err());
     let server = Server::new(target_responses());
     let client = Client::builder("org", "col-a", "bot")
         .base_url(&server.url)
         .api_key("")
         .build()
         .unwrap();
-    NamespaceDeleteInput::new()
-        .namespace("col-b")
+    NamespaceDeleteInput::new("col-b")
         .send(&client, CallOptions::default())
         .await
         .unwrap();
-    NamespaceRollbackInput::new("2020-01-01T00:00:00Z")
-        .namespace("col-b")
+    NamespaceRollbackInput::new("col-b", "2020-01-01T00:00:00Z")
         .send(&client, CallOptions::default())
         .await
         .unwrap();
@@ -87,8 +91,7 @@ async fn namespace_and_collection_requests_preserve_targets() {
         .send(&client, CallOptions::default())
         .await
         .unwrap();
-    CollectionMoveInput::new()
-        .namespace("col-b")
+    CollectionMoveInput::new("col-b")
         .send(&client, CallOptions::default())
         .await
         .unwrap();
@@ -115,16 +118,16 @@ fn blocking_namespace_and_collection_requests_preserve_targets() {
         .build()
         .unwrap();
     client
-        .namespace_delete(NamespaceDeleteInput::new().namespace("col-b"))
+        .namespace_delete(NamespaceDeleteInput::new("col-b"))
         .unwrap();
     client
-        .namespace_rollback(NamespaceRollbackInput::new("2020-01-01T00:00:00Z").namespace("col-b"))
+        .namespace_rollback(NamespaceRollbackInput::new("col-b", "2020-01-01T00:00:00Z"))
         .unwrap();
     client
         .collection_create(CollectionCreateInput::new().namespace("col-b"))
         .unwrap();
     client
-        .collection_move(CollectionMoveInput::new().namespace("col-b"))
+        .collection_move(CollectionMoveInput::new("col-b"))
         .unwrap();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

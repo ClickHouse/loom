@@ -503,12 +503,12 @@ class Emitter:
         wire_fields: list[WireField] = []
         debug_fields: list[str] = []
         secrets: set[str] = set()
+        supplied: set[str] = set()
+        if operation is not None:
+            identity, defaults = operation_identity_fields(selected_operations((operation[0],))[0])
+            supplied = (identity | defaults) & {"org", "namespace", "agent"}
         for wire, prop in schema.get("properties", {}).items():
-            is_required = wire in required and not (
-                operation is not None
-                and wire in {"org", "namespace", "agent"}
-                and not (operation[0] == "collection.delete" and wire == "namespace")
-            )
+            is_required = wire in required and wire not in supplied
             projected = not request and schema.get("_rust_projected")
             field = self.field(
                 name,
@@ -620,80 +620,87 @@ def rustfmt(text: str) -> str:
     ).stdout
 
 
-def operation_facts() -> str:
+def operation_identity_fields(op: Any) -> tuple[set[str], set[str]]:
     from server.code.api.models_common import _CodeIdentity
     from server.memory.api.models_common import _Identity
-    from server.operations.registry import ALL_OPERATIONS
     from server.tasks.api.models_task import _Caller
+
+    keys = set(op.input_model.model_fields)
+    identity = keys & {"org", "namespace"}
+    defaults = set()
+    fact = OpFacts.of(op)
+    if issubclass(op.input_model, _Identity):
+        stamped, defaults = memory_tuple_policy(op)
+        identity |= stamped
+    if issubclass(op.input_model, (_CodeIdentity, _Caller)):
+        identity |= keys & {"agent", "user_id", "session_id", "run_id"}
+    # These models declare authorship directly rather than through a base.
+    if op.name in {
+        "memory.promote",
+        "memory.verify",
+        "memory.import_evidence",
+        "memory.record.write",
+        "knowledge.add",
+        "knowledge.upsert",
+        "knowledge.bulk_add",
+        "knowledge.ingest",
+        "knowledge.source.push_configure",
+        "knowledge.synthesize",
+        "decision.record",
+        "decision.outcome",
+        "observe.record",
+        "observe.crystallize",
+        "run.begin",
+        "cost.record_turns",
+        "procedure.add",
+        "procedure.record_run",
+        "procedure.fork",
+    } or op.name.startswith("conversation."):
+        identity |= keys & {"agent", "user_id", "session_id"}
+    if op.name in PROCEDURE_TARGETS:
+        defaults = keys & {"agent", "user_id", "session_id"}
+    if op.name in {
+        "memory.update",
+        "memory.link",
+        "decision.record",
+        "observe.record",
+    }:
+        identity |= keys & {"run_id"}
+    if op.name.startswith(("namespace.", "collection.")):
+        identity.discard("namespace")
+        if (
+            op.name
+            not in {
+                "namespace.delete",
+                "namespace.rollback",
+                "collection.create",
+                "collection.move",
+                "collection.delete",
+            }
+            and "namespace" in keys
+            and op.input_model.model_fields["namespace"].is_required()
+        ):
+            defaults.add("namespace")
+    if op.name in NAMESPACE_FILTERS:
+        identity.discard("namespace")
+    if op.name.startswith("conversation.") and fact.read_only:
+        identity -= {"agent", "user_id", "session_id"}
+        defaults = {
+            key
+            for key in keys & {"agent", "user_id"}
+            if op.input_model.model_fields[key].is_required()
+        }
+    return identity, defaults
+
+
+def operation_facts() -> str:
+    from server.operations.registry import ALL_OPERATIONS
 
     validate_roles(ALL_OPERATIONS)
     facts = []
     for op in ALL_OPERATIONS:
-        keys = set(op.input_model.model_fields)
-        identity = keys & {"org", "namespace"}
-        defaults = set()
         fact = OpFacts.of(op)
-        if issubclass(op.input_model, _Identity):
-            stamped, defaults = memory_tuple_policy(op)
-            identity |= stamped
-        if issubclass(op.input_model, (_CodeIdentity, _Caller)):
-            identity |= keys & {"agent", "user_id", "session_id", "run_id"}
-        # These models declare authorship directly rather than through a base.
-        if op.name in {
-            "memory.promote",
-            "memory.verify",
-            "memory.import_evidence",
-            "memory.record.write",
-            "knowledge.add",
-            "knowledge.upsert",
-            "knowledge.bulk_add",
-            "knowledge.ingest",
-            "knowledge.source.push_configure",
-            "knowledge.synthesize",
-            "decision.record",
-            "decision.outcome",
-            "observe.record",
-            "observe.crystallize",
-            "run.begin",
-            "cost.record_turns",
-            "procedure.add",
-            "procedure.record_run",
-            "procedure.fork",
-        } or op.name.startswith("conversation."):
-            identity |= keys & {"agent", "user_id", "session_id"}
-        if op.name in PROCEDURE_TARGETS:
-            defaults = keys & {"agent", "user_id", "session_id"}
-        if op.name in {
-            "memory.update",
-            "memory.link",
-            "decision.record",
-            "observe.record",
-        }:
-            identity |= keys & {"run_id"}
-        if op.name.startswith(("namespace.", "collection.")):
-            identity.discard("namespace")
-            if (
-                op.name
-                not in {
-                    "namespace.delete",
-                    "namespace.rollback",
-                    "collection.create",
-                    "collection.move",
-                    "collection.delete",
-                }
-                and "namespace" in keys
-                and op.input_model.model_fields["namespace"].is_required()
-            ):
-                defaults.add("namespace")
-        if op.name in NAMESPACE_FILTERS:
-            identity.discard("namespace")
-        if op.name.startswith("conversation.") and fact.read_only:
-            identity -= {"agent", "user_id", "session_id"}
-            defaults = {
-                key
-                for key in keys & {"agent", "user_id"}
-                if op.input_model.model_fields[key].is_required()
-            }
+        identity, defaults = operation_identity_fields(op)
         fields = ", ".join(rust_string(key) for key in sorted(identity))
         default_fields = ", ".join(rust_string(key) for key in sorted(defaults))
         facts.append(

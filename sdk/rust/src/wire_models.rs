@@ -15942,12 +15942,7 @@ pub struct CollectionMoveInput {
         deserialize_with = "present_value"
     )]
     pub org: Option<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present_value"
-    )]
-    pub namespace: Option<String>,
+    pub namespace: String,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -15955,25 +15950,16 @@ pub struct CollectionMoveInput {
     )]
     pub parent: Option<String>,
 }
-impl Default for CollectionMoveInput {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 impl CollectionMoveInput {
-    pub fn new() -> Self {
+    pub fn new(namespace: impl Into<String>) -> Self {
         Self {
             org: None,
-            namespace: None,
+            namespace: namespace.into(),
             parent: None,
         }
     }
     pub fn org(mut self, org: impl Into<String>) -> Self {
         self.org = Some(org.into());
-        self
-    }
-    pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
-        self.namespace = Some(namespace.into());
         self
     }
     pub fn parent(mut self, parent: impl Into<String>) -> Self {
@@ -44161,31 +44147,17 @@ pub struct NamespaceDeleteInput {
         deserialize_with = "present_value"
     )]
     pub org: Option<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present_value"
-    )]
-    pub namespace: Option<String>,
-}
-impl Default for NamespaceDeleteInput {
-    fn default() -> Self {
-        Self::new()
-    }
+    pub namespace: String,
 }
 impl NamespaceDeleteInput {
-    pub fn new() -> Self {
+    pub fn new(namespace: impl Into<String>) -> Self {
         Self {
             org: None,
-            namespace: None,
+            namespace: namespace.into(),
         }
     }
     pub fn org(mut self, org: impl Into<String>) -> Self {
         self.org = Some(org.into());
-        self
-    }
-    pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
-        self.namespace = Some(namespace.into());
         self
     }
     pub async fn send(
@@ -47447,12 +47419,7 @@ pub struct NamespaceRollbackInput {
         deserialize_with = "present_value"
     )]
     pub org: Option<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present_value"
-    )]
-    pub namespace: Option<String>,
+    pub namespace: String,
     pub as_of: String,
     #[serde(
         default,
@@ -47474,10 +47441,10 @@ pub struct NamespaceRollbackInput {
     pub max_keys: Option<Integer>,
 }
 impl NamespaceRollbackInput {
-    pub fn new(as_of: impl Into<String>) -> Self {
+    pub fn new(namespace: impl Into<String>, as_of: impl Into<String>) -> Self {
         Self {
             org: None,
-            namespace: None,
+            namespace: namespace.into(),
             as_of: as_of.into(),
             dry_run: None,
             memory_keys: None,
@@ -47486,10 +47453,6 @@ impl NamespaceRollbackInput {
     }
     pub fn org(mut self, org: impl Into<String>) -> Self {
         self.org = Some(org.into());
-        self
-    }
-    pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
-        self.namespace = Some(namespace.into());
         self
     }
     pub fn dry_run(mut self, dry_run: bool) -> Self {
