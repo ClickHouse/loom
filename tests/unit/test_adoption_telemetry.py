@@ -54,13 +54,13 @@ async def test_missing_deployment_id_surfaces_status_without_delivery(
     [
         httpx.Response(302, headers={"Location": "https://other.example/adoption"}),
         httpx.Response(200, json={"stored": True, "window_start": "not-this-window"}),
-        httpx.Response(200, content=b"x" * 4097),
+        None,
     ],
     ids=["redirect", "wrong-acknowledgement", "oversized-acknowledgement"],
 )
 @pytest.mark.parametrize("share_domains", [False, True])
 async def test_delivery_retries_without_recounting_after_ack(
-    monkeypatch: pytest.MonkeyPatch, rejection: httpx.Response, share_domains: bool
+    monkeypatch: pytest.MonkeyPatch, rejection: httpx.Response | None, share_domains: bool
 ) -> None:
     monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
     monkeypatch.setattr(settings, "adoption_telemetry_share_domains", share_domains)
@@ -99,9 +99,13 @@ async def test_delivery_retries_without_recounting_after_ack(
 
     def collect(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if len(requests) == 1:
+        acknowledgement = {"stored": True, **json.loads(request.content)}
+        if len(requests) > 1:
+            return httpx.Response(200, json=acknowledgement)
+        if rejection is not None:
             return rejection
-        return httpx.Response(200, json={"stored": True, **json.loads(request.content)})
+        padded = json.dumps(acknowledgement).encode().ljust(4097, b" ")
+        return httpx.Response(200, content=padded)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(collect)) as client:
         monkeypatch.setattr(adoption_telemetry, "get_http_client", lambda: client)
