@@ -99,6 +99,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Tune Loom's performance](docs/guides/performance-tuning.md): Every lever on this page is a setting or a request field.
 - [Query Loom from Postgres](docs/guides/query-from-postgres.md): This guide reads a tenant's memories, conversations and usage from the org's own Postgres, where they can be joined with the application's tables.
 - [Answer questions about a repository](docs/guides/repository-questions.md): Use `code.search` to retrieve source and documentation, and `code.ask` to produce a cited answer from that evidence.
+- [How to choose AI software factory tools](docs/guides/software-factory-tools.md): An AI software factory coordinates agents and existing development tools to take work from an issue to a tested change.
 - [Teaching with Loom](docs/guides/teaching.md): Loom can serve as the lab environment for a course on AI agents, information retrieval, databases or software engineering.
 - [Tokens and grants](docs/guides/tokens-and-grants.md): Every call carries one JWT.
 - [Trace and resume long agent runs](docs/guides/trace-and-resume.md): A long run (process 300 files, crawl a repository, work through a plan) can stop part way: a crash, a full context window, a deploy, a pause.

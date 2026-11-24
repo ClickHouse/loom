@@ -114,6 +114,8 @@ For a single coding assistant, start with [coding-agent memory](agent-memory.md#
 and its cross-session check. For architecture trade-offs, read [Choosing memory for a software factory](https://github.com/ClickHouse/loom/discussions/939).
 Use the [code-linked lesson example](memory-linked-to-code.md#check-a-lesson-after-a-code-edit)
 to evaluate source freshness separately from recall.
+To evaluate the full toolchain, use the [software factory tools pilot](../guides/software-factory-tools.md)
+to check planning, execution, review and release on one repository.
 
 ## Start
 

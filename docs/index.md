@@ -114,6 +114,7 @@ client sees one the server no longer reads.
 [Headless bots](guides/headless-bots.md) ·
 [Tokens and grants](guides/tokens-and-grants.md) ·
 [Trace and resume long runs](guides/trace-and-resume.md) ·
+[Choose AI software factory tools](guides/software-factory-tools.md) ·
 [Optimize a namespace](guides/optimize-namespace.md) ·
 [Investigation-agent memory](guides/investigation-agent-memory.md) ·
 [Extraction pipelines](guides/extraction-pipeline.md) ·
