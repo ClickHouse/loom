@@ -374,19 +374,21 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     the tools the connection's ``toolset`` listing carries."""
     tool = _tool_refs(toolset)
     collections = knowledge_search_reads_collections()
-    task_pack = (
-        _linked_history_guidance(tool["context.pack"])
-        if _bound_coding_connection(toolset)
-        else (
+    if not _bound_coding_connection(toolset):
+        task_context = (
             f"With a default memory namespace, call {tool['context.pack']} first with the task "
             "as `query`, for the memories, decisions and procedures that bear on it in one "
-            "bounded bundle. "
+            f"bounded bundle. Skip it when {FIRST_STEP_HOOK}. "
         )
-    )
+    elif defaults and defaults.get("namespace"):
+        task_context = _linked_history_guidance(tool["context.pack"])
+        task_context += f"Skip it when {FIRST_STEP_HOOK}. "
+    else:
+        task_context = "Read indexed source and its linked lessons for repository work. "
     head = (
         "**Loom-first mode active for this conversation.**\n\n"
         + _tool_routing(toolset)
-        + f"**1. Task context.** {task_pack}Skip it when {FIRST_STEP_HOOK}. "
+        + f"**1. Task context.** {task_context}"
         "For one fact, rule 2's search alone is enough.\n\n"
         "**2. Recall lookup order.** When I ask about preferences, "
         "decisions, family/relationships, work, bills, contracts, "

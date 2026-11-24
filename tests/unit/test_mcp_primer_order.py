@@ -120,6 +120,15 @@ def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) 
     assert "First step of each task" in unbound
 
 
+def test_bound_coding_activation_with_no_default_memory_home() -> None:
+    rules = mcp_primer._loom_rules(
+        "coding", {"org": "project", "namespace": "", "agent": "coding", "readable": ["source"]}
+    )
+    first_rule = rules.split("**2. Recall lookup order.**")[0]
+    assert "Read indexed source and its linked lessons" in first_rule
+    assert "loom_context_pack" not in first_rule
+
+
 def test_compact_coding_catalog_describes_the_task_pack_without_ordering() -> None:
     from server.transport.mcp_tools import _tools_descriptor
 
