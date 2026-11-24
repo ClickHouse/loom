@@ -31,16 +31,18 @@ curl --fail-with-body -sS "$LOOM_BASE_URL/v1/code.ask" \
     "namespace": "code-example",
     "question": "Where is the cache retry delay calculated?",
     "synthesize": false,
+    "no_cache": true,
     "rerank": "none"
   }'
 ```
 
 This returns retrieved `citations` with `path`, `start_line` and `end_line`. The
-`answer` field is empty because the request retrieves evidence for the client to
-use. `rerank: "none"` skips reranking. Retrieval can still use the deployment's
+`answer` field is empty because the request skips synthesis and cached drafts.
+`rerank: "none"` skips reranking. Retrieval can still use the deployment's
 embedding provider. To let Loom draft the answer, set `synthesize` to `true` with a
-[configured server model](../getting-started/models-and-keys.md). The corresponding
-MCP tool is [`loom_code_ask`](../reference/operations/code.md#codeask).
+[configured server model](../getting-started/models-and-keys.md). Omit `no_cache`
+to let Loom reuse a cached draft. The corresponding MCP tool is
+[`loom_code_ask`](../reference/operations/code.md#codeask).
 
 Use `as_of` when available to check the indexed branch and commit behind the result.
 Check `abstain`, `partial` and their reasons before displaying an answer. To test
