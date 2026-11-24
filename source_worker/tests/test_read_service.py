@@ -120,6 +120,24 @@ class TestReadService(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ReadFailure, "^denied$"):
             await read
 
+    async def test_revocation_precedes_output_limit_refusal(self) -> None:
+        self.backend.payload = "é" * 65
+        service = self._service()
+        with self.assertRaisesRegex(ReadFailure, "^unsupported$"):
+            await service.execute(self._token(self._live()), "live")
+
+        self.backend.release.clear()
+        self.backend.started.clear()
+        read = asyncio.create_task(service.execute(self._token(self._live()), "live"))
+        try:
+            await self.backend.started.wait()
+            self.backend.binding = self.backend.binding.model_copy(update={"generation": 2})
+        finally:
+            self.backend.release.set()
+        with self.assertRaisesRegex(ReadFailure, "^denied$"):
+            await read
+        self.assertEqual(self.backend.calls, [self.binding.resource_id] * 2)
+
     async def test_wrong_resource_and_large_utf8_body_are_never_returned(self) -> None:
         service = self._service()
         self.backend.return_identity = "urn:another-document"

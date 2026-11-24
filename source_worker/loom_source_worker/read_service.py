@@ -142,11 +142,16 @@ class ReadService:
                 reader = await self._backend.resolve(binding)
                 reader.binding.authorize(grant)
                 await require_current()
-                document = await reader.read_exact(
-                    binding.resource_id, authorize=require_current, deadline=deadline
-                )
-                fetched_at = int(time.time())
-                content_sha256 = self._check_document(binding, document)
+                try:
+                    document = await reader.read_exact(
+                        binding.resource_id, authorize=require_current, deadline=deadline
+                    )
+                    fetched_at = int(time.time())
+                    content_sha256 = self._check_document(binding, document)
+                except ReadFailure as failure:
+                    if failure.code == "unsupported":
+                        await require_current()
+                    raise
                 await require_current()
                 return ReadResult(
                     grant.request_id,
