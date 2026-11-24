@@ -65,7 +65,9 @@ class _MCPReader:
     def binding(self) -> ConnectionBinding:
         return self.record.binding
 
-    async def read_exact(self, resource_id: str, *, authorize: CurrentAccess) -> Document:
+    async def read_exact(
+        self, resource_id: str, *, authorize: CurrentAccess, deadline: float
+    ) -> Document:
         if resource_id != self.resource_id:
             raise ReadFailure("denied")
         config = replace(self.profile.config, approved_resource_ids=(self.resource_id,))
@@ -83,8 +85,9 @@ class _MCPReader:
                 raise MCPSourceError("denied") from None
 
         try:
-            async with MCPSourceClient(config, bearer, validate_access=require_current) as client:
-                await client.discover()
+            async with MCPSourceClient(
+                config, bearer, validate_access=require_current, deadline=deadline
+            ) as client:
                 item = await client.read(self.resource_id)
                 receipt = item.receipt
                 if (

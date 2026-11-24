@@ -24,7 +24,7 @@ from jsonschema import Draft202012Validator, SchemaError
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
-from pydantic import AnyUrl
+from pydantic import AnyUrl, ValidationError
 from referencing import Registry
 from referencing.exceptions import Unresolvable
 
@@ -257,6 +257,16 @@ def _string(value: Any, maximum: int = 2048, *, empty: bool = False) -> str:
     if len(value.encode()) > maximum or any(ord(c) < 32 or ord(c) == 127 for c in value):
         raise MCPSourceError("limit")
     return value
+
+
+def _resource_url(identity: str) -> AnyUrl:
+    try:
+        uri = AnyUrl(identity)
+    except ValidationError:
+        raise MCPSourceError("unsupported") from None
+    if str(uri) != identity:
+        raise MCPSourceError("unsupported")
+    return uri
 
 
 def _endpoint_url(url: str) -> httpx.URL:
@@ -683,13 +693,17 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                 body = await request.aread()
                 if len(body) > 32_768:
                     raise MCPSourceError("limit")
+                timeouts = dict(request.extensions.get("timeout", {}))
+                if request.method == "GET":
+                    # Notifications may be idle until the session deadline.
+                    timeouts["read"] = None
                 outgoing = httpx.Request(
                     request.method,
                     self.target,
                     headers=headers,
                     content=body,
                     extensions={
-                        "timeout": request.extensions.get("timeout", {}),
+                        "timeout": timeouts,
                         "sni_hostname": self.endpoint.raw_host.decode("ascii"),
                     },
                 )
@@ -697,6 +711,8 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                 response = await self.inner.handle_async_request(outgoing)
                 self._check_state()
                 _check_response(request.method, response)
+                if request.method == "DELETE":
+                    return httpx.Response(response.status_code, content=b"")
                 # Reject compression so the wire budget bounds decoded protocol bytes.
                 if response.headers.get("content-encoding", "identity") != "identity":
                     raise MCPSourceError("protocol")
@@ -736,6 +752,7 @@ class MCPSourceClient:
         credential: MCPBearer | None,
         *,
         validate_access: Callable[[], Awaitable[None]],
+        deadline: float | None = None,
         _transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if type(config.limits) is not MCPLimits or type(config.data_policy) is not MCPDataPolicy:
@@ -777,6 +794,7 @@ class MCPSourceClient:
         self._transport: _PinnedTransport | None = None
         self._operation_failure: ErrorCode | None = None
         self._deadline = 0.0
+        self._outer_deadline = deadline
         self._discovery: MCPDiscovery | None = None
         self._tool_epoch = 0
         self._discovered_epoch = -1
@@ -788,6 +806,9 @@ class MCPSourceClient:
         self._selected_ids = frozenset(
             _string(identity) for identity in config.approved_resource_ids
         )
+        if config.read is None:
+            for identity in self._selected_ids:
+                _resource_url(identity)
         self._resource_titles: dict[str, str] = {}
 
     def __repr__(self) -> str:
@@ -857,6 +878,8 @@ class MCPSourceClient:
         self._privacy.enter_context(private_work())
         loop = asyncio.get_running_loop()
         self._deadline = loop.time() + self._config.limits.timeout_seconds
+        if self._outer_deadline is not None:
+            self._deadline = min(self._deadline, self._outer_deadline)
         self._ready = loop.create_future()
         self._owner_task = asyncio.create_task(self._serve_session())
         try:
@@ -941,6 +964,10 @@ class MCPSourceClient:
             return
         if not self._closing:
             self._closing = True
+            if self._transport is not None:
+                self._transport.deadline = min(
+                    self._deadline, asyncio.get_running_loop().time() + 1
+                )
             owner.cancel()
         interrupted: asyncio.CancelledError | None = None
         while not owner.done():
@@ -984,7 +1011,11 @@ class MCPSourceClient:
                 await self._authorize()
                 self._check_state(require_session=True)
                 assert self._session is not None
-                result = await action(self._session)
+                try:
+                    result = await action(self._session)
+                except Exception:  # Check authority before reporting an upstream error.
+                    await self._authorize()
+                    raise
                 await self._authorize()
                 self._check_state(require_session=True)
                 return result
@@ -1184,8 +1215,11 @@ class MCPSourceClient:
                 return await self._read_tool(session, identity)
             if self._discovery is None or not self._discovery.resources:
                 raise MCPSourceError("unsupported")
-            result = await session.read_resource(AnyUrl(identity))
-            if not result.contents or len(result.contents) > self._config.limits.max_results:
+            result = await session.read_resource(_resource_url(identity))
+            policy = self._config.data_policy
+            if not result.contents or len(result.contents) > min(
+                self._config.limits.max_results, policy.max_items
+            ):
                 raise MCPSourceError("limit")
             texts: list[str] = []
             size = 0
@@ -1198,7 +1232,10 @@ class MCPSourceClient:
                     raise MCPSourceError("unsupported")
                 if (content.mimeType or "text/plain") != mime_type:
                     raise MCPSourceError("unsupported")
-                size += len(content.text.encode()) + bool(texts)
+                part_bytes = len(content.text.encode())
+                if part_bytes > policy.max_string_bytes:
+                    raise MCPSourceError("limit")
+                size += part_bytes + bool(texts)
                 if size > self._config.limits.max_content_bytes:
                     raise MCPSourceError("limit")
                 texts.append(content.text)

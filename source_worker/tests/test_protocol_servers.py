@@ -17,7 +17,7 @@ from loom_source_worker import direct_backend, mcp_client
 from loom_source_worker.credential_store import CredentialRecord
 from loom_source_worker.direct_backend import DirectBackend
 from loom_source_worker.main import _parse_settings
-from loom_source_worker.mcp_client import MCPSourceConfig, MCPToolMapping
+from loom_source_worker.mcp_client import MCPLimits, MCPSourceConfig, MCPToolMapping
 from loom_source_worker.protocol import ConnectionBinding, ReadBinding, ReadGrant, issue_read_grant
 from loom_source_worker.read_service import ReadFailure, ReadLimits, ReadService
 from mcp import types
@@ -146,6 +146,7 @@ async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.M
             endpoint=_ENDPOINT,
             bearer_audience=_ENDPOINT,
             approved_tools=("read",),
+            limits=MCPLimits(max_requests=4),
             read=MCPToolMapping(
                 name="read", input_schema=_INPUT, output_schema=_OUTPUT, argument_name="id"
             ),
@@ -164,11 +165,14 @@ async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.M
         assert host == "source.example.test"
         return ipaddress.IPv6Address("2600::10")
 
-    def routed_client(config: Any, credential: Any, *, validate_access: Any) -> Any:
+    def routed_client(
+        config: Any, credential: Any, *, validate_access: Any, deadline: float
+    ) -> Any:
         return mcp_client.MCPSourceClient(
             config,
             credential,
             validate_access=validate_access,
+            deadline=deadline,
             _transport=_FragmentedASGI(app=app),
         )
 

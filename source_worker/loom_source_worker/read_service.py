@@ -40,7 +40,9 @@ class BoundReader(Protocol):
     @property
     def binding(self) -> ConnectionBinding: ...
 
-    async def read_exact(self, resource_id: str, *, authorize: CurrentAccess) -> Document: ...
+    async def read_exact(
+        self, resource_id: str, *, authorize: CurrentAccess, deadline: float
+    ) -> Document: ...
 
 
 class ReadBackend(Protocol):
@@ -133,14 +135,16 @@ class ReadService:
                 if time.time() >= expires_at:
                     raise ReadFailure("timeout")
 
-            async with (
-                self._slot(binding.org),
-                asyncio.timeout(min(self._limits.timeout_seconds, expires_at - time.time())),
-            ):
+            deadline = asyncio.get_running_loop().time() + min(
+                self._limits.timeout_seconds, expires_at - time.time()
+            )
+            async with self._slot(binding.org), asyncio.timeout_at(deadline):
                 reader = await self._backend.resolve(binding)
                 reader.binding.authorize(grant)
                 await require_current()
-                document = await reader.read_exact(binding.resource_id, authorize=require_current)
+                document = await reader.read_exact(
+                    binding.resource_id, authorize=require_current, deadline=deadline
+                )
                 fetched_at = int(time.time())
                 content_sha256 = self._check_document(binding, document)
                 await require_current()

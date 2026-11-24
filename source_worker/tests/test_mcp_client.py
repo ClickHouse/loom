@@ -67,6 +67,9 @@ class _Source(httpx.MockTransport):
         self.redirect = False
         self.content_encoding = "identity"
         self.resource_text = "synthetic text"
+        self.resource_parts = 1
+        self.notifications: _IdleBody | None = None
+        self.termination: _IdleBody | None = None
         self.change_tools_during_discovery = False
 
     async def aclose(self) -> None:
@@ -76,6 +79,13 @@ class _Source(httpx.MockTransport):
         logging.getLogger("mcp.fixture").warning("synthetic private diagnostic")
         if request.method != "POST":
             self.calls.append((request, request.method))
+            if request.method == "GET" and self.notifications is not None:
+                assert request.extensions["timeout"]["read"] is None
+                return httpx.Response(
+                    200, stream=self.notifications, headers={"content-type": "text/event-stream"}
+                )
+            if request.method == "DELETE" and self.termination is not None:
+                return httpx.Response(200, stream=self.termination)
             return httpx.Response(405 if request.method == "GET" else 204)
         body = json.loads(request.content)
         method = body["method"]
@@ -108,7 +118,9 @@ class _Source(httpx.MockTransport):
                     await asyncio.Future[None]()
                 finally:
                     self.read_cancelled.set()
-            result = {"contents": [{"uri": _DOCUMENT, "text": self.resource_text}]}
+            result = {
+                "contents": [{"uri": _DOCUMENT, "text": self.resource_text}] * self.resource_parts
+            }
             envelope = json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": result})
             return httpx.Response(
                 200,
@@ -148,6 +160,19 @@ class _Body(httpx.AsyncByteStream):
     async def __aiter__(self) -> AsyncIterator[bytes]:
         yield self.content[:64]
         yield self.content[64:]
+
+
+class _IdleBody(httpx.AsyncByteStream):
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        self.started.set()
+        yield await asyncio.Future[bytes]()
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def _json_response(request_id: int, result: dict[str, Any], **headers: str) -> httpx.Response:
@@ -406,6 +431,65 @@ async def test_revalidation_refusal_prevents_more_requests(pin: list[str]) -> No
         with pytest.raises(MCPSourceError, match="^MCP source denied$"):
             await client.read(_DOCUMENT)
     assert "resources/read" not in [method for _, method in source.calls]
+    assert source.closed
+
+
+@pytest.mark.asyncio
+async def test_stateful_read_accepts_idle_notifications_and_does_not_drain_termination(
+    pin: list[str],
+) -> None:
+    source = _Source()
+    source.notifications, source.termination = _IdleBody(), _IdleBody()
+    async with (
+        asyncio.timeout(2),
+        _client(source, approved_resource_ids=(_DOCUMENT,)) as client,
+    ):
+        await source.notifications.started.wait()
+        assert (await client.read(_DOCUMENT)).text == source.resource_text
+    assert source.notifications.closed
+    assert source.termination.closed and not source.termination.started.is_set()
+
+
+@pytest.mark.parametrize("identity", ["https://source.example", "https://résumé.example/item"])
+def test_resource_selection_refuses_a_uri_the_sdk_would_rewrite(identity: str) -> None:
+    source = _Source()
+    with pytest.raises(MCPSourceError, match="^MCP source unsupported$"):
+        _client(source, approved_resource_ids=(identity,))
+    assert not source.calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("parts", "text", "policy"),
+    [(2, "a", MCPDataPolicy(max_items=1)), (1, "é" * 9, MCPDataPolicy(max_string_bytes=16))],
+)
+async def test_resource_content_respects_tightened_data_caps(
+    pin: list[str], parts: int, text: str, policy: MCPDataPolicy
+) -> None:
+    source = _Source()
+    source.resource_parts, source.resource_text = parts, text
+    async with _client(source, approved_resource_ids=(_DOCUMENT,), data_policy=policy) as client:
+        with pytest.raises(MCPSourceError, match="^MCP source limit$"):
+            await client.read(_DOCUMENT)
+
+
+@pytest.mark.asyncio
+async def test_revocation_is_checked_after_a_mapped_tool_error(pin: list[str]) -> None:
+    source, mapping = _mapped_source()
+    source.tool_result = {"isError": True, "content": [{"type": "text", "text": "private error"}]}
+
+    async def validate_access() -> None:
+        if any(method == "tools/call" for _, method in source.calls):
+            raise MCPSourceError("denied")
+
+    config = MCPSourceConfig(
+        _ENDPOINT, approved_tools=("read",), read=mapping, approved_resource_ids=(_DOCUMENT,)
+    )
+    async with MCPSourceClient(
+        config, None, validate_access=validate_access, _transport=source
+    ) as client:
+        with pytest.raises(MCPSourceError, match="^MCP source denied$"):
+            await client.read(_DOCUMENT)
     assert source.closed
 
 

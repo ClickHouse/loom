@@ -36,7 +36,9 @@ class _Backend:
     async def current(self, binding: ReadBinding) -> ConnectionBinding:
         return self.binding
 
-    async def read_exact(self, resource_id: str, *, authorize: CurrentAccess) -> Document:
+    async def read_exact(
+        self, resource_id: str, *, authorize: CurrentAccess, deadline: float
+    ) -> Document:
         await authorize()
         self.calls.append(resource_id)
         self.started.set()
