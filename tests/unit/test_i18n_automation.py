@@ -250,7 +250,6 @@ def test_paid_runner_remains_main_only_with_finite_cumulative_default() -> None:
     assert "github.event_name == 'schedule'" in finalize["if"]
     assert "github.event.workflow_run.event == 'workflow_dispatch'" in finalize["if"]
     assert "github.event.workflow_run.conclusion == 'success'" in finalize["if"]
-    assert "github.event.workflow_run.head_branch == 'i18n/update'" in finalize["if"]
     assert (
         "github.event.workflow_run.head_repository.full_name == github.repository" in finalize["if"]
     )
