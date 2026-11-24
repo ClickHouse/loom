@@ -97,6 +97,7 @@ class _Source(httpx.MockTransport):
         self.content_encoding = "identity"
         self.resource_text = "synthetic text"
         self.resource_uri = _DOCUMENT
+        self.listed_uri = _DOCUMENT
         self.resource_parts = 1
         self.initialize_error: int | None = None
         self.resource_error: int | None = None
@@ -142,7 +143,7 @@ class _Source(httpx.MockTransport):
                 {"resources": []}
                 if body.get("params", {}).get("cursor") == "next"
                 else {
-                    "resources": [{"uri": _DOCUMENT, "name": "Synthetic document"}],
+                    "resources": [{"uri": self.listed_uri, "name": "Synthetic document"}],
                     "nextCursor": "next",
                 }
             )
@@ -540,6 +541,15 @@ async def test_resource_parser_bounds_cover_metadata_and_extensions(
     async with _client(source, approved_resource_ids=(_DOCUMENT,), data_policy=policy) as client:
         with pytest.raises(MCPSourceError, match="^MCP source limit$"):
             await client.read(_DOCUMENT)
+
+
+@pytest.mark.asyncio
+async def test_list_does_not_offer_a_normalized_replacement_identity(pin: list[str]) -> None:
+    source = _Source()
+    source.listed_uri = "https://UPSTREAM.example/path"
+    async with _client(source) as client:
+        with pytest.raises(MCPSourceError, match="^MCP source unsupported$"):
+            await client.list_resources()
 
 
 @pytest.mark.asyncio

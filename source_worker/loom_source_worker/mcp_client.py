@@ -1165,17 +1165,34 @@ class MCPSourceClient:
         async def action(session: ClientSession) -> MCPPage:
             if self._discovery is None or not self._discovery.resources:
                 raise MCPSourceError("unsupported")
-            self._page_start(cursor, ("resources", ""))
-            result = await session.list_resources(
-                params=types.PaginatedRequestParams(cursor=cursor)
+            scope = ("resources", "")
+            self._page_start(cursor, scope)
+            result = await session.send_request(
+                types.ClientRequest(
+                    types.ListResourcesRequest(params=types.PaginatedRequestParams(cursor=cursor))
+                ),
+                types.Result,
             )
+            data = result.model_dump(by_alias=True, exclude_unset=True)
+            limits, policy = self._config.limits, self._config.data_policy
+            _bounded_data(data, limits.max_wire_bytes, policy)
+            resources = data.get("resources")
+            if not isinstance(resources, list) or len(resources) > limits.max_results:
+                raise MCPSourceError("limit")
             items = []
-            for resource in result.resources:
-                identity = _string(str(resource.uri))
-                title = _string(resource.title or resource.name)
+            for resource in resources:
+                if not isinstance(resource, dict):
+                    raise MCPSourceError("schema")
+                identity = _string(resource.get("uri"))
+                # Keep the selected identity tied to the exact URI the server exposed.
+                _resource_url(identity)
+                title = _string(resource.get("title") or resource.get("name"))
                 items.append(MCPEvidence(identity, identity, title))
                 self._resource_titles[identity] = title
-            return self._page(items, result.nextCursor, ("resources", ""))
+            next_cursor = data.get("nextCursor")
+            if next_cursor is not None:
+                next_cursor = _string(next_cursor)
+            return self._page(items, next_cursor, scope)
 
         return await self._run(action)
 
