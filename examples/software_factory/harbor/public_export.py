@@ -386,12 +386,8 @@ def export_public(protocol, output: Path, *, require_complete=False):
             "attempts": public,
             "native_artifact_sha256": hashes,
             "cost_scope": (
-                "Native Claude Code reported cost plus authenticated Loom provider ledger; "
-                "setup and judging separate."
-            ),
-            "cache_cost_scope": (
-                "Estimates replace the first solver input with a full five-minute cache write "
-                "or a full cache read. Later turns, output and Loom costs use the recorded values."
+                "Claude Code reports solver session cost. An authenticated ledger records Loom "
+                "provider cost separately. Setup and judging are separate."
             ),
         }
         write(output / "results.json", payload)
