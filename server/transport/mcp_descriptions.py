@@ -2191,13 +2191,12 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "elision disclosures; use local tools for changed or unindexed code."
     ),
     "code.grep": (
-        "Find exact text. Pass a list of stable literal fragments in `pattern` "
-        "to search alternatives in one call. Matches include enclosing bodies by default. "
-        "Use `include_body: false` for names, locations or short excerpts with `context_lines`. "
+        "Find text and enclosing bodies in one call. Scope with `path_prefix` or `path_globs`. "
+        "Use a list of literals in `pattern` or one RE2 string with `regex: true`. "
+        "Use `include_body: false` for locations or `context_lines` excerpts. "
         "Use code.search for behavior.\n\n"
         "Use code.symbol for the full class or code.read for exact line ranges. "
-        "`regex: true` uses one RE2 string. "
-        "Scope with `path_prefix`, `path_globs` or `langs`. "
+        "Use `langs` to filter by language. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
     ),
     # The coding tier lists blast radius with the sentences a coding session
