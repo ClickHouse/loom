@@ -412,6 +412,10 @@ def _key(r: LinkRow) -> tuple[str, ...]:
     return tuple(row[c] for c in _KEY_COLUMNS)
 
 
+# Columns a read narrows by a bloom filter alone: none is in the sort key.
+_OFF_KEY = frozenset({"former_paths", "anchored_path"})
+
+
 async def _for_code(
     ch: _CHClient,
     org: str,
@@ -435,7 +439,14 @@ async def _for_code(
             params[column] = list(values)
             if column in ("path", "former_paths", "anchored_path", "checked_commit"):
                 long = column
-    sql = f"SELECT * {_LIVE} AND {' AND '.join(where)}"
+    filters = " AND ".join(where)
+    sql = f"SELECT * {_LIVE} AND {filters}"
+    if _OFF_KEY.intersection(narrow):
+        # Under FINAL, ClickHouse widens a skip index's granules to every granule of
+        # every part whose sort-key range overlaps them, most of the table here. The
+        # keys of every version that matches come from the index alone, then FINAL
+        # reads only those keys and judges each by its newest version.
+        sql += f" AND ({_KEY}) IN (SELECT {_KEY} FROM {TABLE} WHERE {filters})"
     return _links(
         await query_all_sliced(ch, sql, params, long) if long else await ch.query_all(sql, params)
     )
@@ -710,6 +721,40 @@ async def memory_heads(
         _HEADS + "WHERE org = {org:String} AND memory_id IN {ids:Array(UUID)}",
         {"org": org, "ids": sorted(set(memory_ids))},
         "ids",
+    )
+
+
+# A memory as a link names it: its identity without the org, then its memory_id.
+LinkedMemory = tuple[str, str, str, str, str, str]
+
+
+def linked_memory(a: LinkRow) -> LinkedMemory:
+    """The memory link `a` was made from, as `heads_by_identity` reads it."""
+    return (
+        a["namespace"],
+        a["agent"],
+        a["user_id"],
+        a["session_id"],
+        a["memory_key"],
+        a["memory_id"],
+    )
+
+
+async def heads_by_identity(
+    org: str, memories: Sequence[LinkedMemory], *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The head rows of these memories, each named by its identity without the org and
+    then its memory_id, as `memory_heads` returns them: read by the identity, the
+    table's sort key, and kept only while it still holds that memory_id."""
+    if not memories:
+        return []
+    return await query_all_sliced(
+        ch or _default_client(),
+        _HEADS + "WHERE org = {org:String} "
+        "AND (namespace, agent, user_id, session_id, memory_key, memory_id) "
+        "IN {memories:Array(Tuple(String, String, String, String, String, UUID))}",
+        {"org": org, "memories": sorted(set(memories))},
+        "memories",
     )
 
 

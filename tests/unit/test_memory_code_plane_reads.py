@@ -218,8 +218,11 @@ async def _lessons(
     async def mirror_here(org, cns, commit):
         return has_mirror
 
-    async def served(org, nss, ids):
+    async def served(org, nss, memories):
         assert nss == ["agent-a", "code-a"]  # the lesson scope bounds the read
+        # each memory is read by the identity its link was made from
+        assert set(memories) <= {code_links.linked_memory(a) for a in links}
+        ids = {m[-1] for m in memories}
         return [e for e in excerpts if e["mid"] in ids]
 
     async def current(org, rows):
