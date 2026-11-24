@@ -233,26 +233,31 @@ async fn timed_out_write_retries_with_its_explicit_key() {
         "hold-body".into(),
         response(200, json!({"version":VERSION}), ""),
     ]);
-    let mut retry = immediate_retry();
-    retry.backoff = Duration::from_millis(300);
-    let result = server
-        .client()
-        .set_with_options(
-            SetRequest::new("key", "fact"),
-            options("write-timeout")
-                .timeout(Duration::from_millis(50))
-                .retry(retry)
-                .idempotency_key("write-timeout-key"),
-        )
-        .await
-        .unwrap();
+    let client = server.client();
+    let call = client.set_with_options(
+        SetRequest::new("key", "fact"),
+        options("write-timeout")
+            .timeout(Duration::from_secs(60))
+            .retry(immediate_retry())
+            .idempotency_key("write-timeout-key"),
+    );
+    tokio::pin!(call);
+    let first = tokio::select! {
+        request = server.request() => request,
+        result = &mut call => panic!("write completed before its timeout: {result:?}"),
+    };
+    // Expire the first attempt, then let the retry use real time for socket I/O.
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(61)).await;
+    tokio::time::resume();
+    let result = call.await.unwrap();
     assert_eq!(result.metadata.attempts, 2);
     assert_eq!(result.data.version, VERSION);
-    let first = server.request().await;
     let retry = server.request().await;
     assert_eq!(first.body, retry.body);
     assert_eq!(first.headers["idempotency-key"], "write-timeout-key");
     assert_eq!(retry.headers["idempotency-key"], "write-timeout-key");
+    assert_eq!(first.headers["x-request-id"], "write-timeout");
     assert_eq!(retry.headers["x-request-id"], "write-timeout");
 }
 

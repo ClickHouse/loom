@@ -32,4 +32,11 @@ tokio = { version = "1", features = ["sync", "time"] }
 
 [dev-dependencies]
 sha2 = "0.10"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "process"] }
+tokio = { version = "1", features = [
+  "macros",
+  "rt-multi-thread",
+  "sync",
+  "time",
+  "process",
+  "test-util",
+] }

@@ -67,6 +67,7 @@ impl Server {
         let stopped = stop.clone();
         let worker = thread::spawn(move || {
             let mut paired: Option<TcpStream> = None;
+            let mut held_bodies = Vec::new();
             for response in responses {
                 let deadline = Instant::now() + Duration::from_secs(5);
                 let mut stream = loop {
@@ -89,13 +90,18 @@ impl Server {
                 stream
                     .set_write_timeout(Some(Duration::from_secs(2)))
                     .unwrap();
-                sender.send(read_request(&mut stream)).unwrap();
-                if response == "hold" {
-                    thread::park_timeout(Duration::from_millis(250));
-                } else if response == "hold-body" {
+                let request = read_request(&mut stream);
+                if response == "hold-body" {
                     stream
                         .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
                         .unwrap();
+                    // Keep the body pending while accepting the next connection.
+                    held_bodies.push(stream);
+                    sender.send(request).unwrap();
+                    continue;
+                }
+                sender.send(request).unwrap();
+                if response == "hold" {
                     thread::park_timeout(Duration::from_millis(250));
                 } else if response == "pair" {
                     // Neither request completes until both connections arrive.
@@ -105,6 +111,12 @@ impl Server {
                     if let Some(mut first) = paired.take() {
                         first.write_all(response.as_bytes()).unwrap();
                     }
+                }
+            }
+            if !held_bodies.is_empty() {
+                // A fixture with no further requests must still withhold its body.
+                while !stopped.load(Ordering::Relaxed) {
+                    thread::park();
                 }
             }
         });
