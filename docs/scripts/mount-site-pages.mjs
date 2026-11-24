@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { publishSiteDiscovery } from "./site-discovery.mjs";
 
@@ -32,6 +32,19 @@ publishSiteDiscovery(new URL("static/", output), {
   root: [...publicPages.keys()],
   aliases: [...publicPages.values()],
 });
+
+if (process.env.VERCEL_TARGET_ENV === "production") {
+  const revision = process.env.VERCEL_GIT_COMMIT_SHA;
+  if (!revision || !/^[0-9a-f]{40}$/.test(revision)) throw new Error("Invalid production revision.");
+  const wellKnown = new URL("static/.well-known/", output);
+  mkdirSync(wellKnown, { recursive: true });
+  writeFileSync(new URL("loom-revision.txt", wellKnown), `${revision}\n`);
+  config.routes.unshift({
+    src: "^/\\.well-known/loom-revision\\.txt$",
+    headers: { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" },
+    continue: true,
+  });
+}
 writeFileSync(manifest, `${JSON.stringify(config, null, "\t")}\n`);
 
 for (const file of readdirSync(docs).filter((name) => /^[0-9a-f]{32}\.txt$/.test(name))) {

@@ -81,7 +81,6 @@ jobs:
     permissions:
       contents: read
       actions: read # Find an earlier submission that succeeded.
-      statuses: read # Verify the production deployment for this commit.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -98,18 +97,23 @@ jobs:
           set -euo pipefail
           # Legacy redirect publication has its own result. Only a successful IndexNow
           # job advances the comparison point so the next run covers a failed submission.
-          runs=$(gh run list -R "$GITHUB_REPOSITORY" --workflow docs-site.yml --branch main \
-            --status completed --limit 20 --json databaseId,headSha --jq '.[] | [.databaseId, .headSha] | @tsv')
           base=
-          while IFS=$'\t' read -r run commit; do
-            if [[ -z "$commit" ]] || ! git merge-base --is-ancestor "$commit" HEAD; then continue; fi
-            submitted=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
-              --jq 'any(.jobs[]; .name == "indexnow" and .conclusion == "success")')
-            if [[ "$submitted" == true ]]; then
-              base="$commit"
-              break
-            fi
-          done <<< "$runs"
+          page=1
+          while [[ -z "$base" ]]; do
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/docs-site.yml/runs?branch=main&status=completed&per_page=25&page=$page" \
+              --jq '.workflow_runs[] | [.id, .head_sha] | @tsv')
+            if [[ -z "$runs" ]]; then break; fi
+            while IFS=$'\t' read -r run commit; do
+              if ! git merge-base --is-ancestor "$commit" HEAD; then continue; fi
+              submitted=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
+                --jq 'any(.jobs[]; .name == "indexnow" and .conclusion == "success")')
+              if [[ "$submitted" == true ]]; then
+                base="$commit"
+                break
+              fi
+            done <<< "$runs"
+            page=$((page + 1))
+          done
 
           changed="$RUNNER_TEMP/indexnow-changed-paths"
           if [[ -n "$base" ]]; then
@@ -131,22 +135,14 @@ jobs:
             exit 0
           fi
 
-          # The production project posts a commit status. A skipped build can also
-          # report success, so require the completed-deployment status for this commit.
-          for _ in {1..25}; do
-            deployment=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/status" --jq '
-              [.statuses[] | select(.context == "Vercel – loom-docs")][0]
-              | if .state == "success" and .description == "Deployment has completed" then "ready"
-                elif .state == "failure" or .state == "error" then "failed"
-                else "pending" end
-            ') || deployment=pending
-            if [[ "$deployment" == ready ]]; then
+          # Read the revision from the live site. Preview and production deployments
+          # share the same GitHub commit status.
+          for attempt in {1..25}; do
+            deployed=$(curl -fsS --max-time 4 \
+              "https://loom.clickhouse.com/.well-known/loom-revision.txt?commit=$GITHUB_SHA&attempt=$attempt") || deployed=
+            if [[ "$deployed" == "$GITHUB_SHA" ]]; then
               xargs -0 python scripts/docs_site/indexnow.py --previous-public-pages "$previous_routes" -- < "$changed"
               exit 0
-            fi
-            if [[ "$deployment" == failed ]]; then
-              echo 'indexnow: production deployment failed' >&2
-              exit 1
             fi
             sleep 10
           done
