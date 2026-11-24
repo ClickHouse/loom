@@ -14,6 +14,8 @@ import httpx
 import pytest
 from loom_source_worker import mcp_client
 from loom_source_worker._mcp_transport import resolve_public_address
+from loom_source_worker.direct_backend import ApprovedProfile
+from loom_source_worker.main import _parse_settings
 from loom_source_worker.mcp_client import (
     MCPBearer,
     MCPDataPolicy,
@@ -32,6 +34,33 @@ _DOCUMENT = "mcp://fixture/document"
 
 async def _authorized() -> None:
     return None
+
+
+def test_equivalent_effective_deadlines_share_one_approved_profile_digest() -> None:
+    raw: dict[str, Any] = {
+        "transport": "tls_proxy_unix",
+        "worker_id": "83d061b4-2542-4db7-adc0-4b81b3280c08",
+        "issuer": "synthetic-grants",
+        "vault": {"origin": "https://vault.example", "mount": "connections"},
+        "read_limits": {
+            "concurrent": 8,
+            "concurrent_per_org": 2,
+            "timeout_seconds": 5,
+            "content_bytes": 4096,
+        },
+        "profiles": [{"organizations": ["tenant"], "config": {"endpoint": _ENDPOINT}}],
+    }
+    omitted = _parse_settings(json.dumps(raw).encode()).profiles[0]
+    raw["profiles"][0]["config"]["limits"] = {
+        "timeout_seconds": 30.0,
+        "request_seconds": 10.0,
+    }
+    explicit = _parse_settings(json.dumps(raw).encode()).profiles[0]
+    direct = ApprovedProfile(
+        MCPSourceConfig(_ENDPOINT, limits=MCPLimits(timeout_seconds=30, request_seconds=10)),
+        ("tenant",),
+    )
+    assert omitted.digest == explicit.digest == direct.digest
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +98,7 @@ class _Source(httpx.MockTransport):
         self.resource_text = "synthetic text"
         self.resource_uri = _DOCUMENT
         self.resource_parts = 1
+        self.initialize_error: int | None = None
         self.resource_error: int | None = None
         self.resource_extensions: dict[str, Any] = {}
         self.notifications: _IdleBody | None = None
@@ -94,6 +124,8 @@ class _Source(httpx.MockTransport):
         method = body["method"]
         self.calls.append((request, method))
         if method == "initialize":
+            if self.initialize_error is not None:
+                return httpx.Response(self.initialize_error)
             if self.redirect:
                 return httpx.Response(307, headers={"location": "https://other.example/mcp"})
             capabilities = {"resources": {}} if self.tool is None else {"tools": {}}
@@ -527,6 +559,25 @@ async def test_revocation_is_checked_after_a_mapped_tool_error(pin: list[str]) -
     ) as client:
         with pytest.raises(MCPSourceError, match="^MCP source denied$"):
             await client.read(_DOCUMENT)
+    assert source.closed
+
+
+@pytest.mark.asyncio
+async def test_revocation_wins_over_initialization_reconnect(pin: list[str]) -> None:
+    source = _Source()
+    source.initialize_error = 401
+
+    async def validate_access() -> None:
+        if any(method == "initialize" for _, method in source.calls):
+            raise MCPSourceError("denied")
+
+    config = MCPSourceConfig(_ENDPOINT, approved_resource_ids=(_DOCUMENT,))
+    with pytest.raises(MCPSourceError, match="^MCP source denied$"):
+        async with MCPSourceClient(
+            config, None, validate_access=validate_access, _transport=source
+        ):
+            pytest.fail("read became available after revocation")
+    assert [method for _, method in source.calls] == ["initialize"]
     assert source.closed
 
 

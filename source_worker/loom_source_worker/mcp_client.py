@@ -122,8 +122,8 @@ def _check_response(method: str, response: httpx.Response) -> None:
 
 @dataclass(frozen=True)
 class MCPLimits:
-    timeout_seconds: float = 30
-    request_seconds: float = 10
+    timeout_seconds: float = 30.0
+    request_seconds: float = 10.0
     max_pages: int = 8
     max_results: int = 100
     max_content_bytes: int = 1_000_000
@@ -138,6 +138,9 @@ class MCPLimits:
                 or not 0 < value <= ceiling
             ):
                 raise MCPSourceError("config")
+        # Profile digests use one representation for equal effective deadlines.
+        object.__setattr__(self, "timeout_seconds", float(self.timeout_seconds))
+        object.__setattr__(self, "request_seconds", float(self.request_seconds))
         for value, ceiling in (
             (self.max_pages, 32),
             (self.max_results, 1000),
@@ -932,9 +935,23 @@ class MCPSourceClient:
         except Exception as error:  # noqa: BLE001 — only fixed initialization failures reach callers
             try:
                 await self._close()
+                code = await self._initialization_failure(error)
             finally:
                 self._leave_private()
-            raise MCPSourceError(self._owner_failure or _error_code(error)) from None
+            raise MCPSourceError(code) from None
+
+    async def _initialization_failure(self, error: Exception) -> ErrorCode:
+        code = self._owner_failure or _error_code(error)
+        if self._transport is None or code in {"denied", "closed", "timeout"}:
+            return code
+        if asyncio.get_running_loop().time() >= self._deadline:
+            return code
+        try:
+            async with asyncio.timeout_at(self._deadline):
+                await self._validate_access()
+        except Exception as current:  # noqa: BLE001 — expose only the current fixed refusal
+            return _error_code(current)
+        return code
 
     async def _serve_session(self) -> None:
         # SDK AnyIO scopes are entered and exited by this one lifecycle owner.
