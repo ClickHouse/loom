@@ -1350,13 +1350,15 @@ jobs:
       - name: Rust formatting
         run: cargo fmt --check
       - name: Install Rust coverage tools
+        id: rust-coverage-tools
         if: github.event_name == 'pull_request' && matrix.rust == 'stable'
+        continue-on-error: true
         run: |
           rustup component add llvm-tools-preview
           cargo install --locked cargo-llvm-cov --version 0.9.2
       - name: Unit, HTTP contract and documentation tests
         env:
-          COLLECT_RUST_COVERAGE: ${{ github.event_name == 'pull_request' && matrix.rust == 'stable' }}
+          COLLECT_RUST_COVERAGE: ${{ steps.rust-coverage-tools.outcome == 'success' }}
         run: |
           if [[ "$COLLECT_RUST_COVERAGE" == true ]]; then
             cargo llvm-cov --locked --no-report
@@ -1366,7 +1368,7 @@ jobs:
           fi
       - name: Export Rust coverage as LCOV
         id: rust-coverage
-        if: github.event_name == 'pull_request' && matrix.rust == 'stable'
+        if: steps.rust-coverage-tools.outcome == 'success'
         continue-on-error: true
         run: cargo llvm-cov report --lcov --output-path "$RUNNER_TEMP/rust.lcov"
       - name: Report Rust SDK changed-line coverage
