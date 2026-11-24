@@ -141,7 +141,7 @@ ORDER BY successful_requests DESC, domain
 LIMIT 50;
 
 -- The public website reads these aggregate views with a separate read-only user.
-CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_totals
+CREATE OR REPLACE VIEW loom_product_analytics.public_adoption_totals
 SQL SECURITY DEFINER AS
 WITH toDate(now('UTC')) AS today_utc
 SELECT
@@ -217,11 +217,12 @@ LEFT JOIN activity
 GROUP BY observations.age
 SETTINGS join_use_nulls = 1;
 
-CREATE VIEW IF NOT EXISTS loom_product_analytics.public_oss_adoption
+CREATE OR REPLACE VIEW loom_product_analytics.public_oss_adoption
 SQL SECURITY DEFINER AS
 SELECT day, source, artifact, metric, value
 FROM loom_product_analytics.loom_oss_metrics_daily
-WHERE day >= toDate(now('UTC')) - 400 AND day < toDate(now('UTC'))
+WHERE day >= toDate(now('UTC')) - if(metric = 'sdk_downloads', 730, 400)
+  AND day < toDate(now('UTC'))
   AND (source, artifact, metric) IN (
       ('github', 'ClickHouse/loom', 'stars'),
       ('github', 'ClickHouse/loom', 'forks'),
@@ -231,7 +232,7 @@ WHERE day >= toDate(now('UTC')) - 400 AND day < toDate(now('UTC'))
       ('ghcr', 'ghcr.io/clickhouse/loom', 'container_pulls_total')
   );
 
-CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_activity
+CREATE OR REPLACE VIEW loom_product_analytics.public_adoption_activity
 SQL SECURITY DEFINER AS
 WITH
     toDate(now('UTC')) AS today_utc,
@@ -252,7 +253,7 @@ WHERE day >= today_utc - 365 AND day < today_utc
 GROUP BY grain, period
 HAVING period >= greatest(first_report, today_utc - 365) OR period_end > today_utc;
 
-CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_lifecycle
+CREATE OR REPLACE VIEW loom_product_analytics.public_adoption_lifecycle
 SQL SECURITY DEFINER AS
 WITH
     toDate(now('UTC')) AS today_utc,

@@ -9,7 +9,9 @@ succeeds. The insert token and warehouse view deduplicate retries.
 
 1. Apply [warehouse.sql](warehouse.sql) to the analytics ClickHouse service. It creates
    the report, enrollment, and distribution tables and the aggregate views for the
-   adoption site. The report table expires rows 400 days after receipt.
+   adoption site. Apply it as the warehouse owner. Reapplying updates view
+   definitions and preserves the report table. Reports expire 400 days after
+   receipt.
 2. Create a collector user with `INSERT` on
    `loom_product_analytics.adoption_reports` and
    `loom_product_analytics.oss_metrics`.

@@ -25,7 +25,7 @@ test("allowlists shareable ranges, grains, and thresholds", () => {
   });
   assert.equal(
     adoptionUrl(filters, {}, "#downloads"),
-    "/adoption?tab=oss&days=90&grain=day&cohort=week&installation=50000&domain=1000000#downloads",
+    "?tab=oss&days=90&grain=day&cohort=week&installation=50000&domain=1000000#downloads",
   );
   assert.deepEqual(adoptionFilters(new URLSearchParams("days=31&grain=__proto__&domain=50001")), {
     tab: "self-hosted",
@@ -98,4 +98,14 @@ test("compares downloads with equal complete coverage and encodes public exports
     /^"registry","package","day_utc","downloads"\r\n"npm","'@clickhouse\/loom","2026-12-01","6"/,
   );
   assert.equal(csvBody([["=1+1", null, -2, 'A"B']]), '"\'=1+1","","-2","A""B"\r\n');
+});
+
+test("compares full annual SDK windows when historical daily rows are available", () => {
+  const history = Array.from({ length: 730 }, (_, index) => ({
+    day: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
+    value: index < 365 ? 2 : 3,
+  }));
+  const [downloads] = summarizeOss([{ id: "npm", isDownload: true, history }], 365, "2027-01-01");
+  assert.equal(downloads.days, 365);
+  assert.equal(downloads.change, 0.5);
 });

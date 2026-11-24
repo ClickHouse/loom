@@ -15,6 +15,7 @@ test("uses fixed aggregate views and reports monthly coverage and missing data",
       if (init.body.includes("public_oss_adoption")) {
         return Response.json({
           data: [
+            { day: "2025-01-01", source: "pypi", metric: "sdk_downloads", value: 2 },
             { day: "2026-10-01", source: "pypi", metric: "sdk_downloads", value: 3 },
             { day: "2026-11-03", source: "pypi", metric: "sdk_downloads", value: 4 },
             { day: "2026-11-08", source: "github", metric: "stars", value: 60 },
@@ -51,6 +52,8 @@ test("uses fixed aggregate views and reports monthly coverage and missing data",
 
   assert.equal(queried.length, 6);
   assert.ok(queried.every((sql) => sql.startsWith("SELECT * FROM loom_product_analytics.public_")));
+  const archived = result.openSource.find(({ id }) => id === "pypi");
+  assert.equal(archived.history[0].day, "2025-01-01");
   const byLabel = Object.fromEntries(
     summarizeOss(result.openSource, 90, result.today).map((metric) => [metric.label, metric]),
   );

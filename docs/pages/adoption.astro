@@ -138,7 +138,7 @@ const overview = [
     <a href={adoptionUrl(filters, { tab: "oss" })} aria-current={filters.tab === "oss" ? "page" : undefined}>OSS</a>
   </nav>
 
-  <form action="/adoption" method="get" class="filters" aria-label="Adoption filters">
+  <form method="get" class="filters" aria-label="Adoption filters">
     <input type="hidden" name="tab" value={filters.tab} />
     <label>Lookback
       <select name="days">

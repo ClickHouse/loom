@@ -7,7 +7,7 @@ const queries = {
   retention: "public_adoption_retention ORDER BY age",
   activity: "public_adoption_activity ORDER BY period",
   lifecycle: "public_adoption_lifecycle ORDER BY bucket",
-  oss: "public_oss_adoption ORDER BY day, source, metric LIMIT 2400",
+  oss: "public_oss_adoption ORDER BY day, source, metric LIMIT 4000",
 };
 
 async function readSource(url, options, decode = (response) => response.json()) {
@@ -75,13 +75,15 @@ export async function loadAdoption(env = process.env, now = new Date()) {
   const refreshedAt = now.toISOString();
   const today = refreshedAt.slice(0, 10);
   const firstDay = daysBefore(today, 365);
+  const historyStart = daysBefore(today, 730);
   const yesterday = daysBefore(today, 1);
-  const [warehouse, repository, releases, python, npm, pulls] = await Promise.all([
+  const [warehouse, repository, releases, python, npm, olderNpm, pulls] = await Promise.all([
     loadWarehouse(env),
     readSource("https://api.github.com/repos/ClickHouse/loom"),
     readSource("https://api.github.com/repos/ClickHouse/loom/releases?per_page=100"),
     readSource("https://pypistats.org/api/packages/clickhouse-loom/overall?mirrors=false"),
     readSource(`https://api.npmjs.org/downloads/range/${firstDay}:${yesterday}/@clickhouse/loom`),
+    readSource(`https://api.npmjs.org/downloads/range/${historyStart}:${daysBefore(firstDay, 1)}/@clickhouse/loom`),
     containerPulls(),
   ]);
 
@@ -89,10 +91,13 @@ export async function loadAdoption(env = process.env, now = new Date()) {
   const series = (source, metric) => oss.filter((row) => row.source === source && row.metric === metric);
   const fetchDays = (rows) =>
     rows
-      .filter(({ day, downloads }) => day >= firstDay && day < today && Number.isFinite(downloads))
+      .filter(({ day, downloads }) => day >= historyStart && day < today && Number.isFinite(downloads))
       .map(({ day, downloads }) => ({ day, value: downloads }))
       .sort((left, right) => left.day.localeCompare(right.day));
-  const npmDays = fetchDays(Array.isArray(npm?.downloads) ? npm.downloads : []);
+  const npmDays = fetchDays([
+    ...(Array.isArray(olderNpm?.downloads) ? olderNpm.downloads : []),
+    ...(Array.isArray(npm?.downloads) ? npm.downloads : []),
+  ]);
   const pythonDays = fetchDays(
     (Array.isArray(python?.data) ? python.data : [])
       .filter(({ category }) => category === "without_mirrors")
@@ -119,7 +124,7 @@ export async function loadAdoption(env = process.env, now = new Date()) {
     return {
       isDownload: true,
       history: [...all]
-        .filter(([day]) => day >= firstDay && day < today)
+        .filter(([day]) => day >= historyStart && day < today)
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([day, value]) => ({ day, value })),
     };

@@ -31,7 +31,7 @@ export function adoptionFilters(params) {
 }
 
 export function adoptionUrl(filters, changes = {}, anchor = "") {
-  return "/adoption?" + new URLSearchParams({ ...filters, ...changes }) + anchor;
+  return "?" + new URLSearchParams({ ...filters, ...changes }) + anchor;
 }
 
 export function relativeChange(current, previous) {
