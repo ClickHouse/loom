@@ -236,6 +236,8 @@ def test_paid_runner_remains_main_only_with_finite_cumulative_default() -> None:
         "37 */6 * * *",
         "5,20,35,50 * * * *",
     }
+    assert workflow["concurrency"]["group"] == "${{ github.workflow }}"
+    assert workflow["concurrency"]["cancel-in-progress"] == "false"
     update = workflow["jobs"]["update"]
     assert update["env"]["LOOM_I18N_BATCH_LANGUAGES"] == "${{ inputs.languages }}"
     assert "github.ref == 'refs/heads/main'" in update["if"]
@@ -246,7 +248,7 @@ def test_paid_runner_remains_main_only_with_finite_cumulative_default() -> None:
     assert "environment" not in workflow["jobs"]["finalize"]
     assert workflow["jobs"]["finalize"]["steps"][0]["with"]["ref"] == "main"
     steps = update["steps"]
-    assert steps[0]["with"]["ref"] == "${{ github.sha }}"
+    assert steps[0]["with"]["ref"] == "main"
     assert steps[0]["with"]["persist-credentials"] == "false"
     assert all("GITHUB_PATH" not in step.get("run", "") for step in steps)
     paid = next(step for step in steps if step.get("id") == "translate")
