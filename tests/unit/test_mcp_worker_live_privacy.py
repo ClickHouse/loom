@@ -74,3 +74,75 @@ async def test_registered_live_operation_is_read_only_and_disabled_without_a_dir
     )
     assert response.status == "unavailable"
     assert response.document is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["own_user", "own_session", "pinned"])
+async def test_live_read_scope_refuses_at_http_and_mcp_admission(monkeypatch, scope) -> None:
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from server.auth.jwt import AuthInfo
+    from server.knowledge.api.models_source_live import KnowledgeSourceLiveInput
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates, http, mcp_call
+
+    op = OPERATIONS_BY_NAME[KNOWLEDGE_SOURCE_LIVE]
+    claims = {"read_user_id": "alice"} if scope == "pinned" else {"read_scope": scope}
+    auth = AuthInfo(
+        subject="alice",
+        org="test-org",
+        namespaces=("docs",),
+        roles=(),
+        is_service_account=False,
+        **claims,
+    )
+    body = KnowledgeSourceLiveInput(
+        org="test-org", namespace="docs", source="test", resource_id="mcp://example/test"
+    )
+    target = gates.authz_target(op, org=body.org, namespace=body.namespace, auth=auth)
+    policy = AsyncMock(side_effect=AssertionError("live read went past read-scope admission"))
+    monkeypatch.setattr(gates, "policy", policy)
+    monkeypatch.setattr(gates, "traffic_class", AsyncMock(return_value=("agent", "fixture")))
+    arguments = body.model_dump()
+    request = SimpleNamespace(state=SimpleNamespace(), headers={})
+    http_call = http._HttpCall(request_id="r", raw_body=arguments, auth=auth)
+    with pytest.raises(HTTPException) as refusal:
+        await http._bind_context_and_policy(op, request, http_call, target, body)
+    assert refusal.value.status_code == 403
+
+    mcp_call_data = mcp_call._AdmittedCall(
+        1, op, body, arguments, auth, "r", "", body.namespace, body.org, target
+    )
+    response = await mcp_call._admission_refusal(mcp_call_data)
+    assert response is not None and response["result"]["isError"] is True
+    assert "read scope" in response["result"]["content"][0]["text"]
+    policy.assert_not_awaited()
+
+
+def test_direct_live_call_still_refuses_a_narrow_protected_context(monkeypatch) -> None:
+    from server.auth.jwt import AuthInfo
+    from server.knowledge.app import mcp_worker_protected as protected
+    from server.knowledge.app.mcp_worker_read import WorkerReadRefused
+
+    wide = AuthInfo(
+        subject="alice", org="test-org", namespaces=("docs",), roles=(), is_service_account=False
+    )
+    narrow = AuthInfo(
+        subject="alice",
+        org="test-org",
+        namespaces=("docs",),
+        roles=(),
+        is_service_account=False,
+        read_scope="own_session",
+    )
+    monkeypatch.setattr(type(protected.settings), "auth_actually_required", lambda self: True)
+    monkeypatch.setattr(protected.settings, "knowledge_mirrored_sources_enabled", True)
+    monkeypatch.setattr(protected, "protected_for", lambda auth: True)
+    monkeypatch.setattr(protected, "current_auth", lambda: wide)
+    protected._require_context("test-org", wide)
+
+    monkeypatch.setattr(protected, "current_auth", lambda: narrow)
+    with pytest.raises(WorkerReadRefused, match="^denied$"):
+        protected._require_context("test-org", narrow)
