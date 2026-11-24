@@ -221,8 +221,8 @@ CREATE OR REPLACE VIEW loom_product_analytics.public_oss_adoption
 SQL SECURITY DEFINER AS
 SELECT day, source, artifact, metric, value
 FROM loom_product_analytics.loom_oss_metrics_daily
-WHERE day >= toDate(now('UTC')) - if(metric = 'sdk_downloads', 730, 400)
-  AND day < toDate(now('UTC'))
+WHERE day >= toDate(now('UTC')) - 730 AND day < toDate(now('UTC'))
+  AND (metric = 'sdk_downloads' OR day >= toDate(now('UTC')) - 400)
   AND (source, artifact, metric) IN (
       ('github', 'ClickHouse/loom', 'stars'),
       ('github', 'ClickHouse/loom', 'forks'),
