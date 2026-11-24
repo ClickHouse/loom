@@ -16,10 +16,6 @@ const names = {
 const arms = Object.keys(data.arms);
 const labelFor = (arm) => names[arm] || data.arms[arm] || arm;
 const byId = (id) => document.getElementById(id);
-const cacheStarts = [...new Set(data.attempts.map((row) => row.cache_start).filter(Boolean))];
-const verifiedPairOrders = new Set((data.cache_pairs || [])
-  .filter((pair) => pair.first_prefix_token_count_match === true)
-  .flatMap((pair) => [pair.cold_order, pair.warm_order]));
 function reportLink(value) {
   if (typeof value !== "string" || !value) return null;
   try {
@@ -103,7 +99,6 @@ function selected() {
     (row) =>
       tasks.includes(row.task) &&
       (!byId("issue").value || row.task === byId("issue").value) &&
-      (!cacheStarts.length || row.cache_start === byId("cache-start").value) &&
       (!byId("repeat").value || String(row.repeat) === byId("repeat").value),
   );
 }
@@ -183,22 +178,11 @@ function summary(rows, plannedRows) {
   const blocks = new Set(rows.map((row) => `${row.task}:${row.repeat}`)).size;
   const plannedBlocks = new Set(plannedRows.map((row) => `${row.task}:${row.repeat}`)).size;
   const waiting = plannedRows.filter((row) => row.state === "complete" && !row.comparison_included).length;
-  const graded = plannedRows.filter((row) => row.state === "complete");
-  const verified = graded.filter((row) => row.cache_start_verified === true).length;
-  const plannedOrders = new Set(plannedRows.map((row) => row.order));
-  const measuredPairs = (data.cache_pairs || []).filter(
-    (pair) =>
-      (plannedOrders.has(pair.cold_order) || plannedOrders.has(pair.warm_order)) &&
-      typeof pair.first_prefix_token_count_match === "boolean",
-  );
-  const matchingPairs = measuredPairs.filter((pair) => pair.first_prefix_token_count_match).length;
   byId("comparison-note").textContent =
     (partial
       ? `${blocks} of ${plannedBlocks} planned blocks matched across all five arms. `
       : `${blocks} matched ${blocks === 1 ? "attempt" : "attempts"} per arm. `) +
     (waiting ? `${waiting} completed attempts await matching arms. ` : "") +
-    (cacheStarts.length ? `Provider cache evidence matches the planned start in ${verified} of ${graded.length} graded attempts. ` : "") +
-    (measuredPairs.length ? `In ${matchingPairs} of ${measuredPairs.length} measured pairs, the warm first response read the same number of tokens the cold response wrote and wrote zero new tokens. ` : "") +
     "The comparison includes hidden test failures and uses Claude Code's reported session cost.";
 }
 function issuesTable(rows, plannedRows) {
@@ -248,9 +232,6 @@ function chart(rows, plannedRows) {
           rows.length === plannedRows.length &&
           matched(rows) &&
           (metric.kind !== "cost" || measuredCost) &&
-          (!cacheStarts.length ||
-            rows.every((row) => row.cache_start_verified === true) &&
-            plannedRows.every((row) => verifiedPairOrders.has(row.order))) &&
           data.run_status !== "interrupted" &&
           data.run_status !== "failed" &&
           sums.baseline.value !== null
@@ -349,9 +330,6 @@ function attemptsTable(rows) {
       }[row.generation_cost_source];
       if (costSource) costCell.append(node("small", costSource));
       addFirstPrompt(costCell, (key) => row[key]);
-      if (row.cache_start && row.cache_start_verified !== true) {
-        costCell.append(node("small", "Planned cache state unverified"));
-      }
     }
     item.append(
       costCell,
@@ -400,8 +378,7 @@ function render() {
     `${new Set(complete.map((row) => row.task)).size} / ${new Set(rows.map((row) => row.task)).size}`;
   byId("progress").textContent = `${complete.length} / ${rows.length}`;
   byId("error-count").textContent = rows.filter((row) => row.state === "error").length;
-  const nativeComparison = data.comparison_by_cache_start?.[byId("cache-start").value] ?? data.comparison_url;
-  const comparison = data.complete && paired.length === rows.length ? reportLink(nativeComparison) : null;
+  const comparison = data.complete && paired.length === rows.length ? reportLink(data.comparison_url) : null;
   byId("comparison").hidden = !comparison;
   if (comparison) byId("comparison").href = comparison;
   summary(paired, rows);
@@ -413,21 +390,19 @@ function render() {
   const spend = knownSpend && observed.length ? observed.reduce((sum, row) => sum + row.generation_cost, 0) : null;
   byId("spend-progress").textContent =
     `Solver spend across all observed primary attempts: ${format(spend, "cost")}. ` +
-    "This includes unmatched attempts; the comparison table uses matched attempts only. A/A controls, setup and judging are separate.";
+    "This includes unmatched attempts; the comparison table uses matched attempts only. Setup and judging are separate.";
   attemptsTable(rows);
   const group = data.cohorts.groups[byId("cohort").value];
   byId("study-disclosure").textContent = [
     data.study_role ? `Study role: ${data.study_role}.` : "",
     data.loom_schema_profile ? `All Loom arms use the ${data.loom_schema_profile} MCP catalog.` : "",
     ...Object.values(data.memory_treatment || {}),
-    `${data.observed - data.attempts.filter((row) => row.state !== "pending").length} A/A control records are excluded from the primary tables. A/A controls repeat no Loom to measure variation.`,
     `${group.task_ids.length} distinct issues; repeats are not additional issues.`,
   ]
     .filter(Boolean)
     .join("\n\n");
   byId("notes").textContent =
-    data.cost_note +
-    " Blind judgments are separate from hidden tests and remain unknown until measured. Agent time includes the coding loop and its tests. End-to-end time also includes environment setup, verification and index audits. Input tokens include cached tokens; total tokens equal input plus output. Historical issues and authored experiments are not pooled.";
+    "Cost uses Claude Code session totals, including failed attempts. Setup and judging costs are separate. Blind judgments are separate from hidden tests and remain unknown until measured. Agent time includes the coding loop and its tests. End-to-end time also includes environment setup, verification and index audits. Input tokens include cached tokens; total tokens equal input plus output. Historical issues and authored experiments are not pooled.";
 }
 for (const [key, group] of Object.entries(data.cohorts.groups).filter(([, group]) => group.task_ids.length)) {
   const option = node("option", group.label);
@@ -435,15 +410,6 @@ for (const [key, group] of Object.entries(data.cohorts.groups).filter(([, group]
   byId("cohort").append(option);
 }
 byId("cohort").value = data.cohorts.default;
-byId("cache-filter").hidden = !cacheStarts.length;
-byId("repeat-label").hidden = cacheStarts.length > 0 && new Set(
-  data.attempts.filter((row) => row.cache_start === "cold").map((row) => row.repeat),
-).size < 2;
-for (const start of cacheStarts) {
-  const option = node("option", start === "cold" ? "Cold start" : "Warm start");
-  option.value = start;
-  byId("cache-start").append(option);
-}
 byId("cohort-label").hidden = Object.values(data.cohorts.groups).filter((group) => group.task_ids.length).length === 1;
 for (const task of [...new Set(data.attempts.map((row) => row.task))].sort()) {
   const option = node("option", data.titles[task] || task);
@@ -461,6 +427,6 @@ byId("cohort").addEventListener("change", () => {
   for (const option of byId("issue").options) option.hidden = Boolean(option.value) && !tasks.includes(option.value);
   render();
 });
-for (const id of ["issue", "repeat", "cache-start", "timing", "chart-metric", "attempt-filter"])
+for (const id of ["issue", "repeat", "timing", "chart-metric", "attempt-filter"])
   byId(id).addEventListener("change", render);
 render();

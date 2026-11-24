@@ -8,7 +8,7 @@ import json
 import re
 from pathlib import Path
 
-from .arms import ALL
+from .arms import PRIMARY
 
 
 def _require(condition, message):
@@ -37,7 +37,7 @@ def binding_for(protocol, slot):
             and protocol["schedule"][order] == slot,
             "Attempt differs from frozen schedule",
         )
-        arm = ALL[slot["arm"]]
+        arm = PRIMARY[slot["arm"]]
         _require(
             type(slot.get("memory_enabled")) is bool
             and all(slot.get(key) == value for key, value in arm.identity().items()),

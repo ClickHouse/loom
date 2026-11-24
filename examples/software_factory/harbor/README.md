@@ -12,18 +12,17 @@ The output directory contains:
 - `reports/attempts/attempt-NN.md` and `.json`: each scheduled attempt, with native
   trajectory and verifier links when those artifacts exist.
 - `reports/scenarios/`: one summary per distinct task, across repeats and arms.
-- `reports/AA-CONTROLS.md` and `reports/aa-controls.json`: separate A/A controls.
 - `reports/charts.html` and `reports/charts.json`: bar charts for hidden success, blind fixed judgments, regressions, provider cost,
   agent time, tests, Loom calls, memory writes and tokens and total tool calls, with scenario and attempt filters.
   The matched table shows cost and time changes from No Loom, first-prompt cache activity, and solver token totals with cache reads, cache writes and output.
   The first-prompt and solver totals use Anthropic's usage counters in the Claude Code stream. Missing counters remain unknown.
-  Cache-pair runs show costs and timing for measured cold and warm attempts under separate selectors.
   Spend per verified solve adds Claude Code's reported session costs, including failed attempts, and divides by the number of hidden-test passes.
 - `reporting-manifest.json`: source job, derived jobs and report locations.
 
 With three scenarios, three repeats and five arms, the primary comparison has
-nine task/repeat rows and five columns. The six A/A controls are excluded from
-those columns. Missing attempts have null metrics and explicit pending counts.
+45 attempts in nine task/repeat rows and five columns. Each attempt starts a
+fresh Claude Code session with normal provider caching. Missing attempts have
+null metrics and explicit pending counts.
 Observed successes are reported immediately; a final success rate is available
 only when all expected attempts in that arm have completed. Unknown cost and
 tool counts remain unknown.
@@ -69,9 +68,9 @@ joining the existing Loom traces. A failed capture leaves billing unknown and a
 preservation receipt; it does not skip resource cleanup. These private diagnostics
 are separate from the allowlisted numeric public export.
 
-A `--pilot-task` run has one task/repeat row and all five arm columns. It has no
-A/A attempts. Its paired deltas are descriptive; confidence intervals remain
-unknown because a single scenario cannot measure variation across scenarios.
+A `--pilot-task` run has one task/repeat row and all five arm columns. Its
+paired deltas are descriptive because a single scenario cannot measure
+variation across scenarios.
 Hidden tests, full regression checks and blind fixed judgments use the same
 contracts as the full matrix.
 
@@ -80,20 +79,9 @@ patch for each candidate. Every patch applies to the same base. Issue text and
 public project documents are shared, and the judge's costs stay separate from
 solver costs.
 
-Add `--cache-pairs` to a pilot to schedule a cold and warm attempt for each arm.
-Use a dedicated Claude API workspace with no other traffic. Each warm attempt
-uses the same provider cache after its paired cold attempt, with a fresh solver
-session and checkout. The runner waits for cache expiry before moving to the next
-arm. Quiet periods are recorded separately from trial times. The first prompt
-must report writes without reads for the cold start, and reads for the warm start.
-A missed cache state remains in the results and fails cache verification. The
-report displays the two start conditions separately and retains the observed
-cache counts for each attempt.
-
 `paired-report.json` reports target progress for complete cohorts with valid
-Harbor rewards. Runs with ordinary provider cache usage use `observed_targets`.
-Cache-pair runs report cold and warm targets separately after their cache
-receipts verify. A linked lesson counts when the recorded reply contains a
+Harbor rewards. The targets use Claude Code session cost and agent time.
+A linked lesson counts when the recorded reply contains a
 nonempty lesson with an explicit code-link state. Incomplete Loom replies leave
 content totals and first-lesson timing unknown.
 
@@ -118,7 +106,7 @@ is saved before adding the navigation script.
 ## Native views
 
 By default, the reporter creates `no-loom`, `loom-treesitter`, `loom-treesitter-memory`,
-`loom-scip`, `loom-scip-memory` and `aa-controls` under the study's `jobs` directory. Each finalized trial's assets
+`loom-scip` and `loom-scip-memory` under the study's `jobs` directory. Each finalized trial's assets
 are copied once. Subsequent exports update aggregates and add newly finalized
 trials. Temporary copies are staged outside native job directories and recovered
 after an interrupted export. JSON and Markdown writes replace files atomically.

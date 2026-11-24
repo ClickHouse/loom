@@ -24,11 +24,10 @@ from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.index import MUTABLE_STATE_KEYS, select_snapshot, snapshot
 from examples.software_factory.harbor.paired import ARMS, analyze, analyze_cohorts
 from examples.software_factory.harbor.reporting import generate_reports
-from examples.software_factory.harbor.runtime import append, read, task_inputs, verify, write
+from examples.software_factory.harbor.runtime import read, task_inputs, verify, write
 
 from .billing import FIELDS as BILLING_FIELDS
 from .billing import audit_provider_costs
-from .cache_start import CACHE_5M_SECONDS, quiet_period, verified_start
 from .fairness import audit_fairness
 from .judging import load_verdicts, run_judging
 from .mcp_qualification import STARTUP_COUNTS, verify_catalog
@@ -420,9 +419,6 @@ def result_record(slot: dict, raw: dict, folder: Path, *, task_kind: str, model_
         "status": "completed" if raw.get("exception_info") is None else "agent_error",
         **observed,
     }
-    if agent == "claude-code" and "cache_start" in slot:
-        result["cache_start"] = slot["cache_start"]
-        result["cache_start_verified"] = verified_start(slot["cache_start"], observed)
     result["model_selected_loom_requests"] = result.get("loom_tool_calls")
     if slot["mode"] == "baseline" or agent == "oracle":
         if result.get("loom_tool_calls") not in (0, None):
@@ -452,8 +448,6 @@ def result_record(slot: dict, raw: dict, folder: Path, *, task_kind: str, model_
     result["harbor_trial"] = str(folder)
     result["schedule_order"] = slot["order"]
     result["pairing_key"] = [slot["task_id"], slot["repeat"]]
-    if "cache_start" in result:
-        result["pairing_key"].append(slot["cache_start"])
     result["harbor_reward_valid"] = raw.get("reward_valid") is True
     return result
 
@@ -591,8 +585,6 @@ def export(protocol: dict, job_name="live") -> dict:
             "task_id",
             "arm",
             "repeat",
-            "cache_start",
-            "cache_start_verified",
             "resolved",
             "status",
             "end_to_end_s",
@@ -665,21 +657,6 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
     timers = {}
     frozen_snapshot = read(output / "index-content.json")
     next_orders = [int(Path(t.path).name.removeprefix("slot-")) for t in config.tasks]
-    cache_pairs = kind == "live" and "cache_start" in protocol["schedule"][0]
-    lease = CACHE_5M_SECONDS
-
-    async def wait_for_cache(seconds):
-        started = time.monotonic()
-        print(json.dumps({"phase": "provider-cache-quiet-period", "seconds": seconds}), flush=True)
-        await asyncio.sleep(seconds)
-        append(
-            output / "cache-quiet-periods.jsonl",
-            {
-                "before_order": next_orders[0],
-                "required_s": seconds,
-                "elapsed_s": time.monotonic() - started,
-            },
-        )
 
     async def start(event):
         started = time.monotonic()
@@ -712,7 +689,6 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
             os.fsync(stream.fileno())
 
     async def end(event):
-        nonlocal lease
         order = int(event.config.task.path.name.removeprefix("slot-"))
         scopes = selected_scopes(protocol, protocol["schedule"][order]) if kind == "live" else []
         audit_started = time.monotonic()
@@ -768,17 +744,10 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
             ),
             flush=True,
         )
-        if cache_pairs:
-            lease = max(lease, quiet_period(trial_folder))
-            if protocol["schedule"][order]["cache_start"] == "warm" and next_orders:
-                await wait_for_cache(lease)
-                lease = CACHE_5M_SECONDS
 
     job.on_trial_started(start).on_trial_ended(end)
     if kind == "live":
         export(protocol, kind)
-    if cache_pairs and next_orders:
-        await wait_for_cache(lease)
     await job.run()
     summary = export(protocol, kind)
     if kind == "live":

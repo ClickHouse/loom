@@ -65,17 +65,13 @@ coverage defines a separate cohort from implementation-only indexes.
 
 ## Execution and artifacts
 
-Three repeats of five arms plus six separate A/A controls produce 51 attempts.
-Pass `--cache-pairs` to both `plan` and `run` to measure each repeat with cold
-and warm provider starts. For Flask this schedules 90 primary attempts and 12
-A/A controls, with 24 blind judgments. Each warm session follows its own cold
-session. The controller waits for the provider cache lease to expire before the
-next cold session. This wait is outside agent and end-to-end attempt times.
-Cold and warm comparisons and A/A controls use separate groups. First-prompt
-read and write counters show whether each pair matched.
+Three issues, five arms and three repeats produce 45 coding attempts. Each
+attempt starts a fresh Claude Code session with normal provider caching. Reports
+show the mean session cost and agent time across repeats. Anthropic’s usage
+counters include observed cache token reads and writes.
 
-The `paired-report.json` target checks use observed provider cost and each time
-measure for the same arm in the same cache state. A 20% margin is 0.8 times
+The `paired-report.json` target checks use Claude Code’s reported session cost
+and agent time in matched issue and repeat groups. A 20% margin is 0.8 times
 the No Loom mean minus the Loom mean. Missing cost evidence leaves the cost
 check unknown. Memory comparisons use the matching code-only index and retain
 hidden-test, blind-judge and regression deltas. Main-session linked-lesson
@@ -147,6 +143,6 @@ a general result across repositories.
 The memory contrast adds historical information as well as retrieval. It tests
 that combined contribution; it does not establish the benefit of linking alone.
 Exact model outputs, cost and timing can vary. Report every arm, failures, paired
-uncertainty, A/A noise and unknowns. Provider cost includes agent and Loom calls;
-setup, judging and unpriced infrastructure remain separate. No reduction or
+uncertainty and unknowns. Claude Code reports solver session cost. The report
+records Loom provider cost, judging and setup separately. No reduction or
 quality gain is established before measurements exist.

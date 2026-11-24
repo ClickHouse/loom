@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 
-from .arms import ALL, CONTROLS, PRIMARY
+from .arms import PRIMARY
 
 
 def schedule(
@@ -41,9 +41,6 @@ def schedule(
             # minimize the position imbalance across the entire frozen scenario set.
             offset = (ordinals[task] * repeats + repeat) % len(arms)
             groups.append((task, repeat, arms[offset:] + arms[:offset]))
-        aa = list(CONTROLS)
-        rng.shuffle(aa)
-        groups.append((task, "aa", aa))
     rng.shuffle(groups)
     for task, repeat, arms in groups:
         for arm in arms:
@@ -53,7 +50,7 @@ def schedule(
                     "task_id": task,
                     "repeat": repeat,
                     "arm": arm,
-                    **ALL[arm].identity(),
+                    **PRIMARY[arm].identity(),
                 }
             )
     return rows

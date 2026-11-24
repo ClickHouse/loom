@@ -29,7 +29,6 @@ class HarborCharts(unittest.TestCase):
                         "loom-treesitter-memory",
                         "loom-scip",
                         "loom-scip-memory",
-                        "baseline-a",
                     )
                 )
             ],

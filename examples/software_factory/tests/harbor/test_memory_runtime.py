@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from examples.software_factory.factory.model import digest
-from examples.software_factory.harbor.arms import ALL
+from examples.software_factory.harbor.arms import PRIMARY
 from examples.software_factory.harbor.runtime import task_inputs
 from examples.software_factory.harbor.scopes import binding_for, selected_scopes
 
@@ -37,7 +37,7 @@ class RuntimeBindings(unittest.TestCase):
         self.slots = []
         bindings = {}
         for order, arm in enumerate(("baseline", "loom-treesitter", "loom-treesitter-memory")):
-            spec = ALL[arm]
+            spec = PRIMARY[arm]
             self.slots.append(
                 {"order": order, "task_id": "task", "repeat": 0, "arm": arm, **spec.identity()}
             )

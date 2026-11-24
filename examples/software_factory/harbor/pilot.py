@@ -1,21 +1,12 @@
-"""Select the pilot issue or pair cache starts in a frozen schedule."""
+"""Select the pilot issue in a frozen schedule."""
 
-from .arms import validate_schedule, with_cache_pairs
+from .arms import validate_schedule
 from .runtime import read, write
 from .source import sha
 
 
-def select(prepared, task_id, output, *, cache_pairs=False):
+def select(prepared, task_id, output):
     validate_schedule(prepared["schedule"])
-    if task_id is None:
-        if not cache_pairs:
-            return prepared
-        rows = with_cache_pairs(prepared["schedule"])
-        validate_schedule(rows)
-        result = {**prepared, "schedule": rows}
-        output.mkdir(parents=True, exist_ok=False)
-        write(output / "inputs.json", result)
-        return result
     if task_id not in prepared["tasks"]:
         raise ValueError("The pilot task must name a frozen evaluation scenario")
     rows = [
@@ -24,8 +15,6 @@ def select(prepared, task_id, output, *, cache_pairs=False):
             row for row in prepared["schedule"] if row["task_id"] == task_id and row["repeat"] == 0
         )
     ]
-    if cache_pairs:
-        rows = with_cache_pairs(rows)
     validate_schedule(rows)
     output.mkdir(parents=True, exist_ok=False)
     manifest = read(prepared["historical_manifest"])

@@ -37,5 +37,5 @@ def compare(results: list[dict]) -> dict:
         "arms": arms,
         "benchmark_claims": False,
         "interpretation": "Replay measures no model quality, savings or adoption.",
-        "inference": "No significance estimate. A live study needs paired clusters and A/A noise.",
+        "inference": "No significance estimate. A live study needs paired scenario clusters.",
     }

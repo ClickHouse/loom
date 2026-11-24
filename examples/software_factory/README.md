@@ -41,16 +41,16 @@ This example uses MCP directly; it does not install the Loom plugin or its hooks
 The server supplies initialization guidance. Reports record startup connection
 state, advertised Loom tools and loaded Loom skills separately from selected calls.
 
-There are three public issues, three repeats and five arms: 45 primary attempts.
-Six A/A attempts measure baseline variation separately. Six base/reference controls
-qualify the grader without model calls. Twelve blind judgments assess submitted
-fixes after coding; judgments do not provide feedback to the solver.
+Three public issues, five arms and three repeats produce 45 coding sessions.
+Six base/reference controls qualify the grader without model calls. Nine blind
+judgments assess submitted fixes after coding. Each attempt starts a fresh
+Claude Code session. The report averages the session cost and agent time and
+retains Anthropic’s cache token counts.
 
 `--pilot-task` runs one selected issue once in each of the five arms, with two
 base/reference controls and one blind judgment. It preserves the issue, historical
 facts, hidden tests and full regression checks. Only the selected task's native
-indexes and memory namespaces are prepared. A pilot has no A/A pair or meaningful
-confidence interval; its results are descriptive. Keep every pilot, including
+indexes and memory namespaces are prepared. A single-issue pilot gives descriptive results. Keep every pilot, including
 negative and failed attempts, and declare the task before running. Resume uses
 the selection frozen in the launch record.
 

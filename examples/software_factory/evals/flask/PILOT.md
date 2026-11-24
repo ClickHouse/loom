@@ -5,15 +5,15 @@ Compare five arms on the same historical Flask issue and base revision:
 `loom-scip-memory`. Claude chooses every Loom call. Baseline has no Loom client or
 schemas. Every arm uses the same native coding agent, issue, model and test capabilities.
 
-Three issues and three repeats produce 45 primary attempts. Add one baseline A/A
-pair per issue for 51 attempts. Freeze seed 741 and retain the interleaved arm
-blocks and balanced positions. Retain nonuse, failures, invalid rewards and
-unknown costs. Analyze paired task clusters and report A/A controls separately.
+Three issues, five arms and three repeats produce 45 attempts. Freeze seed 741
+and retain the interleaved arm blocks and balanced positions. Each attempt starts
+a fresh Claude Code session with normal provider caching. Retain nonuse, failures,
+invalid rewards and unknown costs. Analyze paired task clusters.
 
 For a five-attempt development check, pass `--pilot-task pallets__flask-4230` to
 `plan` and `run`. The selected issue runs once per arm with unchanged grading and
 history. Its task and marker are frozen in the launch and schedule; a truncated
-full schedule is rejected. A pilot has no A/A pair or confidence interval. Keep
+full schedule is rejected. A pilot gives descriptive results. Keep
 all pilot outcomes and hold the full matrix until the development target is met.
 These reused development issues are not held-out confirmation data.
 
@@ -44,8 +44,8 @@ prompts, provider limits and all namespace identities. Require base controls to
 fail and reference controls to pass the hidden verifier. Harbor retries are disabled. Claude Code retains its native provider behavior
 and ordinary checkout tools.
 
-Report hidden success, fixed-only blind judgments, full-suite regressions, total
-agent and Loom provider cost, agent time, full end-to-end time, tokens, agent tests,
+Report hidden success, fixed-only blind judgments, full-suite regressions, Claude Code
+session cost and separately tracked Loom provider cost, agent time, full end-to-end time, tokens, agent tests,
 Loom requests and persisted memory writes. Judge and setup costs are separate.
 Setup writes are not agent writes. Missing billing evidence is unknown. All chart
 bars retain the scheduled denominator and distinguish pending cells.

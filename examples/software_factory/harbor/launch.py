@@ -125,7 +125,6 @@ def plan(
     evaluation="flask",
     pilot_task=None,
     *,
-    cache_pairs=False,
     loom_schema_profile="standard",
 ):
     if loom_schema_profile not in MCP_SCHEMA_PROFILES:
@@ -142,22 +141,20 @@ def plan(
             raise LaunchError("The pilot task must name a frozen evaluation scenario")
         task_ids &= {pilot_task}
         history_ids &= {pilot_task}
-    cold, warm = len(task_ids - history_ids), len(history_ids)
-    starts = 2 if cache_pairs else 1
-    cases, repeats = len(task_ids | history_ids), starts * (1 if pilot_task else 3)
-    aa_attempts = 0 if pilot_task else cases * starts * 2
+    cases, repeats = len(task_ids | history_ids), 1 if pilot_task else 3
     mode = "pilot" if pilot_task else "full"
     memory_attempts = cases * repeats * sum(arm.memory_enabled for arm in PRIMARY.values())
-    seeded_attempts = warm * repeats * sum(arm.history_seeded for arm in PRIMARY.values())
+    seeded_attempts = (
+        len(history_ids) * repeats * sum(arm.history_seeded for arm in PRIMARY.values())
+    )
     records = memories["records"]
     linked = sum(bool(row["files"]) for row in records)
     if not cases or len({row["key"] for row in records}) != len(records):
         raise LaunchError("Public cases or project memory identities are invalid")
     return {
         "schema_version": 1,
-        "study_mode": f"cache-{mode}" if cache_pairs else mode,
+        "study_mode": mode,
         "pilot_task": pilot_task,
-        "cache_pairs": cache_pairs,
         "loom_schema_profile": loom_schema_profile,
         "evaluation": {
             key: descriptor[key] for key in ("id", "title", "adapter", "descriptor_sha256")
@@ -170,17 +167,16 @@ def plan(
         "cases": cases,
         "repeats": repeats,
         "primary_attempts": cases * repeats * len(ARMS),
-        "aa_attempts": aa_attempts,
-        "total_attempts": cases * repeats * len(ARMS) + aa_attempts,
+        "total_attempts": cases * repeats * len(ARMS),
         "blind_judges": {
             "model": locked["model_id"],
             "fixed_only": True,
-            "requests": cases * (repeats + (0 if pilot_task else starts)),
+            "requests": cases * repeats,
         },
         "embedding": {"model": "local:bge-small", "provider": "local", **model_pin(root)},
         "memory": {
-            "history_cases": warm,
-            "cases_without_history": cold,
+            "history_cases": len(history_ids),
+            "cases_without_history": len(task_ids - history_ids),
             "project_records": len(records),
             "linked": linked,
             "unlinked": len(records) - linked,
@@ -540,7 +536,6 @@ def execute(
     docker=None,
     evaluation="flask",
     pilot_task=None,
-    cache_pairs=False,
     loom_schema_profile=None,
 ):
     if amount is not None:
@@ -556,12 +551,11 @@ def execute(
             loom_schema_profile = "standard"
         if loom_schema_profile not in MCP_SCHEMA_PROFILES:
             raise LaunchError("Choose the standard or compact Loom MCP schema profile")
-        if pilot_task is not None or cache_pairs:
+        if pilot_task is not None:
             plan(
                 root=root,
                 evaluation=evaluation,
                 pilot_task=pilot_task,
-                cache_pairs=cache_pairs,
                 loom_schema_profile=loom_schema_profile,
             )
         if not docker.key or any(c.isspace() for c in docker.key):
@@ -586,7 +580,6 @@ def execute(
                     docker=docker,
                     descriptor=descriptor,
                     pilot_task=pilot_task,
-                    cache_pairs=cache_pairs,
                     loom_schema_profile=loom_schema_profile,
                 )
             finally:
@@ -603,7 +596,6 @@ def _execute(
     docker,
     descriptor,
     pilot_task,
-    cache_pairs,
     loom_schema_profile,
 ):
     path = output / "launch.json"
@@ -615,7 +607,6 @@ def _execute(
             owner=owner,
             evaluation=descriptor["id"],
             pilot_task=pilot_task,
-            cache_pairs=cache_pairs,
             loom_schema_profile=loom_schema_profile,
             source_root=str(root),
             output_root=str(output),
@@ -707,10 +698,7 @@ def main(argv=None):
     free = sub.add_parser("plan", help="Describe the frozen evaluation without Docker or providers")
     free.add_argument("--json", action="store_true")
     free.add_argument("--eval", default="flask", dest="evaluation")
-    free.add_argument("--pilot-task", help="One frozen task, once per arm, without A/A attempts")
-    free.add_argument(
-        "--cache-pairs", action="store_true", help="Cold and warm starts for each arm"
-    )
+    free.add_argument("--pilot-task", help="One frozen task, once per arm")
     for name in ("run", "resume", "cleanup"):
         child = sub.add_parser(name)
         child.add_argument("--output", required=True)
@@ -719,9 +707,6 @@ def main(argv=None):
             child.add_argument("--budget-usd", type=budget)
         if name == "run":
             child.add_argument("--pilot-task", help="One frozen task, once per arm")
-            child.add_argument(
-                "--cache-pairs", action="store_true", help="Use a quiet provider workspace"
-            )
             run = child
     for command in (free, run):
         command.add_argument(
@@ -735,18 +720,14 @@ def main(argv=None):
         description = plan(
             evaluation=args.evaluation,
             pilot_task=args.pilot_task,
-            cache_pairs=args.cache_pairs,
             loom_schema_profile=args.loom_schema_profile,
         )
         if args.json:
             print(json.dumps(description, indent=2))
         else:
-            starts = 2 if args.cache_pairs else 1
-            cache_label = " × 2 cache starts" if args.cache_pairs else ""
             print(
                 f"{description['total_attempts']} attempts: {description['cases']} cases × "
-                f"{description['repeats'] // starts} repeats{cache_label} × {len(ARMS)} arms + "
-                f"{description['aa_attempts']} A/A controls"
+                f"{description['repeats']} repeats × {len(ARMS)} arms"
             )
             print(json.dumps(description, indent=2))
         return 0
@@ -764,7 +745,6 @@ def main(argv=None):
             getattr(args, "budget_usd", None),
             evaluation=args.evaluation,
             pilot_task=getattr(args, "pilot_task", None),
-            cache_pairs=getattr(args, "cache_pairs", False),
             loom_schema_profile=getattr(args, "loom_schema_profile", None),
         )
     except (LaunchError, OSError, ValueError) as error:

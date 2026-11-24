@@ -12,12 +12,12 @@ from examples.software_factory.factory.model import digest
 from .anchors import identity as anchor_identity
 from .anchors import matches as anchor_matches
 from .anchors import validate as validate_anchors
-from .arms import ALL
+from .arms import PRIMARY
 
 
 def treatment_fixture(fixture, arm):
     """Apply the frozen arm's history treatment before setup and receipt validation."""
-    if not ALL[arm].memory_enabled:
+    if not PRIMARY[arm].memory_enabled:
         raise PermissionError("Memory is disabled for the selected arm")
     return fixture
 
@@ -65,8 +65,8 @@ def validate_history_certificate(protocol, slot, binding):
 
 def _validate_history(protocol, slot, binding):
     _require(
-        slot.get("arm") in ALL
-        and ALL[slot["arm"]].memory_enabled
+        slot.get("arm") in PRIMARY
+        and PRIMARY[slot["arm"]].memory_enabled
         and slot.get("memory_enabled") is True,
         "Certificate requested for an arm without native memory",
     )

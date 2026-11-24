@@ -149,13 +149,13 @@ class LivePreparationContracts(unittest.TestCase):
         for task in candidates["tasks"]:
             DockerTests(task["dependency_image"], task["objective_selectors"], Path("unused"))
 
-    def test_persistable_schedule_pairs_all_arms_and_keeps_aa(self):
+    def test_persistable_schedule_pairs_all_arms(self):
         from examples.software_factory.harbor.live_support import schedule
 
         rows = schedule(["4045", "4575", "4935"], seed=741)
         self.assertEqual(rows, schedule(["4045", "4575", "4935"], seed=741))
-        self.assertEqual(len(rows), 51)
-        self.assertEqual(sum(r["mode"] == "baseline" for r in rows), 15)
+        self.assertEqual(len(rows), 45)
+        self.assertEqual(sum(r["mode"] == "baseline" for r in rows), 9)
         for task in ("4045", "4575", "4935"):
             for repeat in range(3):
                 self.assertEqual(

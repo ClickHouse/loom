@@ -13,7 +13,7 @@ from pathlib import Path
 from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.runtime import read, task_inputs, verify, write
 
-from .arms import CONTROLS, PRIMARY
+from .arms import PRIMARY
 from .profiles import load_profile
 from .scopes import frozen_json
 
@@ -96,8 +96,8 @@ def _file_patch(path: str, before: str | None, after: str | None) -> dict[str, s
 
 def blind_input(task, candidates, *, seed, validate_candidate, public_documents=None):
     """Return the judge-visible data and a separate private order mapping."""
-    if len(candidates) not in (len(CONTROLS), len(PRIMARY)):
-        raise ValueError("Judging requires a complete control pair or five-arm group")
+    if len(candidates) != len(PRIMARY):
+        raise ValueError("Judging requires a complete five-arm group")
     documents = {} if public_documents is None else public_documents
     if not isinstance(documents, dict) or any(
         not isinstance(key, str) or not key or not isinstance(value, str)
@@ -143,11 +143,9 @@ def blind_input(task, candidates, *, seed, validate_candidate, public_documents=
 def pair_slots(schedule):
     groups = {}
     for slot in schedule:
-        groups.setdefault((slot["task_id"], slot["repeat"], slot.get("cache_start")), []).append(
-            slot
-        )
-    for key, slots in sorted(groups.items(), key=lambda item: str(item[0])):
-        expected = set(CONTROLS if key[1] == "aa" else PRIMARY)
+        groups.setdefault((slot["task_id"], slot["repeat"]), []).append(slot)
+    for _, slots in sorted(groups.items()):
+        expected = set(PRIMARY)
         if len(slots) != len(expected) or {slot["arm"] for slot in slots} != expected:
             raise ValueError("Judge input does not contain complete frozen groups")
         yield slots

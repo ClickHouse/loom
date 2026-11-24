@@ -16,8 +16,7 @@ from statistics import fmean
 from urllib.parse import quote, urlencode
 from uuid import UUID, uuid5
 
-from .arms import CACHE_STARTS, CONTROLS, PRIMARY
-from .cache_start import pair_usage
+from .arms import PRIMARY
 from .cohorts import comparison_cohorts
 
 PRIMARY_VIEWS = {name: "no-loom" if name == "baseline" else name for name in PRIMARY}
@@ -77,12 +76,9 @@ def _tree_hashes(folder):
 
 def _groups(schedule):
     groups = {arm: [s for s in schedule if s["arm"] == arm] for arm in PRIMARY_VIEWS}
-    unknown = {s["arm"] for s in schedule} - set(PRIMARY_VIEWS) - {"baseline-a", "baseline-b"}
+    unknown = {s["arm"] for s in schedule} - set(PRIMARY_VIEWS)
     if unknown:
         raise ValueError("Schedule contains an unsupported comparison arm")
-    controls = [s for s in schedule if s["arm"] in {"baseline-a", "baseline-b"}]
-    if controls:
-        groups["aa-controls"] = controls
     return groups
 
 
@@ -101,7 +97,6 @@ def _settings(protocol):
         )
     base_url = settings.get("viewer_base_url", "http://127.0.0.1:8080").rstrip("/")
     names = {arm: prefix + name for arm, name in PRIMARY_VIEWS.items()}
-    names["aa-controls"] = prefix + "aa-controls"
     return output, jobs, base_url, names
 
 
@@ -120,9 +115,6 @@ def _pair_identity(protocol, slot):
         "grader_sha256": spec["grader_sha256"],
     }
     name = f"{task_id}--repeat-{slot['repeat'] + 1}"
-    if "cache_start" in slot and not slot.get("pilot"):
-        identity["cache_start"] = slot["cache_start"]
-        name += f"--{slot['cache_start']}"
     return name, _digest(identity), identity
 
 
@@ -147,11 +139,6 @@ def _copy_trial(source, destination, raw, slot, protocol):
         "arm": slot["arm"],
         "task_id": slot["task_id"],
         "repeat": slot["repeat"],
-        **(
-            {"cache_start": slot["cache_start"]}
-            if "cache_start" in slot and not slot.get("pilot")
-            else {}
-        ),
         "source_trial": str(source),
         "original_trial_id": raw["id"],
         "original_trial_name": raw["trial_name"],
@@ -408,17 +395,17 @@ def _summary(slots, observed):
     complete = len(records) == len(slots)
     resolved = sum(r["resolved"] for r in records)
     session_cost = _known_sum(records, "generation_cost_usd")
+    agent_time = _known_sum(records, "agent_time_s")
     return {
         "expected": len(slots),
         "observed": len(records),
         "pending": len(slots) - len(records),
-        "cache_starts_verified": sum(r.get("cache_start_verified") is True for r in records)
-        if any("cache_start" in slot for slot in slots)
-        else None,
         "resolved": resolved,
         "success_rate": resolved / len(slots) if complete and slots else None,
         "infrastructure_errors": sum(not r.get("harbor_reward_valid", False) for r in records),
         "generation_cost_usd": session_cost,
+        "mean_claude_cost_usd": session_cost / len(records) if session_cost is not None else None,
+        "mean_agent_time_s": agent_time / len(records) if agent_time is not None else None,
         "total_provider_cost_usd": _known_sum(records, "total_provider_cost_usd"),
         "claude_cost_per_solve_usd": session_cost / resolved
         if session_cost is not None and resolved
@@ -431,7 +418,7 @@ def _summary(slots, observed):
         if records
         else None,
         "selected_loom_calls": _known_sum(records, "model_selected_loom_requests"),
-        "agent_time_s": _known_sum(records, "agent_time_s"),
+        "agent_time_s": agent_time,
         "agent_test_requests": _known_sum(records, "agent_test_requests"),
         "agent_test_runs": _known_sum(records, "agent_test_runs"),
         "loom_tool_calls": _known_sum(records, "loom_tool_calls"),
@@ -457,85 +444,25 @@ def _known_sum(records, key):
     return sum(values) if values and None not in values else None
 
 
-def _cache_arm_summaries(slots, observed, *, arms=PRIMARY_VIEWS):
-    return {
-        state: {
-            arm: _summary(
-                [s for s in slots if s.get("cache_start") == state and s["arm"] == arm], observed
-            )
-            for arm in arms
-        }
-        for state in dict.fromkeys(s["cache_start"] for s in slots if "cache_start" in s)
-    }
-
-
 def _number(value, digits=3):
     return "pending / unknown" if value is None else f"{value:.{digits}f}"
 
 
-def _table(arms, *, cache_starts=False):
+def _table(arms):
     lines = [
-        "| Arm | Observed / expected | Pending | Resolved | Claude Code USD "
-        "| USD per verified solve | Mean full end-to-end (s) | Mean native Harbor (s) |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Arm | Observed / expected | Hidden-test passes | Mean Claude Code cost (USD) "
+        "| USD per verified solve | Mean agent time (s) | Mean end-to-end (s) |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
-    if cache_starts:
-        lines[0] += " Cache starts verified |"
-        lines[1] += "---:|"
     for arm, info in arms.items():
         per_solve = _number(info["claude_cost_per_solve_usd"], 7) if info["resolved"] else "—"
         lines.append(
-            f"| {arm} | {info['observed']} / {info['expected']} | {info['pending']} "
-            f"| {info['resolved']} | {_number(info['generation_cost_usd'], 7)} "
-            f"| {per_solve} "
-            f"| {_number(info['mean_end_to_end_s'])} "
-            f"| {_number(info['mean_native_duration_s'])} |"
+            f"| {PRIMARY[arm].label} | {info['observed']} / {info['expected']} "
+            f"| {info['resolved']} | {_number(info['mean_claude_cost_usd'], 7)} "
+            f"| {per_solve} | {_number(info['mean_agent_time_s'])} "
+            f"| {_number(info['mean_end_to_end_s'])} |"
         )
-        if cache_starts:
-            lines[-1] += f" {info['cache_starts_verified']} / {info['observed']} |"
     return "\n".join(lines) + "\n"
-
-
-def _cache_tables(cache_arms, *, subject=""):
-    return "\n".join(
-        f"## {subject}Planned {state} start\n\n" + _table(arms, cache_starts=True)
-        for state, arms in cache_arms.items()
-    )
-
-
-def _cache_pair_table(pairs):
-    lines = [
-        "## First-prompt reuse by arm",
-        "",
-        "| Issue | Repeat | Arm | Cold reads | Cold writes | Warm reads | Warm writes | "
-        "Prefix size matches |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
-    ]
-    fields = (
-        "cold_first_read_tokens",
-        "cold_first_write_tokens",
-        "warm_first_read_tokens",
-        "warm_first_write_tokens",
-    )
-    for pair in pairs:
-        counters = " | ".join("—" if pair[key] is None else f"{pair[key]:,}" for key in fields)
-        matched = {True: "Yes", False: "No", None: "Unverified"}[
-            pair["first_prefix_token_count_match"]
-        ]
-        arm = pair["arm"]
-        label = PRIMARY[arm].label if arm in PRIMARY else arm
-        repeat = pair["repeat"] + 1 if type(pair["repeat"]) is int else "A/A"
-        lines.append(f"| {pair['task_id']} | {repeat} | {label} | {counters} | {matched} |")
-    lines.extend(
-        (
-            "",
-            "A match means the warm read count equals that arm's cold write count and "
-            "the warm first response wrote zero tokens. The provider reports counts for "
-            "the first response. Later responses have their own cache usage.",
-            "",
-        )
-    )
-    return "\n".join(lines)
 
 
 def generate_reports(protocol, entries, *, job_name="live"):
@@ -551,42 +478,6 @@ def generate_reports(protocol, entries, *, job_name="live"):
     with (output / "reporting.lock").open("a") as guard:
         fcntl.flock(guard, fcntl.LOCK_EX)
         return _generate(protocol, entries, output, jobs, base, names, job_name)
-
-
-def _native_groups(groups, names):
-    view_groups, view_names, view_by_order = {}, {}, {}
-    for group, slots in groups.items():
-        if not slots:
-            view_groups[group], view_names[group] = [], names[group]
-        for slot in slots:
-            suffix = (
-                f"-{slot['cache_start']}" if "cache_start" in slot and not slot.get("pilot") else ""
-            )
-            key = group + suffix
-            view_by_order[str(slot["order"])] = key
-            view_names[key] = names[group] + suffix
-            view_groups.setdefault(key, []).append(slot)
-    return view_groups, view_names, view_by_order
-
-
-def _native_links(schedule, names, base):
-    first = next(iter(schedule), {})
-    suffixes = CACHE_STARTS if "cache_start" in first and not first.get("pilot") else ("",)
-    links, comparisons = {}, {}
-    for state in suffixes:
-        suffix = f"-{state}" if state else ""
-        query = urlencode([("job", names[arm + suffix]) for arm in PRIMARY_VIEWS])
-        url = base + "/compare?" + query
-        comparisons[state] = url
-        stem = f"{state} " if state else ""
-        links.update(
-            {
-                f"{stem}comparison": url,
-                f"{stem}cost": url + "&color=cost",
-                f"{stem}native_time": url + "&color=time",
-            }
-        )
-    return links, comparisons
 
 
 def _generate(protocol, entries, output, jobs, base, names, job_name):
@@ -607,7 +498,6 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             or record["mode"] != slot["mode"]
             or record.get("arm") != slot["arm"]
             or record.get("index_tier") != slot.get("index_tier")
-            or record.get("cache_start") != slot.get("cache_start")
         ):
             raise ValueError("Measured result differs from its scheduled identity")
         raw = _read(Path(record["harbor_trial"]) / "result.json")
@@ -621,16 +511,14 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         record["native_duration_s"] = (finish - start).total_seconds()
         observed[order] = {"order": order, "result": record}
     groups = _groups(schedule)
-    view_groups, view_names, view_by_order = _native_groups(groups, names)
-    native = _native_views(protocol, observed, view_groups, jobs, view_names, job_name)
-    links, comparisons = _native_links(schedule, view_names, base)
+    native = _native_views(protocol, observed, groups, jobs, names, job_name)
+    url = base + "/compare?" + urlencode([("job", names[arm]) for arm in PRIMARY_VIEWS])
+    links = {"comparison": url, "cost": url + "&color=cost", "native_time": url + "&color=time"}
     views_manifest = {
         "kind": VIEW_KIND,
         "source_job": str(output / "jobs" / job_name),
         "viewer_jobs_root": str(jobs),
         "views": native["views"],
-        "comparison_by_cache_start": comparisons if "" not in comparisons else {},
-        "view_by_order": view_by_order,
         "links": links,
         "observed_attempts": len(observed),
         "complete": len(observed) == len(schedule),
@@ -650,7 +538,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
     for slot in schedule:
         order = slot["order"]
         entry = observed.get(order)
-        view_name = view_names[view_by_order[str(order)]]
+        view_name = names[slot["arm"]]
         item = {**slot, "state": "observed" if entry else "pending", "metrics": None, "links": {}}
         model_responses = ""
         if entry:
@@ -707,14 +595,6 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             )
             if entry:
                 record = entry["result"]
-                if "cache_start" in slot:
-                    verification = (
-                        "verified" if record.get("cache_start_verified") is True else "unverified"
-                    )
-                    text += (
-                        f"Planned {slot['cache_start']} start. "
-                        f"Provider cache state {verification}.\n\n"
-                    )
                 text += (
                     f"Resolved: {record['resolved']}. "
                     f"Full end-to-end: {_number(record['end_to_end_s'])}s. "
@@ -745,31 +625,12 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                 arm: _summary([s for s in slots if s["arm"] == arm], observed)
                 for arm in PRIMARY_VIEWS
             },
-            "aa_controls": _summary([s for s in slots if s["arm"] not in PRIMARY_VIEWS], observed),
         }
     primary = cohort_reports[cohorts["default"]]["arms"]
     primary_tasks = set(cohorts["groups"][cohorts["default"]]["task_ids"])
-    controls = _summary(groups.get("aa-controls", []), observed)
-    control_arms = {
-        arm: _summary([s for s in groups.get("aa-controls", []) if s["arm"] == arm], observed)
-        for arm in sorted({s["arm"] for s in groups.get("aa-controls", [])})
-    }
-    cache_controls = _cache_arm_summaries(groups.get("aa-controls", []), observed, arms=CONTROLS)
-    control_report = {
-        "summary": controls,
-        **({"cache_start_arms": cache_controls} if cache_controls else {}),
-        "arms": control_arms,
-        "attempts": [a for a in attempts if a["arm"] not in PRIMARY_VIEWS],
-    }
-    _atomic(report_dir / "aa-controls.json", control_report)
-    _atomic(
-        report_dir / "AA-CONTROLS.md",
-        "# A/A controls\n\nThese controls are excluded from the primary comparison.\n\n"
-        + (_cache_tables(cache_controls) if cache_controls else _table(control_arms)),
-    )
     paired = sorted(
         {
-            (s["task_id"], s["repeat"], s.get("cache_start"))
+            (s["task_id"], s["repeat"])
             for s in schedule
             if s["arm"] in PRIMARY_VIEWS and s["task_id"] in primary_tasks
         }
@@ -778,7 +639,6 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         {
             "task_id": task,
             "repeat": repeat,
-            **({"cache_start": state} if state else {}),
             "cells": {
                 arm: next(
                     (
@@ -786,7 +646,6 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                         for item in attempts
                         if item["task_id"] == task
                         and item["repeat"] == repeat
-                        and item.get("cache_start") == state
                         and item["arm"] == arm
                     ),
                     None,
@@ -794,11 +653,8 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                 for arm in PRIMARY_VIEWS
             },
         }
-        for task, repeat, state in paired
+        for task, repeat in paired
     ]
-    cache_pairs = pair_usage(
-        schedule, {order: entry["result"] for order, entry in observed.items()}
-    )
     scenarios, scenario_links = {}, []
     for task in sorted({s["task_id"] for s in schedule}):
         selected = [s for s in schedule if s["task_id"] == task]
@@ -808,26 +664,9 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                 arm: _summary([s for s in selected if s["arm"] == arm], observed)
                 for arm in PRIMARY_VIEWS
             },
-            "aa_controls": _summary(
-                [s for s in selected if s["arm"] not in PRIMARY_VIEWS], observed
-            ),
-            "aa_control_arms": {
-                arm: _summary([s for s in selected if s["arm"] == arm], observed)
-                for arm in control_arms
-            },
             "attempts": [a for a in attempts if a["task_id"] == task],
             "comparison_links": links,
         }
-        cache_arms = _cache_arm_summaries(selected, observed)
-        scenario_pairs = [pair for pair in cache_pairs if pair["task_id"] == task]
-        scenario_controls = _cache_arm_summaries(
-            [s for s in selected if s["arm"] in CONTROLS], observed, arms=CONTROLS
-        )
-        if cache_arms:
-            info["cache_start_arms"] = cache_arms
-            info["cache_pairs"] = scenario_pairs
-        if scenario_controls:
-            info["cache_start_aa_arms"] = scenario_controls
         scenarios[task] = info
         safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", task) + "-" + _digest(task)[:8]
         scenario_links.append((task, "scenarios/" + safe_name + ".md"))
@@ -835,22 +674,12 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         attempt_links = "\n".join(
             f"- [Attempt {a['order']}](../attempts/attempt-{a['order']:02d}.md): "
             f"{a['arm']}, repeat {a['repeat']}, {a['state']}"
-            + (f", {a['cache_start']} start" if "cache_start" in a else "")
             for a in info["attempts"]
         )
         _atomic(
             report_dir / "scenarios" / (safe_name + ".md"),
             f"# Scenario {task}\n\n"
-            + (
-                _cache_tables(cache_arms) + "\n" + _cache_pair_table(scenario_pairs)
-                if cache_arms
-                else _table(info["arms"])
-            )
-            + (
-                "\n" + _cache_tables(scenario_controls, subject="A/A controls, ")
-                if scenario_controls
-                else "\n## A/A controls\n\n" + _table(info["aa_control_arms"])
-            )
+            + _table(info["arms"])
             + "\n"
             + " · ".join(f"[{key}]({value})" for key, value in links.items())
             + "\n\n"
@@ -872,7 +701,6 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         "cohorts": cohort_reports,
         "pooled_headline": False,
         "all_scenarios_arms": all_scenarios,
-        "aa_controls": controls,
         "paired_rows": rows,
         "scenarios": scenarios,
         "attempts": attempts,
@@ -889,14 +717,6 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             "Original UUIDs, config paths, metrics, costs and timestamps remain unchanged."
         ),
     }
-    if cache_pairs:
-        for cohort in cohort_reports.values():
-            slots = [s for s in schedule if s["task_id"] in cohort["task_ids"]]
-            cohort["cache_start_arms"] = _cache_arm_summaries(slots, observed)
-        report["cache_start_arms"] = cohort_reports[cohorts["default"]]["cache_start_arms"]
-        report["cache_pairs"] = cache_pairs
-    if cache_controls:
-        report["cache_start_aa_arms"] = cache_controls
     _atomic(report_dir / "comparison.json", report)
     text = (
         f"# Factory comparison\n\n{len(observed)}/{len(schedule)} attempts observed across "
@@ -905,28 +725,19 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         "Historical issues and authored experiments are reported separately. "
         "Native Harbor comparison links include all scenarios.\n\n"
     )
-    text += (_cache_tables(report["cache_start_arms"]) if cache_pairs else _table(primary)) + "\n"
-    if cache_pairs:
-        text += _cache_pair_table(cache_pairs) + "\n"
+    text += _table(primary) + "\n"
     text += " · ".join(f"[{key}]({value})" for key, value in links.items())
     for family, cohort in cohort_reports.items():
         if family != cohorts["default"]:
             text += "\n\n## " + cohort["label"] + "\n\n"
-            text += (
-                _cache_tables(cohort["cache_start_arms"]) if cache_pairs else _table(cohort["arms"])
-            )
+            text += _table(cohort["arms"])
     text += (
-        "\n\nA/A controls are separate: "
-        + str(controls["observed"])
-        + " / "
-        + str(controls["expected"])
-        + " observed.\n\n"
+        "\n\n"
         + report["timing"]
-        + "\n\nGeneration estimates are not invoices or all-in infrastructure costs. "
-        "Pending cells are missing, not zero-cost failures.\n"
+        + "\n\nCost uses Claude Code session totals. Spend per verified solve includes "
+        "spend on failed attempts. Provider cache reads and writes are recorded as observed.\n"
     )
     text += "\n" + "\n".join(f"- [{task}]({path})" for task, path in scenario_links)
-    text += "\n- [A/A controls](AA-CONTROLS.md)\n"
     _atomic(report_dir / "COMPARISON.md", text)
     _atomic(
         output / "reporting-manifest.json",

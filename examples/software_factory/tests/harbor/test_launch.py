@@ -168,11 +168,10 @@ class PublicLauncher(unittest.TestCase):
             check=True,
         )
         plan = json.loads(result.stdout)
-        self.assertEqual(plan["total_attempts"], 51)
+        self.assertEqual(plan["total_attempts"], 45)
         self.assertEqual(plan["evaluation"]["id"], "flask")
         self.assertEqual(plan["primary_attempts"], 45)
-        self.assertEqual(plan["aa_attempts"], 6)
-        self.assertEqual(plan["blind_judges"]["requests"], 12)
+        self.assertEqual(plan["blind_judges"]["requests"], 9)
         self.assertTrue(plan["blind_judges"]["fixed_only"])
         self.assertEqual(plan["blind_judges"]["model"], plan["model"])
         self.assertEqual(plan["model"], "claude-opus-5-5")
@@ -198,30 +197,15 @@ class PublicLauncher(unittest.TestCase):
         result = launch.plan(pilot_task="pallets__flask-4230")
         self.assertEqual(result["study_mode"], "pilot")
         self.assertEqual((result["cases"], result["repeats"], result["total_attempts"]), (1, 1, 5))
-        self.assertEqual(result["aa_attempts"], 0)
         self.assertEqual(result["blind_judges"]["requests"], 1)
         self.assertEqual(result["memory"]["memory_namespaces"], 2)
         with self.assertRaises(launch.LaunchError):
             launch.plan(pilot_task="unknown")
 
     def test_pilot_can_freeze_the_compact_catalog(self):
-        result = launch.plan(
-            pilot_task="pallets__flask-4230", cache_pairs=True, loom_schema_profile="compact"
-        )
+        result = launch.plan(pilot_task="pallets__flask-4230", loom_schema_profile="compact")
         self.assertEqual(result["loom_schema_profile"], "compact")
-        self.assertEqual(result["total_attempts"], 10)
-        self.assertFalse(result["paid_requests"])
-
-    def test_full_cache_plan_pairs_all_repeats_including_controls(self):
-        result = launch.plan(cache_pairs=True)
-        self.assertEqual(
-            (result["study_mode"], result["cases"], result["repeats"]), ("cache-full", 3, 6)
-        )
-        self.assertEqual(
-            (result["primary_attempts"], result["aa_attempts"], result["total_attempts"]),
-            (90, 12, 102),
-        )
-        self.assertEqual(result["blind_judges"]["requests"], 24)
+        self.assertEqual(result["total_attempts"], 5)
         self.assertFalse(result["paid_requests"])
 
     def test_run_is_one_command_with_owned_images_and_identical_readonly_paths(self):

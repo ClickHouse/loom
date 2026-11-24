@@ -6,7 +6,6 @@ import copy
 import unittest
 
 from examples.software_factory.factory.model import digest
-from examples.software_factory.harbor.arms import with_cache_pairs
 from examples.software_factory.harbor.live_support import schedule
 from examples.software_factory.harbor.paired import analyze
 
@@ -32,6 +31,8 @@ def inputs():
                     "status": "completed",
                     "duration_s": 5,
                     "total_cost_usd": 2,
+                    "generation_cost_usd": 2,
+                    "generation_cost_source": "claude-code-reported",
                     "cost_status": "priced",
                     "tool_total_requests": 4,
                     "model_selected_loom_requests": chosen,
@@ -49,7 +50,7 @@ def inputs():
 
 
 class PairedAnalysisContracts(unittest.TestCase):
-    def test_one_attempt_per_arm_pilot_has_no_aa_or_confidence_interval(self):
+    def test_one_attempt_per_arm_pilot_has_no_confidence_interval(self):
         full, entries = inputs()
         selected = [row for row in full["attempts"] if row["task_id"] == "a" and row["repeat"] == 0]
         orders = {row["order"]: i for i, row in enumerate(selected)}
@@ -62,70 +63,9 @@ class PairedAnalysisContracts(unittest.TestCase):
         report = analyze({"attempts": rows, "schedule_sha256": digest(rows)}, chosen, resamples=100)
         self.assertTrue(report["complete"])
         self.assertEqual(report["study_mode"], "pilot")
-        self.assertEqual(report["aa_reference"], {})
         contrast = report["paired_deltas"]["loom-treesitter-minus-baseline"]["quality"]
         self.assertEqual(contrast["estimate"], 0)
         self.assertIsNone(contrast["ci95"])
-
-    def test_cache_target_checks_use_same_condition_and_require_reported_cost(self):
-        schedule_data, original = inputs()
-        rows = with_cache_pairs(schedule_data["attempts"])
-        frozen = {"attempts": rows, "schedule_sha256": digest(rows)}
-        entries = []
-        for row in rows:
-            warm = row["cache_start"] == "warm"
-            baseline = row["mode"] == "baseline"
-            memory = row["memory_enabled"]
-            entries.append(
-                {
-                    "order": row["order"],
-                    "result": {
-                        **original[row["order"] // 2]["result"],
-                        "cache_start": row["cache_start"],
-                        "cache_start_verified": True,
-                        "first_cache_read_tokens": 100 if warm else 0,
-                        "first_cache_write_tokens": 0 if warm else 100,
-                        "harbor_reward_valid": True,
-                        "resolved": baseline or memory,
-                        "judge_fixed": baseline or memory,
-                        "full_suite_regressions": 0,
-                        "loom_lesson_chars_main": 100 if memory else 0,
-                        "loom_fresh_linked_lesson_rows_main": int(memory),
-                        "loom_nonfresh_linked_lesson_rows_main": 0,
-                        "total_provider_cost_usd": (0.06 if baseline else 0.07)
-                        if warm
-                        else (0.15 if baseline else 0.12),
-                        "generation_cost_source": "claude-code-reported",
-                        "agent_time_s": 20 if baseline else 16,
-                        "end_to_end_s": 30 if baseline else 24,
-                    },
-                }
-            )
-        report = analyze(frozen, entries, resamples=100)
-        targets = report["cache_start_targets"]
-        self.assertTrue(targets["cache_and_verifier_verified"])
-        cold, warm = (targets["cache_starts"][state] for state in ("cold", "warm"))
-        arm = "loom-scip-memory"
-        self.assertTrue(cold["efficiency_vs_no_loom"][arm]["all_observed_met"])
-        self.assertFalse(warm["efficiency_vs_no_loom"][arm]["all_observed_met"])
-        memory = warm["memory_vs_code_index"][arm]
-        self.assertEqual(memory["code_only_arm"], "loom-scip")
-        self.assertEqual(memory["main_session_linked_lesson_attempts"], 9)
-        self.assertTrue(memory["hidden_test_lift_lower_bound"])
-        fallback = next(
-            entry["result"]
-            for entry in entries
-            if entry["result"]["cache_start"] == "warm" and entry["result"]["arm"] == arm
-        )
-        fallback["generation_cost_source"] = "estimated"
-        updated = analyze(frozen, entries, resamples=100)["cache_start_targets"]
-        self.assertIsNone(
-            updated["cache_starts"]["warm"]["efficiency_vs_no_loom"][arm]["all_observed_met"]
-        )
-        fallback["first_cache_read_tokens"] = 99
-        updated = analyze(frozen, entries, resamples=100)["cache_start_targets"]
-        self.assertFalse(updated["cache_and_verifier_verified"])
-        self.assertFalse(updated["cache_starts"]["warm"]["efficiency_vs_no_loom"])
 
     def test_observed_targets_distinguish_linked_lessons_and_unreadable_traces(self):
         order, entries = inputs()
@@ -136,7 +76,7 @@ class PairedAnalysisContracts(unittest.TestCase):
             baseline = result["arm"] == "baseline"
             result.update(
                 harbor_reward_valid=True,
-                total_provider_cost_usd=0.15 if baseline else 0.12,
+                generation_cost_usd=0.15 if baseline else 0.12,
                 generation_cost_source="claude-code-reported",
                 agent_time_s=20 if baseline else 16,
                 end_to_end_s=30 if baseline else 24,
@@ -150,7 +90,6 @@ class PairedAnalysisContracts(unittest.TestCase):
         memory_runs[1]["loom_fresh_linked_lesson_rows_main"] = None
 
         targets = analyze(order, entries, resamples=100)["observed_targets"]
-        self.assertEqual(targets["cache_policy"], "observed")
         self.assertTrue(targets["verifier_verified"])
         self.assertTrue(targets["efficiency_vs_no_loom"][arm]["all_observed_met"])
         memory = targets["memory_vs_code_index"][arm]
@@ -188,22 +127,22 @@ class PairedAnalysisContracts(unittest.TestCase):
         failed = next(
             e for e in entries if order["attempts"][e["order"]]["arm"] == "loom-treesitter"
         )
-        failed["result"].update(resolved=False, status="objective_failure", total_cost_usd=10)
+        failed["result"].update(resolved=False, status="objective_failure", generation_cost_usd=10)
         report = analyze(order, entries, resamples=100)
         arm = report["arms"]["loom-treesitter"]
         self.assertEqual(arm["resolved"], 8)
-        self.assertEqual(arm["total_cost_usd"], 26)
+        self.assertEqual(arm["claude_cost_usd"], 26)
         self.assertEqual(arm["cost_per_success_usd"], 26 / 8)
-        self.assertEqual(report["cohort_total_cost_usd"], 110)
+        self.assertEqual(report["cohort_claude_cost_usd"], 98)
         self.assertEqual(arm["statuses"]["objective_failure"], 1)
 
     def test_unknowns_are_not_zero_or_removed_from_pairs(self):
         order, entries = inputs()
         next(e for e in entries if e["result"]["arm"] == "loom-treesitter")["result"].update(
-            total_cost_usd=5, cost_status="unknown"
+            total_cost_usd=5, cost_status="unknown", generation_cost_source="litellm_estimate"
         )
         report = analyze(order, entries, resamples=100)
-        self.assertIsNone(report["cohort_total_cost_usd"])
+        self.assertIsNone(report["cohort_claude_cost_usd"])
         contrast = report["paired_deltas"]["loom-treesitter-minus-baseline"]
         self.assertIsNone(contrast["total_cost_usd"]["estimate"])
         self.assertIsNone(contrast["end_to_end_s"]["estimate"])
@@ -234,7 +173,7 @@ class PairedAnalysisContracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Baseline"):
             analyze(order, bad, resamples=100)
 
-    def test_task_cluster_intervals_and_aa_stay_separate(self):
+    def test_task_cluster_intervals(self):
         order, entries = inputs()
         for entry in entries:
             row, result = order["attempts"][entry["order"]], entry["result"]
@@ -242,17 +181,11 @@ class PairedAnalysisContracts(unittest.TestCase):
                 result["resolved"] = False
             if row["arm"] == "loom-treesitter":
                 result["resolved"] = row["task_id"] == "a"
-            if row["arm"] == "baseline-b":
-                result["duration_s"] = 9
         report = analyze(order, entries)
         quality = report["paired_deltas"]["loom-treesitter-minus-baseline"]["quality"]
         self.assertEqual(quality["task_deltas"], {"a": 1, "b": 0, "c": 0})
         self.assertEqual(quality["estimate"], 1 / 3)
         self.assertEqual(quality["ci95"], [0, 1])
-        self.assertEqual(
-            report["aa_reference"]["baseline-b-minus-baseline-a"]["attempt_duration_s"]["estimate"],
-            4,
-        )
         self.assertEqual(
             report["paired_deltas"]["loom-treesitter-minus-baseline"]["attempt_duration_s"][
                 "estimate"

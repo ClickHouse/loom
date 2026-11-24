@@ -18,7 +18,7 @@ from examples.software_factory.factory.model import digest
 from .anchors import changes as anchor_changes
 from .anchors import identity as anchor_identity
 from .anchors import matches as anchor_matches
-from .arms import ALL, validate_schedule
+from .arms import PRIMARY, validate_schedule
 from .index import snapshot
 from .memory import treatment_fixture, validate_history_certificate
 from .source_tree import SOURCE_EXCLUDE_GLOBS, source_files
@@ -774,7 +774,7 @@ class Provisioner:
             task_id = slot["task_id"]
             task = tasks[task_id]
             tier = slot["index_tier"]
-            arm = ALL[slot["arm"]]
+            arm = PRIMARY[slot["arm"]]
             require(
                 re.fullmatch(r"[0-9a-f]{40}", task["base_commit"]) and task["source_roots"],
                 "Task source metadata is incomplete",
@@ -1202,7 +1202,7 @@ class Provisioner:
         seeded = fixture.get("kind") != "cold"
         authored = seeded and fixture.get("kind") != "historical-snapshot"
         slots = group["memory_slots"]
-        history_slots = [slot for slot in slots if ALL[slot["arm"]].history_seeded]
+        history_slots = [slot for slot in slots if PRIMARY[slot["arm"]].history_seeded]
         roles = {
             group["namespace"]: "admin",
             **{"memory-" + str(slot["order"]): "admin" for slot in slots},
@@ -1472,7 +1472,7 @@ class Provisioner:
             )
         for slot in slots:
             binding = bindings[str(slot["order"])]
-            history_seeded = ALL[slot["arm"]].history_seeded
+            history_seeded = PRIMARY[slot["arm"]].history_seeded
             cert = {
                 "schema_version": 1,
                 "kind": "factory-native-history",

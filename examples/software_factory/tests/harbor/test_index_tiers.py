@@ -15,8 +15,7 @@ ZERO = dict(
 class TierContracts(unittest.TestCase):
     def test_five_arms_have_distinct_positions_within_each_task(self):
         rows = schedule(["a", "b", "c"], seed=741)
-        self.assertEqual(len(rows), 51)
-        self.assertEqual(sum(r["repeat"] == "aa" for r in rows), 6)
+        self.assertEqual(len(rows), 45)
         for task in ["a", "b", "c"]:
             positions = {arm: Counter() for arm in PRIMARY}
             for repeat in range(3):
@@ -36,7 +35,6 @@ class TierContracts(unittest.TestCase):
                         PRIMARY[row["arm"]].index_tier,
                     )
             self.assertTrue(all(len(p) == 3 and set(p.values()) == {1} for p in positions.values()))
-        self.assertTrue(all(r["index_tier"] is None for r in rows if r["repeat"] == "aa"))
 
     def verifier(self, tier, counts):
         return ScopeVerifier(

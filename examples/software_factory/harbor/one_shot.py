@@ -275,16 +275,15 @@ def execute(args):
                 output / "inputs",
             ),
         )
-        if launch["pilot_task"] is not None or launch.get("cache_pairs", False):
+        if launch["pilot_task"] is not None:
             from .pilot import select
 
             prepared = phases.run(
-                "pilot-selection" if launch["pilot_task"] is not None else "cache-selection",
+                "pilot-selection",
                 lambda: select(
                     prepared,
                     launch["pilot_task"],
                     output / "pilot-inputs",
-                    cache_pairs=launch.get("cache_pairs", False),
                 ),
             )
         meter.set_phase("native-setup")

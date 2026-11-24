@@ -12,7 +12,6 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .arms import EFFICIENCY_TARGET, PRIMARY
-from .cache_start import pair_usage
 from .cohorts import comparison_cohorts
 from .source import reporting_identity
 
@@ -61,10 +60,10 @@ def number(value):
 
 
 def paired_orders(rows, arms):
-    """Compare each issue, repeat and cache start after every arm has a grade."""
+    """Compare each issue and repeat after every arm has a grade."""
     blocks = {}
     for row in rows:
-        blocks.setdefault((row["task"], row["repeat"], row.get("cache_start")), []).append(row)
+        blocks.setdefault((row["task"], row["repeat"]), []).append(row)
     expected = set(arms)
     return {
         row["order"]
@@ -90,8 +89,7 @@ def chart_data(protocol, entries, views_manifest):
         if slot["arm"] not in ARMS:
             continue
         result = observed.get(slot["order"])
-        key = views_manifest.get("view_by_order", {}).get(str(slot["order"]), slot["arm"])
-        view = views_manifest.get("views", {}).get(key, {})
+        view = views_manifest.get("views", {}).get(slot["arm"], {})
         row = {
             "order": slot["order"],
             "task": slot["task_id"],
@@ -105,8 +103,6 @@ def chart_data(protocol, entries, views_manifest):
             **{metric["key"]: None for metric in METRICS},
             "url": None,
         }
-        if "cache_start" in slot:
-            row.update(cache_start=slot["cache_start"], cache_start_verified=None)
         if result is not None:
             row.update(
                 state="complete" if result.get("harbor_reward_valid") else "error",
@@ -157,8 +153,6 @@ def chart_data(protocol, entries, views_manifest):
                     )
                 },
             )
-            if "cache_start" in slot:
-                row["cache_start_verified"] = result.get("cache_start_verified")
             if result.get("harbor_trial") and view.get("job_name"):
                 row["url"] = (
                     base.rstrip("/")
@@ -188,7 +182,6 @@ def chart_data(protocol, entries, views_manifest):
         "titles": titles,
         "cohorts": comparison_cohorts(protocol),
         "attempts": rows,
-        "cache_pairs": pair_usage(protocol["schedule"], observed),
         "observed": len(entries),
         "scheduled": len(protocol["schedule"]),
         "complete": complete,
@@ -196,11 +189,7 @@ def chart_data(protocol, entries, views_manifest):
         "interruption_reason": views_manifest.get("interruption_reason", ""),
         "evaluation_complete": evaluation_complete,
         "comparison_url": views_manifest.get("links", {}).get("comparison"),
-        "comparison_by_cache_start": views_manifest.get("comparison_by_cache_start", {}),
         "target_reduction": EFFICIENCY_TARGET,
-        "cost_note": "Provider cost combines the solver-reported cost (or Harbor's fallback "
-        "estimate) and paid model calls recorded by Loom, including failed attempts. "
-        "Unmatched backend cost remains unknown. Judge and infrastructure costs are separate.",
     }
 
 

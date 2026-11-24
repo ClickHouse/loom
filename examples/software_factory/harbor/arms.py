@@ -35,23 +35,7 @@ PRIMARY = {
     "loom-scip": Arm("scip", False, "Loom + SCIP"),
     "loom-scip-memory": Arm("scip", True, "Loom + SCIP + historical memory"),
 }
-CONTROLS = {name: PRIMARY["baseline"] for name in ("baseline-a", "baseline-b")}
-ALL = {**PRIMARY, **CONTROLS}
-CACHE_STARTS = ("cold", "warm")
 EFFICIENCY_TARGET = 0.20
-
-
-def with_cache_pairs(rows):
-    return [
-        {
-            **row,
-            "order": len(CACHE_STARTS) * order + start,
-            "repeat": start if row.get("pilot") else row["repeat"],
-            "cache_start": state,
-        }
-        for order, row in enumerate(rows)
-        for start, state in enumerate(CACHE_STARTS)
-    ]
 
 
 def validate_schedule(rows):
@@ -62,12 +46,8 @@ def validate_schedule(rows):
     pilot = any("pilot" in row for row in rows)
     if pilot and (len(tasks) != 1 or any(row.get("pilot") is not True for row in rows)):
         raise ValueError("A pilot requires one scenario and an explicit marker on every arm")
-    if any("cache_start" in row for row in rows):
-        return _validate_cache_pairs(rows)
     repeats = range(1 if pilot else 3)
     expected = {(task, repeat, arm) for task in tasks for repeat in repeats for arm in PRIMARY}
-    if not pilot:
-        expected |= {(task, "aa", arm) for task in tasks for arm in CONTROLS}
     actual = [(row["task_id"], row["repeat"], row["arm"]) for row in rows]
     if len(actual) != len(expected) or set(actual) != expected:
         raise ValueError("Keep every scenario, repeat and arm in the evaluation design")
@@ -76,8 +56,8 @@ def validate_schedule(rows):
             type(row["order"]) is not int
             or type(row.get("memory_enabled")) is not bool
             or row["order"] != order
-            or (row["arm"] in PRIMARY and type(row["repeat"]) is not int)
-            or any(row.get(key) != value for key, value in ALL[row["arm"]].identity().items())
+            or type(row["repeat"]) is not int
+            or any(row.get(key) != value for key, value in PRIMARY[row["arm"]].identity().items())
         ):
             raise ValueError("Scheduled treatment identity or order differs")
     if pilot:
@@ -99,23 +79,6 @@ def validate_schedule(rows):
         values = [counts[position] for position in range(len(PRIMARY))]
         if max(values) - min(values) > 1:
             raise ValueError("Global treatment positions are imbalanced")
-    return tasks
-
-
-def _validate_cache_pairs(rows):
-    logical = [
-        {**{key: value for key, value in row.items() if key != "cache_start"}, "order": order}
-        for order, row in enumerate(rows[::2])
-    ]
-    tasks = validate_schedule(logical)
-    expected = with_cache_pairs(logical)
-    if (
-        rows != expected
-        or any(type(row["order"]) is not int for row in rows)
-        or any(type(row.get("memory_enabled")) is not bool for row in rows)
-        or any(row["arm"] in PRIMARY and type(row["repeat"]) is not int for row in rows)
-    ):
-        raise ValueError("Schedule a consecutive cold and warm attempt for each treatment")
     return tasks
 
 

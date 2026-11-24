@@ -5,11 +5,9 @@ import unittest
 from collections import Counter
 
 from examples.software_factory.harbor.arms import (
-    CONTROLS,
     PRIMARY,
     contrasts,
     validate_schedule,
-    with_cache_pairs,
 )
 from examples.software_factory.harbor.charts import paired_orders
 from examples.software_factory.harbor.judging import pair_slots
@@ -40,19 +38,15 @@ class TreatmentContracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_schedule(altered)
 
-    def test_six_families_keep_all_arms_repeats_and_controls(self):
+    def test_six_families_keep_all_arms_and_repeats(self):
         tasks = [f"scenario-{i}" for i in range(6)]
         rows = schedule(tasks, seed=741)
-        self.assertEqual(len(rows), 102)
+        self.assertEqual(len(rows), 90)
         self.assertEqual(validate_schedule(rows), tasks)
         self.assertEqual(rows, schedule(list(reversed(tasks)), seed=741))
         self.assertEqual(
             Counter(row["arm"] for row in rows),
-            {
-                **dict.fromkeys(PRIMARY, 18),
-                "baseline-a": 6,
-                "baseline-b": 6,
-            },
+            dict.fromkeys(PRIMARY, 18),
         )
         for arm in PRIMARY:
             positions = Counter()
@@ -62,14 +56,13 @@ class TreatmentContracts(unittest.TestCase):
                     positions.update(i for i, row in enumerate(block) if row["arm"] == arm)
             self.assertEqual(sorted(positions.values()), [3, 3, 4, 4, 4])
 
-    def test_cold_and_warm_schedule_keeps_blocks_and_controls_separate(self):
+    def test_schedule_pairs_each_issue_and_repeat(self):
         tasks = ["a", "b", "c"]
-        rows = with_cache_pairs(schedule(tasks, seed=741))
+        rows = schedule(tasks, seed=741)
         self.assertEqual(validate_schedule(rows), tasks)
-        self.assertEqual(len(rows), 102)
+        self.assertEqual(len(rows), 45)
         groups = list(pair_slots(rows))
-        self.assertEqual(Counter(map(len, groups)), {len(PRIMARY): 18, len(CONTROLS): 6})
-        self.assertTrue(all(len({row["cache_start"] for row in group}) == 1 for group in groups))
+        self.assertEqual(Counter(map(len, groups)), {len(PRIMARY): 9})
         chart_rows = [
             {**row, "task": row["task_id"], "state": "complete"}
             for row in rows
@@ -81,14 +74,11 @@ class TreatmentContracts(unittest.TestCase):
         excluded = {
             row["order"]
             for row in chart_rows
-            if (row["task"], row["repeat"], row["cache_start"])
-            == (first["task"], first["repeat"], first["cache_start"])
+            if (row["task"], row["repeat"]) == (first["task"], first["repeat"])
         }
         self.assertEqual(
             paired_orders(chart_rows, PRIMARY), {r["order"] for r in chart_rows} - excluded
         )
-        with self.assertRaisesRegex(ValueError, "consecutive"):
-            validate_schedule([rows[0], rows[3], rows[2], rows[1], *rows[4:]])
 
     def test_memory_cannot_be_silently_enabled_or_aliased_to_a_tier(self):
         rows = schedule(["a", "b", "c"], seed=741)

@@ -9,12 +9,11 @@ from statistics import fmean
 from bench.bootstrap import paired_bootstrap
 from examples.software_factory.factory.model import digest
 
-from .arms import ALL, CACHE_STARTS, EFFICIENCY_TARGET, PRIMARY, contrasts, validate_schedule
-from .cache_start import pair_usage
+from .arms import EFFICIENCY_TARGET, PRIMARY, contrasts, validate_schedule
 from .cohorts import comparison_cohorts
 
-ARMS = tuple(ALL)
-EFFICIENCY_METRICS = ("reported_provider_cost_usd", "agent_time_s", "end_to_end_s")
+ARMS = tuple(PRIMARY)
+EFFICIENCY_METRICS = ("generation_cost_usd", "agent_time_s")
 MEMORY_PEERS = {
     "loom-treesitter-memory": "loom-treesitter",
     "loom-scip-memory": "loom-scip",
@@ -85,14 +84,13 @@ def _metrics(result: dict) -> dict:
         "blind_fixed": int(result["judge_fixed"])
         if type(result.get("judge_fixed")) is bool
         else None,
-        "reported_provider_cost_usd": _number(result.get("total_provider_cost_usd"))
-        if result.get("generation_cost_source") == "claude-code-reported"
-        else None,
         "full_suite_regressions": _number(result.get("full_suite_regressions"), integer=True),
         "attempt_duration_s": _number(result.get("duration_s")),
         "agent_time_s": _number(result.get("agent_time_s")),
         "end_to_end_s": _number(result.get("end_to_end_s")),
-        "generation_cost_usd": _number(result.get("generation_cost_usd")),
+        "generation_cost_usd": _number(result.get("generation_cost_usd"))
+        if result.get("generation_cost_source") == "claude-code-reported"
+        else None,
         "total_provider_cost_usd": _number(result.get("total_provider_cost_usd")),
         "total_tool_requests": tools,
         "total_cost_usd": _number(result.get("total_cost_usd"))
@@ -176,21 +174,6 @@ def _efficiency_reached(values):
     return True if all(value is True for value in values) else None
 
 
-def _threshold_summary(verified):
-    return {
-        "relative_reduction_target": EFFICIENCY_TARGET,
-        "cache_and_verifier_verified": verified,
-        "interpretation": (
-            "Observed means and issue-clustered intervals describe this cohort. "
-            "The pilot has no interval. An infrastructure or cache mismatch withholds the result."
-        ),
-        "cache_starts": {
-            state: {"efficiency_vs_no_loom": {}, "memory_vs_code_index": {}}
-            for state in CACHE_STARTS
-        },
-    }
-
-
 def _memory_target(right, records, contrast):
     states = [
         (r["loom_fresh_linked_lesson_rows_main"], r["loom_nonfresh_linked_lesson_rows_main"])
@@ -247,13 +230,9 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
         if type(order) is not int or not 0 <= order < len(rows) or order in observed:
             raise ValueError("Duplicate or unscheduled attempt; no best-of selection")
         row = rows[order]
-        if (
-            type(result.get("memory_enabled")) is not bool
-            or any(
-                result.get(k) != row[k]
-                for k in ("task_id", "mode", "arm", "index_tier", "memory_enabled")
-            )
-            or result.get("cache_start") != row.get("cache_start")
+        if type(result.get("memory_enabled")) is not bool or any(
+            result.get(k) != row[k]
+            for k in ("task_id", "mode", "arm", "index_tier", "memory_enabled")
         ):
             raise ValueError("Attempt identity differs from its schedule slot")
         identity.add((result["provider"], result["kind"]))
@@ -269,7 +248,6 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     if len(identity) > 1:
         raise ValueError("Provider or task kind changed within the controlled cohort")
     missing = sorted(set(range(len(rows))) - set(observed))
-    cache_pairs = "cache_start" in rows[0]
     pilot = rows[0].get("pilot") is True
     mode = "pilot" if pilot else "full"
     report = {
@@ -286,98 +264,62 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
         if identity
         else None,
         "exploratory_only": True,
-        "study_mode": f"cache-{mode}" if cache_pairs else mode,
+        "study_mode": mode,
         "cluster_count": len(tasks),
         "seed": seed,
         "resamples": resamples,
         "paired_deltas": {},
-        "aa_reference": {},
         "arms": {},
         "interpretation": (
             "Intervals resample complete scenario clusters, not correlated stages or repeats. "
             "Input provenance and billing require independent qualification."
         ),
     }
-    if cache_pairs:
-        report["cache_start_deltas"] = {state: {} for state in CACHE_STARTS}
-        if not pilot:
-            report["cache_start_aa_reference"] = {state: {} for state in CACHE_STARTS}
-        report["cache_starts_verified"] = (
-            not missing
-            and all(result.get("cache_start_verified") is True for result in observed.values())
-            and all(
-                pair["first_prefix_token_count_match"] is True
-                for pair in pair_usage(rows, observed)
-            )
-        )
     for arm in ARMS:
         slots = [r["order"] for r in rows if r["arm"] == arm]
         present = [i for i in slots if i in observed]
-        costs = [metrics[i]["total_cost_usd"] for i in present]
+        costs = [metrics[i]["generation_cost_usd"] for i in present]
         priced = len(present) == len(slots) and None not in costs
         successes = sum(metrics[i]["quality"] for i in present)
         total = math.fsum(costs) if priced else None
         report["arms"][arm] = {
-            **ALL[arm].identity(),
+            **PRIMARY[arm].identity(),
             "expected": len(slots),
             "observed": len(present),
             "resolved": successes,
             "statuses": dict(Counter(observed[i]["status"] for i in present)),
-            "total_cost_usd": total,
+            "claude_cost_usd": total,
+            "mean_claude_cost_usd": total / len(slots) if total is not None else None,
             "cost_per_success_usd": total / successes if total is not None and successes else None,
             "attempts": [{"order": i, **metrics[i]} for i in present],
         }
-    costs = [value["total_cost_usd"] for value in metrics.values()]
-    report["cohort_total_cost_usd"] = (
+    costs = [value["generation_cost_usd"] for value in metrics.values()]
+    report["cohort_claude_cost_usd"] = (
         math.fsum(costs) if not missing and None not in costs else None
     )
     verified = not missing and all(
         result.get("harbor_reward_valid") is True for result in observed.values()
     )
-    if cache_pairs:
-        report["cache_start_targets"] = _threshold_summary(
-            verified and report["cache_starts_verified"]
-        )
-    else:
-        report["observed_targets"] = {
-            "relative_reduction_target": EFFICIENCY_TARGET,
-            "verifier_verified": verified,
-            "cache_policy": "observed",
-            "efficiency_vs_no_loom": {},
-            "memory_vs_code_index": {},
-        }
+    targets = report["observed_targets"] = {
+        "relative_reduction_target": EFFICIENCY_TARGET,
+        "verifier_verified": verified,
+        "efficiency_vs_no_loom": {},
+        "memory_vs_code_index": {},
+    }
     if missing:
         return report  # Missing attempts are visible; no partial-cohort selection.
-    lookup = {
-        (r["task_id"], r["repeat"], r["arm"], r.get("cache_start")): metrics[r["order"]]
-        for r in rows
-    }
-    comparisons = []
-    for i, state in enumerate(CACHE_STARTS if cache_pairs else (None,)):
-        repeats = [i] if pilot else range(3)
-        deltas = report["paired_deltas"] if state is None else report["cache_start_deltas"][state]
-        comparisons.extend((deltas, left, right, repeats, state) for left, right in contrasts())
-        if not pilot:
-            aa = (
-                report["aa_reference"]
-                if state is None
-                else report["cache_start_aa_reference"][state]
-            )
-            comparisons.append((aa, "baseline-b", "baseline-a", ["aa"], state))
-    for destination, left, right, repeats, state in comparisons:
-        contrast, efficiency = {}, {}
-        targets = None
-        if state is None and verified:
-            targets = report["observed_targets"]
-        elif state is not None and report["cache_start_targets"]["cache_and_verifier_verified"]:
-            targets = report["cache_start_targets"]["cache_starts"][state]
-        qualifies = targets is not None and right == "baseline" and left in PRIMARY
+    lookup = {(r["task_id"], r["repeat"], r["arm"]): metrics[r["order"]] for r in rows}
+    repeats = range(1 if pilot else 3)
+    for left, right in contrasts():
+        contrast = {}
+        efficiency = {}
+        qualifies = verified and right == "baseline"
         for key in next(iter(metrics.values())):
             task_pairs = [
                 [
                     (
-                        lookup[task, repeat, left, state][key],
-                        lookup[task, repeat, right, state][key],
+                        lookup[task, repeat, left][key],
+                        lookup[task, repeat, right][key],
                     )
                     for repeat in repeats
                 ]
@@ -395,8 +337,8 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
             }
             if qualifies and key in EFFICIENCY_METRICS:
                 efficiency[key] = _target_margin(task_pairs, tasks, seed=seed, resamples=resamples)
-        destination[left + "-minus-" + right] = contrast
-        if targets is None:
+        report["paired_deltas"][left + "-minus-" + right] = contrast
+        if not verified:
             continue
         if efficiency:
             targets["efficiency_vs_no_loom"][left] = {
@@ -410,6 +352,6 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
                 ),
             }
         if MEMORY_PEERS.get(left) == right:
-            records = [lookup[task, repeat, left, state] for task in tasks for repeat in repeats]
+            records = [lookup[task, repeat, left] for task in tasks for repeat in repeats]
             targets["memory_vs_code_index"][left] = _memory_target(right, records, contrast)
     return report
