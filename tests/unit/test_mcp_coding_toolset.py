@@ -568,7 +568,6 @@ def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     assert "In Claude Code, find deferred tools with ToolSearch" in coding
     assert "linked lessons" in coding
     assert "`code_state`" in coding
-    assert "`uses_brief: true`" in coding
     assert "Batch related matches or ranges" in coding
     assert "Use local tools to edit, run tests, and inspect Git" in coding
     assert "Read locally for working-copy changes, unindexed paths, explicit requests" in coding

@@ -363,6 +363,10 @@
               "body",
               "options"
             ],
+            "edit_context": [
+              "body",
+              "options"
+            ],
             "enclosing": [
               "body",
               "options"
