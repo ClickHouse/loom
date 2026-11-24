@@ -10,7 +10,8 @@ ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --pilot-task pall
 
 Harbor runs its built-in Claude Code agent in a normal checkout. Claude follows shared project instructions and chooses
 its tool calls, edits, test commands and stopping point. The evaluator supplies the
-original issue and environment, then grades the submitted implementation in a
+original issue, a shared submission note, and the environment, then grades
+the submitted implementation in a
 separate container. It adds no coding loop, custom source tools, retrieval hooks or completion review.
 
 The comparison has five arms:

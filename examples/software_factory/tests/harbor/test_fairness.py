@@ -15,7 +15,7 @@ from examples.software_factory.harbor.fairness import audit_fairness
 from examples.software_factory.harbor.index import TABLES
 from examples.software_factory.harbor.mcp_qualification import qualified_catalog, qualify
 from examples.software_factory.harbor.native_environment import agent_settings, mcp_settings
-from examples.software_factory.harbor.project_guidance import guidance, stage
+from examples.software_factory.harbor.project_guidance import guidance, stage, task_instruction
 from examples.software_factory.harbor.runtime import write
 
 
@@ -188,9 +188,11 @@ class PublicPromptBytes(TestCase):
             entries = [{"order": 0, "result": {"harbor_trial": str(trial)}}]
             billing = {"attempts": {"0": {"proof_status": "known"}}}
             for candidate, expected in (
-                (problem.encode("utf-8"), True),
-                (problem.replace("\r\n", "\n").encode("utf-8"), False),
-                (problem.replace("unchanged", "changed").encode("utf-8"), False),
+                (task_instruction(problem).encode("utf-8"), True),
+                (task_instruction(problem.replace("\r\n", "\n")).encode("utf-8"), False),
+                (task_instruction(problem.replace("unchanged", "changed")).encode("utf-8"), False),
+                (problem.encode("utf-8"), False),
+                (task_instruction(problem).replace("evaluator", "reviewer").encode("utf-8"), False),
             ):
                 with self.subTest(candidate=candidate):
                     (task / "instruction.md").write_bytes(candidate)

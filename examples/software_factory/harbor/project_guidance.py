@@ -8,6 +8,16 @@ from pathlib import Path
 TEMPLATE = Path(__file__).with_name("project-guidance.md")
 
 
+SUBMISSION_NOTE = (
+    "The evaluator grades the application implementation. "
+    "Submit the source fix and use local tests to verify it."
+)
+
+
+def task_instruction(issue: str) -> str:
+    return issue + "\n\n## Submission\n\n" + SUBMISSION_NOTE + "\n"
+
+
 def guidance(source_roots):
     text = TEMPLATE.read_text() + "\nIndexed source roots, when Loom is configured: "
     text += ", ".join(source_roots) + ". Other paths may require local reads.\n"

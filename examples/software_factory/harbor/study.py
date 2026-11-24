@@ -35,7 +35,7 @@ from .metrics import known_total, paid_token_totals
 from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp_settings
 from .native_metrics import measurements
 from .profiles import load_profile
-from .project_guidance import agent_image, guidance
+from .project_guidance import SUBMISSION_NOTE, agent_image, guidance, task_instruction
 from .project_guidance import stage as stage_guidance
 from .public_export import export_public
 from .scopes import selected_scopes
@@ -272,6 +272,7 @@ def prepare(previous: Path, output: Path) -> Path:
     plan["harbor_specs"], images = {}, {}
     plan["project_guidance"] = guidance(plan["suite"]["source_roots"])
     plan["public_reproduction"]["project_guidance"] = plan["project_guidance"]
+    plan["public_reproduction"]["submission_note"] = SUBMISSION_NOTE
     builder = partial(build_image, project_instructions=plan["project_guidance"])
     for task_id in sorted(plan["tasks"]):
         plan["harbor_specs"][task_id], images[task_id] = load_profile(plan).stage_task(
@@ -286,7 +287,7 @@ def prepare(previous: Path, output: Path) -> Path:
         # Harbor clears job overlays for separate verifiers; their task definition owns it.
         stage_sandbox_policy(task_dir, verifier=True)
         _, _, task, _ = task_inputs(plan, slot["task_id"])
-        (task_dir / "instruction.md").write_text(task.problem)
+        (task_dir / "instruction.md").write_text(task_instruction(task.problem))
         image = images[slot["task_id"]]
         (task_dir / "task.toml").write_text(
             'schema_version = "1.4"\n'
