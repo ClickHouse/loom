@@ -341,6 +341,10 @@ jobs:
           PY
           )
           uvx --python "$PYTHON_VERSION" --from "$coverage_package" coverage combine "${parts[@]}"
+          # Coverage can skip unreadable data without failing the combine.
+          for part in "${parts[@]}"; do
+            test ! -e "$part"
+          done
           uvx --python "$PYTHON_VERSION" --from "$coverage_package" coverage lcov -o "$RUNNER_TEMP/python.lcov"
       - name: Report Python changed-line coverage
         uses: ./.github/actions/patch-coverage
