@@ -1,3 +1,10 @@
+---
+title: Evaluate Loom
+description: Test memory across coding agents, check recall and namespace isolation, and compare code search, latency, and cost against your team's workload.
+seo:
+  title: How to evaluate memory for coding agents
+---
+
 # Evaluate Loom
 
 Evaluate the decision you need to make, not every harness in the repository. This guide

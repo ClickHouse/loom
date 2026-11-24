@@ -2,7 +2,7 @@
 
 Reference pages say what exists and what each option means. The reasons behind a design are in
 [Concepts](../concepts/memory.md) and [Architecture](../architecture/system-overview.md).
-Procedures are in the [guides](../guides/agent-integration.md) and
+Procedures are in the [guides](../guides/index.md) and
 [operations](../operations/deployment.md) sections.
 
 ## Generated from the code
