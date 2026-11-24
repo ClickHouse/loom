@@ -146,8 +146,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The part count, 6, is also in docs/development/testing.md's unit row and
-        # the loom-investigate-ci row.
+        # Patch coverage and the unit test instructions also use this part count.
         part: [1, 2, 3, 4, 5, 6]
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
@@ -251,7 +250,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 2
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python
         with:
@@ -287,18 +285,6 @@ jobs:
           coverage report --fail-under=40
           coverage xml
           coverage json -o coverage.json
-      - name: Export Python unit coverage for changed lines
-        id: python-coverage
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        run: coverage lcov -o "$RUNNER_TEMP/python.lcov"
-      - name: Report Python changed-line coverage
-        if: steps.python-coverage.outcome == 'success'
-        continue-on-error: true
-        uses: ./.github/actions/patch-coverage
-        with:
-          component: Python server and SDK
-          report: ${{ runner.temp }}/python.lcov
       # Per-module branch floors for the auth, write-path, erasure, migration
       # and supervisor modules (tests/inventory/coverage_floors.toml).
       - name: branch-coverage floors
@@ -315,6 +301,52 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
+
+  python-patch-coverage:
+    name: Python changed-line coverage (report only)
+    needs: [validate-ref, unit]
+    if: >-
+      github.event_name == 'pull_request' && !cancelled() &&
+      needs.validate-ref.result == 'success' &&
+      (needs.unit.result == 'success' || needs.unit.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Download the parts' coverage data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-unit-*
+          merge-multiple: true
+      - name: Combine and export the Python coverage data
+        run: |
+          parts=(.coverage.unit-{1..6})
+          for part in "${parts[@]}"; do
+            test -s "$part"
+          done
+          coverage_package=$(python3 - <<'PY'
+          import tomllib
+          with open("uv.lock", "rb") as lock:
+              packages = tomllib.load(lock)["package"]
+          version = next(package["version"] for package in packages if package["name"] == "coverage")
+          print(f"coverage=={version}")
+          PY
+          )
+          uvx --python "$PYTHON_VERSION" --from "$coverage_package" coverage combine "${parts[@]}"
+          uvx --python "$PYTHON_VERSION" --from "$coverage_package" coverage lcov -o "$RUNNER_TEMP/python.lcov"
+      - name: Report Python changed-line coverage
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: Python server and SDK
+          report: ${{ runner.temp }}/python.lcov
 
   sandbox:
     needs: validate-ref
