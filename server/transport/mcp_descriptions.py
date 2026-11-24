@@ -2168,12 +2168,12 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`uses_brief: true` summarizes callers. Check freshness and source elision."
     ),
     "code.grep": (
-        "Find text and enclosing bodies in one call. Scope with `path_prefix` or `path_globs`. "
-        "Use a list of literals in `pattern` or one RE2 string with `regex: true`. "
-        "`include_body: false` omits bodies. Add `context_lines: 0` for locations. "
+        "Find text and bodies. For edits, use code.edit_context with literal clues and an optional "
+        "file path. Batch literals or use `regex: true` for RE2. Scope by path. "
+        "`include_body: false` omits bodies. `context_lines: 0` gives locations. "
         "Use code.search for behavior.\n\n"
+        "Scope with `path_prefix` or `path_globs`. "
         "An absent call expression can return related source and linked notes. "
-        "For an edit in a known file, use code.edit_context with literal clues. "
         "Use code.symbol for a definition or code.read for exact lines. Filter with `langs`. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
     ),
