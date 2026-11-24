@@ -482,6 +482,7 @@ def generate_reports(protocol, entries, *, job_name="live", loom_source_verified
 
 
 def _generate(protocol, entries, output, jobs, base, names, job_name, loom_source_verified):
+    from examples.software_factory.harbor.cache_start import study_cache_verified
     from examples.software_factory.harbor.charts import generate_charts
 
     schedule = protocol["schedule"]
@@ -529,6 +530,8 @@ def _generate(protocol, entries, output, jobs, base, names, job_name, loom_sourc
         "links": links,
         "observed_attempts": len(observed),
         "loom_source_verified": loom_source_verified,
+        "prompt_cache_isolation": protocol.get("prompt_cache_isolation"),
+        "prompt_cache_verified": study_cache_verified(protocol, entries),
         "complete": len(observed) == len(schedule),
         "evaluation_complete": len(observed) == len(schedule)
         and (output / "provider-costs.json").exists()
@@ -702,6 +705,8 @@ def _generate(protocol, entries, output, jobs, base, names, job_name, loom_sourc
         "expected_attempts": len(schedule),
         "observed_attempts": len(observed),
         "loom_source_verified": loom_source_verified,
+        "prompt_cache_isolation": views_manifest["prompt_cache_isolation"],
+        "prompt_cache_verified": views_manifest["prompt_cache_verified"],
         "pending_orders": sorted(set(slots_by_order) - set(observed)),
         "scenario_count": len(scenarios),
         "expected_primary_pair_rows": len(rows),
@@ -736,6 +741,8 @@ def _generate(protocol, entries, output, jobs, base, names, job_name, loom_sourc
     )
     if loom_source_verified is False:
         text += "At least one Loom session lacked indexed source evidence.\n\n"
+    if report["prompt_cache_verified"] is False:
+        text += "Provider receipts failed the configured prompt-cache verification.\n\n"
     text += _table(primary) + "\n"
     text += " · ".join(f"[{key}]({value})" for key, value in links.items())
     for family, cohort in cohort_reports.items():

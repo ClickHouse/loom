@@ -229,6 +229,7 @@ function chart(rows, plannedRows) {
     metric.kind === "rate"
       ? 1
       : data.loom_source_verified === true &&
+          (!data.prompt_cache_isolation || data.prompt_cache_verified === true) &&
           data.complete &&
           rows.length === plannedRows.length &&
           matched(rows) &&
@@ -362,7 +363,7 @@ function render() {
     {
       interrupted: "Stopped (not running)",
       failed: "Failed",
-      unqualified: "Loom source unverified",
+      unqualified: "Comparison unqualified",
       complete: "Complete",
       grading: "Judging",
       running: "Running",
@@ -374,9 +375,12 @@ function render() {
   byId("subtitle").textContent = `${data.name} · ${data.model || "model unavailable"}`;
   document.querySelector("h1").textContent = "Software factory evaluation";
   byId("run-notice").hidden = !["interrupted", "failed", "unqualified"].includes(status);
+  const verificationFailures = [];
+  if (data.loom_source_verified === false) verificationFailures.push("At least one Loom session lacked indexed source evidence.");
+  if (data.prompt_cache_verified === false) verificationFailures.push("Provider receipts failed the configured prompt-cache verification.");
   byId("run-notice").textContent =
     status === "unqualified"
-      ? "At least one Loom session lacked indexed source evidence."
+      ? verificationFailures.join(" ")
       : data.interruption_reason || "This run stopped before the planned comparison completed. Results are partial.";
   byId("issues-count").textContent =
     `${new Set(complete.map((row) => row.task)).size} / ${new Set(rows.map((row) => row.task)).size}`;

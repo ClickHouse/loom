@@ -79,8 +79,9 @@ one issue without an uncertainty bound.
 
 Harbor uses its built-in `claude-code` agent, pinned by
 [agent.json](../../harbor/agent.json). Every arm receives the original public
-issue in an ordinary shallow checkout at its buggy base. Claude chooses its
-reads, edits, commands, retrieval, subagents and stopping point. There is no
+issue and the same submission note in an ordinary shallow checkout at its buggy
+base. Claude chooses its reads, edits, commands, retrieval, subagents and
+stopping point. There is no
 factory coding loop, injected source context, forced Loom call or final review turn.
 
 All four Loom arms receive the same [retrieval guidance](../../harbor/project-guidance.md)

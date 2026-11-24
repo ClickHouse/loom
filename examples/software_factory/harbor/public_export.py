@@ -13,12 +13,13 @@ from urllib.parse import urlsplit
 
 from examples.software_factory.factory.model import digest
 
+from .cache_start import study_cache_verified
 from .mcp_qualification import STARTUP_COUNTS
 from .native_environment import MCP_SCHEMA_PROFILES
 from .native_trace import COUNTERS as TRACE_COUNTERS
 from .native_trace import EVENTS as TRACE_EVENTS
 from .native_trace import TIMINGS as TRACE_TIMINGS
-from .project_guidance import guidance
+from .project_guidance import SUBMISSION_NOTE, guidance
 from .runtime import read, verify, write
 
 KIND = "factory-public-results"
@@ -182,6 +183,8 @@ def public_metadata(value):
 
     if value.get("study_role"):
         result["study_role"] = public_text(value["study_role"])
+    if value.get("submission_note") == SUBMISSION_NOTE:
+        result["submission_note"] = SUBMISSION_NOTE
     if value.get("memory_treatment"):
         result["memory_treatment"] = {
             key: public_text(value["memory_treatment"][key])
@@ -383,6 +386,8 @@ def export_public(protocol, output: Path, *, require_complete=False):
             "complete": complete,
             "metadata": public_metadata(protocol["public_reproduction"]),
             "solver": protocol["solver"],
+            "prompt_cache_isolation": protocol.get("prompt_cache_isolation"),
+            "prompt_cache_verified": study_cache_verified(protocol, entries),
             "attempts": public,
             "native_artifact_sha256": hashes,
             "cost_scope": (

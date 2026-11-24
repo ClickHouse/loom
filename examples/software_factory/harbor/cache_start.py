@@ -32,6 +32,14 @@ def prompt_caching_disabled(record):
     )
 
 
+def study_cache_verified(protocol, entries):
+    policy = protocol.get("prompt_cache_isolation")
+    if not policy or len(entries) != len(protocol["schedule"]):
+        return None
+    verify = prompt_caching_disabled if policy == "disabled" else first_prompt_verified
+    return all(verify(entry["result"]) for entry in entries)
+
+
 def observed_cache_ttl_s(record):
     writes = record.get("model_cache_write_tokens")
     if record.get("model_cache_write_1h_tokens", 0) or writes != record.get(

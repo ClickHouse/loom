@@ -63,6 +63,9 @@ def _content_counts(body, seen):
     rows = [body]
     for key in ("results", "definitions"):
         rows.extend(_dict_rows(body.get(key)))
+    related = body.get("related")
+    related = related if isinstance(related, dict) else {}
+    rows.extend(_dict_rows(related.get("definitions")))
     lessons = [lesson for row in rows for lesson in _dict_rows(row.get("lessons"))]
     caller_contexts = [
         context
@@ -90,8 +93,12 @@ def _content_counts(body, seen):
     return {
         "source_chars": _text_chars(rows, "body")
         + sum(_text_chars(_dict_rows(row.get("windows")), "text") for row in rows),
-        "match_chars": _text_chars(_dict_rows(body.get("matches")), "text"),
-        "context_chars": _text_chars(_dict_rows(body.get("contexts")), "text"),
+        "match_chars": sum(
+            _text_chars(_dict_rows(row.get("matches")), "text") for row in (body, related)
+        ),
+        "context_chars": sum(
+            _text_chars(_dict_rows(row.get("contexts")), "text") for row in (body, related)
+        ),
         "caller_context_chars": _text_chars(caller_contexts, "text"),
         "source_bodies": sum(
             bool(row.get("body")) for row in rows if isinstance(row.get("body"), str)

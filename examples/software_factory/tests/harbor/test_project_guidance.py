@@ -31,10 +31,11 @@ class ProjectInstructions(TestCase):
         self.assertIn("Use Loom for each search or read of unchanged indexed source", text)
         self.assertIn("including test files and module imports", text)
         self.assertIn(
-            "Start with `loom_code_symbol` for a named definition or enclosing class", text
+            "start with `loom_code_edit_context` for its implementation, "
+            "related tests, and linked notes",
+            text,
         )
-        self.assertIn("find related tests and read their bodies in one lookup", text)
-        self.assertIn("`test_examples_only: true` with `example_context_lines`", text)
+        self.assertIn("pass its path as `name` and literal code fragments as `clues`", text)
         self.assertIn("Keep discovery separate from edits, test execution and Git", text)
         self.assertIn("read working-copy changes, untracked or unindexed files", text)
 

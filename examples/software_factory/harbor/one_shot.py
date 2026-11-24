@@ -10,7 +10,6 @@ import os
 import secrets
 import signal
 import sys
-import time
 import traceback
 from pathlib import Path
 
@@ -306,11 +305,6 @@ def execute(args):
             ),
         )
         disable_prompt_caching = launch.get("disable_prompt_caching", False)
-        cache_quiet_since = (
-            time.monotonic()
-            if launch["pilot_task"] is not None and not workspaces and not disable_prompt_caching
-            else None
-        )
         plan = phases.run(
             "plan",
             lambda: protocol_receipt(
@@ -330,7 +324,6 @@ def execute(args):
                 study.prepare(
                     bootstrap_path,
                     output / "study",
-                    isolate_prompt_cache=cache_quiet_since is not None,
                     workspace_ids=[binding.id for binding in workspaces],
                     disable_prompt_caching=disable_prompt_caching,
                 )
@@ -346,7 +339,6 @@ def execute(args):
                         protocol_path,
                         kind,
                         meter=meter,
-                        cache_quiet_since=cache_quiet_since,
                         workspaces=workspaces if kind == "live" else (),
                     )
                 ),

@@ -31,9 +31,8 @@ from .billing import FIELDS as BILLING_FIELDS
 from .billing import audit_provider_costs
 from .cache_start import (
     DEFAULT_CACHE_TTL_S,
-    first_prompt_verified,
     observed_cache_ttl_s,
-    prompt_caching_disabled,
+    study_cache_verified,
     wait_for_expiry,
 )
 from .fairness import audit_fairness
@@ -590,13 +589,7 @@ def export(protocol: dict, job_name="live") -> dict:
         else None
     )
     cache_policy = protocol.get("prompt_cache_isolation")
-    verify_cache = prompt_caching_disabled if cache_policy == "disabled" else first_prompt_verified
-    cache_verified = (
-        len(entries) == len(protocol["schedule"])
-        and all(verify_cache(entry["result"]) for entry in entries)
-        if cache_policy
-        else None
-    )
+    cache_verified = study_cache_verified(protocol, entries)
     cache_field = (
         "prompt_cache_disabled_verified"
         if cache_policy == "disabled"
