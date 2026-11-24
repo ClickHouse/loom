@@ -2180,9 +2180,9 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 # derived from core text so revision and memory guidance stay consistent.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.symbol": (
-        "Read a definition by name or path:line with source and linked lessons. "
-        "Name the enclosing class to read adjacent methods together. "
-        "Use code.read for exact line ranges and code.search for unknown implementations. "
+        "Read a definition by name, path:symbol, or path:line with source and linked lessons. "
+        "Name the class to read related methods together.\n\n"
+        "Use code.read for exact line ranges or code.search for unknown implementations. "
         "`example_context_lines` adds source near recorded usage sites. Use code.enclosing with "
         "include_body=true for several known locations. "
         "`uses_brief: true` adds a compact caller summary for one resolved definition; "
@@ -2191,12 +2191,11 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "elision disclosures; use local tools for changed or unindexed code."
     ),
     "code.grep": (
-        "Find known text. Use code.search for behavior. "
-        "Pass a list of stable literal fragments in `pattern` "
-        "to search alternatives in one call. "
-        "Matches include the smallest enclosing bodies by default. "
+        "Find exact text. Pass a list of stable literal fragments in `pattern` "
+        "to search alternatives in one call. Matches include enclosing bodies by default. "
+        "Use `include_body: false` for names, locations or short excerpts with `context_lines`. "
+        "Use code.search for behavior.\n\n"
         "Use code.symbol for the full class or code.read for exact line ranges. "
-        "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
         "`regex: true` uses one RE2 string. "
         "Scope with `path_prefix`, `path_globs` or `langs`. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."

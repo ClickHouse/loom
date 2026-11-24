@@ -597,8 +597,8 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         else ""
     )
     return name_ops_for_toolset(
-        "**Loom: memory and code for this session.**\n\n"
-        + _tool_routing(toolset)
+        "Loom provides indexed source and project memory. Find other operations with "
+        '`loom_op` (`op="help"`, `query="<goal>"`). Writes need user intent and permission.'
         + code
         + context
         + "\n\n"
