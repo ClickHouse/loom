@@ -557,6 +557,14 @@ async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     (related,) = member.examples
     assert related["owner_symbol"] == edit.definitions[0].symbol
     assert related["context"] == bundled["context"]
+    location = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=f"src/cli.py:{member.start_line + 1}", include_lessons=False
+        )
+    )
+    (located,) = location.definitions
+    assert located.body == member.body
+    assert located.examples == member.examples
 
 
 async def test_deletion_tombstones_everything(code_env) -> None:

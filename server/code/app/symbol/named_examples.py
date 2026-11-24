@@ -22,7 +22,7 @@ async def owning_type(
     qualified = str(method.get("qualified_name") or "")
     owner, separator, _ = qualified.rpartition("::")
     path = str(method.get("path") or "")
-    revision = _indexed_commit(method.get("indexed_commit"))
+    revision = _indexed_commit(method.get("indexed_commit") or method.get("extent_commit"))
     line = int(method.get("start_line") or 0)
     if (
         method.get("kind") not in {"method", "function", "symbol"}
