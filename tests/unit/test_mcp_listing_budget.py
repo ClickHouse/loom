@@ -396,16 +396,19 @@ def test_the_compact_profile_keeps_the_tool_names():
             assert not {r for r in _OP_REF.findall(t["description"]) if r in listed}, t["name"]
 
 
-def test_compact_coding_grep_advertises_body_default_and_literal_alternatives():
-    tools = {t["name"]: t for t in _listing("coding", True, "compact")}
-    description = tools["loom_code_grep"]["description"]
-    assert "list of literals in `pattern`" in description
-    assert "enclosing bodies in one call" in description
+def test_compact_coding_grep_advertises_search_options_and_edit_routing():
+    compact = {t["name"]: t for t in _listing("coding", True, "compact")}
+    description = compact["loom_code_grep"]["description"]
+    assert "Find text and bodies" in description
+    assert "Batch literals or use `regex: true` for RE2" in description
     assert "`include_body: false` omits bodies" in description
-    assert "`context_lines: 0` for locations" in description
+    assert "`context_lines: 0` gives locations" in description
+    assert "Scope by path" in description
+    assert "For edits, use loom_code_edit_context with literal clues" in description
     assert "loom_code_search" in description
-    assert "one RE2 string with `regex: true`" in description
-    assert "Scope with `path_prefix` or `path_globs`" in description
+
+    full = {t["name"]: t for t in _listing("coding", True, "full")}
+    assert "Scope with `path_prefix` or `path_globs`" in full["loom_code_grep"]["description"]
 
 
 # ---------------------------------------------------------------- one revision policy
