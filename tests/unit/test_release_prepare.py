@@ -970,8 +970,8 @@ def test_the_github_release_notes_start_at_the_previous_final() -> None:
     assert create["env"]["PREVIOUS_TAG"] == "${{ needs.version.outputs.previous }}"
 
 
-@pytest.mark.parametrize("lookup", ["absent", "draft", "error"])
-def test_publish_release_reuses_existing_draft(tmp_path: Path, lookup: str) -> None:
+@pytest.mark.parametrize("outcome", ["absent", "draft", "lookup-error", "publish-error"])
+def test_publish_release_reuses_existing_draft(tmp_path: Path, outcome: str) -> None:
     steps = _release_workflow()["jobs"]["github-release"]["steps"]
     (probe,) = [step for step in steps if step.get("id") == "existing"]
     (publish,) = [step for step in steps if step.get("id") == "publish-release"]
@@ -989,22 +989,17 @@ def test_publish_release_reuses_existing_draft(tmp_path: Path, lookup: str) -> N
     gh = tmp_path / "gh"
     gh.write_text(
         """#!/bin/bash
-if [ "$1 $2" = 'release view' ]; then
-  case $RELEASE_LOOKUP in
-    draft) echo '{"tagName":"v1.3.0"}'; exit 0 ;;
-    absent) echo 'release not found' >&2; exit 1 ;;
-    error) echo 'release API unavailable' >&2; exit 1 ;;
+if [ "$1 $2" = 'api graphql' ]; then
+  case $RELEASE_OUTCOME in
+    draft) echo true; exit 0 ;;
+    lookup-error) echo 'release API unavailable' >&2; exit 1 ;;
+    *) echo false; exit 0 ;;
   esac
 fi
-if [ "$1" = api ]; then
-  if [ "$RELEASE_LOOKUP" = error ]; then
-    echo 'gh: Bad Gateway (HTTP 502)' >&2
-    exit 1
-  fi
-  echo 'gh: Not Found (HTTP 404)' >&2
+printf '%s\\n' "$*" >> "$GH_CALLS"
+if [ "$1 $2" = 'release edit' ] && [ "$RELEASE_OUTCOME" = publish-error ]; then
   exit 1
 fi
-printf '%s\\n' "$*" >> "$GH_CALLS"
 """
     )
     gh.chmod(0o755)
@@ -1016,7 +1011,7 @@ printf '%s\\n' "$*" >> "$GH_CALLS"
         GITHUB_REF_NAME="v1.3.0",
         GITHUB_REPOSITORY="ClickHouse/loom",
         PREVIOUS_TAG="v1.2.9",
-        RELEASE_LOOKUP=lookup,
+        RELEASE_OUTCOME=outcome,
         GITHUB_OUTPUT=str(tmp_path / "output"),
         PRERELEASE="false",
         LATEST="true",
@@ -1024,7 +1019,7 @@ printf '%s\\n' "$*" >> "$GH_CALLS"
     found = subprocess.run(
         ["bash", "-e", "-c", probe["run"]], env=env, cwd=tmp_path, capture_output=True
     )
-    if lookup == "error":
+    if outcome == "lookup-error":
         assert found.returncode != 0
         assert not Path(env["GITHUB_OUTPUT"]).exists()
         return
@@ -1033,22 +1028,21 @@ printf '%s\\n' "$*" >> "$GH_CALLS"
     result = subprocess.run(
         ["bash", "-e", "-c", publish["run"]], env=env, cwd=tmp_path, capture_output=True
     )
-    assert result.returncode == 0, result.stderr
-    commands = calls.read_text().splitlines()
-    if lookup == "draft":
-        upload, edit = commands
-        assert upload.startswith("release upload v1.3.0 ")
-        assert "--clobber" in upload
-        assert edit.startswith("release edit v1.3.0 ")
-        assert "--latest=true" in edit
-        assert all("--notes" not in command for command in commands)
+    assert result.returncode == int(outcome == "publish-error"), result.stderr
+    assets, edit = calls.read_text().splitlines()
+    assert edit.startswith("release edit v1.3.0 ")
+    assert "--latest=true" in edit
+    assert "--draft=false" in edit
+    assert all(name in assets for name in files)
+    if outcome == "draft":
+        assert assets.startswith("release upload v1.3.0 ")
+        assert "--clobber" in assets
+        assert "--notes" not in assets + edit
     else:
-        (create,) = commands
-        assert create.startswith("release create v1.3.0 ")
-        assert "--verify-tag" in create
-        assert "--notes-start-tag v1.2.9" in create
-        assert "--generate-notes" in create
-    assert all(name in commands[0] for name in files)
+        assert assets.startswith("release create v1.3.0 ")
+        assert "--draft --verify-tag" in assets
+        assert "--notes-start-tag v1.2.9" in assets
+        assert "--generate-notes" in assets
 
 
 def test_a_tag_whose_files_name_another_release_is_an_error_on_the_server_file(

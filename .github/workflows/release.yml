@@ -127,7 +127,7 @@ jobs:
       # Every version file names the tag's final, the candidate order holds, and the
       # chart's own version moved (release-process.md); check-tag skips off the tag's
       # commit in a dry run. `previous` is the tag the generated release notes start
-      # from (github-release's previous_tag).
+      # from (the release CLI's --notes-start-tag).
       - name: Version files, the candidate order and the chart
         id: checks
         env:
@@ -823,17 +823,17 @@ jobs:
         id: existing
         env:
           GH_TOKEN: ${{ github.token }}
-        # The CLI also looks up drafts by their pending tag.
+        # A single lookup includes drafts and keeps API failures distinct from absence.
         run: |
-          if out=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json tagName 2>&1); then
-            echo "release=true" >>"$GITHUB_OUTPUT"
-          elif [ "$out" = "release not found" ]; then
-            echo "release=false" >>"$GITHUB_OUTPUT"
-          else
-            echo "$out" >&2
-            echo "::error::could not tell whether $GITHUB_REF_NAME has a release"
-            exit 1
-          fi
+          release=$(gh api graphql \
+            -f query='query($owner: String!, $name: String!, $tag: String!) {
+              repository(owner: $owner, name: $name) {
+                release(tagName: $tag) { id }
+              }
+            }' \
+            -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY#*/}" -f tag="$GITHUB_REF_NAME" \
+            --jq '.data.repository | if has("release") then .release != null else error("Missing release result") end')
+          echo "release=$release" >>"$GITHUB_OUTPUT"
       - name: Create or update the release with notes and files
         id: publish-release
         env:
@@ -850,14 +850,15 @@ jobs:
           if [ "$VERSION_EXISTS" = true ]; then
             # Keep the existing notes, which may include edits from maintainers.
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
-            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --draft=false \
-              --prerelease="$PRERELEASE" --latest="$LATEST" --repo "$GITHUB_REPOSITORY"
           else
             notes=(--generate-notes)
             if [ -n "$PREVIOUS_TAG" ]; then notes+=(--notes-start-tag "$PREVIOUS_TAG"); fi
-            gh release create "$GITHUB_REF_NAME" "${files[@]}" --verify-tag --title "$GITHUB_REF_NAME" \
-              "${notes[@]}" --prerelease="$PRERELEASE" --latest="$LATEST" --repo "$GITHUB_REPOSITORY"
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --draft --verify-tag --title "$GITHUB_REF_NAME" \
+              "${notes[@]}" --prerelease="$PRERELEASE" --repo "$GITHUB_REPOSITORY"
           fi
+          # A failed publish leaves the draft and its assets for the next run.
+          gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --draft=false \
+            --prerelease="$PRERELEASE" --latest="$LATEST" --repo "$GITHUB_REPOSITORY"
 
   # Signs the files the release serves, downloaded as users download them, when
   # they are the bytes this run built (sign_release_files.sh). Its own job, so
