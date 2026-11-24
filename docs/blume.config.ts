@@ -21,6 +21,7 @@ export default defineConfig({
   seo: {
     sitemap: { alternates: true },
   },
+  lastModified: "frontmatter",
   agents: {
     mcp: {
       enabled: true,

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { readContentDates, withContentDate } from "./content-dates.mjs";
 
 const docs = dirname(fileURLToPath(import.meta.url));
 const root = dirname(docs);
@@ -215,12 +216,19 @@ function prepareContent() {
       .map((file) => relative(content, file).split(sep).join("/"))
       .filter((file) => !locales.includes(file.split("/")[0])),
   );
+  const contentDates = readContentDates(repository);
   for (const file of files) {
     const text = readFileSync(file, "utf8");
-    const [locale, ...source] = relative(content, file).split(sep);
+    const preparedPath = relative(content, file).split(sep).join("/");
+    const [locale, ...source] = preparedPath.split("/");
     const sourcePath = source.join("/");
-    const linked = locales.includes(locale) ? rewritePublishedDocLinks(text, englishSources) : text;
-    const prepared = normalizeTranslatedTitle(linked, localizedSeo[sourcePath]?.[locale]);
+    const localized = locales.includes(locale);
+    const linked = localized ? rewritePublishedDocLinks(text, englishSources) : text;
+    const original = localized ? `i18n/${locale}/docs/${sourcePath}` : `docs/${preparedPath}`;
+    const prepared = withContentDate(
+      normalizeTranslatedTitle(linked, localizedSeo[sourcePath]?.[locale]),
+      contentDates.get(original),
+    );
     if (prepared !== text) writeFileSync(file, prepared);
   }
 

@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { withContentDate } from "./content-dates.mjs";
 import { normalizeTranslatedTitle, rewritePublishedDocLinks, rewriteSourceLinks } from "./prepare-content.mjs";
+
+test("adds the source date without changing page content or overriding an explicit date", () => {
+  const date = "2025-01-02T03:04:05.000Z";
+  const field = `lastModified: "${date}"\n`;
+  const body = "# Page\n\nContent.\n";
+  assert.equal(withContentDate(body, date), `---\n${field}---\n\n${body}`);
+  assert.equal(withContentDate(`---\ntitle: Page\n---\n${body}`, date), `---\n${field}title: Page\n---\n${body}`);
+  const pinned = `---\nlastModified: "2025-01-03"\n---\n${body}`;
+  assert.equal(withContentDate(pinned, date), pinned);
+  assert.equal(withContentDate(body, undefined), body);
+});
 
 test("moves a generated translation title into Blume front matter", () => {
   const prepared = normalizeTranslatedTitle(
