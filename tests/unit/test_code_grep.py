@@ -85,6 +85,44 @@ def test_lines_scope_and_window_dedupe() -> None:
     assert out.coverage_floor is True
 
 
+def test_literal_call_prefix_adds_other_uses_without_widening_matches() -> None:
+    path = "src/worker.py"
+    exact = {
+        "path": path,
+        "scope": "consume",
+        "start_line": 1,
+        "end_line": 2,
+        "content": "def consume():\n    return process(job.value, 0)\n",
+        "indexed_commit": "a" * 40,
+    }
+    other = {
+        **exact,
+        "scope": "keep",
+        "start_line": 4,
+        "end_line": 7,
+        "content": "def keep():\n    # Keep job.value.\n    seen = job.values\n    return job.value\n",
+    }
+    stale = {
+        **other,
+        "scope": "stale",
+        "start_line": 8,
+        "end_line": 11,
+        "indexed_commit": "b" * 40,
+    }
+    out = _run(
+        [exact, other, stale],
+        pattern="process(job.value",
+        related_on_prefix=True,
+        include_body=False,
+        context_lines=0,
+    )
+    assert [hit["line"] for hit in out.matches] == [2]
+    assert out.related is not None and out.related.pattern == "job.value"
+    assert [hit["line"] for hit in out.related.matches] == [5, 7]
+    assert not out.related.contexts
+    assert not out.next_cursor
+
+
 def test_unmapped_skeleton_is_disclosed_without_a_guessed_line() -> None:
     chunks = [
         {

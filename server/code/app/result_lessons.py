@@ -19,7 +19,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
-from server.code.api.models_grep import CodeGrepInput
+from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput
 from server.code.api.models_navigation import CodeEnclosingInput
 from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import common, enrich, memory_links
@@ -138,8 +138,7 @@ class WithLessons:
         symbols = None
         grep_lines = None
         if isinstance(input, CodeGrepInput) and input.mode == "matches":
-            rows = out.related.matches if out.related is not None else out.matches
-            symbols, grep_lines = _grep_match_scopes(rows, out._match_commits)
+            symbols, grep_lines = _grep_match_scopes(_grep_matches(out), out._match_commits)
         elif isinstance(input, CodeSearchInput):
             symbols = _search_match_symbols(out)
         found = await lessons_for(
@@ -202,12 +201,14 @@ def _symbols_by_path(rows: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
 # The files each code answer returns, best first.
 
 
-def grep_paths(input: Any, out: Any) -> list[str]:
+def _grep_matches(out: CodeGrepOutput) -> list[dict[str, Any]]:
+    return [*out.matches, *out.related.matches] if out.related is not None else out.matches
+
+
+def grep_paths(input: CodeGrepInput, out: CodeGrepOutput) -> list[str]:
     if input.mode == "presence" or out.not_covered:
         return []
-    rows = out.files if input.mode == "files" else out.matches
-    if input.mode == "matches" and out.related is not None:
-        rows = out.related.matches
+    rows = out.files if input.mode == "files" else _grep_matches(out)
     return [str(row.get("path") or "") for row in rows]
 
 

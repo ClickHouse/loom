@@ -6659,6 +6659,7 @@ class CodeGrepInput(TypedDict, total=False):
     pattern: Required[Union[str, list[str]]]
     regex: NotRequired[bool]
     related_on_miss: NotRequired[bool]
+    related_on_prefix: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
     path_prefix: NotRequired[str]
@@ -6689,6 +6690,7 @@ class CodeGrepBody(TypedDict, total=False):
     pattern: Required[Union[str, list[str]]]
     regex: NotRequired[bool]
     related_on_miss: NotRequired[bool]
+    related_on_prefix: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
     path_prefix: NotRequired[str]
@@ -6743,7 +6745,7 @@ class CodeGrepOutput(TypedDict, total=False):
 
 
 class RelatedGrepEvidence(TypedDict, total=False):
-    "Verified lines for a qualified argument inside a missing call expression."
+    "Verified lines for the qualified argument of a literal call."
 
     pattern: Required[str]
     matches: Required[list[dict[str, Any]]]

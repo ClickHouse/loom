@@ -30,6 +30,7 @@ from server.code.app.grep_source import (
     GREP_MATCH_TEXT_CHARS,
     ContextSource,
     collect_contexts,
+    match_revisions,
     page_contexts,
     recover_source_chunks,
 )
@@ -314,21 +315,15 @@ async def _grep_lines(
         span_attrs(sp, chunks_matched=len(chunks))
 
     matched_chunks = len(chunks)
-    chunks = await recover_source_chunks(
-        repo, org, ns, chunks, max_chars=_LINE_SCAN_MAX_CHARS, budget=budget
-    )
-    spans = await _unit_spans(repo, org, ns, chunks)
-    # extract past the page: the extra lines become the continuation pool. Off the event
-    # loop: a scan of 200 chunks must not stall every other request on this worker.
-    match_commits: dict[tuple[str, int], str] = {}
-    matches, scan_capped = await asyncio.to_thread(
-        _matching_lines,
+    chunks, matches, match_commits, scan_capped = await _read_line_matches(
+        repo,
+        org,
+        ns,
         chunks,
-        spans,
         scan_input,
         line_re,
         limit + _GREP_POOL_EXTRA,
-        match_commits=match_commits,
+        budget,
     )
 
     truncated = scan_capped or len(matches) > limit or matched_chunks >= scan_limit
@@ -360,6 +355,22 @@ async def _grep_lines(
         repo, org, ns, input, matches, route, budget=budget
     )
     coverage = await asyncio.to_thread(_line_coverage_fields, chunks, budget)
+    prefix_related = None
+    if not (related_pattern or offset or truncated or coverage.get("partial")):
+        prefix_related = await _related_prefix_excerpts(
+            repo,
+            org,
+            ns,
+            input,
+            scope=scope,
+            matches=matches,
+            match_commits=match_commits,
+            limit=served_limit,
+            budget=budget,
+        )
+        if prefix_related is not None:
+            route += "+related_call_prefix"
+        coverage.update(_partial_fields(budget))
     next_cursor = ""
     if not related_pattern:
         next_cursor = _issue_grep_cursor(
@@ -378,8 +389,14 @@ async def _grep_lines(
         )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
     # so the outcome fold skips this op; the paths still feed opened_file)
-    files = list(dict.fromkeys(m["path"] for m in matches))
-    risk = "medium" if matches and related_pattern else "low" if matches else "abstain"
+    returned = matches + (prefix_related.matches if prefix_related is not None else [])
+    files = list(dict.fromkeys(m["path"] for m in returned))
+    risk = "low" if returned else "abstain"
+    if (matches and related_pattern) or prefix_related is not None:
+        risk = "medium"
+    related_tokens = (
+        sum(len(row["text"]) for row in prefix_related.contexts) // 4 if prefix_related else 0
+    )
     schedule_code_trace(
         org=org,
         ns=ns,
@@ -391,11 +408,12 @@ async def _grep_lines(
         returned_paths=files,
         returned_scores=[],
         top_k=served_limit,
-        tokens_returned=sum(len(m["text"]) for m in matches) // 4
+        tokens_returned=sum(len(m["text"]) for m in returned) // 4
         + _context_tokens(context)
+        + related_tokens
         + neighbour_tokens
         + definitions_tokens(bodies),
-        abstain=not matches,
+        abstain=not returned,
         retrieval_risk=risk,
         embedding_model="",
         started_monotonic=started,
@@ -409,11 +427,11 @@ async def _grep_lines(
     )
     set_code_span_attributes(
         route=route,
-        results=len(matches),
+        results=len(returned),
         chunks_matched=matched_chunks,
         path_prefix=input.path_prefix,
         truncated=truncated,
-        abstain=not matches,
+        abstain=not returned,
         retrieval_risk=risk,
         consumer=input.consumer,
     )
@@ -430,14 +448,18 @@ async def _grep_lines(
             "No exact match in the indexed scope. Try shorter known fragments together in "
             "a pattern list, code.symbol for a known name, or code.search for behavior."
         )
-    related = None
+    related = prefix_related
+    if prefix_related is not None:
+        note = "Related source shows the call prefix's argument in other scopes."
+        if not matches:
+            note = "No exact match in the indexed scope. " + note
     if related_pattern and matches:
         related = RelatedGrepEvidence(
             pattern=related_pattern, matches=matches, truncated=truncated, **bodies, **context
         )
         note = "No exact match in the indexed scope. Related source matches the call's argument."
     output = CodeGrepOutput(
-        matches=matches if related is None else [],
+        matches=[] if related_pattern else matches,
         related=related,
         next_cursor=next_cursor,
         has_more=bool(next_cursor),
@@ -450,7 +472,7 @@ async def _grep_lines(
         anchors=len(neighbours),
         anchors_capped=anchors_capped,
         neighbour_tokens=neighbour_tokens,
-        **({**bodies, **context} if related is None else {}),
+        **({**bodies, **context} if not related_pattern else {}),
         **coverage,
     )
     output._match_commits = match_commits
@@ -458,10 +480,12 @@ async def _grep_lines(
 
 
 _IDENTIFIER = r"[^\W\d]\w*"
-_QUALIFIED_ARGUMENT = re.compile(
+_CALL_PREFIX = (
     rf"{_IDENTIFIER}(?:(?:\.|::){_IDENTIFIER})*\([ \t]*"
-    rf"({_IDENTIFIER}(?:\.{_IDENTIFIER})+)[ \t]*\)"
+    rf"({_IDENTIFIER}(?:\.{_IDENTIFIER})+)[ \t]*"
 )
+_QUALIFIED_ARGUMENT = re.compile(_CALL_PREFIX + r"\)")
+_QUALIFIED_ARGUMENT_PREFIX = re.compile(_CALL_PREFIX)
 
 
 def _related_grep_pattern(input: CodeGrepInput) -> str:
@@ -473,6 +497,119 @@ def _related_grep_pattern(input: CodeGrepInput) -> str:
 def qualified_call_argument(pattern: str) -> str:
     call = _QUALIFIED_ARGUMENT.fullmatch(pattern.strip())
     return call[1] if call else ""
+
+
+async def _read_line_matches(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    chunks: list[dict[str, Any]],
+    input: CodeGrepInput,
+    line_re: Any,
+    keep: int,
+    budget: code_deadline.Budget | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[tuple[str, int], str], bool]:
+    chunks = await recover_source_chunks(
+        repo, org, ns, chunks, max_chars=_LINE_SCAN_MAX_CHARS, budget=budget
+    )
+    spans = await _unit_spans(repo, org, ns, chunks)
+    # Scanning up to 200 chunks must not stall other requests on this worker.
+    commits: dict[tuple[str, int], str] = {}
+    matches, capped = await asyncio.to_thread(
+        _matching_lines, chunks, spans, input, line_re, keep, match_commits=commits
+    )
+    return chunks, matches, commits, capped
+
+
+def _grep_match_scope(match: dict[str, Any]) -> tuple[str, int, int]:
+    return (
+        match["path"],
+        match["scope_start_line"] or match["line"],
+        match["scope_end_line"] or match["line"],
+    )
+
+
+async def _related_prefix_excerpts(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    input: CodeGrepInput,
+    *,
+    scope: Any,
+    matches: list[dict[str, Any]],
+    match_commits: dict[tuple[str, int], str],
+    limit: int,
+    budget: code_deadline.Budget | None,
+) -> RelatedGrepEvidence | None:
+    if not input.related_on_prefix or input.regex or not isinstance(input.pattern, str):
+        return None
+    call = _QUALIFIED_ARGUMENT_PREFIX.fullmatch(input.pattern.strip())
+    if call is None or not _second_scan_allowed(budget, "related call prefix scan"):
+        return None
+    argument = call[1]
+    scan_limit = min(200, limit * 3)
+    kw = {"scope": scope} if scope.has_path_filters else {}
+    chunks = await _bounded_scan(
+        budget,
+        repo.grep_chunks,
+        org,
+        ns,
+        argument,
+        regex=False,
+        case_sensitive=input.case_sensitive,
+        path_prefix=input.path_prefix,
+        limit=scan_limit,
+        **kw,
+    )
+    scanned = len(chunks)
+    # A longer name sharing the prefix is a different argument.
+    line_re = re.compile(
+        rf"(?<![\w.]){re.escape(argument)}(?!\w|\.\w)",
+        0 if input.case_sensitive else re.IGNORECASE,
+    )
+    chunks, candidates, commits, capped = await _read_line_matches(
+        repo, org, ns, chunks, input, line_re, limit + _GREP_POOL_EXTRA, budget
+    )
+    exact_scopes = {_grep_match_scope(match) for match in matches}
+    exact_paths = {match["path"] for match in matches}
+    exact_lines = {(match["path"], match["line"]) for match in matches}
+    revisions = match_revisions(matches, match_commits)
+    related = [
+        match
+        for match in candidates
+        if (match["path"], match["line"]) not in exact_lines
+        and _grep_match_scope(match) not in exact_scopes
+        and (
+            match["path"] not in exact_paths
+            or (
+                revisions.get(match["path"])
+                and revisions[match["path"]] == commits.get((match["path"], match["line"]))
+            )
+        )
+    ]
+    if not related:
+        return None
+    page = related[:limit]
+    radius = (
+        input.context_lines
+        if "context_lines" in input.model_fields_set
+        else RELATED_GREP_CONTEXT_LINES
+    )
+    context = {}
+    if radius:
+        source = await asyncio.to_thread(
+            collect_contexts, chunks, page, radius, _LINE_SCAN_MAX_CHARS, match_commits=commits
+        )
+        context = page_contexts(source, page, radius)
+    match_commits.update(
+        {key: commits[key] for match in page if (key := (match["path"], match["line"])) in commits}
+    )
+    return RelatedGrepEvidence(
+        pattern=argument,
+        matches=page,
+        truncated=capped or len(related) > limit or scanned >= scan_limit,
+        **context,
+    )
 
 
 async def _grep_neighbours(
@@ -531,7 +668,7 @@ async def _grep_neighbours(
         entries, capped, tokens = await _attach_enclosing_neighbours(
             repo, org, ns, anchors, rows, input.neighbour_k
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 — a failed graph read leaves the grep hits intact
         logger.warning("code.grep: neighbours block failed for %r", input.pattern, exc_info=True)
         return [], False, 0, route
     return entries, capped, tokens, route + "+neighbours"
@@ -652,6 +789,7 @@ def _grep_trace_args(input: CodeGrepInput, *, context_lines: int | None = None) 
         "deadline_ms",
         "include_body",
         "related_on_miss",
+        "related_on_prefix",
         "context_lines",
         context_lines=context_lines,
         paged=bool(input.cursor) or None,
@@ -1239,6 +1377,7 @@ async def _message_literal_fallback(
                 "regex": False,
                 "neighbours": None,
                 "related_on_miss": False,
+                "related_on_prefix": False,
             }
         ),
         route=route + "+literal_fallback",

@@ -58,6 +58,13 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
             "Default true on coding connections."
         ),
     )
+    related_on_prefix: bool = Field(
+        default=False,
+        description=(
+            "For a literal call prefix with one qualified argument, include its uses in other "
+            "scopes as excerpts. Default true on coding connections."
+        ),
+    )
     # False matches `pattern` regardless of letter case.
     case_sensitive: bool = True
     include_lessons: bool = Field(
@@ -177,7 +184,7 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
 
 
 class RelatedGrepEvidence(BaseModel):
-    """Verified lines for a qualified argument inside a missing call expression."""
+    """Verified lines for the qualified argument of a literal call."""
 
     pattern: str
     matches: list[dict[str, Any]]
@@ -224,7 +231,7 @@ class CodeGrepOutput(_LessonsOut):
     # by `scope` (0/0 when the line sits in no unit) — enough to decide whether
     # to fetch the body, or to skip it when that unit is already on screen.
     matches: list[dict[str, Any]]
-    # On a literal miss, source for a qualified argument in the requested expression.
+    # Related source for a qualified argument, separate from literal matches.
     related: RelatedGrepEvidence | None = None
     # Exact retained source windows for this page, with inclusive line bounds.
     contexts: list[dict[str, Any]] = Field(default_factory=list)

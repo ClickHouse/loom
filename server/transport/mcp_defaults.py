@@ -24,7 +24,7 @@ Coding connections also default to indexed tests with source excerpts at the def
 `code.grep` over MCP answers ten matches a page (each with its enclosing
 function), the cursor for the rest: in paired runs an agent's grep through the
 index cost about three times the shell grep it stood in for.
-Coding connections also ask for related source when a call expression is absent.
+Coding connections also ask for related source on a call expression miss or a call prefix.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ _CODING_ARGUMENT_DEFAULTS: dict[str, dict[str, Any]] = {
         "test_examples_only": True,
         "example_context_lines": EDIT_TEST_CONTEXT_LINES,
     },
-    "code.grep": {"related_on_miss": True},
+    "code.grep": {"related_on_miss": True, "related_on_prefix": True},
 }
 
 

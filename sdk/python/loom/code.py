@@ -112,6 +112,7 @@ class CodeClient:
         context_lines: int | None = None,
         include_body: bool | None = None,
         related_on_miss: bool = False,
+        related_on_prefix: bool = False,
         mode: str = "matches",
         path_globs: list[str] | None = None,
         exclude_globs: list[str] | None = None,
@@ -129,6 +130,8 @@ class CodeClient:
         call expression under `related`. Those hits include excerpts when
         bodies are disabled and `context_lines` is omitted. Set it to 0 for
         matching lines only.
+        Pass `related_on_prefix=True` to see excerpts for other uses of a
+        literal call prefix's qualified argument alongside exact matches.
         `mode="files"` answers "which files
         mention X" (no line text) — use it for coverage questions. `limit`
         defaults per mode: 20 lines, or the 500-file ceiling, so a files
@@ -159,6 +162,8 @@ class CodeClient:
             body["include_body"] = include_body
         if related_on_miss:
             body["related_on_miss"] = True
+        if related_on_prefix:
+            body["related_on_prefix"] = True
         if path_globs:
             body["path_globs"] = list(path_globs)
         if exclude_globs:

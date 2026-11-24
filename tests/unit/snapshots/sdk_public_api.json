@@ -2079,6 +2079,7 @@
           "context_lines",
           "include_body",
           "related_on_miss",
+          "related_on_prefix",
           "mode",
           "path_globs",
           "exclude_globs",

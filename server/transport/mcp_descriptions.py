@@ -2173,7 +2173,7 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`include_body: false` omits bodies. `context_lines: 0` gives locations. "
         "Use code.search for behavior.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
-        "An absent call expression can return related source and linked notes. "
+        "Call prefixes and absent call expressions can return related source and linked notes. "
         "Use code.symbol for a definition or code.read for exact lines. Filter with `langs`. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
     ),

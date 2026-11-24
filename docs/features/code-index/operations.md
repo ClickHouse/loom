@@ -108,6 +108,12 @@ matching lines only. `matches` stays empty. Linked notes can accompany that
 source. Coding MCP connections enable recovery by default. HTTP and SDK
 callers can opt in.
 
+A literal call prefix such as `convert(row.value` can also show where
+`row.value` appears in other scopes. Coding MCP connections enable this
+with `related_on_prefix`. The exact hit list and its pagination stay separate
+from those excerpts. Use `context_lines` to choose the radius. It defaults to
+six lines for related excerpts. HTTP and SDK callers can opt in.
+
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
 lines by default. Pass `include_body=false` to omit bodies and `context_lines=0`
 for matching lines only.
