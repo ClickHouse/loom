@@ -584,18 +584,9 @@ async def _tools_descriptor(
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
-    from server.transport.mcp_schemas import (
-        DEFAULT_SCHEMA_PROFILE,
-        SCHEMA_PROFILES,
-        apply_schema_profile,
-    )
+    from server.transport.mcp_schemas import apply_schema_profile, resolve_schema_profile
 
-    default = str(settings.mcp_schema_profile or DEFAULT_SCHEMA_PROFILE).lower()
-    if default not in SCHEMA_PROFILES:
-        default = DEFAULT_SCHEMA_PROFILE
-    profile = str(schema_profile or default).lower()
-    if profile not in SCHEMA_PROFILES:
-        profile = default  # an unknown request value never widens or narrows silently
+    profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
     _with_loading_hints(
         descriptors, _upfront_tools(settings.mcp_always_load_tools, toolset, profile)
     )

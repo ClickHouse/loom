@@ -30,6 +30,9 @@ Query parameters on the URL select what `tools/list` shows for that connection:
   `full` (adds `outputSchema`) or `compact` (the first paragraph and the
   argument tree).
 
+Compact coding connections describe the common source workflows in the
+startup instructions. Find the other tools through discovery.
+
 With the automatic loading policy, compact coding connections load
 `code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
 definition name or location to read implementation, indexed tests, and linked

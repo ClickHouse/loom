@@ -85,6 +85,25 @@ def test_coding_instructions_preserve_the_complete_large_profile() -> None:
     assert text.endswith("Don't re-fetch — it's been delivered.")
 
 
+def test_compact_coding_primer_preserves_scope_and_profile() -> None:
+    full = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "coding", schema_profile="standard")
+    )
+    compact = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "coding", schema_profile="compact")
+    )
+    rules, profile = _split(compact)
+    assert profile == _split(full)[1]
+    assert len(compact) < len(full)
+    assert "repository bound to this connection" in rules
+    assert "`loom_code_edit_context`" in rules
+    assert "`loom_code_grep`" in rules
+    assert "ToolSearch" in rules
+    assert "code_state" in rules
+    assert "loom_code_callers" not in rules
+    assert "loom_code_callers" in _split(full)[0]
+
+
 def test_code_scope_precedes_a_long_memory_workspace_notice(monkeypatch) -> None:
     monkeypatch.setattr(mcp_primer, "_coding_workspace_line", lambda _: "WORKSPACE" * 1000)
     text = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))

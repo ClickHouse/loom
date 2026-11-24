@@ -40,6 +40,7 @@ from server.transport.mcp_identity import (
 )
 from server.transport.mcp_op import keep_first_marks
 from server.transport.mcp_op import reachable as loom_op_reachable
+from server.transport.mcp_schemas import resolve_schema_profile
 from server.transport.mcp_tools import (
     _emit_mcp_event,
     assistant_connection,
@@ -492,7 +493,9 @@ async def _emit_initialize_event(auth: Any, client_name: str | None) -> None:
         log.warning("initialize ledger row failed (non-fatal): %s", e)
 
 
-async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str:
+async def _initialize_instructions(
+    auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+) -> str:
     """Session-start instructions for the `initialize` result: the rules, the
     code scope, the workspace, then the profile. Coding connections use fixed
     wording for implicit scopes and read usage hints during the session. Other
@@ -508,7 +511,14 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
         return _assistant_primer(await _caller_defaults(auth, assistant=True))
     defaults = await _caller_defaults(auth)
     coding = "coding" in toolset_parts(toolset)
-    rules = _coding_instructions(toolset, defaults) if coding else _loom_rules(toolset, defaults)
+    compact = toolset == "coding" and (
+        resolve_schema_profile(schema_profile, settings.mcp_schema_profile) == "compact"
+    )
+    rules = (
+        _coding_instructions(toolset, defaults, compact=compact)
+        if coding
+        else _loom_rules(toolset, defaults)
+    )
     scope = current_code_scope()
     scope_line = ""
     if scope:
@@ -539,7 +549,9 @@ def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
     return " The default memory namespace is filled in when a call names none."
 
 
-def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = None) -> str:
+def _coding_instructions(
+    toolset: str | None, defaults: dict[str, Any] | None = None, *, compact: bool = False
+) -> str:
     """Code and memory routing for coding clients, including clients without hooks."""
     tool = _tool_refs(toolset)
     save = tool["memory.set"]
@@ -566,14 +578,16 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
             ("code.impact", "for change effects"),
             ("code.context_pack", "for a task briefing"),
         )
-        if tool[name]
+        if tool[name] and (not compact or name in {"code.search", "code.grep"})
     ]
     definition_hint = (
         "Before editing a named definition, read its source and tests with "
         f"{tool['code.edit_context']}. "
         if tool["code.edit_context"]
         else ""
-    ) + (f"Inspect a definition with {tool['code.symbol']}. " if tool["code.symbol"] else "")
+    )
+    if not compact and tool["code.symbol"]:
+        definition_hint += f"Inspect a definition with {tool['code.symbol']}. "
     route_hint = "Use " + "; ".join(routes) + ". " if routes else ""
     code = (
         "\n\nUse Loom first to search and read unchanged indexed source, including tests. "
@@ -595,7 +609,10 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         else ""
     )
     discovery = (
-        "Find saved knowledge, documents, code, issues, tasks and records with `loom_op` "
+        'Find other Loom operations with `loom_op(op="help")`. '
+        "Writes need user intent and permission."
+        if compact
+        else "Find saved knowledge, documents, code, issues, tasks and records with `loom_op` "
         '(`op="help"`, `query="<goal>"`). Writes need user intent and permission. '
         "Use `loom_op` for unlisted operations; never invent an unlisted tool name, "
         "and make only calls needed for the task."
