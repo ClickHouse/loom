@@ -105,11 +105,15 @@ def _matched_rows(
 
 
 def _contains(row: dict[str, Any], line: int) -> bool:
-    return row["start_line"] <= line <= row["end_line"]
+    start_line: int = row["start_line"]
+    end_line: int = row["end_line"]
+    return start_line <= line <= end_line
 
 
 def _span(row: dict[str, Any]) -> int:
-    return row["end_line"] - row["start_line"]
+    start_line: int = row["start_line"]
+    end_line: int = row["end_line"]
+    return end_line - start_line
 
 
 def _scope_candidates(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:

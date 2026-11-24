@@ -255,16 +255,15 @@ async def _symbol_bodies(
     async def one(r: dict[str, Any]) -> tuple[str, list[dict[str, Any]], str, str]:
         if input.include_body:
             if not input.token_budget or not _is_large_container(r):
-                row = (
-                    {
+                if expected_commit is None:
+                    text = await symbol_body(repo, org, ns, r)
+                else:
+                    row = {
                         **r,
                         "_extent_commit": r.get("extent_commit") or r.get("indexed_commit"),
                         "_tier_ids": r.get("tier_ids"),
                     }
-                    if expected_commit is not None
-                    else r
-                )
-                text = await symbol_body(repo, org, ns, row, expected_commit=expected_commit)
+                    text = await symbol_body(repo, org, ns, row, expected_commit=expected_commit)
                 if text:
                     return text, [], "", "unit"
             if expected_commit is None and _is_large_container(r):
@@ -551,6 +550,51 @@ def _matches_source(unit: Any, matches: list[dict[str, Any]]) -> bool:
     )
 
 
+async def _unresolved_symbol(
+    repo: CodeRepo, org: str, ns: str, input: CodeSymbolInput
+) -> CodeSymbolOutput:
+    with code_span("symbol.resolve", route="symbol_fuzzy") as sp:
+        near = await near_misses(repo, org, ns, input.name, fallback=input.symbol_id)
+        span_attrs(sp, results=len(near))
+    dep_rows, dep_summary = await _dependency_presence(input, org, ns)
+    set_code_span_attributes(
+        route="symbol_fuzzy" + ("+dependency" if dep_rows else ""),
+        results=0,
+        abstain=True,
+        retrieval_risk="abstain",
+        consumer=input.consumer,
+    )
+    return CodeSymbolOutput(
+        definitions=[],
+        ambiguous=False,
+        candidates=near,
+        presence=dep_rows,
+        summary=dep_summary,
+        resolved_by="dependency" if dep_summary.get("present") else "",
+    )
+
+
+async def _rank_symbol_rows(
+    repo: CodeRepo, org: str, ns: str, input: CodeSymbolInput, rows: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], str]:
+    if not (input.near_paths or input.pr_number):
+        return rows, ""
+
+    from server.code.app import symbol_context as code_symbol_context
+
+    if _uses_brief.single_declaration(rows):
+        return rows, code_symbol_context.NONE
+    with code_span("symbol.context", results=len(rows)):
+        return await code_symbol_context.rank_by_context(
+            repo,
+            org,
+            ns,
+            rows,
+            near_paths=input.near_paths,
+            pr_number=input.pr_number,
+        )
+
+
 async def handle_code_symbol(
     input: CodeSymbolInput,
     *,
@@ -580,48 +624,9 @@ async def handle_code_symbol(
         )
         span_attrs(sp, results=len(rows), tier=tier_of(rows))
     if not rows:
-        # candidates by fuzzy name so a typo'd lookup still orients the
-        # agent; for a path:line that sits at file scope, the functions in
-        # that file nearest the line
-        with code_span("symbol.resolve", route="symbol_fuzzy") as sp:
-            near = await near_misses(repo, org, ns, input.name, fallback=input.symbol_id)
-            span_attrs(sp, results=len(near))
-        # A name the repository does not define may be a dependency's: report its
-        # presence in the entry's `depends_on` namespaces.
-        dep_rows, dep_summary = await _dependency_presence(input, org, ns)
-        set_code_span_attributes(
-            route="symbol_fuzzy" + ("+dependency" if dep_rows else ""),
-            results=0,
-            abstain=True,
-            retrieval_risk="abstain",
-            consumer=input.consumer,
-        )
-        return CodeSymbolOutput(
-            definitions=[],
-            ambiguous=False,
-            candidates=near,
-            presence=dep_rows,
-            summary=dep_summary,
-            resolved_by="dependency" if dep_summary.get("present") else "",
-        )
+        return await _unresolved_symbol(repo, org, ns, input)
 
-    # Several definitions, ranked by the change at hand: ranking only, every row stays;
-    # `picked_by` says which key decided.
-    picked_by = ""
-    if input.near_paths or input.pr_number:
-        from server.code.app import symbol_context as code_symbol_context
-
-        picked_by = code_symbol_context.NONE
-        if not _uses_brief.single_declaration(rows):
-            with code_span("symbol.context", results=len(rows)):
-                rows, picked_by = await code_symbol_context.rank_by_context(
-                    repo,
-                    org,
-                    ns,
-                    rows,
-                    near_paths=input.near_paths,
-                    pr_number=input.pr_number,
-                )
+    rows, picked_by = await _rank_symbol_rows(repo, org, ns, input, rows)
 
     # Every read that needs only the resolved definitions starts here (the defining-chunk
     # hashes, the uses legs, the enrichment, the citing documents and the neighbours
