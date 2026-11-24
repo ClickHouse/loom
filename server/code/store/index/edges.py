@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.code.domain.index.test_gate import TEST_PATH_PATTERN
 from server.code.store.index.base import CodeRepoBase
-from server.code.store.index.sql import _batched, test_path_sql
+from server.code.store.index.sql import _batched
 
 # The shape of a registration function's bare name, as the statement in
 # `caller_counts` applies it; one source of truth with the
@@ -465,7 +466,7 @@ class EdgesMixin(CodeRepoBase):
         revision_sql = (
             ", toString(argMax(indexed_commit, version)) AS indexed_commit" if with_revision else ""
         )
-        tests_sql = f"AND {test_path_sql('path')}" if tests_only else ""
+        tests_sql = "AND match(path, {test_path_pattern:String})" if tests_only else ""
         rows = await self._ch.query_all(
             f"""
             SELECT tier, edge_kind, to_symbol_id, from_symbol_id, path, line,
@@ -492,6 +493,7 @@ class EdgesMixin(CodeRepoBase):
                 "kinds": kinds,
                 "limit": limit,
                 "minc": float(min_confidence),
+                **({"test_path_pattern": TEST_PATH_PATTERN} if tests_only else {}),
                 **({"per_match": int(per_match)} if per_match else {}),
             },
         )

@@ -463,7 +463,7 @@ async def test_symbol_reads_test_examples_with_the_definition(code_env, monkeypa
     monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
     await _ingest(repo, org, ns)
     call = "void test_work() { DB::doWork(); }"
-    path = "tests/test_work.cpp"
+    path = "test/test_work.cpp"
     await _ingest(repo, org, ns, source=(call + "\n").encode(), path=path)
     result = await handle_code_symbol(
         CodeSymbolInput(

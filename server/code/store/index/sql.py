@@ -91,13 +91,8 @@ def skip_tests_sql(col: str) -> str:
     `*.spec.*` files. Prepend to a WHERE with a leading AND. The `_` of
     `_test.` is escaped: bare, LIKE reads it as any one character and drops
     `latest.cpp` or `src/test.py`, which `is_test_path` keeps."""
-    return f" AND NOT {test_path_sql(col)}"
-
-
-def test_path_sql(col: str) -> str:
-    """The SQL predicate for the same test paths recognised by is_test_path."""
     return (
-        f"(startsWith({col}, 'tests/') OR {col} LIKE '%/tests/%'"
+        f" AND NOT (startsWith({col}, 'tests/') OR {col} LIKE '%/tests/%'"
         f" OR {col} LIKE '%/test/%' OR {col} LIKE '%\\\\_test.%'"
         f" OR {col} LIKE '%.test.%' OR {col} LIKE '%.spec.%')"
     )
