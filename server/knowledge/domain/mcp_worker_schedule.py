@@ -9,7 +9,8 @@ import json
 from dataclasses import astuple, dataclass
 from datetime import UTC, datetime, timedelta
 
-MAX_REFRESH_INTERVAL_SECONDS = 366 * 24 * 60 * 60
+MIN_REFRESH_INTERVAL_SECONDS = 300
+MAX_REFRESH_INTERVAL_SECONDS = 86_400
 _MAX_IDENTIFIER_BYTES = 1024
 _MAX_GENERATION = (1 << 63) - 1
 
@@ -83,7 +84,9 @@ class PeriodicSchedule:
             raise ScheduleRejected("invalid refresh schedule state")
         if (
             type(self.interval_seconds) is not int
-            or not 1 <= self.interval_seconds <= MAX_REFRESH_INTERVAL_SECONDS
+            or not MIN_REFRESH_INTERVAL_SECONDS
+            <= self.interval_seconds
+            <= MAX_REFRESH_INTERVAL_SECONDS
         ):
             raise ScheduleRejected("invalid refresh schedule interval")
         object.__setattr__(self, "next_due_at", _utc(self.next_due_at))
@@ -104,7 +107,9 @@ class ScheduledRefresh:
     next_due_at: datetime
 
 
-def _demand(binding: ScheduleBinding, kind: str, anchor: str, due_at: datetime) -> RefreshDemand:
+def refresh_demand(
+    binding: ScheduleBinding, kind: str, anchor: str, due_at: datetime
+) -> RefreshDemand:
     key = json.dumps(
         ("mcp-refresh-schedule-v1", kind, astuple(binding), anchor), separators=(",", ":")
     )
@@ -128,20 +133,5 @@ def plan_scheduled_refresh(
     except OverflowError:
         raise ScheduleRejected("next refresh schedule timestamp is out of range") from None
     return ScheduledRefresh(
-        _demand(schedule.binding, "periodic", due_at.isoformat(), due_at), next_due_at
+        refresh_demand(schedule.binding, "periodic", due_at.isoformat(), due_at), next_due_at
     )
-
-
-def plan_manual_refresh(
-    binding: ScheduleBinding,
-    *,
-    active_binding: ScheduleBinding | None,
-    request_id: str,
-    requested_at: datetime,
-) -> RefreshDemand | None:
-    """Use the store's original request identity and time, without a periodic cursor."""
-    _require_identifier(request_id)
-    due_at = _utc(requested_at)
-    if active_binding is None or binding != active_binding:
-        return None
-    return _demand(binding, "manual", request_id, due_at)

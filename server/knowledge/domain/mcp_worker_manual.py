@@ -15,7 +15,7 @@ from server.knowledge.domain.mcp_worker_schedule import (
     RefreshDemand,
     ScheduleBinding,
     ScheduleRejected,
-    plan_manual_refresh,
+    refresh_demand,
 )
 
 _MAX_SEQUENCE = (1 << 63) - 1
@@ -170,12 +170,4 @@ def manual_demand(
         or selection.fingerprint() != offer.fingerprint
     ):
         raise ScheduleRejected("manual refresh offer unavailable")
-    demand = plan_manual_refresh(
-        selection.binding,
-        active_binding=selection.binding,
-        request_id=offer.position.key(),
-        requested_at=offer.issued_at,
-    )
-    if demand is None:
-        raise ScheduleRejected("manual refresh offer unavailable")
-    return demand
+    return refresh_demand(selection.binding, "manual", offer.position.key(), offer.issued_at)

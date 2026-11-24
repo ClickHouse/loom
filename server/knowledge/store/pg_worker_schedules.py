@@ -30,6 +30,11 @@ if TYPE_CHECKING:
     from asyncpg import Connection, Record
 
 _KEY = "org = $1 AND namespace = $2 AND source_id = $3"
+_RECORD_CLOCK = f"""
+UPDATE loom.mcp_worker_refresh_admission
+SET manual_clock_at = GREATEST(manual_clock_at, $4::timestamptz)
+WHERE {_KEY}
+"""
 _CURRENT = f"""
 SELECT * FROM loom.mcp_worker_refresh_schedules WHERE {_KEY} FOR UPDATE
 """
@@ -56,7 +61,7 @@ _ACCEPT = f"""
 UPDATE loom.mcp_worker_refresh_admission
 SET manual_accepted_items = $6
 WHERE {_KEY} AND manual_incarnation = $4 AND manual_sequence = $5 AND manual_accepted_items IS NULL
-  AND manual_expires_at > GREATEST(manual_clock_at, clock_timestamp())
+  AND manual_expires_at > manual_clock_at
 RETURNING 1
 """
 
@@ -231,25 +236,26 @@ async def prepare_manual_on(conn: Connection, authority: ScheduleAuthority) -> M
     return offer
 
 
-async def submit_manual_on(
-    conn: Connection, authority: ScheduleAuthority, requested: ManualPosition
+class _ExpiredOffer(Exception):
+    def __init__(self, observed_at: datetime) -> None:
+        self.observed_at = observed_at
+
+
+async def _stage_manual_on(
+    conn: Connection,
+    authority: ScheduleAuthority,
+    key: tuple[str, str, UUID],
+    requested: ManualPosition,
+    offer: ManualOffer,
+    demand: RefreshDemand,
 ) -> ManualAdmission:
-    """Admit once by a persisted offer; submit never creates or rotates an offer."""
-    _require_transaction(conn)
     async with conn.transaction():
-        key, row = await _manual_slot_on(conn, authority)
-        offer = _offer_from_row(row)
-        if offer is None:
-            return ManualAdmission("stale")
-        try:
-            demand = manual_demand(
-                offer, requested, _manual_selection(authority), now=row["manual_clock_at"]
-            )
-        except ScheduleRejected:
-            return ManualAdmission("stale")
-        if offer.accepted_items is not None:
-            return ManualAdmission("replayed", demand.job_id, offer.accepted_items)
         inserted = await _enqueue_demand_on(conn, authority, demand)
+        observed = await conn.fetchrow(_MANUAL_CLOCK, *key)
+        if observed is None:
+            raise RefreshRejected("manual refresh authority changed")
+        if not offer.current(observed["manual_clock_at"]):
+            raise _ExpiredOffer(observed["manual_clock_at"])
         if not inserted:
             return ManualAdmission("busy")
         if (
@@ -258,3 +264,28 @@ async def submit_manual_on(
         ):
             raise RefreshRejected("manual refresh authority changed")
         return ManualAdmission("enqueued", demand.job_id, inserted)
+
+
+async def submit_manual_on(
+    conn: Connection, authority: ScheduleAuthority, requested: ManualPosition
+) -> ManualAdmission:
+    """Admit once by a persisted offer; submit never creates or rotates an offer."""
+    _require_transaction(conn)
+    key, row = await _manual_slot_on(conn, authority)
+    offer = _offer_from_row(row)
+    if offer is None:
+        return ManualAdmission("stale")
+    try:
+        demand = manual_demand(
+            offer, requested, _manual_selection(authority), now=row["manual_clock_at"]
+        )
+    except ScheduleRejected:
+        return ManualAdmission("stale")
+    if offer.accepted_items is not None:
+        return ManualAdmission("replayed", demand.job_id, offer.accepted_items)
+    try:
+        return await _stage_manual_on(conn, authority, key, requested, offer, demand)
+    except _ExpiredOffer as expired:
+        # Keep the observation even though the tentative batch was rolled back.
+        await conn.execute(_RECORD_CLOCK, *key, expired.observed_at)
+        return ManualAdmission("stale")

@@ -130,18 +130,25 @@ The queue stores metadata for a selected resource, never its body. A schedule
 and a manual request derive the same kind of per-resource task. Reclaiming a
 lease advances its fence without changing the task key. Changing the source,
 selection, account, or approval generation invalidates existing work. A worker
-can only claim the queue partition assigned to it. The requester, destination,
-and exact selection still need to be rechecked at acceptance.
+can only claim the queue partition assigned to it. A claim page reports how
+many exhausted rows it retired so the worker can distinguish progress from an
+idle poll. The requester, destination, and exact selection still need to be
+rechecked at acceptance.
 
 Admission serializes on the source, allows one unfinished batch of at most 64
-items, and keeps at most 128 queue entries. Completed receipts expire after 24
-hours. A later admission may remove expired queue metadata; it never removes a
+items, and keeps at most 128 queue entries. The next admission under a changed
+assignment fences and cancels old unfinished work without touching its completed
+receipts. Completed receipts expire after 24 hours. A later admission may remove expired queue metadata; it never removes a
 stored copy, source checkpoint or pre-existing unmarked row. If the source is
 busy or retained receipts fill the budget, admission leaves the due cursor in
-place. Old periods can then coalesce into one batch. For manual refresh, Loom
+place. A schedule can run every 5 minutes to 24 hours. Elapsed periods can
+coalesce into one batch. For manual refresh, Loom
 issues one bounded offer for the exact current selection, owner, and destination.
 Submitting it repeats the original result while the offer is current; an expired
-or superseded offer cannot create more work. A busy queue leaves the offer open.
+or superseded offer cannot create more work. If an offer expires while a batch
+is being staged, admission rolls back the batch and records the observed time.
+A backwards clock adjustment cannot reopen that offer. A busy queue leaves an
+unexpired offer open.
 
 The queue does not yet have a worker-facing API or a runner. Its lease and
 checkpoint tests perform no document writes. Treat the upload, copy acceptance,

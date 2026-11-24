@@ -54,7 +54,7 @@ WITH ready AS (
                   = (ready.org, ready.namespace, ready.item_key)
     RETURNING job.item_key, job.fence, job.claimable_at, job.task, job.state
 )
-SELECT item_key, fence, claimable_at, task FROM taken WHERE state = 'claimed'
+SELECT item_key, fence, claimable_at, task, state FROM taken
 """
 _OWNS = f"""
 {_KEY} AND worker_id = $4 AND fence = $5
@@ -77,7 +77,7 @@ RETURNING 1
 _TERMINAL = f"""
 SELECT task, receipt, user_id, claimable_at FROM loom.knowledge_source_refresh
 WHERE {_KEY} AND worker_id = $4 AND fence = $5 AND state = 'completed'
-  AND updated_at > clock_timestamp() - interval '24 hours' FOR SHARE
+  AND updated_at > clock_timestamp() - interval '24 hours'
 """
 
 
@@ -164,7 +164,9 @@ async def enqueue_batch_on(conn: Connection, batch: tuple[RefreshEntry, ...]) ->
         scope.actor,
     )
     async with conn.transaction():
-        if not await admission.reserve_on(conn, source, len(batch)):
+        if not await admission.reserve_on(
+            conn, source, admission.QueueAssignment(first.worker_id, scope), len(batch)
+        ):
             return 0
         for entry in batch:
             if not await _enqueue_on(conn, entry, source_id):
@@ -224,6 +226,12 @@ def _claim_limit(value: int, maximum: int) -> bool:
     return type(value) is int and 1 <= value <= maximum
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class ClaimPage:
+    leases: tuple[LiveLease, ...]
+    retired: int
+
+
 async def claim(
     *,
     org: str,
@@ -231,8 +239,8 @@ async def claim(
     worker_id: UUID,
     limit: int,
     lease_seconds: int,
-) -> tuple[LiveLease, ...]:
-    """Take one bounded tenant and destination page. Being leased grants no upload."""
+) -> ClaimPage:
+    """Process one bounded worker page, distinguishing exhaustion from an idle poll."""
     if not pg.enabled():
         raise RefreshRejected("source refresh requires Postgres authority")
     if not (worker_id.int and _claim_limit(limit, 64) and _claim_limit(lease_seconds, 300)):
@@ -242,7 +250,11 @@ async def claim(
             _CLAIM, org, namespace, worker_id, limit, _MAX_ATTEMPTS, lease_seconds
         )
         leases = []
+        retired = 0
         for row in claimed:
+            if row["state"] == "exhausted":
+                retired += 1
+                continue
             task = _task(row["task"])
             if (task.scope.org, task.scope.namespace, task.idempotency_key) != (
                 org,
@@ -251,7 +263,7 @@ async def claim(
             ):
                 raise RefreshRejected("refresh claim scope mismatch")
             leases.append(LiveLease(task, str(worker_id), int(row["fence"]), row["claimable_at"]))
-        return tuple(leases)
+        return ClaimPage(tuple(leases), retired)
 
 
 def _lease_params(lease: LiveLease) -> tuple[Any, ...]:
@@ -316,8 +328,12 @@ async def replay_completion(conn: Connection, completion: WorkerCompletion) -> b
         row["user_id"],
     ):
         return False
+    # Lock in source-before-queue order, then recheck expiry and the exact row.
+    locked = await conn.fetchrow(_TERMINAL + " FOR SHARE", *_lease_params(lease))
+    if locked is None or locked != row:
+        return False
     try:
-        raw = json.loads(row["receipt"])
+        raw = json.loads(locked["receipt"])
         receipt = CompletionReceipt(
             raw["idempotency_key"],
             Observation(
