@@ -935,13 +935,13 @@ class MCPSourceClient:
         except Exception as error:  # noqa: BLE001 — only fixed initialization failures reach callers
             try:
                 await self._close()
-                code = await self._initialization_failure(error)
+                code = await self._recheck_after_close(self._owner_failure or _error_code(error))
             finally:
                 self._leave_private()
             raise MCPSourceError(code) from None
 
-    async def _initialization_failure(self, error: Exception) -> ErrorCode:
-        code = self._owner_failure or _error_code(error)
+    async def _recheck_after_close(self, code: ErrorCode) -> ErrorCode:
+        """Report current authority after the SDK owner drains, without another upstream call."""
         if self._transport is None or code in {"denied", "closed", "timeout"}:
             return code
         if asyncio.get_running_loop().time() >= self._deadline:
@@ -1091,6 +1091,8 @@ class MCPSourceClient:
                     raise
             if isinstance(error, asyncio.CancelledError):
                 raise
+            code = await self._recheck_after_close(self._operation_failure or code)
+            self._operation_failure = code
             raise MCPSourceError(code) from None
 
     async def discover(self) -> MCPDiscovery:

@@ -92,6 +92,8 @@ class _Source(httpx.MockTransport):
         self.read_started = asyncio.Event()
         self.read_cancelled = asyncio.Event()
         self.closed = False
+        self.close_started = asyncio.Event()
+        self.release_close: asyncio.Event | None = None
         self.stall = False
         self.redirect = False
         self.content_encoding = "identity"
@@ -102,12 +104,16 @@ class _Source(httpx.MockTransport):
         self.resource_parts = 1
         self.initialize_error: int | None = None
         self.resource_error: int | None = None
+        self.resource_rpc_error = False
         self.resource_extensions: dict[str, Any] = {}
         self.notifications: _IdleBody | None = None
         self.termination: _IdleBody | None = None
         self.change_tools_during_discovery = False
 
     async def aclose(self) -> None:
+        self.close_started.set()
+        if self.release_close is not None:
+            await self.release_close.wait()
         self.closed = True
 
     async def respond(self, request: httpx.Request) -> httpx.Response:
@@ -152,6 +158,15 @@ class _Source(httpx.MockTransport):
             self.read_started.set()
             if self.resource_error is not None:
                 return httpx.Response(self.resource_error)
+            if self.resource_rpc_error:
+                return httpx.Response(
+                    200,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "error": {"code": -32603, "message": "synthetic source error"},
+                    },
+                )
             if self.stall:
                 try:
                     await asyncio.Future[None]()
@@ -676,3 +691,33 @@ async def test_cancel_joins_sdk_and_only_terminates_current_session(
         assert sum(method == "DELETE" for _, method in source.calls) == int(not revoked)
         with pytest.raises(MCPSourceError, match="^MCP source closed$"):
             await client.read(_DOCUMENT)
+
+
+@pytest.mark.asyncio
+async def test_established_failure_rechecks_authority_after_sdk_cleanup(pin: list[str]) -> None:
+    source = _Source()
+    source.resource_rpc_error = True
+    source.release_close = asyncio.Event()
+    revoked = False
+    after_drain = False
+
+    async def current_authority() -> None:
+        nonlocal after_drain
+        if revoked:
+            after_drain = source.closed
+            raise MCPSourceError("denied")
+
+    config = MCPSourceConfig(_ENDPOINT, approved_resource_ids=(_DOCUMENT,))
+    async with MCPSourceClient(
+        config, None, validate_access=current_authority, _transport=source
+    ) as client:
+        read = asyncio.create_task(client.read(_DOCUMENT))
+        try:
+            await asyncio.wait_for(source.close_started.wait(), timeout=2)
+            revoked = True
+        finally:
+            source.release_close.set()
+        with pytest.raises(MCPSourceError, match="^MCP source denied$"):
+            await read
+    assert after_drain
+    assert [method for _, method in source.calls].count("resources/read") == 1
