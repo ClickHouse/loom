@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_seri
 
 from server.code.domain.symbol_body import retained_source_lines
 
+SYMBOL_DESCRIPTION_PREVIEW_CHARS = 500
+
 # Characters per token by content kind, measured with o200k_base over 300 randomly
 # sampled chunks per kind from a ClickHouse index (cl100k within 1%): cpp 4.33, h 4.38,
 # py 4.20, md 4.23, json 4.75 — the plain bytes/4 is right, slightly conservative, for
@@ -334,7 +336,7 @@ def unit_from_symbol(row: dict[str, Any], *, body: str = "") -> CodeUnit:
         kind="symbol",
         signature=symbol_signature(row, body=body),
         body=body,
-        description=str(row.get("doc_comment") or "")[:500],
+        description=str(row.get("doc_comment") or "")[:SYMBOL_DESCRIPTION_PREVIEW_CHARS],
         tier=str(row.get("tier") or ""),
     )
 

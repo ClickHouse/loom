@@ -39,7 +39,7 @@ def test_scip_symbol_drops_rendered_description_already_in_source() -> None:
     rendered = (
         "```python\nclass Group(Base):\n```\nExtend `Base`.\n\n"
         r":param load\_defaults: Load the high priority"
-        "  \n&nbsp;&nbsp;options on startup."
+        "  \n&nbsp;&nbsp;&nbsp;&nbsp;options on startup."
     )
     source = {"symbol": "Group", "tier": "scip", "body": body, "description": rendered}
     out = lean_code(
@@ -72,6 +72,16 @@ def test_scip_symbol_keeps_distinct_code_literals_in_docs() -> None:
         row = {"symbol": "send", "tier": "scip", "body": body, "description": rendered}
         out = lean_code("code.symbol", {"definitions": [row]})
         assert out["definitions"][0]["description"] == rendered
+
+
+def test_scip_symbol_keeps_short_or_nested_descriptions() -> None:
+    body = 'def send():\n    """Returns success=False after persisting."""\n    def resolve():\n        pass\n'
+    excerpt = "```python\ndef send():\n```\nReturns success"
+    nested = "```python\ndef resolve():\n```\nReturns success=False after persisting."
+    row = {"symbol": "send", "tier": "scip", "body": body}
+    for description in (excerpt, nested):
+        out = lean_code("code.symbol", {"definitions": [{**row, "description": description}]})
+        assert out["definitions"][0]["description"] == description
 
 
 FRESH = {

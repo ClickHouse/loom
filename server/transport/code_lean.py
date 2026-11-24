@@ -23,6 +23,8 @@ import re
 from textwrap import dedent
 from typing import Any
 
+from server.code.domain.units import SYMBOL_DESCRIPTION_PREVIEW_CHARS
+
 # Accounting counters and ranking internals no agent acts on.
 _DROP_KEYS: frozenset[str] = frozenset(
     {
@@ -300,19 +302,24 @@ def _fold_doc_markup(text: str, *, rendered: bool) -> str | None:
     return None if uncertain else "\n".join(line.rstrip() for line in folded.splitlines())
 
 
-def _python_doc(body: str) -> str | None:
+def _python_doc(body: str, signature: str) -> str | None:
+    source = dedent(body)
     try:
-        declarations = ast.parse(dedent(body)).body
+        declarations = ast.parse(source).body
     except (SyntaxError, ValueError, RecursionError):
         return None
     if len(declarations) != 1 or not isinstance(
         declaration := declarations[0], (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
     ):
         return None
+    header = source.splitlines()[declaration.lineno - 1 : declaration.body[0].lineno - 1]
+    if "\n".join(header).strip() != signature:
+        return None
     return ast.get_docstring(declaration)
 
 
 def _description_repeats_body(description: str, body: str, *, scip: bool) -> bool:
+    reached_preview_limit = len(description) == SYMBOL_DESCRIPTION_PREVIEW_CHARS
     description = description.strip()
     if not description:
         return False
@@ -326,12 +333,18 @@ def _description_repeats_body(description: str, body: str, *, scip: bool) -> boo
         return False
     if "```" in excerpt or any(line.startswith(("    ", "\t")) for line in excerpt.splitlines()):
         return False
-    doc = _python_doc(body)
+    doc = _python_doc(body, signature)
     if doc is None:
         return False
     folded_excerpt = _fold_doc_markup(excerpt, rendered=True)
     source = _fold_doc_markup(doc, rendered=False)
-    return bool(folded_excerpt and source and source.startswith(folded_excerpt))
+    return bool(
+        folded_excerpt
+        and source
+        and (
+            source.startswith(folded_excerpt) if reached_preview_limit else source == folded_excerpt
+        )
+    )
 
 
 def _lean_symbol(out: dict[str, Any]) -> None:
