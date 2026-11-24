@@ -316,7 +316,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like c
 
 ## `code.callers`
 
-Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved where available; `edge_kinds: ['inherits']` narrows the walk to what implements or extends a type.
+Find callers before editing shared code.
 
 `POST /v1/code.callers` · MCP `loom_code_callers` · role `viewer` · read
 
@@ -764,12 +764,12 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
 | `related_on_miss` | `bool` | `False` | If a literal call expression is absent, also find its qualified argument. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
-| `context_lines` | `int` | `0` | Retained lines on each side of a match. |
+| `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
 | `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |
 | `mode` | `Literal['matches', 'files', 'presence', 'message']` | `'matches'` | matches: up to `limit` matching LINES with text + enclosing scope. files: up to `limit` matching FILES (path, matching chunk count, first line) and no line text — the coverage question ("which files mention X?") that a 20-line cap cannot… |
-| `include_body` | `bool` | *(computed)* | Return bodies by default in matches mode, or set false for lines only. |
+| `include_body` | `bool` | *(computed)* | Return full enclosing bodies by default in matches mode. |
 | `limit` | `int \| None` | `None` | Default depends on mode: 20 lines, or the 500-file ceiling — a files answer capped at 20 reads like a complete coverage answer to a caller that did not know to send a limit. matches mode is clamped to 200 lines. |
 | `path_globs` | `list[str]` | *(computed)* | File filters, rg `-g` / `-t` style: keep paths matching any glob, drop paths matching any exclude, restrict to a language's extension set. |
 | `exclude_globs` | `list[str]` | *(computed)* | Drop paths matching any of these rg-style globs. |

@@ -105,7 +105,16 @@ async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
         assert not data["matches"] and not data.get("next_cursor")
         assert data["related"]["pattern"] == "payload.value"
         assert data["related"]["matches"][0]["text"] == "return callback(payload.value)"
+        assert "def run():" in data["related"]["contexts"][0]["text"]
+        assert not data["related"]["definitions"]
         assert {row["memory_key"] for row in data["lessons"]} == {"notes/allowed"}
+        response = await client.post(
+            "/v1/code.grep", json={**body, "related_on_miss": True, "context_lines": 0}
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert data["related"]["matches"] and not data["related"].get("contexts")
 
 
 async def test_enclosing_attaches_only_authorized_resolved_file_lessons(

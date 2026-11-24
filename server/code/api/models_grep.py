@@ -34,6 +34,7 @@ from server.operations.base import MCP_HIDDEN
 
 
 GrepText = Annotated[str, Field(min_length=2, max_length=1000)]
+RELATED_GREP_CONTEXT_LINES = 6
 
 
 class CodeGrepInput(_CodeIdentity, _ResultLessons):
@@ -67,7 +68,13 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         ),
     )
     context_lines: int = Field(
-        default=0, ge=0, le=20, description="Retained lines on each side of a match."
+        default=0,
+        ge=0,
+        le=20,
+        description=(
+            f"Excerpt radius, {RELATED_GREP_CONTEXT_LINES} by default for related hits "
+            "without bodies, or 0 for match lines only."
+        ),
     )
     # Only paths under this repo-relative prefix; '' = the whole index. A prefix outside
     # the indexed ones answers `not_covered`.
@@ -105,7 +112,7 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     mode: Literal["matches", "files", "presence", "message"] = "matches"
     include_body: bool = Field(
         default_factory=lambda data: data["mode"] == "matches",
-        description="Return bodies by default in matches mode, or set false for lines only.",
+        description="Return full enclosing bodies by default in matches mode.",
     )
     # Default depends on mode: 20 lines, or the 500-file ceiling — a files
     # answer capped at 20 reads like a complete coverage answer to a caller

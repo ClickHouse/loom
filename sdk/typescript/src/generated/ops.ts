@@ -954,14 +954,14 @@ export interface CodeGrepInput {
   /** If a literal call expression is absent, also find its qualified argument. Default true on coding connections. */
   related_on_miss?: boolean;
   case_sensitive?: boolean;
-  /** Retained lines on each side of a match. */
+  /** Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. */
   context_lines?: number;
   path_prefix?: string;
   /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";
-  /** Return bodies by default in matches mode, or set false for lines only. */
+  /** Return full enclosing bodies by default in matches mode. */
   include_body?: boolean;
   limit?: number | null;
   path_globs?: string[];

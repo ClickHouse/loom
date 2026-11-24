@@ -193,7 +193,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.blame_range`](operations/code.md#codeblame_range) | Which merged PRs last touched these lines, between release A and B? | viewer | read | no |  |
 | [`code.calibrate`](operations/code.md#codecalibrate) | Derive code-specific abstention thresholds from the authored probe corpus (query/positive/hard-distractor triples over the indexed repo) and persist them as this namespace's calibration. | admin | write | no | yes |
 | [`code.callees`](operations/code.md#codecallees) | What does this symbol call — forward call edges (depth<=3), tier-marked like code.callers. | viewer | read | no |  |
-| [`code.callers`](operations/code.md#codecallers) | Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved where available; `edge_kinds: ['inherits']` narrows the walk to what implements or extends a type. | viewer | read | yes |  |
+| [`code.callers`](operations/code.md#codecallers) | Find callers before editing shared code. | viewer | read | yes |  |
 | [`code.context_pack`](operations/code.md#codecontext_pack) | Briefing at the START of a task, instead of exploring file by file. | viewer | read | yes |  |
 | [`code.context_packs`](operations/code.md#codecontext_packs) | List the stored per-PR context packs of a repository, optionally for one PR. | viewer | read | no |  |
 | [`code.conventions`](operations/code.md#codeconventions) | The repository's recurring maintainer checks as facts over one PR's diff: a setting added or re-defaulted without a SettingsChangesHistory entry; the same setting's docs mention; a new… | viewer | read | no |  |

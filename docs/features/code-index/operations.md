@@ -94,9 +94,11 @@ or file appears once.
 When an exact call expression such as `convert(row.value)` is absent,
 `related_on_miss: true` looks for its qualified argument in the same scope.
 The `related` block names the argument and carries its verified lines and any
-requested excerpts or bodies. `matches` stays empty. Linked notes can accompany
-that source. Coding MCP connections enable this by default. HTTP and SDK callers
-can opt in.
+excerpts or bodies. It includes six lines of surrounding source when full
+bodies are disabled and `context_lines` is omitted. Set `context_lines: 0` for
+matching lines only. `matches` stays empty. Linked notes can accompany that
+source. Coding MCP connections enable recovery by default. HTTP and SDK
+callers can opt in.
 
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
 lines by default. Pass `include_body=false` for names, lines or locations only.

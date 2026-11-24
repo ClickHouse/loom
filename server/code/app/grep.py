@@ -11,7 +11,12 @@ import time
 from dataclasses import replace
 from typing import Any
 
-from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput, RelatedGrepEvidence
+from server.code.api.models_grep import (
+    RELATED_GREP_CONTEXT_LINES,
+    CodeGrepInput,
+    CodeGrepOutput,
+    RelatedGrepEvidence,
+)
 from server.code.app.common import (
     answer_args,
     index_as_of,
@@ -332,16 +337,24 @@ async def _grep_lines(
     matches = matches[offset : offset + served_limit]
     context: dict[str, Any] = {}
     context_source: ContextSource = {}
-    if input.context_lines:
+    context_lines = input.context_lines
+    if (
+        related_pattern
+        and matches
+        and not input.include_body
+        and "context_lines" not in input.model_fields_set
+    ):
+        context_lines = RELATED_GREP_CONTEXT_LINES
+    if context_lines:
         context_source = await asyncio.to_thread(
             collect_contexts,
             chunks,
             pool_matches,
-            input.context_lines,
+            context_lines,
             _LINE_SCAN_MAX_CHARS,
             match_commits=match_commits,
         )
-        context = page_contexts(context_source, matches, input.context_lines)
+        context = page_contexts(context_source, matches, context_lines)
     bodies = await definitions_for(input, matches, budget, match_commits=match_commits)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
         repo, org, ns, input, matches, route, budget=budget
