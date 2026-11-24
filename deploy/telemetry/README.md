@@ -42,10 +42,9 @@ Run `npm --prefix deploy/telemetry test` to exercise the receiver locally.
 ## Publish adoption metrics
 
 The Loom site's Vercel project serves the Self-hosted and OSS tabs at
-`/adoption`. Give its build a separate ClickHouse user with `SELECT` on these
+`/adoption`. Give its server function a separate ClickHouse user with `SELECT` on these
 views in `loom_product_analytics`:
 
-- `public_adoption_daily`
 - `public_adoption_totals`
 - `public_adoption_versions`
 - `public_adoption_retention`
@@ -58,8 +57,15 @@ only to the aggregate views. Use `LOOM_ADOPTION_PUBLIC_CLICKHOUSE_URL`,
 `LOOM_ADOPTION_PUBLIC_CLICKHOUSE_USER`, and `LOOM_ADOPTION_PUBLIC_CLICKHOUSE_PASSWORD`
 as server-side environment variables. The URL must use HTTPS. Vercel caches
 the aggregate page for an hour. The site fetches repository and release counts
-from GitHub and SDK downloads from PyPI Stats and npm. It shows unavailable
-metrics until their sources return data.
+from GitHub, SDK downloads from PyPI Stats and npm, and container pulls from
+the public package page. Stored registry metrics fill gaps when the public
+sources are unavailable. The page shows the latest observation date for each
+metric and compares reporting periods when both periods have coverage on
+every date.
+
+The public page supports 30-, 90-, and 365-day windows. Its chart links preserve
+the selected filters. CSV links export aggregate activity, lifecycle, download,
+and star data for that selection.
 
 Grant the restricted `loom_adoption_top_domains_30d` view only to authorized
 analytics staff. Its rows contain opt-in domain names and attributed counts.

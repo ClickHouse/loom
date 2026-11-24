@@ -1,4 +1,6 @@
 ---
+import { periodOffset } from "../lib/adoption-view.mjs";
+
 interface Props {
   rows: { day: string; value: number; days?: number }[];
   label: string;
@@ -9,11 +11,7 @@ const { rows, label, grain = "day" } = Astro.props;
 const first = rows[0].day;
 const last = rows[rows.length - 1].day;
 const maximum = Math.max(1, ...rows.map(({ value }) => value));
-const monthIndex = (day: string) => Number(day.slice(0, 4)) * 12 + Number(day.slice(5, 7));
-const dayIndex = (day: string) =>
-  grain === "month"
-    ? monthIndex(day) - monthIndex(first) + 1
-    : Math.round((Date.parse(day) - Date.parse(first)) / (grain === "week" ? 604_800_000 : 86_400_000)) + 1;
+const dayIndex = (day: string) => periodOffset(first, day, grain) + 1;
 const periodLabel = (day: string) => (grain === "month" ? day.slice(0, 7) : day);
 const showCoverage = rows.some(({ days }) => days !== undefined);
 const numbers = new Intl.NumberFormat("en-US");
@@ -22,7 +20,7 @@ const numbers = new Intl.NumberFormat("en-US");
 <figure>
   <div class="bars" style={`--days:${dayIndex(last)}`} aria-hidden="true">
     {rows.map(({ day, value }) => (
-      <span style={`grid-column:${dayIndex(day)}; --height:${value / maximum * 100}%`}></span>
+      <span title={`${periodLabel(day)} · ${numbers.format(value)}`} style={`grid-column:${dayIndex(day)}; --height:${value / maximum * 100}%`}></span>
     ))}
   </div>
   <figcaption>

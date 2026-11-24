@@ -141,20 +141,14 @@ ORDER BY successful_requests DESC, domain
 LIMIT 50;
 
 -- The public website reads these aggregate views with a separate read-only user.
-CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_daily
-SQL SECURITY DEFINER AS
-SELECT
-    day,
-    count() AS reporting,
-    countIf(successful_requests > 0) AS active,
-    sum(successful_requests) AS operations
-FROM loom_product_analytics.loom_external_adoption_daily
-WHERE day >= toDate(now('UTC')) - 30 AND day < toDate(now('UTC'))
-GROUP BY day;
-
 CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_totals
 SQL SECURITY DEFINER AS
+WITH toDate(now('UTC')) AS today_utc
 SELECT
+    range_days,
+    if(daily.day >= today_utc - range_days, 'current', 'previous') AS comparison,
+    uniqExact(daily.day) AS days_reported,
+    max(daily.day) AS last_reported,
     uniqExact(daily.installation_id) AS reporting,
     uniqExactIf(daily.installation_id, daily.successful_requests > 0) AS active,
     uniqExactIf(enrolled.company_id, enrolled.company_id != '' AND daily.successful_requests > 0)
@@ -179,7 +173,9 @@ SELECT
     sum(daily.embedding_tokens) AS embedding_tokens
 FROM loom_product_analytics.loom_external_adoption_daily AS daily
 LEFT JOIN loom_product_analytics.loom_adoption_enrollments AS enrolled USING (installation_id)
-WHERE daily.day >= toDate(now('UTC')) - 30 AND daily.day < toDate(now('UTC'));
+ARRAY JOIN [30, 90, 365] AS range_days
+WHERE daily.day >= today_utc - 2 * range_days AND daily.day < today_utc
+GROUP BY range_days, comparison;
 
 CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_versions
 SQL SECURITY DEFINER AS
@@ -243,16 +239,18 @@ WITH
      FROM loom_product_analytics.loom_external_adoption_daily WHERE day < today_utc) AS first_report
 SELECT
     grain,
-    if(grain = 'week', toStartOfWeek(day, 1), toStartOfMonth(day)) AS period,
+    multiIf(grain = 'day', day, grain = 'week', toStartOfWeek(day, 1), toStartOfMonth(day)) AS period,
+    uniqExact(installation_id) AS reporting,
     uniqExactIf(installation_id, successful_requests > 0) AS active,
     sum(successful_requests) AS operations,
-    if(grain = 'week', addWeeks(period, 1), addMonths(period, 1)) AS period_end,
+    uniqExact(day) AS days_reported,
+    multiIf(grain = 'day', addDays(period, 1), grain = 'week', addWeeks(period, 1), addMonths(period, 1)) AS period_end,
     period >= first_report AS forecast_eligible
 FROM loom_product_analytics.loom_external_adoption_daily
-ARRAY JOIN ['week', 'month'] AS grain
-WHERE day >= addMonths(toStartOfMonth(today_utc), -11) AND day < today_utc
+ARRAY JOIN ['day', 'week', 'month'] AS grain
+WHERE day >= today_utc - 365 AND day < today_utc
 GROUP BY grain, period
-HAVING period >= first_report OR period_end > today_utc;
+HAVING period >= greatest(first_report, today_utc - 365) OR period_end > today_utc;
 
 CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_lifecycle
 SQL SECURITY DEFINER AS
@@ -272,7 +270,7 @@ WITH
             if(grain = 'week', toStartOfWeek(day, 1), toStartOfMonth(day)) AS period
         FROM entity_activity
         ARRAY JOIN ['week', 'month'] AS grain
-        ARRAY JOIN if(entity = 'domain', [0, 1000000], [0]) AS min_requests
+        ARRAY JOIN [0, 50000, 1000000] AS min_requests
         WHERE day < today_utc
         GROUP BY entity, identity, grain, min_requests, period
         HAVING sum(requests) > min_requests
@@ -303,6 +301,6 @@ ARRAY JOIN arrayConcat(
     [multiIf(previous = toDate(0), 'new', previous = previous_period, 'retained', 'reactivated')],
     if(following != next_period, ['inactive'], [])
 ) AS state
-WHERE bucket >= addMonths(toStartOfMonth(today_utc), -11)
+WHERE bucket >= today_utc - 365
   AND if(grain = 'week', addWeeks(bucket, 1), addMonths(bucket, 1)) <= today_utc
 GROUP BY entity, grain, min_requests, bucket;

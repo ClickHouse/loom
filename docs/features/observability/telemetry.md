@@ -96,6 +96,11 @@ successful requests. Lifecycle charts count arrivals, consecutive activity,
 returns after gaps, and absence of qualifying activity in completed periods.
 An installation that stops reporting can appear inactive. Domain lifecycle
 uses only attributed requests from deployments with domain sharing enabled.
+Choose a 30-, 90-, or 365-day lookback. Activity shows daily, weekly, or
+monthly buckets. Lifecycle thresholds apply to each selected week or month.
+Projected request volume uses the daily average when every completed day in
+the current period has data. Chart links carry the selection, and CSV exports
+contain aggregate values.
 
 The restricted `loom_adoption_top_domains_30d` view ranks the top 50 domains by
 attributed successful requests and includes the number of active installations
