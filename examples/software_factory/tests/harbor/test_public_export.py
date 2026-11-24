@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import TestCase
 
 from examples.software_factory.factory.model import digest
+from examples.software_factory.harbor.project_guidance import SUBMISSION_NOTE, task_instruction
 from examples.software_factory.harbor.public_export import export_public
 from examples.software_factory.harbor.runtime import write
 
@@ -151,3 +152,18 @@ class NativePublicExport(TestCase):
         Path(next(iter(self.protocol["files"]))).write_text("changed")
         with self.assertRaises(PermissionError):
             export_public(self.protocol, self.root / "public")
+
+    def test_public_submission_note_matches_the_native_task(self):
+        metadata = self.protocol["public_reproduction"]
+        output = self.root / "public"
+        metadata["submission_note"] = "Unpublished text."
+        with self.assertRaisesRegex(ValueError, "Unknown frozen submission instructions"):
+            export_public(self.protocol, output)
+        metadata["submission_note"] = SUBMISSION_NOTE
+        with self.assertRaisesRegex(PermissionError, "differ from the native task"):
+            export_public(self.protocol, output)
+        instruction = self.root / "tasks/slot-00/instruction.md"
+        instruction.write_bytes(task_instruction(self.instruction.decode()).encode())
+        export_public(self.protocol, output)
+        public = json.loads((output / "results.json").read_text())
+        self.assertEqual(public["metadata"]["submission_note"], SUBMISSION_NOTE)

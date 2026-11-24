@@ -19,7 +19,7 @@ from .native_environment import MCP_SCHEMA_PROFILES
 from .native_trace import COUNTERS as TRACE_COUNTERS
 from .native_trace import EVENTS as TRACE_EVENTS
 from .native_trace import TIMINGS as TRACE_TIMINGS
-from .project_guidance import guidance
+from .project_guidance import PUBLIC_SUBMISSION_NOTES, SUBMISSION_HEADING, guidance
 from .runtime import read, verify, write
 
 KIND = "factory-public-results"
@@ -184,7 +184,10 @@ def public_metadata(value):
     if value.get("study_role"):
         result["study_role"] = public_text(value["study_role"])
     if "submission_note" in value:
-        result["submission_note"] = public_text(value["submission_note"])
+        note = public_text(value["submission_note"])
+        if note not in PUBLIC_SUBMISSION_NOTES:
+            raise ValueError("Unknown frozen submission instructions")
+        result["submission_note"] = note
     if value.get("memory_treatment"):
         result["memory_treatment"] = {
             key: public_text(value["memory_treatment"][key])
@@ -333,6 +336,8 @@ def export_public(protocol, output: Path, *, require_complete=False):
     complete = len(entries) == len(protocol["schedule"])
     if require_complete and not complete:
         raise PermissionError("Native cohort is incomplete")
+    metadata = public_metadata(protocol["public_reproduction"])
+    submission_note = metadata.get("submission_note")
     output.mkdir(parents=True, exist_ok=True)
     marker = output / "ownership.json"
     identity = {"kind": KIND, "protocol_sha256": digest(protocol)}
@@ -378,13 +383,18 @@ def export_public(protocol, output: Path, *, require_complete=False):
                     ).hexdigest()
             public.append(row)
             instruction = root / "tasks" / f"slot-{entry['order']:02d}" / "instruction.md"
+            instruction_bytes = instruction.read_bytes()
+            if submission_note and not instruction_bytes.endswith(
+                f"{SUBMISSION_HEADING}{submission_note}\n".encode()
+            ):
+                raise PermissionError("Public submission instructions differ from the native task")
             hashes[str(entry["order"]) + "/task/instruction.md"] = hashlib.sha256(
-                instruction.read_bytes()
+                instruction_bytes
             ).hexdigest()
         payload = {
             "kind": KIND,
             "complete": complete,
-            "metadata": public_metadata(protocol["public_reproduction"]),
+            "metadata": metadata,
             "solver": protocol["solver"],
             "prompt_cache_isolation": protocol.get("prompt_cache_isolation"),
             "prompt_cache_verified": study_cache_verified(protocol, entries),

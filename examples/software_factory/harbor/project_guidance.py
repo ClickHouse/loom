@@ -6,16 +6,25 @@ import hashlib
 from pathlib import Path
 
 TEMPLATE = Path(__file__).with_name("project-guidance.md")
+SUBMISSION_HEADING = "\n\n## Submission\n\n"
 
 
 SUBMISSION_NOTE = (
     "The evaluator grades the application implementation. "
     "Keep the patch to runtime source and tests. Run the relevant tests before submitting."
 )
+# Exact public text used by existing frozen study protocols.
+PUBLIC_SUBMISSION_NOTES = frozenset(
+    {
+        SUBMISSION_NOTE,
+        "The evaluator grades the application implementation. "
+        "Submit the source fix and use local tests to verify it.",
+    }
+)
 
 
 def task_instruction(issue: str) -> str:
-    return issue + "\n\n## Submission\n\n" + SUBMISSION_NOTE + "\n"
+    return issue + SUBMISSION_HEADING + SUBMISSION_NOTE + "\n"
 
 
 def guidance(source_roots):
