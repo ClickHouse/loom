@@ -1,6 +1,8 @@
 # Examples
 
 Run these examples from a Loom checkout with Cargo against a running Loom server.
+They use the source SDK's generated methods and request builders, which are absent
+from the published 0.1.0 crate.
 The three basic examples below write, read and delete their own memory keys and knowledge URIs. Installation
 and client configuration are covered in the [SDK README](../README.md#install).
 
@@ -366,8 +368,9 @@ cargo run --manifest-path sdk/rust/Cargo.toml --example software_factory_memory 
 ```
 
 Checks repository, full commit, fetch freshness and compiler-tier commits;
-reads one complete symbol body and confirms the index did not advance.
-Hashes the returned body with SHA-256, records the operator claim as a derived
+reads one complete symbol body and verifies its bytes against a complete
+`code.read` range at the same `indexed_commit`.
+Hashes the verified body with SHA-256, records the operator claim as a derived
 memory linked to its source and opens a run. The reviewer claims and heartbeats
 the task, reads the note by receipt ID with provenance checks and re-reads the
 source. The outcome reports whether path, symbol and returned-body hash changed.

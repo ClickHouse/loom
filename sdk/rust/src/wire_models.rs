@@ -11870,17 +11870,48 @@ pub struct CodeReadInput {
         deserialize_with = "present_value"
     )]
     pub consumer: Option<String>,
-    pub ranges: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub ranges: Option<Vec<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_nullable"
+    )]
+    pub path: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_nullable"
+    )]
+    pub start_line: Option<Option<Integer>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_nullable"
+    )]
+    pub end_line: Option<Option<Integer>>,
+}
+impl Default for CodeReadInput {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 impl CodeReadInput {
-    pub fn new(ranges: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn new() -> Self {
         Self {
             org: None,
             namespace: None,
             agent: None,
             user_id: None,
             consumer: None,
-            ranges: ranges.into_iter().map(Into::into).collect(),
+            ranges: None,
+            path: None,
+            start_line: None,
+            end_line: None,
         }
     }
     pub fn org(mut self, org: impl Into<String>) -> Self {
@@ -11901,6 +11932,34 @@ impl CodeReadInput {
     }
     pub fn consumer(mut self, consumer: impl Into<String>) -> Self {
         self.consumer = Some(consumer.into());
+        self
+    }
+    pub fn ranges(mut self, ranges: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.ranges = Some(ranges.into_iter().map(Into::into).collect());
+        self
+    }
+    pub fn path(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(Some(path.into()));
+        self
+    }
+    pub fn path_null(mut self) -> Self {
+        self.path = Some(None);
+        self
+    }
+    pub fn start_line(mut self, start_line: impl Into<Integer>) -> Self {
+        self.start_line = Some(Some(start_line.into()));
+        self
+    }
+    pub fn start_line_null(mut self) -> Self {
+        self.start_line = Some(None);
+        self
+    }
+    pub fn end_line(mut self, end_line: impl Into<Integer>) -> Self {
+        self.end_line = Some(Some(end_line.into()));
+        self
+    }
+    pub fn end_line_null(mut self) -> Self {
+        self.end_line = Some(None);
         self
     }
     pub async fn send(

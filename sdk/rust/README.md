@@ -8,7 +8,7 @@ This crate connects to a separately deployed Loom server backed by ClickHouse.
 The server image is `ghcr.io/clickhouse/loom`. Use a local single-user installation
 or connect to a team deployment managed by your operator.
 
-`Client` provides typed calls for every operation in the server registry.
+The source checkout's `Client` provides typed calls for every operation in the server registry.
 Calls are async and use the application's Tokio runtime. The optional `blocking`
 feature provides the same operations through a synchronous client.
 
@@ -72,11 +72,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .base_url("http://localhost:7777")
         .api_key("")
         .build()?;
-    bot.set(SetRequest::new("deploy_window", "Deploy Tue/Thu, never Friday")
-        .memory_type("semantic")
-        .tags(["deployment"])).await?;
+    let mut write = SetRequest::new("deploy_window", "Deploy Tue/Thu, never Friday");
+    write.memory_type = Some("semantic".into());
+    write.tags = Some(vec!["deployment".into()]);
+    bot.set(write).await?;
     let memory = bot.get("deploy_window").await?;
-    let hits = bot.search(SearchRequest::new("when do we deploy").top_k(5)).await?;
+    let mut search = SearchRequest::new("when do we deploy");
+    search.top_k = Some(5);
+    let hits = bot.search(search).await?;
     if memory.found {
         println!("{}", memory.value);
     } else {
@@ -87,6 +90,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+This starter supports the published 0.1.0 crate. The generated operation methods,
+request builders and runnable examples below require the source checkout.
 
 For a team deployment, use your account's org and namespace with a writer token.
 Set the server address through `.base_url(...)` or `LOOM_BASE_URL`, and the token

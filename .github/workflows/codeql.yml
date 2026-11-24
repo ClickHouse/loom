@@ -201,7 +201,8 @@ jobs:
         uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: /language:${{ matrix.language }}
-          ram: 2048
+          # Generated Rust models need more memory during TRAP import.
+          ram: ${{ matrix.language == 'rust' && 6144 || 2048 }}
           threads: 2
       - name: Require actual SDK bytes in the extracted source archive
         run: |

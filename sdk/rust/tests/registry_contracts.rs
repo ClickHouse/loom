@@ -10325,7 +10325,7 @@ fn code_grep() {
 }
 #[test]
 fn code_read() {
-    let value: clickhouse_loom::CodeReadInput = serde_json::from_str("{\"ranges\":[]}").unwrap();
+    let value: clickhouse_loom::CodeReadInput = serde_json::from_str("{}").unwrap();
     let encoded = serde_json::to_value(value).unwrap();
     assert!(encoded.is_object());
     let value: clickhouse_loom::CodeReadOutput =

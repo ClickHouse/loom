@@ -1,11 +1,15 @@
 //! Record a source-linked claim and hand it to a reviewer for a source recheck.
 mod common;
 
+#[cfg(test)]
+#[path = "software_factory_memory/tests.rs"]
+mod tests;
+
 use clickhouse_loom::{
-    CallOptions, Client, CodeIndexStatusInput, CodeSymbolInput, Integer, MemorySetInput,
-    RunBeginInput, RunCompleteInput, RunCompleteInputOutcome, RunCompleteInputStatus,
-    TaskClaimInput, TaskCompleteInput, TaskCreateInput, TaskGetInput, TaskHeartbeatInput,
-    TaskPayloadStatus,
+    CallOptions, Client, CodeIndexStatusInput, CodeReadInput, CodeReadRangeStatus, CodeSymbolInput,
+    Integer, MemorySetInput, RunBeginInput, RunCompleteInput, RunCompleteInputOutcome,
+    RunCompleteInputStatus, TaskClaimInput, TaskCompleteInput, TaskCreateInput, TaskGetInput,
+    TaskHeartbeatInput, TaskPayloadStatus,
 };
 use common::{received, require, Args, Result};
 use serde::Serialize;
@@ -90,7 +94,7 @@ struct SourceEvidence {
     returned_body_sha256: String,
 }
 
-async fn source(code: &Client, args: &Args) -> Result<SourceEvidence> {
+async fn source(code: &Client, repo: &str, symbol: &str) -> Result<SourceEvidence> {
     let before = received(
         code.code_index_status_with_options(
             CodeIndexStatusInput::new().brief(true),
@@ -100,7 +104,7 @@ async fn source(code: &Client, args: &Args) -> Result<SourceEvidence> {
     );
     let commit = &before.git_head;
     require(
-        before.repo == args.required("repo")? && commit_valid(commit) && !before.fetch_overdue,
+        before.repo == repo && commit_valid(commit) && !before.fetch_overdue,
         "The index repository, commit or fetch freshness differs",
     )?;
     for tier in &before.compiler_tiers {
@@ -112,7 +116,7 @@ async fn source(code: &Client, args: &Args) -> Result<SourceEvidence> {
     let result = received(
         code.code_symbol_with_options(
             CodeSymbolInput::new()
-                .name(args.required("symbol")?)
+                .name(symbol)
                 .include_body(true)
                 .include_history(false)
                 .include_examples(false)
@@ -128,35 +132,52 @@ async fn source(code: &Client, args: &Args) -> Result<SourceEvidence> {
     )?;
     let unit = &definitions[0];
     require(
-        unit.symbol == args.required("symbol")? && !unit.elided && unit.granularity == "unit",
+        unit.symbol == symbol && !unit.elided && unit.granularity == "unit",
         "The symbol body is incomplete or differs",
     )?;
     require(
         !unit.body.is_empty() && !unit.path.is_empty(),
         "Missing symbol body or path",
     )?;
-    let after = received(
-        code.code_index_status_with_options(
-            CodeIndexStatusInput::new().brief(true),
+    let read = received(
+        code.code_read_with_options(
+            CodeReadInput::new()
+                .path(&unit.path)
+                .start_line(unit.start_line.clone())
+                .end_line(unit.end_line.clone()),
             CallOptions::default(),
         )
         .await?,
     );
+    require(read.results.len() == 1, "Missing verified source range")?;
+    let range = &read.results[0];
     require(
-        after.repo == before.repo && after.git_head == *commit,
-        "The index advanced during the read",
+        range.status == CodeReadRangeStatus::Complete
+            && range.indexed_commit == *commit
+            && range.path == unit.path
+            && range.start_line == unit.start_line
+            && range.end_line == unit.end_line
+            && range.windows.len() == 1,
+        "The source range is incomplete or at another commit",
+    )?;
+    let window = &range.windows[0];
+    require(
+        window.start_line == unit.start_line
+            && window.end_line == unit.end_line
+            && window.text == unit.body,
+        "The verified source bytes differ from the symbol body",
     )?;
     Ok(SourceEvidence {
-        repo: args.required("repo")?.into(),
+        repo: repo.into(),
         commit: commit.clone(),
-        symbol: args.required("symbol")?.into(),
+        symbol: symbol.into(),
         tier: if unit.tier.is_empty() {
             "unknown".into()
         } else {
             unit.tier.clone()
         },
         path: unit.path.clone(),
-        returned_body_sha256: common::sha256(&unit.body),
+        returned_body_sha256: common::sha256(&window.text),
     })
 }
 
@@ -192,7 +213,12 @@ async fn run() -> Result<()> {
         Some(&implementation_key),
     )?;
     let review_code = common::client(org, code_ns, REVIEWER, "-", "-", Some(&review_key))?;
-    let baseline = source(&implementation_code, &args).await?;
+    let baseline = source(
+        &implementation_code,
+        args.required("repo")?,
+        args.required("symbol")?,
+    )
+    .await?;
     require(
         baseline.commit == args.required("commit")?,
         "The index is not at the requested commit",
@@ -259,7 +285,7 @@ async fn run() -> Result<()> {
             TaskHeartbeatInput::new(&task_id, fence.clone()), CallOptions::default(),
         ).await?);
         common::read_owned(&reviewer, id, &key, IMPLEMENTER, "process:factory-implementation", "derived", &note).await?;
-        let current = source(&review_code, &args).await?;
+        let current = source(&review_code, args.required("repo")?, args.required("symbol")?).await?;
         let unchanged = current.path == baseline.path && current.symbol == baseline.symbol
             && current.returned_body_sha256 == baseline.returned_body_sha256;
         let state = if unchanged { "unchanged_body" } else { "changed_body_needs_review" };
