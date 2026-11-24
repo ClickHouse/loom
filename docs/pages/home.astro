@@ -1,0 +1,48 @@
+---
+import SiteFrame from "../components/SiteFrame.astro";
+---
+
+<SiteFrame
+  title="ClickHouse Loom"
+  description="Shared memory, document search, and code context for AI agents."
+  path="/"
+>
+  <section class="intro">
+    <h1>Shared context<br />for AI agents.</h1>
+    <p class="lead">
+      Loom gives your agents shared memory, document search with citations, and a searchable
+      code index backed by ClickHouse.
+    </p>
+    <div class="actions">
+      <a class="primary" href="/docs/getting-started/quickstart">Get started</a>
+      <a href="/docs">Read the docs</a>
+    </div>
+  </section>
+  <div class="features">
+    <section>
+      <h2>Memory</h2>
+      <p>Keep decisions and useful context available across sessions and tools.</p>
+    </section>
+    <section>
+      <h2>Documents</h2>
+      <p>Find answers in the sources your team has connected and follow their citations.</p>
+    </section>
+    <section>
+      <h2>Code</h2>
+      <p>Find definitions, follow callers, and ask questions about indexed repositories.</p>
+    </section>
+  </div>
+</SiteFrame>
+
+<style>
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 1.25rem; margin-top: 2rem; }
+  .features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+    gap: 1.5rem;
+    border-top: 1px solid var(--line);
+    margin-top: clamp(3rem, 8vw, 6rem);
+    padding-top: 1.75rem;
+  }
+  .features p { margin-top: 0.6rem; max-width: 24rem; }
+</style>

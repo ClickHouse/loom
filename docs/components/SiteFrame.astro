@@ -1,0 +1,84 @@
+---
+interface Props {
+  title: string;
+  description: string;
+  path: string;
+}
+
+const { title, description, path } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <link rel="canonical" href={new URL(path, Astro.site)} />
+    <link rel="icon" href="/docs/favicon.svg" type="image/svg+xml" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <a class="skip" href="#content">Skip to content</a>
+    <header class="shell">
+      <a class="brand" href="/">
+        <img src="/docs/loom.svg" width="32" height="32" alt="" />
+        <span>ClickHouse Loom</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="/docs">Docs</a>
+        <a href="/telemetry" aria-current={path === "/telemetry" ? "page" : undefined}>Telemetry</a>
+        <a href="https://github.com/ClickHouse/loom">GitHub</a>
+      </nav>
+    </header>
+    <main id="content" class="shell"><slot /></main>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    color-scheme: dark;
+    background: #141413;
+    color: #f5f3ed;
+    font-family: system-ui, sans-serif;
+    --muted: #bbb8ac;
+    --accent: #ffcc00;
+    --line: #35342a;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; }
+  a { color: inherit; text-underline-offset: 0.22em; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+  .shell { width: min(100% - 3rem, 70rem); margin-inline: auto; }
+  header.shell {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding-block: 1.25rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand, nav { display: flex; align-items: center; gap: 0.85rem; }
+  .brand { font-weight: 700; text-decoration: none; }
+  nav { flex-wrap: wrap; gap: 1.25rem; font-size: 0.95rem; }
+  nav a { text-decoration: none; color: var(--muted); }
+  nav a:hover, nav a[aria-current] { color: var(--accent); }
+  .skip { position: absolute; left: 1rem; top: -5rem; padding: 0.6rem; background: #141413; }
+  .skip:focus { top: 1rem; }
+  main { padding-block: clamp(3rem, 9vw, 7rem); }
+  h1, h2, p { margin: 0; }
+  p, li { line-height: 1.65; color: var(--muted); }
+  h1 { font-size: clamp(2.9rem, 7vw, 6.1rem); line-height: 1.02; letter-spacing: -0.06em; }
+  h2 { font-size: clamp(1.25rem, 2vw, 1.65rem); letter-spacing: -0.025em; }
+  .lead { font-size: clamp(1.1rem, 2vw, 1.35rem); max-width: 38rem; margin-top: 1.5rem; }
+  .primary {
+    display: inline-block;
+    padding: 0.75rem 1.12rem;
+    color: #141413;
+    background: var(--accent);
+    border-radius: 0.35rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
+</style>
