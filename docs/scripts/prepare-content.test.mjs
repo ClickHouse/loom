@@ -20,6 +20,12 @@ test("defers the localized landing demo and uses the published media file", () =
     `<details>\n<summary>確認済みの出典付きの回答</summary>\n<video src="${media}" controls preload="none" muted><a href="${media}">確認済みの出典付きの回答</a></video>\n</details>`,
   );
   assert.equal(prepareLocalizedLandingDemo(prepared), prepared);
+
+  const refreshed = `<details>\n<summary>デモを見る</summary>\n${source.replace("autoplay loop", 'preload="none"')}\n</details>`;
+  assert.equal(
+    prepareLocalizedLandingDemo(refreshed),
+    prepared.replace("<summary>確認済みの出典付きの回答</summary>", "<summary>デモを見る</summary>"),
+  );
 });
 
 test("adds the source date without changing page content or overriding an explicit date", () => {

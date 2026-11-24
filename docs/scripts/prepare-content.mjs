@@ -257,10 +257,10 @@ export function prepareLocalizedLandingDemo(text) {
   const media = "../assets/screenshots/clip-assistant-answer.webm";
   const video =
     /<video src="https:\/\/github\.com\/ClickHouse\/loom\/raw\/main\/docs\/assets\/screenshots\/clip-assistant-answer\.webm" ([^>]+)><a href="[^"]+">([^<]+)<\/a><\/video>/;
-  return text.replace(video, (original, attributes, label) => {
-    if (!attributes.includes(" autoplay loop ")) return original;
+  return text.replace(video, (_, attributes, label) => {
     const onDemand = attributes.replace(" autoplay loop ", ' preload="none" ');
-    return `<details>\n<summary>${label}</summary>\n<video src="${media}" ${onDemand}><a href="${media}">${label}</a></video>\n</details>`;
+    const player = `<video src="${media}" ${onDemand}><a href="${media}">${label}</a></video>`;
+    return onDemand === attributes ? player : `<details>\n<summary>${label}</summary>\n${player}\n</details>`;
   });
 }
 
