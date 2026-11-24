@@ -31,13 +31,13 @@ to historical knowledge and native memory capability, rather than linking alone.
 
 All arms start from the same agent image. The four Loom arms add one image
 layer with [project instructions](harbor/project-guidance.md) and native Claude
-Code permissions. Loom sessions block Grep, shell grep variants and selected
-shell source reads of indexed paths. Local tools handle edits, tests, Git,
+Code permissions. Loom sessions block the Grep tool and selected shell
+searches and reads of indexed paths. Local tools handle edits, tests, Git,
 working-copy reads and uncovered source. The baseline uses the common image and
 local tools.
 
-The routing audit requires a Loom source response before any successful native
-Read of indexed source. The run keeps all trial results and fails qualification
+The routing audit requires a Loom source response before a native Read request that successfully
+reads indexed source. The run keeps all trial results and fails qualification
 when the receipt cannot establish this order. The protocol freezes the project
 instructions and permissions.
 

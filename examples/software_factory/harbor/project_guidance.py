@@ -11,20 +11,20 @@ SETTINGS = Path(".claude/settings.json")
 
 
 def source_permissions(source_roots):
-    grep = [
-        "Grep",
-        "Bash(grep *)",
-        "Bash(rg *)",
-        "Bash(egrep *)",
-        "Bash(fgrep *)",
-        "Bash(git grep *)",
-    ]
-    reads = [
-        f"Bash({command} *{root.rstrip('/')}/*)"
-        for root in source_roots
-        for command in ("sed -n", "head", "tail")
-    ]
-    return {"permissions": {"deny": grep + reads}}
+    search = ("grep", "rg", "egrep", "fgrep", "git grep")
+    roots = [root.rstrip("/") for root in source_roots]
+    deny = ["Grep"]
+    deny.extend(f"Bash({command} * .)" for command in search)
+    deny.extend(
+        f"Bash({command} *{root}{suffix})"
+        for command in (*search, "sed -n", "head", "tail")
+        for root in roots
+        for suffix in ("", "/*")
+    )
+    deny.extend(
+        f"Bash(cat {prefix}{root}/*)" for root in roots for prefix in ("", "./", "/workspace/")
+    )
+    return {"permissions": {"deny": deny}}
 
 
 def claude_settings(workspace, instructions):

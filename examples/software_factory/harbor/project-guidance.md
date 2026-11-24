@@ -1,9 +1,9 @@
 # Repository context
 
 Use Loom to discover and read unchanged source in the indexed roots. For that
-source, use Loom for each search or read. Shell grep and the Grep tool are
-blocked in Loom sessions. Reserve local file tools for the work described
-below.
+source, use Loom for each search or read. The Grep tool and shell grep of
+indexed paths are blocked in Loom sessions. Reserve local file tools for the
+work described below.
 
 Keep source discovery separate from Git, editing and test commands. Use
 `loom_code_search` for behavior, `loom_code_grep` for exact text and

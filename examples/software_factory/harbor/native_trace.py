@@ -36,7 +36,7 @@ EVENTS = (
     "first_fresh_linked_lesson_result_event_main",
     "first_possible_edit_request_event_main",
     "first_loom_source_result_event_main",
-    "first_indexed_read_result_event_main",
+    "first_indexed_read_request_event_main",
 )
 POSSIBLE_EDIT_TOOLS = {"agent", "bash", "edit", "multiedit", "notebookedit", "task", "write"}
 NONFRESH_LINK_STATES = {"moved", "changed", "unresolved", "missing"}
@@ -172,9 +172,9 @@ def summarize(trial, *, source_roots=()):
     summary.update(dict.fromkeys(COUNTERS, 0))
     summary["model_turns_main"] = len(responses)
     groups, seen, fresh_events, source_events = Counter(), set(), [], []
-    summary["first_indexed_read_result_event_main"] = min(
+    summary["first_indexed_read_request_event_main"] = min(
         (
-            replies[identifier][0]
+            calls[identifier]["request_event"]
             for identifier in indexed_read_ids
             if identifier in replies and not replies[identifier][1].get("is_error", False)
         ),

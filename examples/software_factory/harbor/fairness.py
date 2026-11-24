@@ -51,7 +51,7 @@ def index_certificate_matches(protocol):
 def loom_source_used(trial, source_roots):
     trace = summarize(trial, source_roots=source_roots)["metrics"]
     loom = trace["first_loom_source_result_event_main"]
-    local = trace["first_indexed_read_result_event_main"]
+    local = trace["first_indexed_read_request_event_main"]
     return loom is not None and (local is None or loom < local)
 
 

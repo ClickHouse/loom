@@ -33,7 +33,7 @@ class ProjectInstructions(TestCase):
         self.assertEqual(instructions["applies_to"], "loom-enabled")
         self.assertIn("Use Loom to discover and read unchanged source", actual.decode())
         self.assertIn("use Loom for each search or read", actual.decode())
-        self.assertIn("Shell grep and the Grep tool are", actual.decode())
+        self.assertIn("The Grep tool and shell grep of", actual.decode())
         self.assertIn("Use local tools for edits, tests, Git", actual.decode())
 
     def test_baseline_and_loom_use_their_frozen_images(self):
