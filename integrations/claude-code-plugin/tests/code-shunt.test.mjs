@@ -451,10 +451,10 @@ test("codeResponsePaths covers every code op response shape", async () => {
   const { codeResponsePaths } = await import("../hooks/loom-capture.mjs");
   assert.deepEqual(codeResponsePaths({ results: [{ path: "a" }, { path: "a" }] }), ["a"]);
   assert.deepEqual(codeResponsePaths({ definitions: [{ path: "d" }] }), ["d"]);
-  assert.deepEqual(
-    codeResponsePaths({ definitions: [{ path: "d", examples: [{ path: "test" }, { path: "d" }] }] }),
-    ["d", "test"],
-  );
+  assert.deepEqual(codeResponsePaths({ definitions: [{ path: "d", examples: [{ path: "test" }, { path: "d" }] }] }), [
+    "d",
+    "test",
+  ]);
   assert.deepEqual(codeResponsePaths({ citations: [{ path: "c" }] }), ["c"]);
   assert.deepEqual(codeResponsePaths({ edges: [{ path: "e" }] }), ["e"]);
   assert.deepEqual(codeResponsePaths({ impacted_symbols: [{ path: "i" }], touched_symbols: [{ path: "t" }] }), [
