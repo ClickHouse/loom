@@ -148,7 +148,7 @@ def test_code_scope_precedes_a_long_memory_workspace_notice(monkeypatch) -> None
     scope_at = text.index("repository bound to this connection")
     workspace_at = text.index("WORKSPACE" * 1000)
     assert scope_at < workspace_at < text.index(PROFILE)
-    assert text.index("read its source and tests with `loom_code_edit_context`") < scope_at
+    assert text.index("use `loom_code_edit_context` with a definition or literal clues") < scope_at
     assert text.index("`loom_code_grep` for exact text or an error") < scope_at
 
 

@@ -549,7 +549,7 @@ def test_memory_scoped_primers_set_the_task_pack_order() -> None:
 def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     coding = mcp_primer._coding_instructions("coding")
     assert "Use Loom first to search and read unchanged indexed source, including tests" in coding
-    assert "read its source and tests with `loom_code_edit_context`" in coding
+    assert "use `loom_code_edit_context` with a definition or literal clues" in coding
     assert "Inspect a definition with `loom_code_symbol`" in coding
     for name, purpose in (
         ("loom_code_search", "for behavior or an issue"),
