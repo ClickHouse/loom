@@ -133,6 +133,14 @@ selection, account, or approval generation invalidates existing work. A worker
 can only claim the queue partition assigned to it. The requester, destination,
 and exact selection still need to be rechecked at acceptance.
 
+Admission serializes on the source, allows one unfinished batch of at most 64
+items, and keeps at most 128 queue entries. Completed receipts expire after 24
+hours. A later admission may remove expired queue metadata; it never removes a
+stored copy, source checkpoint or pre-existing unmarked row. If the source is
+busy or retained receipts fill the budget, admission leaves the due cursor in
+place. Old periods can then coalesce into one batch. Manual admission needs a
+durable request identity before it can use this queue.
+
 The queue does not yet have a worker-facing API or a runner. Its lease and
 checkpoint tests perform no document writes. Treat the upload, copy acceptance,
 and cutover described below as requirements for enabling refresh.

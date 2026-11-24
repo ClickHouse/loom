@@ -51,7 +51,8 @@ class TestRefreshReceipt(unittest.IsolatedAsyncioTestCase):
     async def test_exact_receipt_replays_after_expiry_without_publication(self) -> None:
         self.assertTrue(await replay_completion(self.conn, self.completion))
         self.authorize.assert_awaited_once_with(self.conn, self.lease)
-        self.conn.execute.assert_not_awaited()
+        self.conn.execute.assert_awaited_once()
+        assert "pg_advisory_xact_lock_shared" in self.conn.execute.await_args.args[0]
         self.conn.fetchval.assert_not_awaited()
 
     async def test_revoked_or_different_user_does_not_receive_terminal_receipt(self) -> None:
@@ -66,7 +67,8 @@ class TestRefreshReceipt(unittest.IsolatedAsyncioTestCase):
         )
         self.authorize.return_value = replace(self.authorize.return_value, task=newer)
         self.assertFalse(await replay_completion(self.conn, self.completion))
-        self.conn.execute.assert_not_awaited()
+        self.conn.execute.assert_awaited_once()
+        assert "pg_advisory_xact_lock_shared" in self.conn.execute.await_args.args[0]
         self.conn.fetchval.assert_not_awaited()
 
     async def test_same_fence_does_not_replay_a_changed_completion(self) -> None:

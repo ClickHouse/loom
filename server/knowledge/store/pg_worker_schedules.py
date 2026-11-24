@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from server.core import pg
-from server.knowledge.domain.mcp_identity import resource_uri
 from server.knowledge.domain.mcp_worker_refresh import RefreshJob, RefreshRejected, RefreshScope
 from server.knowledge.domain.mcp_worker_schedule import (
     PeriodicSchedule,
@@ -15,7 +14,7 @@ from server.knowledge.domain.mcp_worker_schedule import (
     ScheduleBinding,
     plan_scheduled_refresh,
 )
-from server.knowledge.store import pg_worker_refresh
+from server.knowledge.store import pg_worker_refresh, pg_worker_refresh_admission
 
 if TYPE_CHECKING:
     from asyncpg import Connection
@@ -32,7 +31,7 @@ WHERE {_KEY} RETURNING 1
 
 @dataclass(frozen=True, repr=False)
 class ScheduleAuthority:
-    """Exact current source selection, store quota and writer verified under locks."""
+    """Exact current source selection and writer verified under the source authority locks."""
 
     binding: ScheduleBinding
     profile_digest: str
@@ -68,6 +67,7 @@ async def enqueue_due_on(conn: Connection, authority: ScheduleAuthority) -> int:
     _require_transaction(conn)
     binding = authority.binding
     key = (binding.org, binding.namespace, UUID(binding.source_id))
+    await pg_worker_refresh_admission.lock_namespace_on(conn, binding.org, binding.namespace)
     row = await conn.fetchrow(_CURRENT, *key)
     if row is None or row["user_id"] != authority.owner or row["paused"]:
         return 0
@@ -79,13 +79,13 @@ async def enqueue_due_on(conn: Connection, authority: ScheduleAuthority) -> int:
     plan = plan_scheduled_refresh(schedule, active_binding=binding, now=now)
     if plan is None:
         return 0
-    inserted = await enqueue_demand_on(conn, authority, plan.demand)
-    if await conn.fetchval(_ADVANCE, *key, plan.next_due_at) != 1:
+    inserted = await _enqueue_demand_on(conn, authority, plan.demand)
+    if inserted and await conn.fetchval(_ADVANCE, *key, plan.next_due_at) != 1:
         raise RefreshRejected("source refresh schedule changed")
     return inserted
 
 
-async def enqueue_demand_on(
+async def _enqueue_demand_on(
     conn: Connection, authority: ScheduleAuthority, demand: RefreshDemand
 ) -> int:
     """Enqueue the canonical request under the caller's existing source authority locks."""
@@ -107,16 +107,15 @@ async def enqueue_demand_on(
         authority.profile_digest,
     )
     job = RefreshJob(demand.job_id, scope, authority.selected)
-    inserted = 0
-    for task in job.document_tasks():
-        entry = pg_worker_refresh.RefreshEntry(
+    batch = tuple(
+        pg_worker_refresh.RefreshEntry(
             task,
             UUID(binding.worker_id),
-            resource_uri(binding.source_id, task.resource_id),
             authority.owner,
             demand.due_at,
             authority.agent,
             authority.session_id,
         )
-        inserted += await pg_worker_refresh.enqueue(conn, entry)
-    return inserted
+        for task in job.document_tasks()
+    )
+    return await pg_worker_refresh.enqueue_batch_on(conn, batch)

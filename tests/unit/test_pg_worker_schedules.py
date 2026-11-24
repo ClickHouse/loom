@@ -1,4 +1,3 @@
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
@@ -6,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from server.knowledge.domain.mcp_worker_refresh import RefreshRejected
-from server.knowledge.domain.mcp_worker_schedule import ScheduleBinding, plan_manual_refresh
+from server.knowledge.domain.mcp_worker_schedule import ScheduleBinding
 from server.knowledge.store import pg_worker_schedules as store
 
 _DUE = datetime(2026, 1, 1, tzinfo=UTC)
@@ -24,7 +23,10 @@ def enabled(monkeypatch):
 @pytest.fixture
 def connection():
     conn = Mock(
-        is_in_transaction=Mock(return_value=True), fetchrow=AsyncMock(), fetchval=AsyncMock()
+        is_in_transaction=Mock(return_value=True),
+        execute=AsyncMock(),
+        fetchrow=AsyncMock(),
+        fetchval=AsyncMock(),
     )
     conn.fetchrow.return_value = {
         "org": _BINDING.org,
@@ -47,18 +49,18 @@ def connection():
 
 @pytest.mark.asyncio
 async def test_due_copy_uses_selection_and_advances_after_enqueue(enabled, connection, monkeypatch):
-    async def enqueue(conn, entry):
+    async def enqueue(conn, batch):
         assert conn is connection
         assert connection.fetchval.await_count == 1
+        (entry,) = batch
         assert entry.due == _DUE
         assert entry.user_id == "alice"
         assert entry.task.resource_id == "urn:document:selected"
         assert entry.task.scope.approval_generation == 5
         assert entry.task.scope.profile_digest == "b" * 64
-        assert entry.source_uri.startswith("mcp-resource:")
-        return True
+        return 1
 
-    monkeypatch.setattr(store.pg_worker_refresh, "enqueue", enqueue)
+    monkeypatch.setattr(store.pg_worker_refresh, "enqueue_batch_on", enqueue)
     assert await store.enqueue_due_on(connection, _AUTH) == 1
     assert connection.fetchval.await_args.args[-1] == _DUE + timedelta(seconds=600)
 
@@ -77,7 +79,7 @@ async def test_stale_or_paused_never_admits(enabled, connection, key, value):
 @pytest.mark.asyncio
 async def test_failed_queue_admission_does_not_move_cursor(enabled, connection, monkeypatch):
     enqueue = AsyncMock(side_effect=RefreshRejected("queue limit"))
-    monkeypatch.setattr(store.pg_worker_refresh, "enqueue", enqueue)
+    monkeypatch.setattr(store.pg_worker_refresh, "enqueue_batch_on", enqueue)
     with pytest.raises(RefreshRejected, match="queue limit"):
         await store.enqueue_due_on(connection, _AUTH)
     enqueue.assert_awaited_once()
@@ -85,20 +87,12 @@ async def test_failed_queue_admission_does_not_move_cursor(enabled, connection, 
 
 
 @pytest.mark.asyncio
-async def test_manual_admission_never_consults_periodic_schedule(enabled, connection, monkeypatch):
-    demand = plan_manual_refresh(
-        _BINDING, active_binding=_BINDING, request_id="r", requested_at=_DUE
-    )
-    assert demand is not None
-    enqueue = AsyncMock(return_value=True)
-    monkeypatch.setattr(store.pg_worker_refresh, "enqueue", enqueue)
-    assert await store.enqueue_demand_on(connection, _AUTH, demand) == 1
-    connection.fetchrow.assert_not_awaited()
-    connection.fetchval.assert_not_awaited()
-    other = replace(_AUTH, binding=replace(_BINDING, selection_generation=9))
-    with pytest.raises(RefreshRejected, match="authority changed"):
-        await store.enqueue_demand_on(connection, other, demand)
+async def test_busy_source_keeps_original_due_cursor(enabled, connection, monkeypatch):
+    enqueue = AsyncMock(return_value=0)
+    monkeypatch.setattr(store.pg_worker_refresh, "enqueue_batch_on", enqueue)
+    assert await store.enqueue_due_on(connection, _AUTH) == 0
     enqueue.assert_awaited_once()
+    connection.fetchval.assert_awaited_once_with("SELECT clock_timestamp()")
 
 
 @pytest.mark.asyncio

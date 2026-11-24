@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -13,6 +13,7 @@ from uuid import UUID
 from asyncpg import Connection
 
 from server.core import pg
+from server.knowledge.domain.mcp_identity import resource_uri
 from server.knowledge.domain.mcp_worker_refresh import (
     CompletionReceipt,
     DocumentTask,
@@ -22,14 +23,15 @@ from server.knowledge.domain.mcp_worker_refresh import (
     RefreshRejected,
     RefreshScope,
 )
+from server.knowledge.store import pg_worker_refresh_admission as admission
 
 _MAX_ATTEMPTS = 8
 _KEY = "org = $1 AND namespace = $2 AND item_key = $3"
 _ENQUEUE = """
 INSERT INTO loom.knowledge_source_refresh (
     org, namespace, item_key, worker_id, source_uri, state, claimable_at,
-    agent, user_id, session_id, request_sha256, task, actor, source_class
-) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11::jsonb, $12, 'external')
+    agent, user_id, session_id, request_sha256, task, actor, source_class, admission_source_id
+) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11::jsonb, $12, 'external', $13)
 ON CONFLICT (org, namespace, item_key) DO NOTHING
 RETURNING 1
 """
@@ -75,6 +77,7 @@ RETURNING 1
 _TERMINAL = f"""
 SELECT task, receipt, user_id, claimable_at FROM loom.knowledge_source_refresh
 WHERE {_KEY} AND worker_id = $4 AND fence = $5 AND state = 'completed'
+  AND updated_at > clock_timestamp() - interval '24 hours' FOR SHARE
 """
 
 
@@ -82,7 +85,6 @@ WHERE {_KEY} AND worker_id = $4 AND fence = $5 AND state = 'completed'
 class RefreshEntry:
     task: DocumentTask
     worker_id: UUID
-    source_uri: str
     user_id: str
     due: datetime
     agent: str
@@ -108,8 +110,6 @@ class WorkerCompletion:
 def _metadata(entry: RefreshEntry) -> str:
     if (
         entry.worker_id.int == 0
-        or not entry.source_uri.startswith("mcp-resource:")
-        or not 0 < len(entry.source_uri) <= 255
         or not entry.user_id
         or entry.user_id == "-"
         or len(entry.user_id.encode("utf-8")) > 255
@@ -139,10 +139,48 @@ def _require_transaction(conn: Connection) -> None:
         raise RefreshRejected("source refresh requires Postgres authority transaction")
 
 
-async def enqueue(conn: Connection, entry: RefreshEntry) -> bool:
-    """Insert while the caller holds the scheduling and source authority locks."""
+async def enqueue_batch_on(conn: Connection, batch: tuple[RefreshEntry, ...]) -> int:
+    """Admit an exact batch from current source authority, or leave it pending."""
     _require_transaction(conn)
+    if not batch:
+        raise RefreshRejected("source refresh batch is empty")
+    first = batch[0]
+    task = first.task
+    scope = task.scope
+    source_id = UUID(scope.source_id)
+    if str(source_id) != scope.source_id or source_id.int == 0:
+        raise RefreshRejected("invalid refresh source identity")
+    if any(entry != _replace_task(first, entry.task) for entry in batch) or len(
+        {entry.task.resource_id for entry in batch}
+    ) != len(batch):
+        raise RefreshRejected("refresh batch identity changed")
+    source = admission.AdmissionSource(
+        scope.org,
+        scope.namespace,
+        source_id,
+        first.agent,
+        first.user_id,
+        first.session_id,
+        scope.actor,
+    )
+    async with conn.transaction():
+        if not await admission.reserve_on(conn, source, len(batch)):
+            return 0
+        for entry in batch:
+            if not await _enqueue_on(conn, entry, source_id):
+                raise RefreshRejected("refresh batch was already admitted")
+    return len(batch)
+
+
+def _replace_task(first: RefreshEntry, task: DocumentTask) -> RefreshEntry:
+    if task.scope != first.task.scope or task.job_id != first.task.job_id:
+        raise RefreshRejected("refresh batch task changed")
+    return replace(first, task=task)
+
+
+async def _enqueue_on(conn: Connection, entry: RefreshEntry, source_id: UUID) -> bool:
     scope = entry.task.scope
+    source_uri = resource_uri(scope.source_id, entry.task.resource_id)
     metadata = _metadata(entry)
     key = (scope.org, scope.namespace, entry.task.idempotency_key)
     digest = hashlib.sha256(
@@ -150,7 +188,7 @@ async def enqueue(conn: Connection, entry: RefreshEntry) -> bool:
             [
                 metadata,
                 str(entry.worker_id),
-                entry.source_uri,
+                source_uri,
                 entry.due.astimezone(UTC).isoformat(),
                 entry.agent,
                 entry.user_id,
@@ -164,7 +202,7 @@ async def enqueue(conn: Connection, entry: RefreshEntry) -> bool:
             _ENQUEUE,
             *key,
             entry.worker_id,
-            entry.source_uri,
+            source_uri,
             entry.due,
             entry.agent,
             entry.user_id,
@@ -172,6 +210,7 @@ async def enqueue(conn: Connection, entry: RefreshEntry) -> bool:
             digest,
             metadata,
             scope.actor,
+            source_id,
         )
         is not None
     ):
@@ -263,6 +302,8 @@ async def replay_completion(conn: Connection, completion: WorkerCompletion) -> b
     """An exact terminal retry reads a receipt after fresh authority, without writing a copy."""
     _require_transaction(conn)
     lease = completion.lease
+    scope = lease.task.scope
+    await admission.lock_namespace_on(conn, scope.org, scope.namespace)
     row = await conn.fetchrow(_TERMINAL, *_lease_params(lease))
     if row is None or _task(row["task"]) != lease.task:
         return False

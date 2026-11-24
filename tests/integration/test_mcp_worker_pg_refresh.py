@@ -28,7 +28,6 @@ class _RollbackCheckpoint(Exception):
 
 
 def _entry(org: str, name: str, due: datetime) -> RefreshEntry:
-    from server.knowledge.domain.mcp_identity import resource_uri
     from server.knowledge.domain.mcp_worker_refresh import DocumentTask, RefreshScope
     from server.knowledge.store.pg_worker_refresh import RefreshEntry
 
@@ -50,7 +49,6 @@ def _entry(org: str, name: str, due: datetime) -> RefreshEntry:
     return RefreshEntry(
         task=task,
         worker_id=worker,
-        source_uri=resource_uri(scope.source_id, task.resource_id),
         user_id=scope.actor,
         due=due,
         agent="synthetic-worker-refresh",
@@ -63,6 +61,7 @@ async def _row(conn: Connection, entry: RefreshEntry) -> Record:
     row = await conn.fetchrow(
         """
         SELECT org, namespace, item_key, worker_id, source_uri, agent, user_id, session_id,
+               admission_source_id,
                actor, source_class, task, state, fence, claimable_at, receipt
         FROM loom.knowledge_source_refresh
         WHERE org = $1 AND namespace = $2 AND item_key = $3
@@ -76,6 +75,10 @@ async def _row(conn: Connection, entry: RefreshEntry) -> Record:
 
 
 async def _assert_pending(conn: Connection, entry: RefreshEntry) -> None:
+    from uuid import UUID
+
+    from server.knowledge.domain.mcp_identity import resource_uri
+
     scope = entry.task.scope
     row = dict(await _row(conn, entry))
     row["task"] = json.loads(row["task"])
@@ -84,7 +87,8 @@ async def _assert_pending(conn: Connection, entry: RefreshEntry) -> None:
         "namespace": scope.namespace,
         "item_key": entry.task.idempotency_key,
         "worker_id": entry.worker_id,
-        "source_uri": entry.source_uri,
+        "source_uri": resource_uri(scope.source_id, entry.task.resource_id),
+        "admission_source_id": UUID(scope.source_id),
         "agent": entry.agent,
         "user_id": entry.user_id,
         "session_id": entry.session_id,
@@ -138,6 +142,7 @@ async def _cleanup(conn: Connection, org: str) -> None:
     try:
         async with asyncio.timeout(10), conn.transaction():
             await conn.execute("DELETE FROM loom.knowledge_source_refresh WHERE org = $1", org)
+            await conn.execute("DELETE FROM loom.mcp_worker_refresh_admission WHERE org = $1", org)
     finally:
         async with asyncio.timeout(10):
             await pg.close_pool()
@@ -160,8 +165,9 @@ async def test_refresh_claim_rollback_and_cancel_fence(pg_conn: Connection) -> N
             due = await pg_conn.fetchval("SELECT clock_timestamp() - interval '1 second'")
             first, second = _entry(org, "first", due), _entry(org, "second", due)
             async with pg_conn.transaction():
-                assert await refresh.enqueue(pg_conn, first)
-                assert await refresh.enqueue(pg_conn, second)
+                assert await refresh.enqueue_batch_on(pg_conn, (first,)) == 1
+                assert await refresh.enqueue_batch_on(pg_conn, (first,)) == 0
+                assert await refresh.enqueue_batch_on(pg_conn, (second,)) == 1
             await _assert_pending(pg_conn, first)
             await _assert_pending(pg_conn, second)
 
