@@ -16,6 +16,7 @@ knowledge_source_live = Operation(
     idempotent=True,
     required_role=Role.VIEWER,
     audit=False,
+    maturity="experimental",
 )
 
 OPERATIONS = [knowledge_source_live]

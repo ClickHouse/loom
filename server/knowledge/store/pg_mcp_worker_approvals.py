@@ -81,6 +81,8 @@ async def current_on(
     conn: Connection, key: ApprovalKey, *, lock: bool = False
 ) -> WorkerApproval | None:
     """The caller uses a transaction for a read it will rely on during a write."""
+    if not pg.enabled():
+        return None
     if lock and not conn.is_in_transaction():
         raise RuntimeError("worker approval lock requires an authority transaction")
     query = _CURRENT + " FOR SHARE" if lock else _CURRENT
@@ -90,6 +92,8 @@ async def current_on(
 async def current_generation(
     org: str, namespace: str, worker_id: UUID, digest: str, mode: WorkerMode, team_reader: bool
 ) -> int | None:
+    if not pg.enabled():
+        return None
     async with pg.connection() as conn:
         approval = await current_on(conn, ApprovalKey(org, namespace, worker_id, digest))
     required = {"live": LIVE, "snapshot": SNAPSHOT, "selected_refresh": REFRESH}.get(mode, 0)
@@ -113,7 +117,7 @@ async def replace_on(
     owner: ApprovalOwner,
 ) -> WorkerApproval | None:
     """Change only the exact approval the authorized admin observed."""
-    if not conn.is_in_transaction():
+    if not pg.enabled() or not conn.is_in_transaction():
         raise RuntimeError("worker approval requires an authority transaction")
     if (
         type(modes) is not int
@@ -142,6 +146,8 @@ async def replace_on(
 
 @asynccontextmanager
 async def scope_transaction(key: ApprovalKey) -> AsyncIterator[Connection]:
+    if not pg.enabled():
+        raise RuntimeError("worker approval requires Postgres authority")
     async with pg.transaction() as conn:
         await conn.execute(
             f"SELECT pg_advisory_xact_lock_shared({pg.KNOWLEDGE_LOCK_KEY})", key.org, key.namespace

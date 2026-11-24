@@ -65,6 +65,8 @@ RETURNING link_generation
 
 
 async def current(key: LinkKey) -> Link | None:
+    if not pg.enabled():
+        return None
     async with pg.connection() as conn:
         row = await conn.fetchrow(_GET, *key.parameters())
     if row is None:
@@ -89,7 +91,7 @@ async def set_on(
     origin: WriteOrigin,
 ) -> int | None:
     """The caller holds the current source, worker profile, and account authorizations."""
-    if not conn.is_in_transaction():
+    if not pg.enabled() or not conn.is_in_transaction():
         raise RuntimeError("source reader link requires an authority transaction")
     generations = (selection_generation, connection_generation)
     if not (
@@ -115,7 +117,7 @@ async def set_on(
 
 
 async def revoke_on(conn: Connection, key: LinkKey, *, expected_link_generation: int) -> bool:
-    if not conn.is_in_transaction():
+    if not pg.enabled() or not conn.is_in_transaction():
         raise RuntimeError("source reader unlink requires an authority transaction")
     if type(expected_link_generation) is not int or not 0 < expected_link_generation < 2**63:
         return False

@@ -1,20 +1,14 @@
 import asyncio
+import hashlib
+import json
 import ssl
 import unittest
 from dataclasses import replace
 from uuid import uuid4
 
 import httpx
+import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from source_worker.loom_source_worker.http_service import create_app
-from source_worker.loom_source_worker.protocol import ConnectionBinding, ReadBinding
-from source_worker.loom_source_worker.read_service import (
-    BoundReader,
-    CurrentAccess,
-    Document,
-    ReadLimits,
-    ReadService,
-)
 
 from server.knowledge.app.mcp_worker_authority import RequestedResource
 from server.knowledge.app.mcp_worker_live import _display_link, read_selected_live
@@ -24,23 +18,6 @@ from server.knowledge.app.mcp_worker_read import (
     WorkerReadRefused,
     WorkerReadScope,
 )
-
-
-class _Account:
-    def __init__(self, binding: ConnectionBinding) -> None:
-        self.binding = binding
-
-    async def resolve(self, binding: ReadBinding) -> BoundReader:
-        return self
-
-    async def current(self, binding: ReadBinding) -> ConnectionBinding:
-        return self.binding
-
-    async def read_exact(
-        self, resource_id: str, *, authorize: CurrentAccess, deadline: float
-    ) -> Document:
-        await authorize()
-        return Document(resource_id, "Unpublished", "alpha")
 
 
 class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
@@ -59,16 +36,52 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
             approval_generation=4,
             resource_id="urn:source:Résumé",
         )
-        self.account = _Account(
-            ConnectionBinding(
-                worker_id=self.scope.worker_id,
-                org=self.scope.org,
-                owner=self.scope.requester,
-                connection_id=self.scope.connection_id,
-                generation=self.scope.connection_generation,
-                profile_digest=self.scope.profile_digest,
-            )
+
+    async def _wire_fixture(self, request: httpx.Request) -> httpx.Response:
+        grant = jwt.decode(
+            request.headers["authorization"].removeprefix("Bearer "),
+            self.key.public_key(),
+            algorithms=["EdDSA"],
+            audience=f"urn:loom:source-worker:{self.scope.worker_id}",
+            issuer="loom",
         )
+        claims = grant["grant"]
+        binding = claims["binding"]
+        self.assertEqual(claims["version"], 1)
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(binding["org"], "org")
+        self.assertEqual(binding["namespace"], "team")
+        self.assertEqual(binding["connection_id"], str(self.scope.connection_id))
+        if binding["requester"] != "alice":
+            return httpx.Response(403)
+        if request.url.path == "/v1/live":
+            self.assertEqual(claims["operation"], "live")
+            document = {
+                "resource_id": binding["resource_id"],
+                "title": "Unpublished",
+                "text": "alpha",
+                "revision": None,
+                "source_link": None,
+                "mime_type": "text/plain",
+            }
+        else:
+            self.assertEqual(
+                (request.url.path, claims["operation"]), ("/v1/check-access", "check_access")
+            )
+            document = None
+
+        async def wire():
+            yield json.dumps(
+                {
+                    "status": "ok",
+                    "request_id": claims["request_id"],
+                    "fetched_at": grant["iat"],
+                    "content_sha256": hashlib.sha256(b"alpha").hexdigest(),
+                    "document": document,
+                }
+            ).encode()
+
+        return httpx.Response(200, headers={"Content-Type": "application/json"}, content=wire())
 
     def _channel(
         self,
@@ -78,14 +91,7 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
         tls: ssl.SSLContext | None = None,
     ) -> WorkerReadChannel:
         if transport is None:
-            worker = ReadService(
-                worker_id=self.scope.worker_id,
-                issuer="loom",
-                verifier=self.key.public_key(),
-                backend=self.account,
-                limits=ReadLimits(4, 2, 2, 4096),
-            )
-            transport = httpx.ASGITransport(app=create_app(worker))
+            transport = httpx.MockTransport(self._wire_fixture)
         channel = WorkerReadChannel(
             worker_id=self.scope.worker_id,
             origin="https://source-worker.example.test",
@@ -103,7 +109,7 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
     async def _authorized(self) -> WorkerReadScope:
         return self.scope
 
-    async def test_server_and_worker_use_same_wire_for_live_and_proof(self) -> None:
+    async def test_channel_accepts_checked_live_and_proof_wire(self) -> None:
         channel = self._channel()
         result = await channel.run(self.scope, "live", require_current=self._authorized)
         self.assertIsNotNone(result.document)

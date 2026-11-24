@@ -29,7 +29,8 @@ _ORIGIN_ARGS = ("agent", "-", "actor", "direct")
 
 
 @pytest.fixture
-def conn() -> Mock:
+def conn(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    monkeypatch.setattr(enrollment.pg, "enabled", lambda: True)
     return Mock(
         is_in_transaction=Mock(return_value=True),
         execute=AsyncMock(),

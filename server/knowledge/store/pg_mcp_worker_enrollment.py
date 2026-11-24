@@ -170,7 +170,7 @@ def _origin_args(origin: WriteOrigin) -> tuple[str, str, str, str]:
 
 
 def _require_transaction(conn: Connection) -> None:
-    if not conn.is_in_transaction():
+    if not pg.enabled() or not conn.is_in_transaction():
         raise RuntimeError("account enrollment requires an authority transaction")
 
 
@@ -203,6 +203,8 @@ async def consume_challenge(
 
 async def get_account(conn: Connection, account: AccountKey) -> AccountState | None:
     """Read only the owner's exact account; inactive rows are generation fences."""
+    if not pg.enabled():
+        return None
     row = await conn.fetchrow(_GET, *_account_args(account))
     if row is None:
         return None
@@ -212,6 +214,8 @@ async def get_account(conn: Connection, account: AccountKey) -> AccountState | N
 async def current_reader_account(
     org: str, owner: str, worker_id: UUID, connection_id: UUID
 ) -> tuple[str, AccountState] | None:
+    if not pg.enabled():
+        return None
     async with pg.connection() as conn:
         row = await conn.fetchrow(_CURRENT_READER, org, owner, worker_id, connection_id)
     if row is None:
@@ -233,12 +237,15 @@ async def revoke_account(
 
 async def prune_expired_challenges(conn: Connection, org: str) -> int:
     """Remove at most one org-scoped batch of expired challenges, never account fences."""
+    _require_transaction(conn)
     return int(await conn.fetchval(_PRUNE, org))
 
 
 @asynccontextmanager
 async def owner_transaction(account: AccountKey) -> AsyncIterator[Connection]:
     """Take the existing knowledge scope lock before the account enrollment lock."""
+    if not pg.enabled():
+        raise RuntimeError("account enrollment requires Postgres authority")
     async with pg.transaction() as conn:
         await conn.execute(
             f"SELECT pg_advisory_xact_lock_shared({pg.KNOWLEDGE_LOCK_KEY})",

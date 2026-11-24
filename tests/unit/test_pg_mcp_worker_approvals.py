@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
 from server.knowledge.store import pg_mcp_worker_approvals as approvals
@@ -8,6 +8,7 @@ from server.knowledge.store.pg_mcp_worker_enrollment import WriteOrigin
 
 class TestWorkerApprovals(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        self.enterContext(patch.object(approvals.pg, "enabled", return_value=True))
         self.key = approvals.ApprovalKey("org", "team", UUID(int=2), "a" * 64)
         self.owner = approvals.ApprovalOwner(
             "alice", WriteOrigin("agent", "-", "alice", "asserted")

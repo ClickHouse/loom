@@ -9,6 +9,7 @@ from server.knowledge.store import pg_mcp_worker_readers as readers
 
 class TestWorkerReaderDirectory(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        self.enterContext(patch.object(readers.pg, "enabled", return_value=True))
         self.worker, self.connection, self.source = UUID(int=2), UUID(int=3), UUID(int=4)
         self.key = readers.LinkKey("org", "team", self.source, "bob")
         self.origin = accounts.WriteOrigin("agent", "-", "bob", "asserted")
