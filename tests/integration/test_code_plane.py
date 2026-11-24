@@ -92,7 +92,87 @@ async def test_ingest_lifecycle(code_env) -> None:
     assert s3.symbols_new == 0 and s3.symbols_tombstoned == 0
 
 
-async def test_grep_can_return_distinct_retained_enclosing_bodies(ch_client, monkeypatch) -> None:
+async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
+    from server.code.api.models_read import CodeReadInput
+    from server.code.app import read
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    await _ingest(repo, org, ns)
+
+    async def mirror(_cfg):
+        return "local-mirror"
+
+    async def show_file(_directory, _revision, _path, *, max_bytes):
+        return _SRC
+
+    monkeypatch.setattr(read, "present_dir", mirror)
+    monkeypatch.setattr(read.gitrepo, "show_file", show_file)
+    response = await read.handle_code_read(
+        CodeReadInput(
+            org=org,
+            namespace=ns,
+            ranges=["src/S.cpp:5-6", "src/S.cpp:10", "src/missing.cpp:1", "src/S.cpp:40"],
+        )
+    )
+    assert [r.status for r in response.results] == [
+        "complete",
+        "complete",
+        "not_indexed",
+        "out_of_range",
+    ]
+    source_lines = _SRC.decode().splitlines(keepends=True)
+    for result in response.results[:2]:
+        assert result.indexed_commit == "a" * 40
+        assert result.windows[0].text == "".join(
+            source_lines[result.start_line - 1 : result.end_line]
+        )
+
+
+async def test_read_verifies_mirror_blob_after_incremental_ingest(code_env, monkeypatch) -> None:
+    from server.code.api.models_read import CodeReadInput
+    from server.code.app import read
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    commit = "b" * 40
+    current = _SRC.replace(b"squashImpl();", b"doWork();")
+    await _ingest(repo, org, ns)
+    await _ingest(repo, org, ns, source=current, sha=commit)
+    calls = []
+
+    async def mirror(_cfg):
+        return "local-mirror"
+
+    async def show_file(git_dir, revision, path, *, max_bytes):
+        calls.append((git_dir, revision, path))
+        return current
+
+    monkeypatch.setattr(read, "present_dir", mirror)
+    monkeypatch.setattr(read.gitrepo, "show_file", show_file)
+    response = await read.handle_code_read(
+        CodeReadInput(org=org, namespace=ns, ranges=["src/S.cpp:10", "src/S.cpp:5-10"])
+    )
+    lines = current.decode().splitlines(keepends=True)
+    assert [r.status for r in response.results] == ["complete", "complete"]
+    assert response.results[0].windows[0].text == lines[9]
+    assert response.results[1].windows[0].text == "".join(lines[4:10])
+    assert calls == [("local-mirror", commit, "src/S.cpp")]
+    record = (await repo.live_files_for_path(org, ns, "src/S.cpp"))[0]
+    await repo.insert_rows("code_files", [repo.moved_of("code_files", record, chunk_count=0)])
+    calls.clear()
+    excluded = await read.handle_code_read(
+        CodeReadInput(org=org, namespace=ns, ranges=["src/S.cpp:10"])
+    )
+    assert excluded.results[0].status == "unavailable"
+    assert not excluded.results[0].windows and not calls
+
+
+async def test_grep_returns_distinct_retained_enclosing_bodies_by_default(
+    ch_client, monkeypatch
+) -> None:
     from server.code.api.models_grep import CodeGrepInput
     from server.code.app.grep import handle_code_grep
     from server.code.app.index.repo_registry import read_registry
@@ -106,20 +186,27 @@ async def test_grep_can_return_distinct_retained_enclosing_bodies(ch_client, mon
     org, ns = unique_org("grep-bodies"), "source"
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     await _ingest(CodeRepo(), org, ns)
-    plain = await handle_code_grep(CodeGrepInput(org=org, namespace=ns, pattern="squashImpl"))
-    rich = await handle_code_grep(
-        CodeGrepInput(
-            org=org,
-            namespace=ns,
-            pattern="squashImpl",
-            include_body=True,
-        )
+    plain = await handle_code_grep(
+        CodeGrepInput(org=org, namespace=ns, pattern="squashImpl", include_body=False)
     )
+    rich = await handle_code_grep(CodeGrepInput(org=org, namespace=ns, pattern="squashImpl"))
     assert rich.matches == plain.matches and rich.matches
     assert not plain.definitions
     assert not rich.definitions_partial
     assert len(rich.definitions) == len({row["symbol_id"] for row in rich.definitions}) == 2
     assert all("squashImpl" in row["body"] and not row["body_elided"] for row in rich.definitions)
+    nearby = await handle_code_grep(
+        CodeGrepInput(
+            org=org, namespace=ns, pattern="squashImpl", context_lines=1, include_body=False
+        )
+    )
+    source_lines = _SRC.decode().splitlines(keepends=True)
+    assert nearby.matches == plain.matches and nearby.contexts and not nearby.contexts_partial
+    assert not nearby.definitions
+    for window in nearby.contexts:
+        assert window["text"] == "".join(
+            source_lines[window["start_line"] - 1 : window["end_line"]]
+        )
 
     # A vanished continuation pool reruns lines, but must hydrate only its page.
     from server.code.app import grep
@@ -137,9 +224,9 @@ async def test_grep_can_return_distinct_retained_enclosing_bodies(ch_client, mon
     original = grep.definitions_for
     hydrated = []
 
-    async def bodies(input, matches, budget):
+    async def bodies(input, matches, budget, *, match_commits):
         hydrated.extend((row["path"], row["line"]) for row in matches)
-        return await original(input, matches, budget)
+        return await original(input, matches, budget, match_commits=match_commits)
 
     async def missing_pool(*args):
         return None
@@ -294,6 +381,7 @@ async def test_read_ops_and_abstain(code_env, monkeypatch) -> None:
     from server.code.api.models_symbol import CodeCallersInput, CodeSymbolInput
     from server.code.app.search.handler import handle_code_search
     from server.code.app.symbol import handle_code_callers, handle_code_symbol
+    from server.code.domain.units import _card_of, estimate_unit_tokens
     from server.embedding.fake import fake_model_name
     from server.settings import settings
 
@@ -334,6 +422,35 @@ async def test_read_ops_and_abstain(code_env, monkeypatch) -> None:
     )
     assert any(e.from_symbol == "DB::Squasher::flush" for e in c.edges)
 
+    query = CodeSymbolInput(
+        org=org,
+        namespace=ns,
+        name="DB::Squasher::squashImpl",
+        include_history=False,
+        include_lessons=False,
+    )
+    plain_response = await handle_code_symbol(query)
+    plain = plain_response.definitions[0].examples
+    examples = await handle_code_symbol(query.model_copy(update={"example_context_lines": 2}))
+    sites = examples.definitions[0].examples
+    assert plain and [{k: v for k, v in site.items() if k != "context"} for site in sites] == plain
+    site = next(site for site in sites if site["caller"] == "DB::Squasher::flush")
+    context = site["context"]
+    assert context["commit"] == "a" * 40
+    assert context["start_line"] <= site["line"] <= context["end_line"]
+    assert context["text"].splitlines()[site["line"] - context["start_line"]].strip() == (
+        "void flush() { squashImpl(); }"
+    )
+    plain_definition = plain_response.definitions[0]
+    budget = max(
+        estimate_unit_tokens(plain_definition), estimate_unit_tokens(_card_of(plain_definition))
+    )
+    limited = await handle_code_symbol(
+        query.model_copy(update={"example_context_lines": 2, "token_budget": budget})
+    )
+    assert limited.definitions[0].body == plain_definition.body
+    assert limited.definitions[0].examples == plain
+
 
 async def test_deletion_tombstones_everything(code_env) -> None:
     from server.code.app.index.ingest import tombstone_file
@@ -353,7 +470,10 @@ async def test_file_qualified_symbol_keeps_overloads_and_declines_other_files(co
     from server.code.app.symbol.resolve import _resolve_symbols, near_misses
 
     repo, org, ns = code_env
-    await _ingest(repo, org, ns)
+    source = _SRC.replace(
+        b"namespace DB {\n", b"namespace DB {\nclass Other { public: void insert(int v) {} };\n"
+    )
+    await _ingest(repo, org, ns, source=source)
     plain = await repo.symbols_by_name(org, ns, "Squasher::insert")
     scoped = await _resolve_symbols(repo, org, ns, symbol_id="", name="src/S.cpp:Squasher::insert")
     assert len(scoped) == 2
@@ -363,5 +483,12 @@ async def test_file_qualified_symbol_keeps_overloads_and_declines_other_files(co
         repo, org, ns, symbol_id="", name="src/Other.cpp:Squasher::insert"
     )
     assert not await near_misses(repo, org, ns, "src/Other.cpp:Squasher::insert")
+    close = await near_misses(repo, org, ns, "src/S.cpp:Squasher::inset")
+    assert close[0]["qualified_name"].endswith("Squasher::insert")
+    assert all(row["path"] == "src/S.cpp" for row in close)
+    unqualified = await near_misses(repo, org, ns, "src/S.cpp:inset")
+    names = {row["qualified_name"] for row in unqualified}
+    assert any(name.endswith("Squasher::insert") for name in names)
+    assert any(name.endswith("Other::insert") for name in names)
     limited = await repo.symbols_by_name(org, ns, "insert", path="src/S.cpp", limit=1)
     assert len(limited) == 1 and limited[0]["path"] == "src/S.cpp"

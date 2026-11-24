@@ -66,6 +66,7 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "code.outline",
             "code.path_guards",
             "code.pr_check",
+            "code.read",
             "code.review_brief",
             "code.setting_facts",
             "code.symbol_history",

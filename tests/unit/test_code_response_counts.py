@@ -36,6 +36,19 @@ def test_batched_bodies_and_file_lessons_are_counted_once_where_returned() -> No
     assert "out_lesson_rows" not in project_result(result, op_name="memory.search")
 
 
+def test_grep_reports_returned_lines_and_disclosed_lesson_omissions() -> None:
+    result = {
+        "matches": [{"path": "private.py", "text": "private source"}, {"path": "private.py"}],
+        "lessons_left_out": 5,
+    }
+    projected = project_result(result, op_name="code.grep")
+    assert projected["out_grep_match_lines"] == "2"
+    assert projected["out_lesson_rows_omitted"] == "5"
+    assert "private" not in json.dumps(projected)
+    assert project_result({"matches": []}, op_name="code.grep")["out_grep_match_lines"] == "0"
+    assert "out_grep_match_lines" not in project_result(result, op_name="code.verify")
+
+
 def test_symbol_lessons_and_empty_or_elided_bodies_keep_their_meaning() -> None:
     counts = code_response_counts(
         {
@@ -68,11 +81,16 @@ def test_delivery_counts_reach_the_existing_otel_span_without_io() -> None:
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     with provider.get_tracer(__name__).start_as_current_span("code-read"):
         record_response_counts(
-            project_result({"definitions": [{"body": "abc"}]}, op_name="code.symbol")
+            project_result(
+                {"definitions": [{"body": "abc"}], "matches": [{}], "lessons_left_out": 2},
+                op_name="code.grep",
+            )
         )
     span = exporter.get_finished_spans()[0]
     assert span.attributes["loom.response.code.source_chars"] == 3
     assert span.attributes["loom.response.code.lesson_rows"] == 0
+    assert span.attributes["loom.response.code.grep_match_lines"] == 1
+    assert span.attributes["loom.response.code.lesson_rows_omitted"] == 2
     assert "abc" not in json.dumps(dict(span.attributes))
     provider.shutdown()
 

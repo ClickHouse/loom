@@ -384,6 +384,7 @@ def _synth_payload(model: type, *, seed: _Seed, namespace: str) -> dict[str, Any
         "erasure_id": seed.erasure_id or str(uuid.uuid4()),
         "file": "canary.py",
         "path": "canary.py",
+        "ranges": ["canary.py:1-2"],
         "session_id": "-",
         "user_id": "-",
         "pattern_id": seed.pattern_id or str(uuid.uuid4()),

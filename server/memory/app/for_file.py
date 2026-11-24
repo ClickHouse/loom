@@ -501,6 +501,12 @@ async def _rows_for(
                 "namespace": namespace,
                 "code_state": code_change.worst([a["state"] for a in links]),
                 "code_changed_since": code_change.worst_commit(links),
+                "code_symbols": [
+                    a["qualified_name"]
+                    if a.get("complete") and a["state"] in ("fresh", "moved", "changed")
+                    else ""
+                    for a in links
+                ],
             }
         )
     return out
@@ -666,7 +672,9 @@ async def listing_rows(
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
     rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only, full_values=True)
-    return [_with_ids(_hit(r, input), r) for r in rows], skipped
+    return [
+        _with_ids(_hit(r, input), r) | {"code_symbols": r.get("code_symbols", [])} for r in rows
+    ], skipped
 
 
 def _with_ids(hit: _MemoryForFileHit, row: dict[str, Any]) -> dict[str, Any]:

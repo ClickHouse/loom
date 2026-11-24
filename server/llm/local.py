@@ -1,14 +1,15 @@
 """A chat-completions server the operator runs (Ollama, llama.cpp's server, vLLM).
 
 The request and reply are OpenAI's chat-completions shape, so this is the OpenAI client
-pointed at `LOOM_LOCAL_LLM_BASE_URL`, sending no key. Its calls cost nothing in the cost
-ledger, which lists no price for the model.
+speaking chat completions to `LOOM_LOCAL_LLM_BASE_URL`, sending no key. Its calls cost
+nothing in the cost ledger, which lists no price for the model.
 """
 
 from __future__ import annotations
 
 from server.llm import gateway
-from server.llm.openai import OpenAILLMClient
+from server.llm.chat_completions import ChatCompletions
+from server.llm.openai import OpenAILLMClient, Wire
 
 
 class LocalLLMClient(OpenAILLMClient):
@@ -16,7 +17,7 @@ class LocalLLMClient(OpenAILLMClient):
     _source = "local:chat"
     # Ollama ignores max_completion_tokens without refusing it, so the cap goes as
     # max_tokens, which every chat-completions server reads.
-    _cap_name = "max_tokens"
+    _wire: Wire = ChatCompletions(cap_name="max_tokens")
     _needs_key = False
 
     def _root(self) -> str:

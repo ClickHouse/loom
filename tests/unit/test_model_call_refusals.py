@@ -33,10 +33,11 @@ from tests.unit.switch_state import switch_off
 _BUSY = "The agent has too many inference requests in progress. Retry later."
 
 
-def _chat(text: str) -> dict[str, Any]:
+def _reply(text: str) -> dict[str, Any]:
     return {
-        "choices": [{"message": {"content": text}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        "status": "completed",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": text}]}],
+        "usage": {"input_tokens": 1, "output_tokens": 1},
     }
 
 
@@ -92,7 +93,7 @@ class _Gateway:
             return httpx.Response(200, json={"ranked": [], "results": []})
         if request.url.path.endswith("/classify"):
             return httpx.Response(200, json={"memory_type": "decision"})
-        return httpx.Response(200, json=_chat('["alice"]'))
+        return httpx.Response(200, json=_reply('["alice"]'))
 
     @staticmethod
     def _refusal(agent: str, request: httpx.Request) -> httpx.Response | None:
@@ -306,7 +307,7 @@ def test_a_customers_hold_does_not_block_another_customer(wire, monkeypatch) -> 
 
     def answer(request: httpx.Request) -> httpx.Response:
         sent.append(request.headers["X-Customer"])
-        return _BUDGET if sent[-1] == "first" else httpx.Response(200, json=_chat("ok"))
+        return _BUDGET if sent[-1] == "first" else httpx.Response(200, json=_reply("ok"))
 
     monkeypatch.setattr(_http.get_model_client(), "_transport", httpx.MockTransport(answer))
     with customer.for_org("first", namespace="shared"), pytest.raises(ModelCallRefused):
@@ -449,8 +450,8 @@ def test_a_jobs_hold_is_for_one_path_and_model(wire) -> None:
     assert _job("agent-m", "gpt-4.1-mini").text == '["alice"]'  # another model goes on
     assert _embed_for_job("agent-m") == [[0.5] * 8]  # and so do its embeddings
     assert [(r.url.path, json.loads(r.content)["model"]) for r in wire.sent] == [
-        ("/v1/chat/completions", "gpt-4o-mini"),
-        ("/v1/chat/completions", "gpt-4.1-mini"),
+        ("/v1/responses", "gpt-4o-mini"),
+        ("/v1/responses", "gpt-4.1-mini"),
         ("/v1/embeddings", "m"),
     ]
 
@@ -795,7 +796,7 @@ def test_redirects_preserve_the_model_and_permit_one_short_retry(wire, monkeypat
                 return httpx.Response(307, headers={"Location": request.url.path + "/"})
             if model == "model-a":
                 if wait and sum(path.endswith("/") for path, _ in sent) > 1:
-                    return httpx.Response(200, json=_chat("ok"))
+                    return httpx.Response(200, json=_reply("ok"))
                 if wait:
                     return _error(
                         429,
@@ -805,7 +806,7 @@ def test_redirects_preserve_the_model_and_permit_one_short_retry(wire, monkeypat
                         **{"Retry-After": "0"},
                     )
                 return _BUDGET
-            return httpx.Response(200, json=_chat("ok"))
+            return httpx.Response(200, json=_reply("ok"))
 
     monkeypatch.setattr(_http.get_model_client(), "_transport", Transport())
     _as("agent-a")
@@ -817,4 +818,4 @@ def test_redirects_preserve_the_model_and_permit_one_short_retry(wire, monkeypat
         with pytest.raises(ModelCallRefused):
             _complete("model-a")
         assert _complete("model-b").text == "ok"
-        assert sent[-1] == ("/v1/chat/completions/", "model-b")
+        assert sent[-1] == ("/v1/responses/", "model-b")

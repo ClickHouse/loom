@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from typing import Any
 
@@ -62,21 +61,14 @@ def _is_large_container(row: dict[str, Any]) -> bool:
     return hi - lo + 1 >= AUTO_OUTLINE_MIN_LINES
 
 
-_SCIP_PLACEHOLDER_SIG = re.compile(r"^\(scip:[0-9a-f]+\)$")
-
-
 def outline_entry(row: dict[str, Any]) -> dict[str, Any]:
-    """The wire shape of one outline row: what a reader needs to choose a
-    span, nothing that needs the body. The compiler tier stores an overload
-    hash as its signature (`(scip:49f6e7a0…)`); that is an identity, not a
-    signature, and blanking it saves ~10 tokens on every such row."""
-    sig = str(row.get("signature") or "")[:300]
-    if _SCIP_PLACEHOLDER_SIG.match(sig):
-        sig = ""
+    """A declaration's source location and readable metadata."""
+    from server.code.domain.units import symbol_signature
+
     return {
         "kind": str(row.get("kind") or "function"),
         "qualified_name": str(row.get("qualified_name") or ""),
-        "signature": sig,
+        "signature": symbol_signature(row),
         "start_line": int(row.get("start_line") or 0),
         "end_line": int(row.get("end_line") or 0),
         "tier": str(row.get("tier") or ""),

@@ -56,3 +56,10 @@ One or two sentences: the line or statement that is wrong, why it produces every
 ## Report
 
 The failing cases, the pattern, the cause with `file:line`, the fix, the test that now passes, and the other sites checked.
+
+## Trace a coding-agent attempt
+
+- Join the raw model response to its tool results by call ID. Join Loom retrieval stages and the request ledger by trace run ID, organization and namespace. The ledger captures work after retrieval, including inline lessons, without relying on a remote exporter.
+- For zero Loom calls, check whether the native session received the tool catalog. Distinguish an unavailable tool from a deferred tool the agent never discovered and an available tool the agent chose to skip.
+- Compare the request, the returned evidence and what the next response did. Look for a missing source range, a repeated body or lesson, a stale link, or an avoidable discovery round trip. Distinguish source retrieval from edits, Git and tests.
+- If startup is expensive, check provider cache writes before the first tool response. For a failed fix, compare the submitted patch with the verifier and the evidence the agent received before editing. Replay the narrow failing lookup before rerunning the agent.

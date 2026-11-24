@@ -376,16 +376,16 @@ def test_archetype_cohort_is_the_tasks_a_toolset_lists_every_gold_tool_of(
         {"lock-direct-01", "apply-label-direct-01", "ask-indirect-01", "history-direct-01"} & ids
     )
     assert B.gaps(cohort, coding) == [] and B.gaps(cohort, core_code) == []
-    # the coding listing is 21 tools (including tracker.duplicate_check,
-    # bisect candidates, PR check and blast radius) and carries
+    # The coding listing has 22 tools and carries
     # the code tools without the flag
     assert (
-        len(coding) == 21
+        len(coding) == 22
         and "loom_code_search" in coding
+        and "loom_code_read" in coding
         and "loom_tracker_duplicate_check" in coding
     )
     assert "loom_code_bisect_candidates" in coding and "loom_code_pr_check" in coding
-    assert len(B.load_tools("coding", "standard", "on")) == 21
+    assert len(B.load_tools("coding", "standard", "on")) == 22
     # 10 ops + loom_search, loom_activate, loom_op
     assert len(B.load_tools("core", "standard", "off")) == 13
     # the summary names the arm's settings

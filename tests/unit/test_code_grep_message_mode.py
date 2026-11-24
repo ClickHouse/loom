@@ -449,7 +449,8 @@ def test_literal_hit_is_byte_identical_and_never_falls_back() -> None:
     # and no regex read happens
     assert repo.calls == [("chunks", False)]
     data = json.loads(out.model_dump_json())
-    assert data["matches"] == [] and data["note"] == ""
+    assert data["matches"] == []
+    assert "No exact match" in data["note"]
     assert set(data) == {
         "matches",
         "next_cursor",
@@ -477,7 +478,8 @@ def test_regex_shaped_literal_with_no_chunks_is_run_once_as_a_regex() -> None:
 def test_plain_literal_with_no_chunks_does_not_fall_back() -> None:
     repo = _Repo(literal=[], regex=[LINE_CHUNK])
     out = _grep(repo, pattern="isSerializable")
-    assert repo.calls == [("chunks", False)] and out.matches == [] and out.note == ""
+    assert repo.calls == [("chunks", False)] and out.matches == []
+    assert "code.symbol" in out.note
 
 
 def test_invalid_regex_shaped_literal_only_notes() -> None:
