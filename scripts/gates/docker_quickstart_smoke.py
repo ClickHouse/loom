@@ -144,7 +144,43 @@ def latest_release() -> str:
     ).stdout.strip()
 
 
-def smoke(image: str, extractor_image: str, clickhouse_image: str) -> None:
+def smoke_mcp(inspector: Path, base: str, seeded_value: str) -> None:
+    command = [
+        str(inspector),
+        "--cli",
+        f"{base}/mcp",
+        "--transport",
+        "http",
+        "--format",
+        "json",
+    ]
+    listing = subprocess.check_output([*command, "--method", "tools/list"], text=True, timeout=45)
+    tools = json.loads(listing)["result"]["tools"]
+    assert any(tool["name"] == "loom_memory_get" for tool in tools), "memory read tool is missing"
+    call = subprocess.check_output(
+        [
+            *command,
+            "--method",
+            "tools/call",
+            "--tool-name",
+            "loom_memory_get",
+            "--tool-args-json",
+            json.dumps(
+                {"namespace": "local", "agent": "docker-smoke", "memory_key": "docker/smoke"}
+            ),
+        ],
+        text=True,
+        timeout=45,
+    )
+    result = json.loads(call)["result"]
+    assert not result.get("isError"), result
+    assert result["structuredContent"].get("value") == seeded_value, result
+    print("PASS MCP client lists tools and reads seeded memory over HTTP")
+
+
+def smoke(
+    image: str, extractor_image: str, clickhouse_image: str, mcp_inspector: Path | None = None
+) -> None:
     with tempfile.TemporaryDirectory(prefix="loom-docker-smoke-") as temp:
         root = Path(temp)
         archive, checksum = build(__version__, root / "bundle", clickhouse_image)
@@ -205,6 +241,8 @@ def smoke(image: str, extractor_image: str, clickhouse_image: str) -> None:
             )
             saved = request(base, "/v1/memory.get", {**identity, "memory_key": "docker/smoke"})
             assert saved["found"] and saved["value"] == "Docker memory persists", saved
+            if mcp_inspector is not None:
+                smoke_mcp(mcp_inspector, base, saved["value"])
             extractor = (ROOT / "scripts/gates/docker_extractor_smoke.py").read_text()
             run(*compose, "exec", "-T", "loom", "python", "-", input=extractor, text=True)
             # The service's network is internal: no route out. Its network does hold
@@ -280,5 +318,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--clickhouse-image", help="the release the bundle names; default: the latest, resolved now"
     )
+    parser.add_argument("--mcp-inspector", type=Path, help="path to the installed Inspector client")
     args = parser.parse_args()
-    smoke(args.image, args.extractor_image, args.clickhouse_image or latest_release())
+    smoke(
+        args.image,
+        args.extractor_image,
+        args.clickhouse_image or latest_release(),
+        args.mcp_inspector,
+    )
