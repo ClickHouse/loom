@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   record:
+    name: Record the Pipecat demo
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:

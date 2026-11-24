@@ -96,6 +96,7 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
         "code.bisect_candidates",
         "code.pr_check",
         "code.impact",
+        "code.read",
     }
     # The QA-plane ops a coding session asks for are
     # listed on coding without joining core
@@ -106,7 +107,9 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
         "code.impact",
     }
     # the scratchpad is coding's own; the memory verbs are core's
-    assert _MCP_CODING_OPS - tracker_on_coding - {"working_memory.set"} <= _MCP_CORE_OPS
+    assert (
+        _MCP_CODING_OPS - tracker_on_coding - {"working_memory.set", "code.read"} <= _MCP_CORE_OPS
+    )
     assert not (_MCP_CODING_OPS & _MCP_HIDDEN_OPS)
     assert len(_MCP_CODE_CORE_OPS) == 8
     assert curated_roster("coding", code_tools=False) == _MCP_CODING_OPS | _MCP_CODE_CORE_OPS
@@ -137,7 +140,8 @@ def test_coding_listing_is_its_roster_plus_the_code_tools_regardless_of_the_flag
     for code in (False, True):
         tools = _listing("coding", code)
         names = _names(tools)
-        assert len(tools) == len(_MCP_CODING_OPS | _MCP_CODE_CORE_OPS) + len(SYNTHETIC) == 21
+        assert len(tools) == len(_MCP_CODING_OPS | _MCP_CODE_CORE_OPS) + len(SYNTHETIC) == 22
+        assert "loom_code_read" in names
         assert SYNTHETIC <= names
         assert {TOOL_TO_OP[n] for n in names - SYNTHETIC} == _MCP_CODING_OPS | _MCP_CODE_CORE_OPS
     # what the census found no coding client calling is not listed …
@@ -176,7 +180,7 @@ def test_toolset_is_selectable_per_deployment_and_per_request():
     assert resolve_toolset(None, "bogus") == "core", "an unknown configured value is core"
     assert resolve_toolset("", None) == "core"
     # the per-request override on a `core` deployment is the coding listing
-    assert len(_listing("core", True, requested="coding")) == 21
+    assert len(_listing("core", True, requested="coding")) == 22
     assert (
         len(_listing("core", True, requested="bogus"))
         == len(_MCP_CORE_OPS | _MCP_CODE_CORE_OPS) + 3
@@ -385,21 +389,22 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
-def test_coding_search_and_discovery_entrypoints_load_upfront_by_default(
-    monkeypatch, profile
-) -> None:
+def test_coding_search_and_definition_tools_load_upfront_by_default(monkeypatch, profile) -> None:
     default = Settings.model_fields["mcp_always_load_tools"].get_default()
     monkeypatch.setattr(settings, "mcp_always_load_tools", default)
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
-    assert len(tools) == 21
+    assert len(tools) == 22
     flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
-    assert flagged == {
-        "loom_search",
-        "loom_code_search",
-        "loom_code_symbol",
-        "loom_code_grep",
-        "loom_op",
-    }
+    assert flagged == {"loom_code_search", "loom_code_symbol", "loom_code_grep"}
+    assert {"loom_op", "loom_search"} <= {tool["name"] for tool in tools}
+
+
+@pytest.mark.parametrize("toolset", ["core", "coding+tracker"])
+def test_other_default_toolsets_keep_the_generic_dispatcher_upfront(monkeypatch, toolset) -> None:
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "auto")
+    tools = asyncio.run(mt._tools_descriptor(toolset=toolset))
+    dispatcher = next(tool for tool in tools if tool["name"] == "loom_op")
+    assert dispatcher["_meta"]["anthropic/alwaysLoad"] is True
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
@@ -536,19 +541,26 @@ def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -
 
 def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     coding = mcp_primer._coding_instructions("coding")
+    assert "Use Loom first to search and read unchanged indexed source, including tests" in coding
+    assert "Start with `loom_code_symbol` for a named definition or enclosing class" in coding
     for name, purpose in (
-        ("loom_code_symbol", "for a named definition"),
-        ("loom_code_search", "for an issue, task or conceptual question"),
+        ("loom_code_search", "for behavior or an issue"),
         ("loom_code_grep", "for exact text or an error"),
+        ("loom_code_read", "to read known line ranges together"),
         ("loom_code_callers", "for callers"),
         ("loom_code_impact", "for change effects"),
         ("loom_code_context_pack", "for a task briefing"),
     ):
         assert f"`{name}` {purpose}" in coding
-    assert "ToolSearch" in coding
+    assert "In Claude Code, find deferred tools with ToolSearch" in coding
     assert "linked lessons" in coding
-    assert "uncommitted or unindexed" in coding
-    assert "current context already answers" in coding
+    assert "`code_state`" in coding
+    assert "`uses_brief: true`" in coding
+    assert "Batch related matches or ranges" in coding
+    assert "Use local tools to edit, run tests, and inspect Git" in coding
+    assert "Read locally for working-copy changes, unindexed paths, explicit requests" in coding
+    assert "evidence Loom cannot supply" in coding
+    assert "Reuse source and linked lessons already in context" in coding
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact"])
@@ -566,6 +578,13 @@ async def test_coding_schemas_keep_the_inputs_needed_to_select_and_call_code_too
     ):
         properties = descriptors[name]["inputSchema"]["properties"]
         assert all(properties[field].get("description") for field in fields)
+
+    for name in ("loom_code_search", "loom_code_grep"):
+        cursor = descriptors[name]["inputSchema"]["properties"]["cursor"]["description"]
+        assert "`next_cursor` with the original search arguments" in cursor
+        assert "omit it to start a new search" in cursor
+    regex = descriptors["loom_code_grep"]["inputSchema"]["properties"]["regex"]["description"]
+    assert "without lookaround or backreferences" in regex
 
 
 @pytest.mark.parametrize("defaults", [None, {"namespace": ""}])

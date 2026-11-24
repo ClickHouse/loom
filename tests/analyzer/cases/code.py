@@ -68,6 +68,10 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
     regex = c["scope"] == "regex"
     await repo.grep_chunks(ORG, NS, "needle", regex=regex, path_prefix=prefix, scope=scope)
     await repo.grep_source_chunks_for_span(ORG, NS, "src/a.py", 1, 20, MODEL)
+    await repo.source_chunks_for_span(ORG, NS, "src/a.py", 1, 20, MODEL, with_revision=True)
+    await repo.source_chunks_for_span(
+        ORG, NS, "src/a.py", 1, 20, MODEL, with_revision=True, owner=["symbol-id"]
+    )
     if regex:
         # An alternation gets the needle guard in front of match()
         await repo.grep_chunks(ORG, NS, "needle|other", regex=True, path_prefix=prefix, scope=scope)
@@ -148,6 +152,7 @@ async def _edges(ch: RecordingCH, c: dict[str, Any]) -> None:
         min_confidence=c["min_confidence"],
         per_match=c["per_match"],
     )
+    await repo.edges_for_symbols(ORG, NS, ["s1", "s2"], direction="callers", with_revision=True)
     await repo.live_edges_to_symbols(
         ORG,
         NS,
@@ -314,6 +319,13 @@ async def _point_readers(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     await repo.symbols_by_name(ORG, NS, "f")
     await repo.functions_for_paths(ORG, NS, ["src/a.py"], with_extent_only=tests_flag)
+    revisions = {"src/a.py": "a" * 40}
+    await repo.functions_for_paths(
+        ORG, NS, ["src/a.py"], with_extent_only=tests_flag, with_revision=True
+    )
+    await repo.function_chunk_starts(
+        ORG, NS, MODEL, [("src/a.py", "symbol-id", 2)], revisions=revisions
+    )
     await repo.outline_for_path(ORG, NS, "src/a.py")
     await repo.class_skeleton_chunk(ORG, NS, "src/a.py", "Klass")
     await repo.scip_covered_paths(ORG, NS, ["src/a.py"])

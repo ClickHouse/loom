@@ -16,15 +16,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
+from server.code.domain.anchor import local_name
 from server.memory.api.models_for_file import MemoryForFileInput
 from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
-from server.memory.domain.decision_schema import CONSTRAINT_TAG
+from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
 from server.memory.domain.lemmatize import snowball_stem_tokens
 from server.memory.domain.recall import query_tokens
+from server.memory.store import code_links
+
+logger = logging.getLogger(__name__)
 
 
 def _excerpt(hit: dict[str, Any]) -> str | None:
@@ -75,11 +81,31 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
 
 
 class Lessons(NamedTuple):
-    """The rows served, and how many rows about these files the cap, a cut or a newer row
-    read here that supersedes them left out (memory.for_file lists them)."""
+    """The rows served and how many file lessons were left out (memory.for_file lists them)."""
 
     rows: list[dict[str, Any]]
     left_out: int = 0
+
+
+class GrepMatchLines(NamedTuple):
+    """Retained revisions of all grep matches and line numbers of unscoped matches."""
+
+    unscoped: dict[str, set[int]]
+    revisions: dict[str, set[str]]
+
+    def excludes(self, link: code_links.LinkRow) -> bool:
+        path = link["path"]
+        revisions = self.revisions.get(path)
+        if revisions is None:
+            return True
+        checked_commit = link["checked_commit"]
+        if not checked_commit or revisions != {checked_commit}:
+            return False
+        lines = self.unscoped.get(path)
+        if not lines:
+            return True
+        start, end = link["start_line"], link["end_line"]
+        return 0 < start <= end and all(line > 0 and not start <= line <= end for line in lines)
 
 
 def _ordered_candidates(
@@ -102,6 +128,85 @@ def _ordered_candidates(
     return sorted(candidates, key=rank)
 
 
+def _excludes_other_symbol(hit: dict[str, Any], path: str, symbols: set[str]) -> bool:
+    if hit.get("pinned") or is_whole_row(hit.get("memory_type", ""), hit.get("tags") or []):
+        return False
+    return _outside_scope(hit.get("code_symbols", []), path, symbols)
+
+
+def _outside_scope(names: Sequence[str], path: str, symbols: set[str]) -> bool:
+    anchors = [local_name(name, path) for name in names]
+    # A chunk can hold a nested declaration without naming it as its own scope.
+    return bool(anchors) and all(
+        name
+        and not any(
+            name == scope or name.startswith(scope + ".") or scope.startswith(name + ".")
+            for scope in symbols
+        )
+        for name in anchors
+    )
+
+
+def _focused_paths(
+    candidates: list[tuple[str, dict[str, Any]]],
+    matched_symbols: dict[str, set[str]],
+    superseded: set[str],
+) -> set[str]:
+    """Focus a file only where the read found a whole lesson for a matched symbol."""
+    return {
+        path
+        for path, hit in candidates
+        if (symbols := matched_symbols.get(path))
+        and str(hit.get("memory_id")) not in superseded
+        and not hit.get("value_truncated")
+        and any(name and local_name(name, path) in symbols for name in hit.get("code_symbols", []))
+    }
+
+
+async def _confirmed_omissions(
+    org: str,
+    trunk_ns: str,
+    candidates: list[tuple[str, dict[str, Any]]],
+    symbols: dict[str, set[str]],
+    focused: set[str],
+    timeout_s: float | None,
+    grep_lines: GrepMatchLines | None,
+) -> set[tuple[str, str]]:
+    """Path reads miss pending links. Check only the rows being considered for omission."""
+    omitted = {
+        (path, mid)
+        for path, hit in candidates
+        if path in focused
+        and (mid := str(hit.get("memory_id") or ""))
+        and _excludes_other_symbol(hit, path, symbols[path])
+    }
+    if not omitted or not trunk_ns or (timeout_s is not None and timeout_s <= 0):
+        return set()
+    try:
+        async with asyncio.timeout(timeout_s):
+            links = await code_links.for_memories(org, sorted({mid for _, mid in omitted}))
+    except Exception as error:  # noqa: BLE001 — without confirmation, keep the lessons
+        logger.debug("Scope check unavailable for code lessons: %s", type(error).__name__)
+        return set()
+    resolved: dict[tuple[str, str], list[str]] = defaultdict(list)
+    uncertain: set[str] = set()
+    for link in links:
+        if link["code_namespace"] != trunk_ns:
+            continue
+        if not link["complete"] or link["state"] not in ("fresh", "moved", "changed"):
+            uncertain.add(link["memory_id"])
+        elif grep_lines is not None and not grep_lines.excludes(link):
+            uncertain.add(link["memory_id"])
+        else:
+            resolved[(link["path"], link["memory_id"])].append(link["qualified_name"])
+    return {
+        (path, mid)
+        for path, mid in omitted
+        if mid not in uncertain
+        and _outside_scope(resolved.get((path, mid), []), path, symbols[path])
+    }
+
+
 async def lessons_for_paths(
     org: str,
     namespaces: Sequence[str],
@@ -111,6 +216,8 @@ async def lessons_for_paths(
     token_budget: int,
     timeout_s: float | None = None,
     query: str = "",
+    matched_symbols: dict[str, set[str]] | None = None,
+    grep_lines: GrepMatchLines | None = None,
 ) -> Lessons:
     """The live memories of `namespaces` (each already checked readable) that name or are
     linked to code in `paths`, in path order, then each file's memory.for_file order (past
@@ -126,9 +233,13 @@ async def lessons_for_paths(
     when the conflict check linked one. `timeout_s` bounds the file reads together;
     failed or unfinished reads leave the completed files' rows intact. A nonempty `query`
     ranks matching excerpts after constraints and pins across the selected paths,
-    preserving path and listing order on ties."""
+    preserving path and listing order on ties. Uncapped grep matches focus lessons on
+    the returned definitions. Search focuses a file when a matched definition has a
+    complete lesson. File-wide or uncertain links, decisions, constraints and pins
+    remain eligible."""
     if not namespaces or not paths:
         return Lessons([])
+    started = asyncio.get_running_loop().time()
     # memory.for_file takes two extra namespaces and follows code links only into the
     # trunk an extra one names: each read names the trunk and two caller namespaces.
     own = [ns for ns in namespaces if ns != trunk_ns] or [trunk_ns]
@@ -157,9 +268,22 @@ async def lessons_for_paths(
         for hit in hits
         if _names_this_file(hit, inp.path)
     ]
+    symbols = (matched_symbols or {}) if not token_budget else {}
+    focused = (
+        set(symbols) if grep_lines is not None else _focused_paths(candidates, symbols, superseded)
+    )
+    remaining = (
+        None if timeout_s is None else timeout_s - (asyncio.get_running_loop().time() - started)
+    )
+    omitted = await _confirmed_omissions(
+        org, trunk_ns, candidates, symbols, focused, remaining, grep_lines
+    )
     for path, hit in _ordered_candidates(candidates, query):
         key = (str(hit["namespace"]), str(hit["memory_key"]))
         if key in seen:
+            continue
+        if (path, str(hit.get("memory_id") or "")) in omitted:
+            left.add(key)
             continue
         stale = str(hit.get("memory_id")) in superseded
         lesson = None if stale else _lesson(hit, path)

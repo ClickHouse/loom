@@ -85,14 +85,31 @@ underscores. Toolsets: [MCP reference](../../reference/mcp.md#toolsets).
 | `code.map`       | you want an orientation map of the repository's modules                                                                                                                                           |
 | `code.trace`     | you have a stack trace: each frame resolved to its unit                                                                                                                                           |
 
-In matches mode, `code.grep(include_body=true)` returns the enclosing definitions
-beside the hit lines. Each definition appears once; its `lines` lists the matching
-locations. The same retained-source reader backs `code.enclosing`, including type
-and document-section fallback. No token budget is imposed on these bodies.
+Pass `pattern` as a list of exact strings to find any of them in one scan. For
+example, `["parse(", "parse_async("]` matches both fragments without escaping
+the parentheses. All alternatives share a result limit, and each matching line
+or file appears once.
+`mode: "message"` and `regex: true` require a single string.
 
-The default remains matching lines only. Bodies are read only for the served page,
-and page reruns remove definitions belonging to earlier pages. If source cannot be
-read, matching lines remain available with `definitions_partial=true` and a
+In matches mode, `code.grep` returns the enclosing definitions beside the hit
+lines by default. Pass `include_body=false` for names, lines or locations only.
+Each definition appears once. Its `lines` lists the matching
+locations. The same retained-source reader backs `code.enclosing`, including type
+and document-section fallback. The Python index keeps decorators in their
+owning function's source chunk, so a hit inside a decorator can return the
+complete definition. No token budget is imposed on these grep bodies.
+
+`code.grep(context_lines=3)` adds up to three retained lines on either side of
+each match in `contexts`. Each window gives its path, inclusive source line
+range and exact text at the match's retained revision. Overlapping lines in the
+served page appear once. Conflicting lines and context with uncertain revision
+are left out and set `contexts_partial=true`. Windows stop at the edges of
+available source chunks. The option is available in matches mode.
+
+The default returns matching lines. Bodies are read only for the served page
+and must contain the matching line at its retained revision. Page reruns remove
+definitions belonging to earlier pages. If source cannot be verified,
+matching lines remain available with `definitions_partial=true` and a
 `definitions_note`. Unresolved or elided definitions retain their structural
 disclosures and next lookup when available. Check those fields before treating a
 missing body as missing code. The flag is rejected outside matches mode.
@@ -136,10 +153,23 @@ d = await agent.code.symbol("QuotaLimiter::check", uses_brief=True, include_body
 located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes.py:140"])
 ```
 
+Set `example_context_lines` on `code.symbol` to return retained source around each
+usage example alongside the definition. Where the source is available, the
+example's `context` contains `commit`, `start_line`, `end_line` and `text`.
+Source must match the indexed revision of the usage site. An explicit token
+budget reserves room for the definition before adding usage context.
+
 `code.search` fields worth knowing: `path_prefix`, `path_globs` / `exclude_globs`
 (rg `-g`), `langs` (rg `-t`), `pattern` (constrains both legs to chunks containing it),
 `bodies: "none"` (spans and signatures only, the cheapest answer), `token_budget`,
 `expand` (one LLM hop to bridge wording to identifiers) and `cursor` for the next page.
+
+For `code.search` and `code.grep` in matches mode, pass the returned `next_cursor` as
+`cursor` with the original search arguments to get the next page. Omit `cursor`
+when starting a new search with a different query, pattern or filters.
+
+`code.grep` includes linked lessons when available. Set `include_lessons: false`
+for a follow-up lookup when the relevant notes are already in context.
 
 `code.search` has no response token cap by default. Set
 `LOOM_CODE_SEARCH_TOKEN_BUDGET` to a positive token count to set a deployment default;
@@ -370,6 +400,11 @@ explicitly capped container lookups can return a skeleton and member outline.
 defaults to `0`. An explicit request value of `0` overrides a finite deployment cap.
 Attached file lessons use `code_result_lessons_tokens`, also unlimited by default.
 The internal code grounding reads for memory questions likewise default to no token cap.
+
+For search and grep matches, a file with a lesson linked to a returned definition
+can omit ordinary lessons linked only to other definitions in that file.
+File-level results keep their wider scope. Constraints, decisions, pins, file
+notes and uncertain links stay eligible. `lessons_left_out` includes omissions.
 
 Result counts, requested body modes, access checks, source completeness checks and
 execution deadlines still apply. Unlimited does not reconstruct source absent from the
