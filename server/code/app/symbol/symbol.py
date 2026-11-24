@@ -312,6 +312,8 @@ async def _enrichment(
         )
         by_line = {(site["path"], site["line"]): site for site in sites}
         named = [by_line.pop((site["path"], site["line"]), site) for site in named]
+        if by_line and all(site.get("evidence") == "name_reference" for site in named):
+            named = named[:2]
         return (named + list(by_line.values()))[:3]
 
     with code_span("symbol.enrich"):

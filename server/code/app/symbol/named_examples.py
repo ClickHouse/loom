@@ -18,7 +18,7 @@ async def named_test_examples(
 ) -> list[dict[str, Any]]:
     """Read named tests that mention the identifier in verified indexed source."""
     name = str(definition.get("name") or "")
-    if not name.isidentifier() or not settings.embedding_model:
+    if len(name) < 3 or not name.isidentifier() or not settings.embedding_model:
         return []
     reference = re.compile(rf"\b{re.escape(name)}\b")
     model = served_model_label(settings.embedding_model)
