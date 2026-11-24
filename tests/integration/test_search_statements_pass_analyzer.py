@@ -1253,11 +1253,12 @@ async def test_threads_and_category_read_statements_pass_the_analyzer(
     from server.identity.app import namespace_catalog as ns_handlers
     from server.knowledge.api.models_conversations import ConversationThreadsInput
     from server.knowledge.app.conversations import handle_conversation_threads
+    from server.knowledge.store import conversations as conversation_repo
 
     ch = _StubCHWithOne()
     ch.query_all_returns.append([{"category_id": "c1", "name": "n", "description": "d"}])
     monkeypatch.setattr(ns_handlers, "get_client", lambda: ch)
-    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    monkeypatch.setattr(conversation_repo, "_default_client", lambda: ch)
     await ns_handlers.handle_namespace_list_categories(
         NamespaceListCategoriesInput(org="o", namespace="ns")
     )

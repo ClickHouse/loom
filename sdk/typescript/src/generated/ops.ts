@@ -873,6 +873,7 @@ export interface CodeFirstBuildOutput {
 }
 
 export interface CodeGrepInput {
+  /** Include linked lessons (default true) or set false when you already have the relevant notes. */
   include_lessons?: boolean;
   lesson_namespaces?: string[];
   org?: string;
@@ -880,16 +881,20 @@ export interface CodeGrepInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Exact text to find, or an RE2 expression when regex is true. */
-  pattern: string;
+  /** Literal text, a list of alternatives, or one RE2 expression with regex=true. */
+  pattern: string | string[];
+  /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
   case_sensitive?: boolean;
-  /** Include distinct enclosing bodies in matches mode; default false. */
-  include_body?: boolean;
+  /** Retained lines on each side of a match. */
+  context_lines?: number;
   path_prefix?: string;
+  /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";
+  /** Return bodies by default in matches mode, or set false for lines only. */
+  include_body?: boolean;
   limit?: number | null;
   path_globs?: string[];
   exclude_globs?: string[];
@@ -904,6 +909,8 @@ export interface CodeGrepOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
+  contexts?: Array<Record<string, unknown>>;
+  contexts_partial?: boolean;
   definitions?: Array<Record<string, unknown>>;
   definitions_partial?: boolean;
   definitions_note?: string;
@@ -1241,6 +1248,36 @@ export interface CodePrCheckOutput {
   trace_run_id?: string;
 }
 
+export interface CodeReadInput {
+  org?: string;
+  namespace?: string;
+  agent?: string;
+  user_id?: string;
+  consumer?: string;
+  /** Repo-relative path:start-end ranges with inclusive one-based line numbers. */
+  ranges: string[];
+}
+
+export interface CodeReadRange {
+  path: string;
+  start_line: number;
+  end_line: number;
+  status: "complete" | "partial" | "not_indexed" | "out_of_range" | "unavailable";
+  indexed_commit?: string;
+  windows?: CodeReadWindow[];
+}
+
+export interface CodeReadWindow {
+  start_line: number;
+  end_line: number;
+  text: string;
+}
+
+export interface CodeReadOutput {
+  results: CodeReadRange[];
+  as_of: Record<string, unknown>;
+}
+
 export interface CodeRecentCommitsInput {
   org?: string;
   namespace?: string;
@@ -1571,6 +1608,7 @@ export interface CodeSearchInput {
   top_k?: number;
   token_budget?: number | null;
   path_prefix?: string;
+  /** Pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   rerank?: string;
@@ -1698,6 +1736,8 @@ export interface CodeSymbolInput {
   include_body?: boolean;
   include_history?: boolean;
   include_examples?: boolean;
+  /** Retained source lines on each side of a usage example. Default 0 omits text. */
+  example_context_lines?: number;
   include_lessons?: boolean;
   lesson_namespaces?: string[];
   token_budget?: number;
@@ -6334,6 +6374,8 @@ export interface MemoryListInput {
   tags?: string[];
   tags_every?: boolean;
   contains?: string | null;
+  pinned_only?: boolean;
+  conflicted_only?: boolean;
   fields?: string[];
   known_version?: number | string | null;
 }
@@ -10555,6 +10597,7 @@ export type OpName =
   | "code.outline"
   | "code.path_guards"
   | "code.pr_check"
+  | "code.read"
   | "code.recent_commits"
   | "code.refresh"
   | "code.reindex"
@@ -10934,6 +10977,7 @@ export interface OpMap {
   "code.outline": { input: CodeOutlineInput; output: CodeOutlineOutput };
   "code.path_guards": { input: CodePathGuardsInput; output: CodePathGuardsOutput };
   "code.pr_check": { input: CodePrCheckInput; output: CodePrCheckOutput };
+  "code.read": { input: CodeReadInput; output: CodeReadOutput };
   "code.recent_commits": { input: CodeRecentCommitsInput; output: CodeRecentCommitsOutput };
   "code.refresh": { input: CodeRefreshInput; output: CodeRefreshOutput };
   "code.reindex": { input: CodeReindexInput; output: CodeReindexOutput };
@@ -11313,6 +11357,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "code.outline", group: "code", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "code.path_guards", group: "code", method: "pathGuards", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "code.pr_check", group: "code", method: "prCheck", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 600, audit: false, readOnly: true },
+  { name: "code.read", group: "code", method: "read", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "code.recent_commits", group: "code", method: "recentCommits", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "code.refresh", group: "code", method: "refresh", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 1000, audit: true, readOnly: false },
   { name: "code.reindex", group: "code", method: "reindex", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
@@ -11657,4 +11702,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 376;
+export const GENERATED_OP_COUNT = 377;

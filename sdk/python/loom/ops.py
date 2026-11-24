@@ -77,6 +77,7 @@ OpName = Literal[
     "code.outline",
     "code.path_guards",
     "code.pr_check",
+    "code.read",
     "code.recent_commits",
     "code.refresh",
     "code.reindex",
@@ -456,6 +457,7 @@ OP_NAMES: tuple[str, ...] = (
     "code.outline",
     "code.path_guards",
     "code.pr_check",
+    "code.read",
     "code.recent_commits",
     "code.refresh",
     "code.reindex",
@@ -1250,6 +1252,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         600,
+        False,
+        True,
+    ),
+    "code.read": OpSpec(
+        "code.read",
+        "CodeReadInput",
+        "CodeReadBody",
+        "CodeReadOutput",
+        True,
+        "viewer",
+        "experimental",
+        800,
         False,
         True,
     ),
@@ -6550,14 +6564,15 @@ class CodeGrepInput(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    pattern: Required[str]
+    pattern: Required[Union[str, list[str]]]
     regex: NotRequired[bool]
     case_sensitive: NotRequired[bool]
-    include_body: NotRequired[bool]
+    context_lines: NotRequired[int]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
     mode: NotRequired[Literal["matches", "files", "presence", "message"]]
+    include_body: NotRequired[bool]
     limit: NotRequired[Optional[int]]
     path_globs: NotRequired[list[str]]
     exclude_globs: NotRequired[list[str]]
@@ -6578,14 +6593,15 @@ class CodeGrepBody(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    pattern: Required[str]
+    pattern: Required[Union[str, list[str]]]
     regex: NotRequired[bool]
     case_sensitive: NotRequired[bool]
-    include_body: NotRequired[bool]
+    context_lines: NotRequired[int]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
     mode: NotRequired[Literal["matches", "files", "presence", "message"]]
+    include_body: NotRequired[bool]
     limit: NotRequired[Optional[int]]
     path_globs: NotRequired[list[str]]
     exclude_globs: NotRequired[list[str]]
@@ -6600,6 +6616,8 @@ class CodeGrepOutput(TypedDict, total=False):
     lessons: NotRequired[list[dict[str, Any]]]
     lessons_left_out: NotRequired[int]
     matches: Required[list[dict[str, Any]]]
+    contexts: NotRequired[list[dict[str, Any]]]
+    contexts_partial: NotRequired[bool]
     definitions: NotRequired[list[dict[str, Any]]]
     definitions_partial: NotRequired[bool]
     definitions_note: NotRequired[str]
@@ -7086,6 +7104,44 @@ class CodePrCheckOutput(TypedDict, total=False):
     legs: NotRequired[dict[str, Any]]
     draft: NotRequired[dict[str, Any]]
     trace_run_id: NotRequired[str]
+
+
+class CodeReadInput(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    consumer: NotRequired[str]
+    ranges: Required[list[str]]
+
+
+class CodeReadBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    consumer: NotRequired[str]
+    ranges: Required[list[str]]
+
+
+class CodeReadOutput(TypedDict, total=False):
+    results: Required[list["CodeReadRange"]]
+    as_of: Required[dict[str, Any]]
+
+
+class CodeReadRange(TypedDict, total=False):
+    path: Required[str]
+    start_line: Required[int]
+    end_line: Required[int]
+    status: Required[Literal["complete", "partial", "not_indexed", "out_of_range", "unavailable"]]
+    indexed_commit: NotRequired[str]
+    windows: NotRequired[list["CodeReadWindow"]]
+
+
+class CodeReadWindow(TypedDict, total=False):
+    start_line: Required[int]
+    end_line: Required[int]
+    text: Required[str]
 
 
 class CodeRecentCommitsInput(TypedDict, total=False):
@@ -7798,6 +7854,7 @@ class CodeSymbolInput(TypedDict, total=False):
     include_body: NotRequired[bool]
     include_history: NotRequired[bool]
     include_examples: NotRequired[bool]
+    example_context_lines: NotRequired[int]
     include_lessons: NotRequired[bool]
     lesson_namespaces: NotRequired[list[str]]
     token_budget: NotRequired[int]
@@ -7825,6 +7882,7 @@ class CodeSymbolBody(TypedDict, total=False):
     include_body: NotRequired[bool]
     include_history: NotRequired[bool]
     include_examples: NotRequired[bool]
+    example_context_lines: NotRequired[int]
     include_lessons: NotRequired[bool]
     lesson_namespaces: NotRequired[list[str]]
     token_budget: NotRequired[int]
@@ -14617,6 +14675,8 @@ class MemoryListInput(TypedDict, total=False):
     tags: NotRequired[list[str]]
     tags_every: NotRequired[bool]
     contains: NotRequired[Optional[str]]
+    pinned_only: NotRequired[bool]
+    conflicted_only: NotRequired[bool]
     fields: NotRequired[list[str]]
     known_version: NotRequired[Union[int, str, None]]
 
@@ -14647,6 +14707,8 @@ class MemoryListBody(TypedDict, total=False):
     tags: NotRequired[list[str]]
     tags_every: NotRequired[bool]
     contains: NotRequired[Optional[str]]
+    pinned_only: NotRequired[bool]
+    conflicted_only: NotRequired[bool]
     fields: NotRequired[list[str]]
     known_version: NotRequired[Union[int, str, None]]
 

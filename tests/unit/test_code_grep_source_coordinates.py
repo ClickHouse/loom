@@ -6,6 +6,7 @@ import pytest
 
 from server.code.api.models_grep import CodeGrepInput
 from server.code.app.grep import _matching_lines
+from server.code.app.grep_source import collect_contexts, page_contexts
 from server.code.app.symbol.uses import _uses_lines
 
 
@@ -43,6 +44,107 @@ def test_unicode_string_separators_are_not_source_line_boundaries() -> None:
     }
     matches, _ = _matching_lines([row], {}, CodeGrepInput(pattern="target"), None, 20)
     assert [(hit["line"], hit["text"]) for hit in matches] == [(3, "return target()")]
+
+
+def test_grep_context_unions_overlapping_windows_on_the_served_page() -> None:
+    text = "def register():\n    after(target)\n    before(target)\n    return done\n"
+    chunk = {
+        "path": "cli.py",
+        "scope": "register",
+        "kind": "function",
+        "start_line": 20,
+        "end_line": 23,
+        "content": "# Presentation prefix\n" + text,
+        "indexed_commit": "a" * 40,
+    }
+    request = CodeGrepInput(pattern="target", context_lines=1)
+    matches, _ = _matching_lines([chunk], {}, request, None, 20)
+    pool = collect_contexts(
+        [chunk],
+        matches,
+        request.context_lines,
+        1000,
+        match_commits={("cli.py", 21): "a" * 40, ("cli.py", 22): "a" * 40},
+    )
+    combined = page_contexts(pool, matches, request.context_lines)
+    assert [hit["line"] for hit in matches] == [21, 22]
+    assert combined["contexts"] == [
+        {"path": "cli.py", "start_line": 20, "end_line": 23, "text": text}
+    ]
+    next_page = page_contexts(pool, matches[1:], request.context_lines)
+    assert next_page["contexts"][0]["start_line"] == 21
+    assert not combined["contexts_partial"]
+
+
+def test_grep_context_discloses_conflicting_lines_from_duplicate_hits() -> None:
+    row = {
+        "path": "app.py",
+        "scope": "",
+        "start_line": 1,
+        "end_line": 2,
+        "content": "prepare()\ntarget()\n",
+        "indexed_commit": "a" * 40,
+    }
+    chunks = [row, {**row, "content": "setup()\ntarget()\n"}]
+    request = CodeGrepInput(pattern="target", context_lines=1)
+    matches, _ = _matching_lines(chunks, {}, request, None, 20)
+    assert [hit["line"] for hit in matches] == [2]
+    pool = collect_contexts(
+        chunks, matches, request.context_lines, 1000, match_commits={("app.py", 2): "a" * 40}
+    )
+    output = page_contexts(pool, matches, request.context_lines)
+    assert output == {
+        "contexts": [{"path": "app.py", "start_line": 2, "end_line": 2, "text": "target()\n"}],
+        "contexts_partial": True,
+    }
+
+
+def test_grep_context_excludes_lines_from_other_revisions() -> None:
+    row = {
+        "path": "app.py",
+        "scope": "",
+        "start_line": 10,
+        "end_line": 10,
+        "content": "target()\n",
+        "indexed_commit": "a" * 40,
+    }
+    other = {
+        **row,
+        "start_line": 11,
+        "end_line": 11,
+        "content": "# target at another revision\n",
+        "indexed_commit": "b" * 40,
+    }
+    all_matches = [{"path": "app.py", "line": line} for line in (10, 11)]
+    commits = {("app.py", 10): "a" * 40, ("app.py", 11): "b" * 40}
+    matches = all_matches[:1]
+    pool = collect_contexts([row, other], matches, 1, 1000, match_commits=commits)
+    assert page_contexts(pool, matches, 1) == {
+        "contexts": [{"path": "app.py", "start_line": 10, "end_line": 10, "text": "target()\n"}],
+        "contexts_partial": True,
+    }
+    ambiguous = collect_contexts([row, other], all_matches, 1, 1000, match_commits=commits)
+    assert page_contexts(ambiguous, all_matches, 1) == {"contexts": [], "contexts_partial": True}
+
+
+def test_a_grep_line_uses_retained_chunk_provenance() -> None:
+    row = {
+        "path": "m.py",
+        "scope": "",
+        "start_line": 124,
+        "end_line": 124,
+        "content": "target = 1\n",
+        "indexed_commit": "b" * 40,
+    }
+    request = CodeGrepInput(pattern="target")
+    commits: dict[tuple[str, int], str] = {}
+    matches, _ = _matching_lines([row], {}, request, None, 20, match_commits=commits)
+    assert commits == {("m.py", 124): "b" * 40}
+    assert "indexed_commit" not in matches[0]
+    other = {**row, "indexed_commit": "a" * 40}
+    repeated, _ = _matching_lines([row, other], {}, request, None, 20, match_commits=commits)
+    assert repeated == matches
+    assert commits == {("m.py", 124): ""}
 
 
 def test_compacted_class_text_does_not_invent_a_matching_source_line() -> None:

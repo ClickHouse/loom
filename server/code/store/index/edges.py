@@ -416,6 +416,7 @@ class EdgesMixin(CodeRepoBase):
         limit: int = 200,
         min_confidence: float = 0.0,
         per_match: int | None = None,
+        with_revision: bool = False,
     ) -> list[dict[str, Any]]:
         """One hop of live edges. Both tiers returned with tier marked; the
         service layer prefers scip edges per (from,to) pair.
@@ -457,13 +458,16 @@ class EdgesMixin(CodeRepoBase):
         match_col = "to_symbol_id" if direction == "callers" else "from_symbol_id"
         kinds = edge_kinds or ["calls"]
         per_match_sql = f"LIMIT {{per_match:UInt32}} BY {match_col}" if per_match else ""
+        revision_sql = (
+            ", toString(argMax(indexed_commit, version)) AS indexed_commit" if with_revision else ""
+        )
         rows = await self._ch.query_all(
             f"""
             SELECT tier, edge_kind, to_symbol_id, from_symbol_id, path, line,
                    argMax(from_qualified_name, version) AS from_qualified_name,
                    argMax(to_qualified_name, version) AS to_qualified_name,
                    argMax(confidence, version) AS confidence,
-                   argMax(tombstoned_at IS NULL, version) AS is_live
+                   argMax(tombstoned_at IS NULL, version) AS is_live{revision_sql}
             FROM loom.code_edges
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND {match_col} IN {{ids:Array(String)}}

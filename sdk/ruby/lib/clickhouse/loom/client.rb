@@ -11,6 +11,7 @@ require_relative "version"
 require_relative "configuration"
 require_relative "retry_policy"
 require_relative "operations"
+require_relative "pagination"
 require_relative "generated/errors"
 require_relative "generated/ops"
 
@@ -104,6 +105,14 @@ module ClickHouse
         body = JSON.generate(@identity.merge((input || {}).transform_keys(&:to_s)))
         policy = RetryPolicy.resolve(@retry_policy, retry_policy, "call #{op}")
         send_with_retries(op, spec, body, request_headers(spec, idempotency_key), policy)
+      end
+
+      # Walks a cursor-paginated op page by page and returns a lazy Enumerator of its rows;
+      # see Pagination.paginate. The block fetches one page for the cursor it is given:
+      #
+      #   client.paginate { |cursor| client.knowledge.list(limit: 50, cursor: cursor) }.first(200)
+      def paginate(max_pages: nil, &fetch_page)
+        Pagination.paginate(max_pages: max_pages, &fetch_page)
       end
 
       # Saves +value+ under +key+: plain text, or any Hash, Array or scalar. Writing a

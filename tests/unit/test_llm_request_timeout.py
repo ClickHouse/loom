@@ -47,7 +47,7 @@ def _setup(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_openai_waits_the_configured_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    stub = _Client({"choices": [{"message": {"content": "ok"}}], "usage": {}})
+    stub = _Client({"status": "completed", "output": [], "usage": {}})
     monkeypatch.setattr(oa, "_http_client", lambda: stub)
     asyncio.run(oa.OpenAILLMClient("gpt-x").complete("s", "u", max_tokens=10))
     assert stub.timeouts == [123.0]

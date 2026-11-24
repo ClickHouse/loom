@@ -1,0 +1,169 @@
+name: workflow security findings
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+  push:
+    branches: [main, "release/**"]
+  schedule:
+    - cron: "23 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Workflow security audit (report only)
+    if: github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out workflow definitions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: /.github/
+          sparse-checkout-cone-mode: false
+      - name: Install checksum-verified scanner
+        shell: bash
+        run: |
+          tool_dir="$RUNNER_TEMP/zizmor-tool"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 \
+            https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+            --output "$tool_dir/zizmor.tar.gz"
+          echo "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b  $tool_dir/zizmor.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$tool_dir/zizmor.tar.gz" --directory "$tool_dir" zizmor
+          test -x "$tool_dir/zizmor"
+      - name: Collect every workflow finding
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/zizmor-tool/zizmor" --offline --strict-collection --no-config --no-ignores \
+            --persona=auditor --collect=workflows,dependabot --no-exit-codes \
+            --format=json . > "$RUNNER_TEMP/zizmor.json"
+      - name: List all findings in the job summary
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          from collections import Counter
+          import html
+          import json
+          import os
+          import secrets
+          from pathlib import Path
+
+          source = Path(os.environ["RUNNER_TEMP"]) / "zizmor.json"
+          if source.stat().st_size > 8 * 1024 * 1024:
+              raise ValueError("Findings exceed the report input budget")
+          findings = json.loads(source.read_text())
+          counts = Counter(finding["ident"] for finding in findings)
+          lines = [f"Total findings: {len(findings)}", ""]
+          lines.extend(f"{rule}: {count}" for rule, count in sorted(counts.items()))
+          lines.append("")
+          for finding in findings:
+              primary = next(location for location in finding["locations"]
+                             if location["symbolic"]["kind"] == "Primary")
+              path = primary["symbolic"]["key"]["Local"]["verbatim_path"]
+              line = primary["concrete"]["location"]["start_point"]["row"] + 1
+              severity = finding["determinations"]["severity"]
+              confidence = finding["determinations"]["confidence"]
+              lines.append(f"{path}:{line}: {finding['ident']} [{severity}/{confidence}]")
+              lines.append(f"  {finding['desc']}")
+          summary = ("## Workflow security findings\n\n"
+                     "Hosted scanner: zizmor 1.32.0; network mode offline; auditor persona; workflows and dependency-update configuration.\n\n"
+                     "Report only: findings need source review; a green job is not a clean audit. "
+                     "Scanner, collection and reporting errors fail the job. "
+                     "Every finding is listed below and in the escaped report log.\n\n"
+                     "<pre>" + html.escape("\n".join(lines)) + "</pre>\n")
+          if len(summary.encode("utf-8")) > 900_000:
+              raise ValueError("Complete findings exceed the job summary budget")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
+              output.write(summary)
+          command_token = secrets.token_hex(16)
+          print(f"::stop-commands::{command_token}")
+          print(json.dumps(
+              {"total": len(findings), "by_rule": dict(sorted(counts.items())), "lines": lines},
+              ensure_ascii=True,
+          ))
+          print(f"::{command_token}::")
+          PYTHON
+  maintenance_issues:
+    name: Publish workflow maintenance issues
+    if: github.repository == 'ClickHouse/loom' && github.event.repository.private == false && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # Create maintenance tasks and append deduplicated status updates.
+    steps:
+      - name: Check out trusted workflow tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: /.github/
+          sparse-checkout-cone-mode: false
+      - name: Install checksum-verified scanner
+        shell: bash
+        run: |
+          tool_dir="$RUNNER_TEMP/zizmor-tool"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 \
+            https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+            --output "$tool_dir/zizmor.tar.gz"
+          echo "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b  $tool_dir/zizmor.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$tool_dir/zizmor.tar.gz" --directory "$tool_dir" zizmor
+          test -x "$tool_dir/zizmor"
+      - name: Collect trusted maintenance evidence
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/zizmor-tool/zizmor" --offline --strict-collection --no-config --no-ignores \
+            --persona=auditor --collect=workflows,dependabot --no-exit-codes \
+            --format=json . > "$RUNNER_TEMP/zizmor.json"
+      - name: Reconcile automatic maintenance issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: python3 .github/scripts/workflow_audit_issues.py "$RUNNER_TEMP/zizmor.json"
+
+  security_alerts:
+    name: Publish workflow code scanning alerts
+    if: github.repository == 'ClickHouse/loom' && github.event.repository.private == false && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      security-events: write # Send security findings to the existing code scanning view.
+    steps:
+      - name: Check out trusted workflow tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: /.github/
+          sparse-checkout-cone-mode: false
+      - name: Install checksum-verified scanner
+        shell: bash
+        run: |
+          tool_dir="$RUNNER_TEMP/zizmor-tool"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 \
+            https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+            --output "$tool_dir/zizmor.tar.gz"
+          echo "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b  $tool_dir/zizmor.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$tool_dir/zizmor.tar.gz" --directory "$tool_dir" zizmor
+          test -x "$tool_dir/zizmor"
+      - name: Collect trusted security findings
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/zizmor-tool/zizmor" --offline --strict-collection --no-config --no-ignores \
+            --persona=auditor --collect=workflows,dependabot --no-exit-codes \
+            --format=sarif . > "$RUNNER_TEMP/zizmor.sarif"
+          test "$(wc -c < "$RUNNER_TEMP/zizmor.sarif")" -le 8388608
+      - name: Upload workflow findings to code scanning
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: ${{ runner.temp }}/zizmor.sarif
+          category: zizmor-workflows
