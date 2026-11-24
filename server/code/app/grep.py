@@ -320,6 +320,7 @@ async def _scan_grep_lines(
                 line_re=None,
                 budget=budget,
             )
+            line_re = _qualified_argument_line_re(related_pattern, input.case_sensitive)
             route += "+related_argument"
         span_attrs(sp, chunks_matched=len(chunks))
 
@@ -634,6 +635,14 @@ def qualified_call_argument(pattern: str) -> str:
     return call[1] if call else ""
 
 
+def _qualified_argument_line_re(argument: str, case_sensitive: bool) -> re.Pattern[str]:
+    # A longer name or a different receiver is a different argument.
+    return re.compile(
+        rf"(?<![\w.]){re.escape(argument)}(?!\w|\.\w)",
+        0 if case_sensitive else re.IGNORECASE,
+    )
+
+
 async def _read_line_matches(
     repo: CodeRepo,
     org: str,
@@ -725,11 +734,7 @@ async def _read_prefix_excerpts(
         **kw,
     )
     scanned = len(chunks)
-    # A longer name sharing the prefix is a different argument.
-    line_re = re.compile(
-        rf"(?<![\w.]){re.escape(argument)}(?!\w|\.\w)",
-        0 if input.case_sensitive else re.IGNORECASE,
-    )
+    line_re = _qualified_argument_line_re(argument, input.case_sensitive)
     chunks, candidates, commits, capped = await _read_line_matches(
         repo, org, ns, chunks, input, line_re, limit + _GREP_POOL_EXTRA, budget
     )

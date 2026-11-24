@@ -600,7 +600,23 @@ async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     )
     assert scoped.resolved_by == "file_argument"
     assert scoped.definitions == recovered.definitions
-    await _ingest(repo, org, ns, path="src/worker.py", source=b"def run():\n    return 'ok'\n")
+    await _ingest(
+        repo,
+        org,
+        ns,
+        path="src/worker.py",
+        source=b"def run(self):\n    return 'ok' if self.payload.value_extra else ''\n",
+    )
+    near_miss = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org,
+            namespace=ns,
+            name="src/worker.py",
+            clues=["decode(self.payload.value)"],
+            include_lessons=False,
+        )
+    )
+    assert not near_miss.definitions and not near_miss.candidates
     competing_files = await handle_code_edit_context(
         CodeEditContextInput(org=org, namespace=ns, clues=["return 'ok'"], include_lessons=False)
     )
