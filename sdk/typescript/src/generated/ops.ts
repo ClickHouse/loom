@@ -1312,19 +1312,22 @@ export interface CodePrCheckOutput {
   trace_run_id?: string;
 }
 
+export interface CodeReadRangeInput {
+  path: string;
+  start_line: number;
+  end_line?: number | null;
+}
+
 export interface CodeReadInput {
   org?: string;
   namespace?: string;
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Batch of repo-relative path:start-end ranges with inclusive one-based lines. */
-  ranges?: string[];
-  /** File for a single range. */
+  /** Batch of inclusive one-based ranges. */
+  ranges?: Array<CodeReadRangeInput | string>;
   path?: string | null;
-  /** First line of the single range, one-based. */
   start_line?: number | null;
-  /** Last line, inclusive. Defaults to start_line. */
   end_line?: number | null;
 }
 

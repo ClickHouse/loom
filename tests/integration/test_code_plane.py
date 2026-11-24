@@ -132,6 +132,20 @@ async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
         CodeReadInput(org=org, namespace=ns, path="src/S.cpp", start_line=5, end_line=6)
     )
     assert single.results == response.results[:1]
+    mixed = await read.handle_code_read(
+        CodeReadInput.model_validate(
+            {
+                "org": org,
+                "namespace": ns,
+                "ranges": [
+                    {"path": "src/S.cpp", "start_line": 5, "end_line": 6},
+                    {"path": "./src/S.cpp", "start_line": 10},
+                    "src/missing.cpp:1",
+                ],
+            }
+        )
+    )
+    assert mixed.results == response.results[:3]
 
 
 async def test_read_verifies_mirror_blob_after_incremental_ingest(code_env, monkeypatch) -> None:

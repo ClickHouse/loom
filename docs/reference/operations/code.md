@@ -1128,7 +1128,7 @@ A PR draft asks whether a PR like it already exists.
 
 ## `code.read`
 
-Read exact ranges from indexed files in one call.
+Read exact indexed source lines.
 
 `POST /v1/code.read` · MCP `loom_code_read` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -1139,10 +1139,10 @@ Read exact ranges from indexed files in one call.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `ranges` | `list[str]` | *(computed)* | Batch of repo-relative path:start-end ranges with inclusive one-based lines. |
-| `path` | `str \| None` | `None` | File for a single range. |
-| `start_line` | `int \| None` | `None` | First line of the single range, one-based. |
-| `end_line` | `int \| None` | `None` | Last line, inclusive. |
+| `ranges` | `list[CodeReadRangeInput \| str]` | *(computed)* | Batch of inclusive one-based ranges. |
+| `path` | `str \| None` | `None` |  |
+| `start_line` | `int \| None` | `None` |  |
+| `end_line` | `int \| None` | `None` |  |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

@@ -8,22 +8,25 @@ from pydantic import BaseModel, Field
 
 from server.code.api.models_common import _CodeIdentity
 
+_FilePath = Annotated[str, Field(min_length=1, max_length=1024)]
+_SourceLine = Annotated[int, Field(ge=1, lt=2**32)]
+
+
+class CodeReadRangeInput(BaseModel):
+    path: _FilePath
+    start_line: _SourceLine
+    end_line: _SourceLine | None = None
+
 
 class CodeReadInput(_CodeIdentity):
-    ranges: list[Annotated[str, Field(max_length=1024)]] = Field(
+    ranges: list[CodeReadRangeInput | Annotated[str, Field(max_length=1024)]] = Field(
         default_factory=list,
         max_length=32,
-        description="Batch of repo-relative path:start-end ranges with inclusive one-based lines.",
+        description="Batch of inclusive one-based ranges.",
     )
-    path: str | None = Field(
-        default=None, min_length=1, max_length=1024, description="File for a single range."
-    )
-    start_line: int | None = Field(
-        default=None, ge=1, lt=2**32, description="First line of the single range, one-based."
-    )
-    end_line: int | None = Field(
-        default=None, ge=1, lt=2**32, description="Last line, inclusive. Defaults to start_line."
-    )
+    path: _FilePath | None = None
+    start_line: _SourceLine | None = None
+    end_line: _SourceLine | None = None
 
 
 class CodeReadWindow(BaseModel):
