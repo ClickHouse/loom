@@ -643,7 +643,9 @@ def export(protocol: dict, job_name="live") -> dict:
             for entry in entries:
                 merged = {**entry["result"], **protocol["schedule"][entry["order"]]}
                 writer.writerow({k: merged.get(k) for k in columns})
-    summary["reporting"] = generate_reports(protocol, entries, job_name=job_name)
+    summary["reporting"] = generate_reports(
+        protocol, entries, job_name=job_name, loom_source_verified=routing_verified
+    )
     summary["fairness_verified"] = audit.get("passed") if audit else None
     summary["loom_source_verified"] = routing_verified
     if protocol.get("public_reproduction"):

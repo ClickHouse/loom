@@ -228,7 +228,8 @@ function chart(rows, plannedRows) {
   const target =
     metric.kind === "rate"
       ? 1
-      : data.complete &&
+      : data.loom_source_verified === true &&
+          data.complete &&
           rows.length === plannedRows.length &&
           matched(rows) &&
           (metric.kind !== "cost" || measuredCost) &&
@@ -361,6 +362,7 @@ function render() {
     {
       interrupted: "Stopped (not running)",
       failed: "Failed",
+      unqualified: "Loom source unverified",
       complete: "Complete",
       grading: "Judging",
       running: "Running",
@@ -371,9 +373,11 @@ function render() {
     : "Primary attempts completed";
   byId("subtitle").textContent = `${data.name} · ${data.model || "model unavailable"}`;
   document.querySelector("h1").textContent = "Software factory evaluation";
-  byId("run-notice").hidden = !["interrupted", "failed"].includes(status);
+  byId("run-notice").hidden = !["interrupted", "failed", "unqualified"].includes(status);
   byId("run-notice").textContent =
-    data.interruption_reason || "This run stopped before the planned comparison completed. Results are partial.";
+    status === "unqualified"
+      ? "At least one Loom session lacked indexed source evidence."
+      : data.interruption_reason || "This run stopped before the planned comparison completed. Results are partial.";
   byId("issues-count").textContent =
     `${new Set(complete.map((row) => row.task)).size} / ${new Set(rows.map((row) => row.task)).size}`;
   byId("progress").textContent = `${complete.length} / ${rows.length}`;
