@@ -11,6 +11,7 @@ from server.auth.jwt import AuthInfo
 from server.auth.session_protection import protected_for
 from server.core import request_tail, request_work
 from server.core.diagnostics import private_work
+from server.identity.domain.read_scope import effective_read_scope
 from server.knowledge.app import connected_accounts, session_admission
 from server.knowledge.app.mcp_worker_authority import (
     CurrentRead,
@@ -48,6 +49,8 @@ def _require_context(org: str, auth: AuthInfo) -> None:
         or not settings.knowledge_mirrored_sources_enabled
         or not protected_for(auth)
         or is_answer_token(auth)
+        or effective_read_scope(None, auth) != "namespace"
+        or bool(auth.read_user_id)
     ):
         raise WorkerReadRefused("denied")
 
