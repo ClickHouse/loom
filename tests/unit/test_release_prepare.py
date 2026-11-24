@@ -963,11 +963,65 @@ def test_the_github_release_notes_start_at_the_previous_final() -> None:
     (checks,) = [s for s in job["steps"] if s.get("id") == "checks"]
     assert 'previous=$(python3 scripts/release/prepare.py previous "$VERSION")' in checks["run"]
     (create,) = [
-        s
-        for s in workflow["jobs"]["github-release"]["steps"]
-        if s.get("uses", "").startswith("softprops/action-gh-release@")
+        step
+        for step in workflow["jobs"]["github-release"]["steps"]
+        if step.get("id") == "publish-release"
     ]
-    assert create["with"]["previous_tag"] == "${{ needs.version.outputs.previous }}"
+    assert create["env"]["PREVIOUS_TAG"] == "${{ needs.version.outputs.previous }}"
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_publish_release_preserves_notes_on_rerun(tmp_path: Path, existing: bool) -> None:
+    (step,) = [
+        step
+        for step in _release_workflow()["jobs"]["github-release"]["steps"]
+        if step.get("id") == "publish-release"
+    ]
+    files = [
+        "release/python/clickhouse-loom.whl",
+        "release/npm/clickhouse-loom.tgz",
+        "release/plugins/loom.zip",
+        "release/stack/loom-stack.tar.gz",
+        "release/agent/agent-setup.txt",
+    ]
+    for name in files:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    gh = tmp_path / "gh"
+    gh.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$GH_CALLS"\n')
+    gh.chmod(0o755)
+    calls = tmp_path / "calls"
+    env = dict(
+        os.environ,
+        PATH=str(tmp_path) + os.pathsep + os.environ["PATH"],
+        GH_CALLS=str(calls),
+        GITHUB_REF_NAME="v1.3.0",
+        GITHUB_REPOSITORY="ClickHouse/loom",
+        PREVIOUS_TAG="v1.2.9",
+        VERSION_EXISTS=str(existing).lower(),
+        PRERELEASE="false",
+        LATEST="true",
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-c", step["run"]], env=env, cwd=tmp_path, capture_output=True
+    )
+    assert result.returncode == 0, result.stderr
+    commands = calls.read_text().splitlines()
+    if existing:
+        upload, edit = commands
+        assert upload.startswith("release upload v1.3.0 ")
+        assert "--clobber" in upload
+        assert edit.startswith("release edit v1.3.0 ")
+        assert "--latest=true" in edit
+        assert all("--notes" not in command for command in commands)
+    else:
+        (create,) = commands
+        assert create.startswith("release create v1.3.0 ")
+        assert "--verify-tag" in create
+        assert "--notes-start-tag v1.2.9" in create
+        assert "--generate-notes" in create
+    assert all(name in commands[0] for name in files)
 
 
 def test_a_tag_whose_files_name_another_release_is_an_error_on_the_server_file(

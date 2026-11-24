@@ -231,17 +231,24 @@ def test_paid_runner_remains_main_only_with_finite_cumulative_default() -> None:
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.load((root / ".github/workflows/i18n.yml").read_text(), Loader=yaml.BaseLoader)
     assert "pull_request" not in workflow["on"]
-    assert workflow["on"]["workflow_run"]["branches"] == ["i18n/update"]
+    assert set(workflow["on"]) == {"push", "schedule", "workflow_dispatch"}
+    assert {item["cron"] for item in workflow["on"]["schedule"]} == {
+        "37 */6 * * *",
+        "5,20,35,50 * * * *",
+    }
     update = workflow["jobs"]["update"]
     assert update["env"]["LOOM_I18N_BATCH_LANGUAGES"] == "${{ inputs.languages }}"
     assert "github.ref == 'refs/heads/main'" in update["if"]
     assert update["environment"] == "i18n"
-    assert "workflow_run" not in update["if"]
+    assert "github.event.schedule == '37 */6 * * *'" in update["if"]
+    assert "github.event.schedule == '5,20,35,50 * * * *'" in workflow["jobs"]["finalize"]["if"]
     assert workflow["jobs"]["finalize"]["runs-on"] == "ubuntu-latest"
     assert "environment" not in workflow["jobs"]["finalize"]
     assert workflow["jobs"]["finalize"]["steps"][0]["with"]["ref"] == "main"
     steps = update["steps"]
     assert steps[0]["with"]["ref"] == "${{ github.sha }}"
+    assert steps[0]["with"]["persist-credentials"] == "false"
+    assert all("GITHUB_PATH" not in step.get("run", "") for step in steps)
     paid = next(step for step in steps if step.get("id") == "translate")
     assert paid["env"]["LOOM_I18N_TOTAL_USD"] == "${{ vars.LOOM_I18N_TOTAL_USD || '0' }}"
 

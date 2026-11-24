@@ -51,7 +51,9 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - name: Install the locked native dependencies
-        run: uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
+        run: uv sync --locked --python "${PYTHON_PATH}" --extra dev --extra code
       - name: Check native tools
         run: |
           command -v docker

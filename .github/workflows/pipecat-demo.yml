@@ -76,10 +76,12 @@ jobs:
           version: "0.12.19"
           enable-cache: false
       - name: Prepare the pinned source fixture
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = 3c9ae8e1dde82685ee0e27bfe29b1c8d66cb956f
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          uv sync --locked --python "${PYTHON_PATH}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
           cp "$GITHUB_WORKSPACE/dev/pipecat_demo/_pipecat_video_ci.py" tests/integration/_pipecat_video_ci.py
           image=$(bash dev/clickhouse_release.sh)
