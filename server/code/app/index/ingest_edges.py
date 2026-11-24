@@ -26,6 +26,7 @@ from server.code.app.index.ingest_parse import (
 from server.code.app.index.ingest_resolve import (
     _LIVE_PATHS_CACHE,
     _barrel_targets_of,
+    _git_blob_paths,
     _git_text,
     _go_module_index,
     _live_paths,
@@ -223,6 +224,20 @@ async def _python_read_edges(
         *(_git_text(org, ns, path, settings.code_ingest_max_file_bytes) for path in paths)
     )
     sources = {path: text for path, text in zip(paths, texts, strict=True) if text}
+    modules = await asyncio.to_thread(py_member_reads.module_types, pf, sources)
+    unindexed = await asyncio.to_thread(
+        py_member_reads.unindexed_absolute_modules,
+        pf,
+        names.member_sites,
+        types,
+        modules,
+        context or {},
+    )
+    if known := await _git_blob_paths(unindexed):
+        context = {
+            **(context or {}),
+            "py_present": (context or {}).get("py_present", set()) | known,
+        }
     return await asyncio.to_thread(
         py_member_reads.read_edges,
         pf,
@@ -230,7 +245,7 @@ async def _python_read_edges(
         names.reads,
         targets,
         types,
-        sources,
+        modules,
         context,
     )
 

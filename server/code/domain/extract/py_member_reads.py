@@ -70,7 +70,9 @@ def read_sites(pf: ParsedFile) -> list[MemberRead]:
     if not candidates:
         return []
     try:
-        module = symtable(pf.source.decode("utf-8"), pf.path, "exec")
+        text = pf.source.decode("utf-8")
+        module = symtable(text, pf.path, "exec")
+        statements: list[ast.AST] = list(ast.parse(text).body)
     except (SyntaxError, UnicodeDecodeError, RecursionError):
         return []
     children = _child_scopes(module)
@@ -84,7 +86,12 @@ def read_sites(pf: ParsedFile) -> list[MemberRead]:
         for row in module.get_symbols()
         if row.is_imported() and not row.is_assigned()
     }
-    direct = _direct_imports(pf)
+    direct = _from_imports(statements)
+    top_functions = {
+        (node.name, node.lineno)
+        for node in statements
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
     imports.difference_update(_global_rebindings(children))
     sites: list[MemberRead] = []
     for line, receiver, member, owner in candidates:
@@ -94,7 +101,11 @@ def read_sites(pf: ParsedFile) -> list[MemberRead]:
         binding = scope.lookup(receiver)
         if binding.is_global() and receiver in imports and (origin := direct.get(receiver)):
             sites.append(MemberRead(line, receiver, member, imported=origin))
-        elif binding.is_parameter() and not (binding.is_assigned() or binding.is_imported()):
+        elif (
+            (owner.name, owner.line) in top_functions
+            and binding.is_parameter()
+            and not (binding.is_assigned() or binding.is_imported())
+        ):
             if receiver_type := owner.annotations.get(receiver):
                 sites.append(MemberRead(line, receiver, member, receiver_type))
     return sites
@@ -182,10 +193,6 @@ def _resolver(
         if symbol.kind == "function":
             local[symbol.name].append(symbol)
     return _CallResolver(pf, name_table, local, lane_context=lane_context)
-
-
-def _direct_imports(pf: ParsedFile) -> dict[str, tuple[str, str] | None]:
-    return _from_imports(list(ast.parse(pf.source.decode("utf-8")).body))
 
 
 def _from_imports(nodes: list[ast.AST]) -> dict[str, tuple[str, str] | None]:
@@ -283,6 +290,28 @@ def _dependency_paths(path: str, spec: str, context: dict[str, Any]) -> list[str
     return import_candidates(path, spec, roots) if spec.startswith(".") else []
 
 
+def unindexed_absolute_modules(
+    pf: ParsedFile,
+    sites: list[MemberRead],
+    types: dict[tuple[str, str], tuple[str, str]],
+    modules: dict[str, _ModuleTypes],
+    context: dict[str, Any],
+) -> set[str]:
+    """Path candidates to check against Git before relying on the index's order."""
+    imports = {(pf.path, site.imported[0]) for site in sites if site.imported}
+    type_sites = {*types.values(), *((pf.path, s.receiver_type) for s in sites if s.receiver_type)}
+    for path, name in type_sites:
+        if (module := modules.get(path)) and (origin := module.imports.get(name)):
+            imports.add((path, origin[0]))
+    roots, present = context.get("py_roots", ()), context.get("py_present", set())
+    return {
+        candidate
+        for path, spec in imports
+        if not spec.startswith(".") and not first_present_candidate(path, spec, present, roots)
+        for candidate in import_candidates(path, spec, roots)
+    }
+
+
 def _type_owner(
     module: _ModuleTypes,
     name: str,
@@ -328,16 +357,11 @@ def read_edges(
     name_table: dict[str, list[tuple[str, str, str]]],
     targets: dict[str, tuple[str, str]],
     types: dict[tuple[str, str], tuple[str, str]],
-    sources: dict[str, str],
+    modules: dict[str, _ModuleTypes],
     lane_context: dict[str, Any] | None,
 ) -> list[Edge]:
     """Record binding reads and the member each declared type can resolve."""
     context = lane_context or {}
-    modules = {
-        path: module for path, text in sources.items() if (module := _module_types(path, text))
-    }
-    if current := _module_types(pf.path, pf.source.decode("utf-8")):
-        modules[pf.path] = current
     functions = [s for s in pf.symbols if s.kind in {"function", "test"} and s.has_body]
     owner_at = last_span_at(_caller_spans(pf, functions))
     out: dict[tuple[str, str, int], Edge] = {}
@@ -383,6 +407,11 @@ def read_edges(
             0.8,
         )
     return [*out.values(), *_dependency_edges(pf.path, dependencies)]
+
+
+def module_types(pf: ParsedFile, sources: dict[str, str]) -> dict[str, _ModuleTypes]:
+    texts = {**sources, pf.path: pf.source.decode("utf-8")}
+    return {path: module for path, text in texts.items() if (module := _module_types(path, text))}
 
 
 def _member_target(

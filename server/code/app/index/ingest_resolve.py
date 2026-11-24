@@ -423,6 +423,18 @@ def _source_key(org: str, ns: str) -> tuple[str, ...]:
     return (org, ns, *(_GIT_TEXT_SOURCE.get() or ()))
 
 
+async def _git_blob_paths(paths: set[str]) -> set[str]:
+    source = _GIT_TEXT_SOURCE.get()
+    if source is None or not paths:
+        return set()
+    from server.code.app.index import gitrepo
+
+    try:
+        return await gitrepo.blob_paths_at(*source, paths)
+    except gitrepo.GitError:
+        return set()
+
+
 @contextmanager
 def git_text_source(git_dir: str, sha: str) -> Iterator[None]:
     """Read sibling texts from `git_dir` at `sha` inside the block; tasks

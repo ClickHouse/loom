@@ -1,7 +1,12 @@
 """Typed Python property reads keep their lexical receiver and their edge kind."""
 
 from server.code.domain.extract.lang_python import parse_python
-from server.code.domain.extract.py_member_reads import read_edges, read_sites, receiver_targets
+from server.code.domain.extract.py_member_reads import (
+    module_types,
+    read_edges,
+    read_sites,
+    receiver_targets,
+)
 
 
 def test_typed_reads_decline_shadowed_receivers_and_write_targets() -> None:
@@ -53,6 +58,13 @@ def imported_over_parameter(client: Other):
     return client.option
 
 from .shadow import Client
+
+class NestedType:
+    class Client:
+        option = 7
+
+    def use(self, client: Client):
+        return client.option
 """,
     )
     other = parse_python("src/pkg/shadow.py", b"class Client:\n    option = 3\n")
@@ -63,14 +75,14 @@ from .shadow import Client
                 (symbol.id, symbol.qualified_name, symbol.kind)
             )
     lane_context = {"py_present": {context.path, reader.path, other.path}, "py_roots": ("src",)}
-    texts = {context.path: context.source.decode("utf-8")}
+    modules = module_types(reader, {context.path: context.source.decode("utf-8")})
     sites = read_sites(reader)
     targets = receiver_targets(reader, sites, names, lane_context)
     declaration = next(s for s in context.symbols if s.name == "client")
     key = (declaration.qualified_name, declaration.id)
     assert targets == {"default_client": key}
     edges = read_edges(
-        reader, sites, names, targets, {key: (context.path, "Client")}, texts, lane_context
+        reader, sites, names, targets, {key: (context.path, "Client")}, modules, lane_context
     )
     assert [
         (e.edge_kind, e.line, e.to_qualified_name) for e in edges if e.edge_kind == "reads"
@@ -79,5 +91,5 @@ from .shadow import Client
         ("reads", 9, "src.pkg.context::Client::option"),
         ("reads", 12, "src.pkg.reader::Other::option"),
     ]
-    unresolved = read_edges(reader, sites, names, targets, {}, texts, lane_context)
+    unresolved = read_edges(reader, sites, names, targets, {}, modules, lane_context)
     assert [(e.line, e.to_symbol_id) for e in unresolved if e.line == 9] == [(9, declaration.id)]
