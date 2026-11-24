@@ -13,7 +13,8 @@ assert _SPEC and _SPEC.loader
 indexnow = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(indexnow)
 
-SITE = "https://loom.clickhouse.com/docs/"
+ORIGIN = "https://loom.clickhouse.com"
+SITE = f"{ORIGIN}/docs/"
 
 
 def test_a_changed_page_maps_to_the_url_the_site_serves_it_at() -> None:
@@ -30,6 +31,33 @@ def test_only_changed_pages_are_submitted_without_translation_dependencies(
     monkeypatch.setattr(indexnow, "DOCS", tmp_path / "docs")
     urls = indexnow.urls_for(["docs/a.md", "docs/a.md", "README.md", "docs/b/index.md"])
     assert urls == [SITE + "a/", SITE + "b/"]
+
+
+def test_astro_pages_submit_their_canonical_public_urls() -> None:
+    urls = indexnow.urls_for(
+        ["docs/pages/home.astro", "docs/pages/platform.astro", "docs/pages/adoption.astro"]
+    )
+    assert urls == [f"{ORIGIN}/", f"{ORIGIN}/adoption", f"{ORIGIN}/platform"]
+    assert indexnow.payload(urls, "a" * 32)["urlList"] == urls
+
+
+def test_public_components_and_shared_build_inputs_submit_affected_pages() -> None:
+    public_pages = sorted(
+        f"{ORIGIN}{route}" for route in ("/", "/adoption", "/enterprise", "/platform", "/telemetry")
+    )
+    assert indexnow.urls_for(["docs/components/SiteFrame.astro"]) == public_pages
+    assert indexnow.urls_for(["docs/scripts/public-pages.json"]) == public_pages
+    assert indexnow.urls_for(["docs/theme.css"]) == sorted([*public_pages, *indexnow.every_page()])
+
+
+def test_full_submission_only_enumerates_documentation_sources(tmp_path, monkeypatch) -> None:
+    docs = tmp_path / "docs"
+    monkeypatch.setattr(indexnow, "DOCS", docs)
+    for name in ("a.md", ".blume-content/a.md", ".vercel/a.md", "dist/a.md", "node_modules/a.md"):
+        path = docs / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# A\n")
+    assert indexnow.every_page() == [SITE + "a/"]
 
 
 def test_the_key_file_is_named_after_its_own_content_and_the_payload_points_at_it() -> None:

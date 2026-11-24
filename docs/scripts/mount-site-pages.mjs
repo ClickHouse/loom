@@ -6,13 +6,8 @@ const output = new URL("../.vercel/output/", import.meta.url);
 const docs = new URL("../", import.meta.url);
 const manifest = new URL("config.json", output);
 const config = JSON.parse(readFileSync(manifest, "utf8"));
-const publicPages = new Map([
-  ["/", "/docs/home"],
-  ["/platform", "/docs/platform"],
-  ["/enterprise", "/docs/enterprise"],
-  ["/telemetry", "/docs/telemetry"],
-  ["/adoption", "/docs/adoption"],
-]);
+const publicPagesFile = new URL("./public-pages.json", import.meta.url);
+const publicPages = new Map(Object.entries(JSON.parse(readFileSync(publicPagesFile, "utf8"))));
 const staticRoutes = [...publicPages]
   .filter(([path]) => path !== "/adoption")
   .map(([path, dest]) => ({

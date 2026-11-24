@@ -1,15 +1,12 @@
-"""Tell IndexNow search engines which documentation-site pages a push to main changed.
+"""Tell IndexNow search engines which public site pages a push to main changed.
 
 IndexNow search engines share one endpoint: it takes a list of changed URLs and checks
 ownership against a key file served on the site. The key file is the one `.txt` file in
 docs/ whose name is its own content; it is public by design.
 
 Usage: indexnow.py <changed path>...   (paths relative to the repository root)
-A changed or deleted page under docs/ maps to its URL. A change to what renders the pages
-(mkdocs.yml, the hooks, the shared routes, the theme overrides, the pinned builder, or
-scripts/codegen/page_summary.py, which supplies the descriptions and the sidebar order)
-changes every page, so every page under docs/ is submitted; a change to this script alone
-submits none.
+A changed or deleted Markdown or Astro page maps to its canonical URL. Changes to
+shared render inputs submit the pages that use them.
 """
 
 from __future__ import annotations
@@ -21,7 +18,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-SITE = "https://loom.clickhouse.com/docs/"
+ORIGIN = "https://loom.clickhouse.com"
+SITE = f"{ORIGIN}/docs/"
 ENDPOINT = "https://api.indexnow.org/indexnow"
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -29,7 +27,27 @@ if str(ROOT) not in sys.path:
 from scripts.docs_site.paths import page_path  # noqa: E402
 
 DOCS = ROOT / "docs"
+PUBLIC_PAGE_URLS = {
+    f"docs/pages/{destination.removeprefix('/docs/')}.astro": ORIGIN + route
+    for route, destination in json.loads((DOCS / "scripts/public-pages.json").read_text()).items()
+}
+SITE_BUILD_INPUTS = (
+    "docs/blume.config.ts",
+    "docs/package-lock.json",
+    "docs/package.json",
+    "docs/scripts/prepare-content.mjs",
+    "docs/theme.css",
+    "docs/vercel.json",
+)
+PUBLIC_BUILD_INPUTS = (
+    *SITE_BUILD_INPUTS,
+    "docs/components/",
+    "docs/lib/",
+    "docs/scripts/mount-site-pages.mjs",
+    "docs/scripts/public-pages.json",
+)
 BUILD_INPUTS = (
+    *SITE_BUILD_INPUTS,
     "mkdocs.yml",
     "scripts/codegen/page_summary.py",
     "scripts/docs_site/hooks.py",
@@ -50,7 +68,9 @@ def key() -> str:
 
 
 def page_url(path: str) -> str | None:
-    """The site URL a docs/ Markdown file is served at, or None for other files."""
+    """The canonical URL of a public page source, if it has one."""
+    if path in PUBLIC_PAGE_URLS:
+        return PUBLIC_PAGE_URLS[path]
     if path.startswith("i18n/"):
         from scripts.docs_site.locales import localized_page_path
 
@@ -62,10 +82,17 @@ def page_url(path: str) -> str | None:
 
 
 def every_page() -> list[str]:
+    """The published documentation routes, including translations."""
     from scripts.docs_site.locales import translations
 
-    paths = [f"docs/{p.relative_to(DOCS).as_posix()}" for p in DOCS.rglob("*.md")]
-    english = [u for p in paths if (u := page_url(p))]
+    paths = [p.relative_to(DOCS) for p in DOCS.rglob("*.md")]
+    english = [
+        url
+        for path in paths
+        if not path.parts[0].startswith(".")
+        and path.parts[0] not in {"dist", "node_modules"}
+        and (url := page_url(f"docs/{path.as_posix()}"))
+    ]
     localized = [
         SITE + urllib.parse.quote(page_path(f"docs/{uri}")) for uri in translations(DOCS.parent)
     ]
@@ -88,12 +115,20 @@ def urls_for(paths: list[str]) -> list[str]:
         english
         and any(any((DOCS.parent / "i18n" / lang / "docs").rglob("*.md")) for lang in LANGUAGES)
     )
-    if locale_change or any(
-        p == i or (i.endswith("/") and p.startswith(i)) for p in paths for i in BUILD_INPUTS
-    ):
+    if locale_change or _changed_build_input(paths, BUILD_INPUTS):
         # A deleted page is no longer in the tree, so keep the changed paths' URLs too.
-        return sorted(changed | set(every_page()))
+        changed.update(every_page())
+    if _changed_build_input(paths, PUBLIC_BUILD_INPUTS):
+        changed.update(PUBLIC_PAGE_URLS.values())
     return sorted(changed)
+
+
+def _changed_build_input(paths: list[str], inputs: tuple[str, ...]) -> bool:
+    return any(
+        path == item or (item.endswith("/") and path.startswith(item))
+        for path in paths
+        for item in inputs
+    )
 
 
 def payload(urls: list[str], k: str) -> dict:
@@ -101,14 +136,14 @@ def payload(urls: list[str], k: str) -> dict:
         "host": urllib.parse.urlsplit(SITE).hostname,
         "key": k,
         "keyLocation": urllib.parse.urljoin(SITE, f"/{k}.txt"),
-        "urlList": [url.rstrip("/") for url in urls],
+        "urlList": [url if url == f"{ORIGIN}/" else url.rstrip("/") for url in urls],
     }
 
 
 def main(paths: list[str]) -> int:
     urls = urls_for(paths)
     if not urls:
-        print("indexnow: no documentation page changed")
+        print("indexnow: no public page changed")
         return 0
     body = json.dumps(payload(urls, key())).encode()
     req = urllib.request.Request(
