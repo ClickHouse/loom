@@ -115,12 +115,12 @@ jobs:
             page=$((page + 1))
           done
 
-          changed="$RUNNER_TEMP/indexnow-changed-paths"
+          changed="$RUNNER_TEMP/indexnow-changes"
           if [[ -n "$base" ]]; then
-            git diff -z --name-only --no-renames "$base" HEAD > "$changed"
+            git diff -z --name-status --no-renames "$base" HEAD > "$changed"
           else
             # Without a recent checkpoint, submit the canonical site as a single batch.
-            printf '%s\0' docs/blume.config.ts > "$changed"
+            printf '%s\0' M docs/blume.config.ts > "$changed"
           fi
           routes=docs/scripts/public-pages.json
           previous_routes="$RUNNER_TEMP/indexnow-previous-public-pages.json"
@@ -129,7 +129,7 @@ jobs:
           else
             printf '{}\n' > "$previous_routes"
           fi
-          urls=$(xargs -0 python scripts/docs_site/indexnow.py --list --previous-public-pages "$previous_routes" -- < "$changed")
+          urls=$(python scripts/docs_site/indexnow.py --list --previous-public-pages "$previous_routes" --changes-file "$changed")
           if [[ -z "$urls" ]]; then
             echo 'indexnow: no public page changed'
             exit 0
@@ -141,7 +141,7 @@ jobs:
             deployed=$(curl -fsS --max-time 4 \
               "https://loom.clickhouse.com/.well-known/loom-revision.txt?commit=$GITHUB_SHA&attempt=$attempt") || deployed=
             if [[ "$deployed" == "$GITHUB_SHA" ]]; then
-              xargs -0 python scripts/docs_site/indexnow.py --previous-public-pages "$previous_routes" -- < "$changed"
+              python scripts/docs_site/indexnow.py --previous-public-pages "$previous_routes" --changes-file "$changed"
               exit 0
             fi
             sleep 10
