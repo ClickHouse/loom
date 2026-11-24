@@ -55,7 +55,9 @@ def retained_source_ranges(
     parts: list[str] = []
     first = previous = 0
     for line, text in sorted(by_line.items()):
-        if parts and (line != previous + 1 or not parts[-1].endswith("\n")):
+        if not text.endswith("\n"):
+            continue  # a retained chunk can end mid-line
+        if parts and line != previous + 1:
             windows.append((first, previous, "".join(parts)))
             parts = []
         if not parts:

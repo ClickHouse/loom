@@ -14,9 +14,22 @@ def test_retained_ranges_report_revision_disagreement_as_gap() -> None:
     ]
     assert retained_source_ranges(rows, 1, 4, revision="current") == [
         (1, 1, "a\n"),
-        (3, 4, "c\nd"),
+        (3, 3, "c\n"),
     ]
     assert retained_source_ranges(rows, 3, 3, revision="current") == [(3, 3, "c\n")]
+
+
+def test_retained_ranges_omit_a_truncated_header_line() -> None:
+    rows = [
+        {
+            "kind": "file_header",
+            "start_line": 1,
+            "end_line": 1,
+            "content": "//" + "x" * 5998,
+            "indexed_commit": "current",
+        },
+    ]
+    assert retained_source_ranges(rows, 1, 1, revision="current") == []
 
 
 @pytest.mark.parametrize("value", ["../file.py:2", "/file.py:1", "file.py:0", "file.py:9-2"])

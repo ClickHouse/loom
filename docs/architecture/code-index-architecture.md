@@ -381,9 +381,9 @@ enclosing definitions together. `code.symbol` resolves a named definition or
 one location; the batch avoids a separate lookup for every located definition.
 
 `code.read` reads several known line ranges in one request. Each window
-contains the retained source at the indexed file's revision, with inclusive
-line numbers. The result marks gaps and ranges outside the index, so an
-agent can limit its working-copy reads to missing source.
+contains source at the indexed file's revision, with inclusive line numbers.
+When retained chunks leave gaps, a local Git mirror can fill them if the
+blob hash matches the indexed file. The result marks any remaining gaps.
 
 Python SCIP identities use the same placeholder for callables of every
 arity. Definition and enclosing-body responses recover the parameter list

@@ -96,6 +96,7 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
         "code.bisect_candidates",
         "code.pr_check",
         "code.impact",
+        "code.read",
     }
     # The QA-plane ops a coding session asks for are
     # listed on coding without joining core
@@ -106,7 +107,9 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
         "code.impact",
     }
     # the scratchpad is coding's own; the memory verbs are core's
-    assert _MCP_CODING_OPS - tracker_on_coding - {"working_memory.set"} <= _MCP_CORE_OPS
+    assert (
+        _MCP_CODING_OPS - tracker_on_coding - {"working_memory.set", "code.read"} <= _MCP_CORE_OPS
+    )
     assert not (_MCP_CODING_OPS & _MCP_HIDDEN_OPS)
     assert len(_MCP_CODE_CORE_OPS) == 8
     assert curated_roster("coding", code_tools=False) == _MCP_CODING_OPS | _MCP_CODE_CORE_OPS
@@ -137,7 +140,8 @@ def test_coding_listing_is_its_roster_plus_the_code_tools_regardless_of_the_flag
     for code in (False, True):
         tools = _listing("coding", code)
         names = _names(tools)
-        assert len(tools) == len(_MCP_CODING_OPS | _MCP_CODE_CORE_OPS) + len(SYNTHETIC) == 21
+        assert len(tools) == len(_MCP_CODING_OPS | _MCP_CODE_CORE_OPS) + len(SYNTHETIC) == 22
+        assert "loom_code_read" in names
         assert SYNTHETIC <= names
         assert {TOOL_TO_OP[n] for n in names - SYNTHETIC} == _MCP_CODING_OPS | _MCP_CODE_CORE_OPS
     # what the census found no coding client calling is not listed …
@@ -176,7 +180,7 @@ def test_toolset_is_selectable_per_deployment_and_per_request():
     assert resolve_toolset(None, "bogus") == "core", "an unknown configured value is core"
     assert resolve_toolset("", None) == "core"
     # the per-request override on a `core` deployment is the coding listing
-    assert len(_listing("core", True, requested="coding")) == 21
+    assert len(_listing("core", True, requested="coding")) == 22
     assert (
         len(_listing("core", True, requested="bogus"))
         == len(_MCP_CORE_OPS | _MCP_CODE_CORE_OPS) + 3
@@ -389,7 +393,7 @@ def test_coding_search_and_definition_tools_load_upfront_by_default(monkeypatch,
     default = Settings.model_fields["mcp_always_load_tools"].get_default()
     monkeypatch.setattr(settings, "mcp_always_load_tools", default)
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
-    assert len(tools) == 21
+    assert len(tools) == 22
     flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
     assert flagged == {
         "loom_search",

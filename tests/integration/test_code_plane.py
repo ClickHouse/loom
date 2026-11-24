@@ -123,6 +123,40 @@ async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
         )
 
 
+async def test_read_verifies_mirror_blob_after_incremental_ingest(code_env, monkeypatch) -> None:
+    from server.code.api.models_read import CodeReadInput
+    from server.code.app import read
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", FakeNGramEmbedder().model_name)
+    commit = "b" * 40
+    current = _SRC.replace(b"squashImpl();", b"doWork();")
+    await _ingest(repo, org, ns)
+    await _ingest(repo, org, ns, source=current, sha=commit)
+    calls = []
+
+    async def mirror(_cfg):
+        return "local-mirror"
+
+    async def show_file(git_dir, revision, path, *, max_bytes):
+        calls.append((git_dir, revision, path))
+        return current
+
+    monkeypatch.setattr(read, "present_dir", mirror)
+    monkeypatch.setattr(read.gitrepo, "show_file", show_file)
+    response = await read.handle_code_read(
+        CodeReadInput(org=org, namespace=ns, ranges=["src/S.cpp:10", "src/S.cpp:5-10"])
+    )
+    lines = current.decode().splitlines(keepends=True)
+    assert [r.status for r in response.results] == ["complete", "complete"]
+    assert response.results[0].windows[0].text == lines[9]
+    assert response.results[1].windows[0].text == "".join(lines[4:10])
+    assert calls == [("local-mirror", commit, "src/S.cpp")]
+
+
 async def test_grep_returns_distinct_retained_enclosing_bodies_by_default(
     ch_client, monkeypatch
 ) -> None:
