@@ -19,7 +19,7 @@ from .native_environment import MCP_SCHEMA_PROFILES
 from .native_trace import COUNTERS as TRACE_COUNTERS
 from .native_trace import EVENTS as TRACE_EVENTS
 from .native_trace import TIMINGS as TRACE_TIMINGS
-from .project_guidance import SUBMISSION_NOTE, guidance
+from .project_guidance import guidance
 from .runtime import read, verify, write
 
 KIND = "factory-public-results"
@@ -183,8 +183,8 @@ def public_metadata(value):
 
     if value.get("study_role"):
         result["study_role"] = public_text(value["study_role"])
-    if value.get("submission_note") == SUBMISSION_NOTE:
-        result["submission_note"] = SUBMISSION_NOTE
+    if "submission_note" in value:
+        result["submission_note"] = public_text(value["submission_note"])
     if value.get("memory_treatment"):
         result["memory_treatment"] = {
             key: public_text(value["memory_treatment"][key])

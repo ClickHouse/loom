@@ -10,7 +10,7 @@ TEMPLATE = Path(__file__).with_name("project-guidance.md")
 
 SUBMISSION_NOTE = (
     "The evaluator grades the application implementation. "
-    "Submit the source fix and use local tests to verify it."
+    "Keep the patch to runtime source and tests. Run the relevant tests before submitting."
 )
 
 

@@ -5,10 +5,21 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from examples.software_factory.harbor.project_guidance import agent_image, guidance, stage
+from examples.software_factory.harbor.project_guidance import (
+    agent_image,
+    guidance,
+    stage,
+    task_instruction,
+)
 
 
 class ProjectInstructions(TestCase):
+    def test_submission_scope_preserves_the_original_issue(self):
+        issue = "Example issue\r\nOriginal body\r\n"
+        rendered = task_instruction(issue)
+        self.assertTrue(rendered.startswith(issue + "\n\n## Submission\n\n"))
+        self.assertIn("Keep the patch to runtime source and tests.", rendered)
+
     def test_project_file_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
