@@ -386,8 +386,8 @@ async def _erase_knowledge_once(
         )
         worker_metadata = await _delete_worker_metadata(conn, where, org, arg)
         await _mark_step(conn, org)
-    removed = len(heads) + len(leases) + int(jobs) + int(catalog) + worker_metadata
-    return removed, [*left, *earlier]
+    count = len(heads) + len(leases) + int(jobs) + int(catalog) + worker_metadata
+    return count, [*left, *earlier]
 
 
 _PG_WORKER_METADATA = (

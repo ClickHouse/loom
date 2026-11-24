@@ -16,7 +16,9 @@ _MAX_CONFIG_BYTES = 16_384
 _MAX_SELECTION_BYTES = 131_072
 _Generation = Annotated[int, Field(ge=1, le=2**63 - 1)]
 _Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-_Items = TypeAdapter(Annotated[tuple[ResourceIdentity, ...], Field(min_length=1, max_length=1000)])
+_Items: TypeAdapter[tuple[ResourceIdentity, ...]] = TypeAdapter(
+    Annotated[tuple[ResourceIdentity, ...], Field(min_length=1, max_length=1000)]
+)
 
 
 class WorkerSourceRefused(ValueError):
