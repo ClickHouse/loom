@@ -210,7 +210,7 @@ class RelatedGrepEvidence(BaseModel):
 
     @model_serializer(mode="wrap")
     def _drop_empty_dependencies(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        data = handler(self)
+        data: dict[str, Any] = handler(self)
         if not data.get("dependencies"):
             data.pop("dependencies", None)
         return data
