@@ -615,7 +615,7 @@ def _coding_instructions(
             )
         context += f"Skip it when {FIRST_STEP_HOOK}."
     discovery = (
-        'Find other Loom operations with `loom_op(op="help")`. '
+        'Find other Loom operations with `loom_op(op="help", query="<goal>")`. '
         "Writes need user intent and permission."
         if compact
         else "Find saved knowledge, documents, code, issues, tasks and records with `loom_op` "

@@ -114,6 +114,19 @@ def test_compact_bound_coding_uses_task_pack_for_additional_history(monkeypatch)
     assert "First step of each task" in unbound
 
 
+def test_compact_coding_catalog_describes_the_task_pack_without_ordering() -> None:
+    from server.transport.mcp_tools import _tools_descriptor
+
+    async def describe(profile: str) -> str:
+        tools = await _tools_descriptor(toolset="coding", schema_profile=profile)
+        return next(tool["description"] for tool in tools if tool["name"] == "loom_context_pack")
+
+    assert "call first" in asyncio.run(describe("standard"))
+    compact = asyncio.run(describe("compact"))
+    assert "call first" not in compact
+    assert "prior decisions" in compact
+
+
 def test_code_scope_precedes_a_long_memory_workspace_notice(monkeypatch) -> None:
     monkeypatch.setattr(mcp_primer, "_coding_workspace_line", lambda _: "WORKSPACE" * 1000)
     text = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
