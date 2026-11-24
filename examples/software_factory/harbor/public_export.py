@@ -13,8 +13,8 @@ from urllib.parse import urlsplit
 
 from examples.software_factory.factory.model import digest
 
-from .mcp_qualification import STARTUP_COUNTS
 from .fairness import attempt_evidence_verified
+from .mcp_qualification import STARTUP_COUNTS
 from .native_environment import MCP_SCHEMA_PROFILES
 from .native_trace import COUNTERS as TRACE_COUNTERS
 from .native_trace import EVENTS as TRACE_EVENTS
