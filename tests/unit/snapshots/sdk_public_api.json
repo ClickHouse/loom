@@ -2069,6 +2069,7 @@
           "path_prefix",
           "limit",
           "context_lines",
+          "include_body",
           "mode",
           "path_globs",
           "exclude_globs",
