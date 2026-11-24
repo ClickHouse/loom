@@ -180,7 +180,7 @@ const overview = [
     {totals && (
       <article class="card activity">
         <h3>Adoption lifecycle</h3>
-        <p>New means first observed activity. Retained means active in consecutive periods. Reactivated means active after a gap. Inactive means activity fell below the threshold after a qualifying period.</p>
+        <p>New means first observed activity. Retained means active in consecutive periods. Reactivated means active after a gap. Inactive means no qualifying activity was observed after a qualifying period. This includes installations that stopped reporting.</p>
         <div class="panels plots">
           {lifecycleGroups.map(({ entity, min, title, definition }) => (
             <div>

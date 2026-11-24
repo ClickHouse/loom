@@ -124,7 +124,8 @@ WHERE installation_id NOT IN (
 GROUP BY installation_id, day, domain;
 
 -- Domain attribution is available only to analysts with warehouse access.
-CREATE VIEW IF NOT EXISTS loom_product_analytics.loom_adoption_top_domains_30d AS
+CREATE VIEW IF NOT EXISTS loom_product_analytics.loom_adoption_top_domains_30d
+SQL SECURITY DEFINER AS
 SELECT domain, sum(instance_requests) AS successful_requests, countIf(instance_requests > 0) AS installations,
        sum(latest_accounts) AS accounts
 FROM (

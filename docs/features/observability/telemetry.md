@@ -93,7 +93,8 @@ reporting coverage, activity, feature usage, versions, weekly retention, and the
 number of verified companies with an active installation. Monthly and weekly
 activity count distinct installations with a successful request and sum
 successful requests. Lifecycle charts count arrivals, consecutive activity,
-returns after gaps, and loss of activity in completed periods. Domain lifecycle
+returns after gaps, and absence of qualifying activity in completed periods.
+An installation that stops reporting can appear inactive. Domain lifecycle
 uses only attributed requests from deployments with domain sharing enabled.
 
 The restricted `loom_adoption_top_domains_30d` view ranks the top 50 domains by

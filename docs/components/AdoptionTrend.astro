@@ -54,7 +54,7 @@ const numbers = new Intl.NumberFormat("en-US");
     display: grid;
     grid-template-columns: repeat(var(--days), minmax(0, 1fr));
     align-items: end;
-    gap: min(0.35vw, 0.25rem);
+    gap: min(0.25rem, calc(20% / var(--days)));
     border-bottom: 1px solid var(--line);
   }
   .bars span {

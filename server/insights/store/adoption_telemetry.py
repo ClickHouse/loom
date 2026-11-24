@@ -102,9 +102,6 @@ async def window_report(
         "installation_id": str(installation_id),
         "loom_version": __version__,
     }
-    report = await ch.query_one(ADOPTION_SQL, params)
-    if report is None:
-        raise RuntimeError("adoption aggregation returned no row")
     domains = (
         await ch.query_all(
             DOMAINS_SQL, {"start": start, "end": end, "restricted": sorted(restricted)}
@@ -112,6 +109,10 @@ async def window_report(
         if restricted is not None
         else []
     )
+    # Read totals after attribution so late ledger rows can only increase the total.
+    report = await ch.query_one(ADOPTION_SQL, params)
+    if report is None:
+        raise RuntimeError("adoption aggregation returned no row")
     return {
         **report,
         "day": start.date().isoformat(),
