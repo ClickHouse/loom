@@ -209,6 +209,9 @@ export function codeResponsePaths(body) {
   take(body.evidence); // verify
   take(body.frames); // trace (resolved frames)
   take(body.paths, null); // history (plain strings)
+  if (Array.isArray(body.definitions)) {
+    for (const definition of body.definitions) take(definition?.examples);
+  }
   return [...out].slice(0, 50);
 }
 
