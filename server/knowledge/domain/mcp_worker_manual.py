@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from server.knowledge.domain.mcp_identity import resource_digest
-from server.knowledge.domain.mcp_worker_refresh import MAX_DOCUMENTS_PER_JOB, MAX_IDENTIFIER_BYTES
+from server.knowledge.domain.mcp_worker_refresh import MAX_DOCUMENTS_PER_JOB, is_refresh_identifier
 from server.knowledge.domain.mcp_worker_schedule import (
     RefreshDemand,
     ScheduleBinding,
@@ -96,12 +96,7 @@ class ManualSelection:
 
 
 def _refresh_resource_digest(value: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not 0 < len(value) <= MAX_IDENTIFIER_BYTES
-        or not value.isprintable()
-        or len(value.encode()) > MAX_IDENTIFIER_BYTES
-    ):
+    if not is_refresh_identifier(value):
         raise ScheduleRejected("invalid manual refresh resource")
     return resource_digest(value)
 

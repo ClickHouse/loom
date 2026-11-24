@@ -12,11 +12,11 @@ from datetime import UTC, datetime, timedelta
 from server.knowledge.domain.mcp_worker_refresh import (
     MAX_DOCUMENTS_PER_JOB,
     MAX_QUEUE_ROWS_PER_SOURCE,
+    is_refresh_identifier,
 )
 
 MIN_REFRESH_INTERVAL_SECONDS = 12 * 60
 MAX_REFRESH_INTERVAL_SECONDS = 86_400
-_MAX_IDENTIFIER_BYTES = 1024
 _MAX_GENERATION = (1 << 63) - 1
 
 
@@ -25,13 +25,7 @@ class ScheduleRejected(ValueError):
 
 
 def _require_identifier(value: str) -> None:
-    if (
-        not isinstance(value, str)
-        or len(value) > _MAX_IDENTIFIER_BYTES
-        or not value.isprintable()
-        or not value.strip()
-        or len(value.encode()) > _MAX_IDENTIFIER_BYTES
-    ):
+    if not is_refresh_identifier(value):
         raise ScheduleRejected("invalid refresh schedule identifier")
 
 

@@ -115,6 +115,21 @@ async def _claim(entry: RefreshEntry, *, namespace: str) -> ClaimPage:
     )
 
 
+async def _assert_wrong_org_cannot_claim(conn: Connection, entry: RefreshEntry) -> None:
+    from server.knowledge.store import pg_worker_refresh as refresh
+
+    before = dict(await _row(conn, entry))
+    page = await refresh.claim(
+        org=unique_org("wrong-worker-org"),
+        namespace=entry.task.scope.namespace,
+        worker_id=entry.worker_id,
+        limit=1,
+        lease_seconds=30,
+    )
+    assert not page.leases and page.retired == 0
+    assert dict(await _row(conn, entry)) == before
+
+
 async def _assert_checkpoint_rolls_back(
     pg_conn: Connection, entry: RefreshEntry, lease: LiveLease, receipt: CompletionReceipt
 ) -> None:
@@ -173,6 +188,7 @@ async def test_refresh_claim_rollback_and_cancel_fence(pg_conn: Connection) -> N
             await _assert_pending(pg_conn, first)
             await _assert_pending(pg_conn, second)
 
+            await _assert_wrong_org_cannot_claim(pg_conn, first)
             assert not (await _claim(first, namespace=second.task.scope.namespace)).leases
             snapshots = []
             leases = []
@@ -876,5 +892,77 @@ async def test_committed_receipt_replays_only_for_exact_current_authority(
             async with pg_conn.transaction():
                 await refresh.checkpoint(pg_conn, lease, _receipt_for(lease))
             await _assert_terminal_replay(pg_conn, entry, lease)
+    finally:
+        await _cleanup(pg_conn, org)
+
+
+async def _refresh_rows_for_owner(conn: Connection, org: str, owner: str) -> tuple[int, ...]:
+    row = await conn.fetchrow(
+        """
+        SELECT
+            (SELECT count(*) FROM loom.knowledge_source_refresh WHERE org = $1 AND user_id = $2),
+            (SELECT count(*) FROM loom.mcp_worker_refresh_schedules WHERE org = $1 AND user_id = $2),
+            (SELECT count(*) FROM loom.mcp_worker_refresh_admission WHERE org = $1 AND user_id = $2)
+        """,
+        org,
+        owner,
+    )
+    assert row is not None
+    return tuple(row)
+
+
+async def _wait_for_refresh_erasure_lock(conn: Connection, erase: asyncio.Task[int]) -> None:
+    while not await conn.fetchval(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM pg_locks held JOIN pg_locks waiting
+              USING (locktype, database, classid, objid, objsubid)
+            WHERE held.pid = pg_backend_pid() AND held.locktype = 'advisory' AND held.granted
+              AND NOT waiting.granted AND waiting.mode = 'ExclusiveLock'
+        )
+        """
+    ):
+        assert not erase.done(), "user erasure did not discover the refresh namespace lock"
+        await asyncio.sleep(0.01)
+
+
+async def _erase_refresh_owner(conn: Connection, entry: RefreshEntry) -> None:
+    from server.core import pg
+    from server.erasure.store.steps_pg import delete_pg_knowledge_by_user
+
+    scope = entry.task.scope
+    async with asyncio.TaskGroup() as tasks:
+        async with conn.transaction():
+            await conn.execute(
+                f"SELECT pg_advisory_xact_lock_shared({pg.KNOWLEDGE_LOCK_KEY})",
+                scope.org,
+                scope.namespace,
+            )
+            erase = tasks.create_task(delete_pg_knowledge_by_user(scope.org, entry.user_id))
+            await _wait_for_refresh_erasure_lock(conn, erase)
+    assert await _refresh_rows_for_owner(conn, scope.org, entry.user_id) == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_user_erasure_discovers_and_removes_refresh_only_metadata(
+    pg_conn: Connection,
+) -> None:
+    from server.knowledge.store import pg_worker_refresh as refresh
+
+    org = unique_org("worker-pg-refresh-erasure")
+    try:
+        async with asyncio.timeout(20):
+            now = await pg_conn.fetchval("SELECT clock_timestamp()")
+            first, other = _entry(org, "erased", now), _entry(org, "retained", now)
+            neighbor = replace(other.task.scope, namespace=first.task.scope.namespace)
+            other = replace(other, task=replace(other.task, scope=neighbor))
+            async with pg_conn.transaction():
+                for entry in (first, other):
+                    await _write_schedule(pg_conn, entry, 720)
+                    assert await refresh.enqueue_batch_on(pg_conn, (entry,)) == 1
+                    assert await _refresh_rows_for_owner(pg_conn, org, entry.user_id) == (1, 1, 1)
+            await _erase_refresh_owner(pg_conn, first)
+            assert await _refresh_rows_for_owner(pg_conn, org, other.user_id) == (1, 1, 1)
+            assert (await _row(pg_conn, other))["state"] == "pending"
     finally:
         await _cleanup(pg_conn, org)

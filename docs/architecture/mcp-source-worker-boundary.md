@@ -192,17 +192,16 @@ new resource identities have a verified one-to-one binding. An unmapped copy
 keeps its old address and erasure history. Deployment requires compatible builds,
 an approved worker binding and a separate operator cutover.
 
-## Qualification and transition
+## Qualification targets and transition
 
-The supported transport is remote MCP over Streamable HTTP with server
-verification. The worker does not run local server commands or expose a
-stdio bridge. A profile declares the read operations it permits. Resource
+Qualify remote MCP over Streamable HTTP with server verification. Local server
+commands and a stdio bridge are out of scope. A profile declares the read operations it permits. Resource
 listing or reading requires the corresponding capability. Tools require
 explicit validated mappings and schemas for search and read. Server names,
 descriptions and read-only hints do not grant permission. Missing revision,
 listing, permission or deletion evidence disables the behavior that depends on
-it. Test resources and mapped tools exercise the same worker and do not qualify
-a particular provider.
+it. Qualification must exercise resources and mapped tools with the same worker.
+Synthetic servers cannot qualify a particular provider.
 
 The worker can use an independently provisioned account. A delegated account
 host needs a requester-bound read and a service lifecycle that can run without

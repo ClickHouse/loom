@@ -26,14 +26,19 @@ class RefreshRejected(ValueError):
     """The refresh metadata, lease, or proposed completion cannot be used."""
 
 
+def is_refresh_identifier(value: object) -> bool:
+    """Validate the shared identifier bound without changing the input."""
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= MAX_IDENTIFIER_BYTES
+        and value.isprintable()
+        and bool(value.strip())
+        and len(value.encode()) <= MAX_IDENTIFIER_BYTES
+    )
+
+
 def _require_identifier(value: str) -> None:
-    if (
-        not isinstance(value, str)
-        or len(value) > MAX_IDENTIFIER_BYTES
-        or not value.isprintable()
-        or not value.strip()
-        or len(value.encode()) > MAX_IDENTIFIER_BYTES
-    ):
+    if not is_refresh_identifier(value):
         raise RefreshRejected("invalid refresh identifier")
 
 
