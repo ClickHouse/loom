@@ -65,7 +65,8 @@ def _content_counts(body, seen):
         rows.extend(_dict_rows(body.get(key)))
     related = body.get("related")
     related = related if isinstance(related, dict) else {}
-    rows.extend(_dict_rows(related.get("definitions")))
+    for key in ("definitions", "dependencies"):
+        rows.extend(_dict_rows(related.get(key)))
     lessons = [lesson for row in rows for lesson in _dict_rows(row.get("lessons"))]
     caller_contexts = [
         context

@@ -127,6 +127,7 @@ class NativeTrace(unittest.TestCase):
                                     {
                                         "matches": [{"text": "line"}],
                                         "contexts": [{"text": "around"}],
+                                        "related": {"dependencies": [{"body": "helper"}]},
                                         "lessons": [
                                             {**lesson, "path": "file.py", "excerpt": "note text"}
                                         ],
@@ -149,7 +150,7 @@ class NativeTrace(unittest.TestCase):
             self.assertEqual(metrics["model_turns_main"], 2)
             self.assertEqual(metrics["parallel_tool_groups_main"], 1)
             self.assertEqual(metrics["tool_calls_main"], 2)
-            self.assertEqual(metrics["loom_source_chars_main"], 3)
+            self.assertEqual(metrics["loom_source_chars_main"], 9)
             self.assertEqual(metrics["loom_match_chars_main"], 4)
             self.assertEqual(metrics["loom_context_chars_main"], 6)
             self.assertEqual(metrics["loom_caller_context_chars_main"], 6)
@@ -159,6 +160,7 @@ class NativeTrace(unittest.TestCase):
             self.assertEqual(metrics["first_fresh_linked_lesson_result_event_main"], 2)
             self.assertIsNone(metrics["first_possible_edit_request_event_main"])
             self.assertEqual(result["calls"][0]["request_event"], 1)
+            self.assertEqual(result["calls"][1]["source_bodies"], 1)
             self.assertEqual(metrics["claude_api_time_s"], 2)
             self.assertNotIn("secret", json.dumps(result))
             self.assertNotIn("private", json.dumps(result))
