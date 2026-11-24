@@ -245,14 +245,14 @@ class PairedAnalysisContracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identity"):
             analyze(order, wrong, resamples=100)
 
-    def test_unbalanced_arm_positions_are_rejected_before_analysis(self):
+    def test_reordered_arms_are_rejected_before_analysis(self):
         order, entries = inputs()
         block = [r for r in order["attempts"] if r["task_id"] == "a" and r["repeat"] == 0]
         left, right = block[:2]
         for key in ("arm", "mode", "index_tier", "memory_enabled"):
             left[key], right[key] = right[key], left[key]
         order["schedule_sha256"] = digest(order["attempts"])
-        with self.assertRaisesRegex(ValueError, "distinct positions"):
+        with self.assertRaisesRegex(ValueError, "five-arm order"):
             analyze(order, entries, resamples=100)
 
 

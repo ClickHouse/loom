@@ -48,13 +48,18 @@ class TreatmentContracts(unittest.TestCase):
             Counter(row["arm"] for row in rows),
             dict.fromkeys(PRIMARY, 18),
         )
-        for arm in PRIMARY:
-            positions = Counter()
-            for task in tasks:
-                for repeat in range(3):
-                    block = [r for r in rows if r["task_id"] == task and r["repeat"] == repeat]
-                    positions.update(i for i, row in enumerate(block) if row["arm"] == arm)
-            self.assertEqual(sorted(positions.values()), [3, 3, 4, 4, 4])
+        for task in tasks:
+            for repeat in range(3):
+                block = [r for r in rows if r["task_id"] == task and r["repeat"] == repeat]
+                self.assertEqual([r["arm"] for r in block], list(PRIMARY))
+        self.assertEqual([row["repeat"] for row in rows], sorted(row["repeat"] for row in rows))
+
+        reordered = copy.deepcopy(rows)
+        reordered[0], reordered[1] = reordered[1], reordered[0]
+        for index, row in enumerate(reordered):
+            row["order"] = index
+        with self.assertRaisesRegex(ValueError, "five-arm order"):
+            validate_schedule(reordered)
 
     def test_schedule_pairs_each_issue_and_repeat(self):
         tasks = ["a", "b", "c"]

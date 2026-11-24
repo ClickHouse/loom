@@ -27,10 +27,16 @@ class ProjectInstructions(TestCase):
         self.assertEqual(hashlib.sha256(actual).hexdigest(), instructions["sha256"])
         self.assertIn("services, crates", actual.decode())
         self.assertEqual(instructions["applies_to"], "loom-enabled")
-        self.assertIn("Use Loom to discover and read unchanged source", actual.decode())
-        self.assertIn("use Loom for each search or read", actual.decode())
-        self.assertIn("Reserve Bash grep, rg, sed, cat, find", actual.decode())
-        self.assertIn("Use local tools for edits, tests, Git", actual.decode())
+        text = " ".join(actual.decode().split())
+        self.assertIn("Use Loom for each search or read of unchanged indexed source", text)
+        self.assertIn("including test files and module imports", text)
+        self.assertIn(
+            "Start with `loom_code_symbol` for a named definition or enclosing class", text
+        )
+        self.assertIn("find related tests and read their bodies in one lookup", text)
+        self.assertIn("`test_examples_only: true` with `example_context_lines`", text)
+        self.assertIn("Keep discovery separate from edits, test execution and Git", text)
+        self.assertIn("read working-copy changes, untracked or unindexed files", text)
 
     def test_baseline_and_loom_use_their_frozen_images(self):
         images = {"task": {"agent": {"baseline": "base-image", "loom": "loom-image"}}}

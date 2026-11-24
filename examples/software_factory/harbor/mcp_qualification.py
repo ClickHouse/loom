@@ -101,6 +101,7 @@ def qualify(client, url, token, binding, *, schema_profile):
                 key: binding[key] for key in ("org", "code_namespace", "memory_namespace")
             },
             "tool_names": sorted(names),
+            "upfront_tool_names": sorted(name for name, eager in loading.items() if eager),
             "tool_loading_sha256": digest(loading),
             "tools_sha256": digest(tools),
             "provider_generation": False,
@@ -125,9 +126,19 @@ def qualified_catalog(schema_profile, receipts, standard):
             standard is None
             or standard["tools_sha256"] == catalog
             or standard["tool_names"] != sample["tool_names"]
-            or standard["tool_loading_sha256"] != sample["tool_loading_sha256"]
         ):
-            raise PermissionError("Compact catalog must preserve the tools and loading policy")
+            raise PermissionError("Compact catalog must preserve the listed tools")
+        if standard["tool_loading_sha256"] != sample["tool_loading_sha256"]:
+            upfront = set(sample.get("upfront_tool_names", ()))
+            standard_upfront = set(standard.get("upfront_tool_names", ()))
+            deferred = {"loom_code_search"}
+            promoted = set()
+            if "loom_code_edit_context" in sample["tool_names"]:
+                deferred.add("loom_code_symbol")
+                promoted.add("loom_code_edit_context")
+            expected = (standard_upfront - deferred) | promoted
+            if not deferred <= standard_upfront or upfront != expected:
+                raise PermissionError("Compact coding has an unexpected upfront lookup set")
     return {
         "schema_profile": schema_profile,
         "tool_catalog_sha256": catalog,

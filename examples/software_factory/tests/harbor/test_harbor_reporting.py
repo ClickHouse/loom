@@ -49,11 +49,9 @@ class HarborReporting(unittest.TestCase):
         self.entries, self.raw, self.locks = [], [], []
         self.tasks = ["scenario-a", "scenario-b", "scenario-c"]
         schedule = []
-        for task in self.tasks:
-            for repeat in range(3):
-                arms = list(PRIMARY_VIEWS)
-                shift = (self.tasks.index(task) * 3 + repeat) % len(arms)
-                for arm in arms[shift:] + arms[:shift]:
+        for repeat in range(3):
+            for task in self.tasks:
+                for arm in PRIMARY_VIEWS:
                     schedule.append(
                         {
                             "order": len(schedule),

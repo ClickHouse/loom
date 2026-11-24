@@ -11,8 +11,7 @@ ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --pilot-task pall
 Harbor runs its built-in Claude Code agent in a normal checkout. Claude follows shared project instructions and chooses
 its tool calls, edits, test commands and stopping point. The evaluator supplies the
 original issue, a shared submission note, and the environment, then grades
-the submitted implementation in a
-separate container. It adds no coding loop, custom source tools, retrieval hooks or completion review.
+the submitted implementation in a separate container. It adds no coding loop, custom source tools, retrieval hooks or completion review.
 
 The comparison has five arms:
 
@@ -21,6 +20,9 @@ The comparison has five arms:
 - Claude Code with Loom's tree-sitter code index and historical memory.
 - Claude Code with Loom's SCIP code index.
 - Claude Code with Loom's SCIP code index and historical memory.
+
+Every repetition completes all five arms in this order for each scenario
+before the next repetition starts.
 
 All arms use the same model, pinned Claude Code version, issue, base checkout,
 resources and hidden verifier. Loom-enabled arms use the native MCP server and
@@ -59,6 +61,25 @@ facts, hidden tests and full regression checks. Only the selected task's native
 indexes and memory namespaces are prepared. A single-issue pilot gives descriptive results. Keep every pilot, including
 negative and failed attempts, and declare the task before running. Resume uses
 the selection frozen in the launch record.
+
+Run the callback-order pilot with provider prompt caching disabled:
+
+```bash
+python3 -m examples.software_factory run --pilot-task pallets__flask-4230 --loom-schema-profile compact --disable-prompt-caching --output ./factory-uncached
+```
+
+For fresh provider cache starts, set `FACTORY_ANTHROPIC_WORKSPACE_MANIFEST` to the
+path of a private JSON file. Supply `{"key_files": ["first.key", "second.key", "..."]}`
+for workspace-scoped keys, or `{"key_file": "service.key", "workspace_ids": ["wrkspc_...", "..."]}`
+for an unscoped key. Relative key paths start in the manifest's directory. List
+one unused workspace per scheduled attempt. Use `ANTHROPIC_API_KEY` from a separate
+workspace for setup and judging. The launcher checks the provider's workspace
+headers before running. The report checks first-request cache reads for every
+attempt, and Claude Code keeps caching within each session.
+
+Use `--disable-prompt-caching` for an uncached comparison with the same
+`ANTHROPIC_API_KEY` for every attempt. The pilot skips expiry waits and checks
+Anthropic's cache reads and writes for each complete Claude Code session.
 
 Omit `--pilot-task` to run the full matrix:
 

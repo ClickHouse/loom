@@ -1,26 +1,22 @@
 # Repository context
 
-Use Loom to discover and read unchanged source in the indexed roots. For that
-source, use Loom for each search or read. Reserve Bash grep, rg, sed, cat, find,
-Python source-printing scripts, and local Read, Grep and Glob for the local
-work described below.
+Use Loom for each search or read of unchanged indexed source, including test
+files and module imports. For a known edit target, start with
+`loom_code_edit_context` for its implementation, related tests, and linked
+notes. Name the method for a local change or the class when several methods
+interact. If you know the file but need to find the target, pass its path as
+`name` and literal code fragments as `clues`. Check the source revision and
+note freshness. Reuse the returned
+source and test excerpts before looking up more context. Use
+`loom_code_symbol` to inspect a definition.
 
-Keep source discovery separate from Git, editing and test commands. Use
-`loom_code_search` for behavior, `loom_code_grep` for exact text and
-`loom_code_symbol` for a named definition or enclosing class. Request related
-methods together by reading their enclosing class. Use `loom_code_read` for
-several known line ranges.
+Use `loom_code_search` for behavior and `loom_code_grep` for exact text. Once a
+search identifies the edit target, use `loom_code_edit_context` with its
+file and symbol to read the implementation and tests together. For specific
+additional lines, batch known ranges with `loom_code_read`. To find more
+tests, scope grep to their path and pass a list of literals or one regex.
 
-Retrieve linked project history when needed. Use the source already in
-context when it answers your question. Continue through Loom when you need
-another indexed definition. Check source references and link freshness
-before relying on a historical note.
-
-Use local tools for edits, tests, Git, and source outside Loom's coverage.
-Read locally when Loom is unavailable or reports that it cannot supply the
-needed source. State the missing evidence when you fall back for indexed source.
-Use local Read or grep for working-copy changes, untracked files and paths
-outside Loom’s coverage. Reading a file inside an editing script to apply a
-patch is part of editing.
-
-Choose the calls, edits and verification needed to solve the issue.
+Keep discovery separate from edits, test execution and Git. Use local tools
+for these operations and to read working-copy changes, untracked or unindexed
+files, and evidence Loom cannot supply. State the missing evidence when you
+fall back for indexed source. An editing script may read the file it patches.

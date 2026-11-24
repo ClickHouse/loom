@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import time
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from statistics import fmean
@@ -28,6 +29,13 @@ from examples.software_factory.harbor.runtime import read, task_inputs, verify, 
 
 from .billing import FIELDS as BILLING_FIELDS
 from .billing import audit_provider_costs
+from .cache_start import (
+    DEFAULT_CACHE_TTL_S,
+    first_prompt_verified,
+    observed_cache_ttl_s,
+    prompt_caching_disabled,
+    wait_for_expiry,
+)
 from .fairness import audit_fairness
 from .judging import load_verdicts, run_judging
 from .mcp_qualification import STARTUP_COUNTS, verify_catalog
@@ -39,6 +47,7 @@ from .project_guidance import SUBMISSION_NOTE, agent_image, guidance, task_instr
 from .project_guidance import stage as stage_guidance
 from .public_export import export_public
 from .scopes import selected_scopes
+from .workspace import API_KEY, CUSTOM_HEADERS, solver_environment
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
@@ -209,7 +218,14 @@ def build_image(
     return image
 
 
-def prepare(previous: Path, output: Path) -> Path:
+def prepare(
+    previous: Path,
+    output: Path,
+    *,
+    isolate_prompt_cache: bool = False,
+    workspace_ids=(),
+    disable_prompt_caching: bool = False,
+) -> Path:
     plan = read(previous)
     if not plan.get("public_reproduction"):
         raise ValueError("A public reproduction manifest is required")
@@ -273,6 +289,17 @@ def prepare(previous: Path, output: Path) -> Path:
     plan["project_guidance"] = guidance(plan["suite"]["source_roots"])
     plan["public_reproduction"]["project_guidance"] = plan["project_guidance"]
     plan["public_reproduction"]["submission_note"] = SUBMISSION_NOTE
+    if disable_prompt_caching:
+        plan["prompt_cache_isolation"] = "disabled"
+    elif workspace_ids:
+        if len(workspace_ids) != len(plan["schedule"]) or len(set(workspace_ids)) != len(
+            workspace_ids
+        ):
+            raise ValueError("Every scheduled attempt requires a distinct Anthropic workspace")
+        plan["prompt_cache_isolation"] = "dedicated-anthropic-workspace-per-attempt"
+        plan["anthropic_workspace_ids"] = list(workspace_ids)
+    elif isolate_prompt_cache:
+        plan["prompt_cache_isolation"] = "provider-expiry-between-attempts"
     builder = partial(build_image, project_instructions=plan["project_guidance"])
     for task_id in sorted(plan["tasks"]):
         plan["harbor_specs"][task_id], images[task_id] = load_profile(plan).stage_task(
@@ -312,7 +339,15 @@ def prepare(previous: Path, output: Path) -> Path:
         "model_name": plan["model_id"],
         "kwargs": {"version": solver["version"]},
         "override_setup_timeout_sec": float("inf"),
-        "env": PROXY_ENV,
+        "env": {
+            **PROXY_ENV,
+            **({"DISABLE_PROMPT_CACHING": "1"} if disable_prompt_caching else {}),
+            **(
+                {API_KEY: "${" + API_KEY + "}", CUSTOM_HEADERS: "${" + CUSTOM_HEADERS + "}"}
+                if workspace_ids
+                else {}
+            ),
+        },
     }
     controls = {}
     for name in ("base", "reference"):
@@ -517,6 +552,12 @@ def export(protocol: dict, job_name="live") -> dict:
             model_id=protocol["model_id"],
         )
         result["protocol_sha256"] = digest(protocol)
+        if job_name == "live" and protocol.get("anthropic_workspace_ids"):
+            intent = read(output / f"live-intent-{order:02d}.json")
+            reached = intent.get("anthropic_workspace_id")
+            if reached != protocol["anthropic_workspace_ids"][order]:
+                raise PermissionError("Recorded workspace differs from the scheduled scope")
+            result["anthropic_workspace_preflight_id"] = reached
         entries.append({"order": order, "result": result})
     entries.sort(key=lambda e: e["order"])
     enrich_evaluations(protocol, entries, job_name)
@@ -548,9 +589,23 @@ def export(protocol: dict, job_name="live") -> dict:
         if audit is not None
         else None
     )
+    cache_policy = protocol.get("prompt_cache_isolation")
+    verify_cache = prompt_caching_disabled if cache_policy == "disabled" else first_prompt_verified
+    cache_verified = (
+        len(entries) == len(protocol["schedule"])
+        and all(verify_cache(entry["result"]) for entry in entries)
+        if cache_policy
+        else None
+    )
+    cache_field = (
+        "prompt_cache_disabled_verified"
+        if cache_policy == "disabled"
+        else "fresh_prompt_cache_verified"
+    )
     for comparison in (report, *report["cohorts"].values()):
         comparison["loom_source_verified"] = routing_verified
-        if routing_verified is not True:
+        comparison[cache_field] = cache_verified
+        if routing_verified is not True or cache_verified is False:
             comparison["observed_targets"]["efficiency_vs_no_loom"] = {}
             comparison["observed_targets"]["memory_vs_code_index"] = {}
     write(output / "paired-report.json", report)
@@ -558,8 +613,11 @@ def export(protocol: dict, job_name="live") -> dict:
         "complete": report["complete"],
         "observed": len(entries),
         "scheduled": len(protocol["schedule"]),
+        cache_field: cache_verified,
         "arms": {},
     }
+    if protocol.get("anthropic_workspace_ids"):
+        summary["workspace_preflight_source"] = "Anthropic Models API response headers"
     for arm in ARMS:
         records = [e["result"] for e in entries if protocol["schedule"][e["order"]]["arm"] == arm]
         costs = [r.get("generation_cost_usd") for r in records]
@@ -607,6 +665,7 @@ def export(protocol: dict, job_name="live") -> dict:
             "generation_cost_usd",
             "generation_cost_source",
             "solver_token_source",
+            "anthropic_workspace_preflight_id",
             "loom_provider_cost_usd",
             "total_provider_cost_usd",
             "total_cost_usd",
@@ -655,7 +714,7 @@ def export(protocol: dict, job_name="live") -> dict:
     return summary
 
 
-async def run(protocol_path: Path, kind: str, *, meter=None):
+async def run(protocol_path: Path, kind: str, *, meter=None, cache_quiet_since=None, workspaces=()):
     protocol = read(protocol_path)
     verify(protocol)
     output = Path(protocol["output_root"])
@@ -668,12 +727,17 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
     config = JobConfig.model_validate(read(output / (kind + "-job.json")))
     if kind == "live":
         load_credentials(protocol)
-    job = await Job.create(config)
+        if [binding.id for binding in workspaces] != protocol.get("anthropic_workspace_ids", []):
+            raise PermissionError("Workspace bindings differ from the frozen protocol")
     if config.n_concurrent_trials != 1 or config.retry.max_retries != 0:
         raise PermissionError("Frozen trial order requires serial execution without retries")
     timers = {}
     frozen_snapshot = read(output / "index-content.json")
     next_orders = [int(Path(t.path).name.removeprefix("slot-")) for t in config.tasks]
+    wait_for_cache = (
+        kind == "live"
+        and protocol.get("prompt_cache_isolation") == "provider-expiry-between-attempts"
+    )
 
     async def start(event):
         started = time.monotonic()
@@ -699,6 +763,7 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
                     "slot": protocol["schedule"][order],
                     "trial_name": event.trial_name,
                     "protocol_sha256": digest(protocol),
+                    **({"anthropic_workspace_id": workspaces[order].id} if workspaces else {}),
                 },
                 stream,
             )
@@ -761,11 +826,26 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
             ),
             flush=True,
         )
+        if workspaces and next_orders:
+            workspaces[next_orders[0]].activate()
+        if wait_for_cache and next_orders:
+            entry = next(
+                row for row in read(output / "live-attempts.json") if row["order"] == order
+            )
+            elapsed = (datetime.now(UTC) - event.result.finished_at).total_seconds()
+            await wait_for_expiry(observed_cache_ttl_s(entry["result"]) - elapsed, next_orders[0])
 
-    job.on_trial_started(start).on_trial_ended(end)
-    if kind == "live":
-        export(protocol, kind)
-    await job.run()
+    with solver_environment():
+        if workspaces:
+            workspaces[next_orders[0]].activate()
+        job = await Job.create(config)
+        job.on_trial_started(start).on_trial_ended(end)
+        if kind == "live":
+            export(protocol, kind)
+        if wait_for_cache:
+            elapsed = time.monotonic() - cache_quiet_since if cache_quiet_since is not None else 0
+            await wait_for_expiry(DEFAULT_CACHE_TTL_S - elapsed, next_orders[0])
+        await job.run()
     summary = export(protocol, kind)
     if kind == "live":
         costs = await asyncio.to_thread(

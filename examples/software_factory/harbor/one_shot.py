@@ -10,6 +10,7 @@ import os
 import secrets
 import signal
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from .profiles import load_profile
 from .provision import Provisioner
 from .runtime import read, write
 from .spending import Spending
+from .workspace import BINDINGS_ENV, Workspace
 
 
 class Phases:
@@ -180,6 +182,11 @@ def execute(args):
         return receipt
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise PermissionError("An API credential is required")
+    workspaces = tuple(
+        Workspace(**values) for values in json.loads(os.environ.pop(BINDINGS_ENV, "[]"))
+    )
+    if [binding.id for binding in workspaces] != launch.get("workspace_ids", []):
+        raise PermissionError("Workspace bindings differ from the frozen launch")
     if launch["budget_usd"] != args.budget_usd:
         raise PermissionError("Provider allowance differs from the launch record")
     if launch["evaluation"] != args.eval:
@@ -284,6 +291,7 @@ def execute(args):
                     prepared,
                     launch["pilot_task"],
                     output / "pilot-inputs",
+                    repeats=launch["pilot_repeats"],
                 ),
             )
         meter.set_phase("native-setup")
@@ -296,6 +304,12 @@ def execute(args):
                 compiled,
                 loom_schema_profile=launch["loom_schema_profile"],
             ),
+        )
+        disable_prompt_caching = launch.get("disable_prompt_caching", False)
+        cache_quiet_since = (
+            time.monotonic()
+            if launch["pilot_task"] is not None and not workspaces and not disable_prompt_caching
+            else None
         )
         plan = phases.run(
             "plan",
@@ -312,7 +326,15 @@ def execute(args):
         bootstrap_path = checked_protocol_path(plan)
         staged = phases.run(
             "harbor",
-            lambda: protocol_receipt(study.prepare(bootstrap_path, output / "study")),
+            lambda: protocol_receipt(
+                study.prepare(
+                    bootstrap_path,
+                    output / "study",
+                    isolate_prompt_cache=cache_quiet_since is not None,
+                    workspace_ids=[binding.id for binding in workspaces],
+                    disable_prompt_caching=disable_prompt_caching,
+                )
+            ),
         )
         for kind in ("base", "reference", "live"):
             meter.set_phase(kind)
@@ -320,7 +342,13 @@ def execute(args):
             phases.run(
                 kind,
                 lambda kind=kind, protocol_path=protocol_path: asyncio.run(
-                    study.run(protocol_path, kind, meter=meter)
+                    study.run(
+                        protocol_path,
+                        kind,
+                        meter=meter,
+                        cache_quiet_since=cache_quiet_since,
+                        workspaces=workspaces if kind == "live" else (),
+                    )
                 ),
             )
         summary = {

@@ -79,10 +79,34 @@ any tool has returned. Compare later responses with the tool trace to see where
 the context grows. A tool call ID relates records across the two sources. The
 provider does not report token charges for individual tool results.
 
+For an uncached run, compare the first request before comparing tool results.
+The coding catalog adds input before any retrieval. Check which tools were
+loaded upfront and which the agent called. A retry adds another model request
+over the accumulated prompt. Replay the original arguments against the pinned
+index to distinguish interface failures from retrieval failures.
+
+When a symbol lookup is followed by a test search, compare the actual tests
+the agent sought with the examples Loom could return on the same revision.
+Test decorators can pass a class by reference. Check whether the agent
+explicitly disabled examples before changing retrieval. For a known edit
+target, measure whether `code.edit_context` supplies the sought tests and
+avoids a separate search. When a history arm serves only changed notes,
+verify the linked source revisions before interpreting the result as a test
+of fresh linked memory.
+
 Use the serving revision and recorded request flag to determine whether grep
 requested enclosing bodies. Compare the returned body counts and the next model
 response to see whether a combined lookup removed a local read or a model turn.
 A smaller tool count alone does not establish either saving.
+
+When an indexed arm uses local search, compare the actual MCP connection, loaded
+tool hints, project instructions, and native calls. A connected client can
+choose a local read. Keep those attempts in the report and inspect whether the
+startup primer and tool discovery give the same routing advice.
+
+Compare agent tasks with the artifact the verifier reads. Give every arm the
+same submission scope so that time spent on changelog or documentation work
+does not obscure the implementation comparison.
 
 Loom's ledger supplies request ids, latency, cost and response-size estimates.
 Its OpenTelemetry spans supply internal stages. The existing Langfuse integration

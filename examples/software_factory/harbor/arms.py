@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass
 
 
@@ -39,14 +38,14 @@ EFFICIENCY_TARGET = 0.20
 
 
 def validate_schedule(rows):
-    """Reject missing arms, repetitions, changed treatments and position imbalance."""
+    """Reject incomplete rounds, reordered arm batches and changed treatments."""
     if not isinstance(rows, list) or not rows:
         raise ValueError("Freeze a nonempty five-arm schedule")
     tasks = sorted({row["task_id"] for row in rows})
     pilot = any("pilot" in row for row in rows)
     if pilot and (len(tasks) != 1 or any(row.get("pilot") is not True for row in rows)):
         raise ValueError("A pilot requires one scenario and an explicit marker on every arm")
-    repeats = range(1 if pilot else 3)
+    repeats = range(1 if pilot and len(rows) == len(PRIMARY) else 3)
     expected = {(task, repeat, arm) for task in tasks for repeat in repeats for arm in PRIMARY}
     actual = [(row["task_id"], row["repeat"], row["arm"]) for row in rows]
     if len(actual) != len(expected) or set(actual) != expected:
@@ -60,25 +59,11 @@ def validate_schedule(rows):
             or any(row.get(key) != value for key, value in PRIMARY[row["arm"]].identity().items())
         ):
             raise ValueError("Scheduled treatment identity or order differs")
-    if pilot:
-        return tasks
-    global_positions = {arm: Counter() for arm in PRIMARY}
-    for task in tasks:
-        positions = {arm: Counter() for arm in PRIMARY}
-        for repeat in range(3):
-            block = [row for row in rows if row["task_id"] == task and row["repeat"] == repeat]
-            start = block[0]["order"]
-            if [row["order"] for row in block] != list(range(start, start + len(PRIMARY))):
-                raise ValueError("Primary arms require contiguous five-arm blocks")
-            for position, row in enumerate(block):
-                positions[row["arm"]][position] += 1
-                global_positions[row["arm"]][position] += 1
-        if any(max(counts.values()) != 1 for counts in positions.values()):
-            raise ValueError("Each arm must occupy three distinct positions per scenario")
-    for counts in global_positions.values():
-        values = [counts[position] for position in range(len(PRIMARY))]
-        if max(values) - min(values) > 1:
-            raise ValueError("Global treatment positions are imbalanced")
+    batch_size = len(PRIMARY)
+    task_order = [row["task_id"] for row in rows[: len(tasks) * batch_size : batch_size]]
+    ordered = [(task, repeat, arm) for repeat in repeats for task in task_order for arm in PRIMARY]
+    if set(task_order) != set(tasks) or actual != ordered:
+        raise ValueError("Every round must follow the same five-arm order for each scenario")
     return tasks
 
 

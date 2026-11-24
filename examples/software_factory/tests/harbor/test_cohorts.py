@@ -11,7 +11,7 @@ from examples.software_factory.tests.harbor.test_paired import inputs
 
 
 class CohortComparisons(unittest.TestCase):
-    def test_each_experiment_has_balanced_positions_and_complete_pairs(self):
+    def test_each_experiment_has_ordered_rounds_and_complete_pairs(self):
         families = {str(i): "historical-issue" if i < 3 else "authored" for i in range(6)}
         for seed in (741, 0, 13):
             rows = schedule(list(families), seed=seed, task_families=families)
@@ -30,7 +30,7 @@ class CohortComparisons(unittest.TestCase):
                 for task in ("a", "b", "c")
             },
         }
-        # Regenerate a cohort-balanced schedule while retaining each paired result.
+        # Regenerate the scenario order while retaining each paired result.
         rows = schedule(
             ["a", "b", "c"],
             seed=741,

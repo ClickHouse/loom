@@ -5,15 +5,17 @@ Compare five arms on the same historical Flask issue and base revision:
 `loom-scip-memory`. Claude chooses every Loom call. Baseline has no Loom client or
 schemas. Every arm uses the same native coding agent, issue, model and test capabilities.
 
-Three issues, five arms and three repeats produce 45 attempts. Freeze seed 741
-and retain the interleaved arm blocks and balanced positions. Each attempt starts
-a fresh Claude Code session with normal provider caching. Retain nonuse, failures,
-invalid rewards and unknown costs. Analyze paired task clusters.
+Three issues, five arms and three repeats produce 45 attempts. Seed 741 fixes
+the issue order. Each round runs all five arms for each issue in the order above.
+Each attempt starts a fresh Claude Code session. Set `--disable-prompt-caching`
+to measure uncached requests. Retain nonuse, failures, invalid rewards and
+unknown costs. Analyze paired task clusters.
 
 For a five-attempt development check, pass `--pilot-task pallets__flask-4230` to
 `plan` and `run`. The selected issue runs once per arm with unchanged grading and
-history. Its task and marker are frozen in the launch and schedule; a truncated
-full schedule is rejected. A pilot gives descriptive results. Keep
+history. Add `--pilot-repeats 3` to run three complete rounds of the five arms.
+The launch and schedule freeze the task and repetition count. A pilot gives
+descriptive results. Keep
 all pilot outcomes and hold the full matrix until the development target is met.
 These reused development issues are not held-out confirmation data.
 

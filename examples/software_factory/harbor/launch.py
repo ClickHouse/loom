@@ -15,6 +15,7 @@ import sys
 import tempfile
 import uuid
 from contextlib import contextmanager, nullcontext
+from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -24,6 +25,9 @@ from .catalog import load_evaluation
 from .host_tunnel import HostTunnel
 from .native_environment import MCP_SCHEMA_PROFILES
 from .project_guidance import guidance
+from .workspace import BINDINGS_ENV, MANIFEST_ENV
+from .workspace import manifest as workspace_manifest
+from .workspace import qualify as qualify_workspaces
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path("examples/software_factory/harbor")
@@ -125,7 +129,9 @@ def plan(
     evaluation="flask",
     pilot_task=None,
     *,
+    pilot_repeats=1,
     loom_schema_profile="standard",
+    disable_prompt_caching=False,
 ):
     if loom_schema_profile not in MCP_SCHEMA_PROFILES:
         raise LaunchError("Choose the standard or compact Loom MCP schema profile")
@@ -141,7 +147,11 @@ def plan(
             raise LaunchError("The pilot task must name a frozen evaluation scenario")
         task_ids &= {pilot_task}
         history_ids &= {pilot_task}
-    cases, repeats = len(task_ids | history_ids), 1 if pilot_task else 3
+    if type(pilot_repeats) is not int or pilot_repeats not in (1, 3):
+        raise LaunchError("Choose one or three repeats for the pilot issue")
+    if pilot_task is None and pilot_repeats != 1:
+        raise LaunchError("Set --pilot-task when specifying pilot repeats")
+    cases, repeats = len(task_ids | history_ids), pilot_repeats if pilot_task else 3
     mode = "pilot" if pilot_task else "full"
     memory_attempts = cases * repeats * sum(arm.memory_enabled for arm in PRIMARY.values())
     seeded_attempts = (
@@ -156,6 +166,7 @@ def plan(
         "study_mode": mode,
         "pilot_task": pilot_task,
         "loom_schema_profile": loom_schema_profile,
+        "disable_prompt_caching": disable_prompt_caching,
         "evaluation": {
             key: descriptor[key] for key in ("id", "title", "adapter", "descriptor_sha256")
         },
@@ -266,12 +277,15 @@ class Docker:
     def __init__(self):
         self.process = None
         self.key = os.environ.get("ANTHROPIC_API_KEY", "")
+        self.workspaces = ()
         self.proxy_url = self.proxy_host_url = self.proxy_token = None
 
     def environment(self, secret=False):
         env = {key: value for key, value in os.environ.items() if key in HOST_ENV}
         if secret:
             env["ANTHROPIC_API_KEY"] = self.key
+            if self.workspaces:
+                env[BINDINGS_ENV] = json.dumps([asdict(binding) for binding in self.workspaces])
         if self.proxy_url:
             env["HTTPS_PROXY"] = self.proxy_url
         return env
@@ -324,7 +338,8 @@ class Docker:
         return result.stdout.strip()
 
     def redact(self, text):
-        for value in (self.key, self.proxy_url, self.proxy_host_url, self.proxy_token):
+        values = (self.key, self.proxy_url, self.proxy_host_url, self.proxy_token)
+        for value in (*values, *(binding.key for binding in self.workspaces)):
             if value:
                 text = text.replace(value, "[redacted]")
         return text
@@ -416,6 +431,8 @@ def container_args(record, action, name):
     )
     if action != "cleanup":
         args.extend(["--env", "ANTHROPIC_API_KEY"])
+        if record.get("workspace_ids"):
+            args.extend(["--env", BINDINGS_ENV])
     if record.get("host_tunnel"):
         args.extend(["--env", "HTTPS_PROXY"])
     args.extend(
@@ -536,7 +553,9 @@ def execute(
     docker=None,
     evaluation="flask",
     pilot_task=None,
+    pilot_repeats=1,
     loom_schema_profile=None,
+    disable_prompt_caching=False,
 ):
     if amount is not None:
         raise LaunchError("Native coding evaluations run without a spending cap")
@@ -546,16 +565,20 @@ def execute(
         raise LaunchError("Output must not be a symlink")
     output, root = requested.resolve(), Path(root).resolve()
     descriptor = load_evaluation(root, evaluation)
+    manifest_path = os.environ.get(MANIFEST_ENV) if isinstance(docker, Docker) else None
     if action == "run":
+        if disable_prompt_caching and manifest_path:
+            raise LaunchError("A cache-disabled run uses only ANTHROPIC_API_KEY")
         if loom_schema_profile is None:
             loom_schema_profile = "standard"
         if loom_schema_profile not in MCP_SCHEMA_PROFILES:
             raise LaunchError("Choose the standard or compact Loom MCP schema profile")
-        if pilot_task is not None:
+        if pilot_task is not None or pilot_repeats != 1:
             plan(
                 root=root,
                 evaluation=evaluation,
                 pilot_task=pilot_task,
+                pilot_repeats=pilot_repeats,
                 loom_schema_profile=loom_schema_profile,
             )
         if not docker.key or any(c.isspace() for c in docker.key):
@@ -564,6 +587,16 @@ def execute(
             raise LaunchError("Run requires a fresh output path; use explicit resume or cleanup")
         if not (root / HERE / "one_shot.py").is_file():
             raise LaunchError("The inner controller entry point is missing")
+        if manifest_path:
+            planned = plan(
+                root=root, evaluation=evaluation, pilot_task=pilot_task, pilot_repeats=pilot_repeats
+            )
+            docker.workspaces = qualify_workspaces(
+                workspace_manifest(Path(manifest_path).expanduser()),
+                expected=planned["primary_attempts"],
+                infrastructure_key=docker.key,
+                model=planned["model"],
+            )
         output.mkdir(parents=True, mode=0o700)
     with output_lock(output):
         use_tunnel = isinstance(docker, Docker) and sys.platform == "darwin"
@@ -580,7 +613,10 @@ def execute(
                     docker=docker,
                     descriptor=descriptor,
                     pilot_task=pilot_task,
+                    pilot_repeats=pilot_repeats,
                     loom_schema_profile=loom_schema_profile,
+                    workspace_manifest_path=manifest_path,
+                    disable_prompt_caching=disable_prompt_caching,
                 )
             finally:
                 if tunnel is not None:
@@ -596,7 +632,10 @@ def _execute(
     docker,
     descriptor,
     pilot_task,
+    pilot_repeats,
     loom_schema_profile,
+    workspace_manifest_path,
+    disable_prompt_caching,
 ):
     path = output / "launch.json"
     if action == "run":
@@ -607,7 +646,9 @@ def _execute(
             owner=owner,
             evaluation=descriptor["id"],
             pilot_task=pilot_task,
+            pilot_repeats=pilot_repeats,
             loom_schema_profile=loom_schema_profile,
+            disable_prompt_caching=disable_prompt_caching,
             source_root=str(root),
             output_root=str(output),
             source_sha256=source_hash(root, output),
@@ -619,6 +660,8 @@ def _execute(
             host_tunnel=isinstance(docker, Docker) and bool(docker.proxy_url),
             state="building",
         )
+        if getattr(docker, "workspaces", ()):
+            record["workspace_ids"] = [binding.id for binding in docker.workspaces]
         save(path, record)
     else:
         record = read(path)
@@ -640,6 +683,18 @@ def _execute(
             amount != record["budget_usd"] or not docker.key or record["state"] == "completed"
         ):
             raise LaunchError("Resume requires the same budget, credentials and an incomplete run")
+        if action == "resume" and record.get("workspace_ids"):
+            if not workspace_manifest_path:
+                raise LaunchError("Resume requires the original workspace manifest")
+            workspace_ids = record["workspace_ids"]
+            docker.workspaces = qualify_workspaces(
+                workspace_manifest(Path(workspace_manifest_path).expanduser()),
+                expected=len(workspace_ids),
+                infrastructure_key=docker.key,
+                model=read(descriptor["paths"]["suite_lock"])["model_id"],
+            )
+            if workspace_ids != [binding.id for binding in docker.workspaces]:
+                raise LaunchError("Resume requires the original workspace order")
     if os.environ.get("DOCKER_HOST", "unix://").startswith(("tcp:", "ssh:")):
         raise LaunchError("Use a local Docker daemon so bind paths refer to this checkout")
     docker.run(["version", "--format", "{{.Server.Version}}"], capture=True)
@@ -698,7 +753,7 @@ def main(argv=None):
     free = sub.add_parser("plan", help="Describe the frozen evaluation without Docker or providers")
     free.add_argument("--json", action="store_true")
     free.add_argument("--eval", default="flask", dest="evaluation")
-    free.add_argument("--pilot-task", help="One frozen task, once per arm")
+    free.add_argument("--pilot-task", help="Select one frozen issue")
     for name in ("run", "resume", "cleanup"):
         child = sub.add_parser(name)
         child.add_argument("--output", required=True)
@@ -706,9 +761,21 @@ def main(argv=None):
         if name != "cleanup":
             child.add_argument("--budget-usd", type=budget)
         if name == "run":
-            child.add_argument("--pilot-task", help="One frozen task, once per arm")
+            child.add_argument("--pilot-task", help="Select one frozen issue")
             run = child
     for command in (free, run):
+        command.add_argument(
+            "--disable-prompt-caching",
+            action="store_true",
+            help="Disable Claude Code prompt caching for all solver sessions",
+        )
+        command.add_argument(
+            "--pilot-repeats",
+            type=int,
+            choices=(1, 3),
+            default=1,
+            help="Repeats for the pilot issue",
+        )
         command.add_argument(
             "--loom-schema-profile",
             choices=MCP_SCHEMA_PROFILES,
@@ -720,7 +787,9 @@ def main(argv=None):
         description = plan(
             evaluation=args.evaluation,
             pilot_task=args.pilot_task,
+            pilot_repeats=args.pilot_repeats,
             loom_schema_profile=args.loom_schema_profile,
+            disable_prompt_caching=args.disable_prompt_caching,
         )
         if args.json:
             print(json.dumps(description, indent=2))
@@ -745,7 +814,9 @@ def main(argv=None):
             getattr(args, "budget_usd", None),
             evaluation=args.evaluation,
             pilot_task=getattr(args, "pilot_task", None),
+            pilot_repeats=getattr(args, "pilot_repeats", 1),
             loom_schema_profile=getattr(args, "loom_schema_profile", None),
+            disable_prompt_caching=getattr(args, "disable_prompt_caching", False),
         )
     except (LaunchError, OSError, ValueError) as error:
         print(f"Factory launcher refused ({type(error).__name__}): {error}", file=sys.stderr)

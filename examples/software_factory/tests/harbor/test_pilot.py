@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from examples.software_factory.harbor.arms import PRIMARY
 from examples.software_factory.harbor.live_support import schedule
 from examples.software_factory.harbor.pilot import select
 from examples.software_factory.harbor.source import sha
@@ -45,6 +46,11 @@ class PilotSelection(unittest.TestCase):
             self.assertEqual(hashes, {str(path): sha(path) for path in (manifest, controls)})
             self.assertEqual(len(prepared["schedule"]), 30)
             self.assertEqual(len(selected["schedule"]), 5)
+            repeated = select(prepared, "b", root / "repeated", repeats=3)["schedule"]
+            self.assertEqual(
+                [(row["repeat"], row["arm"]) for row in repeated],
+                [(repeat, arm) for repeat in range(3) for arm in PRIMARY],
+            )
             for path, digest in selected["public_inputs"].items():
                 self.assertEqual(sha(Path(path)), digest)
 

@@ -57,7 +57,7 @@ class NativeTreatment(TestCase):
             len(json.dumps(tools, ensure_ascii=False, separators=(",", ":")).encode()),
         )
 
-    def test_compact_qualification_requires_one_distinct_catalog_with_the_same_loading(self):
+    def test_compact_qualification_preserves_the_roster_and_can_defer_search(self):
         standard = {
             "tools_sha256": "a" * 64,
             "tool_names": ["loom_code_grep"],
@@ -72,6 +72,40 @@ class NativeTreatment(TestCase):
                 "standard_catalog_sha256": "a" * 64,
             },
         )
+        standard_with_search = {
+            **standard,
+            "tool_names": ["loom_code_grep", "loom_code_search"],
+            "upfront_tool_names": ["loom_code_grep", "loom_code_search"],
+        }
+        compact_deferred = {
+            **compact,
+            "tool_names": standard_with_search["tool_names"],
+            "upfront_tool_names": ["loom_code_grep"],
+            "tool_loading_sha256": "d" * 64,
+        }
+        qualified_catalog("compact", {"0": compact_deferred}, standard_with_search)
+        standard_with_edit = {
+            **standard_with_search,
+            "tool_names": [
+                "loom_code_edit_context",
+                "loom_code_grep",
+                "loom_code_search",
+                "loom_code_symbol",
+            ],
+            "upfront_tool_names": ["loom_code_grep", "loom_code_search", "loom_code_symbol"],
+        }
+        compact_with_edit = {
+            **compact_deferred,
+            "tool_names": standard_with_edit["tool_names"],
+            "upfront_tool_names": ["loom_code_edit_context", "loom_code_grep"],
+        }
+        qualified_catalog("compact", {"0": compact_with_edit}, standard_with_edit)
+        with self.assertRaises(PermissionError):
+            qualified_catalog(
+                "compact",
+                {"0": {**compact_with_edit, "upfront_tool_names": ["loom_code_grep"]}},
+                standard_with_edit,
+            )
         for attempts in (
             {"0": standard},
             {"0": compact, "2": standard},

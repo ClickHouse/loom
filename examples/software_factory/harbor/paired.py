@@ -309,7 +309,7 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     if missing:
         return report  # Missing attempts are visible; no partial-cohort selection.
     lookup = {(r["task_id"], r["repeat"], r["arm"]): metrics[r["order"]] for r in rows}
-    repeats = range(1 if pilot else 3)
+    repeats = sorted({row["repeat"] for row in rows})
     for left, right in contrasts():
         contrast = {}
         efficiency = {}
