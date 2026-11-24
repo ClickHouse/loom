@@ -116,8 +116,6 @@ def chart_data(protocol, entries, views_manifest):
                 seconds=number(result.get("end_to_end_s")),
                 native_seconds=number(result.get("harbor_wall_s")),
                 cost=number(result.get("total_provider_cost_usd")),
-                equal_cold_cost=number(result.get("equal_cold_provider_cost_usd")),
-                equal_warm_cost=number(result.get("equal_warm_provider_cost_usd")),
                 generation_cost=number(result.get("generation_cost_usd")),
                 generation_cost_source=result.get("generation_cost_source"),
                 solver_token_source=result.get("solver_token_source"),

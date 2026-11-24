@@ -11,7 +11,6 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from .pricing import first_prompt_input_prices
 from .runtime import write
 
 LOOM_TOOL_PREFIXES = ("mcp__loom__", "mcp__plugin_loom_loom__")
@@ -233,47 +232,20 @@ def measurements(raw: dict, trial: Path) -> dict:
     cache = cache_usage(provider)
     incoming = reported_input(provider, cache)
     outgoing = number(provider.get("output_tokens"))
-    steps = (trajectory or {}).get("steps", [])
-    first_step = next(
-        (
-            step
-            for step in steps
-            if step.get("source") == "agent"
-            and not step.get("is_copied_context")
-            and not (step.get("extra") or {}).get("is_sidechain")
-        ),
-        {},
-    )
-    first = first_step.get("metrics") or {}
-    first_extra = first.get("extra") or {}
     first_cache = cache_usage(first_provider)
     first_input = reported_input(first_provider, first_cache)
     first_read = first_cache["cache_read_tokens"]
     first_write = first_cache["cache_write_tokens"]
-    first_prices = {}
-    if (
-        first_extra.get("service_tier", "standard") == "standard"
-        and first_extra.get("inference_geo", "global") == "global"
-    ):
-        first_prices = first_prompt_input_prices(
-            first_step.get("model_name"),
-            prompt_tokens=first_input,
-            output_tokens=first.get("completion_tokens"),
-            cached_tokens=first_read,
-            written_tokens=first_write,
-            long_writes=(first_extra.get("cache_creation") or {}).get(
-                "ephemeral_1h_input_tokens", 0
-            ),
-            step_cost=number(first.get("cost_usd")),
-        )
+    cost_source = extra.get("cost_source", "claude-code-reported")
+    cost = number(metrics.get("total_cost_usd")) if cost_source == "claude-code-reported" else None
     return {
         **initialization(trial),
         **summarize(trial)["metrics"],
         "measurement_source": "native Harbor Claude Code trajectory and trial timing",
         "solver": "claude-code",
         "solver_version": ((trajectory or {}).get("agent") or {}).get("version"),
-        "generation_cost_usd": number(metrics.get("total_cost_usd")),
-        "generation_cost_source": extra.get("cost_source", "claude-code-reported"),
+        "generation_cost_usd": cost,
+        "generation_cost_source": cost_source,
         "solver_token_source": "anthropic-reported" if provider else None,
         "model_input_tokens": incoming,
         "model_output_tokens": outgoing,
@@ -286,7 +258,6 @@ def measurements(raw: dict, trial: Path) -> dict:
         "first_cache_write_tokens": first_write,
         "first_prompt_input_tokens": first_input,
         "first_uncached_input_tokens": number(first_provider.get("input_tokens")),
-        **first_prices,
         "tool_total_requests": len(calls) if calls is not None else None,
         "loom_tool_calls": sum(count for name, count in counts.items() if is_loom_tool(name))
         if counts is not None

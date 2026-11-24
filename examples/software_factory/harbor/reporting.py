@@ -406,6 +406,8 @@ def _summary(slots, observed):
     records = [observed[s["order"]]["result"] for s in slots if s["order"] in observed]
     costs = [r.get("generation_cost_usd") for r in records]
     complete = len(records) == len(slots)
+    resolved = sum(r["resolved"] for r in records)
+    session_cost = _known_sum(records, "generation_cost_usd")
     return {
         "expected": len(slots),
         "observed": len(records),
@@ -413,15 +415,14 @@ def _summary(slots, observed):
         "cache_starts_verified": sum(r.get("cache_start_verified") is True for r in records)
         if any("cache_start" in slot for slot in slots)
         else None,
-        "resolved": sum(r["resolved"] for r in records),
-        "success_rate": sum(r["resolved"] for r in records) / len(slots)
-        if complete and slots
-        else None,
+        "resolved": resolved,
+        "success_rate": resolved / len(slots) if complete and slots else None,
         "infrastructure_errors": sum(not r.get("harbor_reward_valid", False) for r in records),
-        "generation_cost_usd": sum(costs) if costs and None not in costs else None,
+        "generation_cost_usd": session_cost,
         "total_provider_cost_usd": _known_sum(records, "total_provider_cost_usd"),
-        "equal_cold_provider_cost_usd": _known_sum(records, "equal_cold_provider_cost_usd"),
-        "equal_warm_provider_cost_usd": _known_sum(records, "equal_warm_provider_cost_usd"),
+        "claude_cost_per_solve_usd": session_cost / resolved
+        if session_cost is not None and resolved
+        else None,
         "loom_provider_cost_usd": _known_sum(records, "loom_provider_cost_usd"),
         "known_generation_cost_usd": sum(c for c in costs if c is not None) if costs else None,
         "unknown_generation_costs": sum(c is None for c in costs),
@@ -474,30 +475,25 @@ def _number(value, digits=3):
 
 def _table(arms, *, cache_starts=False):
     lines = [
-        "| Arm | Observed / expected | Pending | Resolved | Solver USD | Observed provider USD "
-        "| Equal cold USD | Equal warm USD "
-        "| Mean full end-to-end (s) | Mean native Harbor (s) |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Arm | Observed / expected | Pending | Resolved | Claude Code USD "
+        "| USD per verified solve | Mean full end-to-end (s) | Mean native Harbor (s) |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     if cache_starts:
         lines[0] += " Cache starts verified |"
         lines[1] += "---:|"
     for arm, info in arms.items():
+        per_solve = _number(info["claude_cost_per_solve_usd"], 7) if info["resolved"] else "—"
         lines.append(
             f"| {arm} | {info['observed']} / {info['expected']} | {info['pending']} "
             f"| {info['resolved']} | {_number(info['generation_cost_usd'], 7)} "
-            f"| {_number(info['total_provider_cost_usd'], 7)} "
-            f"| {_number(info['equal_cold_provider_cost_usd'], 7)} "
-            f"| {_number(info['equal_warm_provider_cost_usd'], 7)} "
+            f"| {per_solve} "
             f"| {_number(info['mean_end_to_end_s'])} "
             f"| {_number(info['mean_native_duration_s'])} |"
         )
         if cache_starts:
             lines[-1] += f" {info['cache_starts_verified']} / {info['observed']} |"
-    return "\n".join(lines) + (
-        "\n\nEqual-cache estimates reprice the first solver input as a full five-minute "
-        "cache write or a full cache read. Later turns and Loom charges use the recorded values.\n"
-    )
+    return "\n".join(lines) + "\n"
 
 
 def _cache_tables(cache_arms, *, subject=""):
@@ -723,11 +719,9 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                     f"Resolved: {record['resolved']}. "
                     f"Full end-to-end: {_number(record['end_to_end_s'])}s. "
                     f"Native Harbor: {_number(record['native_duration_s'])}s. "
-                    f"Solver cost (USD) {_number(record.get('generation_cost_usd'), 7)}. "
-                    "Observed provider cost (USD) "
-                    f"{_number(record.get('total_provider_cost_usd'), 7)}. "
-                    f"Equal cold {_number(record.get('equal_cold_provider_cost_usd'), 7)}. "
-                    f"Equal warm {_number(record.get('equal_warm_provider_cost_usd'), 7)}.\n\n"
+                    f"Claude Code cost (USD) {_number(record.get('generation_cost_usd'), 7)}. "
+                    "Loom provider cost (USD) "
+                    f"{_number(record.get('loom_provider_cost_usd'), 7)}.\n\n"
                 )
                 text += (
                     " · ".join(f"[{key}]({value})" for key, value in item["links"].items()) + "\n"

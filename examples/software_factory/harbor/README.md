@@ -17,7 +17,8 @@ The output directory contains:
   agent time, tests, Loom calls, memory writes and tokens and total tool calls, with scenario and attempt filters.
   The matched table shows cost and time changes from No Loom, first-prompt cache activity, and solver token totals with cache reads, cache writes and output.
   The first-prompt and solver totals use Anthropic's usage counters in the Claude Code stream. Missing counters remain unknown.
-  Equal-cold and equal-warm estimates replace only the first solver input charge using the same price rule for every arm. Reported cost stays visible alongside both estimates.
+  Cache-pair runs show costs and timing for measured cold and warm attempts under separate selectors.
+  Spend per verified solve adds Claude Code's reported session costs, including failed attempts, and divides by the number of hidden-test passes.
 - `reporting-manifest.json`: source job, derived jobs and report locations.
 
 With three scenarios, three repeats and five arms, the primary comparison has

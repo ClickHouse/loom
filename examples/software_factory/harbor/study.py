@@ -35,7 +35,6 @@ from .mcp_qualification import STARTUP_COUNTS, verify_catalog
 from .metrics import known_total, paid_token_totals
 from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp_settings
 from .native_metrics import measurements
-from .pricing import first_prompt_cost_sensitivity
 from .profiles import load_profile
 from .project_guidance import agent_image, guidance
 from .project_guidance import stage as stage_guidance
@@ -493,7 +492,6 @@ def enrich_evaluations(protocol, entries, job_name):
         result.update(paid_token_totals(result))
         components = [result.get("generation_cost_usd"), result.get("loom_provider_cost_usd")]
         result["total_provider_cost_usd"] = sum(components) if None not in components else None
-        result.update(first_prompt_cost_sensitivity(result))
         full = result.get("full_suite")
         changed = profile.full_suite_regressions(
             full if job_name == "base" else bases.get(result["task_id"]), full
@@ -604,8 +602,6 @@ def export(protocol: dict, job_name="live") -> dict:
             "solver_token_source",
             "loom_provider_cost_usd",
             "total_provider_cost_usd",
-            "equal_cold_provider_cost_usd",
-            "equal_warm_provider_cost_usd",
             "total_cost_usd",
             "agent_time_s",
             "agent_test_requests",
