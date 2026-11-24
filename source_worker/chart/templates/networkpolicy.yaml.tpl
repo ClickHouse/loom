@@ -41,7 +41,7 @@ spec:
     {{- range .Values.network.httpsCidrs }}
     - to:
         - ipBlock:
-            cidr: {{ .cidr | quote }}
+            cidr: {{ include "loom-source-worker.ipv4Network" .cidr | quote }}
       ports:
         - port: {{ .port }}
           protocol: TCP

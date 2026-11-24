@@ -1183,10 +1183,14 @@ class MCPSourceClient:
             for resource in resources:
                 if not isinstance(resource, dict):
                     raise MCPSourceError("schema")
+                try:
+                    provider_resource = types.Resource.model_validate(resource)
+                except ValidationError:
+                    raise MCPSourceError("schema") from None
                 identity = _string(resource.get("uri"))
                 # Keep the selected identity tied to the exact URI the server exposed.
                 _resource_url(identity)
-                title = _string(resource.get("title") or resource.get("name"))
+                title = _string(provider_resource.title or provider_resource.name)
                 items.append(MCPEvidence(identity, identity, title))
                 self._resource_titles[identity] = title
             next_cursor = data.get("nextCursor")

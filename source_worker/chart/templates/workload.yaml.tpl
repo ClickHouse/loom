@@ -96,6 +96,8 @@ spec:
                   with socket.socket(socket.AF_UNIX) as probe:
                       probe.settimeout(1)
                       probe.connect('/run/loom-source-worker/socket/worker.sock')
+                  with socket.create_connection(('127.0.0.1', 8443), timeout=0.5):
+                      pass
             timeoutSeconds: 2
             periodSeconds: 5
           resources:
@@ -118,11 +120,6 @@ spec:
             - {name: https, containerPort: 8443, protocol: TCP}
           securityContext:
             {{- include "loom-source-worker.containerSecurity" . | nindent 12 }}
-          readinessProbe:
-            tcpSocket:
-              port: https
-            timeoutSeconds: 2
-            periodSeconds: 5
           resources:
             requests: {cpu: 50m, memory: 64Mi, ephemeral-storage: 8Mi}
             limits: {cpu: 500m, memory: 128Mi, ephemeral-storage: 16Mi}

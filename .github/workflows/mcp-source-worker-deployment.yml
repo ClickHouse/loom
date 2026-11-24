@@ -71,3 +71,11 @@ jobs:
             echo 'IPv6-only nameserver was accepted' >&2
             exit 1
           fi
+          grep -Fq "socket.create_connection(('127.0.0.1', 8443)" <<< "$rendered"
+          for cidr in 999.0.2.44/32 192.0.2.44/24; do
+            if helm template source-worker "$chart" -f "$values" \
+              --set-string "network.httpsCidrs[0].cidr=$cidr"; then
+              echo 'Invalid IPv4 network was accepted' >&2
+              exit 1
+            fi
+          done

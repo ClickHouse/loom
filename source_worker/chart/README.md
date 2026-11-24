@@ -16,7 +16,9 @@ proxy qualification with the unchanged configuration. Configure image pulls at
 the node if the worker image is private. The proxy supports IPv4 Pod and Service
 addresses only. The chart requests an IPv4 ClusterIP and requires IPv4 DNS and
 CIDR values. Deploy it only where the Pod, Service and credential backend have
-IPv4 connectivity.
+IPv4 connectivity. The readiness probe checks the worker socket and the proxy's
+IPv4 loopback listener from inside the Pod, independent of its primary address.
+Use canonical IPv4 networks for HTTPS egress, with host bits set to zero.
 
 ## Inputs
 
