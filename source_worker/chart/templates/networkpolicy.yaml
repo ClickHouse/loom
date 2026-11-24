@@ -20,9 +20,8 @@ spec:
   egress:
     - to:
         {{- range .Values.network.dns.nameservers }}
-        {{- $prefix := ternary 128 32 (contains ":" .) }}
         - ipBlock:
-            cidr: {{ printf "%s/%d" . $prefix | quote }}
+            cidr: {{ printf "%s/32" . | quote }}
         {{- end }}
         {{- range .Values.network.dns.pods }}
         - {{ include "loom-source-worker.podPeer" . | nindent 10 | trim }}

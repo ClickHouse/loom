@@ -63,4 +63,11 @@ jobs:
           test -z "$disabled"
           values="$chart/examples/qualification-values.yaml"
           helm lint --strict "$chart" -f "$values"
-          helm template source-worker "$chart" -f "$values" | kubeconform -strict -summary -kubernetes-version 1.30.0
+          rendered=$(helm template source-worker "$chart" -f "$values")
+          printf '%s\n' "$rendered" | kubeconform -strict -summary -kubernetes-version 1.30.0
+          grep -Fq 'ipFamilies: [IPv4]' <<< "$rendered"
+          if helm template source-worker "$chart" -f "$values" \
+            --set-string 'network.dns.nameservers[0]=2001:db8::53'; then
+            echo 'IPv6-only nameserver was accepted' >&2
+            exit 1
+          fi

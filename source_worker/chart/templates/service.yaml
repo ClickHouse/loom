@@ -6,6 +6,8 @@ metadata:
   namespace: {{ .Release.Namespace | quote }}
 spec:
   type: ClusterIP
+  ipFamilyPolicy: SingleStack
+  ipFamilies: [IPv4]
   selector:
     {{- include "loom-source-worker.selector" . | nindent 4 }}
   ports:

@@ -13,7 +13,10 @@ operator-supplied `@sha256:` references. Build the worker from the same reviewed
 revision as the chart. The proxy baseline is the digest in
 [`../compose.yaml`](../compose.yaml); an alternate build must pass the same
 proxy qualification with the unchanged configuration. Configure image pulls at
-the node if the worker image is private.
+the node if the worker image is private. The proxy supports IPv4 Pod and Service
+addresses only. The chart requests an IPv4 ClusterIP and requires IPv4 DNS and
+CIDR values. Deploy it only where the Pod, Service and credential backend have
+IPv4 connectivity.
 
 ## Inputs
 
