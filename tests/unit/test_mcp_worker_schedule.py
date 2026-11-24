@@ -10,6 +10,7 @@ from server.knowledge.domain.mcp_worker_schedule import (
     PeriodicSchedule,
     ScheduleBinding,
     ScheduleRejected,
+    minimum_interval_for_selected,
     plan_scheduled_refresh,
 )
 
@@ -35,7 +36,7 @@ def test_overdue_periods_coalesce_without_shifting_cadence() -> None:
     plan = plan_scheduled_refresh(_SCHEDULE, active_binding=_BINDING, now=now)
     assert plan is not None
     assert plan.demand.due_at == _DUE
-    assert plan.next_due_at == _DUE + timedelta(days=7, minutes=5)
+    assert plan.next_due_at == _DUE + timedelta(days=7, minutes=12)
 
     advanced = replace(_SCHEDULE, next_due_at=plan.next_due_at)
     assert plan_scheduled_refresh(advanced, active_binding=_BINDING, now=now) is None
@@ -44,7 +45,7 @@ def test_overdue_periods_coalesce_without_shifting_cadence() -> None:
     assert next_plan is not None
     assert next_plan.demand.job_id != plan.demand.job_id
     assert next_plan.demand.due_at == plan.next_due_at
-    assert next_plan.next_due_at == plan.next_due_at + timedelta(minutes=5)
+    assert next_plan.next_due_at == plan.next_due_at + timedelta(minutes=12)
 
 
 def test_periodic_pause_does_not_spend_the_cursor() -> None:
@@ -122,3 +123,8 @@ def test_periodic_clock_overflow_does_not_emit_a_demand() -> None:
     schedule = replace(_SCHEDULE, next_due_at=last)
     with pytest.raises(ScheduleRejected, match="out of range"):
         plan_scheduled_refresh(schedule, active_binding=_BINDING, now=last)
+
+
+@pytest.mark.parametrize("count,minimum", [(1, 720), (4, 2788), (32, 28800), (64, 86400)])
+def test_periodic_cadence_leaves_headroom_for_retained_receipts(count, minimum):
+    assert minimum_interval_for_selected(count) == minimum

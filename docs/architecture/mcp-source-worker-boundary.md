@@ -128,7 +128,8 @@ same access check; derived memory and cached results cannot extend it.
 
 The queue stores metadata for a selected resource, never its body. A schedule
 and a manual request derive the same kind of per-resource task. Reclaiming a
-lease advances its fence without changing the task key. Changing the source,
+lease assigns a new fence from a noncycling sequence without changing the task
+key. An old fence cannot return after a queue row is pruned. Changing the source,
 selection, account, or approval generation invalidates existing work. A worker
 can only claim the queue partition assigned to it. A claim page reports how
 many exhausted rows it retired so the worker can distinguish progress from an
@@ -141,8 +142,10 @@ assignment fences and cancels old unfinished work without touching its completed
 receipts. Completed receipts expire after 24 hours. A later admission may remove expired queue metadata; it never removes a
 stored copy, source checkpoint or pre-existing unmarked row. If the source is
 busy or retained receipts fill the budget, admission leaves the due cursor in
-place. A schedule can run every 5 minutes to 24 hours. Elapsed periods can
-coalesce into one batch. For manual refresh, Loom
+place. The shortest cadence depends on selection size and the receipt budget:
+12 minutes for one document and 24 hours for 64 documents. The estimate leaves
+room for one extra batch. Manual requests share the budget and can defer a
+scheduled batch. Elapsed periods can coalesce into one batch. For manual refresh, Loom
 issues one bounded offer for the exact current selection, owner, and destination.
 Submitting it repeats the original result while the offer is current; an expired
 or superseded offer cannot create more work. If an offer expires while a batch
@@ -155,7 +158,10 @@ checkpoint tests perform no document writes. Treat the upload, copy acceptance,
 and cutover described below as requirements for enabling refresh.
 
 Loom schedules and claims bounded refresh jobs. Each claim targets one worker and
-the approved source revision, with a lease and a monotonically fenced attempt.
+the approved source revision. Settlement checks the deadline against the
+Postgres clock after acquiring the row lock. A clock adjustment can affect an
+unobserved deadline; replacement and cancellation permanently invalidate the
+old claim.
 The worker uploads an idempotent completion for the exact claim. The server
 checks the fence, deadline, registration and current connection before accepting
 writes, and advances the checkpoint only for an accepted result. “Sync now”

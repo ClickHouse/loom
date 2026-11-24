@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
@@ -5,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from server.knowledge.domain.mcp_worker_refresh import RefreshRejected
-from server.knowledge.domain.mcp_worker_schedule import ScheduleBinding
+from server.knowledge.domain.mcp_worker_schedule import ScheduleBinding, ScheduleRejected
 from server.knowledge.store import pg_worker_schedules as store
 
 _DUE = datetime(2026, 1, 1, tzinfo=UTC)
@@ -39,11 +40,11 @@ def connection():
         "selection_generation": _BINDING.selection_generation,
         "worker_generation": _BINDING.worker_generation,
         "user_id": "alice",
-        "interval_seconds": 300,
+        "interval_seconds": 720,
         "next_due_at": _DUE,
         "paused": False,
     }
-    conn.fetchval.side_effect = [_DUE + timedelta(seconds=310), 1]
+    conn.fetchval.side_effect = [_DUE + timedelta(seconds=730), 1]
     return conn
 
 
@@ -62,7 +63,7 @@ async def test_due_copy_uses_selection_and_advances_after_enqueue(enabled, conne
 
     monkeypatch.setattr(store.pg_worker_refresh, "enqueue_batch_on", enqueue)
     assert await store.enqueue_due_on(connection, _AUTH) == 1
-    assert connection.fetchval.await_args.args[-1] == _DUE + timedelta(seconds=600)
+    assert connection.fetchval.await_args.args[-1] == _DUE + timedelta(seconds=1440)
 
 
 @pytest.mark.asyncio
@@ -101,3 +102,11 @@ async def test_due_admission_requires_transaction(enabled, connection):
     with pytest.raises(RefreshRejected, match="authority transaction"):
         await store.enqueue_due_on(connection, _AUTH)
     connection.fetchrow.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_selection_growth_refuses_an_unsustainable_cadence(enabled, connection):
+    larger = replace(_AUTH, selected=("urn:document:a", "urn:document:b"))
+    with pytest.raises(ScheduleRejected, match="receipt capacity"):
+        await store.enqueue_due_on(connection, larger)
+    connection.fetchval.assert_not_awaited()

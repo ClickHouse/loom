@@ -133,7 +133,7 @@ def test_reclaimed_lease_refuses_old_fence_even_for_same_worker() -> None:
     )
 
 
-@pytest.mark.parametrize("fence", [0, -1, True, 1 << 32])
+@pytest.mark.parametrize("fence", [0, -1, True, 1 << 53])
 def test_invalid_fences_do_not_pass_even_if_lease_matches(fence: int) -> None:
     with pytest.raises(refresh.RefreshRejected, match="lease"):
         _validate(replace(_COMPLETE, fence=fence), lease=replace(_LEASE, fence=fence))

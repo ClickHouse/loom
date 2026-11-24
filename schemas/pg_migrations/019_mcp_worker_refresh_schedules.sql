@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS loom.mcp_worker_refresh_schedules (
     source_generation bigint NOT NULL CHECK (source_generation > 0),
     selection_generation bigint NOT NULL CHECK (selection_generation > 0),
     worker_generation bigint NOT NULL CHECK (worker_generation > 0),
-    interval_seconds integer NOT NULL CHECK (interval_seconds BETWEEN 300 AND 86400),
+    interval_seconds integer NOT NULL CHECK (interval_seconds BETWEEN 720 AND 86400),
     next_due_at timestamptz NOT NULL,
     paused boolean NOT NULL,
     PRIMARY KEY (org, namespace, source_id)

@@ -178,10 +178,13 @@ async def test_refresh_claim_rollback_and_cancel_fence(pg_conn: Connection) -> N
             for entry in (first, second):
                 claimed = await _claim(entry, namespace=entry.task.scope.namespace)
                 row = await _row(pg_conn, entry)
-                lease = LiveLease(entry.task, str(entry.worker_id), 1, row["claimable_at"])
+                lease = LiveLease(
+                    entry.task, str(entry.worker_id), row["fence"], row["claimable_at"]
+                )
                 assert claimed.leases == (lease,)
                 assert claimed.retired == 0
-                assert (row["state"], row["fence"], row["receipt"]) == ("claimed", 1, None)
+                assert (row["state"], row["receipt"]) == ("claimed", None)
+                assert row["fence"] > 0
                 snapshots.append(row)
                 leases.append(lease)
 
@@ -203,7 +206,7 @@ async def test_refresh_claim_rollback_and_cancel_fence(pg_conn: Connection) -> N
                 with pytest.raises(RefreshRejected, match=rejection):
                     await refresh.checkpoint(pg_conn, lease, receipt)
             cancelled = dict(await _row(pg_conn, first))
-            assert cancelled == dict(snapshots[0], state="cancelled", fence=lease.fence + 1)
+            assert cancelled == dict(snapshots[0], state="cancelled")
             assert dict(await _row(pg_conn, second)) == dict(snapshots[1])
     finally:
         await _cleanup(pg_conn, org)
@@ -353,7 +356,7 @@ async def test_exhausted_claim_page_is_distinct_from_idle(pg_conn: Connection) -
                 assert await refresh.enqueue_batch_on(pg_conn, (first,)) == 1
                 assert await refresh.enqueue_batch_on(pg_conn, (later,)) == 1
                 await pg_conn.execute(
-                    "UPDATE loom.knowledge_source_refresh SET state = 'claimed', fence = 8 "
+                    "UPDATE loom.knowledge_source_refresh SET state = 'claimed', attempts = 8 "
                     "WHERE org = $1 AND item_key = $2",
                     org,
                     first.task.idempotency_key,
@@ -428,6 +431,34 @@ async def test_late_offer_observation_survives_batch_rollback_and_backward_clock
         await _cleanup(pg_conn, org)
 
 
+async def _write_schedule(conn: Connection, entry: RefreshEntry, interval: int) -> None:
+    binding = _schedule_authority(entry).binding
+    await conn.execute(
+        """
+        INSERT INTO loom.mcp_worker_refresh_schedules (
+            org, namespace, source_id, user_id, agent, session_id, actor, source_class,
+            connection_id, worker_id, connection_generation, source_generation,
+            selection_generation, worker_generation, interval_seconds, next_due_at, paused
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'external',$8,$9,$10,$11,$12,$13,$14,$15,false)
+        """,
+        binding.org,
+        binding.namespace,
+        UUID(binding.source_id),
+        entry.user_id,
+        entry.agent,
+        entry.session_id,
+        entry.task.scope.actor,
+        UUID(binding.connection_id),
+        UUID(binding.worker_id),
+        binding.connection_generation,
+        binding.source_generation,
+        binding.selection_generation,
+        binding.worker_generation,
+        interval,
+        entry.due,
+    )
+
+
 @pytest.mark.asyncio
 async def test_schedule_interval_boundaries_match_postgres(pg_conn: Connection) -> None:
     from asyncpg import CheckViolationError
@@ -448,28 +479,7 @@ async def test_schedule_interval_boundaries_match_postgres(pg_conn: Connection) 
             binding = authority.binding
             schedule = PeriodicSchedule(binding, interval, due)
             key = (org, binding.namespace, UUID(binding.source_id))
-            await pg_conn.execute(
-                """
-                INSERT INTO loom.mcp_worker_refresh_schedules (
-                    org, namespace, source_id, user_id, agent, session_id, actor, source_class,
-                    connection_id, worker_id, connection_generation, source_generation,
-                    selection_generation, worker_generation, interval_seconds, next_due_at, paused
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,'external',$8,$9,$10,$11,$12,$13,$14,$15,false)
-                """,
-                *key,
-                entry.user_id,
-                entry.agent,
-                entry.session_id,
-                entry.task.scope.actor,
-                UUID(binding.connection_id),
-                UUID(binding.worker_id),
-                binding.connection_generation,
-                binding.source_generation,
-                binding.selection_generation,
-                binding.worker_generation,
-                schedule.interval_seconds,
-                schedule.next_due_at,
-            )
+            await _write_schedule(pg_conn, entry, schedule.interval_seconds)
             async with pg_conn.transaction():
                 assert await schedules.enqueue_due_on(pg_conn, authority) == 1
             with pytest.raises(CheckViolationError):
@@ -478,6 +488,173 @@ async def test_schedule_interval_boundaries_match_postgres(pg_conn: Connection) 
                     "WHERE org = $1 AND namespace = $2 AND source_id = $3",
                     *key,
                     interval - 1 if interval == MIN_REFRESH_INTERVAL_SECONDS else interval + 1,
+                )
+    finally:
+        await _cleanup(pg_conn, org)
+
+
+def _receipt_for(lease: LiveLease) -> CompletionReceipt:
+    from server.knowledge.domain.mcp_worker_refresh import (
+        CompletionReceipt,
+        Observation,
+        ObservationKind,
+    )
+
+    return CompletionReceipt(
+        lease.task.idempotency_key, Observation(ObservationKind.PRESENT, "a" * 64)
+    )
+
+
+@pytest.mark.asyncio
+async def test_pruned_queue_identity_never_reuses_a_claim_fence(pg_conn: Connection) -> None:
+    from server.knowledge.domain.mcp_worker_refresh import RefreshRejected
+    from server.knowledge.store import pg_worker_refresh as refresh
+
+    org = unique_org("worker-pg-fence-incarnation")
+    try:
+        async with asyncio.timeout(15):
+            due = await pg_conn.fetchval("SELECT clock_timestamp() - interval '1 second'")
+            entry = _entry(org, "incarnation", due)
+            async with pg_conn.transaction():
+                assert await refresh.enqueue_batch_on(pg_conn, (entry,)) == 1
+            (first,) = (await _claim(entry, namespace=entry.task.scope.namespace)).leases
+            async with pg_conn.transaction():
+                await refresh.checkpoint(pg_conn, first, _receipt_for(first))
+                await pg_conn.execute(
+                    "UPDATE loom.knowledge_source_refresh SET updated_at = clock_timestamp() - interval '25 hours' "
+                    "WHERE org = $1 AND item_key = $2",
+                    org,
+                    entry.task.idempotency_key,
+                )
+                assert await refresh.enqueue_batch_on(pg_conn, (entry,)) == 1
+            (second,) = (await _claim(entry, namespace=entry.task.scope.namespace)).leases
+            assert second.fence > first.fence
+            async with pg_conn.transaction():
+                with pytest.raises(RefreshRejected, match="no longer current"):
+                    await refresh.lock_current(
+                        pg_conn, replace(first, expires_at=second.expires_at)
+                    )
+                assert await refresh.lock_current(pg_conn, second) == second
+    finally:
+        await _cleanup(pg_conn, org)
+
+
+async def _contend_after_lock(lease: LiveLease, settle: bool, started: asyncio.Future[int]) -> None:
+    from server.core import pg
+    from server.knowledge.domain.mcp_worker_refresh import RefreshRejected
+    from server.knowledge.store import pg_worker_refresh as refresh
+
+    async with pg.transaction() as contender:
+        started.set_result(await contender.fetchval("SELECT pg_backend_pid()"))
+        with pytest.raises(RefreshRejected, match="no longer current"):
+            if settle:
+                await refresh.checkpoint(contender, lease, _receipt_for(lease))
+            else:
+                await refresh.lock_current(contender, lease)
+
+
+async def _hold_until_expiry(
+    conn: Connection, pending: asyncio.Future[int], deadline: datetime
+) -> None:
+    pid = await pending
+    while not await conn.fetchval("SELECT pg_backend_pid() = ANY(pg_blocking_pids($1))", pid):
+        await conn.fetchval("SELECT pg_sleep(0.01)")
+    await conn.fetchval(
+        "SELECT pg_sleep(GREATEST(0, extract(epoch FROM ($1::timestamptz - clock_timestamp()))))",
+        deadline,
+    )
+    raise _RollbackCheckpoint
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settle", [False, True])
+async def test_lock_wait_cannot_complete_after_lease_deadline(
+    pg_conn: Connection, settle: bool
+) -> None:
+    from server.knowledge.store import pg_worker_refresh as refresh
+
+    org = unique_org("worker-pg-lease-clock")
+    try:
+        async with asyncio.timeout(15):
+            due = await pg_conn.fetchval("SELECT clock_timestamp() - interval '1 second'")
+            entry = _entry(org, "deadline", due)
+            async with pg_conn.transaction():
+                assert await refresh.enqueue_batch_on(pg_conn, (entry,)) == 1
+            page = await refresh.claim(
+                org=org,
+                namespace=entry.task.scope.namespace,
+                worker_id=entry.worker_id,
+                limit=1,
+                lease_seconds=3,
+            )
+            (lease,) = page.leases
+            async with asyncio.TaskGroup() as tasks:
+                started = asyncio.get_running_loop().create_future()
+                with pytest.raises(_RollbackCheckpoint):
+                    async with pg_conn.transaction():
+                        await refresh.lock_current(pg_conn, lease)
+                        tasks.create_task(_contend_after_lock(lease, settle, started))
+                        await _hold_until_expiry(pg_conn, started, lease.expires_at)
+            row = await _row(pg_conn, entry)
+            assert row["state"] == "claimed" and row["receipt"] is None
+    finally:
+        await _cleanup(pg_conn, org)
+
+
+async def _complete_cadence_batch(entry: RefreshEntry, *, count: int) -> None:
+    from server.core import pg
+    from server.knowledge.store import pg_worker_refresh as refresh
+
+    scope = entry.task.scope
+    page = await refresh.claim(
+        org=scope.org,
+        namespace=scope.namespace,
+        worker_id=entry.worker_id,
+        limit=count,
+        lease_seconds=30,
+    )
+    assert len(page.leases) == count and page.retired == 0
+    async with pg.transaction() as conn:
+        for lease in page.leases:
+            await refresh.checkpoint(conn, lease, _receipt_for(lease))
+
+
+@pytest.mark.asyncio
+async def test_large_selection_cadence_retains_one_day_over_three_cycles(
+    pg_conn: Connection,
+) -> None:
+    from server.knowledge.domain.mcp_worker_schedule import minimum_interval_for_selected
+    from server.knowledge.store import pg_worker_schedules as schedules
+
+    org = unique_org("worker-pg-cadence-repeated")
+    try:
+        async with asyncio.timeout(15):
+            due = await pg_conn.fetchval("SELECT clock_timestamp() - interval '3 days'")
+            entry = _entry(org, "full-batch", due)
+            selection = tuple(f"urn:synthetic:resource:{i}" for i in range(64))
+            authority = replace(_schedule_authority(entry), selected=selection)
+            interval = minimum_interval_for_selected(len(selection))
+            await _write_schedule(pg_conn, entry, interval)
+            for cycle in range(3):
+                async with pg_conn.transaction():
+                    # Simulate the next persisted daily cursor without changing the DB clock.
+                    await pg_conn.execute(
+                        "UPDATE loom.mcp_worker_refresh_schedules SET next_due_at = "
+                        "$2::timestamptz + make_interval(days => $3) WHERE org = $1",
+                        org,
+                        due,
+                        cycle,
+                    )
+                    assert await schedules.enqueue_due_on(pg_conn, authority) == len(selection)
+                await _complete_cadence_batch(entry, count=len(selection))
+                assert await pg_conn.fetchval(
+                    "SELECT count(*) FROM loom.knowledge_source_refresh WHERE org = $1 AND state = 'completed'",
+                    org,
+                ) == len(selection)
+                await pg_conn.execute(
+                    "UPDATE loom.knowledge_source_refresh SET updated_at = clock_timestamp() - interval '24 hours' "
+                    "WHERE org = $1 AND state = 'completed'",
+                    org,
                 )
     finally:
         await _cleanup(pg_conn, org)

@@ -94,13 +94,13 @@ def test_claim_preserves_maximum_generation_and_fence() -> None:
     )
     task = replace(_TASK, scope=scope)
     result = project_refresh_claim(
-        replace(_LEASE, task=task, fence=(1 << 32) - 1),
+        replace(_LEASE, task=task, fence=(1 << 53) - 1),
         authority=replace(_AUTHORITY, task=task),
         owner=_OWNER,
         worker=replace(_WORKER, connection_generation=maximum),
         now=_NOW,
     )
-    assert result["fence"] == 4294967295
+    assert result["fence"] == 9007199254740991
     assert result["source_generation"] == "9223372036854775807"
     scope_wire = result["task"]["scope"]
     assert scope_wire["connection_generation"] == "9223372036854775807"
@@ -203,7 +203,7 @@ def test_claim_refuses_lossy_identity_even_with_matching_authority(
         (replace(_LEASE, expires_at=_EXPIRY.replace(tzinfo=None)), _NOW),
         (replace(_LEASE, fence=0), _NOW),
         (replace(_LEASE, fence=True), _NOW),
-        (replace(_LEASE, fence=1 << 32), _NOW),
+        (replace(_LEASE, fence=1 << 53), _NOW),
     ],
 )
 def test_claim_refuses_invalid_or_expired_lease(lease: LiveLease | None, now: datetime) -> None:

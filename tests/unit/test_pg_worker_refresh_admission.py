@@ -84,7 +84,7 @@ async def test_obsolete_claim_is_fenced_without_pruning_unexpired_receipts(conne
     ]
     assert await admission.reserve_on(connection, _SOURCE, _ASSIGNMENT, 64)
     retire, org, namespace, source, candidates = connection.execute.await_args.args
-    assert "fence = fence + 1" in retire
+    assert "state = 'cancelled'" in retire
     assert (org, namespace, source, candidates) == ("org", "team", _SOURCE.source_id, ["old"])
     assert connection.execute.await_count == 3
     scope_filter = json.loads(connection.fetch.await_args.args[-1])

@@ -1,3 +1,6 @@
+CREATE SEQUENCE IF NOT EXISTS loom.knowledge_source_refresh_fence
+    AS bigint MAXVALUE 9007199254740991 NO CYCLE;
+
 CREATE TABLE IF NOT EXISTS loom.knowledge_source_refresh (
     org text COLLATE "C" NOT NULL,
     namespace text COLLATE "C" NOT NULL,
@@ -10,7 +13,8 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_source_refresh (
     worker_id uuid NOT NULL,
     source_uri text COLLATE "C" NOT NULL,
     state text NOT NULL CHECK (state IN ('pending', 'claimed', 'completed', 'exhausted', 'cancelled')),
-    fence bigint NOT NULL DEFAULT 0 CHECK (fence >= 0),
+    fence bigint NOT NULL DEFAULT 0 CHECK (fence BETWEEN 0 AND 9007199254740991),
+    attempts smallint NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 8),
     claimable_at timestamptz NOT NULL,
     request_sha256 text NOT NULL,
     task jsonb NOT NULL,

@@ -20,6 +20,7 @@ from server.knowledge.domain.mcp_worker_schedule import (
     RefreshDemand,
     ScheduleBinding,
     ScheduleRejected,
+    minimum_interval_for_selected,
     plan_scheduled_refresh,
 )
 from server.knowledge.store import pg_worker_refresh, pg_worker_refresh_admission
@@ -112,6 +113,8 @@ async def enqueue_due_on(conn: Connection, authority: ScheduleAuthority) -> int:
     if current != binding:
         return 0
     schedule = PeriodicSchedule(current, row["interval_seconds"], row["next_due_at"])
+    if schedule.interval_seconds < minimum_interval_for_selected(len(authority.selected)):
+        raise ScheduleRejected("refresh cadence exceeds selection receipt capacity")
     now = await conn.fetchval("SELECT clock_timestamp()")
     plan = plan_scheduled_refresh(schedule, active_binding=binding, now=now)
     if plan is None:

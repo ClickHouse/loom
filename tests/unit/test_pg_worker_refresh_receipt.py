@@ -68,7 +68,7 @@ class TestRefreshReceipt(unittest.IsolatedAsyncioTestCase):
         completion = replace(self.completion, authorize=authorize)
         self.assertFalse(await replay_completion(self.conn, completion))
         assert self.conn.fetchrow.await_count == 2
-        assert self.conn.fetchrow.await_args.args[0].endswith("FOR SHARE")
+        assert "FOR SHARE" in self.conn.fetchrow.await_args.args[0]
 
     async def test_revoked_or_different_user_does_not_receive_terminal_receipt(self) -> None:
         for authority in (None, replace(self.authorize.return_value, user_id="bob")):

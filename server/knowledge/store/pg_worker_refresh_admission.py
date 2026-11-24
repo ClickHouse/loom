@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from server.core import pg
 from server.knowledge.domain.mcp_worker_refresh import (
     MAX_DOCUMENTS_PER_JOB,
+    MAX_QUEUE_ROWS_PER_SOURCE,
     RefreshRejected,
     RefreshScope,
 )
@@ -18,7 +19,6 @@ if TYPE_CHECKING:
 
     from asyncpg import Connection
 
-MAX_RETAINED = 2 * MAX_DOCUMENTS_PER_JOB
 _SCOPE = "org = $1 AND namespace = $2 AND admission_source_id = $3"
 _OPEN = """
 INSERT INTO loom.mcp_worker_refresh_admission
@@ -38,7 +38,7 @@ FROM loom.knowledge_source_refresh WHERE {_SCOPE} ORDER BY item_key LIMIT $4
 """
 _RETIRE = f"""
 UPDATE loom.knowledge_source_refresh
-SET state = 'cancelled', fence = fence + 1, updated_at = clock_timestamp()
+SET state = 'cancelled', updated_at = clock_timestamp()
 WHERE {_SCOPE} AND state IN ('pending', 'claimed') AND item_key = ANY($4::text[])
 """
 _TRIM = f"""
@@ -103,12 +103,12 @@ async def reserve_on(
     rows = await conn.fetch(
         _QUEUE,
         *key,
-        MAX_RETAINED + 1,
+        MAX_QUEUE_ROWS_PER_SOURCE + 1,
         assignment.worker_id,
         source.user_id,
         assignment.scope_filter(),
     )
-    if len(rows) > MAX_RETAINED:
+    if len(rows) > MAX_QUEUE_ROWS_PER_SOURCE:
         raise RefreshRejected("source refresh admission invariant failed")
     unfinished = [row for row in rows if row["state"] in _PENDING]
     if any(row["current_assignment"] for row in unfinished):
@@ -116,7 +116,7 @@ async def reserve_on(
     if unfinished:
         await conn.execute(_RETIRE, *key, [row["item_key"] for row in unfinished])
     expired = [row["item_key"] for row in rows if row["state"] not in _PENDING and row["expired"]]
-    if len(rows) - len(expired) + count > MAX_RETAINED:
+    if len(rows) - len(expired) + count > MAX_QUEUE_ROWS_PER_SOURCE:
         return False
     if expired:
         await conn.execute(_TRIM, *key, expired)

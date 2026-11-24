@@ -9,7 +9,12 @@ import json
 from dataclasses import astuple, dataclass
 from datetime import UTC, datetime, timedelta
 
-MIN_REFRESH_INTERVAL_SECONDS = 300
+from server.knowledge.domain.mcp_worker_refresh import (
+    MAX_DOCUMENTS_PER_JOB,
+    MAX_QUEUE_ROWS_PER_SOURCE,
+)
+
+MIN_REFRESH_INTERVAL_SECONDS = 12 * 60
 MAX_REFRESH_INTERVAL_SECONDS = 86_400
 _MAX_IDENTIFIER_BYTES = 1024
 _MAX_GENERATION = (1 << 63) - 1
@@ -90,6 +95,15 @@ class PeriodicSchedule:
         ):
             raise ScheduleRejected("invalid refresh schedule interval")
         object.__setattr__(self, "next_due_at", _utc(self.next_due_at))
+
+
+def minimum_interval_for_selected(count: int) -> int:
+    """Reserve one batch of slack alongside a day of completed receipts."""
+    if type(count) is not int or not 1 <= count <= MAX_DOCUMENTS_PER_JOB:
+        raise ScheduleRejected("invalid refresh selection size")
+    batches = MAX_QUEUE_ROWS_PER_SOURCE // count - 1
+    seconds = (MAX_REFRESH_INTERVAL_SECONDS + batches - 1) // batches
+    return max(MIN_REFRESH_INTERVAL_SECONDS, seconds)
 
 
 @dataclass(frozen=True, slots=True)

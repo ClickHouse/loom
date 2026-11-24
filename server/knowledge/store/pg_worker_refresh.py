@@ -46,8 +46,10 @@ WITH ready AS (
     LIMIT $4 FOR UPDATE SKIP LOCKED
 ), taken AS (
     UPDATE loom.knowledge_source_refresh AS job
-    SET state = CASE WHEN job.fence >= $5 THEN 'exhausted' ELSE 'claimed' END,
-        fence = job.fence + 1,
+    SET state = CASE WHEN job.attempts >= $5 THEN 'exhausted' ELSE 'claimed' END,
+        attempts = LEAST(job.attempts + 1, $5::smallint),
+        fence = CASE WHEN job.attempts < $5 THEN nextval('loom.knowledge_source_refresh_fence')
+                     ELSE job.fence END,
         claimable_at = clock_timestamp() + make_interval(secs => $6),
         updated_at = clock_timestamp()
     FROM ready WHERE (job.org, job.namespace, job.item_key)
@@ -58,26 +60,35 @@ SELECT item_key, fence, claimable_at, task, state FROM taken
 """
 _OWNS = f"""
 {_KEY} AND worker_id = $4 AND fence = $5
-AND state = 'claimed' AND claimable_at > clock_timestamp()
+AND state = 'claimed' AND claimable_at = $6
 """
 _LOCK = f"""
-SELECT task, claimable_at FROM loom.knowledge_source_refresh WHERE {_OWNS} FOR UPDATE
+WITH locked AS MATERIALIZED (
+    SELECT task, claimable_at FROM loom.knowledge_source_refresh WHERE {_OWNS} FOR UPDATE
+)
+SELECT task, claimable_at FROM locked WHERE claimable_at > clock_timestamp()
 """
 _CHECKPOINT = f"""
+WITH locked AS MATERIALIZED (
+    SELECT claimable_at AS deadline FROM loom.knowledge_source_refresh WHERE {_OWNS} FOR UPDATE
+)
 UPDATE loom.knowledge_source_refresh
-SET state = 'completed', updated_at = clock_timestamp(), receipt = $6::jsonb
-WHERE {_OWNS} RETURNING 1
+SET state = 'completed', updated_at = clock_timestamp(), receipt = $7::jsonb
+FROM locked WHERE {_OWNS} AND locked.deadline > clock_timestamp() RETURNING 1
 """
 _CANCEL = f"""
 UPDATE loom.knowledge_source_refresh
-SET state = 'cancelled', fence = fence + 1, updated_at = clock_timestamp()
+SET state = 'cancelled', updated_at = clock_timestamp()
 WHERE {_KEY} AND user_id = $4 AND state IN ('pending', 'claimed')
 RETURNING 1
 """
 _TERMINAL = f"""
-SELECT task, receipt, user_id, claimable_at FROM loom.knowledge_source_refresh
-WHERE {_KEY} AND worker_id = $4 AND fence = $5 AND state = 'completed'
-  AND updated_at > clock_timestamp() - interval '24 hours'
+SELECT task, receipt, user_id, claimable_at, updated_at FROM loom.knowledge_source_refresh
+WHERE {_KEY} AND worker_id = $4 AND fence = $5 AND claimable_at = $6 AND state = 'completed'
+"""
+_LOCKED_TERMINAL = f"""
+WITH locked AS MATERIALIZED ({_TERMINAL} FOR SHARE)
+SELECT * FROM locked WHERE updated_at > clock_timestamp() - interval '24 hours'
 """
 
 
@@ -273,6 +284,7 @@ def _lease_params(lease: LiveLease) -> tuple[Any, ...]:
         lease.task.idempotency_key,
         UUID(lease.worker_id),
         lease.fence,
+        lease.expires_at,
     )
 
 
@@ -329,7 +341,7 @@ async def replay_completion(conn: Connection, completion: WorkerCompletion) -> b
     ):
         return False
     # Lock in source-before-queue order, then recheck expiry and the exact row.
-    locked = await conn.fetchrow(_TERMINAL + " FOR SHARE", *_lease_params(lease))
+    locked = await conn.fetchrow(_LOCKED_TERMINAL, *_lease_params(lease))
     if locked is None or locked != row:
         return False
     try:

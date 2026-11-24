@@ -16,8 +16,9 @@ from enum import StrEnum
 from server.knowledge.domain.mcp_identity import resource_digest
 
 MAX_DOCUMENTS_PER_JOB = 64
+MAX_QUEUE_ROWS_PER_SOURCE = 2 * MAX_DOCUMENTS_PER_JOB
 MAX_IDENTIFIER_BYTES = 1024
-_MAX_FENCE = (1 << 32) - 1
+_MAX_FENCE = (1 << 53) - 1
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
