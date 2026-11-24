@@ -65,6 +65,10 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
             "scopes as excerpts. Default true on coding connections."
         ),
     )
+    include_dependencies: bool = Field(
+        default=False,
+        description="Include the resolved argument definition and direct helper in related source.",
+    )
     # False matches `pattern` regardless of letter case.
     case_sensitive: bool = True
     include_lessons: bool = Field(
@@ -183,6 +187,14 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         return min(self.limit or 20, 200)
 
 
+class GrepDependency(BaseModel):
+    qualified_name: str
+    path: str
+    start_line: int
+    end_line: int
+    body: str
+
+
 class RelatedGrepEvidence(BaseModel):
     """Verified lines for the qualified argument of a literal call."""
 
@@ -194,6 +206,14 @@ class RelatedGrepEvidence(BaseModel):
     definitions_partial: bool = False
     definitions_note: str = ""
     truncated: bool = False
+    dependencies: list[GrepDependency] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_dependencies(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        if not data.get("dependencies"):
+            data.pop("dependencies", None)
+        return data
 
 
 class CodeGrepOutput(_LessonsOut):

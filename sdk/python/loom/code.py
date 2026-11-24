@@ -113,6 +113,7 @@ class CodeClient:
         include_body: bool | None = None,
         related_on_miss: bool = False,
         related_on_prefix: bool = False,
+        include_dependencies: bool = False,
         mode: str = "matches",
         path_globs: list[str] | None = None,
         exclude_globs: list[str] | None = None,
@@ -132,6 +133,8 @@ class CodeClient:
         matching lines only.
         Pass `related_on_prefix=True` to see excerpts for other uses of a
         literal call prefix's qualified argument alongside exact matches.
+        Pass `include_dependencies=True` to include small retained definitions
+        for an argument with a unique graph target and its direct helper.
         `mode="files"` answers "which files
         mention X" (no line text) — use it for coverage questions. `limit`
         defaults per mode: 20 lines, or the 500-file ceiling, so a files
@@ -164,6 +167,8 @@ class CodeClient:
             body["related_on_miss"] = True
         if related_on_prefix:
             body["related_on_prefix"] = True
+        if include_dependencies:
+            body["include_dependencies"] = True
         if path_globs:
             body["path_globs"] = list(path_globs)
         if exclude_globs:

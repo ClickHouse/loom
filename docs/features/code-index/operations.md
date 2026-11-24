@@ -115,6 +115,13 @@ from those excerpts. Use `context_lines` to choose the radius. It defaults to
 six lines for related excerpts. HTTP and SDK callers can opt in. A failed or
 incomplete related scan sets `partial` and keeps the exact matches.
 
+Coding MCP connections can include a resolved Python argument definition and
+its direct helper under `related.dependencies`. The index must bind the same
+argument to one target, and the retained bodies must share the hit's revision
+and satisfy the request's path filters. HTTP and SDK callers can opt in with
+`include_dependencies`. Set it to `false` or pass `context_lines: 0` to omit
+these definitions.
+
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
 lines by default. Pass `include_body=false` to omit bodies and `context_lines=0`
 for matching lines only.

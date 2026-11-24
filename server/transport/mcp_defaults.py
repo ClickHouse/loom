@@ -45,7 +45,7 @@ _CODING_ARGUMENT_DEFAULTS: dict[str, dict[str, Any]] = {
         "test_examples_only": True,
         "example_context_lines": EDIT_TEST_CONTEXT_LINES,
     },
-    "code.grep": {"related_on_miss": True, "related_on_prefix": True},
+    "code.grep": {"related_on_miss": True, "related_on_prefix": True, "include_dependencies": True},
 }
 
 

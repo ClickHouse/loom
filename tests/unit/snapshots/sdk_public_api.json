@@ -2080,6 +2080,7 @@
           "include_body",
           "related_on_miss",
           "related_on_prefix",
+          "include_dependencies",
           "mode",
           "path_globs",
           "exclude_globs",

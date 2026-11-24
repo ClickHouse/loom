@@ -6660,6 +6660,7 @@ class CodeGrepInput(TypedDict, total=False):
     regex: NotRequired[bool]
     related_on_miss: NotRequired[bool]
     related_on_prefix: NotRequired[bool]
+    include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
     path_prefix: NotRequired[str]
@@ -6691,6 +6692,7 @@ class CodeGrepBody(TypedDict, total=False):
     regex: NotRequired[bool]
     related_on_miss: NotRequired[bool]
     related_on_prefix: NotRequired[bool]
+    include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
     path_prefix: NotRequired[str]
@@ -6755,6 +6757,15 @@ class RelatedGrepEvidence(TypedDict, total=False):
     definitions_partial: NotRequired[bool]
     definitions_note: NotRequired[str]
     truncated: NotRequired[bool]
+    dependencies: NotRequired[list["GrepDependency"]]
+
+
+class GrepDependency(TypedDict, total=False):
+    qualified_name: Required[str]
+    path: Required[str]
+    start_line: Required[int]
+    end_line: Required[int]
+    body: Required[str]
 
 
 class CodeHistoryInput(TypedDict, total=False):

@@ -764,6 +764,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
 | `related_on_miss` | `bool` | `False` | If a literal call expression is absent, also find its qualified argument. |
 | `related_on_prefix` | `bool` | `False` | For a literal call prefix with one qualified argument, include its uses in other scopes as excerpts. |
+| `include_dependencies` | `bool` | `False` | Include the resolved argument definition and direct helper in related source. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |

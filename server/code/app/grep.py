@@ -27,6 +27,7 @@ from server.code.app.common import (
     schedule_code_trace,
 )
 from server.code.app.grep_bodies import definitions_for, definitions_tokens
+from server.code.app.grep_dependencies import add_dependencies
 from server.code.app.grep_source import (
     GREP_MATCH_TEXT_CHARS,
     ContextSource,
@@ -438,14 +439,20 @@ async def _grep_lines(
         )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
     # so the outcome fold skips this op; the paths still feed opened_file)
+    related, note = _label_related(
+        related_pattern, matches, bodies, context, scan, prefix_related, note
+    )
+    await add_dependencies(repo, org, ns, input, related, scope, scan.match_commits, budget)
     returned = matches + (prefix_related.matches if prefix_related is not None else [])
-    files = list(dict.fromkeys(m["path"] for m in returned))
+    dependencies = related.dependencies if related else []
+    files = list(dict.fromkeys([*(m["path"] for m in returned), *(d.path for d in dependencies)]))
     risk = "low" if returned else "abstain"
     if (matches and related_pattern) or (prefix_related and prefix_related.matches):
         risk = "medium"
     related_tokens = (
-        sum(len(row["text"]) for row in prefix_related.contexts) // 4 if prefix_related else 0
-    )
+        (sum(len(row["text"]) for row in prefix_related.contexts) if prefix_related else 0)
+        + sum(len(d.body) for d in dependencies)
+    ) // 4
     schedule_code_trace(
         org=org,
         ns=ns,
@@ -497,16 +504,6 @@ async def _grep_lines(
             "No exact match in the indexed scope. Try shorter known fragments together in "
             "a pattern list, code.symbol for a known name, or code.search for behavior."
         )
-    related = prefix_related
-    if prefix_related and prefix_related.matches:
-        note = "Related source shows the call prefix's argument in other scopes."
-        if not matches:
-            note = "No exact match in the indexed scope. " + note
-    if related_pattern and matches:
-        related = RelatedGrepEvidence(
-            pattern=related_pattern, matches=matches, truncated=scan.truncated, **bodies, **context
-        )
-        note = "No exact match in the indexed scope. Related source matches the call's argument."
     output = CodeGrepOutput(
         matches=[] if related_pattern else matches,
         related=related,
@@ -526,6 +523,30 @@ async def _grep_lines(
     )
     output._match_commits = scan.match_commits
     return output
+
+
+def _label_related(
+    pattern: str,
+    matches: list[dict[str, Any]],
+    bodies: dict[str, Any],
+    context: dict[str, Any],
+    scan: _GrepLineScan,
+    prefix: RelatedGrepEvidence | None,
+    note: str,
+) -> tuple[RelatedGrepEvidence | None, str]:
+    if pattern and matches:
+        related = RelatedGrepEvidence(
+            pattern=pattern, matches=matches, truncated=scan.truncated, **bodies, **context
+        )
+        return (
+            related,
+            "No exact match in the indexed scope. Related source matches the call's argument.",
+        )
+    if prefix and prefix.matches:
+        note = "Related source shows the call prefix's argument in other scopes."
+        if not matches:
+            note = "No exact match in the indexed scope. " + note
+    return prefix, note
 
 
 _IDENTIFIER = r"[^\W\d]\w*"
@@ -880,6 +901,7 @@ def _grep_trace_args(input: CodeGrepInput, *, context_lines: int | None = None) 
         "include_body",
         "related_on_miss",
         "related_on_prefix",
+        "include_dependencies",
         "context_lines",
         context_lines=context_lines,
         paged=bool(input.cursor) or None,

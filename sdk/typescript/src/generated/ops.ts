@@ -955,6 +955,8 @@ export interface CodeGrepInput {
   related_on_miss?: boolean;
   /** For a literal call prefix with one qualified argument, include its uses in other scopes as excerpts. Default true on coding connections. */
   related_on_prefix?: boolean;
+  /** Include the resolved argument definition and direct helper in related source. */
+  include_dependencies?: boolean;
   case_sensitive?: boolean;
   /** Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. */
   context_lines?: number;
@@ -984,6 +986,15 @@ export interface RelatedGrepEvidence {
   definitions_partial?: boolean;
   definitions_note?: string;
   truncated?: boolean;
+  dependencies?: GrepDependency[];
+}
+
+export interface GrepDependency {
+  qualified_name: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  body: string;
 }
 
 export interface CodeGrepOutput {
