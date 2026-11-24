@@ -574,8 +574,16 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         if tool["code.symbol"]
         else ""
     )
+    definition_hint = (
+        f"Start with {tool['code.symbol']} when the task names the class, function or method "
+        "you need to read, before searching for text inside it. "
+        if tool["code.symbol"]
+        else ""
+    )
     code = (
-        "\n\nUse Loom first to search and read unchanged indexed source. Use "
+        "\n\nUse Loom first to search and read unchanged indexed source. "
+        + definition_hint
+        + "Use "
         + "; ".join(routes)
         + ". Discover deferred tools by name with ToolSearch in Claude Code. "
         + caller_hint
