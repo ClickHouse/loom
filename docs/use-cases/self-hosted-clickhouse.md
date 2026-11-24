@@ -1,3 +1,10 @@
+---
+title: Self-hosted agent memory on ClickHouse
+description: Query self-hosted agent memory with SQL. Review decision history and writer provenance with read-only access scoped to an org and namespace.
+seo:
+  title: SQL-queryable agent memory on ClickHouse
+---
+
 # Self-hosted agent memory on ClickHouse
 
 Loom runs on your own infrastructure, with Docker or on Kubernetes with its Helm chart, and
@@ -31,6 +38,53 @@ by `loom sql-access` reads only its granted orgs and namespaces. Start with
 [`sql_v1_memories`](../reference/sql-surface.md#sql_v1_memories) for current facts and
 [`sql_v1_memory_history`](../reference/sql-surface.md#sql_v1_memory_history) for versions.
 Agents can keep using MCP or HTTP for semantic recall and writes.
+
+### Audit a changed decision with SQL
+
+Try this on a disposable single-user quickstart deployment with bundled ClickHouse and
+the default `dev/local` scope and database `loom`.
+
+1. Save `deploy_window` using the [first HTTP memory write](../getting-started/quickstart.md#4-first-memory-over-http).
+   Keep its `memory_id`. Pass that ID, `org: "dev"` and a replacement `value` to
+   [`memory.update_by_id`](../reference/operations/memory.md#memoryupdate_by_id).
+   Check that the operation returns `updated: true`.
+2. From the Loom container, create a SQL reader scoped to
+   this namespace. The [SQL access requirements](../reference/sql-surface.md#access) list
+   the privileges the operator needs.
+
+   ```bash
+   docker compose --project-directory "$HOME/.loom" exec loom \
+     loom sql-access grant --user loom_demo_audit --org dev --namespaces local
+   ```
+
+3. Open the bundled ClickHouse client as `loom_demo_audit` and enter the password printed
+   by the grant.
+
+   ```bash
+   docker compose --project-directory "$HOME/.loom" exec clickhouse \
+     clickhouse-client --user loom_demo_audit --ask-password
+   ```
+
+   Query the history of the decision written by the quickstart's `http` agent.
+
+   ```sql
+   SELECT version, actor, updated_at, value, value_withheld
+   FROM loom.sql_v1_memory_history
+   WHERE org = 'dev'
+     AND namespace = 'local'
+     AND agent = 'http'
+     AND memory_key = 'deploy_window'
+   ORDER BY version;
+   ```
+
+The history shows both versions, with each `value` returned as a JSON string. The
+single-user example leaves `actor` blank. On an authenticated deployment, it identifies
+the writer's token subject. The view returns NULL for a redacted `value` or any version
+of a key ever labeled `high` and gives the reason in `value_withheld`. Under the
+Postgres authority, the version appears once it has been
+[published to ClickHouse](../reference/sql-surface.md#freshness).
+
+Run `loom sql-access revoke --user loom_demo_audit` in the Loom container when finished.
 
 ## Measured
 
