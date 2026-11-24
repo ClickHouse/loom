@@ -627,49 +627,38 @@ jobs:
       # isolation. jsdom, no browser.
       - name: vitest (unit + component + axe)
         working-directory: frontend
-        env:
-          LOOM_TEST_COVERAGE: ${{ github.event_name == 'pull_request' && '1' || '' }}
         run: npm run test -- --shard=${{ matrix.part }}/${{ strategy.job-total }}
-      - name: Save dashboard coverage for this shard
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dashboard-coverage-${{ matrix.part }}
-          path: frontend/coverage/lcov.info
-          if-no-files-found: error
-          overwrite: true
 
   frontend-coverage:
-    needs: [validate-ref, frontend-vitest]
+    needs: validate-ref
     if: github.event_name == 'pull_request'
     name: Dashboard changed-line coverage (report only)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     continue-on-error: true
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 2
-      - name: Download both dashboard coverage reports
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          pattern: dashboard-coverage-*
-          path: ${{ runner.temp }}/dashboard-coverage
-      - name: Combine the dashboard coverage records
-        run: |
-          reports=("$RUNNER_TEMP"/dashboard-coverage/dashboard-coverage-*/lcov.info)
-          test "${#reports[@]}" -eq 2
-          test -s "${reports[0]}"
-          test -s "${reports[1]}"
-          cat "${reports[@]}" > "$RUNNER_TEMP/dashboard.lcov"
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+      - name: Collect dashboard unit coverage
+        run: npm run test -- --coverage --testTimeout=10000
       - name: Report dashboard changed-line coverage
         uses: ./.github/actions/patch-coverage
         with:
           component: Dashboard
           working-directory: frontend
-          report: ${{ runner.temp }}/dashboard.lcov
+          report: frontend/coverage/lcov.info
 
   # With fullyParallel: false, --shard splits by spec file per project, not by test.
   frontend-e2e:
