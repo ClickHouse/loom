@@ -251,6 +251,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python
         with:
@@ -286,6 +287,18 @@ jobs:
           coverage report --fail-under=40
           coverage xml
           coverage json -o coverage.json
+      - name: Export Python unit coverage for changed lines
+        id: python-coverage
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: coverage lcov -o "$RUNNER_TEMP/python.lcov"
+      - name: Report Python changed-line coverage
+        if: steps.python-coverage.outcome == 'success'
+        continue-on-error: true
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: Python server and SDK
+          report: ${{ runner.temp }}/python.lcov
       # Per-module branch floors for the auth, write-path, erasure, migration
       # and supervisor modules (tests/inventory/coverage_floors.toml).
       - name: branch-coverage floors
@@ -614,7 +627,49 @@ jobs:
       # isolation. jsdom, no browser.
       - name: vitest (unit + component + axe)
         working-directory: frontend
+        env:
+          LOOM_TEST_COVERAGE: ${{ github.event_name == 'pull_request' && '1' || '' }}
         run: npm run test -- --shard=${{ matrix.part }}/${{ strategy.job-total }}
+      - name: Save dashboard coverage for this shard
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dashboard-coverage-${{ matrix.part }}
+          path: frontend/coverage/lcov.info
+          if-no-files-found: error
+          overwrite: true
+
+  frontend-coverage:
+    needs: [validate-ref, frontend-vitest]
+    if: github.event_name == 'pull_request'
+    name: Dashboard changed-line coverage (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Download both dashboard coverage reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dashboard-coverage-*
+          path: ${{ runner.temp }}/dashboard-coverage
+      - name: Combine the dashboard coverage records
+        run: |
+          reports=("$RUNNER_TEMP"/dashboard-coverage/dashboard-coverage-*/lcov.info)
+          test "${#reports[@]}" -eq 2
+          test -s "${reports[0]}"
+          test -s "${reports[1]}"
+          cat "${reports[@]}" > "$RUNNER_TEMP/dashboard.lcov"
+      - name: Report dashboard changed-line coverage
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: Dashboard
+          working-directory: frontend
+          report: ${{ runner.temp }}/dashboard.lcov
 
   # With fullyParallel: false, --shard splits by spec file per project, not by test.
   frontend-e2e:
@@ -1284,6 +1339,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
       - name: Install Rust with format and lint components
         run: |
           rustup toolchain install "${{ matrix.rust }}" --profile minimal --component rustfmt --component clippy
@@ -1293,8 +1349,34 @@ jobs:
         run: cargo generate-lockfile
       - name: Rust formatting
         run: cargo fmt --check
+      - name: Install Rust coverage tools
+        if: github.event_name == 'pull_request' && matrix.rust == 'stable'
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install --locked cargo-llvm-cov --version 0.9.2
       - name: Unit, HTTP contract and documentation tests
-        run: cargo test --locked
+        env:
+          COLLECT_RUST_COVERAGE: ${{ github.event_name == 'pull_request' && matrix.rust == 'stable' }}
+        run: |
+          if [[ "$COLLECT_RUST_COVERAGE" == true ]]; then
+            cargo llvm-cov --locked --no-report
+            cargo test --locked --doc
+          else
+            cargo test --locked
+          fi
+      - name: Export Rust coverage as LCOV
+        id: rust-coverage
+        if: github.event_name == 'pull_request' && matrix.rust == 'stable'
+        continue-on-error: true
+        run: cargo llvm-cov report --lcov --output-path "$RUNNER_TEMP/rust.lcov"
+      - name: Report Rust SDK changed-line coverage
+        if: steps.rust-coverage.outcome == 'success'
+        continue-on-error: true
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: Rust SDK
+          working-directory: sdk/rust
+          report: ${{ runner.temp }}/rust.lcov
       - name: Lint the library, tests and examples
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: API documentation
@@ -1318,6 +1400,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python
         with:
@@ -1348,7 +1431,17 @@ jobs:
       # ts examples type-checked against src, vitest.
       - name: lint + type-check + version + README examples + unit tests
         working-directory: sdk/typescript
+        env:
+          LOOM_TEST_COVERAGE: ${{ github.event_name == 'pull_request' && '1' || '' }}
         run: npm run check
+      - name: Report TypeScript SDK changed-line coverage
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: TypeScript SDK
+          working-directory: sdk/typescript
+          report: sdk/typescript/coverage/lcov.info
       # ESM + CJS build, the dist tests over the exact export
       # list, publint and arethetypeswrong — the package must resolve for
       # CommonJS consumers and bundlers before it is ever published.

@@ -182,6 +182,7 @@
     "@mastra/memory": "1.41.1",
     "@openai/agents": "0.22.0",
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "4.1.12",
     "ai": "7.0.172",
     "publint": "^0.3.24",
     "tsdown": "^0.23.0",
