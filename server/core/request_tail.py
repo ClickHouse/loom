@@ -230,7 +230,7 @@ async def _publish(tail: _Tail, deliver: Callable[[], Awaitable[None]]) -> None:
             raise RequiredTailError()
         await deliver()
 
-    guarded = checked_delivery
+    guarded: Callable[[], Awaitable[None]] = checked_delivery
     for _owner, context, _check, _fresh, fence in reversed(checks):
         if fence is not None:
             guarded = _guarded_delivery(context, fence, guarded)

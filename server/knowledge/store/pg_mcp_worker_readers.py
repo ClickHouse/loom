@@ -124,7 +124,7 @@ async def set_on(
         generation = await conn.fetchval(_INSERT, *args)
     else:
         generation = await conn.fetchval(_REPLACE, *args, expected_link_generation)
-    return generation if type(generation) is int and generation > 0 else None
+    return int(generation) if type(generation) is int and generation > 0 else None
 
 
 async def revoke_on(conn: Connection, key: LinkKey, *, expected_link_generation: int) -> bool:
