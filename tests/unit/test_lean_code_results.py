@@ -28,6 +28,38 @@ def test_symbol_drops_only_descriptions_repeated_in_the_returned_body() -> None:
     assert h["description"] == "Compute the total."
 
 
+def test_scip_symbol_drops_rendered_description_already_in_source() -> None:
+    body = '''class Group(Base):
+    """Extend :class:`Base`.
+
+    :param load_defaults: Load the high priority
+        options on startup.
+    """
+'''
+    rendered = (
+        "```python\nclass Group(Base):\n```\nExtend `Base`.\n\n"
+        r":param load\_defaults: Load the high priority"
+        "  \n&nbsp;&nbsp;options on startup."
+    )
+    source = {"symbol": "Group", "tier": "scip", "body": body, "description": rendered}
+    out = lean_code(
+        "code.symbol",
+        {
+            "definitions": [
+                source,
+                {**source, "description": rendered + " Bypass startup on empty input."},
+                {**source, "description": rendered.replace("class Group", "class Other")},
+                {**source, "elided": True},
+            ]
+        },
+    )
+    repeated, extra, other, elided = out["definitions"]
+    assert repeated["body"] == body and "description" not in repeated
+    assert extra["description"] == rendered + " Bypass startup on empty input."
+    assert other["description"] == rendered.replace("class Group", "class Other")
+    assert elided["description"] == rendered
+
+
 FRESH = {
     "branch": "main",
     "commit": "c15ee82f1020ed8261a2add694a46519457e2d2a",

@@ -18,6 +18,7 @@ HTTP and SDK shapes are unchanged; `explain=true` skips all trimming.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # Accounting counters and ranking internals no agent acts on.
@@ -272,6 +273,28 @@ def _lean_search(out: dict[str, Any]) -> None:
 _NO_DOC = "No documentation available."
 # Search hits past this rank keep where they are, not what they do.
 _DESCRIBED_HITS = 3
+_RST_ROLE = re.compile(r":[A-Za-z][\w-]*:(?=`)")
+
+
+def _fold_doc_markup(text: str) -> str:
+    """Fold spacing and escapes from SCIP's rendered source documentation."""
+    return " ".join(_RST_ROLE.sub("", text).replace("&nbsp;", " ").replace(r"\_", "_").split())
+
+
+def _description_repeats_body(description: str, body: str, *, scip: bool) -> bool:
+    description = description.strip()
+    if not description:
+        return False
+    if description in body:
+        return True
+    if not scip or not description.startswith("```"):
+        return False
+    header, closing, excerpt = description.partition("\n```\n")
+    signature = header.partition("\n")[2].strip()
+    if not closing or not signature or signature not in body:
+        return False
+    excerpt = _fold_doc_markup(excerpt)
+    return bool(excerpt) and excerpt in _fold_doc_markup(body)
 
 
 def _lean_symbol(out: dict[str, Any]) -> None:
@@ -296,10 +319,9 @@ def _lean_symbol(out: dict[str, Any]) -> None:
         body = d.get("body")
         if description == _NO_DOC or (
             isinstance(description, str)
-            and bool(description.strip())
             and isinstance(body, str)
-            and description.strip() in body
             and not (d.get("elided") or d.get("granularity") == "skeleton")
+            and _description_repeats_body(description, body, scip=d.get("tier") == "scip")
         ):
             d.pop("description")
 
