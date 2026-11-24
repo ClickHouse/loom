@@ -196,7 +196,7 @@ class CodeSymbolOutput(BaseModel):
     # [...]} of {symbol, kind, via (extends | implements), tier, confidence, path,
     # line}. Absent for functions and when the seed has no hierarchy edge.
     hierarchy: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
-    # When nothing resolved: cheap fuzzy candidates (names + paths only).
+    # Source pointers when nothing resolved, or other hits outside a file-clue target.
     candidates: list[dict[str, Any]] = Field(default_factory=list)
     # Estimated tokens of the answer: definitions, uses, cited documents, neighbours
     # and hierarchy blocks together.

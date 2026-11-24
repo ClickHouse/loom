@@ -528,6 +528,15 @@ async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOut
             out.ambiguous = len(target.candidates) > 1
         else:
             out.resolved_by = "file_clues"
+            out.candidates = [
+                candidate
+                for candidate in target.candidates
+                if not any(
+                    unit.path == candidate["path"]
+                    and unit.start_line <= candidate["start_line"] <= unit.end_line
+                    for unit in out.definitions
+                )
+            ]
     return out
 
 
