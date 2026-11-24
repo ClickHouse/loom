@@ -823,11 +823,11 @@ jobs:
         id: existing
         env:
           GH_TOKEN: ${{ github.token }}
-        # Only a 404 means there is none: any other failure would regenerate the notes.
+        # The CLI also looks up drafts by their pending tag.
         run: |
-          if out=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>&1); then
+          if out=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json tagName 2>&1); then
             echo "release=true" >>"$GITHUB_OUTPUT"
-          elif grep -q "(HTTP 404)" <<<"$out"; then
+          elif [ "$out" = "release not found" ]; then
             echo "release=false" >>"$GITHUB_OUTPUT"
           else
             echo "$out" >&2

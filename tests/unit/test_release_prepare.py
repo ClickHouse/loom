@@ -970,13 +970,11 @@ def test_the_github_release_notes_start_at_the_previous_final() -> None:
     assert create["env"]["PREVIOUS_TAG"] == "${{ needs.version.outputs.previous }}"
 
 
-@pytest.mark.parametrize("existing", [False, True])
-def test_publish_release_preserves_notes_on_rerun(tmp_path: Path, existing: bool) -> None:
-    (step,) = [
-        step
-        for step in _release_workflow()["jobs"]["github-release"]["steps"]
-        if step.get("id") == "publish-release"
-    ]
+@pytest.mark.parametrize("lookup", ["absent", "draft", "error"])
+def test_publish_release_reuses_existing_draft(tmp_path: Path, lookup: str) -> None:
+    steps = _release_workflow()["jobs"]["github-release"]["steps"]
+    (probe,) = [step for step in steps if step.get("id") == "existing"]
+    (publish,) = [step for step in steps if step.get("id") == "publish-release"]
     files = [
         "release/python/clickhouse-loom.whl",
         "release/npm/clickhouse-loom.tgz",
@@ -989,7 +987,26 @@ def test_publish_release_preserves_notes_on_rerun(tmp_path: Path, existing: bool
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
     gh = tmp_path / "gh"
-    gh.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$GH_CALLS"\n')
+    gh.write_text(
+        """#!/bin/bash
+if [ "$1 $2" = 'release view' ]; then
+  case $RELEASE_LOOKUP in
+    draft) echo '{"tagName":"v1.3.0"}'; exit 0 ;;
+    absent) echo 'release not found' >&2; exit 1 ;;
+    error) echo 'release API unavailable' >&2; exit 1 ;;
+  esac
+fi
+if [ "$1" = api ]; then
+  if [ "$RELEASE_LOOKUP" = error ]; then
+    echo 'gh: Bad Gateway (HTTP 502)' >&2
+    exit 1
+  fi
+  echo 'gh: Not Found (HTTP 404)' >&2
+  exit 1
+fi
+printf '%s\\n' "$*" >> "$GH_CALLS"
+"""
+    )
     gh.chmod(0o755)
     calls = tmp_path / "calls"
     env = dict(
@@ -999,16 +1016,26 @@ def test_publish_release_preserves_notes_on_rerun(tmp_path: Path, existing: bool
         GITHUB_REF_NAME="v1.3.0",
         GITHUB_REPOSITORY="ClickHouse/loom",
         PREVIOUS_TAG="v1.2.9",
-        VERSION_EXISTS=str(existing).lower(),
+        RELEASE_LOOKUP=lookup,
+        GITHUB_OUTPUT=str(tmp_path / "output"),
         PRERELEASE="false",
         LATEST="true",
     )
+    found = subprocess.run(
+        ["bash", "-e", "-c", probe["run"]], env=env, cwd=tmp_path, capture_output=True
+    )
+    if lookup == "error":
+        assert found.returncode != 0
+        assert not Path(env["GITHUB_OUTPUT"]).exists()
+        return
+    assert found.returncode == 0, found.stderr
+    env["VERSION_EXISTS"] = Path(env["GITHUB_OUTPUT"]).read_text().strip().split("=", 1)[1]
     result = subprocess.run(
-        ["bash", "-e", "-c", step["run"]], env=env, cwd=tmp_path, capture_output=True
+        ["bash", "-e", "-c", publish["run"]], env=env, cwd=tmp_path, capture_output=True
     )
     assert result.returncode == 0, result.stderr
     commands = calls.read_text().splitlines()
-    if existing:
+    if lookup == "draft":
         upload, edit = commands
         assert upload.startswith("release upload v1.3.0 ")
         assert "--clobber" in upload
