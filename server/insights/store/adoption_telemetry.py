@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from server import __version__
-from server.core.ch import CHClient
+from server.core.ch import CHClient, sequential_reads
 from server.core.naming import not_mirror_sql
 
 _REQUEST_SCOPE = f"""
@@ -102,15 +102,16 @@ async def window_report(
         "installation_id": str(installation_id),
         "loom_version": __version__,
     }
-    domains = (
-        await ch.query_all(
-            DOMAINS_SQL, {"start": start, "end": end, "restricted": sorted(restricted)}
+    with sequential_reads():
+        domains = (
+            await ch.query_all(
+                DOMAINS_SQL, {"start": start, "end": end, "restricted": sorted(restricted)}
+            )
+            if restricted is not None
+            else []
         )
-        if restricted is not None
-        else []
-    )
-    # Read totals after attribution so late ledger rows can only increase the total.
-    report = await ch.query_one(ADOPTION_SQL, params)
+        # Read totals last so late ledger rows can only increase the total.
+        report = await ch.query_one(ADOPTION_SQL, params)
     if report is None:
         raise RuntimeError("adoption aggregation returned no row")
     return {
