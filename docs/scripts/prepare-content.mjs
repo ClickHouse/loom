@@ -2,12 +2,15 @@ import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeF
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fromMarkdown } from "mdast-util-from-markdown";
 
 const docs = dirname(fileURLToPath(import.meta.url));
 const root = dirname(docs);
 const repository = dirname(root);
 const content = join(root, ".blume-content");
 const locales = ["es", "ja", "ko", "pt-BR", "zh-CN"];
+const docsBlob = "https://github.com/ClickHouse/loom/blob/main/docs/";
+const docsSite = "https://loom.clickhouse.com/docs";
 const localizedSeo = {
   "index.md": {
     ja: {
@@ -206,11 +209,18 @@ function prepareContent() {
     if (existsSync(translatedDocs)) cpSync(translatedDocs, join(content, locale), { recursive: true });
   }
 
-  for (const file of contentFiles(content)) {
+  const files = contentFiles(content);
+  const englishSources = new Set(
+    files
+      .map((file) => relative(content, file).split(sep).join("/"))
+      .filter((file) => !locales.includes(file.split("/")[0])),
+  );
+  for (const file of files) {
     const text = readFileSync(file, "utf8");
     const [locale, ...source] = relative(content, file).split(sep);
     const sourcePath = source.join("/");
-    const prepared = normalizeTranslatedTitle(text, localizedSeo[sourcePath]?.[locale]);
+    const linked = locales.includes(locale) ? rewritePublishedDocLinks(text, englishSources) : text;
+    const prepared = normalizeTranslatedTitle(linked, localizedSeo[sourcePath]?.[locale]);
     if (prepared !== text) writeFileSync(file, prepared);
   }
 
@@ -240,6 +250,51 @@ function contentFiles(directory) {
     if (statSync(path).isDirectory()) return contentFiles(path);
     return path.endsWith(".md") || path.endsWith(".mdx") ? [path] : [];
   });
+}
+
+function publishedDocUrl(url, englishSources) {
+  if (!url.startsWith(docsBlob)) return;
+  const match = /^([^?#]+\.mdx?)(#.*)?$/.exec(url.slice(docsBlob.length));
+  if (!match) return;
+  const [, encodedPath, fragment = ""] = match;
+  if (/^#L\d+(?:-L\d+)?$/.test(fragment)) return;
+  let source;
+  try {
+    source = decodeURIComponent(encodedPath);
+  } catch {
+    return;
+  }
+  if (!englishSources.has(source)) return;
+  const slug = encodedPath.replace(/\.mdx?$/, "").replace(/(^|\/)index$/, "");
+  return `${docsSite}${slug ? `/${slug}` : ""}${fragment}`;
+}
+
+/** Keep the translator's choice of English fallback and send it to the published page. */
+export function rewritePublishedDocLinks(text, englishSources) {
+  if (!text.includes(docsBlob)) return text;
+  const pending = [fromMarkdown(text)];
+  const replacements = [];
+  for (const node of pending) {
+    if (node.children) pending.push(...node.children);
+    if (node.type !== "link") continue;
+    const url = publishedDocUrl(node.url, englishSources);
+    if (!url) continue;
+    const { start, end } = node.position;
+    const labelEnd = node.children.at(-1)?.position.end.offset;
+    const searchFrom = text[start.offset] === "<" ? start.offset : (labelEnd ?? start.offset);
+    const offset = text.indexOf(node.url, searchFrom);
+    if (offset >= 0 && offset + node.url.length <= end.offset) {
+      replacements.push({ offset, end: offset + node.url.length, url });
+    }
+  }
+
+  let written = "";
+  let cursor = 0;
+  for (const { offset, end, url } of replacements.sort((a, b) => a.offset - b.offset)) {
+    written += text.slice(cursor, offset) + url;
+    cursor = end;
+  }
+  return written + text.slice(cursor);
 }
 
 /** Move a generated translation's title into front matter for Blume to render once. */

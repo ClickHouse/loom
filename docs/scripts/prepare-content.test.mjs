@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeTranslatedTitle, rewriteSourceLinks } from "./prepare-content.mjs";
+import { normalizeTranslatedTitle, rewritePublishedDocLinks, rewriteSourceLinks } from "./prepare-content.mjs";
 
 test("moves a generated translation title into Blume front matter", () => {
   const prepared = normalizeTranslatedTitle(
@@ -57,4 +57,35 @@ test("keeps translated repository links outside the docs site", () => {
 
   assert.equal(rewriteSourceLinks(source, "development/repository-guide.md"), expected);
   assert.equal(rewriteSourceLinks(source, "ja/development/repository-guide.md"), expected);
+});
+
+test("routes translated GitHub docs fallbacks to the published English pages", () => {
+  const github = "https://github.com/ClickHouse/loom/blob/main/docs/";
+  const docs = "https://loom.clickhouse.com/docs";
+  const original =
+    `> [English original](${github}index.md)\n\n` +
+    `[Setup [details]](${github}getting-started/index.md#setup "Open the setup guide")\n\n` +
+    `<${github}getting-started/quickstart.md#configuration>\n\n` +
+    "[Japanese setup](../getting-started/index.md#setup)\n";
+  const expected =
+    `> [English original](${docs})\n\n` +
+    `[Setup [details]](${docs}/getting-started#setup "Open the setup guide")\n\n` +
+    `<${docs}/getting-started/quickstart#configuration>\n\n` +
+    "[Japanese setup](../getting-started/index.md#setup)\n";
+  const sources = new Set(["index.md", "getting-started/index.md", "getting-started/quickstart.md"]);
+  assert.equal(rewritePublishedDocLinks(original, sources), expected);
+});
+
+test("preserves repository source links, images and examples", () => {
+  const github = "https://github.com/ClickHouse/loom/blob/main/";
+  const original = [
+    `[README](${github}README.md)`,
+    `[Missing page](${github}docs/missing.md)`,
+    `[Source lines](${github}docs/index.md#L3-L7)`,
+    `[Plain source](${github}docs/index.md?plain=1)`,
+    `![Image](${github}docs/index.md)`,
+    `\`[Doc](${github}docs/index.md)\``,
+    `~~~md\n[Doc](${github}docs/index.md)\n~~~`,
+  ].join("\n\n");
+  assert.equal(rewritePublishedDocLinks(original, new Set(["index.md"])), original);
 });
