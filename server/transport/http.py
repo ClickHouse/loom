@@ -567,9 +567,14 @@ async def _start_telemetry(op: Operation, response: Response, call: _HttpCall) -
     # here, once, from a 60s cache — never inside the provider call, which
     # would put a ClickHouse round trip on every generation.
     try:
+        from server.core.operation_privacy import retains_no_payload
         from server.observability import capture_consent as _consent
 
-        _capture_level = await _consent.resolve(identity["org"], identity["namespace"])
+        _capture_level = (
+            "off"
+            if retains_no_payload(op.name)
+            else await _consent.resolve(identity["org"], identity["namespace"])
+        )
     except Exception:  # noqa: BLE001 — fail closed, not open
         _capture_level = "off"
 

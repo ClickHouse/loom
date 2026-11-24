@@ -198,6 +198,7 @@ def emit_agent_event(
     request's argument object; only its allow-listed projection reaches the
     row (event_args.project_args). Never the text.
     """
+    from server.core.operation_privacy import retains_no_payload
     from server.observability import cost_accumulator, sli
     from server.observability.event_args import (
         bounded_error,
@@ -206,6 +207,10 @@ def emit_agent_event(
         response_tokens_of,
     )
 
+    private_payload = retains_no_payload(op_name)
+    if private_payload:
+        raw_args = None
+        result = None
     acc = cost_accumulator.current()
     args: dict[str, str] = {}
     run_id = run_id_of(raw_args)
@@ -251,7 +256,7 @@ def emit_agent_event(
     _hint = current_hint_code()
     if _hint and "out_hint_code" not in args:
         args["out_hint_code"] = _hint
-    if not success and error is not None:
+    if not private_payload and not success and error is not None:
         _cls, _msg = bounded_error(error)
         args["error_class"] = _cls
         if _msg:

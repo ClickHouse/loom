@@ -3002,6 +3002,10 @@ settings:
   # Off does not lift protection while the deployment latch remains set. [restart]
   # knowledge_mirrored_sources_enabled: false
 
+  # Path to the operator's source worker routes file. Empty disables the worker
+  # directory. [restart]
+  # knowledge_source_worker_routes_file: ""
+
   # Mirrored reads require a complete listing and group observation within this many
   # seconds; missing or older evidence admits nobody. [restart]
   # knowledge_source_acl_stale_seconds: 3600

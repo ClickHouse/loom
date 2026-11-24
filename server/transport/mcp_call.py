@@ -342,8 +342,14 @@ async def _call_tool(
         # Same per-namespace consent resolution as the HTTP path: once per
         # request, from a 60s cache, never inside the provider call.
         try:
-            _ident["capture_level"] = await _consent.resolve(
-                str(_ident.get("org") or ""), str(_ident.get("namespace") or "")
+            from server.core.operation_privacy import retains_no_payload
+
+            _ident["capture_level"] = (
+                "off"
+                if retains_no_payload(op.name)
+                else await _consent.resolve(
+                    str(_ident.get("org") or ""), str(_ident.get("namespace") or "")
+                )
             )
         except Exception:  # noqa: BLE001 — fail closed
             _ident["capture_level"] = "off"

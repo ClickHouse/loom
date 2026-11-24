@@ -2479,6 +2479,9 @@ class KnowledgeSettings(BaseModel):
     # Require protected automatic session capture and persist deployment privacy state.
     # Off does not lift protection while the deployment latch remains set.
     knowledge_mirrored_sources_enabled: bool = False
+
+    # Path to the operator's source worker routes file. Empty disables the worker directory.
+    knowledge_source_worker_routes_file: str = ""
     # Mirrored reads require a complete listing and group observation within this
     # many seconds; missing or older evidence admits nobody.
     knowledge_source_acl_stale_seconds: int = Field(default=3600, ge=1)
@@ -6413,6 +6416,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.source.check": 30000,
     "knowledge.source.inspect": 400,
     "knowledge.source.list": 300,
+    "knowledge.source.live": 8000,
     "knowledge.source.parse_links": 50,
     "knowledge.source.remove": 400,
     "knowledge.source.rotate": 30000,

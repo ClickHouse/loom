@@ -1562,6 +1562,15 @@ class KnowledgeOps:
             await self._agent.call("knowledge.source.list", body, **options),
         )
 
+    async def source_live(
+        self, body: _ops.KnowledgeSourceLiveBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceLiveOutput:
+        """`knowledge.source.live`."""
+        return cast(
+            "_ops.KnowledgeSourceLiveOutput",
+            await self._agent.call("knowledge.source.live", body, **options),
+        )
+
     async def source_parse_links(
         self, body: _ops.KnowledgeSourceParseLinksBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeSourceParseLinksOutput:

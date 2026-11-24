@@ -1,0 +1,144 @@
+# Document source worker boundary
+
+This design specifies the requirements for the external worker integration.
+
+Loom serves stored document search and explicit live document reads through its
+existing MCP endpoint. Stored search reads indexed copies. A live read asks an
+approved source worker to read one selected resource under the current caller's
+connection. It returns the source link and fetch time. It does not index the
+result, save it as a memory or record its body as a diagnostic. The client that
+receives the result controls what it retains.
+
+The source worker owns upstream credentials, outbound MCP requests and account
+consent. Loom owns source configuration, schedules, access policy, selected
+copies and their normal erasure lifecycle. Loom stores opaque worker and
+connection identifiers, their generations and the approved profile digest. The
+worker resolves the connection within its own credential authority. Neither side
+uses the other side's credential at the upstream endpoint.
+
+Enrollment matches a short worker-signed statement to a challenge issued for
+the authenticated owner and current approved profile. The statement contains
+opaque connection metadata only. Loom verifies the worker's separate enrollment
+key, consumes the challenge with the link write, and never uses an enrollment
+statement to authorize a read. A newer connection generation replaces older
+authority without erasing a copy or moving it to another account.
+
+## Worker provisioning
+
+The operator mounts a worker routes file and sets
+`LOOM_KNOWLEDGE_SOURCE_WORKER_ROUTES_FILE` to its path. An empty setting leaves the
+worker directory disabled. Version 1 of the JSON file contains a `workers` list.
+Each entry names a `worker_id`, HTTPS `origin`, grant `issuer`, and a `profiles`
+map from exact organization names to permitted profile digests. A collection
+approval cannot name a different organization or profile at that worker.
+
+The `trust_ca_file`, `client_certificate_file` and `client_key_file` entries
+configure mutual TLS. `grant_key_file` names Loom's Ed25519 key for signing
+requests. `enrollment_verifier_file`, when present, names the worker's separate
+public Ed25519 key. File paths are relative to the routes file or absolute. These
+files authenticate communication between Loom and the worker. The operator does
+not put upstream credentials or upstream endpoint configuration in this file.
+
+A worker source uses the existing source registry. Its versioned configuration
+contains opaque identifiers and generations. The items hold exact selected
+resource identities. No new ClickHouse table or upstream credential is needed.
+A worker source has mirrored access and an empty legacy kind, so a reader that
+only understands legacy source configurations cannot serve it. The release must
+qualify mixed builds before enabling worker registration or copy writes.
+
+## Binding a live read
+
+Loom proves the current caller and collection grant, finds the exact selected
+resource and resolves the caller's approved worker connection. It signs a short
+read grant for that worker. The grant binds the request, operation, organization,
+namespace, source and selection generation, requester, connection and its
+generation, profile digest and exact resource identity. The grant is for the
+worker audience. It carries no credential, URL or tool arguments. The worker
+accepts grants only from its configured Loom issuer and resolves that exact
+connection with matching ownership and profile. It rejects an anonymous caller
+or a grant for another worker, owner, organization, connection or generation.
+For a team source, the reader enrolls a specific connection for the current
+selection. A different connection for the same endpoint or profile cannot
+stand in for it. The owner and reader connections must share a verified resource
+realm before the reader can request access to the selected identity.
+
+The worker validates the current connection before upstream use and before
+return. Loom checks current source, selection, connection and reader standing
+again before delivering a result. A live request lives with its API request;
+it has a separate deadline and admission limit from refresh work and no durable
+payload queue. Denial, reconnect, saturation, unavailable and timeout are distinct
+outcomes. An authorized stored copy can be offered after timeout or worker outage
+with its own age and provenance. Denial never falls back to a stored result.
+The initial live read returns the explicit error without a stored substitute.
+
+Each worker resolves approved profiles to its own endpoint and read mappings.
+Resource reads and validated tool reads share the same bounds. Caller input and
+server descriptions cannot expand the accepted operations or outbound addresses.
+Returned data is evidence for the requested resource only. An account host can
+implement this worker contract locally if it can resolve the exact requester
+and connection for the requested operation without an active agent session or
+credential export. An agent's own integration does not establish that authority.
+
+## Account enrollment
+
+An authenticated owner selects an externally provisioned connection. Loom
+issues a short challenge for its exact organization, owner, worker, profile,
+nonce, opaque connection ID and generation. The worker has a separate key for
+signing its statement about the current account. Neither the challenge nor the
+statement includes the token or endpoint. Loom verifies the statement and
+checks approval again under the same store locks as it consumes the challenge.
+A retired generation cannot be restored by replaying a proof. Team readers
+still enroll their own accounts separately for the selected source.
+
+The Postgres enrollment records contain only scoped identity, provenance,
+bindings, generation and expiry. Expired challenges can be removed in bounded
+batches. Account revocation retains its generation fence until erasure. Enable
+writes only when owner erasure and worker approval take the same authority
+locks and every runnable eraser covers these tables.
+
+## Stored copies and permission evidence
+
+Imports use the existing original, document, chunk, extraction, indexing and
+accounting paths. The identity of a copy is its source UUID and the exact scoped
+resource identity. A display link is provenance only. The copy's stable source
+URI is never an outbound fetch target. Refresh retains the copy identity and
+updates content or receipt time as needed.
+
+Team collection membership is only one requirement. A reader also needs current
+upstream permission evidence for their own connection to the exact resource.
+Evidence binds the reader, collection, source and selection generation, worker,
+connection generation, resource identity and expiry. An import receipt from one
+reader cannot authorize another. Missing, expired, denied or disconnected
+evidence fails closed. Evidence from reading current content cannot establish
+access to historical content unless the approved upstream contract covers it.
+Search, direct reads, originals, contextual results and publication share the
+same access check; derived memory and cached results cannot extend it.
+
+## Refresh and retirement
+
+Loom schedules and claims bounded refresh jobs. Each claim targets one worker and
+the approved source revision, with a lease and a monotonically fenced attempt.
+The worker uploads an idempotent completion for the exact claim. The server
+checks the fence, deadline, registration and current connection before accepting
+writes, and advances the checkpoint only for an accepted result. “Sync now”
+requests the same work as a schedule. Interruptions leave copies and originals
+intact; stale completion does not renew permission or replace a copy. Partial
+pages, missing items, timeouts and ambiguous errors do not prove deletion.
+
+Refresh uses a metadata queue separate from ingestion jobs. It does not change
+ingestion fairness or select work for the extractor. Postgres commits the
+accepted receipt with the document head and its delivery obligation. Index
+delivery can recover after that commit. A deployment without Postgres knowledge
+authority refuses worker refresh; ordinary ingestion still follows its configured
+store. Install the queue schema and its erasure support before allowing writes,
+and admit work only when every runnable eraser can remove the queue's rows.
+
+Disconnect invalidates live reads, claims and permissions without erasing stored
+bytes. The existing erasure pipeline handles a separate deletion request. Older
+builds must retain opaque registrations and must fail closed on worker-authorized
+copies. Keep manual import available throughout the transition. A native source
+keeps its stored copies, provenance and originals through upgrade. Reuse a copy
+identity only when the owner authorizes a replacement connection and the old and
+new resource identities have a verified one-to-one binding. An unmapped copy
+keeps its old address and erasure history. Deployment requires compatible builds,
+an approved worker binding and a separate operator cutover.

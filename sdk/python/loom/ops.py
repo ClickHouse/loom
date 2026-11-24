@@ -197,6 +197,7 @@ OpName = Literal[
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
+    "knowledge.source.live",
     "knowledge.source.parse_links",
     "knowledge.source.push_configure",
     "knowledge.source.push_confirm",
@@ -577,6 +578,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
+    "knowledge.source.live",
     "knowledge.source.parse_links",
     "knowledge.source.push_configure",
     "knowledge.source.push_confirm",
@@ -2692,6 +2694,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         300,
+        False,
+        True,
+    ),
+    "knowledge.source.live": OpSpec(
+        "knowledge.source.live",
+        "KnowledgeSourceLiveInput",
+        "KnowledgeSourceLiveBody",
+        "KnowledgeSourceLiveOutput",
+        True,
+        "viewer",
+        "stable",
+        8000,
         False,
         True,
     ),
@@ -11967,6 +11981,44 @@ class KnowledgeSourceEntry(TypedDict, total=False):
     created_by: NotRequired[str]
     created_at: NotRequired[str]
     sync: NotRequired["KnowledgeSourceSync"]
+
+
+class KnowledgeSourceLiveInput(TypedDict, total=False):
+    "Read one selected resource through the caller's current worker connection."
+
+    org: Required[str]
+    namespace: Required[str]
+    source: Required[str]
+    resource_id: Required[str]
+
+
+class KnowledgeSourceLiveBody(TypedDict, total=False):
+    "Read one selected resource through the caller's current worker connection."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    source: Required[str]
+    resource_id: Required[str]
+
+
+class KnowledgeSourceLiveOutput(TypedDict, total=False):
+    status: Required[
+        Literal["ok", "denied", "reconnect", "overloaded", "timeout", "unavailable", "unsupported"]
+    ]
+    document: NotRequired[Optional["KnowledgeSourceLiveDocument"]]
+
+
+class KnowledgeSourceLiveDocument(TypedDict, total=False):
+    "The current selected document. It is not written to the index."
+
+    source_id: Required[str]
+    resource_id: Required[str]
+    uri: Required[str]
+    source_link: Required[Optional[str]]
+    fetched_at: Required[int]
+    title: Required[str]
+    text: Required[str]
+    mime_type: Required[str]
 
 
 class KnowledgeSourceParseLinksInput(TypedDict, total=False):
