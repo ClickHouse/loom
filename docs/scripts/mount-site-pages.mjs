@@ -8,7 +8,6 @@ const staticRoutes = [
   { src: "^/$", dest: "/docs/home" },
   { src: "^/platform/?$", dest: "/docs/platform" },
   { src: "^/enterprise/?$", dest: "/docs/enterprise" },
-  { src: "^/roadmap/?$", dest: "/docs/roadmap" },
   { src: "^/telemetry/?$", dest: "/docs/telemetry" },
 ];
 

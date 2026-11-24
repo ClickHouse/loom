@@ -73,21 +73,14 @@ const capabilities = [
     </div>
   </section>
 
-  <section class="site-section decisions" aria-labelledby="roadmap-title">
+  <section class="site-section evaluation" aria-labelledby="evaluation-title">
     <div class="section-copy">
-      <h2 id="roadmap-title">The Knowledge Factory roadmap</h2>
-      <p>Loom’s roadmap connects a mistake found during agent work to a reviewed correction that another agent can retrieve. See how reporting, review, and evidence about reuse fit into that work.</p>
-      <div class="site-actions"><a class="text-link" href="/roadmap">See the roadmap <span aria-hidden="true">↗</span></a></div>
+      <h2 id="evaluation-title">Evaluate Loom for your team</h2>
+      <p>Review self-hosting, access controls, and operating requirements for a shared deployment.</p>
     </div>
-    <div class="decision-links">
-      <a href="/enterprise">
-        <span><strong>Evaluate a team deployment</strong><small>Access controls, audit, retention, and operations</small></span>
-        <span aria-hidden="true">↗</span>
-      </a>
-      <a href="/adoption">
-        <span><strong>See Loom adoption</strong><small>Self-hosted activity and open-source distribution</small></span>
-        <span aria-hidden="true">↗</span>
-      </a>
+    <div class="site-actions">
+      <a class="secondary" href="/enterprise">Review deployment options</a>
+      <a class="text-link" href="/adoption">View adoption data</a>
     </div>
   </section>
 </SiteFrame>
@@ -115,13 +108,10 @@ const capabilities = [
   }
   .preview img { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 0.45rem; }
   .preview figcaption { margin-top: 0.8rem; font-size: 0.86rem; color: var(--muted); }
-  .decisions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem clamp(1.5rem, 4vw, 4rem); align-items: start; }
-  .decision-links { border-top: 1px solid var(--line); }
-  .decision-links a { display: flex; justify-content: space-between; gap: 0.75rem; padding: 1rem 0; border-bottom: 1px solid var(--line); text-decoration: none; }
-  .decision-links a:hover strong, .decision-links a > span:last-child { color: var(--accent); }
-  .decision-links small { display: block; color: var(--muted); font-size: 0.87rem; margin-top: 0.3rem; }
+  .evaluation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.2rem 2rem; }
+  .evaluation .site-actions { margin-top: 0; }
   @media (max-width: 63rem) {
-    .hero, .decisions { grid-template-columns: minmax(0, 1fr); }
+    .hero { grid-template-columns: minmax(0, 1fr); }
     .hero h1 { max-width: 16ch; }
   }
 </style>

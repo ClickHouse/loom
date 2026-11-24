@@ -79,7 +79,7 @@ The public pages live in [docs/pages](../../docs/pages). The site's Vercel proje
 uses `docs` as its root directory. Add a page as an `.astro` file, register its
 public path in [mount-site-pages.mjs](../../docs/scripts/mount-site-pages.mjs), and run
 `npm --prefix docs run build`. The build preserves the documentation under `/docs`
-and serves the homepage, product, enterprise, roadmap, and telemetry pages
+and serves the homepage, product, enterprise, and telemetry pages
 at their public paths.
 
 For local editing, run `npm --prefix docs run dev` and open the page under the
