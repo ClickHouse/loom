@@ -23,7 +23,7 @@ ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --eval flask --ou
 
 The launcher prepares isolated services, source indexes, dependency images and
 verifiers. Three issues, five arms and three repeats produce 45 coding attempts. Nine blind
-fixed-only judgments use the same Sonnet 5.5 model. Harbor retries are disabled. Each attempt
+fixed-only judgments use the same Opus 5.5 model. Harbor retries are disabled. Each attempt
 uses a fresh native Claude Code session. Claude chooses when to stop; no extra
 review turn is supplied by the evaluator.
 
