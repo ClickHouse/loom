@@ -470,7 +470,10 @@ async def test_file_qualified_symbol_keeps_overloads_and_declines_other_files(co
     from server.code.app.symbol.resolve import _resolve_symbols, near_misses
 
     repo, org, ns = code_env
-    await _ingest(repo, org, ns)
+    source = _SRC.replace(
+        b"namespace DB {\n", b"namespace DB {\nclass Other { public: void insert(int v) {} };\n"
+    )
+    await _ingest(repo, org, ns, source=source)
     plain = await repo.symbols_by_name(org, ns, "Squasher::insert")
     scoped = await _resolve_symbols(repo, org, ns, symbol_id="", name="src/S.cpp:Squasher::insert")
     assert len(scoped) == 2
@@ -481,7 +484,11 @@ async def test_file_qualified_symbol_keeps_overloads_and_declines_other_files(co
     )
     assert not await near_misses(repo, org, ns, "src/Other.cpp:Squasher::insert")
     close = await near_misses(repo, org, ns, "src/S.cpp:Squasher::inset")
-    assert any(row["qualified_name"].endswith("Squasher::insert") for row in close)
+    assert close[0]["qualified_name"].endswith("Squasher::insert")
     assert all(row["path"] == "src/S.cpp" for row in close)
+    unqualified = await near_misses(repo, org, ns, "src/S.cpp:inset")
+    names = {row["qualified_name"] for row in unqualified}
+    assert any(name.endswith("Squasher::insert") for name in names)
+    assert any(name.endswith("Other::insert") for name in names)
     limited = await repo.symbols_by_name(org, ns, "insert", path="src/S.cpp", limit=1)
     assert len(limited) == 1 and limited[0]["path"] == "src/S.cpp"
