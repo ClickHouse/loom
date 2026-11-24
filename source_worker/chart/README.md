@@ -120,15 +120,13 @@ backend, independent issuer keys, synthetic PKI and controlled HTTPS MCP
 endpoints. Run server-side dry-run and wait for Pod admission and readiness.
 Record the exact chart revision, tool versions, CNI, image digests and checks.
 
-| Check | Expected result |
-| --- | --- |
-| Missing input object, missing key, bad token permissions or invalid proxy TLS | No ready endpoints. No fallback listener or credentials. |
-| Runtime mounts | Worker socket directory `10001:10001` mode `0700`, socket `0600`, Vault file mode `0440`; no token in proxy or Loom and no service-account token in either container. |
-| Approved caller, trusted client certificate and valid signed grant | Bodyless HTTP/1.1 `POST /v1/live` and `POST /v1/check-access` work; only the live response has content. Responses carry `Cache-Control: no-store`. |
-| No or untrusted client certificate; wrong server name or CA; plaintext; forged or missing grant | No protected result; no caller TLS bypass or plaintext route. |
-| Extra headers, nonempty body, transfer encoding or unlisted method/path | Proxy forwards only the grant and fixed upstream Host; rejects disallowed requests without an upstream read. |
-| Same labels in a different namespace, wrong caller labels, unapproved TCP destination/port, and unauthorized DNS | Policy blocks them. The approved DNS, Vault and MCP destinations still work. |
-| Log, volume and restart inspection | Synthetic body and token markers absent from proxy and worker logs, termination messages and proxy temp files. No stale socket route after worker restart; readiness and mTLS recover after restart and reviewed rotation. |
+- **Missing input object, missing key, bad token permissions or invalid proxy TLS.** No ready endpoints. No fallback listener or credentials.
+- **Runtime mounts.** Worker socket directory `10001:10001` mode `0700`, socket `0600`, Vault file mode `0440`; no token in proxy or Loom and no service-account token in either container.
+- **Approved caller, trusted client certificate and valid signed grant.** Bodyless HTTP/1.1 `POST /v1/live` and `POST /v1/check-access` work; only the live response has content. Responses carry `Cache-Control: no-store`.
+- **No or untrusted client certificate; wrong server name or CA; plaintext; forged or missing grant.** No protected result; no caller TLS bypass or plaintext route.
+- **Extra headers, nonempty body, transfer encoding or unlisted method/path.** Proxy forwards only the grant and fixed upstream Host; rejects disallowed requests without an upstream read.
+- **Same labels in a different namespace, wrong caller labels, unapproved TCP destination/port, and unauthorized DNS.** Policy blocks them. The approved DNS, Vault and MCP destinations still work.
+- **Log, volume and restart inspection.** Synthetic body and token markers absent from proxy and worker logs, termination messages and proxy temp files. No stale socket route after worker restart; readiness and mTLS recover after restart and reviewed rotation.
 
 Remove the hosted synthetic resources after recording results. Rendering and
 schema checks do not qualify mTLS, file ownership, DNS translation or CNI
