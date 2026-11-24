@@ -6409,7 +6409,7 @@ class CodeEditContextInput(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    name: Required[str]
+    name: NotRequired[str]
     clues: NotRequired[list[str]]
 
 
@@ -6421,7 +6421,7 @@ class CodeEditContextBody(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    name: Required[str]
+    name: NotRequired[str]
     clues: NotRequired[list[str]]
 
 

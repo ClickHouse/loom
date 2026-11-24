@@ -1,4 +1,4 @@
-"""Resolve a file-scoped edit target from exact text at one index revision."""
+"""Resolve an edit target from exact text at one index revision."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 from server.code.api.models_grep import CodeGrepInput
 from server.code.api.models_symbol import CodeEditContextInput
 from server.code.app.common import repo_relative, resolve_code_identity
-from server.code.app.grep import handle_code_grep
+from server.code.app.grep import handle_code_grep, qualified_call_argument
 from server.code.app.grep_source import match_revisions
 from server.code.app.symbol.outline import _is_large_container
 from server.code.app.symbol.resolve import _indexed_commit
@@ -28,8 +28,11 @@ class EditTarget:
 async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
     """Resolve a declaration or return verified source pointers."""
     path = repo_relative(input.name)
-    if not path:
+    if input.name and not path:
         return EditTarget()
+    pattern: str | list[str] = input.clues
+    if not path and len(input.clues) == 1 and qualified_call_argument(input.clues[0]):
+        pattern = input.clues[0]
     org, ns = resolve_code_identity(input.org, input.namespace)
     found = await handle_code_grep(
         CodeGrepInput(
@@ -38,17 +41,25 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
             agent=input.agent,
             user_id=input.user_id,
             consumer=input.consumer,
-            pattern=input.clues,
+            pattern=pattern,
             path_prefix=path,
             include_body=False,
+            context_lines=0,
+            related_on_miss=isinstance(pattern, str),
             include_lessons=False,
         ),
         exact_path=path,
     )
-    matches = found.matches
+    matches = found.related.matches if found.related is not None else found.matches
     candidates = _scope_candidates(matches)
+    if not path:
+        paths = {match["path"] for match in matches}
+        if len(paths) != 1:
+            return EditTarget(candidates=candidates)
+        (path,) = paths
     revision = match_revisions(matches, found._match_commits).get(path)
-    if not revision or found.has_more or found.truncated or found.partial:
+    truncated = found.related.truncated if found.related is not None else found.truncated
+    if not revision or found.has_more or truncated or found.partial:
         return EditTarget(candidates=candidates)
     from server.code.app.symbol.enclosing import ENCLOSING_KINDS
 
@@ -117,11 +128,11 @@ def _span(row: dict[str, Any]) -> int:
 
 
 def _scope_candidates(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    candidates: dict[tuple[str, int], dict[str, Any]] = {}
+    candidates: dict[tuple[str, str, int], dict[str, Any]] = {}
     for match in matches:
         start = match["line"]
         candidates.setdefault(
-            (match["scope"], start),
+            (match["path"], match["scope"], start),
             {"path": match["path"], "qualified_name": match["scope"], "start_line": start},
         )
     return list(candidates.values())

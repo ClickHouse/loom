@@ -201,7 +201,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.coverage.unwatch`](operations/code.md#codecoverageunwatch) | Cancel a coverage watch on a commit. | viewer | idempotent | no |  |
 | [`code.coverage.watch`](operations/code.md#codecoveragewatch) | Ask for a task-inbox message when the index covers a commit, instead of polling for it. | viewer | idempotent | no |  |
 | [`code.coverage_claim`](operations/code.md#codecoverage_claim) | Is this already tested? | viewer | read | no |  |
-| [`code.edit_context`](operations/code.md#codeedit_context) | Read implementation, relevant indexed tests, and linked lessons before editing. | viewer | read | no |  |
+| [`code.edit_context`](operations/code.md#codeedit_context) | Read implementation, indexed tests, and linked notes before editing. | viewer | read | no |  |
 | [`code.enclosing`](operations/code.md#codeenclosing) | Batched `path:line` -> enclosing function. | viewer | read | yes |  |
 | [`code.examples`](operations/code.md#codeexamples) | Real call sites of a symbol, ranked test-covered-first — a current, tested usage example beats the deprecated one grep finds first. | viewer | read | no |  |
 | [`code.files`](operations/code.md#codefiles) | Which indexed files have this NAME — an rg-style glob (`tests/queries/0_stateless/05138_*`, `/*Parquet*.cpp`), a basename stem (`05138_with_fill` matches the stem exactly or as its leading prefix… | viewer | read | no |  |

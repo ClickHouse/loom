@@ -768,9 +768,9 @@ export interface CodeEditContextInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Definition name, path:symbol, or path:line. With clues, give the file path. */
-  name: string;
-  /** Literal code fragments to locate the edit target in the named file. */
+  /** Definition name, path:symbol, or path:line. File path with clues if known. */
+  name?: string;
+  /** Literal fragments to find the edit target in a file or across the index. */
   clues?: string[];
 }
 

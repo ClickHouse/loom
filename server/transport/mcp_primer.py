@@ -606,8 +606,7 @@ def _coding_instructions(
         if tool[name] and (not compact or name in {"code.search", "code.grep"})
     ]
     definition_hint = (
-        "Before editing a named definition, read its source and tests with "
-        f"{tool['code.edit_context']}. "
+        f"Before editing, use {tool['code.edit_context']} with a definition or literal clues. "
         if tool["code.edit_context"]
         else ""
     )

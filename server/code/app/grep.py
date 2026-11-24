@@ -467,7 +467,11 @@ _QUALIFIED_ARGUMENT = re.compile(
 def _related_grep_pattern(input: CodeGrepInput) -> str:
     if not input.related_on_miss or input.regex or not isinstance(input.pattern, str):
         return ""
-    call = _QUALIFIED_ARGUMENT.fullmatch(input.pattern.strip())
+    return qualified_call_argument(input.pattern)
+
+
+def qualified_call_argument(pattern: str) -> str:
+    call = _QUALIFIED_ARGUMENT.fullmatch(pattern.strip())
     return call[1] if call else ""
 
 

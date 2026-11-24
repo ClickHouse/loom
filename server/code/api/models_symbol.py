@@ -39,13 +39,13 @@ EDIT_TEST_CONTEXT_LINES = 10
 
 class CodeEditContextInput(_CodeIdentity, _ResultLessons):
     name: str = Field(
-        min_length=1,
-        description="Definition name, path:symbol, or path:line. With clues, give the file path.",
+        default="",
+        description="Definition name, path:symbol, or path:line. File path with clues if known.",
     )
     clues: list[GrepText] = Field(
         default_factory=list,
         max_length=255,
-        description="Literal code fragments to locate the edit target in the named file.",
+        description="Literal fragments to find the edit target in a file or across the index.",
     )
 
 

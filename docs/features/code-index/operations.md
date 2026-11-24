@@ -91,6 +91,13 @@ the parentheses. All alternatives share a result limit, and each matching line
 or file appears once.
 `mode: "message"` and `regex: true` require a single string.
 
+Use `code.edit_context` for implementation, indexed tests and linked notes in
+one request. Give the definition name or location if known. Literal `clues`
+can locate the edit target in the named file or across the index when you omit
+`name`. A repository lookup returns source when its verified matches identify
+one file. Competing files return candidate locations. A missing call
+expression can recover source from its qualified argument.
+
 When an exact call expression such as `convert(row.value)` is absent,
 `related_on_miss: true` looks for its qualified argument in the same scope.
 The `related` block names the argument and carries its verified lines and any

@@ -51,6 +51,7 @@ from server.code.app.symbol.resolve import (
 )
 from server.code.app.symbol.uses import _mention_leg, _symbol_uses
 from server.code.store.index import CodeRepo
+from server.core.errors import ValidationError
 from server.identity.app.request_scope import request_narrowed
 from server.observability.budget_shape import note_budget_shape
 
@@ -502,6 +503,8 @@ def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any],
 async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
     from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
 
+    if not input.name and not input.clues:
+        raise ValidationError("code.edit_context requires a name or literal clues")
     target = await locate_edit_target(input) if input.clues else EditTarget(name=input.name)
     if not target.name:
         return CodeSymbolOutput(
@@ -526,7 +529,7 @@ async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOut
             out.candidates = target.candidates
             out.ambiguous = len(target.candidates) > 1
         else:
-            out.resolved_by = "file_clues"
+            out.resolved_by = "file_clues" if input.name else "repository_clues"
             out.candidates = [
                 candidate
                 for candidate in target.candidates
