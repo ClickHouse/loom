@@ -214,11 +214,24 @@ def test_a_failing_leg_leaves_the_definition_served():
     assert [p["pr_number"] for p in d.recent_prs] == [7]
 
 
-def test_a_lessons_read_past_its_bound_says_lessons_went_unread():
+def test_an_unread_lessons_leg_is_flagged_on_the_definition():
+    # None is what the bounded read answers when cut off or failed (tested below)
     out, _wall = _run(_Clock(), lessons=None)
     d = out.definitions[0]
     assert d.lessons == [] and d.lessons_unread
     assert d.model_dump()["lessons_unread"] is True
+
+
+def test_a_narrowed_token_gets_no_lessons_and_no_unread_flag():
+    from server.code.app.symbol import symbol as h
+
+    clock = _Clock()
+    with patch.object(h, "request_narrowed", return_value=True):
+        out, _wall = _run(clock, lessons=LESSON)
+    d = out.definitions[0]
+    assert "lessons" not in clock.calls  # the read is not made
+    assert not d.lessons_unread
+    assert "lessons_unread" not in d.model_dump() and "lessons" not in d.model_dump()
 
 
 def test_a_symbol_with_no_lessons_says_nothing_about_them():
