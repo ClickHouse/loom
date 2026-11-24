@@ -110,3 +110,36 @@ async def test_selection_growth_refuses_an_unsustainable_cadence(enabled, connec
     with pytest.raises(ScheduleRejected, match="receipt capacity"):
         await store.enqueue_due_on(connection, larger)
     connection.fetchval.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_manual_claim_uses_wall_due_without_changing_offer_identity(
+    enabled, connection, monkeypatch
+):
+    from server.knowledge.domain.mcp_worker_manual import ManualPosition, manual_demand, next_offer
+
+    wall_now = _DUE - timedelta(minutes=2)
+    selection = store._manual_selection(_AUTH)
+    offer = next_offer(ManualPosition(uuid4(), 0), None, selection, _DUE)
+    outer_slot = AsyncMock(
+        return_value=(
+            ("org", "team", uuid4()),
+            {
+                "manual_incarnation": offer.position.incarnation,
+                "manual_sequence": offer.position.sequence,
+                "manual_fingerprint": offer.fingerprint,
+                "manual_issued_at": offer.issued_at,
+                "manual_expires_at": offer.expires_at,
+                "manual_accepted_items": None,
+                "manual_clock_at": _DUE,
+                "wall_now": wall_now,
+            },
+        )
+    )
+    stage = AsyncMock(return_value=store.ManualAdmission("enqueued", "fixture", 1))
+    monkeypatch.setattr(store, "_manual_slot_on", outer_slot)
+    monkeypatch.setattr(store, "_stage_manual_on", stage)
+    assert (await store.submit_manual_on(connection, _AUTH, offer.position)).status == "enqueued"
+    actual = stage.await_args.args[-1]
+    expected = manual_demand(offer, offer.position, selection, now=_DUE)
+    assert actual == replace(expected, due_at=wall_now)

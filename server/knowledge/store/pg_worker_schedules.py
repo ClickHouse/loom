@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
 
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     from asyncpg import Connection, Record
 
+_SCHEDULE_CLOCK = "SELECT clock_timestamp()"
 _KEY = "org = $1 AND namespace = $2 AND source_id = $3"
 _RECORD_CLOCK = f"""
 UPDATE loom.mcp_worker_refresh_admission
@@ -46,11 +47,12 @@ WHERE {_KEY} RETURNING 1
 
 
 _MANUAL_CLOCK = f"""
+WITH sample AS MATERIALIZED (SELECT clock_timestamp() AS wall_now)
 UPDATE loom.mcp_worker_refresh_admission
-SET manual_clock_at = GREATEST(manual_clock_at, clock_timestamp())
-WHERE {_KEY}
+SET manual_clock_at = GREATEST(manual_clock_at, sample.wall_now)
+FROM sample WHERE {_KEY}
 RETURNING manual_incarnation, manual_sequence, manual_fingerprint, manual_issued_at,
-          manual_expires_at, manual_accepted_items, manual_clock_at
+          manual_expires_at, manual_accepted_items, manual_clock_at, sample.wall_now
 """
 _OFFER = f"""
 UPDATE loom.mcp_worker_refresh_admission
@@ -115,7 +117,7 @@ async def enqueue_due_on(conn: Connection, authority: ScheduleAuthority) -> int:
     schedule = PeriodicSchedule(current, row["interval_seconds"], row["next_due_at"])
     if schedule.interval_seconds < minimum_interval_for_selected(len(authority.selected)):
         raise ScheduleRejected("refresh cadence exceeds selection receipt capacity")
-    now = await conn.fetchval("SELECT clock_timestamp()")
+    now = await conn.fetchval(_SCHEDULE_CLOCK)
     plan = plan_scheduled_refresh(schedule, active_binding=binding, now=now)
     if plan is None:
         return 0
@@ -287,7 +289,9 @@ async def submit_manual_on(
     if offer.accepted_items is not None:
         return ManualAdmission("replayed", demand.job_id, offer.accepted_items)
     try:
-        return await _stage_manual_on(conn, authority, key, requested, offer, demand)
+        # An offer's monotone issue time is not the immediate queue's wall-clock due time.
+        immediate = replace(demand, due_at=row["wall_now"])
+        return await _stage_manual_on(conn, authority, key, requested, offer, immediate)
     except _ExpiredOffer as expired:
         # Keep the observation even though the tentative batch was rolled back.
         await conn.execute(_RECORD_CLOCK, *key, expired.observed_at)
