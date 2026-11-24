@@ -28,17 +28,11 @@ from examples.software_factory.harbor.runtime import read, task_inputs, verify, 
 
 from .billing import FIELDS as BILLING_FIELDS
 from .billing import audit_provider_costs
-from .fairness import attempt_evidence_verified, audit_fairness
+from .fairness import audit_fairness
 from .judging import load_verdicts, run_judging
 from .mcp_qualification import STARTUP_COUNTS, verify_catalog
 from .metrics import known_total, paid_token_totals
-from .native_environment import (
-    CLAUDE_CACHE_ENV,
-    PROXY_ENV,
-    agent_settings,
-    load_credentials,
-    mcp_settings,
-)
+from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp_settings
 from .native_metrics import measurements
 from .profiles import load_profile
 from .project_guidance import agent_image, guidance
@@ -312,13 +306,12 @@ def prepare(previous: Path, output: Path) -> Path:
     protocol_path = output / "protocol.json"
     solver = read(HERE / "agent.json")
     plan["solver"] = solver
-    plan["prompt_caching"] = "disabled"
     agent = {
         "name": solver["name"],
         "model_name": plan["model_id"],
         "kwargs": {"version": solver["version"]},
         "override_setup_timeout_sec": float("inf"),
-        "env": {**PROXY_ENV, **CLAUDE_CACHE_ENV},
+        "env": PROXY_ENV,
     }
     controls = {}
     for name in ("base", "reference"):
@@ -547,12 +540,16 @@ def export(protocol: dict, job_name="live") -> dict:
     report.update(analyze_cohorts(protocol, entries))
     audit_path = output / "fairness-audit.json"
     audit = read(audit_path) if audit_path.exists() else None
-    routing_verified = attempt_evidence_verified(protocol, audit, "loom_source_used")
-    cache_verified = attempt_evidence_verified(protocol, audit, "prompt_cache_disabled")
+    routing_verified = (
+        audit.get("protocol_sha256") == digest(protocol)
+        and len(audit["attempts"]) == len(protocol["schedule"])
+        and all(row.get("loom_source_used") is True for row in audit["attempts"])
+        if audit is not None
+        else None
+    )
     for comparison in (report, *report["cohorts"].values()):
         comparison["loom_source_verified"] = routing_verified
-        comparison["prompt_cache_disabled_verified"] = cache_verified
-        if not (routing_verified and cache_verified):
+        if routing_verified is not True:
             comparison["observed_targets"]["efficiency_vs_no_loom"] = {}
             comparison["observed_targets"]["memory_vs_code_index"] = {}
     write(output / "paired-report.json", report)
@@ -647,15 +644,10 @@ def export(protocol: dict, job_name="live") -> dict:
                 merged = {**entry["result"], **protocol["schedule"][entry["order"]]}
                 writer.writerow({k: merged.get(k) for k in columns})
     summary["reporting"] = generate_reports(
-        protocol,
-        entries,
-        job_name=job_name,
-        loom_source_verified=routing_verified,
-        prompt_cache_disabled_verified=cache_verified,
+        protocol, entries, job_name=job_name, loom_source_verified=routing_verified
     )
     summary["fairness_verified"] = audit.get("passed") if audit else None
     summary["loom_source_verified"] = routing_verified
-    summary["prompt_cache_disabled_verified"] = cache_verified
     if protocol.get("public_reproduction"):
         summary["public_export"] = export_public(protocol, output / "public-results")
     write(output / "summary.json", summary)
@@ -782,8 +774,6 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
             audit_fairness, protocol, read(output / "live-attempts.json"), billing=costs
         )
         summary = export(protocol)
-        if not summary["prompt_cache_disabled_verified"]:
-            raise PermissionError("Zero Claude Code cache reads and writes were not established.")
         if not summary["loom_source_verified"]:
             raise PermissionError(
                 "A Loom session returned no indexed source. See the fairness audit."

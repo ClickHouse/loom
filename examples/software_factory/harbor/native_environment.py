@@ -13,7 +13,6 @@ PROXY_ENV = dict.fromkeys(
     ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"), ""
 )
 MCP_SCHEMA_PROFILES = ("standard", "compact")
-CLAUDE_CACHE_ENV = {"DISABLE_PROMPT_CACHING": "1"}
 
 
 def mcp_endpoint(url: str, schema_profile: str | None) -> str:

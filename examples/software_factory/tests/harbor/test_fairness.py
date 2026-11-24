@@ -126,7 +126,6 @@ class PublicPromptBytes(TestCase):
                             "name": "claude-code",
                             "model_name": "claude-sonnet-5-5",
                             "kwargs": {"version": "pinned"},
-                            "env": {"DISABLE_PROMPT_CACHING": "1"},
                         }
                     }
                 },
@@ -186,19 +185,7 @@ class PublicPromptBytes(TestCase):
                     }
                 },
             }
-            entries = [
-                {
-                    "order": 0,
-                    "result": {
-                        "harbor_trial": str(trial),
-                        "solver_token_source": "anthropic-reported",
-                        "first_cache_read_tokens": 0,
-                        "first_cache_write_tokens": 0,
-                        "model_cache_read_tokens": 0,
-                        "model_cache_write_tokens": 0,
-                    },
-                }
-            ]
+            entries = [{"order": 0, "result": {"harbor_trial": str(trial)}}]
             billing = {"attempts": {"0": {"proof_status": "known"}}}
             for candidate, expected in (
                 (problem.encode("utf-8"), True),

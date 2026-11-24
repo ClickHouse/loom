@@ -66,7 +66,7 @@ coverage defines a separate cohort from implementation-only indexes.
 ## Execution and artifacts
 
 Three issues, five arms and three repeats produce 45 coding attempts. Each
-attempt starts a fresh Claude Code session with prompt caching disabled. Reports
+attempt starts a fresh Claude Code session with normal provider caching. Reports
 show the mean session cost and agent time across repeats. Anthropic’s usage
 counters include observed cache token reads and writes.
 
