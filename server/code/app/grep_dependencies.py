@@ -19,9 +19,6 @@ from server.core.caller_regex import compile_caller_regex
 
 logger = logging.getLogger(__name__)
 
-# This evidence is for small definitions that fit beside a grep result.
-_DEPENDENCY_LINES = 30
-_DEPENDENCY_CHARS = 2400
 _PYTHON_PATHS = (".py", ".pyi", ".pyw")
 
 
@@ -34,23 +31,33 @@ async def add_dependencies(
     scope: SearchScope,
     commits: dict[tuple[str, int], str],
     budget: Budget | None,
-) -> None:
+) -> str:
     if (
         related is None
         or related.truncated
         or not input.include_dependencies
         or ("context_lines" in input.model_fields_set and input.context_lines == 0)
-        or (budget is not None and budget.left_ms() <= 0)
+        or not any(r["path"].endswith(_PYTHON_PATHS) for r in related.matches)
     ):
-        return
+        return ""
+    if budget is not None and budget.left_ms() <= 0:
+        budget.drop("related definitions skipped")
+        return budget.reason()
     try:
         with code_span("grep.dependencies"):
             async with asyncio.timeout(None if budget is None else budget.left_ms() / 1000):
                 related.dependencies = await _find_dependencies(
                     repo, org, ns, input, related, scope, commits
                 )
+    except TimeoutError:
+        if budget is not None:
+            budget.drop("related definition lookup timed out")
+            return budget.reason()
+        return "related definition lookup timed out"
     except Exception as error:  # noqa: BLE001 — exact and related source survive optional failures
         logger.debug("code.grep dependency lookup ended: %s", type(error).__name__)
+        return "related definition lookup failed"
+    return ""
 
 
 def _code_tokens(text: str) -> list[str]:
@@ -88,9 +95,15 @@ def _allowed(path: str, input: CodeGrepInput, scope: SearchScope) -> bool:
         and (not scope.extensions or path.endswith(scope.extensions))
         and (
             not scope.path_globs_re
-            or any(compile_caller_regex(regex).search(path) for regex in scope.path_globs_re)
+            or any(
+                compile_caller_regex(regex, dot_nl=True).search(path)
+                for regex in scope.path_globs_re
+            )
         )
-        and not any(compile_caller_regex(regex).search(path) for regex in scope.exclude_globs_re)
+        and not any(
+            compile_caller_regex(regex, dot_nl=True).search(path)
+            for regex in scope.exclude_globs_re
+        )
     )
 
 
@@ -133,6 +146,7 @@ async def _find_dependencies(
     if definition is None:
         return []
     row, source = definition
+    related.dependencies.append(source)
     helper = await _one_helper(repo, org, ns, row, source, revision)
     if helper is None:
         return [source]
@@ -166,13 +180,13 @@ async def _load(
     if (
         name != edge["to_qualified_name"]
         or row["kind"] not in {"function", "method", "property"}
-        or not 0 < start <= end < start + _DEPENDENCY_LINES
+        or not 0 < start <= end
         or not _allowed(path, input, scope)
     ):
         return None
     extent = {**row, "_extent_commit": row.get("indexed_commit")}
     body = await symbol_body(repo, org, ns, extent, expected_commit=revision)
-    if not body or len(body) > _DEPENDENCY_CHARS:
+    if not body:
         return None
     return row, GrepDependency(
         qualified_name=name, path=path, start_line=start, end_line=end, body=body
@@ -209,6 +223,6 @@ async def _one_helper(
             continue
         tokens = _code_tokens(lines[offset])
         name = edge["to_qualified_name"].rsplit("::", 1)[-1]
-        if (name, "(") in zip(tokens, tokens[1:], strict=False):
+        if tokens.count(name) == 1 and (name, "(") in zip(tokens, tokens[1:], strict=False):
             called.append(edge)
     return _one_target(called)

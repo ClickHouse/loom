@@ -118,9 +118,9 @@ incomplete related scan sets `partial` and keeps the exact matches.
 Coding MCP connections can include a resolved Python argument definition and
 its direct helper under `related.dependencies`. The index must bind the same
 argument to one target, and the retained bodies must share the hit's revision
-and satisfy the request's path filters. HTTP and SDK callers can opt in with
-`include_dependencies`. Set it to `false` or pass `context_lines: 0` to omit
-these definitions.
+and satisfy the request's path filters. HTTP and SDK callers can set
+`include_dependencies: true` with `related_on_miss` or `related_on_prefix`.
+Set `include_dependencies: false` or `context_lines: 0` to omit these definitions.
 
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
 lines by default. Pass `include_body=false` to omit bodies and `context_lines=0`

@@ -9,10 +9,12 @@ import pytest
 
 from server.code.api.models_grep import CodeGrepInput
 from server.code.app import message_grep
-from server.code.app.grep import _matching_lines
+from server.code.app.grep import _matching_lines, handle_code_grep
+from server.code.app.index.ingest import ingest_file
 from server.code.app.symbol.uses import _uses_lines
 from server.code.store.index import CodeRepo
 from server.core.ch import get_client
+from server.embedding.fake import FakeNGramEmbedder
 from server.settings import settings
 from tests.integration._resources import unique_org
 
@@ -98,3 +100,54 @@ async def test_stored_chunks_retain_kind_and_physical_source_lines(ch_client: An
         message_grep.split_message("Cannot bind endpoint"), message_chunks
     )
     assert [(statement.path, statement.line) for statement in ranked] == [("endpoint.cpp", 21)]
+
+
+@pytest.mark.asyncio
+async def test_related_grep_returns_the_bound_argument_and_helper(ch_client, monkeypatch) -> None:
+    org, ns = unique_org("grep-dependencies"), "source"
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    await get_client().connect()
+    repo = CodeRepo()
+    await ingest_file(
+        repo,
+        org,
+        ns,
+        path="src/client.py",
+        source=b"""def helper():
+    return 7
+
+class Client:
+    @property
+    def option(self):
+        return helper()
+
+def use(client: Client):
+    return consume(client.option, extra=True)
+""",
+        commit_sha="a" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    args = CodeGrepInput(
+        org=org,
+        namespace=ns,
+        pattern="consume(client.option)",
+        related_on_miss=True,
+        include_dependencies=True,
+        include_body=False,
+    )
+    out = await handle_code_grep(args)
+    assert not out.matches and out.related and out.related.matches
+    assert [d.qualified_name for d in out.related.dependencies] == [
+        "src.client::Client::option",
+        "src.client::helper",
+    ]
+    assert [d.body.splitlines()[-1].strip() for d in out.related.dependencies] == [
+        "return helper()",
+        "return 7",
+    ]
+    locations = await handle_code_grep(args.model_copy(update={"context_lines": 0}))
+    assert locations.related and locations.related.matches == out.related.matches
+    assert not locations.related.dependencies

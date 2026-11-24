@@ -133,8 +133,8 @@ class CodeClient:
         matching lines only.
         Pass `related_on_prefix=True` to see excerpts for other uses of a
         literal call prefix's qualified argument alongside exact matches.
-        Pass `include_dependencies=True` to include small retained definitions
-        for an argument with a unique graph target and its direct helper.
+        With `related_on_miss` or `related_on_prefix`, `include_dependencies=True`
+        returns retained definitions for a uniquely bound argument and its direct helper.
         `mode="files"` answers "which files
         mention X" (no line text) — use it for coverage questions. `limit`
         defaults per mode: 20 lines, or the 500-file ceiling, so a files

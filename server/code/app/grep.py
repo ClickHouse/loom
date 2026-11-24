@@ -421,6 +421,20 @@ async def _grep_lines(
         coverage.update(prefix_coverage)
         if prefix_related is not None:
             route += "+related_call_prefix"
+    related, note = _label_related(
+        related_pattern, matches, bodies, context, scan, prefix_related, note
+    )
+    missing = (
+        ""
+        if coverage.get("partial")
+        else await add_dependencies(
+            repo, org, ns, input, related, scope, scan.match_commits, budget
+        )
+    )
+    if missing:
+        coverage.update(
+            partial=True, partial_reason=_notes(coverage.get("partial_reason", ""), missing)
+        )
     next_cursor = ""
     if not related_pattern:
         next_cursor = _issue_grep_cursor(
@@ -439,10 +453,6 @@ async def _grep_lines(
         )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
     # so the outcome fold skips this op; the paths still feed opened_file)
-    related, note = _label_related(
-        related_pattern, matches, bodies, context, scan, prefix_related, note
-    )
-    await add_dependencies(repo, org, ns, input, related, scope, scan.match_commits, budget)
     returned = matches + (prefix_related.matches if prefix_related is not None else [])
     dependencies = related.dependencies if related else []
     files = list(dict.fromkeys([*(m["path"] for m in returned), *(d.path for d in dependencies)]))

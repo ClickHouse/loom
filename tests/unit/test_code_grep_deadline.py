@@ -188,6 +188,33 @@ def test_call_prefix_span_read_obeys_the_remaining_deadline() -> None:
     assert out.partial and out.partial_reason == "related call prefix scan timed out"
 
 
+def test_dependency_deadline_keeps_exact_and_related_source() -> None:
+    exact = _chunk("src/a.py", 1, "run", "def run():\n    return process(row.value, 0)\n")
+    related = _chunk("src/b.py", 1, "read", "def read():\n    return row.value\n")
+    for chunk in (exact, related):
+        chunk.update(indexed_commit="a" * 40, kind="function")
+
+    class SlowDependencies(_Repo):
+        async def grep_chunks(self, org, ns, pattern, **kw):
+            return [related] if pattern == "row.value" else [exact]
+
+        async def member_edges_at_locations(self, org, ns, sites, member):
+            await asyncio.sleep(0.8)
+            return []
+
+    out, _ = _grep(
+        SlowDependencies(),
+        pattern="process(row.value",
+        related_on_prefix=True,
+        include_dependencies=True,
+        include_body=False,
+        deadline_ms=300,
+    )
+    assert [hit["path"] for hit in out.matches] == ["src/a.py"]
+    assert out.related and out.related.matches and not out.related.dependencies
+    assert out.partial and "related definition lookup timed out" in out.partial_reason
+
+
 # --------------------------------------------------------------- the bound
 
 
