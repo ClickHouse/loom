@@ -240,7 +240,7 @@ python scripts/codegen/sdk_rust_gen.py --fixtures
 python scripts/codegen/sdk_rust_gen.py --fixtures --check
 ```
 
-The published crate contains the generated Rust source and needs no Python runtime.
+The source SDK contains the generated Rust files and needs no Python runtime.
 
 ## Results and errors
 

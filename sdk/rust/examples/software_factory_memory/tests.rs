@@ -7,13 +7,8 @@ use std::{
 };
 
 // Cached status A must not attribute bytes read from index B to A.
-async fn check_range(commit: &str, status: &str, text: &str) -> Result<SourceEvidence> {
+async fn check_range(range: serde_json::Value) -> Result<SourceEvidence> {
     let head = "a".repeat(40);
-    let range = json!({
-        "path": "src/lib.rs", "start_line": 1, "end_line": 1,
-        "status": status, "indexed_commit": commit,
-        "windows": [{"start_line": 1, "end_line": 1, "text": text}]
-    });
     let replies = [
         (
             "code.index_status",
@@ -96,16 +91,33 @@ async fn check_range(commit: &str, status: &str, text: &str) -> Result<SourceEvi
 #[tokio::test]
 async fn evidence_rejects_an_advanced_index_partial_ranges_and_changed_bytes() {
     let head = "a".repeat(40);
-    for (commit, status, body) in [
-        ("b".repeat(40), "complete", "fn function() {}\n"),
-        (head.clone(), "partial", "fn function() {}\n"),
-        (head.clone(), "complete", "fn function() { changed(); }\n"),
+    let complete = json!({
+        "path": "src/lib.rs", "start_line": 1, "end_line": 1,
+        "status": "complete", "indexed_commit": head,
+        "windows": [{"start_line": 1, "end_line": 1, "text": "fn function() {}\n"}]
+    });
+    for (pointer, value) in [
+        ("/indexed_commit", json!("b".repeat(40))),
+        ("/status", json!("partial")),
+        ("/windows/0/text", json!("fn function() { changed(); }\n")),
+        ("/windows/0/text", json!("fn function() {}")),
+        ("/end_line", json!(2)),
+        ("/windows/0/end_line", json!(2)),
+        ("/path", json!("src/other.rs")),
+        ("/windows", json!([])),
+        (
+            "/windows",
+            json!([
+                {"start_line": 1, "end_line": 1, "text": "fn function() {}\n"},
+                {"start_line": 1, "end_line": 1, "text": "fn function() {}\n"}
+            ]),
+        ),
     ] {
-        assert!(check_range(&commit, status, body).await.is_err());
+        let mut range = complete.clone();
+        *range.pointer_mut(pointer).unwrap() = value;
+        assert!(check_range(range).await.is_err(), "{pointer}");
     }
-    let evidence = check_range(&head, "complete", "fn function() {}\n")
-        .await
-        .unwrap();
+    let evidence = check_range(complete).await.unwrap();
     assert_eq!(evidence.commit, head);
     assert_eq!(
         evidence.returned_body_sha256,

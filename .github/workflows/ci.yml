@@ -155,8 +155,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The part count, 6, is also in docs/development/testing.md's unit row and
-        # the loom-investigate-ci row.
+        # Patch coverage and the unit test instructions also use this part count.
         part: [1, 2, 3, 4, 5, 6]
     env:
       LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
@@ -311,6 +310,56 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
+
+  python-patch-coverage:
+    name: Python changed-line coverage (report only)
+    needs: [validate-ref, unit]
+    if: >-
+      github.event_name == 'pull_request' && !cancelled() &&
+      needs.validate-ref.result == 'success' &&
+      (needs.unit.result == 'success' || needs.unit.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Download the parts' coverage data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-unit-*
+          merge-multiple: true
+      - name: Combine and export the Python coverage data
+        run: |
+          parts=(.coverage.unit-{1..6})
+          for part in "${parts[@]}"; do
+            test -s "$part"
+          done
+          coverage_package=$(python3 - <<'PY'
+          import tomllib
+          with open("uv.lock", "rb") as lock:
+              packages = tomllib.load(lock)["package"]
+          version = next(package["version"] for package in packages if package["name"] == "coverage")
+          print(f"coverage=={version}")
+          PY
+          )
+          uvx --python "$PYTHON_VERSION" --from "$coverage_package" coverage combine "${parts[@]}"
+          # Coverage can skip unreadable data without failing the combine.
+          for part in "${parts[@]}"; do
+            test ! -e "$part"
+          done
+          uvx --python "$PYTHON_VERSION" --from "$coverage_package" coverage lcov -o "$RUNNER_TEMP/python.lcov"
+      - name: Report Python changed-line coverage
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: Python server and SDK
+          report: ${{ runner.temp }}/python.lcov
 
   sandbox:
     needs: validate-ref
@@ -624,6 +673,37 @@ jobs:
       - name: vitest (unit + component + axe)
         working-directory: frontend
         run: npm run test -- --shard=${{ matrix.part }}/${{ strategy.job-total }}
+
+  frontend-coverage:
+    needs: validate-ref
+    if: github.event_name == 'pull_request'
+    name: Dashboard changed-line coverage (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+      - name: Collect dashboard unit coverage
+        run: npm run test -- --coverage --testTimeout=10000
+      - name: Report dashboard changed-line coverage
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: Dashboard
+          working-directory: frontend
+          report: frontend/coverage/lcov.info
 
   # With fullyParallel: false, --shard splits by spec file per project, not by test.
   frontend-e2e:
@@ -1306,6 +1386,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
       - name: Install Rust with format and lint components
         run: |
           rustup toolchain install "${{ matrix.rust }}" --profile minimal --component rustfmt --component clippy
@@ -1315,8 +1396,36 @@ jobs:
         run: cargo generate-lockfile
       - name: Rust formatting
         run: cargo fmt --check
+      - name: Install Rust coverage tools
+        id: rust-coverage-tools
+        if: github.event_name == 'pull_request' && matrix.rust == 'stable'
+        continue-on-error: true
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install --locked cargo-llvm-cov --version 0.9.2
       - name: Unit, HTTP contract and documentation tests
-        run: cargo test --locked $RUST_SDK_FEATURES
+        env:
+          COLLECT_RUST_COVERAGE: ${{ steps.rust-coverage-tools.outcome == 'success' }}
+        run: |
+          if [[ "$COLLECT_RUST_COVERAGE" == true ]]; then
+            cargo llvm-cov --locked --all-targets $RUST_SDK_FEATURES --no-report
+          else
+            cargo test --locked --all-targets $RUST_SDK_FEATURES
+          fi
+          cargo test --locked --doc $RUST_SDK_FEATURES
+      - name: Export Rust coverage as LCOV
+        id: rust-coverage
+        if: steps.rust-coverage-tools.outcome == 'success'
+        continue-on-error: true
+        run: cargo llvm-cov report $RUST_SDK_FEATURES --lcov --output-path "$RUNNER_TEMP/rust.lcov"
+      - name: Report Rust SDK changed-line coverage
+        if: steps.rust-coverage.outcome == 'success'
+        continue-on-error: true
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: Rust SDK
+          working-directory: sdk/rust
+          report: ${{ runner.temp }}/rust.lcov
       - name: Lint the library, tests and examples
         run: cargo clippy --locked --all-targets $RUST_SDK_FEATURES -- -D warnings
       - name: API documentation
@@ -1340,6 +1449,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python
         with:
@@ -1370,7 +1480,17 @@ jobs:
       # ts examples type-checked against src, vitest.
       - name: lint + type-check + version + README examples + unit tests
         working-directory: sdk/typescript
+        env:
+          LOOM_TEST_COVERAGE: ${{ github.event_name == 'pull_request' && '1' || '' }}
         run: npm run check
+      - name: Report TypeScript SDK changed-line coverage
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: TypeScript SDK
+          working-directory: sdk/typescript
+          report: sdk/typescript/coverage/lcov.info
       # ESM + CJS build, the dist tests over the exact export
       # list, publint and arethetypeswrong — the package must resolve for
       # CommonJS consumers and bundlers before it is ever published.

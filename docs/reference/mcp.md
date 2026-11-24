@@ -34,6 +34,13 @@ With the automatic loading policy, compact coding connections load `code.symbol`
 and `code.grep` up front. Clients can discover `code.search` when they need it.
 An explicit `LOOM_MCP_ALWAYS_LOAD_TOOLS` list controls loading on every profile.
 
+On coding connections, `code.symbol` includes related indexed tests and nearby
+source with the definition. Set `include_examples: false` to omit the tests,
+`test_examples_only: false` for general usage examples, or
+`example_context_lines: 0` for locations alone. A lookup with
+`include_body: false` returns test locations unless you request an excerpt.
+The MCP schema advertises the defaults applied to the call.
+
 An unknown value for either falls back to the deployment default, so a typo
 never widens or narrows a listing silently. The `?toolset=` value also shapes the
 session primer (`initialize` instructions, `server/discover`, the `loom` prompt,

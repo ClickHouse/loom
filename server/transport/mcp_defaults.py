@@ -19,6 +19,7 @@ symbol within `code_result_lessons_tokens` (unlimited by default). `code.search`
 `code.callees`, `code.impact`, `code.outline` and a task's `code.context_pack` carry
 the memories of their top files (`server.code.app.result_lessons`): as many as fit in
 `code_result_lessons_tokens` (unlimited by default), each whole or left out.
+Coding connections also default to indexed tests with source excerpts at the definition.
 
 `code.grep` over MCP answers ten matches a page (each with its enclosing
 function), the cursor for the rest: in paired runs an agent's grep through the
@@ -29,18 +30,32 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.operations.toolsets import resolve_toolset, toolset_parts
+
 MCP_DEFAULT_ARGUMENTS: dict[str, dict[str, Any]] = {
     "code.index_status": {"brief": True},
     "code.symbol": {"include_history": False},
     "code.grep": {"limit": 10},
 }
 
+_CODING_SYMBOL_EXAMPLE_DEFAULTS = {"test_examples_only": True, "example_context_lines": 10}
 
-def mcp_default_arguments(op_name: str, arguments: Any) -> Any:
+
+def mcp_argument_defaults(op_name: str, toolset: str | None = None) -> dict[str, Any]:
+    defaults = MCP_DEFAULT_ARGUMENTS.get(op_name, {})
+    if op_name == "code.symbol":
+        from server.settings import settings
+
+        if "coding" in toolset_parts(resolve_toolset(toolset, settings.mcp_toolset)):
+            return {**defaults, **_CODING_SYMBOL_EXAMPLE_DEFAULTS}
+    return defaults
+
+
+def mcp_default_arguments(op_name: str, arguments: Any, *, toolset: str | None = None) -> Any:
     """`arguments` with the op's MCP defaults filled in where the caller gave
     none; anything that is not a dict is returned untouched for the
     validator to reject."""
-    defaults = MCP_DEFAULT_ARGUMENTS.get(op_name)
+    defaults = mcp_argument_defaults(op_name, toolset)
     if not defaults or not isinstance(arguments, dict):
         return arguments
     return {**defaults, **arguments}

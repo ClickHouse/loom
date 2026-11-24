@@ -1742,9 +1742,9 @@ export interface CodeSymbolInput {
   include_body?: boolean;
   include_history?: boolean;
   include_examples?: boolean;
-  /** Use indexed test examples. Set example_context_lines to include their source. */
+  /** Restrict usage examples to indexed tests. */
   test_examples_only?: boolean;
-  /** Retained source lines on each side of a usage example. Default 0 omits text. */
+  /** Retained source lines on each side of a usage example. Use 0 to omit text. */
   example_context_lines?: number;
   include_lessons?: boolean;
   lesson_namespaces?: string[];

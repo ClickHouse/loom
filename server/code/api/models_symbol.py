@@ -62,13 +62,13 @@ class CodeSymbolInput(_CodeIdentity):
     include_examples: bool = True
     test_examples_only: bool = Field(
         default=False,
-        description="Use indexed test examples. Set example_context_lines to include their source.",
+        description="Restrict usage examples to indexed tests.",
     )
     example_context_lines: int = Field(
         default=0,
         ge=0,
         le=20,
-        description="Retained source lines on each side of a usage example. Default 0 omits text.",
+        description="Retained source lines on each side of a usage example. Use 0 to omit text.",
     )
     # Attach `lessons` to the first definition: the memories linked to the symbol from
     # `lesson_namespaces` (over MCP the caller's memory home by default) and the
