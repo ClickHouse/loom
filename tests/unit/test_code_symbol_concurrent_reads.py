@@ -41,8 +41,9 @@ async def test_named_examples_require_type_references() -> None:
 
 async def test_named_examples_skip_ambiguous_bare_types(monkeypatch) -> None:
     from server.code.app.symbol.named_examples import named_test_examples
+    from server.embedding.fake import fake_model_name
 
-    monkeypatch.setattr(settings, "embedding_model", "local/test")
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
     target = {**DEFS[0], "qualified_name": "modern::Cache", "name": "Cache", "kind": "class"}
     legacy = {**target, "qualified_name": "legacy::Cache", "path": "src/legacy.cpp"}
     repo = AsyncMock()
