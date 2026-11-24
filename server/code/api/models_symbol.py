@@ -30,8 +30,24 @@ from server.code.api.models_common import (
     _ResultLessons,
     _trim_namespaces,
 )
+from server.code.api.models_grep import GrepText
 from server.code.domain.units import CodeUnit
 from server.operations.base import MCP_HIDDEN
+
+EDIT_TEST_CONTEXT_LINES = 10
+
+
+class CodeEditContextInput(_CodeIdentity, _ResultLessons):
+    name: str = Field(
+        min_length=1,
+        description="Definition name, path:symbol, or path:line. With clues, give the file path.",
+    )
+    clues: list[GrepText] = Field(
+        default_factory=list,
+        max_length=255,
+        description="Literal code fragments to locate the edit target in the named file.",
+    )
+
 
 # ============================================================
 # code.symbol
@@ -60,6 +76,16 @@ class CodeSymbolInput(_CodeIdentity):
     include_history: bool = True
     # Attach `examples` (call sites that use the symbol) to the first definition.
     include_examples: bool = True
+    test_examples_only: bool = Field(
+        default=False,
+        description="Restrict usage examples to indexed tests.",
+    )
+    example_context_lines: int = Field(
+        default=0,
+        ge=0,
+        le=20,
+        description="Retained source lines on each side of a usage example. Use 0 to omit text.",
+    )
     # Attach `lessons` to the first definition: the memories linked to the symbol from
     # `lesson_namespaces` (over MCP the caller's memory home by default) and the
     # repository's team namespace, each with its `code_state` (`fresh`, `moved`, or
@@ -157,8 +183,8 @@ class CodeSymbolOutput(BaseModel):
             data.pop("lessons_left_out", None)
         return data
 
-    # The resolved definitions (at most 10), fitted to `token_budget`; empty when
-    # nothing resolved (see `candidates`) or on a presence answer.
+    # Up to 10 name matches, or the members matched by file clues, fitted to
+    # `token_budget`. Empty when only candidates or presence were found.
     definitions: list[CodeUnit]
     # Whole linked lessons omitted to preserve definitions within an explicit request budget.
     # Absent when none were omitted; the deployment lesson budget is applied separately.
@@ -170,7 +196,7 @@ class CodeSymbolOutput(BaseModel):
     # [...]} of {symbol, kind, via (extends | implements), tier, confidence, path,
     # line}. Absent for functions and when the seed has no hierarchy edge.
     hierarchy: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
-    # When nothing resolved: cheap fuzzy candidates (names + paths only).
+    # Source pointers when nothing resolved, or other hits outside a file-clue target.
     candidates: list[dict[str, Any]] = Field(default_factory=list)
     # Estimated tokens of the answer: definitions, uses, cited documents, neighbours
     # and hierarchy blocks together.
@@ -194,8 +220,8 @@ class CodeSymbolOutput(BaseModel):
     # — same_file | same_dir | co_change | path_distance | none. "" and off the wire
     # when no context was given.
     picked_by: str = ""
-    # `anonymous_namespace` | `tail` | `python_module` | `registration` | `file_symbol` when a
-    # read-side name form bound; "" and off the wire for an exact hit.
+    # Which name form bound, or `file_clues` when edit context located the target
+    # from literal text. Empty for an exact symbol name.
     resolved_by: str = ""
     # The document sections that cite the definition (the Markdown lane's `reads` edges)
     # — section qualified name, path, line; at most five distinct sections, first by

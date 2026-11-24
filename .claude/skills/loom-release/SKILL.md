@@ -1,6 +1,6 @@
 ---
 name: loom-release
-description: Cuts and checks a Loom release — the version bump and notes (prepare.py), the release PR, a release candidate and its soak, the final tag and the registry dispatch, then the release checked from outside (one-line installer on amd64 and arm64, SDK installs, anonymous pulls, signatures), rollback and patch releases. Use when asked to release, tag, publish or verify a release.
+description: Cuts and checks a Loom release — version and notes, release PR, candidate soak, tags, registries, outside verification and announcements. Use to release, tag, publish or verify a release, or prepare release notes and announcements. Includes rollback and patch releases.
 argument-hint: "[X.Y.Z]"
 metadata:
   internal: true
@@ -45,6 +45,8 @@ With the tags fetched (`git fetch --tags`) and `gh` signed in:
 
 It refuses a prerelease, an older or an already tagged version before the notes, writes `release-notes.md`, then bumps every file. Read the notes: place every entry under "Unclassified", prune the operator-steps items that name no step and check the rest against their pull requests, and rewrite an entry a user could not act on. Open the pull request (`loom-ship-pr`) titled `Release X.Y.Z`, changelog category "Not for changelog", with the notes as its "Release notes" section. Just before it merges, rebase it and run `prepare.py notes X.Y.Z` again, so the notes name every pull request the tag ships.
 
+Prepare the user-facing opening and announcement in that same review, following [release notes and announcements](../loom-writing/SKILL.md#release-notes-and-announcements). Keep required upgrade actions and compatibility changes near the top. Check highlights against the final tag's contents after a rebase or candidate fix; a merged change on `main` is not evidence that this release ships it.
+
 ## 3. Release candidate and soak
 
 ```bash
@@ -87,7 +89,7 @@ gh api -X POST "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run f
 
 To publish only the images and the GitHub Release, as for a `clickhouse_image` or `allow_clickhouse_downgrade` dispatch that stands in for a stopped tag run ([when the clickhouse job stops](../../../docs/development/release-process.md#when-the-clickhouse-job-stops)), send the POST with `-f state=rejected -f comment="Registries not published for $tag"`. The run then fails on those jobs, while the images and the GitHub Release stay published.
 
-The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, a failed file signing, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process. A failed file signing is recovered with "Re-run failed jobs" on the run that failed, and when that is the tag run, before any dispatch.
+The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); publish the reviewed opening above them as in §5a. The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, a failed file signing, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process. A failed file signing is recovered with "Re-run failed jobs" on the run that failed, and when that is the tag run, before any dispatch.
 
 ## 5. Check it from outside
 
@@ -110,6 +112,14 @@ For a candidate, the MCP Registry does not list it, `next` names `X.Y.Z-rc.N`, a
 npm can take several minutes to list a version it has just accepted ("Your package is being processed"), so re-run a failed `sdks` job of `release-check` and read `dist-tags` again before calling the publish missing. Both SDKs publish through trusted publishing, with no token in the workflow, which is why PyPI holds the wheel's provenance and `npm audit signatures` finds an attestation.
 
 The plugins, in a throwaway `HOME`: `claude plugin marketplace add ClickHouse/loom && claude plugin install loom@loom`, and `codex plugin marketplace add ClickHouse/loom` then install `loom` from it; each lists the plugin version on `main`, and its SessionStart against this server prints no `loom:` line about the server's version. Post what you checked, with the run links, on the release pull request (the owner's go-ahead first).
+
+## 5a. Publish the reviewed summary and announcement
+
+The current workflow generates the changelog but does not import the release pull request's reviewed notes. Carry that text into the release body programmatically: read the approved notes and the existing body, assemble the reviewed opening above the generated changelog in a temporary file, then use `gh release edit vX.Y.Z -R ClickHouse/loom --notes-file <file>`. Preserve the generated detail and subsequent authorized edits; read back the body and check for omissions or duplicate summaries. This edits notes, not the signed release files. When changing release automation, make this transfer part of publication rather than leaving a manual paste step; reruns must preserve the reviewed text without appending it again.
+
+After §5's checks, prepare one short announcement for the version in an ongoing release-announcements discussion. Find and reuse the existing thread; creating one or posting a comment needs authorization. Reuse authorization already given for that action; drafting a release note alone does not authorize a public post. The comment links the release, relevant docs and upgrade instructions. Read before retrying a post so the same version is not announced twice.
+
+Report availability from this release's evidence: artifact publication, registry results and outside checks. A successful tag run does not prove a later registry dispatch passed, and a skipped check did not pass. State known limits and identify a candidate as a prerelease. Link the [knowledge-factory roadmap](https://github.com/ClickHouse/loom/issues/1232) when relevant; label roadmap items as planned and keep them separate from shipped changes. Read back the posted comment and verify its version and links.
 
 ## 6. Something is wrong
 

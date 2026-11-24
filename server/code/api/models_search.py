@@ -65,7 +65,14 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
     # scans. The response discloses `as_of.page_offset`, `page_commit`, `page_stale`
     # (the index moved) and `page_fallback` when the pool row was gone and a re-search
     # was run. A cursor for another query, prefix or ranking setting is a 400.
-    cursor: str = Field(default="", max_length=1024)
+    cursor: str = Field(
+        default="",
+        max_length=1024,
+        description=(
+            "Pass `next_cursor` with the original search arguments "
+            "and omit it to start a new search."
+        ),
+    )
     # The caller's seen-set: unit ids not to serve again. Dropped from the
     # fused list before diversification on a computed search; skipped while
     # walking the pool on a continuation page.

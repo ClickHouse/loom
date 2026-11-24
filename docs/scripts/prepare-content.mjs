@@ -15,6 +15,8 @@ const excluded = new Set([
   ".vercel",
   "dist",
   "node_modules",
+  "components",
+  "pages",
   "blume.config.ts",
   "package-lock.json",
   "package.json",

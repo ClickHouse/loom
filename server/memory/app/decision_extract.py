@@ -66,6 +66,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from server.auth.authz import row_in_scope
+from server.code.app.prose_candidates import CodeDiscovery, discover_candidates
 from server.code.domain.extract.lang_markdown import is_markdown_path
 from server.core.background import TaskSet
 from server.core.errors import LoomServerError
@@ -134,6 +135,8 @@ class RecordReport:
     # "deleted" or "rewritten": the row the reconcile read or a tag write found deleted or
     # rewritten since the run read it.
     race: str = ""
+    # Preview evidence only: semantic hits never enter body["files"] or stored links.
+    code_discovery: CodeDiscovery | None = None
 
 
 @dataclass
@@ -541,6 +544,7 @@ async def _write_kept(
     a stored decision not found gone is not written, under a new key or the key of a
     stored decision not found stated."""
     written: set[str] = set()
+    discoveries = 0
     # One under the key of a row the text states is reconciled as that row's candidate.
     kept_by = {
         heir: key
@@ -593,10 +597,25 @@ async def _write_kept(
             report.races.append(f"{rec.memory_key}: {rec.race} since the run read it")
         if rec.action == "row_changed":
             continue
+        if dry_run and not rec.body.get("files"):
+            rec.code_discovery = await _discover_code(org, t, cand, texts, discoveries)
+            discoveries += 1
         report.records.append(rec)
         if rec.action == "flagged":
             report.flagged.append(rec.memory_key)
     return written
+
+
+async def _discover_code(
+    org: str, target: Target, cand: dx.Candidate, texts: list[str], attempted: int
+) -> CodeDiscovery:
+    quote = "\n".join(
+        dict.fromkeys(span for q in cand.quotes() if (span := dx.document_span(q, texts)))
+    )
+    if attempted >= 8 or not quote:
+        note = "preview code discovery limit reached" if quote else "no grounded document quotation"
+        return CodeDiscovery("deferred", target.code_namespace, note=note)
+    return await discover_candidates(org, target.code_namespace, quote)
 
 
 def _held_error(org: str, e: LoomServerError) -> str:

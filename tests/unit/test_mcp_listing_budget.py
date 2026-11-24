@@ -396,6 +396,17 @@ def test_the_compact_profile_keeps_the_tool_names():
             assert not {r for r in _OP_REF.findall(t["description"]) if r in listed}, t["name"]
 
 
+def test_compact_coding_grep_advertises_body_default_and_literal_alternatives():
+    tools = {t["name"]: t for t in _listing("coding", True, "compact")}
+    description = tools["loom_code_grep"]["description"]
+    assert "list of literals in `pattern`" in description
+    assert "enclosing bodies in one call" in description
+    assert "`include_body: false` for locations or `context_lines` excerpts" in description
+    assert "loom_code_search" in description
+    assert "one RE2 string with `regex: true`" in description
+    assert "Scope with `path_prefix` or `path_globs`" in description
+
+
 # ---------------------------------------------------------------- one revision policy
 
 
@@ -538,6 +549,7 @@ def test_marked_fields_are_unlisted_but_still_accepted():
     assert m.kind_prior == "flat" and m.vector_shortlist == 50
     # the fields a description or a skill names stay listed
     keep = {
+        "code.grep": {"include_lessons"},
         "code.search": {"query", "expand", "namespaces", "top_k", "cursor"},
         "memory.set": {
             "dry_run",

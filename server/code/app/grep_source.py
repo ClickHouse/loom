@@ -8,10 +8,120 @@ from typing import Any
 
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.deadline import Budget
-from server.code.domain.symbol_body import complete_source_span
+from server.code.domain.symbol_body import complete_source_span, retained_source_lines
 from server.code.store.index import CodeRepo
 
 logger = logging.getLogger(__name__)
+
+
+ContextSource = dict[str, dict[str, str | None]]
+GREP_MATCH_TEXT_CHARS = 300
+
+
+def match_revisions(
+    matches: list[dict[str, Any]], commits: dict[tuple[str, int], str]
+) -> dict[str, str]:
+    """Use a path's revision only when every returned hit agrees."""
+    revisions: dict[str, str] = {}
+    for hit in matches:
+        path = str(hit["path"])
+        commit = commits.get((path, int(hit["line"])), "")
+        if revisions.setdefault(path, commit) != commit:
+            revisions[path] = ""
+    return {path: commit for path, commit in revisions.items() if commit}
+
+
+def _wanted_lines(matches: list[dict[str, Any]], radius: int) -> dict[str, set[int]]:
+    wanted: dict[str, set[int]] = {}
+    for hit in matches:
+        line = int(hit["line"])
+        wanted.setdefault(str(hit["path"]), set()).update(
+            range(max(1, line - radius), line + radius + 1)
+        )
+    return wanted
+
+
+def collect_contexts(
+    chunks: list[dict[str, Any]],
+    matches: list[dict[str, Any]],
+    radius: int,
+    max_chars: int,
+    *,
+    match_commits: dict[tuple[str, int], str],
+) -> ContextSource:
+    """Keep context at each path's verified match revision, with omissions marked."""
+    wanted = _wanted_lines(matches, radius)
+    revisions = match_revisions(matches, match_commits)
+    by_path: ContextSource = {
+        path: {str(line): None for line in lines}
+        for path, lines in wanted.items()
+        if path not in revisions
+    }
+    other_revisions: dict[str, set[str]] = {}
+    scanned = 0
+    for chunk in chunks:
+        path = str(chunk["path"])
+        scanned += len(str(chunk.get("content") or ""))
+        if scanned > max_chars:
+            break
+        if path not in revisions or (lines := retained_source_lines(chunk)) is None:
+            continue
+        commit = str(chunk.get("indexed_commit") or "").rstrip("\0")
+        if commit != revisions[path]:
+            start = int(chunk["start_line"])
+            other_revisions.setdefault(path, set()).update(
+                str(line) for line in wanted[path].intersection(range(start, start + len(lines)))
+            )
+            continue
+        source = by_path.setdefault(path, {})
+        for line, text in enumerate(lines, int(chunk["start_line"])):
+            if line in wanted[path]:
+                key = str(line)
+                if source.setdefault(key, text) != text:
+                    source[key] = None
+    for path, keys in other_revisions.items():
+        source = by_path.setdefault(path, {})
+        for key in keys:
+            source.setdefault(key, None)
+    return by_path
+
+
+def page_contexts(
+    source: ContextSource, matches: list[dict[str, Any]], radius: int
+) -> dict[str, Any]:
+    """Render only this page's windows from retained lines that agree."""
+    wanted = _wanted_lines(matches, radius)
+    partial = False
+    contexts = []
+    for path, lines in wanted.items():
+        retained = source.get(path, {})
+        window: list[str] = []
+        start = previous = 0
+        for line in sorted(lines):
+            key = str(line)
+            text = retained.get(key)
+            if text is None and key in retained:
+                partial = True
+            if window and (text is None or line != previous + 1 or not window[-1].endswith("\n")):
+                contexts.append(
+                    {
+                        "path": path,
+                        "start_line": start,
+                        "end_line": previous,
+                        "text": "".join(window),
+                    }
+                )
+                window = []
+            if text is not None:
+                if not window:
+                    start = line
+                window.append(text)
+                previous = line
+        if window:
+            contexts.append(
+                {"path": path, "start_line": start, "end_line": previous, "text": "".join(window)}
+            )
+    return {"contexts": contexts, "contexts_partial": partial}
 
 
 def _summary_spans(chunks: list[dict[str, Any]]) -> dict[tuple[str, str, str], tuple[int, int]]:

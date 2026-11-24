@@ -191,14 +191,14 @@ def test_provider_runtime_failure_from_the_breaker(monkeypatch: pytest.MonkeyPat
                 "last_error": "429 insufficient_quota",
                 "last_error_age_s": 3.0,
             },
-            "openai:chat": {"failing": False},
+            "openai:responses": {"failing": False},
         },
     }
     problems = collect_problems(s, HealthState(provider_status=status, env={}))
     p = _by_code(problems, "provider_failing:openai:embeddings")
     assert p.severity == "error" and p.source == "runtime"
     assert "429 insufficient_quota" in p.message and "3.0s ago" in p.message
-    assert "provider_failing:openai:chat" not in _codes(problems)
+    assert "provider_failing:openai:responses" not in _codes(problems)
     assert derive_status(True, problems) == "degraded"
 
 
@@ -480,7 +480,7 @@ def test_every_fix_is_one_imperative_sentence_naming_a_knob(
         probed_dim=1536,
         provider_status={
             "degraded": True,
-            "providers": {"openai:chat": {"failing": True, "last_error": "500"}},
+            "providers": {"openai:responses": {"failing": True, "last_error": "500"}},
         },
         pending_migrations=("1000_a.sql",),
         worker_lease_held=False,

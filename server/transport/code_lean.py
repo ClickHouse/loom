@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.code.domain.symbol_documentation import description_repeats_body
+
 # Accounting counters and ranking internals no agent acts on.
 _DROP_KEYS: frozenset[str] = frozenset(
     {
@@ -45,6 +47,7 @@ _HIT_DROP: dict[str, frozenset[str]] = {
     "code.search": frozenset({"score", "lexical_rank", "vector_rank", "via", "unit_id"}),
     "code.ask": frozenset({"unit_id"}),
     "code.symbol": frozenset({"score", "unit_id"}),
+    "code.edit_context": frozenset({"score", "unit_id"}),
 }
 # Flags that only speak when true — false is the default reading.
 _TRUE_ONLY: frozenset[str] = frozenset(
@@ -283,22 +286,30 @@ def _lean_symbol(out: dict[str, Any]) -> None:
     for d in defs:
         if d.get("body") and d.get("outline"):
             d.pop("outline")
-        if d.get("description") == _NO_DOC:
+    if defs and defs[0].get("granularity") == "skeleton" and defs[0].get("body"):
+        owner = str(defs[0].get("symbol") or "")
+        for d in defs[1:]:
+            sym = str(d.get("symbol") or "")
+            if owner and sym.startswith(owner + "::") and d.get("body"):
+                d.pop("body")
+                d["elided"] = True
+                d["next"] = f"code.symbol name={sym}"
+    for d in defs:
+        description = d.get("description")
+        body = d.get("body")
+        if description == _NO_DOC or (
+            isinstance(description, str)
+            and isinstance(body, str)
+            and not (d.get("elided") or d.get("granularity") == "skeleton")
+            and description_repeats_body(description, body, scip=d.get("tier") == "scip")
+        ):
             d.pop("description")
-    if not defs or defs[0].get("granularity") != "skeleton" or not defs[0].get("body"):
-        return
-    owner = str(defs[0].get("symbol") or "")
-    for d in defs[1:]:
-        sym = str(d.get("symbol") or "")
-        if owner and sym.startswith(owner + "::") and d.get("body"):
-            d.pop("body")
-            d["elided"] = True
-            d["next"] = f"code.symbol name={sym}"
 
 
 _PER_OP = {
     "code.search": _lean_search,
     "code.symbol": _lean_symbol,
+    "code.edit_context": _lean_symbol,
     "code.callers": _lean_callers,
     "code.callees": _lean_callers,
     "code.outline": _lean_outline,
@@ -313,6 +324,7 @@ LEAN_CODE_OPS: frozenset[str] = frozenset(
     {
         "code.search",
         "code.symbol",
+        "code.edit_context",
         "code.callers",
         "code.callees",
         "code.outline",

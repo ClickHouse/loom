@@ -254,7 +254,8 @@ def test_literal_alternatives_match_punctuation_and_deduplicate_lines() -> None:
 
 def test_literal_alternatives_without_hits_remain_literal() -> None:
     out = _run([], pattern=["missing(", "left|right"])
-    assert out.matches == [] and out.note == ""
+    assert out.matches == []
+    assert "pattern list" in out.note and "code.search" in out.note
 
 
 @pytest.mark.parametrize("fields", [{"regex": True}, {"mode": "message"}])

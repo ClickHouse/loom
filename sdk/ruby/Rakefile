@@ -4,6 +4,7 @@ require "rake/testtask"
 
 Rake::TestTask.new(:test) do |t|
   t.libs << "test" << "lib"
+  t.ruby_opts << "-r./test/coverage_setup" if ENV["LOOM_TEST_COVERAGE"] == "1"
   t.test_files = FileList["test/**/*_test.rb"]
 end
 

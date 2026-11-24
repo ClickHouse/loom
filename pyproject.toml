@@ -68,6 +68,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Bounded in-process HTTP schema checks; not installed by the runtime or ordinary unit jobs.
+contract = ["schemathesis==4.33.4"]
 # Lemmagen3 English lemmatizer — covers irregular morphology Snowball misses
 # (went/go, mice/mouse, children/child). Matches ClickHouse's
 # lemmatize('en', ...) byte-for-byte: deploy/lemmagen3/en.bin, which ClickHouse
@@ -84,6 +86,7 @@ dev = [
   "clickhouse-loom-server[aws]",       # the export-analytics tests exercise boto3
   "clickhouse-loom-server[extractor]", # the extractor's parser tests parse every format
   "pytest>=8.0",
+  "hypothesis>=6.170.17,<7",           # bounded domain properties; no service or runtime dependency
   "pytest-asyncio>=0.24",
   "pytest-httpx>=0.32",
   "pytest-rerunfailures>=15.0",
@@ -347,6 +350,7 @@ exclude = [
   "server/code/domain/extract/edges_treesitter.py",
   "server/code/domain/extract/lang_bash.py",
   "server/code/domain/extract/lang_python.py",
+  "server/code/domain/extract/py_decorated_chunks.py",
   "server/code/domain/extract/py_layouts.py",
   "server/code/domain/extract/py_library_methods.py",
   "server/code/domain/extract/py_members.py",

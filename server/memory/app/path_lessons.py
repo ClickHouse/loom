@@ -81,11 +81,31 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
 
 
 class Lessons(NamedTuple):
-    """The rows served, and how many rows about these files the cap, a cut or a newer row
-    read here that supersedes them left out (memory.for_file lists them)."""
+    """The rows served and how many file lessons were left out (memory.for_file lists them)."""
 
     rows: list[dict[str, Any]]
     left_out: int = 0
+
+
+class GrepMatchLines(NamedTuple):
+    """Retained revisions of all grep matches and line numbers of unscoped matches."""
+
+    unscoped: dict[str, set[int]]
+    revisions: dict[str, set[str]]
+
+    def excludes(self, link: code_links.LinkRow) -> bool:
+        path = link["path"]
+        revisions = self.revisions.get(path)
+        if revisions is None:
+            return True
+        checked_commit = link["checked_commit"]
+        if not checked_commit or revisions != {checked_commit}:
+            return False
+        lines = self.unscoped.get(path)
+        if not lines:
+            return True
+        start, end = link["start_line"], link["end_line"]
+        return 0 < start <= end and all(line > 0 and not start <= line <= end for line in lines)
 
 
 def _ordered_candidates(
@@ -150,6 +170,7 @@ async def _confirmed_omissions(
     symbols: dict[str, set[str]],
     focused: set[str],
     timeout_s: float | None,
+    grep_lines: GrepMatchLines | None,
 ) -> set[tuple[str, str]]:
     """Path reads miss pending links. Check only the rows being considered for omission."""
     omitted = {
@@ -174,6 +195,8 @@ async def _confirmed_omissions(
             continue
         if not link["complete"] or link["state"] not in ("fresh", "moved", "changed"):
             uncertain.add(link["memory_id"])
+        elif grep_lines is not None and not grep_lines.excludes(link):
+            uncertain.add(link["memory_id"])
         else:
             resolved[(link["path"], link["memory_id"])].append(link["qualified_name"])
     return {
@@ -194,6 +217,7 @@ async def lessons_for_paths(
     timeout_s: float | None = None,
     query: str = "",
     matched_symbols: dict[str, set[str]] | None = None,
+    grep_lines: GrepMatchLines | None = None,
 ) -> Lessons:
     """The live memories of `namespaces` (each already checked readable) that name or are
     linked to code in `paths`, in path order, then each file's memory.for_file order (past
@@ -209,9 +233,10 @@ async def lessons_for_paths(
     when the conflict check linked one. `timeout_s` bounds the file reads together;
     failed or unfinished reads leave the completed files' rows intact. A nonempty `query`
     ranks matching excerpts after constraints and pins across the selected paths,
-    preserving path and listing order on ties. `matched_symbols` focuses inline lessons
-    on the matched definitions when an uncapped answer finds a complete lesson
-    there. File-wide or uncertain links, decisions, constraints and pins remain eligible."""
+    preserving path and listing order on ties. Uncapped grep matches focus lessons on
+    the returned definitions. Search focuses a file when a matched definition has a
+    complete lesson. File-wide or uncertain links, decisions, constraints and pins
+    remain eligible."""
     if not namespaces or not paths:
         return Lessons([])
     started = asyncio.get_running_loop().time()
@@ -244,11 +269,15 @@ async def lessons_for_paths(
         if _names_this_file(hit, inp.path)
     ]
     symbols = (matched_symbols or {}) if not token_budget else {}
-    focused = _focused_paths(candidates, symbols, superseded)
+    focused = (
+        set(symbols) if grep_lines is not None else _focused_paths(candidates, symbols, superseded)
+    )
     remaining = (
         None if timeout_s is None else timeout_s - (asyncio.get_running_loop().time() - started)
     )
-    omitted = await _confirmed_omissions(org, trunk_ns, candidates, symbols, focused, remaining)
+    omitted = await _confirmed_omissions(
+        org, trunk_ns, candidates, symbols, focused, remaining, grep_lines
+    )
     for path, hit in _ordered_candidates(candidates, query):
         key = (str(hit["namespace"]), str(hit["memory_key"]))
         if key in seen:

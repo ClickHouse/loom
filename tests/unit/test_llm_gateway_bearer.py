@@ -19,9 +19,10 @@ from server.settings import Settings, settings
 from tests.unit.clock_fake import ManualClock
 from tests.unit.model_client import through_the_model_client
 
-_CHAT = {
-    "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
-    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+_RESPONSE = {
+    "status": "completed",
+    "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
+    "usage": {"input_tokens": 1, "output_tokens": 1},
 }
 _MESSAGES = {
     "content": [{"type": "text", "text": "hi"}],
@@ -74,8 +75,8 @@ class _Wire:
         self.bearers.append(bearer)
         if bearer in self.refused:
             return httpx.Response(401, json={"error": {"code": "invalid_token"}})
-        if request.url.path.endswith("/chat/completions"):
-            return httpx.Response(200, json=_CHAT)
+        if request.url.path.endswith("/responses"):
+            return httpx.Response(200, json=_RESPONSE)
         if request.url.path.endswith("/messages"):
             return httpx.Response(200, json=_MESSAGES)
         return httpx.Response(200, json=_VECTORS)

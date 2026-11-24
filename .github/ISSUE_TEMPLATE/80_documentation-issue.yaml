@@ -7,6 +7,13 @@ body:
       value: |
         > Thanks for helping improve the documentation.
   - type: input
+    id: company
+    attributes:
+      label: Company
+      description: Your company or organization. Enter "Independent" if filing personally.
+    validations:
+      required: true
+  - type: input
     id: page
     attributes:
       label: Documentation page

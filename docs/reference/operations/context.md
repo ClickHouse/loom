@@ -74,7 +74,7 @@ Park a large tool result (log, page, diff, query output) outside the model conte
 
 ## `context.pack`
 
-Task context: call first with a default memory namespace, unless a Loom hook already put Loom's context in this session.
+Retrieve task context by passing the task as `query`.
 
 `POST /v1/context.pack` · MCP `loom_context_pack` · role `viewer` · read
 

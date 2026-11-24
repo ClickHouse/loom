@@ -56,6 +56,16 @@ def _named(qualified_name: str, defs: list[Definition]) -> list[Definition]:
     return [d for n, d in ends if n == best]
 
 
+def _could_name_symbol(link: LinkRow, name: str) -> bool:
+    # Keep anchors and former names for branches that still have them. The
+    # source check below decides which qualified identity the link matches.
+    return (
+        bare_name(link["qualified_name"]) == name
+        or bare_name(link["anchored_name"]) == name
+        or any(bare_name(former["name"]) == name for former in link["former"])
+    )
+
+
 async def lessons_for_symbol(
     org: str,
     code_namespace: str,
@@ -80,11 +90,15 @@ async def lessons_for_symbol(
         ),
         code.indexed_head(org, code_namespace),
     )
-    links = [
+    name = bare_name(qualified_name)
+    candidates = [
         a
-        for a in await current_links(org, stored)
-        if a["state"] != "pending" and a["qualified_name"]
+        for a in stored
+        if a["state"] != "pending" and a["qualified_name"] and _could_name_symbol(a, name)
     ]
+    if not candidates:
+        return []
+    links = await current_links(org, candidates)
     if not links:
         return []
     here = await _definitions_at(org, code_namespace, head, paths, qualified_name)
@@ -112,12 +126,17 @@ async def lessons_for_symbol(
             },
         )
     ranked = [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
+    return fit_symbol_lessons(ranked)
+
+
+def fit_symbol_lessons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep whole lesson rows within the configured aggregate budget."""
     budget = settings.code_result_lessons_tokens
     if not budget:
-        return ranked
+        return rows
     kept: list[dict[str, Any]] = []
     spent = 0
-    for lesson in ranked:
+    for lesson in rows:
         cost = len(json.dumps(lesson, ensure_ascii=False)) // 4 + 1
         if spent + cost <= budget:
             kept.append(lesson)

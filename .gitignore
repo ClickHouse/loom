@@ -65,6 +65,9 @@ htmlcov/
 nosetests.xml
 coverage.xml
 coverage.json
+/frontend/coverage/
+/sdk/ruby/coverage/
+/sdk/typescript/coverage/
 *.cover
 *.py,cover
 .tox/

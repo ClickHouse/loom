@@ -40,6 +40,7 @@ from server.transport.mcp_config import (
     _LOOM_SEARCH_TOOL_NAME,
     _READ_SHAPED_VERBS,
 )
+from server.transport.mcp_defaults import mcp_argument_defaults
 from server.transport.mcp_descriptions import (
     ASSISTANT_TOOL_DESCRIPTIONS as _ASSISTANT_TOOL_DESCRIPTIONS,
 )
@@ -502,6 +503,17 @@ def listed_ops(toolset: str | None) -> list[Operation]:
     return out
 
 
+def _upfront_tools(configured: str, toolset: str, profile: str) -> set[str]:
+    if configured.strip().casefold() != "auto":
+        return {name.strip() for name in configured.split(",") if name.strip()}
+    if toolset == "coding" and profile == "compact":
+        return {"code.edit_context", "code.grep"}
+    names = {"code.search", "code.symbol", "code.grep"}
+    if toolset != "coding":
+        names.update({"search.query", LOOM_OP_TOOL_NAME})
+    return names
+
+
 def _with_loading_hints(descriptors: list[dict[str, Any]], requested: set[str]) -> None:
     """Apply one loading policy to registry and synthetic descriptors alike."""
     names = {op.mcp_tool_name for op in ALL_OPERATIONS if op.name in requested}
@@ -527,7 +539,6 @@ async def _tools_descriptor(
     from server.settings import settings
 
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
-    always_load = {n.strip() for n in settings.mcp_always_load_tools.split(",") if n.strip()}
     descriptors: list[dict[str, Any]] = []
     ops = listed_ops(toolset)
     listed = _tool_names(ops, toolset)
@@ -558,6 +569,11 @@ async def _tools_descriptor(
                 input_schema, set(ASSISTANT_FORCED_ARGS.get(op.name, {})) | ASSISTANT_DROPPED_ARGS
             )
             input_schema = _with_identity(input_schema, op)
+        if defaults := mcp_argument_defaults(op.name, toolset):
+            fields = input_schema.get("properties", {})
+            for field, value in defaults.items():
+                if field in fields:
+                    fields[field] = {**fields[field], "default": value}
         descriptor: dict[str, Any] = {
             "name": op.mcp_tool_name,
             "description": desc,
@@ -568,19 +584,12 @@ async def _tools_descriptor(
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
-    _with_loading_hints(descriptors, always_load)
-    from server.transport.mcp_schemas import (
-        DEFAULT_SCHEMA_PROFILE,
-        SCHEMA_PROFILES,
-        apply_schema_profile,
-    )
+    from server.transport.mcp_schemas import apply_schema_profile, resolve_schema_profile
 
-    default = str(settings.mcp_schema_profile or DEFAULT_SCHEMA_PROFILE).lower()
-    if default not in SCHEMA_PROFILES:
-        default = DEFAULT_SCHEMA_PROFILE
-    profile = str(schema_profile or default).lower()
-    if profile not in SCHEMA_PROFILES:
-        profile = default  # an unknown request value never widens or narrows silently
+    profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
+    _with_loading_hints(
+        descriptors, _upfront_tools(settings.mcp_always_load_tools, toolset, profile)
+    )
     # only the full profile sends output schemas
     schemas = ("inputSchema", "outputSchema") if profile == "full" else ("inputSchema",)
     for d in descriptors:

@@ -247,6 +247,8 @@ Tree-sitter modules import lazily, so a server with the code workers off boots w
 | `file_header`    | Leading comments and includes.                                                                              |
 | `other`          | The rest, grouped.                                                                                          |
 
+Python search responses omit a prefixed class docstring when the skeleton already contains its text.
+
 Files without a tree fall back to whole-line windows; lanes without a grammar cut on
 their symbol spans (`lane_units.span_chunks`). A chunk id is
 `uuid5("loom://code/{namespace}/{path}#{scope}@{sha16}")`. It is content-addressed, so
@@ -378,17 +380,33 @@ locations to `code.enclosing` with `include_body=true`. It returns complete
 enclosing definitions together. `code.symbol` resolves a named definition or
 one location; the batch avoids a separate lookup for every located definition.
 
+`code.read` reads several known line ranges in one request. It uses a local
+Git mirror and checks the blob's hash against each indexed file record.
+Only files indexed for text search qualify. Projected notebook cells and
+reference fixtures with omitted text are unavailable. The response gives
+inclusive line numbers for each window and marks unavailable ranges, including
+ranges that exceed the request’s source byte limit.
+
+Python SCIP identities use the same placeholder for callables of every
+arity. Definition and enclosing-body responses recover the parameter list
+from a retained declaration with the matching name. Metadata-only responses
+leave the signature empty when the index provides only the placeholder.
+The stored identity and call edges keep their existing keys.
+
 Search and grep rank candidate lessons across all selected files by query-term
 overlap after constraints and pinned rows. English inflections share stems; equal
 matches keep path order, then the listing's confidence and recency order.
 The remaining file-lesson reads retain path and listing order.
 The ranking uses the existing namespace-scoped candidates. On trunk, uncapped
-search and grep-match responses can focus a file's lessons when every returned
-hit names a definition and an exact linked lesson is available. Whole-file
-search hits use file-level selection. Read the broader file history with
-`memory.for_file`. Before omitting a lesson by scope, the enrichment checks its
-live link set for pending and uncertain links within the request's enrichment
-deadline. Ranking and focusing add no model calls.
+grep responses focus lessons on the definitions their matches name. Search
+focuses a file's lessons when a returned definition has an exact linked lesson.
+Whole-file search hits use file-level selection. Grep omits a candidate by scope
+only if its link was checked at the same revision as the matched chunks. Matches
+outside a named definition also keep candidates with overlapping or unverified
+link ranges. Read the broader file history with `memory.for_file`. Before
+omitting a lesson by scope, the enrichment checks its live link set for pending
+and uncertain links within the request's enrichment deadline. Ranking and
+focusing add no model calls.
 
 File and symbol lessons carry complete memory text, including source references.
 The internal file listing reads complete values; the pre-edit block keeps its own
