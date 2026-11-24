@@ -57,8 +57,9 @@ retains Anthropic’s cache token counts.
 
 `--pilot-task` runs one selected issue once in each of the five arms, with two
 base/reference controls and one blind judgment. It preserves the issue, historical
-facts, hidden tests and full regression checks. Only the selected task's native
-indexes and memory namespaces are prepared. A single-issue pilot gives descriptive results. Keep every pilot, including
+facts, hidden tests and full regression checks. Setup builds compiler artifacts,
+native indexes and memory namespaces for the selected task. A single-issue
+pilot gives descriptive results. Keep every pilot, including
 negative and failed attempts, and declare the task before running. Resume uses
 the selection frozen in the launch record.
 

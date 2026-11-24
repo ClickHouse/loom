@@ -80,10 +80,12 @@ def materialize_cases(assets, output):
     return materialize(assets, output)
 
 
-def prepare_compiler_artifacts(assets, materialization, output, *, loom_python, owner):
+def prepare_compiler_artifacts(assets, materialization, output, *, loom_python, owner, task_ids):
     from .compiler_setup import prepare_compiler_artifacts as compile_sources
 
-    return compile_sources(assets, materialization, output, loom_python=loom_python, owner=owner)
+    return compile_sources(
+        assets, materialization, output, loom_python=loom_python, owner=owner, task_ids=task_ids
+    )
 
 
 def plan_inputs(assets, materialization, output):

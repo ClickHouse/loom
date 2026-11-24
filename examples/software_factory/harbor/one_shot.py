@@ -263,16 +263,6 @@ def execute(args):
         materialized = phases.run(
             "scenarios", lambda: profile.materialize_cases(output / "assets", output / "scenarios")
         )
-        compiled = phases.run(
-            "compilers",
-            lambda: profile.prepare_compiler_artifacts(
-                output / "assets",
-                materialized,
-                output / "compilers",
-                loom_python=core_python,
-                owner=args.owner,
-            ),
-        )
         prepared = phases.run(
             "inputs",
             lambda: profile.plan_inputs(
@@ -293,6 +283,17 @@ def execute(args):
                     repeats=launch["pilot_repeats"],
                 ),
             )
+        compiled = phases.run(
+            "compilers",
+            lambda: profile.prepare_compiler_artifacts(
+                output / "assets",
+                materialized,
+                output / "compilers",
+                loom_python=core_python,
+                owner=args.owner,
+                task_ids=frozenset(prepared["tasks"]),
+            ),
+        )
         meter.set_phase("native-setup")
         setup = phases.run(
             "native-setup",

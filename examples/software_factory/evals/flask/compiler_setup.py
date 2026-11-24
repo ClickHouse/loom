@@ -40,7 +40,9 @@ def _run(command, *, data=None, timeout=None, env=None):
     ).stdout
 
 
-def compiler_revisions(assets: Path, materialization: dict) -> list[dict]:
+def compiler_revisions(
+    assets: Path, materialization: dict, *, task_ids: frozenset[str] | None = None
+) -> list[dict]:
     """Each solver base and any additional chronological history revisions."""
     lock = _read(LOCK)
     source_git = _read(assets / "assets.json")["source_git"]
@@ -78,6 +80,10 @@ def compiler_revisions(assets: Path, materialization: dict) -> list[dict]:
                 raise PermissionError("History compiler source differs from the solver base")
             if not existing:
                 revisions.append(row)
+    if task_ids is not None:
+        revisions = [row for row in revisions if row["task_id"] in task_ids]
+        if {row["task_id"] for row in revisions} != task_ids:
+            raise PermissionError("Compiler preparation is missing a selected frozen task")
     if not revisions or len({row["key"] for row in revisions}) != len(revisions):
         raise PermissionError("Compiler preparation requires every distinct frozen revision")
     for row in revisions:
@@ -501,6 +507,7 @@ def prepare_compiler_artifacts(
     loom_python=None,
     cache_file: Path | None = None,
     owner: str | None = None,
+    task_ids: frozenset[str] | None = None,
 ) -> dict:
     """Compile frozen source revisions; no model calls, server writes, or repository tests."""
     from .bootstrap import stage_compiler_source
@@ -510,7 +517,7 @@ def prepare_compiler_artifacts(
     owner = owner or os.environ.get("FACTORY_OWNER") or uuid.uuid4().hex
     if not re.fullmatch(r"[a-f0-9]{32}", owner):
         raise ValueError("Compiler resource owner requires 32 lowercase hex characters")
-    revisions = compiler_revisions(assets, materialization)
+    revisions = compiler_revisions(assets, materialization, task_ids=task_ids)
     image_rows = _read(assets / "images.json")["images"]
     architectures = {image_rows[row["dependency_task_id"]]["architecture"] for row in revisions}
     if len(architectures) != 1:

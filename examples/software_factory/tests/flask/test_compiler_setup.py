@@ -55,6 +55,14 @@ class CompilerSetup(unittest.TestCase):
             self.assertEqual(len({row["base_commit"] for row in rows}), 9)
             self.assertEqual(sum(row["revision"] == "A" for row in rows), 3)
             self.assertEqual({row["dependency_task_id"] for row in rows[3:]}, {dependency})
+            selected = setup.compiler_revisions(
+                assets, dict(fixtures=fixtures, tasks=tasks), task_ids=frozenset({"authored-0"})
+            )
+            self.assertEqual(selected, [row for row in rows if row["task_id"] == "authored-0"])
+            with self.assertRaisesRegex(PermissionError, "missing a selected frozen task"):
+                setup.compiler_revisions(
+                    assets, dict(fixtures=fixtures, tasks=tasks), task_ids=frozenset({"unknown"})
+                )
             tasks["authored-0"]["image"] = "wrong-image"
             with self.assertRaises(PermissionError):
                 setup.compiler_revisions(assets, dict(fixtures=fixtures, tasks=tasks))
