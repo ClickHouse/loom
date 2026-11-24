@@ -68,6 +68,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Bounded in-process HTTP schema checks; not installed by the runtime or ordinary unit jobs.
+contract = ["schemathesis==4.33.4"]
 # Lemmagen3 English lemmatizer — covers irregular morphology Snowball misses
 # (went/go, mice/mouse, children/child). Matches ClickHouse's
 # lemmatize('en', ...) byte-for-byte: deploy/lemmagen3/en.bin, which ClickHouse
