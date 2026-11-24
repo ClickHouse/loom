@@ -416,7 +416,14 @@ def test_compact_coding_grep_advertises_common_args_and_help_lists_the_rest():
         tool = next(t for t in _listing("coding", True, profile) if t["name"] == "loom_code_grep")
         return set(tool["inputSchema"]["properties"])
 
-    advanced = {"related_on_miss", "related_on_prefix", "neighbours", "neighbour_k", "deadline_ms"}
+    advanced = {
+        "related_on_miss",
+        "related_on_prefix",
+        "include_dependencies",
+        "neighbours",
+        "neighbour_k",
+        "deadline_ms",
+    }
     assert advanced <= props("standard") and advanced <= props("full")
     compact = props("compact")
     assert not compact & advanced
