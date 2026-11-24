@@ -407,7 +407,9 @@ def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None
     assert flagged == expected
     assert {"loom_op", "loom_search", "loom_code_search"} <= {tool["name"] for tool in tools}
     edit = next(tool for tool in tools if tool["name"] == "loom_code_edit_context")
-    assert edit["inputSchema"]["required"] == ["name"]
+    schema = edit["inputSchema"]
+    assert "name" not in schema.get("required", [])
+    assert {"name", "clues"} <= schema["properties"].keys()
     assert edit["annotations"]["readOnlyHint"]
 
 

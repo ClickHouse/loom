@@ -220,9 +220,9 @@ class CodeSymbolOutput(BaseModel):
     # — same_file | same_dir | co_change | path_distance | none. "" and off the wire
     # when no context was given.
     picked_by: str = ""
-    # How the definition resolved. Edit context uses `file_clues` for an explicit
-    # file, `repository_clues` for a repository literal match, and
-    # `repository_argument` for recovery from a missing call expression.
+    # Edit context reports `file_clues` for an explicit file, `repository_clues`
+    # for a literal repository match, or `repository_argument` for recovery
+    # from a missing call expression.
     # Empty for an exact symbol name.
     resolved_by: str = ""
     # The document sections that cite the definition (the Markdown lane's `reads` edges)
