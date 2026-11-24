@@ -2078,6 +2078,7 @@
           "limit",
           "context_lines",
           "include_body",
+          "related_on_miss",
           "mode",
           "path_globs",
           "exclude_globs",
