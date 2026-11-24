@@ -1,7 +1,6 @@
 name: docs site
 
-# Builds the legacy routes and publishes redirects to the documentation. After a
-# deploy, submit changed documentation URLs to IndexNow.
+# Publishes legacy redirects and submits changed site URLs after production deploys.
 on:
   push:
     branches: [main]
@@ -76,14 +75,13 @@ jobs:
 
   indexnow:
     name: indexnow
-    needs: deploy
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # A failed submission only delays indexing; it must not mark the deploy failed.
-    continue-on-error: true
+    timeout-minutes: 8
     permissions:
       contents: read
-      actions: read # to find the last successful run, below
+      actions: read # Find an earlier submission that succeeded.
+      statuses: read # Verify the production deployment for this commit.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,24 +90,65 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - name: Submit the pages changed since the last successful run
+      - name: Submit changed pages after the production deployment
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # A push can carry several commits, and a pending run can be cancelled by a newer
-          # one, so diff from the last successful run on main. Fall back to HEAD~1 when
-          # there is none or it isn't an ancestor of HEAD. A run counts as successful even
-          # when its submission failed or the deploy was off, and those pages aren't resent.
-          base=$(gh run list -R "$GITHUB_REPOSITORY" --workflow docs-site.yml --branch main \
-            --event push --status success --limit 1 --json headSha --jq '.[0].headSha // empty')
-          if [ -z "$base" ] || ! git merge-base --is-ancestor "$base" HEAD; then base=HEAD~1; fi
-          routes=docs/scripts/public-pages.json
-          args=()
-          if git cat-file -e "$base:$routes" 2>/dev/null; then
-            previous_routes="$RUNNER_TEMP/indexnow-previous-public-pages.json"
-            git show "$base:$routes" > "$previous_routes"
-            args=(--previous-public-pages "$previous_routes")
+          # Legacy redirect publication has its own result. Only a successful IndexNow
+          # job advances the comparison point so the next run covers a failed submission.
+          runs=$(gh run list -R "$GITHUB_REPOSITORY" --workflow docs-site.yml --branch main \
+            --status completed --limit 20 --json databaseId,headSha --jq '.[] | [.databaseId, .headSha] | @tsv')
+          base=
+          while IFS=$'\t' read -r run commit; do
+            if [[ -z "$commit" ]] || ! git merge-base --is-ancestor "$commit" HEAD; then continue; fi
+            submitted=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
+              --jq 'any(.jobs[]; .name == "indexnow" and .conclusion == "success")')
+            if [[ "$submitted" == true ]]; then
+              base="$commit"
+              break
+            fi
+          done <<< "$runs"
+
+          changed="$RUNNER_TEMP/indexnow-changed-paths"
+          if [[ -n "$base" ]]; then
+            git diff -z --name-only --no-renames "$base" HEAD > "$changed"
+          else
+            # Without a recent checkpoint, submit the canonical site as a single batch.
+            printf '%s\0' docs/blume.config.ts > "$changed"
           fi
-          git diff -z --name-only --no-renames "$base" HEAD | xargs -0 python scripts/docs_site/indexnow.py "${args[@]}" --
+          routes=docs/scripts/public-pages.json
+          previous_routes="$RUNNER_TEMP/indexnow-previous-public-pages.json"
+          if [[ -n "$base" ]] && git cat-file -e "$base:$routes" 2>/dev/null; then
+            git show "$base:$routes" > "$previous_routes"
+          else
+            printf '{}\n' > "$previous_routes"
+          fi
+          urls=$(xargs -0 python scripts/docs_site/indexnow.py --list --previous-public-pages "$previous_routes" -- < "$changed")
+          if [[ -z "$urls" ]]; then
+            echo 'indexnow: no public page changed'
+            exit 0
+          fi
+
+          # The production project posts a commit status. A skipped build can also
+          # report success, so require the completed-deployment status for this commit.
+          for _ in {1..25}; do
+            deployment=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/status" --jq '
+              [.statuses[] | select(.context == "Vercel – loom-docs")][0]
+              | if .state == "success" and .description == "Deployment has completed" then "ready"
+                elif .state == "failure" or .state == "error" then "failed"
+                else "pending" end
+            ') || deployment=pending
+            if [[ "$deployment" == ready ]]; then
+              xargs -0 python scripts/docs_site/indexnow.py --previous-public-pages "$previous_routes" -- < "$changed"
+              exit 0
+            fi
+            if [[ "$deployment" == failed ]]; then
+              echo 'indexnow: production deployment failed' >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          echo 'indexnow: production deployment was not confirmed' >&2
+          exit 1

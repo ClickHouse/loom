@@ -62,6 +62,16 @@ def test_renamed_and_deleted_public_routes_keep_their_previous_urls(monkeypatch)
     ) == [ORIGIN + "/platform", ORIGIN + "/product", ORIGIN + "/retired"]
 
 
+def test_list_mode_prints_changed_urls_without_reading_the_key(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(indexnow, "DOCS", tmp_path / "docs")
+    assert indexnow.main(["README.md"], list_urls=True) == 0
+    assert capsys.readouterr().out == ""
+    assert indexnow.main(["docs/pages/home.astro"], list_urls=True) == 0
+    assert capsys.readouterr().out == f"{ORIGIN}/\n"
+
+
 def test_full_submission_only_enumerates_documentation_sources(tmp_path, monkeypatch) -> None:
     docs = tmp_path / "docs"
     monkeypatch.setattr(indexnow, "DOCS", docs)

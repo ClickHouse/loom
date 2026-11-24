@@ -147,13 +147,19 @@ def payload(urls: list[str], k: str) -> dict:
     }
 
 
-def main(paths: list[str], previous_public_pages: Path | None = None) -> int:
+def main(
+    paths: list[str], previous_public_pages: Path | None = None, *, list_urls: bool = False
+) -> int:
     previous_routes = (
         json.loads(previous_public_pages.read_text())
         if previous_public_pages is not None and PUBLIC_PAGES_PATH in paths
         else ()
     )
     urls = urls_for(paths, previous_routes)
+    if list_urls:
+        if urls:
+            print("\n".join(urls))
+        return 0
     if not urls:
         print("indexnow: no public page changed")
         return 0
@@ -168,7 +174,8 @@ def main(paths: list[str], previous_public_pages: Path | None = None) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--list", action="store_true", help="List changed URLs without submitting.")
     parser.add_argument("--previous-public-pages", type=Path)
     parser.add_argument("paths", nargs="*")
     arguments = parser.parse_args()
-    sys.exit(main(arguments.paths, arguments.previous_public_pages))
+    sys.exit(main(arguments.paths, arguments.previous_public_pages, list_urls=arguments.list))
