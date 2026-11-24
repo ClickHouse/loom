@@ -35,6 +35,41 @@ def retained_source_window(
     rows: list[dict[str, Any]], start: int, end: int, *, anchor: int, revision: str
 ) -> tuple[int, int, str] | None:
     """Keep the contiguous retained lines around the anchor at its indexed revision."""
+    by_line = _retained_line_map(rows, start, end, revision)
+    if anchor not in by_line:
+        return None
+    start = end = anchor
+    while by_line.get(start - 1, "").endswith("\n"):
+        start -= 1
+    while by_line[end].endswith("\n") and end + 1 in by_line:
+        end += 1
+    return start, end, "".join(by_line[line] for line in range(start, end + 1))
+
+
+def retained_source_ranges(
+    rows: list[dict[str, Any]], start: int, end: int, *, revision: str
+) -> list[tuple[int, int, str]]:
+    """Return disjoint retained windows with their original line positions."""
+    by_line = _retained_line_map(rows, start, end, revision)
+    windows: list[tuple[int, int, str]] = []
+    parts: list[str] = []
+    first = previous = 0
+    for line, text in sorted(by_line.items()):
+        if parts and (line != previous + 1 or not parts[-1].endswith("\n")):
+            windows.append((first, previous, "".join(parts)))
+            parts = []
+        if not parts:
+            first = line
+        parts.append(text)
+        previous = line
+    if parts:
+        windows.append((first, previous, "".join(parts)))
+    return windows
+
+
+def _retained_line_map(
+    rows: list[dict[str, Any]], start: int, end: int, revision: str
+) -> dict[int, str]:
     by_line: dict[int, str] = {}
     gaps: set[int] = set()
     for row in rows:
@@ -56,14 +91,7 @@ def retained_source_window(
                 gaps.add(line)
     for line in gaps:
         by_line.pop(line, None)
-    if anchor not in by_line:
-        return None
-    start = end = anchor
-    while by_line.get(start - 1, "").endswith("\n"):
-        start -= 1
-    while by_line[end].endswith("\n") and end + 1 in by_line:
-        end += 1
-    return start, end, "".join(by_line[line] for line in range(start, end + 1))
+    return by_line
 
 
 def complete_source_span(

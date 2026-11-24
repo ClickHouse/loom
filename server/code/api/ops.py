@@ -64,6 +64,7 @@ from server.code.api.models_navigation import (
     CodeTraceOutput,
 )
 from server.code.api.models_outcome import CodeOutcomeInput, CodeOutcomeOutput
+from server.code.api.models_read import CodeReadInput, CodeReadOutput
 from server.code.api.models_repos import (
     CodeRepoAddBranchInput,
     CodeRepoAddInput,
@@ -163,6 +164,7 @@ from server.code.app.ingest import (
 from server.code.app.outcome import handle_code_outcome
 from server.code.app.path_guards import handle_code_path_guards
 from server.code.app.pr_check import handle_code_pr_check
+from server.code.app.read import handle_code_read
 from server.code.app.repo_admin import (
     handle_code_repo_add,
     handle_code_repo_add_branch,
@@ -359,6 +361,16 @@ OPERATIONS: list[Operation] = [
         input_model=CodeGrepInput,
         output_model=CodeGrepOutput,
         handler=result_lessons.WithLessons(handle_code_grep, result_lessons.grep_paths),
+        idempotent=True,
+        required_role=Role.VIEWER,
+    ),
+    Operation(
+        name="code.read",
+        maturity="experimental",
+        session_content=True,
+        input_model=CodeReadInput,
+        output_model=CodeReadOutput,
+        handler=handle_code_read,
         idempotent=True,
         required_role=Role.VIEWER,
     ),

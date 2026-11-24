@@ -77,6 +77,7 @@ OpName = Literal[
     "code.outline",
     "code.path_guards",
     "code.pr_check",
+    "code.read",
     "code.recent_commits",
     "code.refresh",
     "code.reindex",
@@ -456,6 +457,7 @@ OP_NAMES: tuple[str, ...] = (
     "code.outline",
     "code.path_guards",
     "code.pr_check",
+    "code.read",
     "code.recent_commits",
     "code.refresh",
     "code.reindex",
@@ -1250,6 +1252,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         600,
+        False,
+        True,
+    ),
+    "code.read": OpSpec(
+        "code.read",
+        "CodeReadInput",
+        "CodeReadBody",
+        "CodeReadOutput",
+        True,
+        "viewer",
+        "experimental",
+        800,
         False,
         True,
     ),
@@ -7090,6 +7104,44 @@ class CodePrCheckOutput(TypedDict, total=False):
     legs: NotRequired[dict[str, Any]]
     draft: NotRequired[dict[str, Any]]
     trace_run_id: NotRequired[str]
+
+
+class CodeReadInput(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    consumer: NotRequired[str]
+    ranges: Required[list[str]]
+
+
+class CodeReadBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    consumer: NotRequired[str]
+    ranges: Required[list[str]]
+
+
+class CodeReadOutput(TypedDict, total=False):
+    results: Required[list["CodeReadRange"]]
+    as_of: Required[dict[str, Any]]
+
+
+class CodeReadRange(TypedDict, total=False):
+    path: Required[str]
+    start_line: Required[int]
+    end_line: Required[int]
+    status: Required[Literal["complete", "partial", "not_indexed", "out_of_range", "unavailable"]]
+    indexed_commit: NotRequired[str]
+    windows: NotRequired[list["CodeReadWindow"]]
+
+
+class CodeReadWindow(TypedDict, total=False):
+    start_line: Required[int]
+    end_line: Required[int]
+    text: Required[str]
 
 
 class CodeRecentCommitsInput(TypedDict, total=False):

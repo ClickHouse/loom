@@ -8,7 +8,7 @@ module ClickHouse
     # Every served operation: its spec in OPS, and one method per op on the class
     # of its group (`client.memory.set(...)` is `memory.set`).
     module Generated
-      OP_COUNT = 376
+      OP_COUNT = 377
 
       # The declared spec of every served op, by name; the HTTP path is /v1/<name>.
       OPS = {
@@ -50,6 +50,7 @@ module ClickHouse
         "code.outline" => OpSpec.new("code.outline", "code", "outline", true, true, "viewer", "experimental", %w[include_lessons lesson_namespaces org namespace agent user_id consumer path kinds token_budget].freeze, %w[path].freeze),
         "code.path_guards" => OpSpec.new("code.path_guards", "code", "path_guards", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer from_symbol to_symbol mentions depth].freeze, %w[from_symbol to_symbol].freeze),
         "code.pr_check" => OpSpec.new("code.pr_check", "code", "pr_check", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer title body paths symbols issues pr_number top_k].freeze, [].freeze),
+        "code.read" => OpSpec.new("code.read", "code", "read", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer ranges].freeze, %w[ranges].freeze),
         "code.recent_commits" => OpSpec.new("code.recent_commits", "code", "recent_commits", true, true, "viewer", "stable", %w[org namespace agent user_id consumer limit].freeze, [].freeze),
         "code.refresh" => OpSpec.new("code.refresh", "code", "refresh", false, false, "writer", "stable", %w[org namespace agent user_id consumer expected_head wait wait_timeout_seconds].freeze, [].freeze),
         "code.reindex" => OpSpec.new("code.reindex", "code", "reindex", false, false, "admin", "experimental", %w[org namespace agent user_id consumer git_head].freeze, %w[git_head].freeze),
@@ -631,6 +632,12 @@ module ClickHouse
         # A PR draft asks whether a PR like it already exists. Every field is
         def pr_check(body = nil, request_options: nil, **fields)
           call_op("code.pr_check", body, fields, request_options)
+        end
+
+        # `code.read` (viewer, read-only, experimental).
+        # Required: ranges.
+        def read(body = nil, request_options: nil, **fields)
+          call_op("code.read", body, fields, request_options)
         end
 
         # `code.recent_commits` (viewer, read-only).

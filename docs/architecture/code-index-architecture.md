@@ -380,6 +380,11 @@ locations to `code.enclosing` with `include_body=true`. It returns complete
 enclosing definitions together. `code.symbol` resolves a named definition or
 one location; the batch avoids a separate lookup for every located definition.
 
+`code.read` reads several known line ranges in one request. Each window
+contains the retained source at the indexed file's revision, with inclusive
+line numbers. The result marks gaps and ranges outside the index, so an
+agent can limit its working-copy reads to missing source.
+
 Python SCIP identities use the same placeholder for callables of every
 arity. Definition and enclosing-body responses recover the parameter list
 from a retained declaration with the matching name. Metadata-only responses

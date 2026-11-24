@@ -1369,6 +1369,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`mode: 'presence'` checks `namespaces`. "
         "Check coverage. Use code.files for paths and local tools for uncommitted source."
     ),
+    "code.read": (
+        "Read exact source ranges from the index in one call. "
+        'Pass a list such as ["src/app.py:40-70", "src/lib.py:12-19"]. '
+        "Each result names its indexed revision and available line windows. "
+        "Local tools can fill gaps marked partial or unavailable."
+    ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
         "(`tests/queries/0_stateless/05138_*`), a basename stem "

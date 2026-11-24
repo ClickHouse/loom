@@ -6221,6 +6221,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "code.outcome": 150,
     # one symbol-table read served by the path bloom index + as_of
     "code.outline": 300,
+    "code.read": 800,
     # the verify(reaches) BFS (depth<=4) plus one keyed read of the
     # guards of every hop and, on a miss, one namespace probe
     "code.path_guards": 1500,
