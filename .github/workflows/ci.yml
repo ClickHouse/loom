@@ -303,6 +303,20 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
+      # LCOV preserves both source paths when the server and SDK share a filename.
+      - name: Export repository-relative coverage
+        id: lcov
+        continue-on-error: true
+        run: coverage lcov -o coverage.lcov
+      - name: Upload LCOV report
+        if: steps.lcov.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-lcov
+          path: coverage.lcov
+          if-no-files-found: error
+
   unit-coverage-upload:
     name: Publish patch coverage (report only)
     needs: unit-coverage
@@ -331,14 +345,14 @@ jobs:
           fi
       - name: Download the unit coverage report
         if: steps.source.outputs.matches == 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: coverage-xml
+          name: coverage-lcov
       - name: Upload unit coverage
         if: steps.source.outputs.matches == 'true'
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
-          files: coverage.xml
+          files: coverage.lcov
           disable_search: true
           fail_ci_if_error: true
           use_oidc: true
