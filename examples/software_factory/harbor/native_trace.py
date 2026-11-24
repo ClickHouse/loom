@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import posixpath
 from collections import Counter
 
 SOURCE_COUNTERS = (
@@ -34,6 +35,8 @@ COUNTERS = (
 EVENTS = (
     "first_fresh_linked_lesson_result_event_main",
     "first_possible_edit_request_event_main",
+    "first_loom_source_result_event_main",
+    "first_indexed_read_result_event_main",
 )
 POSSIBLE_EDIT_TOOLS = {"agent", "bash", "edit", "multiedit", "notebookedit", "task", "write"}
 NONFRESH_LINK_STATES = {"moved", "changed", "unresolved", "missing"}
@@ -87,7 +90,8 @@ def _content_counts(body, seen):
                 repeated += len(excerpt)
             seen.add(identity)
     return {
-        "source_chars": _text_chars(rows, "body"),
+        "source_chars": _text_chars(rows, "body")
+        + sum(_text_chars(_dict_rows(row.get("windows")), "text") for row in rows),
         "match_chars": _text_chars(_dict_rows(body.get("matches")), "text"),
         "context_chars": _text_chars(_dict_rows(body.get("contexts")), "text"),
         "caller_context_chars": _text_chars(caller_contexts, "text"),
@@ -104,7 +108,18 @@ def _content_counts(body, seen):
     }
 
 
-def summarize(trial):
+def _indexed_read(block, roots):
+    if block.get("name") != "Read" or not roots:
+        return False
+    arguments = block.get("input")
+    raw = arguments.get("file_path") if isinstance(arguments, dict) else None
+    if not isinstance(raw, str):
+        return False
+    path = posixpath.normpath(posixpath.join("/workspace", raw))
+    return any(path.startswith("/workspace/" + root.strip("/") + "/") for root in roots)
+
+
+def summarize(trial, *, source_roots=()):
     path = trial / "agent/claude-code.txt"
     summary = dict.fromkeys((*COUNTERS, *EVENTS, *TIMINGS))
     output = {
@@ -121,6 +136,7 @@ def summarize(trial):
     raw = path.read_bytes()
     output["source_sha256"] = hashlib.sha256(raw).hexdigest()
     calls, responses, replies, final = {}, set(), {}, None
+    indexed_read_ids = set()
     for event_index, line in enumerate(raw.decode().splitlines(), 1):
         try:
             event = json.loads(line)
@@ -140,6 +156,8 @@ def summarize(trial):
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "tool_use":
+                if _indexed_read(block, source_roots):
+                    indexed_read_ids.add(block["id"])
                 calls.setdefault(
                     block["id"],
                     {
@@ -153,7 +171,15 @@ def summarize(trial):
                 replies.setdefault(block["tool_use_id"], (event_index, block))
     summary.update(dict.fromkeys(COUNTERS, 0))
     summary["model_turns_main"] = len(responses)
-    groups, seen, fresh_events = Counter(), set(), []
+    groups, seen, fresh_events, source_events = Counter(), set(), [], []
+    summary["first_indexed_read_result_event_main"] = min(
+        (
+            replies[identifier][0]
+            for identifier in indexed_read_ids
+            if identifier in replies and not replies[identifier][1].get("is_error", False)
+        ),
+        default=None,
+    )
     content_counts_complete = True
     summary["first_possible_edit_request_event_main"] = next(
         (
@@ -196,6 +222,8 @@ def summarize(trial):
                 counted = _content_counts(body, seen)
                 if counted["fresh_linked_lesson_rows"]:
                     fresh_events.append(result_event)
+                if "loom_code_" in name and any(counted[key] > 0 for key, _ in SOURCE_COUNTERS):
+                    source_events.append(result_event)
                 observed.update(counted)
                 for source, target in CONTENT_COUNTERS:
                     summary[target] += counted[source]
@@ -208,6 +236,7 @@ def summarize(trial):
             summary[target] = None
     else:
         summary["first_fresh_linked_lesson_result_event_main"] = min(fresh_events, default=None)
+    summary["first_loom_source_result_event_main"] = min(source_events, default=None)
     summary["tool_calls_main"] = len(calls)
     summary["parallel_tool_groups_main"] = sum(size > 1 for size in groups.values())
     for source, target in (

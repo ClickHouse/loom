@@ -179,7 +179,7 @@ def build_image(
             "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/workspace/src\n"
             "WORKDIR /workspace\nRUN test -w /workspace\n"
             "FROM baseline AS loom\n"
-            "COPY --chown=1000:1000 loom-guidance/CLAUDE.md /workspace/CLAUDE.md\n"
+            "COPY --chown=1000:1000 loom-guidance/ /workspace/\n"
         )
     else:
         recipe = (
@@ -201,7 +201,9 @@ def build_image(
             loom["RootFS"]["Layers"][:-1] != baseline["RootFS"]["Layers"]
             or loom["Config"] != baseline["Config"]
         ):
-            raise PermissionError("Loom agent image must add only the project instructions layer")
+            raise PermissionError(
+                "Loom agent image must add only the project guidance and permissions layer"
+            )
     else:
         image = _build_runtime(folder, network="none")
     if _inspect_image(reference)["Id"] != dependency:
@@ -382,6 +384,7 @@ def prepare(previous: Path, output: Path) -> Path:
     paths += [output / "index-content.json", output / "images.json"]
     paths += list((output / "builds").rglob("Dockerfile"))
     paths += list((output / "builds").glob("*/agent/loom-guidance/CLAUDE.md"))
+    paths += list((output / "builds").glob("*/agent/loom-guidance/.claude/settings.json"))
     plan["files"] = {str(p): file_hash(p) for p in sorted(set(paths))}
     plan.pop("source_archive", None)
     write(protocol_path, plan)
@@ -754,10 +757,14 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
         costs = await asyncio.to_thread(
             audit_provider_costs, protocol, read(output / "live-attempts.json")
         )
-        await asyncio.to_thread(
+        audit = await asyncio.to_thread(
             audit_fairness, protocol, read(output / "live-attempts.json"), billing=costs
         )
         export(protocol)
+        if not all(row["loom_source_used"] for row in audit["attempts"]):
+            raise PermissionError(
+                "Loom-first source retrieval was not established. See the fairness audit."
+            )
         if meter is not None:
             meter.set_phase("judge")
         await asyncio.to_thread(

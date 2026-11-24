@@ -1,14 +1,15 @@
 # Repository context
 
 Use Loom to discover and read unchanged source in the indexed roots. For that
-source, use Loom for each search or read. Reserve Bash grep, rg, sed, cat, find,
-Python source-printing scripts, and local Read, Grep and Glob for the local
-work described below.
+source, use Loom for each search or read. Shell grep and the Grep tool are
+blocked in Loom sessions. Reserve local file tools for the work described
+below.
 
 Keep source discovery separate from Git, editing and test commands. Use
 `loom_code_search` for behavior, `loom_code_grep` for exact text and
 `loom_code_symbol` for a named definition or enclosing class. Request related
-methods together by reading their enclosing class.
+methods together by reading their enclosing class. Use `loom_code_read` for
+several known line ranges.
 
 Retrieve linked project history when needed. Use the source already in
 context when it answers your question. Continue through Loom when you need

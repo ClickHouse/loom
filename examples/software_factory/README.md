@@ -30,12 +30,16 @@ none are inserted into the issue prompt. The memory contrast measures both acces
 to historical knowledge and native memory capability, rather than linking alone.
 
 All arms start from the same agent image. The four Loom arms add one image
-layer with [project instructions](harbor/project-guidance.md) in
-`/workspace/CLAUDE.md`. Claude uses Loom for covered unchanged source and
-linked project history. Local tools handle edits, tests, Git, working-copy reads
-and uncovered source. The baseline uses the common image and local tools. The
-protocol freezes the instruction text and hash. Published runs retain the
-guidance from their serving revision.
+layer with [project instructions](harbor/project-guidance.md) and native Claude
+Code permissions. Loom sessions block Grep, shell grep variants and selected
+shell source reads of indexed paths. Local tools handle edits, tests, Git,
+working-copy reads and uncovered source. The baseline uses the common image and
+local tools.
+
+The routing audit requires a Loom source response before any successful native
+Read of indexed source. The run keeps all trial results and fails qualification
+when the receipt cannot establish this order. The protocol freezes the project
+instructions and permissions.
 
 This example uses MCP directly; it does not install the Loom plugin or its hooks.
 The server supplies initialization guidance. Reports record startup connection
