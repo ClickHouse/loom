@@ -1,14 +1,12 @@
 # Repository context
 
 Use Loom for each search or read of unchanged indexed source, including test
-files and module imports. For a known edit target, start with
+files and module imports. For an edit, start with
 `loom_code_edit_context` for its implementation, related tests, and linked
-notes. Name the method for a local change or the class when several methods
-interact. If you know the file but need to find the target, pass its path as
-`name` and literal code fragments as `clues`. Check the source revision and
-note freshness. Reuse the returned
-source and test excerpts before looking up more context. Use
-`loom_code_symbol` to inspect a definition.
+notes. Pass the smallest known definition as `name`, or literal code fragments
+as `clues`. With clues, pass the file's path as `name` if known. Check the source
+revision and note freshness. Reuse the returned source and test excerpts.
+Use `loom_code_symbol` to inspect a definition.
 
 Use `loom_code_search` for behavior and `loom_code_grep` for exact text. Once a
 search identifies the edit target, use `loom_code_edit_context` with its

@@ -35,7 +35,8 @@ class ProjectInstructions(TestCase):
             "related tests, and linked notes",
             text,
         )
-        self.assertIn("pass its path as `name` and literal code fragments as `clues`", text)
+        self.assertIn("or literal code fragments as `clues`", text)
+        self.assertIn("With clues, pass the file's path as `name` if known", text)
         self.assertIn("Keep discovery separate from edits, test execution and Git", text)
         self.assertIn("read working-copy changes, untracked or unindexed files", text)
 
