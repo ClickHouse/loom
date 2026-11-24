@@ -299,12 +299,13 @@ async def lessons_for_symbol(
     paths: list[str],
     extra_namespaces: list[str],
     limit: int = 3,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, Any]] | None:
     """The memories linked to the symbol, from the caller's lesson scope: the readable
     `extra_namespaces` the call names (over MCP its memory home) and the repository's
     team namespace.
     Each carries `code_state`: `changed` when this branch's definition differs from the
-    one the memory was written against. Any failure -> []."""
+    one the memory was written against. None when the read failed or ran past its
+    bound, so the answer can say lessons went unread rather than that there are none."""
     from server.memory.app import code_plane_reads
 
     async def read() -> list[dict[str, Any]]:
@@ -318,4 +319,4 @@ async def lessons_for_symbol(
             limit=limit,
         )
 
-    return await bounded(read(), [])
+    return await bounded(read(), None)

@@ -503,7 +503,9 @@ The links are read where the code is:
 - `code.symbol` attaches the linked memories as `lessons`, each with its `code_state`.
   They come from the repository's team namespace and the `lesson_namespaces` the call
   names (over MCP the caller's memory home when it names none), never from every
-  namespace the caller can read.
+  namespace the caller can read. The read is bounded by `code_enrich_timeout_s` and
+  serves at most three; when it fails or runs past that bound, the definition carries
+  `lessons_unread: true` instead, so a caller can tell it apart from a symbol with none.
 - `code.search`, `code.callers`, `code.callees`, `code.impact`, `code.outline` and a task's
   `code.context_pack` attach `lessons` for the answer's top files
   (`code_result_lessons_paths`): from the same namespaces, less any other repository's code

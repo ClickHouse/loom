@@ -90,7 +90,7 @@ class CodeSymbolInput(_CodeIdentity):
     # `lesson_namespaces` (over MCP the caller's memory home by default) and the
     # repository's team namespace, each with its `code_state` (`fresh`, `moved`, or
     # `changed` when this branch's body differs from the one the memory was written
-    # against).
+    # against). `lessons_unread: true` instead when the read failed or ran past its bound.
     include_lessons: bool = True
     # The memory namespaces whose linked memories `lessons` reads besides the repository's
     # team rules (over MCP the caller's memory home by default); one the caller cannot

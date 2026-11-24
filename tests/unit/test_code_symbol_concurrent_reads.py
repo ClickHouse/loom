@@ -210,7 +210,22 @@ def test_a_failing_leg_leaves_the_definition_served():
     d = out.definitions[0]
     assert d.body == "<body f1>"
     assert d.lessons == []  # the leg degraded to nothing; the answer did not
+    assert d.lessons_unread  # and it says so, unlike a symbol with no lessons
     assert [p["pr_number"] for p in d.recent_prs] == [7]
+
+
+def test_a_lessons_read_past_its_bound_says_lessons_went_unread():
+    out, _wall = _run(_Clock(), lessons=None)
+    d = out.definitions[0]
+    assert d.lessons == [] and d.lessons_unread
+    assert d.model_dump()["lessons_unread"] is True
+
+
+def test_a_symbol_with_no_lessons_says_nothing_about_them():
+    out, _wall = _run(_Clock(), lessons=[])
+    d = out.definitions[0]
+    assert not d.lessons_unread
+    assert "lessons_unread" not in d.model_dump() and "lessons" not in d.model_dump()
 
 
 def test_enrichment_not_asked_reads_nothing_extra():
@@ -225,3 +240,29 @@ def test_enrichment_not_asked_reads_nothing_extra():
     assert not {"pr_history", "test_map", "lessons"} & set(clock.calls), clock.calls
     assert "edges:calls" not in clock.calls  # usage examples were not asked for
     assert out.definitions[0].recent_prs == [] and out.definitions[0].lessons == []
+    assert not out.definitions[0].lessons_unread  # not asked is not unread
+
+
+@pytest.mark.parametrize("outcome", ["slow", "failing"])
+def test_the_lessons_read_answers_none_when_cut_off_or_failed(monkeypatch, outcome):
+    from server.code.app import enrich as code_enrich
+    from server.memory.app import code_plane_reads
+
+    async def nss(org, ns, extra):
+        return ["code-a"]
+
+    async def read(*a, **kw):
+        if outcome == "failing":
+            raise RuntimeError("memory plane down")
+        await asyncio.sleep(5)
+        return [{"memory_key": "late"}]
+
+    monkeypatch.setattr(code_plane_reads, "lesson_namespaces", nss)
+    monkeypatch.setattr(code_plane_reads, "lessons_for_symbol", read)
+    monkeypatch.setattr(settings, "code_enrich_timeout_s", 0.05)
+    got = asyncio.run(
+        code_enrich.lessons_for_symbol(
+            "o", "code-a", symbol_name="f", paths=["a.py"], extra_namespaces=[]
+        )
+    )
+    assert got is None

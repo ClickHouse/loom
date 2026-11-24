@@ -791,6 +791,7 @@ export interface CodeUnit {
   recent_prs?: Array<Record<string, unknown>>;
   examples?: Array<Record<string, unknown>>;
   lessons?: Array<Record<string, unknown>>;
+  lessons_unread?: boolean;
   churn?: number;
   amp?: number;
   tested?: boolean;

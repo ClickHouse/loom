@@ -365,11 +365,13 @@ async def _enrichment(
     async def none() -> None:
         return None
 
-    async def lessons() -> list[dict[str, Any]]:
+    unread: list[str] = []  # members whose lessons read was cut off or failed
+
+    async def lessons() -> list[dict[str, Any]] | None:
         if request_narrowed():
             return []  # a token that may not read every user's lessons
 
-        async def read(name: str) -> list[dict[str, Any]]:
+        async def read(name: str) -> list[dict[str, Any]] | None:
             return await code_enrich.lessons_for_symbol(
                 org, ns, symbol_name=name, paths=paths, extra_namespaces=input.lesson_namespaces
             )
@@ -380,6 +382,9 @@ async def _enrichment(
         groups = await asyncio.gather(*(read(name) for name in names))
         notes: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
         for name, group in zip(names, groups, strict=True):
+            if group is None:
+                unread.append(name)
+                continue
             for note in group:
                 key = (
                     note["namespace"],
@@ -450,6 +455,8 @@ async def _enrichment(
         out["examples"] = examples
     if lessons_out is not None:
         out["lessons"] = lessons_out
+    if input.include_lessons and (lessons_out is None or unread):
+        out["lessons_unread"] = True  # cut off or failed: not "no lessons"
     if for_edit and (matched_members or _uses_brief.single_declaration(head)):
         with code_span("enrich.owner_context"):
             out.update(

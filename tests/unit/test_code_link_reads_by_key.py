@@ -89,12 +89,21 @@ async def test_the_reads_off_the_sort_key_take_their_keys_from_the_index_first()
     }
 
 
-def _memory(key: str, mid: str, version: int, *, gone: bool = False, status: str = "active") -> str:
+def _memory(
+    key: str,
+    mid: str,
+    version: int,
+    *,
+    gone: bool = False,
+    status: str = "active",
+    pinned: int = 0,
+    confidence: float = 0.5,
+) -> str:
     return (
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
-        "memory_id, value, status, tombstoned_at, version) VALUES "
+        "memory_id, value, status, tombstoned_at, pinned, confidence, version) VALUES "
         f"('o', 'n', 'a', '-', '-', '{key}', '{mid}', '\"text of {key}\"', '{status}', "
-        f"{'now()' if gone else 'NULL'}, {version})"
+        f"{'now()' if gone else 'NULL'}, {pinned}, {confidence}, {version})"
     )
 
 
@@ -123,7 +132,7 @@ async def test_a_linked_memory_is_read_by_its_identity_while_it_holds_the_linked
         ("k1", False),
         ("k3", True),
     ]
-    served = await code_plane_reads.served_excerpts("o", ["n"], linked, ch=ch)
+    served = await code_plane_reads.served_excerpts("o", ["n"], linked, limit=3, ch=ch)
     assert [(r["memory_key"], r["excerpt"]) for r in served] == [("k1", "text of k1")]
 
 
@@ -133,4 +142,22 @@ async def test_no_memory_named_reads_nothing() -> None:
             raise AssertionError("read")
 
     assert await code_links.heads_by_identity("o", [], ch=_CH()) == []
-    assert await code_plane_reads.served_excerpts("o", ["n"], [], ch=_CH()) == []
+    assert await code_plane_reads.served_excerpts("o", ["n"], [], limit=3, ch=_CH()) == []
+
+
+async def test_the_excerpt_read_keeps_the_best_rows_up_to_its_limit() -> None:
+    ch = _memory_ch(
+        _memory("k1", ID["a"], 1, confidence=0.9),
+        _memory("k2", ID["b"], 1, pinned=1, confidence=0.1),  # pinned, but its code changed
+        _memory("k3", ID["c"], 1, pinned=1, confidence=0.2),
+        _memory("k4", ID["d"], 1, confidence=0.3),
+        _memory("k5", ID["e"], 1, confidence=0.95, gone=True),  # deleted: never a candidate
+    )
+    linked = [_named(f"k{n}", ID[c]) for n, c in enumerate("abcde", 1)]
+    served = await code_plane_reads.served_excerpts(
+        "o", ["n"], linked, limit=3, changed=[ID["b"]], ch=ch
+    )
+    # code that still matches first, then pinned, then the most confident
+    assert [r["memory_key"] for r in served] == ["k3", "k1", "k4"]
+    everything = await code_plane_reads.served_excerpts("o", ["n"], linked, limit=10, ch=ch)
+    assert [r["memory_key"] for r in everything] == ["k2", "k3", "k1", "k4"]

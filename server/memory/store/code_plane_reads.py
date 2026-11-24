@@ -17,12 +17,17 @@ async def served_excerpts(
     namespaces: Sequence[str],
     memories: Sequence[LinkedMemory],
     *,
+    limit: int,
+    changed: Sequence[str] = (),
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """The served rows of `namespaces` among `memories` (live, unexpired, not `high`),
-    each read by its identity, the table's sort key, and kept only while that identity
-    still holds its memory_id; with the complete value as text (a JSON string value
-    decoded), for a code read's lessons."""
+    """The best `limit` served rows of `namespaces` among `memories` (live, unexpired,
+    not `high`), each read by its identity, the table's sort key, and kept only while
+    that identity still holds its memory_id; with the complete value as text (a JSON
+    string value decoded), for a code read's lessons. Best is a memory not in `changed`
+    (its code still matches), then pinned, then the most confident: a file with many
+    linked memories reads no more excerpts than the answer serves. Each slice of
+    `memories` keeps its own `limit`, so the caller ranks and cuts again."""
     if not memories or not namespaces:
         return []
     return await query_all_sliced(
@@ -37,8 +42,16 @@ async def served_excerpts(
               IN {memories:Array(Tuple(String, String, String, String, String, UUID))}
           AND tombstoned_at IS NULL AND status IN ('active', 'conflicted')
           AND (expires_at IS NULL OR expires_at > now()) AND sensitivity != 'high'
+        ORDER BY memory_id IN {changed:Array(UUID)}, pinned DESC, confidence DESC
+        LIMIT {limit:UInt32}
         """,
-        {"org": org, "nss": sorted(set(namespaces)), "memories": sorted(set(memories))},
+        {
+            "org": org,
+            "nss": sorted(set(namespaces)),
+            "memories": sorted(set(memories)),
+            "changed": sorted(set(changed)),
+            "limit": limit,
+        },
         "memories",
     )
 

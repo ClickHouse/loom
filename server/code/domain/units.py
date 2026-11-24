@@ -97,6 +97,7 @@ _OPTIONAL_WHEN_EMPTY: frozenset[str] = frozenset(
         "recent_prs",
         "examples",
         "lessons",
+        "lessons_unread",
         "churn",
         "amp",
         "tested",
@@ -154,6 +155,9 @@ class CodeUnit(BaseModel):
     recent_prs: list[dict[str, Any]] = Field(default_factory=list)
     examples: list[dict[str, Any]] = Field(default_factory=list)
     lessons: list[dict[str, Any]] = Field(default_factory=list)
+    # True when `lessons` was asked for but its read failed or ran past
+    # `code_enrich_timeout_s`: the symbol may have lessons this answer does not carry.
+    lessons_unread: bool = False
     # risk annotations + one-hop context (code.search fills these when
     # annotate=True; see code/app/risk.py for exact semantics — churn
     # is a floor bounded by PR-history coverage, tested means "a mapped

@@ -346,9 +346,9 @@ async def test_lesson_excerpts_are_read_only_from_the_lesson_namespaces() -> Non
     from server.memory.store import code_plane_reads
 
     ch = _CH()
-    mid = str(uuid.uuid4())
-    await code_plane_reads.served_excerpts("o", ["team", "me"], [mid], ch=ch)
+    memory = ("me", "a", "-", "-", "k", str(uuid.uuid4()))
+    await code_plane_reads.served_excerpts("o", ["team", "me"], [memory], limit=3, ch=ch)
     ((sql, params),) = ch.sql
     assert "namespace IN {nss:Array(String)}" in sql and params["nss"] == ["me", "team"]
-    assert await code_plane_reads.served_excerpts("o", [], [mid], ch=ch) == []
+    assert await code_plane_reads.served_excerpts("o", [], [memory], limit=3, ch=ch) == []
     assert len(ch.sql) == 1
