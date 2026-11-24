@@ -601,13 +601,19 @@ def _coding_instructions(
         else ""
     )
     # A code-only token can have no default memory workspace.
-    context = (
-        f"\n\nFirst step of each task: call {tool['context.pack']} with "
-        + "the task as `query`. "
-        + f"Skip it when {FIRST_STEP_HOOK}."
-        if defaults and defaults.get("namespace") and tool["context.pack"]
-        else ""
-    )
+    context = ""
+    if defaults and defaults.get("namespace") and tool["context.pack"]:
+        if compact and current_code_scope():
+            context = (
+                "\n\nFor prior decisions or procedures beyond linked code lessons, use "
+                f"{tool['context.pack']} with the task as `query`. "
+            )
+        else:
+            context = (
+                f"\n\nFirst step of each task: call {tool['context.pack']} "
+                "with the task as `query`. "
+            )
+        context += f"Skip it when {FIRST_STEP_HOOK}."
     discovery = (
         'Find other Loom operations with `loom_op(op="help")`. '
         "Writes need user intent and permission."

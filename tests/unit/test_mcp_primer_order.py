@@ -104,6 +104,16 @@ def test_compact_coding_primer_preserves_scope_and_profile() -> None:
     assert "loom_code_callers" in _split(full)[0]
 
 
+def test_compact_bound_coding_uses_task_pack_for_additional_history(monkeypatch) -> None:
+    defaults = {"org": "project", "namespace": "history", "agent": "coding"}
+    bound = mcp_primer._coding_instructions("coding", defaults, compact=True)
+    assert "First step of each task" not in bound
+    assert "For prior decisions or procedures beyond linked code lessons" in bound
+    monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: None)
+    unbound = mcp_primer._coding_instructions("coding", defaults, compact=True)
+    assert "First step of each task" in unbound
+
+
 def test_code_scope_precedes_a_long_memory_workspace_notice(monkeypatch) -> None:
     monkeypatch.setattr(mcp_primer, "_coding_workspace_line", lambda _: "WORKSPACE" * 1000)
     text = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
