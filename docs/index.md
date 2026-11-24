@@ -28,6 +28,7 @@ One page per need, each saying what Loom does for it and where to start:
 [document search and RAG](use-cases/document-search.md) ·
 [knowledge factory for AI agents](use-cases/knowledge-factory.md) ·
 [code index for coding agents](use-cases/code-intelligence.md) ·
+[repository Q&A without a checkout](guides/repository-questions.md) ·
 [code index by language](use-cases/code-intelligence-by-language.md) ·
 [memory linked to code](use-cases/memory-linked-to-code.md) ·
 [coding-agent model cost](use-cases/coding-agent-cost.md) ·

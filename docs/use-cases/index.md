@@ -9,6 +9,7 @@ does for that need and where to start.
 | Knowledge and document search for agents (RAG)                                   | [Document search](document-search.md)                      |
 | Turn sources and agent lessons into reusable knowledge                           | [Knowledge factory](knowledge-factory.md)                  |
 | A code index and code intelligence for coding agents                             | [Code index](code-intelligence.md)                         |
+| Answer repository questions from a bot without a local checkout                  | [Repository Q&A](../guides/repository-questions.md)        |
 | What the code index gives per language (C++, Python, TypeScript, Go, Rust, Java) | [Code index by language](code-intelligence-by-language.md) |
 | Memory linked to the code it is about, flagged when the code changes             | [Memory linked to code](memory-linked-to-code.md)          |
 | Lower model cost for coding agents                                               | [Coding-agent cost](coding-agent-cost.md)                  |
