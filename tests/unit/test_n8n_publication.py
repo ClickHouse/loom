@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
         ("n8n-v0.1.0", "0.1.0-rc.1", False),
         ("n8n-v01.1.0", "01.1.0", False),
         ("v1.3.0", "0.1.0", True),
+        ("vbad", "0.1.0", False),
         ("v1.3.0", "0.1.0-rc.1", False),
         ("v1.3.0-rc.1", "0.1.0", False),
         ("n8n-v0.1.0; exit 0", "0.1.0", False),
@@ -34,16 +35,19 @@ def test_publication_tag_selects_a_stable_package(
     workflow = yaml.safe_load((ROOT / ".github/workflows/n8n-publish.yml").read_text())
     guard = next(
         step["run"]
-        for step in workflow["jobs"]["publish"]["steps"]
-        if step.get("id") == "publication-tag"
+        for step in workflow["jobs"]["check"]["steps"]
+        if step.get("id") == "package-version"
     )
+    output = tmp_path / "output"
+    output.touch()
     (tmp_path / "package.json").write_text(json.dumps({"version": version}))
     result = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", guard],
         cwd=tmp_path,
-        env={**os.environ, "RELEASE_TAG": tag},
+        env={**os.environ, "RELEASE_TAG": tag, "GITHUB_OUTPUT": str(output)},
         capture_output=True,
         text=True,
         timeout=5,
     )
     assert (result.returncode == 0) is accepted, result.stderr
+    assert output.read_text() == (f"version={version}\n" if accepted else "")
