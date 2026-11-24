@@ -94,15 +94,22 @@ async def test_ingest_lifecycle(code_env) -> None:
 
 async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
     from server.code.api.models_read import CodeReadInput
-    from server.code.app.read import handle_code_read
-    from server.embedding.fake import FakeNGramEmbedder
+    from server.code.app import read
     from server.settings import settings
 
     repo, org, ns = code_env
     monkeypatch.setattr(settings, "code_intel_enabled", True)
-    monkeypatch.setattr(settings, "embedding_model", FakeNGramEmbedder().model_name)
     await _ingest(repo, org, ns)
-    response = await handle_code_read(
+
+    async def mirror(_cfg):
+        return "local-mirror"
+
+    async def show_file(_directory, _revision, _path, *, max_bytes):
+        return _SRC
+
+    monkeypatch.setattr(read, "present_dir", mirror)
+    monkeypatch.setattr(read.gitrepo, "show_file", show_file)
+    response = await read.handle_code_read(
         CodeReadInput(
             org=org,
             namespace=ns,
@@ -126,12 +133,10 @@ async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
 async def test_read_verifies_mirror_blob_after_incremental_ingest(code_env, monkeypatch) -> None:
     from server.code.api.models_read import CodeReadInput
     from server.code.app import read
-    from server.embedding.fake import FakeNGramEmbedder
     from server.settings import settings
 
     repo, org, ns = code_env
     monkeypatch.setattr(settings, "code_intel_enabled", True)
-    monkeypatch.setattr(settings, "embedding_model", FakeNGramEmbedder().model_name)
     commit = "b" * 40
     current = _SRC.replace(b"squashImpl();", b"doWork();")
     await _ingest(repo, org, ns)
@@ -155,6 +160,14 @@ async def test_read_verifies_mirror_blob_after_incremental_ingest(code_env, monk
     assert response.results[0].windows[0].text == lines[9]
     assert response.results[1].windows[0].text == "".join(lines[4:10])
     assert calls == [("local-mirror", commit, "src/S.cpp")]
+    record = (await repo.live_files_for_path(org, ns, "src/S.cpp"))[0]
+    await repo.insert_rows("code_files", [repo.moved_of("code_files", record, chunk_count=0)])
+    calls.clear()
+    excluded = await read.handle_code_read(
+        CodeReadInput(org=org, namespace=ns, ranges=["src/S.cpp:10"])
+    )
+    assert excluded.results[0].status == "unavailable"
+    assert not excluded.results[0].windows and not calls
 
 
 async def test_grep_returns_distinct_retained_enclosing_bodies_by_default(

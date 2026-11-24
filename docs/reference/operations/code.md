@@ -1090,7 +1090,7 @@ A PR draft asks whether a PR like it already exists.
 
 ## `code.read`
 
-Read exact source ranges from the index in one call.
+Read exact ranges from indexed files in one call.
 
 `POST /v1/code.read` · MCP `loom_code_read` · role `viewer` · read · not listed under the MCP `all` toolset
 

@@ -1370,10 +1370,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Check coverage. Use code.files for paths and local tools for uncommitted source."
     ),
     "code.read": (
-        "Read exact source ranges from the index in one call. "
+        "Read exact ranges from indexed files in one call. "
         'Pass a list such as ["src/app.py:40-70", "src/lib.py:12-19"]. '
-        "Each result names its indexed revision and available line windows. "
-        "Local tools can fill gaps marked partial or unavailable."
+        "Loom verifies source at its indexed revision against the local Git mirror."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
@@ -2182,8 +2181,9 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.symbol": (
         "Read a definition by name or path:line with source and linked lessons. "
-        "`example_context_lines` adds source near recorded usage sites. "
-        "Use code.search for unknown implementations, or code.enclosing with "
+        "Name the enclosing class to read adjacent methods together. "
+        "Use code.read for exact line ranges and code.search for unknown implementations. "
+        "`example_context_lines` adds source near recorded usage sites. Use code.enclosing with "
         "include_body=true for several known locations. "
         "`uses_brief: true` adds a compact caller summary for one resolved definition; "
         "code.callers reads a larger graph. `uses: true` adds the full mention list. "
@@ -2194,7 +2194,8 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Find known text. Use code.search for behavior. "
         "Pass a list of stable literal fragments in `pattern` "
         "to search alternatives in one call. "
-        "Matches include enclosing bodies by default. "
+        "Matches include the smallest enclosing bodies by default. "
+        "Use code.symbol for the full class or code.read for exact line ranges. "
         "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
         "`regex: true` uses one RE2 string. "
         "Scope with `path_prefix`, `path_globs` or `langs`. "

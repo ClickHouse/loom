@@ -1,4 +1,4 @@
-"""Read exact source ranges from the indexed revision."""
+"""Read exact source ranges at the indexed file's revision."""
 
 from __future__ import annotations
 
