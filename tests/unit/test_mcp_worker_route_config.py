@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from cryptography.x509.oid import NameOID
 
+from server.core import pg
 from server.knowledge.app.mcp_worker_route_config import load_worker_routes
 from server.knowledge.app.mcp_worker_routes import open_worker_routes
 from server.knowledge.app.mcp_worker_runtime import current_directory, source_worker_runtime
@@ -30,7 +31,11 @@ def _write_private_key(path, key) -> None:
 
 
 @pytest.mark.asyncio
-async def test_provision_operator_pins_trust_and_loads_only_loom_keys(tmp_path) -> None:
+@pytest.mark.parametrize("pg_authority", [True, False])
+async def test_provision_operator_pins_trust_and_loads_only_loom_keys(
+    tmp_path, monkeypatch, pg_authority
+) -> None:
+    monkeypatch.setattr(pg, "enabled", lambda: pg_authority)
     client = Ed25519PrivateKey.generate()
     grant = Ed25519PrivateKey.generate()
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "fixture")])
@@ -59,8 +64,11 @@ async def test_provision_operator_pins_trust_and_loads_only_loom_keys(tmp_path) 
     assert current_directory() is None
     async with source_worker_runtime(str(path)):
         directory = current_directory()
-        assert directory is not None
-        assert directory.worker(route.worker_id) is not None
+        if pg_authority:
+            assert directory is not None
+            assert directory.worker(route.worker_id) is not None
+        else:
+            assert directory is None
     assert current_directory() is None
 
 

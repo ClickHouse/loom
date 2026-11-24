@@ -63,8 +63,8 @@ RETURNING generation, modes, team_access, active
 """
 _REPLACE = f"""
 UPDATE loom.mcp_worker_approvals
-SET modes = $5, team_access = $6, user_id = $7, agent = $8, session_id = $9,
-    actor = $10, source_class = $11, active = ($5 > 0),
+SET modes = $5::smallint, team_access = $6, user_id = $7, agent = $8, session_id = $9,
+    actor = $10, source_class = $11, active = ($5::smallint > 0),
     generation = nextval('loom.mcp_worker_approval_generations')
 WHERE {_SCOPE} AND generation = $12
 RETURNING {_FIELDS}

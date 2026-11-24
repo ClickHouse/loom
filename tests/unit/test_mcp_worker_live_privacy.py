@@ -1,6 +1,6 @@
 """Live document telemetry retains request accounting without the payload."""
 
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -42,6 +42,20 @@ def test_live_ledger_ignores_arguments_results_and_exception_text(monkeypatch, s
     assert not event.run_id
     assert not event.response_tokens
     assert "canary" not in str(event.args)
+
+
+@pytest.mark.asyncio
+async def test_live_mcp_capture_ignores_namespace_consent(monkeypatch) -> None:
+    from server.observability import capture_consent
+    from server.transport.mcp_call import _capture_level
+
+    consent = AsyncMock(return_value="full")
+    monkeypatch.setattr(capture_consent, "resolve", consent)
+    identity = {"org": "test-org", "namespace": "docs"}
+    assert await _capture_level(KNOWLEDGE_SOURCE_LIVE, identity) == "off"
+    consent.assert_not_awaited()
+    assert await _capture_level("knowledge.search", identity) == "full"
+    consent.assert_awaited_once_with("test-org", "docs")
 
 
 @pytest.mark.asyncio

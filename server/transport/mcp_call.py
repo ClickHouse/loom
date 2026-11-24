@@ -236,6 +236,20 @@ def _forbidden_result(
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
 
+async def _capture_level(operation: str, identity: dict[str, Any]) -> str:
+    from server.core.operation_privacy import retains_no_payload
+    from server.observability import capture_consent
+
+    if retains_no_payload(operation):
+        return "off"
+    try:
+        return await capture_consent.resolve(
+            str(identity.get("org") or ""), str(identity.get("namespace") or "")
+        )
+    except Exception:  # noqa: BLE001 — fail closed
+        return "off"
+
+
 async def _call_tool(
     req_id: Any,
     params: dict[str, Any],
@@ -333,7 +347,6 @@ async def _call_tool(
     # task-scoped, so entry N's provider spans would carry entry N-1's tenant.
     # Setting it here, once per entry before any LLM call, prevents both.
     try:
-        from server.observability import capture_consent as _consent
         from server.observability import otel as _otel_pre
 
         _ident = _span_identity(
@@ -341,18 +354,7 @@ async def _call_tool(
         )
         # Same per-namespace consent resolution as the HTTP path: once per
         # request, from a 60s cache, never inside the provider call.
-        try:
-            from server.core.operation_privacy import retains_no_payload
-
-            _ident["capture_level"] = (
-                "off"
-                if retains_no_payload(op.name)
-                else await _consent.resolve(
-                    str(_ident.get("org") or ""), str(_ident.get("namespace") or "")
-                )
-            )
-        except Exception:  # noqa: BLE001 — fail closed
-            _ident["capture_level"] = "off"
+        _ident["capture_level"] = await _capture_level(op.name, _ident)
         _otel_pre.set_loom_attributes(**_ident)
     except Exception:  # noqa: BLE001 — identity stamping must not fail a tool call
         # The identity could not be built: capture nothing, and name the op so its
