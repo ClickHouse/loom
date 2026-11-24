@@ -856,7 +856,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" "${files[@]}" --draft --verify-tag --title "$GITHUB_REF_NAME" \
               "${notes[@]}" --prerelease="$PRERELEASE" --repo "$GITHUB_REPOSITORY"
           fi
-          # A failed publish leaves the draft and its assets for the next run.
+          # Publish separately so a failed response leaves the release and its assets available.
           gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --draft=false \
             --prerelease="$PRERELEASE" --latest="$LATEST" --repo "$GITHUB_REPOSITORY"
 
