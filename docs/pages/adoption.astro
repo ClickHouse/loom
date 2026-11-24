@@ -286,7 +286,7 @@ const overview = [
       </div>
       <a href="https://github.com/ClickHouse/loom">View on GitHub</a>
     </div>
-    <div class="panels">
+    <div class="panels oss-metrics">
       {oss.map(({ label, source, value, day, days, change, isDownload }) => (
         <article class="card">
           <h3>{label}</h3>
@@ -421,6 +421,9 @@ const overview = [
     gap: 0.8rem;
   }
   .panels { grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); }
+  .oss-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 55rem) { .oss-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 34rem) { .oss-metrics { grid-template-columns: minmax(0, 1fr); } }
   .metrics + .panels, .activity + .panels, .notice + .panels { margin-top: 0.8rem; }
   .card {
     padding: clamp(0.9rem, 3vw, 1.3rem);

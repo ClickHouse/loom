@@ -41,6 +41,7 @@ export default defineConfig({
     radius: "sm",
   },
   navigation: {
+    actions: [{ label: "Website", href: "https://loom.clickhouse.com/" }],
     tabs: [
       { label: "Get started", path: "/getting-started" },
       { label: "Guides", path: "/guides" },
