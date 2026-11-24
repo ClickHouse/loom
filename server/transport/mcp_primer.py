@@ -613,17 +613,22 @@ def _coding_instructions(
     if not compact and tool["code.symbol"]:
         definition_hint += f"Inspect a definition with {tool['code.symbol']}. "
     route_hint = "Use " + "; ".join(routes) + ". " if routes else ""
-    code = (
-        "\n\nUse Loom first to search and read unchanged indexed source, including tests. "
-        + definition_hint
-        + route_hint
-        + "Batch related matches or ranges. In Claude Code, find deferred tools with ToolSearch. "
-        "Reuse source and linked lessons already in context. Check revision and `code_state`. "
-        "Use local tools to edit, run tests, and inspect Git. Read locally for working-copy "
-        "changes, unindexed paths, explicit requests, or evidence Loom cannot supply."
-        if routes or definition_hint
-        else ""
-    )
+    if compact:
+        lead = "\n\nUse Loom first for unchanged indexed code and tests. "
+        follow = (
+            "Batch lookups, check revision and `code_state`, and reuse source and notes. "
+            "Use local tools for edits, tests, Git, working-copy changes, explicit requests, "
+            "and evidence missing from Loom. Find deferred tools with ToolSearch."
+        )
+    else:
+        lead = "\n\nUse Loom first to search and read unchanged indexed source, including tests. "
+        follow = (
+            "Batch related matches or ranges. In Claude Code, find deferred tools with ToolSearch. "
+            "Reuse source and linked lessons already in context. Check revision and `code_state`. "
+            "Use local tools to edit, run tests, and inspect Git. Read locally for working-copy "
+            "changes, unindexed paths, explicit requests, or evidence Loom cannot supply."
+        )
+    code = lead + definition_hint + route_hint + follow if routes or definition_hint else ""
     # A code-only token can have no default memory workspace.
     context = ""
     if defaults and defaults.get("namespace") and tool["context.pack"]:
@@ -636,7 +641,7 @@ def _coding_instructions(
             )
         context += f"Skip it when {FIRST_STEP_HOOK}."
     discovery = (
-        'Find other Loom operations with `loom_op(op="help", query="<goal>")`. '
+        'Find Loom operations and arguments with `loom_op(op="help", query="<goal>")`. '
         "Writes need user intent and permission."
         if compact
         else "Find saved knowledge, documents, code, issues, tasks and records with `loom_op` "

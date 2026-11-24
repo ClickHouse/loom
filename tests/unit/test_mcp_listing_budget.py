@@ -411,6 +411,22 @@ def test_compact_coding_grep_advertises_search_options_and_edit_routing():
     assert "Scope with `path_prefix` or `path_globs`" in full["loom_code_grep"]["description"]
 
 
+def test_compact_coding_grep_advertises_common_args_and_help_lists_the_rest():
+    def props(profile):
+        tool = next(t for t in _listing("coding", True, profile) if t["name"] == "loom_code_grep")
+        return set(tool["inputSchema"]["properties"])
+
+    advanced = {"related_on_miss", "related_on_prefix", "neighbours", "neighbour_k", "deadline_ms"}
+    assert advanced <= props("standard") and advanced <= props("full")
+    compact = props("compact")
+    assert not compact & advanced
+    assert {"pattern", "path_prefix", "regex", "context_lines", "include_body", "cursor"} <= compact
+    help_row = next(
+        op for op in mcp_op.catalog("code.grep", toolset="coding")["ops"] if op["op"] == "code.grep"
+    )
+    assert advanced <= set(help_row["optional"])
+
+
 # ---------------------------------------------------------------- one revision policy
 
 
