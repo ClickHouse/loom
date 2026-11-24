@@ -22,8 +22,10 @@ if str(ROOT) not in sys.path:  # run as a file
 
 from scripts.codegen.common import GeneratedFile, OpFacts, pascal  # noqa: E402
 from scripts.codegen.rust_identity import (  # noqa: E402
+    CONVERSATION_TARGETS,
     NAMESPACE_FILTERS,
     PROCEDURE_TARGETS,
+    SOURCE_TARGETS,
     memory_tuple_policy,
     validate_roles,
 )
@@ -136,7 +138,7 @@ def factory_defaults() -> dict[tuple[str, str], object]:
     }
 
 
-def schema_for(model: type[BaseModel]) -> dict[str, Any]:
+def schema_for(model: type[BaseModel], *, request: bool = False) -> dict[str, Any]:
     """Describe factory defaults without executing arbitrary Python code."""
     from server.operations.read_projection import ProjectedRow
 
@@ -167,6 +169,9 @@ def schema_for(model: type[BaseModel]) -> dict[str, Any]:
             nested(field.annotation)
             factory = field.default_factory
             if factory is not None:
+                if request and field.default_factory_takes_validated_data:
+                    # The server computes this from sibling fields after validation.
+                    continue
                 if factory in (list, dict, set, tuple):
                     prop["default"] = [] if factory is not dict else {}
                 elif (current.__name__, name) in known:
@@ -636,8 +641,6 @@ def operation_identity_fields(op: Any) -> tuple[set[str], set[str]]:
         identity |= keys & {"agent", "user_id", "session_id", "run_id"}
     # These models declare authorship directly rather than through a base.
     if op.name in {
-        "memory.promote",
-        "memory.verify",
         "memory.import_evidence",
         "memory.record.write",
         "knowledge.add",
@@ -655,9 +658,9 @@ def operation_identity_fields(op: Any) -> tuple[set[str], set[str]]:
         "procedure.add",
         "procedure.record_run",
         "procedure.fork",
-    } or op.name.startswith("conversation."):
+    } or (op.name.startswith("conversation.") and op.name not in CONVERSATION_TARGETS):
         identity |= keys & {"agent", "user_id", "session_id"}
-    if op.name in PROCEDURE_TARGETS:
+    if op.name in PROCEDURE_TARGETS | SOURCE_TARGETS | CONVERSATION_TARGETS:
         defaults = keys & {"agent", "user_id", "session_id"}
     if op.name in {
         "memory.update",
@@ -742,7 +745,7 @@ def build(selected: tuple[str, ...] | None = None) -> str:
     for op in operations:
         key = op.name
         for request, model in [(False, op.output_model), (True, op.input_model)]:
-            schema = schema_for(model)
+            schema = schema_for(model, request=request)
             em.defs = schema.get("$defs", {})
             root = operation_type(op, request=request)
             em.ref_names = {}
@@ -844,7 +847,7 @@ def build_contract_tests(selected: tuple[str, ...] | None = None) -> str:
     for op in selected_operations(selected):
         lines = []
         for request, model in [(True, op.input_model), (False, op.output_model)]:
-            schema = schema_for(model)
+            schema = schema_for(model, request=request)
             payload = json.dumps(
                 schema_sample(schema, schema.get("$defs", {})), separators=(",", ":")
             )

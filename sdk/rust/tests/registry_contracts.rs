@@ -10183,6 +10183,16 @@ fn code_grep() {
         "code.grep:lessons_left_out"
     );
     assert_eq!(
+        encoded["contexts"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.grep:contexts"
+    );
+    assert_eq!(
+        encoded["contexts_partial"],
+        serde_json::from_str::<serde_json::Value>("false").unwrap(),
+        "code.grep:contexts_partial"
+    );
+    assert_eq!(
         encoded["definitions"],
         serde_json::from_str::<serde_json::Value>("[]").unwrap(),
         "code.grep:definitions"

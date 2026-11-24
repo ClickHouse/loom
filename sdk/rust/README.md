@@ -420,8 +420,12 @@ to the server; collection deletion requires an explicit target.
 Nullable namespace filters, including cost and audit rollups, preserve explicit
 values, null and omission. Memory row selectors preserve explicit agent, user,
 session and run values, with client defaults for omitted personal-view fields.
+Promotion and verification select the requested source identity. Conversation
+update, delete, compact and unsave calls preserve explicit targets and default
+omitted target fields to the client identity.
 `memory.recall` and `memory.brief` default only their required agent; optional
-filters use server defaults. Unknown operations receive
+filters use server defaults. `code.grep` omits `include_body` unless supplied,
+so the server chooses its default from `mode`. Unknown operations receive
 bound org and namespace only and retry connection failures before dispatch.
 They do not retry HTTP errors, timeouts, incomplete responses or 429 responses.
 The server validates fields and authorizes every operation.

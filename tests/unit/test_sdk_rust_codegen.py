@@ -139,6 +139,53 @@ def test_unknown_factory_is_refused_without_executing_it() -> None:
         gen.schema_for(Model)
 
 
+def test_data_dependent_defaults_are_omitted_only_in_requests() -> None:
+    def refuse(data: dict[str, Any]) -> bool:
+        raise AssertionError("must not execute arbitrary factories")
+
+    class Model(BaseModel):
+        mode: str = "matches"
+        include_body: bool = Field(default_factory=refuse)
+
+    schema = gen.schema_for(Model, request=True)
+    assert "default" not in schema["properties"]["include_body"]
+    assert "include_body" not in schema.get("required", [])
+    with pytest.raises(ValueError, match="unsupported default factory"):
+        gen.schema_for(Model)
+
+
+@pytest.mark.parametrize("mode", ["matches", "files", "presence", "message"])
+def test_grep_dynamic_default_preserves_omission_and_explicit_values(mode: str) -> None:
+    from server.code.api.models_grep import CodeGrepInput
+
+    schema = gen.schema_for(CodeGrepInput, request=True)
+    assert "default" not in schema["properties"]["include_body"]
+    base = {"org": "org", "namespace": "ns", "pattern": "needle", "mode": mode}
+    assert CodeGrepInput.model_validate(base).include_body == (mode == "matches")
+    for value in (True, False):
+        assert CodeGrepInput.model_validate({**base, "include_body": value}).include_body == value
+
+
+@pytest.mark.parametrize(
+    ("name", "targets"),
+    [
+        ("memory.promote", {"agent", "user_id", "session_id"}),
+        ("memory.verify", {"agent", "user_id", "session_id"}),
+        ("conversation.update", {"agent"}),
+        ("conversation.delete", {"agent"}),
+        ("conversation.compact", {"agent"}),
+        ("conversation.unsave_message", {"agent", "user_id"}),
+    ],
+)
+def test_source_and_conversation_mutation_targets_are_defaulted(
+    name: str, targets: set[str]
+) -> None:
+    op = gen.selected_operations((name,))[0]
+    stamped, defaults = gen.operation_identity_fields(op)
+    assert stamped == {"org", "namespace"}
+    assert defaults == targets
+
+
 @pytest.mark.parametrize(
     "schema",
     [
@@ -359,11 +406,15 @@ def test_registered_factory_defaults_match_server_values() -> None:
 
     checked = set()
     for op in ALL_OPERATIONS:
-        for model in (op.input_model, op.output_model):
-            schema = gen.schema_for(model)
+        for request, model in ((True, op.input_model), (False, op.output_model)):
+            schema = gen.schema_for(model, request=request)
             for field, prop in schema.get("properties", {}).items():
-                factory = model.model_fields[field].default_factory
+                info = model.model_fields[field]
+                factory = info.default_factory
                 if factory is not None:
+                    if info.default_factory_takes_validated_data:
+                        assert request and "default" not in prop
+                        continue
                     value = factory()
                     if isinstance(value, BaseModel):
                         value = value.model_dump(mode="json")

@@ -93,6 +93,14 @@ NAMESPACE_FILTERS = {
 
 PROCEDURE_TARGETS = {"procedure.evolve", "procedure.revise"}
 
+SOURCE_TARGETS = {"memory.promote", "memory.verify"}
+CONVERSATION_TARGETS = {
+    "conversation.update",
+    "conversation.delete",
+    "conversation.compact",
+    "conversation.unsave_message",
+}
+
 
 def memory_tuple_policy(op: Any) -> tuple[set[str], set[str]]:
     fields = op.input_model.model_fields

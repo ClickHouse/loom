@@ -5,6 +5,9 @@ use clickhouse_loom::{
 };
 use serde_json::{json, Value};
 
+#[path = "live_targets/mod.rs"]
+mod live_targets;
+
 fn client(namespace: &str, agent: &str, user: &str, session: &str) -> Client {
     Client::builder(
         std::env::var("LOOM_RUST_LIVE_ORG").unwrap(),

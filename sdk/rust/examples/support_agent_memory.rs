@@ -75,8 +75,9 @@ async fn run() -> Result<()> {
         keep.memory_update_by_id(MemoryUpdateByIdInput::new(&plan_id).value(revised)).await?;
         require(keep.get("plan").await?.value == revised, "The revised plan differs")?;
         let receipt = erase.erasure_request(
-            ErasureRequestInput::new(ErasureRequestInputScopeType::UserId, &users[1], "example@loom.test"),
+            ErasureRequestInput::new(ErasureRequestInputScopeType::UserId, &users[1], "example@loom.test").purge(true),
         ).await?;
+        require(receipt.purge, "Physical erasure was not requested")?;
         require(!receipt.erasure_id.is_empty(), "Missing erasure ID")?;
         let id = &receipt.erasure_id;
         let deadline = Instant::now() + Duration::from_secs(120);

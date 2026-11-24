@@ -1,4 +1,5 @@
 use super::*;
+mod targeted_mutations;
 use clickhouse_loom::{
     CallOptions, CollectionCreateInput, CollectionDeleteInput, CollectionMoveInput,
     MemoryExtractionStatusInput, MemoryListInput, MemoryListOutput, NamespaceDeleteInput,
@@ -370,4 +371,45 @@ fn secret_fields_serialize_but_do_not_appear_in_debug() {
         "token-marker"
     );
     assert!(!format!("{status:?}").contains("token-marker"));
+}
+
+#[tokio::test]
+async fn grep_preserves_dynamic_default_omission_and_explicit_booleans() {
+    use clickhouse_loom::{CodeGrepInput, CodeGrepInputMode};
+
+    let server = Server::new(vec![
+        response(
+            200,
+            json!({"matches": [], "chunks_matched": 0}),
+            ""
+        );
+        12
+    ]);
+    let client = Client::builder("org", "ns", "bot")
+        .base_url(&server.url)
+        .api_key("")
+        .build()
+        .unwrap();
+    for mode in [
+        CodeGrepInputMode::Matches,
+        CodeGrepInputMode::Files,
+        CodeGrepInputMode::Presence,
+        CodeGrepInputMode::Message,
+    ] {
+        for include_body in [None, Some(false), Some(true)] {
+            let pattern = serde_json::from_value(json!("needle")).unwrap();
+            let mut input = CodeGrepInput::new(pattern).mode(mode.clone());
+            if let Some(value) = include_body {
+                input = input.include_body(value);
+            }
+            let encoded = serde_json::to_value(&input).unwrap();
+            input.send(&client, CallOptions::default()).await.unwrap();
+            let body = server.request().await.body;
+            assert_eq!(body["mode"], serde_json::to_value(&mode).unwrap());
+            let expected = include_body.map(Value::Bool);
+            for value in [encoded, body] {
+                assert_eq!(value.get("include_body"), expected.as_ref());
+            }
+        }
+    }
 }
