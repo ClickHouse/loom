@@ -27,6 +27,16 @@ model writes the answer from the passages Loom returns.
 - **Access control on every passage.** Documents live in namespaces with viewer, writer and
   admin roles. [Namespaces and sharing](../features/namespaces-and-sharing.md)
 
+## Build a knowledge base agents can cite
+
+Start with documents the team already maintains, such as runbooks, architecture
+decisions and policies. Group sources in namespaces with the same readership. Give
+each agent access to the namespaces it needs and register sources for the documents
+that change outside Loom. A search hit gives the agent a passage, source and revision
+to check against the question. Store a decision an agent makes while applying a
+policy in [shared agent memory](agent-memory.md) so future agents can find it alongside
+the original evidence.
+
 ## Measured
 
 On a committed corpus of PDF, DOCX and PPTX files (27 held-out files), Loom's extractor,

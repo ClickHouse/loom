@@ -8,36 +8,36 @@ const capabilities = [
     title: "Shared memory",
     detail:
       "Carry decisions, constraints, and lessons into future sessions. Give people and agents a common place to review and update what they know.",
-    href: "/platform#memory",
-    link: "Explore memory",
+    href: "/docs/use-cases/agent-memory",
+    link: "Memory for coding agents",
   },
   {
     title: "Document search",
     detail:
       "Find the policy, runbook, or reference that answers a question. Open the cited passage and its document revision.",
-    href: "/platform#documents",
-    link: "Explore documents",
+    href: "/docs/use-cases/document-search",
+    link: "Document search and RAG",
   },
   {
     title: "Code intelligence",
     detail:
       "Find symbols, trace callers, and link memories to the code they describe. See when the source has changed since a memory was recorded.",
-    href: "/platform#code",
-    link: "Explore code intelligence",
+    href: "/docs/use-cases/memory-linked-to-code",
+    link: "Memory linked to code",
   },
 ];
 ---
 
 <SiteFrame
-  title="ClickHouse Loom | Shared knowledge for AI agents"
-  description="Give agents shared memory, cited document search, and code intelligence in an open-source service you can self-host on ClickHouse."
+  title="Open-source agent memory and code intelligence | ClickHouse Loom"
+  description="Shared memory for Claude Code, Codex, Cursor, and autonomous agents. Recall lessons across sessions, find cited documents, and trace code."
   path="/"
 >
   <section class="hero" aria-labelledby="home-title">
     <div class="hero-content">
       <p class="deployment">Open source · Self-hosted on ClickHouse</p>
-      <h1 id="home-title">Shared knowledge for AI agents.</h1>
-      <p class="lead">Loom connects what your agents learn with your team’s documents and source code. The next agent can pick up the decision, check its evidence, and keep working.</p>
+      <h1 id="home-title">Shared memory for AI agents</h1>
+      <p class="lead">Loom carries decisions and lessons across sessions. Agents can retrieve what the team learned, check cited documents, and see the source code each lesson applies to.</p>
       <div class="site-actions">
         <a class="primary" href="/docs/getting-started/quickstart">Run Loom</a>
         <a class="secondary" href="/platform">Explore the product</a>
@@ -71,6 +71,18 @@ const capabilities = [
         </article>
       ))}
     </div>
+  </section>
+
+  <section class="site-section" aria-labelledby="use-cases-title">
+    <div class="section-copy">
+      <h2 id="use-cases-title">Share what agents learn as they work</h2>
+      <p>Keep implementation decisions, review findings, and operational knowledge available to the next agent.</p>
+    </div>
+    <nav class="site-actions" aria-label="Agent memory use cases">
+      <a class="text-link" href="/docs/use-cases/multi-agent">Memory for a software factory</a>
+      <a class="text-link" href="/docs/use-cases/autonomous-agents">Memory for autonomous agents</a>
+      <a class="text-link" href="/docs/use-cases/self-hosted-clickhouse">Self-hosted agent memory</a>
+    </nav>
   </section>
 
   <section class="site-section evaluation" aria-labelledby="evaluation-title">

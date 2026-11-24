@@ -18,6 +18,9 @@ export default defineConfig({
     root: ".blume-content",
     include: ["**/*.{md,mdx}"],
   },
+  seo: {
+    sitemap: { alternates: true },
+  },
   agents: {
     mcp: {
       enabled: true,

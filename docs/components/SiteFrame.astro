@@ -9,6 +9,19 @@ interface Props {
 
 const { title, description, path } = Astro.props;
 const githubRepository = "https://github.com/ClickHouse/loom";
+const website = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: "ClickHouse Loom",
+  alternateName: "Loom by ClickHouse",
+  url: new URL("/", Astro.site).href,
+};
+// Search engines verify this public site's ownership from its homepage.
+const searchVerification = {
+  "google-site-verification": "zAhVtIsYdw5ZX9BICx7n53DkRaonzhBsK6uOYyk-chQ",
+  "msvalidate.01": "189DA06B0EB7CA657F91BF1A2D63BB67",
+  "yandex-verification": "bc461af94f4cec32",
+};
 const navigation = [
   { label: "Product", href: "/platform" },
   { label: "Enterprise", href: "/enterprise" },
@@ -29,6 +42,8 @@ const navigation = [
     <link rel="canonical" href={new URL(path, Astro.site)} />
     <link rel="icon" href="/docs/favicon.svg" type="image/svg+xml" />
     <title>{title}</title>
+    {path === "/" && Object.entries(searchVerification).map(([name, content]) => <meta name={name} content={content} />)}
+    {path === "/" && <script type="application/ld+json" set:html={JSON.stringify(website)} />}
   </head>
   <body>
     <a class="skip" href="#content">Skip to content</a>

@@ -17,6 +17,19 @@ that belong in every checkout in version control. Connecting an MCP client suppl
 operations; automatic session capture depends on the client's integration and settings.
 [Connect a coding agent](../getting-started/connect-a-coding-agent.md) describes both paths.
 
+## What is agentic memory?
+
+Agentic memory is information an AI agent can retrieve and update as it works. It lets a
+new session reuse a tested workaround, respect an earlier decision, or correct a fact
+when the evidence changes. The agent's context window holds the text it has available
+for the current request. Persistent memory makes selected information available to
+future requests without loading the entire conversation.
+
+For example, an agent can save why a retry needs an idempotency key and link the lesson
+to the function that enforces it. A later agent can retrieve the lesson with the
+function and check the source before changing the retry. Use [memory history and provenance](../features/memory/history-and-provenance.md)
+to see who saved the lesson and how it changed.
+
 ## Choosing a memory tool for coding agents
 
 The best memory tool for a coding agent depends on what it needs to remember. Keep

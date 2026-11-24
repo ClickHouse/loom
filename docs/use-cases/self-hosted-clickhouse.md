@@ -23,6 +23,15 @@ receive what they process), and what your agents know is queryable with SQL.
   the embedding provider accepts an OpenAI-compatible endpoint you run.
   [Models and API keys](../getting-started/models-and-keys.md)
 
+## Query agent memory with SQL
+
+Use the [read-only ClickHouse views](../reference/sql-surface.md) to audit saved facts,
+trace corrections, or pull usage into a reporting job. The ClickHouse user provisioned
+by `loom sql-access` reads only its granted orgs and namespaces. Start with
+[`sql_v1_memories`](../reference/sql-surface.md#sql_v1_memories) for current facts and
+[`sql_v1_memory_history`](../reference/sql-surface.md#sql_v1_memory_history) for versions.
+Agents can keep using MCP or HTTP for semantic recall and writes.
+
 ## Measured
 
 A synthetic load of memories with 2.4 versions per key and 3072-dimension embeddings (two
