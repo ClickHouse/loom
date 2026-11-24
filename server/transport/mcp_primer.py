@@ -353,17 +353,40 @@ def _tool_routing(toolset: str | None) -> str:
     )
 
 
+def _bound_coding_connection(toolset: str | None) -> bool:
+    from server.settings import settings
+
+    return (
+        resolve_toolset(toolset, settings.mcp_toolset) == "coding"
+        and current_code_scope() is not None
+    )
+
+
+def _linked_history_guidance(task_pack: str | None) -> str:
+    return (
+        "For prior decisions or procedures beyond linked code lessons, use "
+        f"{task_pack} with the task as `query`. "
+    )
+
+
 def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     """The Loom-first rules with the caller's default workspace baked in, naming
     the tools the connection's ``toolset`` listing carries."""
     tool = _tool_refs(toolset)
     collections = knowledge_search_reads_collections()
+    task_pack = (
+        _linked_history_guidance(tool["context.pack"])
+        if _bound_coding_connection(toolset)
+        else (
+            f"With a default memory namespace, call {tool['context.pack']} first with the task "
+            "as `query`, for the memories, decisions and procedures that bear on it in one "
+            "bounded bundle. "
+        )
+    )
     head = (
         "**Loom-first mode active for this conversation.**\n\n"
         + _tool_routing(toolset)
-        + "**1. Task context.** With a default memory namespace, call "
-        f"{tool['context.pack']} first with the task as `query`, for the memories, decisions and "
-        f"procedures that bear on it in one bounded bundle. Skip it when {FIRST_STEP_HOOK}. "
+        + f"**1. Task context.** {task_pack}Skip it when {FIRST_STEP_HOOK}. "
         "For one fact, rule 2's search alone is enough.\n\n"
         "**2. Recall lookup order.** When I ask about preferences, "
         "decisions, family/relationships, work, bills, contracts, "
@@ -603,11 +626,8 @@ def _coding_instructions(
     # A code-only token can have no default memory workspace.
     context = ""
     if defaults and defaults.get("namespace") and tool["context.pack"]:
-        if compact and current_code_scope():
-            context = (
-                "\n\nFor prior decisions or procedures beyond linked code lessons, use "
-                f"{tool['context.pack']} with the task as `query`. "
-            )
+        if _bound_coding_connection(toolset):
+            context = "\n\n" + _linked_history_guidance(tool["context.pack"])
         else:
             context = (
                 f"\n\nFirst step of each task: call {tool['context.pack']} "
