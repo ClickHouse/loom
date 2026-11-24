@@ -538,7 +538,11 @@ async function withClient(name, token, run) {
     await client.connect(transport);
     await run(client);
   } finally {
-    await client.close();
+    try {
+      await transport.terminateSession();
+    } finally {
+      await client.close();
+    }
   }
 }
 
