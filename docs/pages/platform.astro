@@ -87,7 +87,15 @@ const workflows = [
         <p class="example">{example}</p>
         <div class="site-actions"><a class="text-link" href={href}>{cta} <span aria-hidden="true">↗</span></a></div>
       </div>
-      <Image src={image} format="webp" alt={alt} loading="lazy" decoding="async" />
+      <Image
+        src={image}
+        format="webp"
+        widths={[360, 480, 640, 800, 960, image.width]}
+        sizes="(max-width: 55rem) 92vw, (max-width: 108rem) 52vw, 56rem"
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+      />
     </section>
   ))}
 

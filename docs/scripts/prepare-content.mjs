@@ -224,9 +224,10 @@ function prepareContent() {
     const sourcePath = source.join("/");
     const localized = locales.includes(locale);
     const linked = localized ? rewritePublishedDocLinks(text, englishSources) : text;
+    const rendered = localized && sourcePath === "index.md" ? prepareLocalizedLandingDemo(linked) : linked;
     const original = localized ? `i18n/${locale}/docs/${sourcePath}` : `docs/${preparedPath}`;
     const prepared = withContentDate(
-      normalizeTranslatedTitle(linked, localizedSeo[sourcePath]?.[locale]),
+      normalizeTranslatedTitle(rendered, localizedSeo[sourcePath]?.[locale]),
       contentDates.get(original),
     );
     if (prepared !== text) writeFileSync(file, prepared);
@@ -250,6 +251,17 @@ function prepareContent() {
     text = rewriteSourceLinks(text, relative(content, file));
     writeFileSync(file, text);
   }
+}
+
+export function prepareLocalizedLandingDemo(text) {
+  const media = "../assets/screenshots/clip-assistant-answer.webm";
+  const video =
+    /<video src="https:\/\/github\.com\/ClickHouse\/loom\/raw\/main\/docs\/assets\/screenshots\/clip-assistant-answer\.webm" ([^>]+)><a href="[^"]+">([^<]+)<\/a><\/video>/;
+  return text.replace(video, (original, attributes, label) => {
+    if (!attributes.includes(" autoplay loop ")) return original;
+    const onDemand = attributes.replace(" autoplay loop ", ' preload="none" ');
+    return `<details>\n<summary>${label}</summary>\n<video src="${media}" ${onDemand}><a href="${media}">${label}</a></video>\n</details>`;
+  });
 }
 
 function contentFiles(directory) {

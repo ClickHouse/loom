@@ -8,7 +8,10 @@ follow the reading order below.
 
 ![The dashboard's Library: a search for a refund rule answered by cited passages](assets/screenshots/document-search.webp)
 
-<video src="assets/screenshots/clip-assistant-answer.webm" controls autoplay loop muted playsinline width="100%" aria-label="Ask AI answering a question about refunds, with its numbered sources checked against Loom"><a href="assets/screenshots/clip-assistant-answer.webm">Ask AI answering with checked sources (clip)</a></video>
+<details>
+<summary>Watch the cited-answer demo</summary>
+<video src="assets/screenshots/clip-assistant-answer.webm" controls preload="none" muted playsinline width="100%" aria-label="Ask AI answering a question about refunds, with its numbered sources checked against Loom"><a href="assets/screenshots/clip-assistant-answer.webm">Download the cited-answer clip</a></video>
+</details>
 
 ## Start here
 

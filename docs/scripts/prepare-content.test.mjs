@@ -3,7 +3,24 @@ import test from "node:test";
 import { load } from "js-yaml";
 
 import { withContentDate } from "./content-dates.mjs";
-import { normalizeTranslatedTitle, rewritePublishedDocLinks, rewriteSourceLinks } from "./prepare-content.mjs";
+import {
+  normalizeTranslatedTitle,
+  prepareLocalizedLandingDemo,
+  rewritePublishedDocLinks,
+  rewriteSourceLinks,
+} from "./prepare-content.mjs";
+
+test("defers the localized landing demo and uses the published media file", () => {
+  const file = "docs/assets/screenshots/clip-assistant-answer.webm";
+  const source = `<video src="https://github.com/ClickHouse/loom/raw/main/${file}" controls autoplay loop muted><a href="https://github.com/ClickHouse/loom/blob/main/${file}">確認済みの出典付きの回答</a></video>`;
+  const prepared = prepareLocalizedLandingDemo(source);
+  const media = "../assets/screenshots/clip-assistant-answer.webm";
+  assert.equal(
+    prepared,
+    `<details>\n<summary>確認済みの出典付きの回答</summary>\n<video src="${media}" controls preload="none" muted><a href="${media}">確認済みの出典付きの回答</a></video>\n</details>`,
+  );
+  assert.equal(prepareLocalizedLandingDemo(prepared), prepared);
+});
 
 test("adds the source date without changing page content or overriding an explicit date", () => {
   const date = "2025-01-02T03:04:05.000Z";

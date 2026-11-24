@@ -48,6 +48,8 @@ const capabilities = [
       <Image
         src={dashboard}
         format="webp"
+        widths={[360, 480, 640, 800, 960, dashboard.width]}
+        sizes="(max-width: 63rem) 92vw, (max-width: 108rem) 48vw, 52rem"
         loading="eager"
         alt="Loom dashboard showing a payment decision linked to its function and a warning when related code has changed"
         fetchpriority="high"
