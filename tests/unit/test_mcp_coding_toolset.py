@@ -552,7 +552,7 @@ def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
         ("loom_code_context_pack", "for a task briefing"),
     ):
         assert f"`{name}` {purpose}" in coding
-    assert "ToolSearch" in coding
+    assert "In Claude Code, find deferred tools with ToolSearch" in coding
     assert "linked lessons" in coding
     assert "`code_state`" in coding
     assert "`uses_brief: true`" in coding

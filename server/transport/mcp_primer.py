@@ -578,7 +578,7 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         "\n\nUse Loom first to search and read unchanged indexed source, including tests. "
         + definition_hint
         + route_hint
-        + "Batch related matches or ranges. Find deferred tools with ToolSearch. "
+        + "Batch related matches or ranges. In Claude Code, find deferred tools with ToolSearch. "
         "Reuse source and linked lessons already in context. Check revision and `code_state`. "
         "Use local tools to edit, run tests, and inspect Git. Read locally for working-copy "
         "changes, unindexed paths, explicit requests, or evidence Loom cannot supply."
