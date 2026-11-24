@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+from difflib import get_close_matches
 from typing import Any
 
 from server.code.app.common import repo_relative
@@ -117,8 +118,7 @@ async def _functions_near(
 async def near_misses(
     repo: CodeRepo, org: str, ns: str, name: str, *, fallback: str = "", limit: int = 10
 ) -> list[dict[str, Any]]:
-    """The near-miss list for a name that resolved nothing: symbols whose name contains
-    its bare name, or for a `path:line` the functions in that file nearest the line."""
+    """Suggest declarations related to the missed name or source line."""
     loc = _parse_location(name)
     file_symbol = _parse_file_symbol(name)
     if loc:
@@ -127,6 +127,13 @@ async def near_misses(
         path, local = file_symbol
         needle = local.split("::")[-1].rsplit(".", 1)[-1]
         fuzzy = await repo.symbols_fuzzy(org, ns, needle or fallback, path=path, limit=limit)
+        if not fuzzy and needle:
+            # A guessed or mistyped name can miss substring search. The file the
+            # caller provided bounds the recovery to its own declarations.
+            outline = await repo.outline_for_path(org, ns, path)
+            by_name = {str(row["name"]).casefold(): row for row in reversed(outline)}
+            names = get_close_matches(needle.casefold(), by_name, n=limit)
+            fuzzy = [by_name[name] for name in names]
     else:
         fuzzy = await repo.symbols_fuzzy(org, ns, name.split("::")[-1] or fallback)
     return [
