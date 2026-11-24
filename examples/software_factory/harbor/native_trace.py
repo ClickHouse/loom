@@ -123,6 +123,7 @@ def summarize(trial):
     raw = path.read_bytes()
     output["source_sha256"] = hashlib.sha256(raw).hexdigest()
     calls, responses, replies, final = {}, set(), {}, None
+    code_calls = set()
     for event_index, line in enumerate(raw.decode().splitlines(), 1):
         try:
             event = json.loads(line)
@@ -142,6 +143,13 @@ def summarize(trial):
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "tool_use":
+                tool = block["name"].rsplit("__", 1)[-1]
+                arguments = block.get("input")
+                op = arguments.get("op") if isinstance(arguments, dict) else None
+                if tool.startswith("loom_code_") or (
+                    tool == "loom_op" and isinstance(op, str) and op.startswith("code.")
+                ):
+                    code_calls.add(block["id"])
                 calls.setdefault(
                     block["id"],
                     {
@@ -198,7 +206,7 @@ def summarize(trial):
                 counted = _content_counts(body, seen)
                 if counted["fresh_linked_lesson_rows"]:
                     fresh_events.append(result_event)
-                if "loom_code_" in name and any(counted[key] > 0 for key, _ in SOURCE_COUNTERS):
+                if identifier in code_calls and any(counted[key] > 0 for key, _ in SOURCE_COUNTERS):
                     source_events.append(result_event)
                 observed.update(counted)
                 for source, target in CONTENT_COUNTERS:
