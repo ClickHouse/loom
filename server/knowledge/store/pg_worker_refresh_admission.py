@@ -55,6 +55,16 @@ async def lock_namespace_on(conn: Connection, org: str, namespace: str) -> None:
     )
 
 
+async def lock_source_on(conn: Connection, source: AdmissionSource) -> tuple[str, str, UUID]:
+    await lock_namespace_on(conn, source.org, source.namespace)
+    key = (source.org, source.namespace, source.source_id)
+    await conn.execute(_OPEN, *key, source.agent, source.user_id, source.session_id, source.actor)
+    owner = await conn.fetchval(_OWNER, *key)
+    if owner != source.user_id:
+        raise RefreshRejected("source refresh authority changed")
+    return key
+
+
 async def reserve_on(conn: Connection, source: AdmissionSource, count: int) -> bool:
     """Reserve one batch under the source's erasure and admission locks.
 
@@ -63,12 +73,7 @@ async def reserve_on(conn: Connection, source: AdmissionSource, count: int) -> b
     """
     if type(count) is not int or not 1 <= count <= MAX_DOCUMENTS_PER_JOB:
         raise RefreshRejected("invalid refresh admission size")
-    await lock_namespace_on(conn, source.org, source.namespace)
-    key = (source.org, source.namespace, source.source_id)
-    await conn.execute(_OPEN, *key, source.agent, source.user_id, source.session_id, source.actor)
-    owner = await conn.fetchval(_OWNER, *key)
-    if owner != source.user_id:
-        raise RefreshRejected("source refresh authority changed")
+    key = await lock_source_on(conn, source)
     rows = await conn.fetch(_QUEUE, *key, MAX_RETAINED + 1)
     if len(rows) > MAX_RETAINED:
         raise RefreshRejected("source refresh admission invariant failed")

@@ -3,21 +3,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-from uuid import UUID
+from typing import TYPE_CHECKING, Literal
+from uuid import UUID, uuid4
 
 from server.core import pg
+from server.knowledge.domain.mcp_worker_manual import (
+    ManualOffer,
+    ManualPosition,
+    ManualSelection,
+    manual_demand,
+    next_offer,
+)
 from server.knowledge.domain.mcp_worker_refresh import RefreshJob, RefreshRejected, RefreshScope
 from server.knowledge.domain.mcp_worker_schedule import (
     PeriodicSchedule,
     RefreshDemand,
     ScheduleBinding,
+    ScheduleRejected,
     plan_scheduled_refresh,
 )
 from server.knowledge.store import pg_worker_refresh, pg_worker_refresh_admission
 
 if TYPE_CHECKING:
-    from asyncpg import Connection
+    from datetime import datetime
+
+    from asyncpg import Connection, Record
 
 _KEY = "org = $1 AND namespace = $2 AND source_id = $3"
 _CURRENT = f"""
@@ -26,6 +36,28 @@ SELECT * FROM loom.mcp_worker_refresh_schedules WHERE {_KEY} FOR UPDATE
 _ADVANCE = f"""
 UPDATE loom.mcp_worker_refresh_schedules SET next_due_at = $4
 WHERE {_KEY} RETURNING 1
+"""
+
+
+_MANUAL_CLOCK = f"""
+UPDATE loom.mcp_worker_refresh_admission
+SET manual_clock_at = GREATEST(manual_clock_at, clock_timestamp())
+WHERE {_KEY}
+RETURNING manual_incarnation, manual_sequence, manual_fingerprint, manual_issued_at,
+          manual_expires_at, manual_accepted_items, manual_clock_at
+"""
+_OFFER = f"""
+UPDATE loom.mcp_worker_refresh_admission
+SET manual_incarnation = $4, manual_sequence = $5, manual_fingerprint = $6,
+    manual_issued_at = $7, manual_expires_at = $8, manual_accepted_items = NULL
+WHERE {_KEY} RETURNING 1
+"""
+_ACCEPT = f"""
+UPDATE loom.mcp_worker_refresh_admission
+SET manual_accepted_items = $6
+WHERE {_KEY} AND manual_incarnation = $4 AND manual_sequence = $5 AND manual_accepted_items IS NULL
+  AND manual_expires_at > GREATEST(manual_clock_at, clock_timestamp())
+RETURNING 1
 """
 
 
@@ -119,3 +151,110 @@ async def _enqueue_demand_on(
         for task in job.document_tasks()
     )
     return await pg_worker_refresh.enqueue_batch_on(conn, batch)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ManualAdmission:
+    status: Literal["enqueued", "replayed", "busy", "stale"]
+    job_id: str | None = None
+    items: int = 0
+
+
+def _manual_selection(authority: ScheduleAuthority) -> ManualSelection:
+    return ManualSelection(
+        authority.binding,
+        authority.owner,
+        authority.actor,
+        authority.profile_digest,
+        authority.destination_id,
+        authority.selected,
+    )
+
+
+async def _manual_slot_on(
+    conn: Connection, authority: ScheduleAuthority
+) -> tuple[tuple[str, str, UUID], Record]:
+    binding = authority.binding
+    source_id = UUID(binding.source_id)
+    if str(source_id) != binding.source_id or source_id.int == 0:
+        raise RefreshRejected("invalid refresh source identity")
+    source = pg_worker_refresh_admission.AdmissionSource(
+        binding.org,
+        binding.namespace,
+        source_id,
+        authority.agent,
+        authority.owner,
+        authority.session_id,
+        authority.actor,
+    )
+    key = await pg_worker_refresh_admission.lock_source_on(conn, source)
+    row = await conn.fetchrow(_MANUAL_CLOCK, *key)
+    if row is None:
+        raise RefreshRejected("manual refresh authority changed")
+    return key, row
+
+
+def _offer_from_row(row: Record) -> ManualOffer | None:
+    if row["manual_incarnation"] is None:
+        return None
+    return ManualOffer(
+        ManualPosition(row["manual_incarnation"], row["manual_sequence"]),
+        row["manual_fingerprint"],
+        row["manual_issued_at"],
+        row["manual_expires_at"],
+        row["manual_accepted_items"],
+    )
+
+
+async def prepare_manual_on(conn: Connection, authority: ScheduleAuthority) -> ManualOffer:
+    """Create or return the current server-issued offer without enqueuing work."""
+    key, row = await _manual_slot_on(conn, authority)
+    previous = _offer_from_row(row)
+    position = previous.position if previous else ManualPosition(uuid4(), 0)
+    now: datetime = row["manual_clock_at"]
+    offer = next_offer(position, previous, _manual_selection(authority), now)
+    if offer is previous:
+        return offer
+    if (
+        await conn.fetchval(
+            _OFFER,
+            *key,
+            offer.position.incarnation,
+            offer.position.sequence,
+            offer.fingerprint,
+            offer.issued_at,
+            offer.expires_at,
+        )
+        != 1
+    ):
+        raise RefreshRejected("manual refresh authority changed")
+    return offer
+
+
+async def submit_manual_on(
+    conn: Connection, authority: ScheduleAuthority, requested: ManualPosition
+) -> ManualAdmission:
+    """Admit once by a persisted offer; submit never creates or rotates an offer."""
+    _require_transaction(conn)
+    async with conn.transaction():
+        key, row = await _manual_slot_on(conn, authority)
+        offer = _offer_from_row(row)
+        if offer is None:
+            return ManualAdmission("stale")
+        try:
+            demand = manual_demand(
+                offer, requested, _manual_selection(authority), now=row["manual_clock_at"]
+            )
+        except ScheduleRejected:
+            return ManualAdmission("stale")
+        if offer.accepted_items is not None:
+            return ManualAdmission("replayed", demand.job_id, offer.accepted_items)
+        inserted = await _enqueue_demand_on(conn, authority, demand)
+        if not inserted:
+            return ManualAdmission("busy")
+        if (
+            await conn.fetchval(_ACCEPT, *key, requested.incarnation, requested.sequence, inserted)
+            != 1
+        ):
+            raise RefreshRejected("manual refresh authority changed")
+        return ManualAdmission("enqueued", demand.job_id, inserted)

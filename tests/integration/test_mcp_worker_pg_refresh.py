@@ -19,8 +19,10 @@ if TYPE_CHECKING:
 
     from asyncpg import Connection, Record
 
+    from server.knowledge.domain.mcp_worker_manual import ManualPosition
     from server.knowledge.domain.mcp_worker_refresh import CompletionReceipt, LiveLease
     from server.knowledge.store.pg_worker_refresh import RefreshEntry
+    from server.knowledge.store.pg_worker_schedules import ScheduleAuthority
 
 
 class _RollbackCheckpoint(Exception):
@@ -203,5 +205,91 @@ async def test_refresh_claim_rollback_and_cancel_fence(pg_conn: Connection) -> N
             cancelled = dict(await _row(pg_conn, first))
             assert cancelled == dict(snapshots[0], state="cancelled", fence=lease.fence + 1)
             assert dict(await _row(pg_conn, second)) == dict(snapshots[1])
+    finally:
+        await _cleanup(pg_conn, org)
+
+
+async def _assert_manual_offer_replay(pg_conn: Connection, entry: RefreshEntry) -> None:
+    from dataclasses import replace
+
+    from server.knowledge.domain.mcp_worker_schedule import ScheduleBinding
+    from server.knowledge.store import pg_worker_schedules as schedules
+
+    scope = entry.task.scope
+    authority = schedules.ScheduleAuthority(
+        ScheduleBinding(
+            scope.org,
+            scope.namespace,
+            scope.source_id,
+            scope.connection_id,
+            str(entry.worker_id),
+            scope.connection_generation,
+            scope.source_generation,
+            scope.selection_generation,
+            scope.approval_generation,
+        ),
+        scope.profile_digest,
+        (entry.task.resource_id,),
+        scope.destination_id,
+        entry.user_id,
+        scope.actor,
+        entry.agent,
+        entry.session_id,
+    )
+    async with pg_conn.transaction():
+        offer = await schedules.prepare_manual_on(pg_conn, authority)
+        submitted = await schedules.submit_manual_on(pg_conn, authority, offer.position)
+    assert submitted.status == "enqueued" and submitted.job_id and submitted.items == 1
+    async with pg_conn.transaction():
+        retry = await schedules.submit_manual_on(pg_conn, authority, offer.position)
+        changed = replace(authority, selected=(*authority.selected, "different-resource"))
+        stale = await schedules.submit_manual_on(pg_conn, changed, offer.position)
+    assert retry == replace(submitted, status="replayed")
+    assert stale.status == "stale" and stale.job_id is None
+    assert (
+        await pg_conn.fetchval(
+            "SELECT count(*) FROM loom.knowledge_source_refresh WHERE org = $1", scope.org
+        )
+        == 1
+    )
+    await _assert_expired_offer(pg_conn, authority, offer.position)
+
+
+async def _assert_expired_offer(
+    pg_conn: Connection, authority: ScheduleAuthority, previous: ManualPosition
+) -> None:
+    from uuid import UUID
+
+    from server.knowledge.store import pg_worker_schedules as schedules
+
+    binding = authority.binding
+    async with pg_conn.transaction():
+        await pg_conn.execute(
+            """
+            UPDATE loom.mcp_worker_refresh_admission
+            SET manual_issued_at = statement_timestamp() - interval '10 minutes',
+                manual_expires_at = statement_timestamp() - interval '5 minutes'
+            WHERE org = $1 AND namespace = $2 AND source_id = $3
+            """,
+            binding.org,
+            binding.namespace,
+            UUID(binding.source_id),
+        )
+        stale = await schedules.submit_manual_on(pg_conn, authority, previous)
+        replacement = await schedules.prepare_manual_on(pg_conn, authority)
+        still_busy = await schedules.submit_manual_on(pg_conn, authority, replacement.position)
+        again = await schedules.submit_manual_on(pg_conn, authority, previous)
+    assert stale.status == again.status == "stale"
+    assert replacement.position.sequence == previous.sequence + 1
+    assert still_busy.status == "busy"
+
+
+@pytest.mark.asyncio
+async def test_manual_refresh_offer_is_durable_and_single_use(pg_conn: Connection) -> None:
+    org = unique_org("worker-pg-manual")
+    try:
+        async with asyncio.timeout(15):
+            due = await pg_conn.fetchval("SELECT clock_timestamp()")
+            await _assert_manual_offer_replay(pg_conn, _entry(org, "manual", due))
     finally:
         await _cleanup(pg_conn, org)
