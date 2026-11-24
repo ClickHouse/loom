@@ -44,8 +44,9 @@ Run `npm --prefix deploy/telemetry test` to exercise the receiver locally.
 ## Publish adoption metrics
 
 The Loom site's Vercel project serves the Self-hosted and OSS tabs at
-`/adoption`. Give its server function a separate ClickHouse user with `SELECT` on these
-views in `loom_product_analytics`:
+`/adoption`. Save [public-adoption.sql](public-adoption.sql) in the ClickHouse
+Cloud SQL console and create a Query API endpoint for it. Give the endpoint's
+database role `SELECT` on these views in `loom_product_analytics`:
 
 - `public_adoption_totals`
 - `public_adoption_versions`
@@ -54,11 +55,15 @@ views in `loom_product_analytics`:
 - `public_adoption_lifecycle`
 - `public_oss_adoption`
 
-The views run with the schema owner's privileges. Give the website user access
-only to the aggregate views. Use `LOOM_ADOPTION_PUBLIC_CLICKHOUSE_URL`,
-`LOOM_ADOPTION_PUBLIC_CLICKHOUSE_USER`, and `LOOM_ADOPTION_PUBLIC_CLICKHOUSE_PASSWORD`
-as server-side environment variables. The URL must use HTTPS. Vercel caches
-the aggregate page for an hour. The site fetches repository and release counts
+The views run with the schema owner's privileges. Set `readonly = 2` on the
+endpoint role so the Query API can apply HTTP and output-format settings.
+Authorize a dedicated API key for the endpoint and set
+`LOOM_ADOPTION_QUERY_ENDPOINT_URL`, `LOOM_ADOPTION_QUERY_KEY_ID`, and
+`LOOM_ADOPTION_QUERY_KEY_SECRET` in the site's server environment. Use the HTTPS
+`/run/<id>` URL from the endpoint configuration. Redeploy the site after saving
+the variables.
+
+Vercel caches the aggregate page for an hour. The site fetches repository and release counts
 from GitHub, SDK downloads from PyPI Stats and npm, and container pulls from
 the public package page. Stored registry metrics fill gaps when the public
 sources are unavailable. The page shows the latest observation date for each
@@ -71,7 +76,6 @@ and star data for that selection.
 
 Grant the restricted `loom_adoption_top_domains_30d` view only to authorized
 analytics staff. Its rows contain opt-in domain names and attributed counts.
-The site's user needs only the listed public views.
 
 ## Edit the public site
 

@@ -4,25 +4,32 @@ import { test } from "node:test";
 import { loadAdoption } from "./adoption-data.mjs";
 import { summarizeOss } from "./adoption-view.mjs";
 
-test("uses fixed aggregate views and reports monthly coverage and missing data", async (t) => {
+test("calls the saved aggregate endpoint and reports monthly coverage and missing data", async (t) => {
   const queried = [];
   t.mock.method(globalThis, "fetch", async (input, init) => {
     const url = new URL(input);
-    if (url.hostname === "clickhouse.example.test") {
-      queried.push(init.body);
+    if (url.hostname === "queries.clickhouse.cloud") {
+      queried.push(url.href);
       assert.equal(init.redirect, "error");
-      assert.match(init.headers.Authorization, /^Basic /);
-      if (init.body.includes("public_oss_adoption")) {
-        return Response.json({
-          data: [
-            { day: "2025-01-01", source: "pypi", metric: "sdk_downloads", value: 2 },
-            { day: "2026-10-01", source: "pypi", metric: "sdk_downloads", value: 3 },
-            { day: "2026-11-03", source: "pypi", metric: "sdk_downloads", value: 4 },
-            { day: "2026-11-08", source: "github", metric: "stars", value: 60 },
-          ],
-        });
-      }
-      return Response.json({ data: [] });
+      assert.equal(init.headers.Authorization, `Basic ${Buffer.from("fixture-id:fixture-secret").toString("base64")}`);
+      assert.equal(init.body, undefined);
+      return Response.json({
+        data: [
+          {
+            totals: [],
+            versions: [],
+            retention: [],
+            activity: [],
+            lifecycle: [],
+            oss: [
+              { day: "2025-01-01", source: "pypi", metric: "sdk_downloads", value: 2 },
+              { day: "2026-10-01", source: "pypi", metric: "sdk_downloads", value: 3 },
+              { day: "2026-11-03", source: "pypi", metric: "sdk_downloads", value: 4 },
+              { day: "2026-11-08", source: "github", metric: "stars", value: 60 },
+            ].map((row) => JSON.stringify(row)),
+          },
+        ],
+      });
     }
     assert.equal(init.headers, undefined);
     if (url.hostname === "github.com") {
@@ -43,15 +50,15 @@ test("uses fixed aggregate views and reports monthly coverage and missing data",
   });
   const result = await loadAdoption(
     {
-      LOOM_ADOPTION_PUBLIC_CLICKHOUSE_URL: "https://clickhouse.example.test",
-      LOOM_ADOPTION_PUBLIC_CLICKHOUSE_USER: "website",
-      LOOM_ADOPTION_PUBLIC_CLICKHOUSE_PASSWORD: "password",
+      LOOM_ADOPTION_QUERY_ENDPOINT_URL:
+        "https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001?format=CSV",
+      LOOM_ADOPTION_QUERY_KEY_ID: "fixture-id",
+      LOOM_ADOPTION_QUERY_KEY_SECRET: "fixture-secret",
     },
     new Date("2026-11-10T08:00:00Z"),
   );
 
-  assert.equal(queried.length, 6);
-  assert.ok(queried.every((sql) => sql.startsWith("SELECT * FROM loom_product_analytics.public_")));
+  assert.deepEqual(queried, ["https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001?format=JSON"]);
   const archived = result.openSource.find(({ id }) => id === "pypi");
   assert.equal(archived.history[0].day, "2025-01-01");
   const byLabel = Object.fromEntries(
@@ -70,4 +77,23 @@ test("uses fixed aggregate views and reports monthly coverage and missing data",
     { day: "2026-11-08", value: 60 },
     { day: "2026-11-10", value: 77 },
   ]);
+});
+
+test("keeps Query API credentials off unrecognized endpoint URLs", async (t) => {
+  const requests = [];
+  t.mock.method(console, "warn", () => {});
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    requests.push([new URL(input).hostname, init.headers?.Authorization]);
+    return new Response(null, { status: 502 });
+  });
+  const result = await loadAdoption(
+    {
+      LOOM_ADOPTION_QUERY_ENDPOINT_URL: "https://external.example/run/00000000-0000-0000-0000-000000000001",
+      LOOM_ADOPTION_QUERY_KEY_ID: "fixture-id",
+      LOOM_ADOPTION_QUERY_KEY_SECRET: "fixture-secret",
+    },
+    new Date("2026-11-10T08:00:00Z"),
+  );
+  assert.ok(requests.every(([host, authorization]) => host !== "external.example" && authorization === undefined));
+  assert.equal(result.selfHosted.totals, undefined);
 });
