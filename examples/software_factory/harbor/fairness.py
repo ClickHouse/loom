@@ -47,6 +47,16 @@ def index_certificate_matches(protocol):
     )
 
 
+def attempt_evidence_verified(protocol, audit, field):
+    if audit is None:
+        return None
+    return (
+        audit.get("protocol_sha256") == digest(protocol)
+        and len(audit["attempts"]) == len(protocol["schedule"])
+        and all(row.get(field) is True for row in audit["attempts"])
+    )
+
+
 def audit_fairness(protocol, entries, *, billing=None):
     verify(protocol)
     root = Path(protocol["output_root"])

@@ -28,7 +28,7 @@ from examples.software_factory.harbor.runtime import read, task_inputs, verify, 
 
 from .billing import FIELDS as BILLING_FIELDS
 from .billing import audit_provider_costs
-from .fairness import audit_fairness
+from .fairness import attempt_evidence_verified, audit_fairness
 from .judging import load_verdicts, run_judging
 from .mcp_qualification import STARTUP_COUNTS, verify_catalog
 from .metrics import known_total, paid_token_totals
@@ -547,22 +547,8 @@ def export(protocol: dict, job_name="live") -> dict:
     report.update(analyze_cohorts(protocol, entries))
     audit_path = output / "fairness-audit.json"
     audit = read(audit_path) if audit_path.exists() else None
-    complete_audit = (
-        audit is not None
-        and audit.get("protocol_sha256") == digest(protocol)
-        and len(audit["attempts"]) == len(protocol["schedule"])
-    )
-    routing_verified = (
-        complete_audit and all(row.get("loom_source_used") is True for row in audit["attempts"])
-        if audit is not None
-        else None
-    )
-    cache_verified = (
-        complete_audit
-        and all(row.get("prompt_cache_disabled") is True for row in audit["attempts"])
-        if audit is not None
-        else None
-    )
+    routing_verified = attempt_evidence_verified(protocol, audit, "loom_source_used")
+    cache_verified = attempt_evidence_verified(protocol, audit, "prompt_cache_disabled")
     for comparison in (report, *report["cohorts"].values()):
         comparison["loom_source_verified"] = routing_verified
         comparison["prompt_cache_disabled_verified"] = cache_verified

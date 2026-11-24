@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from examples.software_factory.factory.model import digest
 
 from .mcp_qualification import STARTUP_COUNTS
+from .fairness import attempt_evidence_verified
 from .native_environment import MCP_SCHEMA_PROFILES
 from .native_trace import COUNTERS as TRACE_COUNTERS
 from .native_trace import EVENTS as TRACE_EVENTS
@@ -390,6 +391,13 @@ def export_public(protocol, output: Path, *, require_complete=False):
                 "provider cost separately. Setup and judging are separate."
             ),
         }
+        if protocol.get("prompt_caching") == "disabled":
+            audit_path = root / "fairness-audit.json"
+            audit = read(audit_path) if audit_path.exists() else None
+            payload["prompt_caching"] = "disabled"
+            payload["prompt_cache_disabled_verified"] = attempt_evidence_verified(
+                protocol, audit, "prompt_cache_disabled"
+            )
         write(output / "results.json", payload)
         files = {"results.json": hashlib.sha256((output / "results.json").read_bytes()).hexdigest()}
         write(output / "manifest.json", {**identity, "files": files})
