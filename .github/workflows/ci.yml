@@ -20,7 +20,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Every job only reads the repository; none needs a write scope.
+# Jobs read the repository by default.
 permissions:
   contents: read
 
@@ -302,6 +302,46 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
+
+  unit-coverage-upload:
+    name: Publish patch coverage (report only)
+    needs: unit-coverage
+    if: github.repository == 'ClickHouse/loom' && github.event.repository.private == false && github.event_name != 'workflow_dispatch' && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write # Authenticate coverage uploads on branches in this repository.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      # The uploader associates a PR report with its head. CI tests the merge commit.
+      - name: Check that covered files match the PR head
+        id: source
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ -z "$PR_HEAD" ]] || git diff --quiet "$PR_HEAD" HEAD -- server sdk/python/loom; then
+            echo "matches=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Skipping upload because the merge commit and PR head differ in covered files."
+          fi
+      - name: Download the unit coverage report
+        if: steps.source.outputs.matches == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.1
+        with:
+          name: coverage-xml
+      - name: Upload unit coverage
+        if: steps.source.outputs.matches == 'true'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: coverage.xml
+          disable_search: true
+          fail_ci_if_error: true
+          use_oidc: true
 
   sandbox:
     needs: validate-ref
