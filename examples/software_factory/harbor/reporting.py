@@ -267,9 +267,8 @@ def _native_views(protocol, observed, groups, jobs, names, job_name):
                 for _ in trials
             ]
             evaluation.metrics = [{"mean": fmean(values)}] if values else []
-        all_costs = [r.compute_token_cost_totals()[-1] for r in results]
-        if any(cost is None for cost in all_costs):
-            stats.cost_usd = None
+        records = [observed[s["order"]]["result"] for s in slots if s["order"] in observed]
+        stats.cost_usd = _known_sum(records, "generation_cost_usd")
         complete = len(results) == len(slots)
         started = min(
             (r.started_at for r in results),
@@ -501,6 +500,8 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         ):
             raise ValueError("Measured result differs from its scheduled identity")
         raw = _read(Path(record["harbor_trial"]) / "result.json")
+        if record.get("generation_cost_source") != "claude-code-reported":
+            record["generation_cost_usd"] = None
         valid = raw["reward_valid"] is True
         resolved = (
             valid and ((raw.get("verifier_result") or {}).get("rewards") or {}).get("reward") == 1
@@ -513,7 +514,11 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
     groups = _groups(schedule)
     native = _native_views(protocol, observed, groups, jobs, names, job_name)
     url = base + "/compare?" + urlencode([("job", names[arm]) for arm in PRIMARY_VIEWS])
-    links = {"comparison": url, "cost": url + "&color=cost", "native_time": url + "&color=time"}
+    links = {"comparison": url, "native_time": url + "&color=time"}
+    if len(observed) == len(schedule) and all(
+        entry["result"].get("generation_cost_usd") is not None for entry in observed.values()
+    ):
+        links["cost"] = url + "&color=cost"
     views_manifest = {
         "kind": VIEW_KIND,
         "source_job": str(output / "jobs" / job_name),
@@ -530,7 +535,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         ),
         "report": str(output / "reports" / "comparison.json"),
     }
-    charts = generate_charts(protocol, entries, views_manifest)
+    charts = generate_charts(protocol, list(observed.values()), views_manifest)
     links["charts"] = charts["url"] or charts["html"]
     views_manifest["charts"] = charts
     attempts = []

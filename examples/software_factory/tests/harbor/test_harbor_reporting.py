@@ -133,14 +133,9 @@ class HarborReporting(unittest.TestCase):
         for _ in range(count):
             order = len(self.entries)
             slot = self.protocol["schedule"][order]
-            primary = slot["arm"] in PRIMARY_VIEWS
-            ordinal = (
-                self.tasks.index(slot["task_id"]) * 3 + slot["repeat"]
-                if primary
-                else self.tasks.index(slot["task_id"])
-            )
+            ordinal = self.tasks.index(slot["task_id"]) * 3 + slot["repeat"]
             passed = ordinal < successes[slot["arm"]]
-            cost = None if unknown_cost else totals[slot["arm"]] / (9 if primary else 3)
+            cost = None if unknown_cost else totals[slot["arm"]] / 9
             folder = self.source / f"trial-{order:02d}"
             task_config = self.config["tasks"][order]
             trial_config = {
@@ -205,6 +200,7 @@ class HarborReporting(unittest.TestCase):
                 "resolved": passed,
                 "harbor_reward_valid": True,
                 "generation_cost_usd": cost,
+                "generation_cost_source": "claude-code-reported",
                 "end_to_end_s": 37.25,
                 "harbor_trial": str(folder),
                 "model_selected_loom_requests": 1 if slot["mode"] == "natural" else 0,
