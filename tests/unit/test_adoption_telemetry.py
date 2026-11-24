@@ -27,8 +27,33 @@ async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.Mo
     http.assert_not_called()
 
 
-async def test_daily_delivery_retries_without_redirecting_or_recounting_after_ack(
+async def test_missing_deployment_id_surfaces_status_without_delivery(
     monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
+    monkeypatch.setattr(settings, "adoption_telemetry_capture_key", "phc_example")
+    monkeypatch.setattr(adoption_telemetry, "get_client", object)
+    monkeypatch.setattr(adoption_telemetry, "recorded_authority", AsyncMock(return_value=None))
+    http = AsyncMock()
+    monkeypatch.setattr(adoption_telemetry, "get_http_client", http)
+
+    with pass_context.ensure_pass("adoption_telemetry") as ctx:
+        await adoption_telemetry.run_pass()
+        assert ctx.outcome == {"status": "missing_deployment_id"}
+        assert ctx.cursor == ""
+    http.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "rejection",
+    [
+        httpx.Response(302, headers={"Location": "https://other.example/adoption"}),
+        httpx.Response(200, json={"status": 1, "quota_limited": ["events"]}),
+    ],
+    ids=["redirect", "quota_limited"],
+)
+async def test_delivery_retries_without_recounting_after_ack(
+    monkeypatch: pytest.MonkeyPatch, rejection: httpx.Response
 ) -> None:
     monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
     monkeypatch.setattr(settings, "adoption_telemetry_capture_key", "phc_example")
@@ -39,13 +64,21 @@ async def test_daily_delivery_retries_without_redirecting_or_recounting_after_ac
     authority = AsyncMock(return_value={"deployment_id": str(deployment_id)})
     monkeypatch.setattr(adoption_telemetry, "recorded_authority", authority)
     monkeypatch.setattr(adoption_telemetry, "get_client", object)
+    restricted_pairs = {("test", "restricted")}
+    monkeypatch.setattr(adoption_telemetry, "configured_restricted_pairs", lambda: restricted_pairs)
 
     async def report(
-        start: datetime, end: datetime, installation_id: UUID, *, ch: object
+        start: datetime,
+        end: datetime,
+        installation_id: UUID,
+        *,
+        restricted: set[tuple[str, str]],
+        ch: object,
     ) -> dict[str, str]:
         assert installation_id != deployment_id
         assert start == datetime(2026, 11, 23, 12, tzinfo=UTC)
         assert end == datetime(2026, 11, 24, tzinfo=UTC)
+        assert restricted == restricted_pairs
         return {"installation_id": str(installation_id), "window_start": start.isoformat()}
 
     aggregate = AsyncMock(side_effect=report)
@@ -55,8 +88,8 @@ async def test_daily_delivery_retries_without_redirecting_or_recounting_after_ac
     def collect(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if len(requests) == 1:
-            return httpx.Response(302, headers={"Location": "https://other.example/adoption"})
-        return httpx.Response(204)
+            return rejection
+        return httpx.Response(200, json={"status": 1})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(collect)) as client:
         monkeypatch.setattr(adoption_telemetry, "get_http_client", lambda: client)

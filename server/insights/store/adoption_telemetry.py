@@ -57,6 +57,7 @@ FROM (
         extract(email, '^[^@[:space:]]+@([a-z0-9.-]+)$') AS domain
     FROM loom.namespaces FINAL
     WHERE active = 1 AND classification = 'standard' AND {not_mirror_sql()}
+      AND (org, namespace) NOT IN {{restricted:Array(Tuple(String, String))}}
       AND contact_email != ''
       AND (
           (password_hash = '' AND has(tags, 'oidc-jit'))
@@ -66,7 +67,8 @@ FROM (
       )
 )
 WHERE length(domain) <= 253
-  AND match(domain, '^(?:[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?[.])+[a-z0-9]{{2,63}}$')
+  AND match(domain, concat('^(?:[a-z0-9](?:[a-z0-9-]{{0,61}}[a-z0-9])?[.])+',
+                           '(?:[a-z]{{2,63}}|xn--[a-z0-9](?:[a-z0-9-]{{0,57}}[a-z0-9])?)$'))
 GROUP BY domain
 ORDER BY user_count DESC, domain
 LIMIT 30
@@ -75,7 +77,12 @@ SETTINGS optimize_move_to_prewhere_if_final = 0
 
 
 async def window_report(
-    start: datetime, end: datetime, installation_id: UUID, *, ch: CHClient
+    start: datetime,
+    end: datetime,
+    installation_id: UUID,
+    *,
+    restricted: set[tuple[str, str]],
+    ch: CHClient,
 ) -> dict[str, Any]:
     params = {
         "start": start,
@@ -91,5 +98,5 @@ async def window_report(
         "day": start.date().isoformat(),
         "window_start": start.isoformat(),
         "window_end": end.isoformat(),
-        "user_domains": await ch.query_all(DOMAINS_SQL),
+        "user_domains": await ch.query_all(DOMAINS_SQL, {"restricted": sorted(restricted)}),
     }

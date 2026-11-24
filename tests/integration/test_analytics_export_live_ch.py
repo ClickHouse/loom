@@ -228,6 +228,7 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
     )
     installation_id = uuid.uuid4()
     domain = f"{org}.example.test"
+    idn = f"{org}.xn--p1ai"
     namespace = {
         "org": org,
         "owner_email": f"account@{domain}",
@@ -242,6 +243,12 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
             {**namespace, "namespace": "duplicate-one"},
             {**namespace, "namespace": "duplicate-two"},
             {**namespace, "namespace": "second", "contact_email": f"second@{domain}"},
+            {**namespace, "namespace": "idn", "contact_email": f"second@{idn}"},
+            {
+                **namespace,
+                "namespace": "configured-restricted",
+                "contact_email": f"excluded@{domain}",
+            },
             {
                 **namespace,
                 "namespace": "unverified",
@@ -256,8 +263,12 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
             },
         ],
     )
-    report = await window_report(start, end, installation_id, ch=ch)
-    assert {"domain": domain, "user_count": 2} in report.pop("user_domains")
+    report = await window_report(
+        start, end, installation_id, restricted={(org, "configured-restricted")}, ch=ch
+    )
+    domains = report.pop("user_domains")
+    assert {"domain": domain, "user_count": 2} in domains
+    assert {"domain": idn, "user_count": 1} in domains
     assert report.pop("total_namespaces") >= 5
     version = await ch.query_one("SELECT version() AS version")
     assert version is not None
@@ -290,7 +301,11 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
         "embedding_tokens": 5,
     }
     idle = await window_report(
-        end + timedelta(days=2), end + timedelta(days=2, hours=12), installation_id, ch=ch
+        end + timedelta(days=2),
+        end + timedelta(days=2, hours=12),
+        installation_id,
+        restricted=set(),
+        ch=ch,
     )
     assert idle["requests"] == 0
 

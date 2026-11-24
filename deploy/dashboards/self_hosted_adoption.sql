@@ -83,7 +83,7 @@ FROM (
         argMax(loom_version, day) AS loom_version,
         argMax(clickhouse_version, day) AS clickhouse_version
     FROM loom_external_adoption_daily
-    WHERE day >= toDate(now('UTC')) - 30
+    WHERE day >= toDate(now('UTC')) - 30 AND day < toDate(now('UTC'))
     GROUP BY installation_id
 )
 GROUP BY loom_version, clickhouse_version
@@ -138,7 +138,7 @@ SELECT
 FROM (
     SELECT installation_id, argMax(user_domains, window_start) AS domains
     FROM loom_adoption_windows
-    WHERE day >= toDate(now('UTC')) - 30
+    WHERE day >= toDate(now('UTC')) - 30 AND day < toDate(now('UTC'))
       AND installation_id NOT IN (
           SELECT installation_id FROM loom_adoption_enrollments WHERE is_internal = 1
       )
@@ -162,7 +162,7 @@ FROM loom_adoption_enrollments AS enrollment
 LEFT JOIN (
     SELECT installation_id, day, successful_requests
     FROM loom_adoption_daily
-    WHERE day >= toDate(now('UTC')) - 30
+    WHERE day >= toDate(now('UTC')) - 30 AND day < toDate(now('UTC'))
 ) AS daily ON enrollment.installation_id = daily.installation_id
 WHERE enrollment.company_id != '' AND enrollment.is_internal = 0
 GROUP BY enrollment.company_id

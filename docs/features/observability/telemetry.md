@@ -26,7 +26,9 @@ Delivery uses the release's public project capture key. A build with an empty
 `LOOM_ADOPTION_TELEMETRY_CAPTURE_KEY` skips delivery.
 
 The worker derives a stable reporting UUID from the storage authority's deployment ID.
-Replicas sharing that authority report under one UUID. Windows start at midnight
+Replicas sharing that authority report under one UUID. If the worker detail shows
+`missing_deployment_id` on a deployment that applies migrations manually, start the
+server once with `LOOM_BOOT_MIGRATE=true` to record its authority. Windows start at midnight
 and noon UTC. The worker allows an hour for ledger rows to arrive before reporting.
 It reports idle windows and retries an unsuccessful delivery while that window is
 still the most recent completed one. An unreachable collector does not interrupt
@@ -86,6 +88,26 @@ can enroll several installations under one company ID. The
 [Hex queries](../../../deploy/dashboards/self_hosted_adoption.sql) chart reporting coverage,
 activity, usage by feature, versions, weekly retention, and the named company's pilot
 stage beside its self-hosted usage. Coverage describes participating deployments.
+
+## Open-source adoption
+
+The [OSS queries](../../../deploy/dashboards/oss_adoption.sql) use distribution
+metrics collected outside the Loom server. Load them into `loom_oss_metrics_daily`
+with one row per `(day, source, artifact, metric)`. Use a UTC `Date` for `day`,
+`String` for dimensions and `UInt64` for `value`.
+
+| Source                                | Artifact                  | Metrics                                          |
+| ------------------------------------- | ------------------------- | ------------------------------------------------ |
+| GitHub repository API                 | `ClickHouse/loom`         | `stars`, `forks` snapshots                       |
+| GitHub releases API                   | Release assets            | `release_asset_downloads_total` snapshots        |
+| Python Package Index download dataset | `clickhouse-loom`         | `sdk_downloads` per UTC day                      |
+| npm downloads API                     | `@clickhouse/loom`        | `sdk_downloads` per UTC day                      |
+| Container registry statistics         | `ghcr.io/clickhouse/loom` | `container_pulls_total` snapshots when available |
+
+For snapshot counters, use the date the source was read. For download increments,
+use the date the registry reports. Leave missing observations absent. Package
+downloads and container pulls count distribution activity, including automated
+builds and retries. Self-hosted reports measure activity after installation.
 
 ## The ledger
 
