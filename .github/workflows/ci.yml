@@ -306,6 +306,7 @@ jobs:
       # LCOV preserves both source paths when the server and SDK share a filename.
       - name: Export repository-relative coverage
         id: lcov
+        if: vars.CODECOV_UPLOAD_ENABLED == 'true'
         continue-on-error: true
         run: coverage lcov -o coverage.lcov
       - name: Upload LCOV report
@@ -320,7 +321,10 @@ jobs:
   unit-coverage-upload:
     name: Publish patch coverage (report only)
     needs: unit-coverage
-    if: github.repository == 'ClickHouse/loom' && github.event.repository.private == false && github.event_name != 'workflow_dispatch' && github.actor != 'dependabot[bot]'
+    if: >-
+      vars.CODECOV_UPLOAD_ENABLED == 'true' &&
+      github.repository == 'ClickHouse/loom' && github.event.repository.private == false &&
+      github.event_name != 'workflow_dispatch' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     continue-on-error: true
