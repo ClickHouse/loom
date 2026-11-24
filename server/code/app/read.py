@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 
 from server.code.api.models_common import _safe_path
 from server.code.api.models_read import CodeReadInput, CodeReadOutput, CodeReadRange, CodeReadWindow
 from server.code.app.common import (
     index_as_of,
-    path_coverage,
     require_code_intel,
     resolve_code_identity,
 )
 from server.code.app.index import gitrepo
+from server.code.app.index.denylist import under_prefixes
 from server.code.app.index.mirrors import present_dir
 from server.code.app.spans import set_code_span_attributes
 from server.code.domain.index.repos import repo_for_namespace
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
 from server.settings import settings
+
+# Bound byte buffering independently of whether an index limits ingest size.
+_SOURCE_BYTES_PER_REQUEST = 8_000_000
 
 
 def _parse_range(value: str) -> tuple[str, int, int]:
@@ -39,20 +43,54 @@ def _parse_range(value: str) -> tuple[str, int, int]:
     return path, start, end
 
 
-async def _verified_blob(git_dir: str, path: str, commit: str, expected: str) -> list[str] | None:
+async def _verified_blob(git_dir: str, path: str, commit: str, expected: str) -> bytes | None:
+    limit = min(
+        settings.code_ingest_max_file_bytes or _SOURCE_BYTES_PER_REQUEST, _SOURCE_BYTES_PER_REQUEST
+    )
     try:
-        raw = await gitrepo.show_file(
-            git_dir, commit, path, max_bytes=settings.code_ingest_max_file_bytes
-        )
+        raw = await gitrepo.show_file(git_dir, commit, path, max_bytes=limit)
         if raw is not None and gitrepo.blob_sha(raw) == expected:
-            pieces = raw.decode("utf-8").split("\n")
-            lines = [line + "\n" for line in pieces[:-1]]
-            if pieces[-1]:
-                lines.append(pieces[-1])
-            return lines
+            raw.decode("utf-8")
+            return raw
     except (gitrepo.BlobTooLarge, gitrepo.GitError, UnicodeDecodeError):
         return None
     return None
+
+
+def _line_offsets(raw: bytes, lines: set[int]) -> dict[int, int]:
+    """Find only the boundaries the caller needs, including the offset at EOF."""
+    offsets = {}
+    current, offset = 1, 0
+    for line in sorted(lines):
+        while current < line:
+            boundary = raw.find(b"\n", offset)
+            offset = len(raw) if boundary < 0 else boundary + 1
+            current += 1
+        offsets[line] = offset
+    return offsets
+
+
+def _fill_ranges(raw: bytes, ranges: list[CodeReadRange], remaining: int) -> int:
+    line_count = raw.count(b"\n") + int(bool(raw) and not raw.endswith(b"\n"))
+    endpoints = [(r, min(r.end_line, line_count)) for r in ranges if r.start_line <= line_count]
+    boundaries = _line_offsets(
+        raw, {line for r, last in endpoints for line in (r.start_line, last + 1)}
+    )
+    for result in ranges:
+        if result.start_line > line_count:
+            result.status = "out_of_range"
+    for result, last in endpoints:
+        start, end = boundaries[result.start_line], boundaries[last + 1]
+        if end - start > remaining:
+            continue
+        result.windows = [
+            CodeReadWindow(
+                start_line=result.start_line, end_line=last, text=raw[start:end].decode()
+            )
+        ]
+        result.status = "complete" if result.end_line == last else "partial"
+        remaining -= end - start
+    return remaining
 
 
 async def handle_code_read(input: CodeReadInput) -> CodeReadOutput:
@@ -60,43 +98,41 @@ async def handle_code_read(input: CodeReadInput) -> CodeReadOutput:
     org, ns = resolve_code_identity(input.org, input.namespace)
     requested = [_parse_range(value) for value in input.ranges]
     cfg = repo_for_namespace(org, ns)
-    paths = list(dict.fromkeys(path for path, _, _ in requested if path_coverage(cfg, path)[0]))
+    prefixes = cfg.path_prefixes if cfg is not None else ()
+    results = [
+        CodeReadRange(path=path, start_line=start, end_line=end, status="not_indexed")
+        for path, start, end in requested
+    ]
+    by_path: dict[str, list[CodeReadRange]] = defaultdict(list)
+    for result in results:
+        if under_prefixes(prefixes, result.path):
+            by_path[result.path].append(result)
     repo = CodeRepo()
     files, as_of, git_dir = await asyncio.gather(
-        repo.file_rows_for_paths(org, ns, paths), index_as_of(repo, org, ns), present_dir(cfg)
+        repo.file_rows_for_paths(org, ns, list(by_path)),
+        index_as_of(repo, org, ns),
+        present_dir(cfg),
     )
-    eligible = {
-        path: file
-        for path, file in files.items()
-        if git_dir and file["chunk_count"] > 0 and file["indexed_commit"] and file["blob_sha"]
-    }
-    bodies = await asyncio.gather(
-        *(
-            _verified_blob(git_dir, path, file["indexed_commit"], file["blob_sha"])
-            for path, file in eligible.items()
-        )
-    )
-    source_files = dict(zip(eligible, bodies, strict=True))
-    results = []
-    for path, start, end in requested:
-        result = CodeReadRange(path=path, start_line=start, end_line=end, status="not_indexed")
-        results.append(result)
+    remaining = _SOURCE_BYTES_PER_REQUEST
+    for path, ranges in by_path.items():
         if (file := files.get(path)) is None:
             continue
-        result.indexed_commit = file["indexed_commit"]
-        lines = source_files.get(path)
-        if lines is None:
+        commit = file["indexed_commit"]
+        for result in ranges:
+            result.indexed_commit = commit
             result.status = "unavailable"
-        elif start > len(lines):
-            result.status = "out_of_range"
-        else:
-            last = min(end, len(lines))
-            result.windows = [
-                CodeReadWindow(
-                    start_line=start, end_line=last, text="".join(lines[start - 1 : last])
-                )
-            ]
-            result.status = "complete" if end == last else "partial"
+        if (
+            git_dir
+            and remaining
+            and file["chunk_count"] > 0
+            and commit
+            and file["blob_sha"]
+            and file["lang"] != "reference"
+            and not path.lower().endswith(".ipynb")
+        ):
+            raw = await _verified_blob(git_dir, path, commit, file["blob_sha"])
+            if raw is not None:
+                remaining = _fill_ranges(raw, ranges, remaining)
 
     set_code_span_attributes(
         route="verified_blob_ranges",

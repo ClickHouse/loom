@@ -1,4 +1,4 @@
-"""Read exact source ranges at the indexed file's revision."""
+"""Read exact UTF-8 source ranges from indexed Git files."""
 
 from __future__ import annotations
 
