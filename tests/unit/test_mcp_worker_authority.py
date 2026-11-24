@@ -1,8 +1,9 @@
+import asyncio
 import hashlib
 import json
 import time
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
 from uuid import UUID, uuid4
 
 import httpx
@@ -277,3 +278,130 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
             await confirm_stored_read(
                 channel=channel, current=authority, revision=revision, max_age_seconds=15
             )
+
+    async def _live_publication(self, *, revoke_for_publication: bool) -> tuple[list, list]:
+        from unittest.mock import AsyncMock, patch
+
+        import jwt
+
+        from server.auth.context import set_current_auth
+        from server.auth.jwt import AuthInfo
+        from server.auth.session_protection import request_declaration
+        from server.core import request_tail, request_work
+        from server.knowledge.app import mcp_worker_protected as protected
+        from server.operations.base import Role
+
+        reader = self.connections["bob"].binding
+        signing_key = Ed25519PrivateKey.generate()
+        attempts = []
+        published = []
+        text = "synthetic live canary"
+
+        async def answer(request: httpx.Request) -> httpx.Response:
+            claims = jwt.decode(
+                request.headers["Authorization"].removeprefix("Bearer "),
+                signing_key.public_key(),
+                algorithms=["EdDSA"],
+                audience=f"urn:loom:source-worker:{reader.worker_id}",
+                issuer="loom",
+            )
+            grant = claims["grant"]
+            attempts.append(grant)
+            assert request.url.path == "/v1/live"
+            payload = {
+                "status": "ok",
+                "request_id": grant["request_id"],
+                "fetched_at": int(time.time()),
+                "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                "document": {
+                    "resource_id": self.request.resource_id,
+                    "title": "Document",
+                    "text": text,
+                    "revision": "fixture-1",
+                    "source_link": "https://source.example/document",
+                    "mime_type": "text/plain",
+                },
+            }
+            return httpx.Response(
+                200,
+                stream=httpx.ByteStream(json.dumps(payload).encode()),
+                headers={"Content-Type": "application/json"},
+            )
+
+        channel = WorkerReadChannel(
+            worker_id=reader.worker_id,
+            origin="https://worker.example.test",
+            issuer="loom",
+            signing_key=signing_key,
+            grant_seconds=5,
+            max_response_bytes=4096,
+            _transport=httpx.MockTransport(answer),
+        )
+        self.addAsyncCleanup(channel.close)
+        directory = protected.LiveSourceDirectory(
+            self._source, self._connection, self._enrollment, lambda _: channel, self._approval
+        )
+        auth = AuthInfo(
+            subject="bob",
+            org="org",
+            namespaces=("collection",),
+            roles=(Role.VIEWER,),
+            is_service_account=False,
+        )
+
+        async def downstream(scope, _receive, send) -> None:
+            with request_declaration(scope), request_work.http_owner(scope):
+                set_current_auth(auth)
+                try:
+                    request_work.begin()
+                    result = await protected.protected_live_read(
+                        self.request, directory, deadline=asyncio.get_running_loop().time() + 5
+                    )
+                    assert result.text == text
+                    if revoke_for_publication:
+                        self.connections["bob"] = replace(self.connections["bob"], active=False)
+                    await send({"type": "http.response.start", "status": 200, "headers": []})
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": json.dumps(asdict(result), default=str).encode(),
+                        }
+                    )
+                finally:
+                    set_current_auth(None)
+
+        async def send(message) -> None:
+            published.append(message)
+
+        middleware = request_tail.RequestTailMiddleware(downstream)
+        scope = {"type": "http", "headers": [(b"x-loom-session-protection", b"v1")]}
+        with (
+            patch.object(type(protected.settings), "auth_actually_required", return_value=True),
+            patch.object(protected.settings, "knowledge_mirrored_sources_enabled", True),
+            patch.object(protected.session_admission, "require", AsyncMock()),
+            patch.object(protected.authz, "row_in_scope", AsyncMock(return_value=True)),
+            patch.object(
+                protected.connected_accounts, "own_subject", AsyncMock(return_value=("org", "bob"))
+            ),
+        ):
+            if revoke_for_publication:
+                with self.assertRaises(request_tail.RequiredTailError):
+                    await middleware(scope, None, send)
+            else:
+                await middleware(scope, None, send)
+        return attempts, published
+
+    async def test_authorized_live_document_passes_publication_with_bobs_connection(self) -> None:
+        attempts, published = await self._live_publication(revoke_for_publication=False)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["binding"]["requester"], "bob")
+        self.assertEqual(
+            attempts[0]["binding"]["connection_id"],
+            str(self.connections["bob"].binding.connection_id),
+        )
+        self.assertIn(b"synthetic live canary", published[-1]["body"])
+
+    async def test_revoked_live_document_is_withheld_even_after_the_worker_returns(self) -> None:
+        attempts, published = await self._live_publication(revoke_for_publication=True)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(published, [])
