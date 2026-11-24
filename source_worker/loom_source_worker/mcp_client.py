@@ -554,6 +554,35 @@ def _tool_value(
     return value
 
 
+def _resource_value(
+    result: types.Result, identity: str, limits: MCPLimits, policy: MCPDataPolicy
+) -> tuple[str, str]:
+    data = result.model_dump(by_alias=True, exclude_unset=True)
+    _bounded_data(data, limits.max_wire_bytes, policy)
+    contents = data.get("contents")
+    if not isinstance(contents, list) or not contents or len(contents) > limits.max_results:
+        raise MCPSourceError("limit")
+    texts: list[str] = []
+    mime_type = "text/plain"
+    size = 0
+    for part in contents:
+        if not isinstance(part, dict) or part.get("uri") != identity or "blob" in part:
+            raise MCPSourceError("unsupported")
+        text = part.get("text")
+        mime = part.get("mimeType")
+        if not isinstance(text, str) or (mime is not None and not isinstance(mime, str)):
+            raise MCPSourceError("unsupported")
+        mime = mime or "text/plain"
+        if texts and mime != mime_type:
+            raise MCPSourceError("unsupported")
+        mime_type = mime
+        size += len(text.encode()) + bool(texts)
+        if size > limits.max_content_bytes:
+            raise MCPSourceError("limit")
+        texts.append(text)
+    return "\n".join(texts), _string(mime_type, 128)
+
+
 def _check_tool_schema(tool: types.Tool, mapping: MCPToolMapping, policy: MCPDataPolicy) -> None:
     _schema(tool.inputSchema, policy)
     if _json(tool.inputSchema, 16_384) != _json(mapping.input_schema, 16_384):
@@ -630,6 +659,7 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         self.target: httpx.URL | None = None
         self.pin_lock = asyncio.Lock()
         self.failure: ErrorCode | None = None
+        self.terminate_only = False
 
     def _check_state(self) -> None:
         _guard_state(self.deadline, self.failure)
@@ -652,6 +682,8 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         try:
             async with asyncio.timeout_at(self.deadline):
                 self._check_state()
+                if self.terminate_only and request.method != "DELETE":
+                    raise asyncio.CancelledError
                 if request.url != self.endpoint or request.method not in {"POST", "GET", "DELETE"}:
                     raise MCPSourceError("denied")
                 self.requests += 1
@@ -840,11 +872,14 @@ class MCPSourceClient:
 
     def _check_state(self, *, require_session: bool = False) -> None:
         owner = self._owner_task
-        failure = self._operation_failure or self._owner_failure
+        lifecycle = not require_session and asyncio.current_task() is owner
+        failure = self._operation_failure
+        # A cancelled read may still release its stateful session with current authority.
+        if lifecycle and self._closing and failure == "closed":
+            failure = None
+        failure = failure or self._owner_failure
         if failure is None and self._transport is not None:
             failure = self._transport.failure
-        # The lifecycle owner may perform SDK session termination during cleanup.
-        lifecycle = not require_session and asyncio.current_task() is owner
         active = (
             owner is not None
             and not owner.done()
@@ -965,6 +1000,7 @@ class MCPSourceClient:
         if not self._closing:
             self._closing = True
             if self._transport is not None:
+                self._transport.terminate_only = True
                 self._transport.deadline = min(
                     self._deadline, asyncio.get_running_loop().time() + 1
                 )
@@ -1014,7 +1050,7 @@ class MCPSourceClient:
                 try:
                     result = await action(self._session)
                 except Exception:  # Check authority before reporting an upstream error.
-                    await self._authorize()
+                    await self._validate_access()
                     raise
                 await self._authorize()
                 self._check_state(require_session=True)
@@ -1215,37 +1251,25 @@ class MCPSourceClient:
                 return await self._read_tool(session, identity)
             if self._discovery is None or not self._discovery.resources:
                 raise MCPSourceError("unsupported")
-            result = await session.read_resource(_resource_url(identity))
-            policy = self._config.data_policy
-            if not result.contents or len(result.contents) > min(
-                self._config.limits.max_results, policy.max_items
-            ):
-                raise MCPSourceError("limit")
-            texts: list[str] = []
-            size = 0
-            mime_type = result.contents[0].mimeType or "text/plain"
-            for content in result.contents:
-                if (
-                    not isinstance(content, types.TextResourceContents)
-                    or str(content.uri) != identity
-                ):
-                    raise MCPSourceError("unsupported")
-                if (content.mimeType or "text/plain") != mime_type:
-                    raise MCPSourceError("unsupported")
-                part_bytes = len(content.text.encode())
-                if part_bytes > policy.max_string_bytes:
-                    raise MCPSourceError("limit")
-                size += part_bytes + bool(texts)
-                if size > self._config.limits.max_content_bytes:
-                    raise MCPSourceError("limit")
-                texts.append(content.text)
+            # Read the wire URI before AnyUrl can normalize its spelling.
+            result = await session.send_request(
+                types.ClientRequest(
+                    types.ReadResourceRequest(
+                        params=types.ReadResourceRequestParams(uri=_resource_url(identity))
+                    )
+                ),
+                types.Result,
+            )
+            text, mime_type = _resource_value(
+                result, identity, self._config.limits, self._config.data_policy
+            )
             return self._with_receipt(
                 MCPEvidence(
                     identity,
                     identity,
                     self._resource_titles.get(identity, identity),
-                    "\n".join(texts),
-                    _string(mime_type, 128),
+                    text,
+                    mime_type,
                 ),
                 "resources/read",
             )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
 import time
@@ -40,6 +41,11 @@ _OUTPUT = {
     "required": ["id", "title", "uri", "text"],
     "additionalProperties": False,
 }
+
+
+async def _synthetic_pin(host: str) -> ipaddress.IPv6Address:
+    assert host == "source.example.test"
+    return ipaddress.IPv6Address("2600::10")
 
 
 class _SyntheticAccounts:
@@ -161,10 +167,6 @@ async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.M
 
         await manager.handle_request(scope, receive, send)
 
-    async def synthetic_pin(host: str) -> ipaddress.IPv6Address:
-        assert host == "source.example.test"
-        return ipaddress.IPv6Address("2600::10")
-
     def routed_client(
         config: Any, credential: Any, *, validate_access: Any, deadline: float
     ) -> Any:
@@ -176,7 +178,7 @@ async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.M
             _transport=_FragmentedASGI(app=app),
         )
 
-    monkeypatch.setattr(mcp_client, "resolve_public_address", synthetic_pin)
+    monkeypatch.setattr(mcp_client, "resolve_public_address", _synthetic_pin)
     monkeypatch.setattr(direct_backend, "MCPSourceClient", routed_client)
     worker_id = uuid4()
     settings = _parse_settings(
@@ -252,3 +254,51 @@ async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.M
         revoke = bob.connection_id
         with pytest.raises(ReadFailure, match="^denied$"):
             await service.execute(grant(bob, "live"), "live")
+
+
+@pytest.mark.asyncio
+async def test_cancel_terminates_an_active_stateful_sdk_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+    terminations: list[tuple[bytes, int]] = []
+    server: Server[Any, Any] = Server("synthetic-stateful-resources")
+
+    @server.list_resources()
+    async def list_resources() -> list[types.Resource]:
+        return [types.Resource(uri=AnyUrl(_DOC), name="Resource")]
+
+    @server.read_resource()
+    async def read_resource(uri: AnyUrl) -> str:
+        assert str(uri) == _DOC
+        started.set()
+        return await asyncio.Future[str]()
+
+    manager = StreamableHTTPSessionManager(app=server, json_response=True, stateless=False)
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        async def watch(message: Any) -> None:
+            if scope["method"] == "DELETE" and message["type"] == "http.response.start":
+                terminations.append((dict(scope["headers"])[b"mcp-session-id"], message["status"]))
+            await send(message)
+
+        await manager.handle_request(scope, receive, watch)
+
+    async def validate() -> None:
+        return None
+
+    monkeypatch.setattr(mcp_client, "resolve_public_address", _synthetic_pin)
+    config = MCPSourceConfig(endpoint=_ENDPOINT, approved_resource_ids=(_DOC,))
+    async with (
+        asyncio.timeout(5),
+        manager.run(),
+        mcp_client.MCPSourceClient(
+            config, None, validate_access=validate, _transport=httpx.ASGITransport(app=app)
+        ) as client,
+    ):
+        read = asyncio.create_task(client.read(_DOC))
+        await started.wait()
+        read.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await read
+    assert len(terminations) == 1 and terminations[0][0] and terminations[0][1] == 200
