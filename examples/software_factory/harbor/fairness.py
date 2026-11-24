@@ -11,8 +11,7 @@ from examples.software_factory.factory.model import digest
 from .index import select_snapshot
 from .memory import validate_history_certificate
 from .native_environment import mcp_settings
-from .native_trace import summarize
-from .project_guidance import SETTINGS, agent_image, claude_settings
+from .project_guidance import agent_image
 from .runtime import read, verify, write
 from .scopes import selected_scopes
 
@@ -48,13 +47,6 @@ def index_certificate_matches(protocol):
     )
 
 
-def loom_source_used(trial, source_roots):
-    trace = summarize(trial, source_roots=source_roots)["metrics"]
-    loom = trace["first_loom_source_result_event_main"]
-    local = trace["first_indexed_read_request_event_main"]
-    return loom is not None and (local is None or loom < local)
-
-
 def audit_fairness(protocol, entries, *, billing=None):
     verify(protocol)
     root = Path(protocol["output_root"])
@@ -79,8 +71,7 @@ def audit_fairness(protocol, entries, *, billing=None):
         agent = raw["config"]["agent"]
         servers = config["environment"].get("mcp_servers", [])
         build = root / "builds" / slot["task_id"] / "agent"
-        workspace = build / "workspace"
-        baseline_guidance = workspace / "CLAUDE.md"
+        baseline_guidance = build / "workspace/CLAUDE.md"
         row = {
             "order": order,
             "unique_attempt": order not in seen,
@@ -97,10 +88,8 @@ def audit_fairness(protocol, entries, *, billing=None):
                 and hashlib.sha256((build / "loom-guidance/CLAUDE.md").read_bytes()).hexdigest()
                 == protocol["project_guidance"]["sha256"]
             ),
-            "source_permissions": read(build / "loom-guidance" / SETTINGS)
-            == claude_settings(workspace, protocol["project_guidance"]),
             "loom_source_used": slot["mode"] == "baseline"
-            or loom_source_used(trial, protocol["suite"]["source_roots"]),
+            or type(result.get("first_loom_source_result_event_main")) is int,
             "mcp_treatment": servers
             == tomllib.loads(mcp_settings(protocol, slot))
             .get("environment", {})

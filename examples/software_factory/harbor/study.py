@@ -179,7 +179,7 @@ def build_image(
             "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/workspace/src\n"
             "WORKDIR /workspace\nRUN test -w /workspace\n"
             "FROM baseline AS loom\n"
-            "COPY --chown=1000:1000 loom-guidance/ /workspace/\n"
+            "COPY --chown=1000:1000 loom-guidance/CLAUDE.md /workspace/CLAUDE.md\n"
         )
     else:
         recipe = (
@@ -201,9 +201,7 @@ def build_image(
             loom["RootFS"]["Layers"][:-1] != baseline["RootFS"]["Layers"]
             or loom["Config"] != baseline["Config"]
         ):
-            raise PermissionError(
-                "Loom agent image must add only the project guidance and permissions layer"
-            )
+            raise PermissionError("Loom agent image must add only the project instructions layer")
     else:
         image = _build_runtime(folder, network="none")
     if _inspect_image(reference)["Id"] != dependency:
@@ -384,7 +382,6 @@ def prepare(previous: Path, output: Path) -> Path:
     paths += [output / "index-content.json", output / "images.json"]
     paths += list((output / "builds").rglob("Dockerfile"))
     paths += list((output / "builds").glob("*/agent/loom-guidance/CLAUDE.md"))
-    paths += list((output / "builds").glob("*/agent/loom-guidance/.claude/settings.json"))
     plan["files"] = {str(p): file_hash(p) for p in sorted(set(paths))}
     plan.pop("source_archive", None)
     write(protocol_path, plan)
@@ -541,6 +538,20 @@ def export(protocol: dict, job_name="live") -> dict:
         {"attempts": protocol["schedule"], "schedule_sha256": protocol["schedule_sha256"]}, entries
     )
     report.update(analyze_cohorts(protocol, entries))
+    audit_path = output / "fairness-audit.json"
+    audit = read(audit_path) if audit_path.exists() else None
+    routing_verified = (
+        audit.get("protocol_sha256") == digest(protocol)
+        and len(audit["attempts"]) == len(protocol["schedule"])
+        and all(row.get("loom_source_used") is True for row in audit["attempts"])
+        if audit is not None
+        else None
+    )
+    for comparison in (report, *report["cohorts"].values()):
+        comparison["loom_source_verified"] = routing_verified
+        if routing_verified is not True:
+            comparison["observed_targets"]["efficiency_vs_no_loom"] = {}
+            comparison["observed_targets"]["memory_vs_code_index"] = {}
     write(output / "paired-report.json", report)
     summary = {
         "complete": report["complete"],
@@ -633,8 +644,8 @@ def export(protocol: dict, job_name="live") -> dict:
                 merged = {**entry["result"], **protocol["schedule"][entry["order"]]}
                 writer.writerow({k: merged.get(k) for k in columns})
     summary["reporting"] = generate_reports(protocol, entries, job_name=job_name)
-    audit_path = output / "fairness-audit.json"
-    summary["fairness_verified"] = read(audit_path).get("passed") if audit_path.exists() else None
+    summary["fairness_verified"] = audit.get("passed") if audit else None
+    summary["loom_source_verified"] = routing_verified
     if protocol.get("public_reproduction"):
         summary["public_export"] = export_public(protocol, output / "public-results")
     write(output / "summary.json", summary)
@@ -757,13 +768,13 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
         costs = await asyncio.to_thread(
             audit_provider_costs, protocol, read(output / "live-attempts.json")
         )
-        audit = await asyncio.to_thread(
+        await asyncio.to_thread(
             audit_fairness, protocol, read(output / "live-attempts.json"), billing=costs
         )
-        export(protocol)
-        if not all(row["loom_source_used"] for row in audit["attempts"]):
+        summary = export(protocol)
+        if not summary["loom_source_verified"]:
             raise PermissionError(
-                "Loom-first source retrieval was not established. See the fairness audit."
+                "A Loom session returned no indexed source. See the fairness audit."
             )
         if meter is not None:
             meter.set_phase("judge")

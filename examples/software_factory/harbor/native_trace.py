@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import posixpath
 from collections import Counter
 
 SOURCE_COUNTERS = (
@@ -36,7 +35,6 @@ EVENTS = (
     "first_fresh_linked_lesson_result_event_main",
     "first_possible_edit_request_event_main",
     "first_loom_source_result_event_main",
-    "first_indexed_read_request_event_main",
 )
 POSSIBLE_EDIT_TOOLS = {"agent", "bash", "edit", "multiedit", "notebookedit", "task", "write"}
 NONFRESH_LINK_STATES = {"moved", "changed", "unresolved", "missing"}
@@ -108,18 +106,7 @@ def _content_counts(body, seen):
     }
 
 
-def _indexed_read(block, roots):
-    if block.get("name") != "Read" or not roots:
-        return False
-    arguments = block.get("input")
-    raw = arguments.get("file_path") if isinstance(arguments, dict) else None
-    if not isinstance(raw, str):
-        return False
-    path = posixpath.normpath(posixpath.join("/workspace", raw))
-    return any(path.startswith("/workspace/" + root.strip("/") + "/") for root in roots)
-
-
-def summarize(trial, *, source_roots=()):
+def summarize(trial):
     path = trial / "agent/claude-code.txt"
     summary = dict.fromkeys((*COUNTERS, *EVENTS, *TIMINGS))
     output = {
@@ -136,7 +123,6 @@ def summarize(trial, *, source_roots=()):
     raw = path.read_bytes()
     output["source_sha256"] = hashlib.sha256(raw).hexdigest()
     calls, responses, replies, final = {}, set(), {}, None
-    indexed_read_ids = set()
     for event_index, line in enumerate(raw.decode().splitlines(), 1):
         try:
             event = json.loads(line)
@@ -156,8 +142,6 @@ def summarize(trial, *, source_roots=()):
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "tool_use":
-                if _indexed_read(block, source_roots):
-                    indexed_read_ids.add(block["id"])
                 calls.setdefault(
                     block["id"],
                     {
@@ -172,14 +156,6 @@ def summarize(trial, *, source_roots=()):
     summary.update(dict.fromkeys(COUNTERS, 0))
     summary["model_turns_main"] = len(responses)
     groups, seen, fresh_events, source_events = Counter(), set(), [], []
-    summary["first_indexed_read_request_event_main"] = min(
-        (
-            calls[identifier]["request_event"]
-            for identifier in indexed_read_ids
-            if identifier in replies and not replies[identifier][1].get("is_error", False)
-        ),
-        default=None,
-    )
     content_counts_complete = True
     summary["first_possible_edit_request_event_main"] = next(
         (
