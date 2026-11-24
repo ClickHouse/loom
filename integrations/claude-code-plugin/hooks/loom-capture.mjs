@@ -299,10 +299,10 @@ function handleCodeSignals(payload, scope, opts) {
   const stash = readCodeStash(sessionId);
   if (!stash.length) return;
 
-  // 2) Read of a returned path -> opened_file
+  // 2) Read of a returned path -> opened_file on the latest matching trace.
   if (toolName === "Read" && typeof toolInput.file_path === "string") {
     const opened = toolInput.file_path;
-    for (const row of stash) {
+    for (const row of stash.reverse()) {
       if (row.paths.some((p) => opened.endsWith(p) || p.endsWith(opened))) {
         postFireAndForget(
           CODE_OUTCOME_OP,
