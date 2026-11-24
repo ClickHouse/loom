@@ -25,11 +25,12 @@ the objects; they do not contain config or credentials. Every listed key is
 required. A missing object or key prevents volume setup. Invalid configuration
 or credential syntax stops the worker; invalid proxy TLS files stop nginx.
 
-| Value | Object and required keys | Mount |
-| --- | --- | --- |
-| `inputs.workerConfigMap` | ConfigMap: `config.json`, `grant-verifier.pem`, `vault-ca.pem` | Worker only, read-only at `/etc/loom-source-worker`. |
-| `inputs.vaultTokenSecret` | Secret: `vault-token` | Worker only, read-only at `/run/loom-source-worker/credentials/vault-token`, mode `0440`, group `10001`. |
-| `inputs.proxyTlsSecret` | Separate Secret: `server-chain.pem`, `server-key.pem`, `client-ca.pem` | Proxy only, read-only at `/etc/nginx/tls`. |
+- `inputs.workerConfigMap`: `config.json`, `grant-verifier.pem` and
+  `vault-ca.pem`. Worker only, read-only at `/etc/loom-source-worker`.
+- `inputs.vaultTokenSecret`: `vault-token`. Worker only, read-only at
+  `/run/loom-source-worker/credentials/vault-token`, mode `0440`, group `10001`.
+- `inputs.proxyTlsSecret`: a separate Secret with `server-chain.pem`,
+  `server-key.pem` and `client-ca.pem`. Proxy only, read-only at `/etc/nginx/tls`.
 
 Use the [worker config and grant contract](../README.md). Set
 `transport: tls_proxy_unix` in the worker config. Mount the Vault CA bundle and
