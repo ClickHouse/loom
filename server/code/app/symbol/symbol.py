@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable
 from typing import Any
 
 from server.code.api.models_symbol import (
@@ -33,7 +34,7 @@ from server.code.app.spans import (
     start_stage_wall,
 )
 from server.code.app.symbol.hierarchy import _symbol_hierarchy
-from server.code.app.symbol.named_examples import named_test_examples
+from server.code.app.symbol.named_examples import named_test_examples, owning_type
 from server.code.app.symbol.neighbours import (
     _attach_enclosing_neighbours,
     _soft,
@@ -158,6 +159,8 @@ class _SymbolLegs:
         ns: str,
         input: CodeSymbolInput,
         rows: list[dict[str, Any]],
+        *,
+        include_owner: bool,
     ) -> None:
         head = rows[:10]
         self.hashes = asyncio.ensure_future(_chunk_hashes(repo, org, ns, head))
@@ -184,7 +187,9 @@ class _SymbolLegs:
             if want_brief and _uses_brief.single_declaration(head)
             else None
         )
-        self.enrich = asyncio.ensure_future(_enrichment(repo, org, ns, input, head))
+        self.enrich = asyncio.ensure_future(
+            _enrichment(repo, org, ns, input, head, include_owner=include_owner)
+        )
         self.documented_in = asyncio.ensure_future(
             _staged("symbol.documented_in", _soft(documented_in_for(repo, org, ns, rows), []))
         )
@@ -273,8 +278,50 @@ def _unit_with_body(
     return u
 
 
+async def _owner_context(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    input: CodeSymbolInput,
+    method: dict[str, Any],
+    direct: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    from server.code.app import enrich as code_enrich
+
+    want_examples = input.include_examples and not direct.get("examples")
+    want_lessons = input.include_lessons and not request_narrowed() and not direct.get("lessons")
+    if not (want_examples or want_lessons):
+        return {}
+    owner = await owning_type(repo, org, ns, method)
+    if owner is None:
+        return {}
+    reads: dict[str, Awaitable[list[dict[str, Any]]]] = {}
+    if want_examples:
+        reads["examples"] = named_test_examples(repo, org, ns, owner, input.example_context_lines)
+    if want_lessons:
+        reads["lessons"] = code_enrich.lessons_for_symbol(
+            org,
+            ns,
+            symbol_name=owner["qualified_name"],
+            paths=[owner["path"]],
+            extra_namespaces=input.lesson_namespaces,
+        )
+    values = await asyncio.gather(*(_soft(read, []) for read in reads.values()))
+    return {
+        key: [{**row, "owner_symbol": owner["qualified_name"]} for row in rows]
+        for key, rows in zip(reads, values, strict=True)
+        if rows
+    }
+
+
 async def _enrichment(
-    repo: CodeRepo, org: str, ns: str, input: CodeSymbolInput, head: list[dict[str, Any]]
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    input: CodeSymbolInput,
+    head: list[dict[str, Any]],
+    *,
+    include_owner: bool = False,
 ) -> dict[str, Any]:
     """Enrichment of the first definition (recent PRs, usage examples, lessons), the
     three reads gathered, each bounded and degradable; {} when not asked. Keyed on the
@@ -344,6 +391,11 @@ async def _enrichment(
         out["examples"] = examples
     if lessons_out is not None:
         out["lessons"] = lessons_out
+    if include_owner and _uses_brief.single_declaration(head):
+        with code_span("enrich.owner_context"):
+            out.update(
+                await code_enrich.bounded(_owner_context(repo, org, ns, input, head[0], out), {})
+            )
     return out
 
 
@@ -479,7 +531,7 @@ async def handle_code_symbol(
     # block) and the bodies are read side by side too, so none of them waits on the
     # bodies. Each leg stays fail-open on its own.
     head = rows[:10]
-    legs = _SymbolLegs(repo, org, ns, input, rows)
+    legs = _SymbolLegs(repo, org, ns, input, rows, include_owner=op_name == "code.edit_context")
     try:
         with code_span("symbol.bodies", results=len(head)):
             bodies = await _symbol_bodies(repo, org, ns, input, head)

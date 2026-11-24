@@ -512,7 +512,13 @@ async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     repo, org, ns = code_env
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
-    await _ingest(repo, org, ns, source=b"class EntryPoint:\n    pass\n", path="src/cli.py")
+    await _ingest(
+        repo,
+        org,
+        ns,
+        source=b"class EntryPoint:\n    def run(self):\n        return 'ok'\n",
+        path="src/cli.py",
+    )
     path = "tests/test_cli.py"
     source = b"from src.cli import EntryPoint\n\ndef test_entrypoint():\n    @register(cls=EntryPoint)\n    def cli():\n        pass\n"
     await _ingest(repo, org, ns, source=source, path=path)
@@ -540,6 +546,17 @@ async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     (bundled,) = edit.definitions[0].examples
     assert bundled["context"]["commit"] == "a" * 40
     assert "@register(cls=EntryPoint)" in bundled["context"]["text"]
+    method = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name="src/cli.py:EntryPoint.run", include_lessons=False
+        )
+    )
+    (member,) = method.definitions
+    assert "def run(self)" in member.body
+    assert "class EntryPoint" not in member.body
+    (related,) = member.examples
+    assert related["owner_symbol"] == edit.definitions[0].symbol
+    assert related["context"] == bundled["context"]
 
 
 async def test_deletion_tombstones_everything(code_env) -> None:
