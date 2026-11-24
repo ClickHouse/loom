@@ -68,6 +68,8 @@ into one place.
   [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
 - **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
   extractor service converts. [Document search](./docs/use-cases/document-search.md)
+- **A knowledge factory for AI agents** that turns runbooks and lessons from agent work
+  into answers backed by sources. [Build a knowledge factory](https://loom.clickhouse.com/docs/use-cases/knowledge-factory)
 - **Shared context for multi-agent workflows**: shared memory, task inboxes and
   decisions. [Multi-agent](./docs/use-cases/multi-agent.md)
 - **Memory, recall, audit and erasure for autonomous agents.**
@@ -83,7 +85,7 @@ access with tokens, await required writes and task handoffs in your application,
 recheck code-linked lessons against the current source before review. The same service
 supports multi-agent workflows and autonomous bots; your orchestration runs the agents,
 tests and approvals. Offering a tool does not guarantee the model uses it.
-[Multi-agent workflow](./docs/use-cases/multi-agent.md) ·
+[Software factory memory workflow](https://loom.clickhouse.com/docs/use-cases/multi-agent#memory-for-a-software-factory) ·
 [Autonomous-agent memory](./docs/use-cases/autonomous-agents.md)
 
 Every use case, and when another tool fits better: [use cases](./docs/use-cases/index.md).
