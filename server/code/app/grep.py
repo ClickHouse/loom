@@ -386,7 +386,7 @@ async def _grep_lines(
         op="code.grep",
         query=_grep_trace_query(input),
         route=route,
-        args=_grep_trace_args(input),
+        args=_grep_trace_args(input, context_lines=context_lines),
         returned_ids=files,
         returned_paths=files,
         returned_scores=[],
@@ -632,7 +632,7 @@ def _context_tokens(context: dict[str, Any]) -> int:
     return sum(len(row["text"]) for row in context.get("contexts", ())) // 4
 
 
-def _grep_trace_args(input: CodeGrepInput) -> dict[str, Any]:
+def _grep_trace_args(input: CodeGrepInput, *, context_lines: int | None = None) -> dict[str, Any]:
     """The grep arguments that change the answer, for the trace row, so a flip between two
     same-second calls (0 -> N matches) can be pinned on the argument that differed."""
     return answer_args(
@@ -649,6 +649,7 @@ def _grep_trace_args(input: CodeGrepInput) -> dict[str, Any]:
         "include_body",
         "related_on_miss",
         "context_lines",
+        context_lines=context_lines,
         paged=bool(input.cursor) or None,
     )
 

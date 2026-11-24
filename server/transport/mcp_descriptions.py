@@ -1361,7 +1361,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Find known text in indexed source. Use code.search for behavior. "
         "Pass a list in `pattern` to search literal alternatives in one call. "
         "Matches include bodies by default. "
-        "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
+        "`include_body: false` omits bodies. Add `context_lines: 0` for locations. "
         "Use literal strings or one RE2 string with `regex: true`. "
         "Filter by `path_prefix`, `path_globs` or `langs`. "
         "`neighbours` adds graph links. `deadline_ms` allows partial results. "
@@ -2170,7 +2170,7 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.grep": (
         "Find text and enclosing bodies in one call. Scope with `path_prefix` or `path_globs`. "
         "Use a list of literals in `pattern` or one RE2 string with `regex: true`. "
-        "Use `include_body: false` for locations or `context_lines` excerpts. "
+        "`include_body: false` omits bodies. Add `context_lines: 0` for locations. "
         "Use code.search for behavior.\n\n"
         "An absent call expression can return related source and linked notes. "
         "For an edit in a known file, use code.edit_context with literal clues. "

@@ -59,6 +59,7 @@ async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
                 2,
                 "def run():\n    return callback(payload.value)\n",
                 [0.0] * settings.embedding_dim,
+                "a" * 40,
                 1,
             ]
         ],
@@ -74,6 +75,7 @@ async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
             "end_line",
             "content",
             "embedding",
+            "indexed_commit",
             "version",
         ],
     )

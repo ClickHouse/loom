@@ -101,7 +101,8 @@ source. Coding MCP connections enable recovery by default. HTTP and SDK
 callers can opt in.
 
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
-lines by default. Pass `include_body=false` for names, lines or locations only.
+lines by default. Pass `include_body=false` to omit bodies and `context_lines=0`
+for matching lines only.
 Each definition appears once. Its `lines` lists the matching
 locations. The same retained-source reader backs `code.enclosing`, including type
 and document-section fallback. The Python index keeps decorators in their
