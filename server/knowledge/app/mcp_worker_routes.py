@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from server.knowledge.app.mcp_worker_enrollment_flow import EnrollmentRoute
 from server.knowledge.app.mcp_worker_read import WorkerReadChannel
 
 if TYPE_CHECKING:
@@ -83,9 +84,17 @@ class WorkerRoute:
 
 
 @dataclass(frozen=True, repr=False)
+class _EnrollmentIdentity:
+    issuer: str
+    request_signer: Ed25519PrivateKey
+    statement_verifier: Ed25519PublicKey
+
+
+@dataclass(frozen=True, repr=False)
 class WorkerRoutes:
     _channels: Mapping[UUID, WorkerReadChannel]
     _profiles: Mapping[tuple[UUID, str, str], WorkerProfile]
+    _enrollment: Mapping[UUID, _EnrollmentIdentity]
 
     def get(self, worker_id: UUID) -> WorkerReadChannel | None:
         return self._channels.get(worker_id)
@@ -99,6 +108,31 @@ class WorkerRoutes:
         profile = self.profile(worker_id, org, profile_digest)
         return profile is not None and mode in profile.modes and (not team or profile.team_access)
 
+    def enrollment_route(
+        self, worker_id: UUID, org: str, namespace: str, profile_digest: str, generation: int
+    ) -> EnrollmentRoute | None:
+        identity = self._enrollment.get(worker_id)
+        channel = self.get(worker_id)
+        if (
+            identity is None
+            or channel is None
+            or self.profile(worker_id, org, profile_digest) is None
+            or type(generation) is not int
+            or generation <= 0
+        ):
+            return None
+        return EnrollmentRoute(
+            org,
+            namespace,
+            worker_id,
+            profile_digest,
+            generation,
+            identity.issuer,
+            identity.request_signer,
+            identity.statement_verifier,
+            channel,
+        )
+
 
 @asynccontextmanager
 async def open_worker_routes(routes: tuple[WorkerRoute, ...]) -> AsyncIterator[WorkerRoutes]:
@@ -110,6 +144,7 @@ async def open_worker_routes(routes: tuple[WorkerRoute, ...]) -> AsyncIterator[W
     async with AsyncExitStack() as stack:
         channels = {}
         profiles = {}
+        enrollment = {}
         for route in routes:
             channel = WorkerReadChannel(
                 worker_id=route.worker_id,
@@ -125,4 +160,10 @@ async def open_worker_routes(routes: tuple[WorkerRoute, ...]) -> AsyncIterator[W
             channels[route.worker_id] = channel
             for profile in route.profiles:
                 profiles[(route.worker_id, profile.org, profile.digest)] = profile
-        yield WorkerRoutes(MappingProxyType(channels), MappingProxyType(profiles))
+            if route.enrollment_verifier is not None:
+                enrollment[route.worker_id] = _EnrollmentIdentity(
+                    route.issuer, route.grant_key, route.enrollment_verifier
+                )
+        yield WorkerRoutes(
+            MappingProxyType(channels), MappingProxyType(profiles), MappingProxyType(enrollment)
+        )

@@ -69,3 +69,19 @@ async def test_routes_reject_duplicate_workers_and_insecure_credentials() -> Non
         with pytest.raises(ValueError, match="invalid source worker (route|profile)"):
             async with open_worker_routes(entries):
                 pytest.fail("invalid route opened")
+
+
+@pytest.mark.asyncio
+async def test_enrollment_keys_require_the_exact_provision_and_a_current_generation() -> None:
+    route = _route()
+    async with open_worker_routes((route,)) as routes:
+        assert routes.enrollment_route(route.worker_id, "other", "docs", _PROFILE, 1) is None
+        assert routes.enrollment_route(route.worker_id, "org", "docs", "9" * 64, 1) is None
+        assert routes.enrollment_route(route.worker_id, "org", "docs", _PROFILE, 0) is None
+        binding = routes.enrollment_route(route.worker_id, "org", "docs", _PROFILE, 17)
+        assert binding is not None
+        assert binding.approval_namespace == "docs" and binding.approval_generation == 17
+        assert binding.worker_key is route.enrollment_verifier
+        assert binding.channel is routes.get(route.worker_id)
+    async with open_worker_routes((replace(route, enrollment_verifier=None),)) as routes:
+        assert routes.enrollment_route(route.worker_id, "org", "docs", _PROFILE, 17) is None
