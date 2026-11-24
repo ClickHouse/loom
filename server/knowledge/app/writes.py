@@ -505,50 +505,30 @@ async def handle_knowledge_upsert(
     )
 
 
-async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
+async def _prepare_document_add_rows(
+    input: KnowledgeAddInput,
+    *,
+    author: dict[str, str],
+    chunks: list[Chunk],
+    embedder: Embedder,
+    doc_id: str,
+    now: datetime,
+    revision: int,
+    base_version: int,
+    original: tuple[str, int, str, str],
+) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+    """Build one document revision and its chunks without writing either."""
+    from server.knowledge.store import documents as documents_repo
     from server.observability.otel import traced
 
-    author = authorship(input)
-
-    embedder = get_embedder()
-    await codes_state.refuse_width("chunks", embedder.dim)
-    doc_id = str(uuid.uuid4())
-    now = datetime.now(UTC).replace(tzinfo=None)
-
-    with traced("chunk.text", content_len=len(input.content)):
-        chunks = _chunk_text(input.content)
-
-    # Carry a prior blob forward across a metadata-only edit (no fresh
-    # bytes) so the user's download capability isn't silently dropped.
-    from server.knowledge.store import documents as documents_repo
-
-    prior = await documents_repo.get_one(
-        input.org,
-        input.namespace,
-        input.source_uri,
-        include_superseded=True,
-    )
-    # The document row and every chunk row record the same revision.
-    revision = next_revision(prior)
-    uploader = author["user_id"]  # the writer's, even when the document keeps its author
-    writer = author["actor"]
-    author = _author_for(prior, input.content, author, _fresh_sha(input))
-    _require_source_tags_kept(prior, writer, author["actor"], input.tags)
-    # Refused before anything is written, the original's bytes included.
-    documents_repo.check_storable(
-        [{**author, "org": input.org, "namespace": input.namespace, "source_uri": input.source_uri}]
-    )
-    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
-        input, _original_of(prior, author), uploader=uploader
-    )
-
+    blob_path, blob_size, blob_content_type, original_filename = original
     from server.knowledge.store import chunks as knowledge_repo
 
     with traced("embed.chunks", model=embedder.model_name, chunk_count=len(chunks)):
         contexts = _contexts(chunks, input.title, input.description)
         embeddings = await _embed_inline_batch(embedder, _embedding_texts(chunks, contexts))
         # Stamped once embedded, as upsert's.
-        version = documents_repo.version_past(documents_repo.version_of(prior))
+        version = documents_repo.version_past(base_version)
         rows = knowledge_repo.build_chunk_rows(
             org=input.org,
             namespace=input.namespace,
@@ -588,6 +568,58 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         blob_content_type=blob_content_type,
         original_filename=original_filename,
         revision=revision,
+    )
+
+    return doc_row, rows, version
+
+
+async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
+    from server.observability.otel import traced
+
+    author = authorship(input)
+
+    embedder = get_embedder()
+    await codes_state.refuse_width("chunks", embedder.dim)
+    doc_id = str(uuid.uuid4())
+    now = datetime.now(UTC).replace(tzinfo=None)
+
+    with traced("chunk.text", content_len=len(input.content)):
+        chunks = _chunk_text(input.content)
+
+    # Carry a prior blob forward across a metadata-only edit (no fresh
+    # bytes) so the user's download capability isn't silently dropped.
+    from server.knowledge.store import documents as documents_repo
+
+    prior = await documents_repo.get_one(
+        input.org,
+        input.namespace,
+        input.source_uri,
+        include_superseded=True,
+    )
+    # The document row and every chunk row record the same revision.
+    revision = next_revision(prior)
+    uploader = author["user_id"]  # the writer's, even when the document keeps its author
+    writer = author["actor"]
+    author = _author_for(prior, input.content, author, _fresh_sha(input))
+    _require_source_tags_kept(prior, writer, author["actor"], input.tags)
+    # Refused before anything is written, the original's bytes included.
+    documents_repo.check_storable(
+        [{**author, "org": input.org, "namespace": input.namespace, "source_uri": input.source_uri}]
+    )
+    original = await _resolve_blob(input, _original_of(prior, author), uploader=uploader)
+
+    from server.knowledge.store import chunks as knowledge_repo
+
+    doc_row, rows, version = await _prepare_document_add_rows(
+        input,
+        author=author,
+        chunks=chunks,
+        embedder=embedder,
+        doc_id=doc_id,
+        now=now,
+        revision=revision,
+        base_version=documents_repo.version_of(prior),
+        original=original,
     )
 
     # The chunks first, as upsert and bulk add: a commit that answers PUBLICATION_PENDING
