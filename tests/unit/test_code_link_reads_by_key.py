@@ -160,4 +160,5 @@ async def test_the_excerpt_read_keeps_the_best_rows_up_to_its_limit() -> None:
     # code that still matches first, then pinned, then the most confident
     assert [r["memory_key"] for r in served] == ["k3", "k1", "k4"]
     everything = await code_plane_reads.served_excerpts("o", ["n"], linked, limit=10, ch=ch)
-    assert [r["memory_key"] for r in everything] == ["k2", "k3", "k1", "k4"]
+    # with no changed code, the two pinned rank by confidence
+    assert [r["memory_key"] for r in everything] == ["k3", "k2", "k1", "k4"]
