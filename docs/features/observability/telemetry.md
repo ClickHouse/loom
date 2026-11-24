@@ -72,8 +72,9 @@ warehouse and dashboard setup. `loom_adoption_windows` contains one report per
 `(installation_id, window_start)`. The daily rollup adds request counts and
 uses the peak half-day distinct count for each installation.
 
-Maintain a separate, access-controlled `loom_adoption_enrollments` dataset with one row per
-installation. An enrolling operator can find the reporting UUID in the
+Maintain enrollment records in the access-controlled `adoption_enrollments` table.
+The `loom_adoption_enrollments` view reads the latest record per installation.
+An enrolling operator can find the reporting UUID in the
 `adoption_telemetry` worker's detail at `/v1/admin/workers.status`. The warehouse uses these
 columns:
 
@@ -93,8 +94,9 @@ stage beside its self-hosted usage. Coverage describes participating deployments
 ## Open-source adoption
 
 The [OSS queries](../../../deploy/dashboards/oss_adoption.sql) use distribution
-metrics collected outside the Loom server. Load them into `loom_oss_metrics_daily`
-with one row per `(day, source, artifact, metric)`. Use a UTC `Date` for `day`,
+metrics collected outside the Loom server. Load them into `oss_metrics`. The
+`loom_oss_metrics_daily` view returns one row per `(day, source, artifact, metric)`.
+Use a UTC `Date` for `day`,
 `String` for dimensions and `UInt64` for `value`.
 
 | Source                                | Artifact                  | Metrics                                          |

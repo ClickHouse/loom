@@ -5,13 +5,13 @@ const output = new URL("../.vercel/output/", import.meta.url);
 const manifest = new URL("config.json", output);
 const config = JSON.parse(readFileSync(manifest, "utf8"));
 const siteRoutes = [
-  { src: "^/$", dest: "/docs/home/index.html" },
-  { src: "^/telemetry/?$", dest: "/docs/telemetry/index.html" },
+  { src: "^/$", dest: "/docs/home" },
+  { src: "^/telemetry/?$", dest: "/docs/telemetry" },
 ];
 
 if (!Array.isArray(config.routes)) throw new Error("Vercel build manifest has no routes.");
 for (const { dest } of siteRoutes) {
-  const file = new URL(`static${dest}`, output);
+  const file = new URL(`static${dest}/index.html`, output);
   if (!existsSync(file)) throw new Error(`Missing prerendered site page: ${fileURLToPath(file)}`);
 }
 
