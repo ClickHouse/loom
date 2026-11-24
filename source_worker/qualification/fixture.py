@@ -31,6 +31,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from loom_source_worker.direct_backend import ApprovedProfile
+from loom_source_worker.main import _parse_settings
 from loom_source_worker.mcp_client import MCPSourceConfig
 from loom_source_worker.protocol import ReadBinding, ReadGrant, issue_read_grant
 
@@ -141,6 +142,8 @@ def prepare(root: Path) -> None:
     profile = ApprovedProfile(
         MCPSourceConfig(f"{PRIVATE_MCP}/mcp", bearer_audience=PRIVATE_MCP), (ORG,)
     )
+    profile_config = asdict(profile)
+    del profile_config["config"]["approved_resource_ids"]
     settings = {
         "transport": "tls_proxy_unix",
         "worker_id": worker_id,
@@ -157,15 +160,17 @@ def prepare(root: Path) -> None:
             "concurrent_per_org": 1,
             "content_bytes": 4096,
         },
-        "profiles": [asdict(profile)],
+        "profiles": [profile_config],
     }
-    write(config / "config.json", json.dumps(settings).encode())
+    raw_settings = json.dumps(settings).encode()
+    [parsed_profile] = _parse_settings(raw_settings).profiles
+    write(config / "config.json", raw_settings)
     bindings = {
         "worker_id": worker_id,
         "active": active,
         "slow": slow,
         "missing": missing,
-        "profile_digest": profile.digest,
+        "profile_digest": parsed_profile.digest,
     }
     write(caller / "bindings.json", json.dumps(bindings).encode())
     vault_token, upstream_token = (secrets.token_urlsafe(32) for _ in range(2))
@@ -350,15 +355,24 @@ def probe(mode: str) -> None:
 
     wait_for((SIGNALS / "kv-ready").is_file, "synthetic KV is not listening")
 
+    last_probe = "no response"
+
     def ready() -> bool:
+        nonlocal last_probe
         try:
-            return request(context)[::2] == (403, b'{"status":"denied"}')
+            status, _, payload = request(context)
+            last_probe = f"HTTP {status}"
+            return status == 403 and payload == b'{"status":"denied"}'
         except ssl.SSLCertVerificationError:
             raise
-        except (OSError, http.client.HTTPException):
+        except (OSError, http.client.HTTPException) as error:
+            last_probe = type(error).__name__
             return False
 
-    wait_for(ready, "mTLS proxy or worker socket is not ready")
+    try:
+        wait_for(ready, "mTLS proxy or worker socket is not ready")
+    except AssertionError as error:
+        raise AssertionError(f"{error}; last probe: {last_probe}") from None
     before = observed()
     assert_reply(request(context, grant()), 409, "reconnect")
     assert observed() == [*before, "missing"], "signed grant did not reach the KV fixture"
