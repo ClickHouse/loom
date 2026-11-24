@@ -458,6 +458,16 @@ test("codeResponsePaths covers every code op response shape", async () => {
     "t",
   ]);
   assert.deepEqual(codeResponsePaths({ matches: [{ path: "m", line: 3 }] }), ["m"]);
+  assert.deepEqual(
+    codeResponsePaths({
+      matches: [],
+      related: {
+        matches: [{ path: "m", line: 3 }],
+        definitions: [{ path: "m" }, { path: "d" }],
+      },
+    }),
+    ["m", "d"],
+  );
   assert.deepEqual(codeResponsePaths({ evidence: [{ path: "v" }, { from: "x" }] }), ["v"]);
   assert.deepEqual(codeResponsePaths({ frames: [{ path: "f", resolved: true }, { frame: "u" }] }), ["f"]);
   assert.deepEqual(codeResponsePaths({ paths: ["h1", "h2"] }), ["h1", "h2"]);

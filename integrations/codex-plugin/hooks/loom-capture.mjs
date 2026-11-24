@@ -184,7 +184,7 @@ const MEMORY_SERVED_TOOL_RE = /loom_(search|memory_get|memory_search)\b/;
 // Every code op whose response carries a trace_run_id (each server read
 // handler writes a loom.code_search_trace row).
 const CODE_TRACED_TOOL_RE =
-  /loom_code_(search|symbol|ask|trace|callers|callees|impact|verify|grep|context_pack|examples|history|map)\b/;
+  /loom_code_(search|symbol|ask|trace|callers|callees|impact|verify|grep|edit_context|context_pack|examples|history|map)\b/;
 
 /** Repo paths a code op's response points at, whatever its shape. Exported
  *  for tests via handleCodeSignals' behaviour; kept tiny and total. */
@@ -204,6 +204,8 @@ export function codeResponsePaths(body) {
   take(body.impacted_symbols); // impact
   take(body.touched_symbols);
   take(body.matches); // grep
+  take(body.related?.matches);
+  take(body.related?.definitions);
   take(body.evidence); // verify
   take(body.frames); // trace (resolved frames)
   take(body.paths, null); // history (plain strings)
