@@ -30,6 +30,7 @@ from server.code.api.models_common import (
     _ResultLessons,
     _trim_namespaces,
 )
+from server.code.api.models_grep import GrepText
 from server.code.domain.units import CodeUnit
 from server.operations.base import MCP_HIDDEN
 
@@ -38,7 +39,13 @@ EDIT_TEST_CONTEXT_LINES = 10
 
 class CodeEditContextInput(_CodeIdentity, _ResultLessons):
     name: str = Field(
-        min_length=1, description="Definition name, path:symbol, or path:line inside a function."
+        min_length=1,
+        description="Definition name, path:symbol, or path:line. With clues, give the file path.",
+    )
+    clues: list[GrepText] = Field(
+        default_factory=list,
+        max_length=255,
+        description="Literal code fragments to locate the edit target in the named file.",
     )
 
 
@@ -213,8 +220,8 @@ class CodeSymbolOutput(BaseModel):
     # — same_file | same_dir | co_change | path_distance | none. "" and off the wire
     # when no context was given.
     picked_by: str = ""
-    # `anonymous_namespace` | `tail` | `python_module` | `registration` | `file_symbol` when a
-    # read-side name form bound; "" and off the wire for an exact hit.
+    # Which name form bound, or `file_clues` when edit context located the target
+    # from literal text. Empty for an exact symbol name.
     resolved_by: str = ""
     # The document sections that cite the definition (the Markdown lane's `reads` edges)
     # — section qualified name, path, line; at most five distinct sections, first by
@@ -584,8 +591,8 @@ class CodeImpactOutput(_LessonsOut):
     # True when `impacted_symbols` is a page of the radius (per_hop_limit /
     # offset sliced it, or the per-hop edge read hit its cap).
     truncated: bool = False
-    # `anonymous_namespace` | `tail` | `python_module` | `registration` | `file_symbol` when a
-    # read-side name form bound; "" and off the wire for an exact hit.
+    # Which name form bound, or `file_clues` when edit context located the target
+    # from literal text. Empty for an exact symbol name.
     resolved_by: str = ""
     # Why the radius is empty, '' when it is not. Answers:
     # `no_indexed_paths` (the change names no path the symbol table holds

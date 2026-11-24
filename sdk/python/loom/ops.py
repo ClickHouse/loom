@@ -6410,6 +6410,7 @@ class CodeEditContextInput(TypedDict, total=False):
     user_id: NotRequired[str]
     consumer: NotRequired[str]
     name: Required[str]
+    clues: NotRequired[list[str]]
 
 
 class CodeEditContextBody(TypedDict, total=False):
@@ -6421,6 +6422,7 @@ class CodeEditContextBody(TypedDict, total=False):
     user_id: NotRequired[str]
     consumer: NotRequired[str]
     name: Required[str]
+    clues: NotRequired[list[str]]
 
 
 class CodeSymbolOutput(TypedDict, total=False):

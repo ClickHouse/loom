@@ -565,6 +565,39 @@ async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     (located,) = location.definitions
     assert located.body == member.body
     assert located.examples == member.examples
+    clue = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name="src/cli.py", clues=["return 'ok'"], include_lessons=False
+        )
+    )
+    (matched,) = clue.definitions
+    assert clue.resolved_by == "file_clues"
+    assert matched.body == member.body
+    assert matched.examples == member.examples
+    missing = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org,
+            namespace=ns,
+            name="src/cli.py",
+            clues=["not in this file"],
+        )
+    )
+    assert not missing.definitions and not missing.candidates
+    await _ingest(
+        repo,
+        org,
+        ns,
+        path="src/other.py",
+        source=b"def first():\n    return 'same'\n\ndef second():\n    return 'same'\n",
+    )
+    ambiguous = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, name="src/other.py", clues=["return 'same'"])
+    )
+    assert not ambiguous.definitions and ambiguous.ambiguous
+    assert {c["qualified_name"] for c in ambiguous.candidates} == {
+        "src.other::first",
+        "src.other::second",
+    }
 
 
 async def test_deletion_tombstones_everything(code_env) -> None:

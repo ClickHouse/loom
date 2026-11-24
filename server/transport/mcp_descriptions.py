@@ -1443,7 +1443,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.edit_context": (
         "Read implementation, relevant indexed tests, and linked lessons before editing. "
-        "Use a definition name, path:symbol, or a line inside a function."
+        "Use a definition name, path:symbol, or path:line. If the target is unknown, "
+        "give its file path and literal clues in this call."
     ),
     "code.backport_gap": (
         "Which release branches still carry the bug a merged fix removed, "
@@ -2191,8 +2192,9 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Find text and enclosing bodies in one call. Scope with `path_prefix` or `path_globs`. "
         "Use a list of literals in `pattern` or one RE2 string with `regex: true`. "
         "Use `include_body: false` for locations or `context_lines` excerpts. "
+        "For an edit in a known file, use code.edit_context with literal clues. "
         "Use code.search for behavior.\n\n"
-        "Use code.symbol for a class or code.read for exact lines. Filter with `langs`. "
+        "Use code.symbol for a definition or code.read for exact lines. Filter with `langs`. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
     ),
     # The coding tier lists blast radius with the sentences a coding session

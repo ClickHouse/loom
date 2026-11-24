@@ -42,6 +42,7 @@ from server.code.app.symbol.neighbours import (
 )
 from server.code.app.symbol.outline import _container_skeleton, _is_large_container
 from server.code.app.symbol.resolve import (
+    _indexed_commit,
     _parse_location,
     _resolve_symbols,
     _seed_ids_of,
@@ -232,17 +233,28 @@ async def _chunk_hashes(
 
 
 async def _symbol_bodies(
-    repo: CodeRepo, org: str, ns: str, input: CodeSymbolInput, head: list[dict[str, Any]]
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    input: CodeSymbolInput,
+    head: list[dict[str, Any]],
+    *,
+    expected_commit: str | None = None,
 ) -> list[tuple[str, list[dict[str, Any]], str, str]]:
     """Complete bodies by default; explicitly capped large containers use outlines."""
 
     async def one(r: dict[str, Any]) -> tuple[str, list[dict[str, Any]], str, str]:
         if input.include_body:
             if not input.token_budget or not _is_large_container(r):
-                text = await symbol_body(repo, org, ns, r)
+                row = (
+                    {**r, "_extent_commit": r.get("extent_commit") or r.get("indexed_commit")}
+                    if expected_commit is not None
+                    else r
+                )
+                text = await symbol_body(repo, org, ns, row, expected_commit=expected_commit)
                 if text:
                     return text, [], "", "unit"
-            if _is_large_container(r):
+            if expected_commit is None and _is_large_container(r):
                 body, outline, outline_next = await _container_skeleton(
                     repo, org, ns, r, input.token_budget
                 )
@@ -451,19 +463,33 @@ def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any],
 
 
 async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
-    return await handle_code_symbol(
+    from server.code.app.symbol.edit_target import locate_edit_target
+
+    name, revision = input.name, None
+    if input.clues:
+        name, revision, candidates = await locate_edit_target(input)
+        if not name:
+            return CodeSymbolOutput(
+                definitions=[], ambiguous=len(candidates) > 1, candidates=candidates
+            )
+    out = await handle_code_symbol(
         CodeSymbolInput(
-            **input.model_dump(),
+            **input.model_dump(exclude={"name", "clues"}),
+            name=name,
             include_history=False,
             test_examples_only=True,
             example_context_lines=EDIT_TEST_CONTEXT_LINES,
         ),
         op_name="code.edit_context",
+        expected_commit=revision,
     )
+    if revision is not None and out.definitions:
+        out.resolved_by = "file_clues"
+    return out
 
 
 async def handle_code_symbol(
-    input: CodeSymbolInput, *, op_name: str = "code.symbol"
+    input: CodeSymbolInput, *, op_name: str = "code.symbol", expected_commit: str | None = None
 ) -> CodeSymbolOutput:
     from server.code.app import fan_in as code_fan_in
 
@@ -481,6 +507,13 @@ async def handle_code_symbol(
 
     with code_span("symbol.resolve") as sp:
         rows = await _resolve_symbols(repo, org, ns, symbol_id=input.symbol_id, name=input.name)
+        if expected_commit is not None:
+            rows = [
+                row
+                for row in rows
+                if _indexed_commit(row.get("extent_commit") or row.get("indexed_commit"))
+                == expected_commit
+            ]
         span_attrs(sp, results=len(rows), tier=tier_of(rows))
     if not rows:
         # candidates by fuzzy name so a typo'd lookup still orients the
@@ -534,7 +567,9 @@ async def handle_code_symbol(
     legs = _SymbolLegs(repo, org, ns, input, rows, include_owner=op_name == "code.edit_context")
     try:
         with code_span("symbol.bodies", results=len(head)):
-            bodies = await _symbol_bodies(repo, org, ns, input, head)
+            bodies = await _symbol_bodies(
+                repo, org, ns, input, head, expected_commit=expected_commit
+            )
         hashes = await legs.hashes
         units = [_unit_with_body(r, b, hashes) for r, b in zip(head, bodies, strict=True)]
 

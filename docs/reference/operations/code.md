@@ -590,7 +590,8 @@ Read implementation, relevant indexed tests, and linked lessons before editing.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `name` | `str` | required | Definition name, path:symbol, or path:line inside a function. |
+| `name` | `str` | required | Definition name, path:symbol, or path:line. |
+| `clues` | `list[str]` | *(computed)* | Literal code fragments to locate the edit target in the named file. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
