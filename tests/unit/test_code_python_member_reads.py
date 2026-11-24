@@ -17,7 +17,7 @@ client: Client
     )
     reader = parse_python(
         "src/pkg/reader.py",
-        b"""from .context import client
+        b"""from .context import client as default_client
 
 class Other:
     @property
@@ -25,17 +25,28 @@ class Other:
         return 2
 
 def imported():
-    return client.option
+    return default_client.option
 
 def local(client: Other):
     return client.option
 
-def shadow(client):
-    return client.option
+def shadow(default_client):
+    return default_client.option
 
 def update():
-    client.option = 2
-    client.option()
+    default_client.option = 2
+    default_client.option()
+
+class Outer:
+    def method(self):
+        def nested(self):
+            return self.option
+        return nested(self)
+
+def reassigned(client: Other):
+    value = client.option
+    client = object()
+    return value
 """,
     )
     names: dict[str, list[tuple[str, str, str]]] = {}
@@ -47,9 +58,14 @@ def update():
     lane_context = {"py_present": {context.path, reader.path}, "py_roots": ("src",)}
     sites = read_sites(reader)
     targets = receiver_targets(reader, sites, names, lane_context)
-    assert targets == {"name:client": "src.pkg.context::client"}
-    edges = read_edges(reader, sites, names, {"name:client": "Client"}, lane_context)
+    declaration = next(s for s in context.symbols if s.name == "client")
+    key = (declaration.qualified_name, declaration.id)
+    assert targets == {"default_client": key}
+    edges = read_edges(reader, sites, names, targets, {key: "Client"}, lane_context)
     assert [(e.edge_kind, e.line, e.to_qualified_name) for e in edges] == [
+        ("reads", 9, "src.pkg.context::client"),
         ("reads", 9, "src.pkg.context::Client::option"),
         ("reads", 12, "src.pkg.reader::Other::option"),
     ]
+    unresolved = read_edges(reader, sites, names, targets, {}, lane_context)
+    assert [(e.line, e.to_symbol_id) for e in unresolved if e.line == 9] == [(9, declaration.id)]

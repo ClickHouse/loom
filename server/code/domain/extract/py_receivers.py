@@ -405,7 +405,7 @@ class PyReceiverTyper:
         """Bare callee name → the return annotation this file states."""
         return {k: v for k, v in self._same_file.items() if v}
 
-    def type_of(self, line: int, receiver: str, *, include_imported: bool = True) -> str:
+    def type_of(self, line: int, receiver: str) -> str:
         """The named type of `receiver` (`client`, `self.client`, `self`) as
         written at `line`, '' when the tree does not say."""
         key = receiver.strip()
@@ -423,7 +423,7 @@ class PyReceiverTyper:
             return bound
         # a name no scope binds is an import's — its
         # definition's annotation (`conf: AirflowConfigParser = …`) is its type
-        return self._returns.get(NAME_PREFIX + key, "") if include_imported else ""
+        return self._returns.get(NAME_PREFIX + key, "")
 
     def _resolve(self, binding: str) -> str:
         if binding.startswith(_FIXTURE_PREFIX):

@@ -44,7 +44,6 @@ from server.code.domain.extract.lang_py_islands import py_sql_units
 from server.code.domain.extract.lang_shell_islands import drop_program_misses
 from server.code.domain.extract.lang_sql_model import SQL_LANG
 from server.code.domain.extract.name_scope import drop_test_local_shell_defs, gate_name_table
-from server.code.domain.extract.py_receivers import NAME_PREFIX
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.store.index import CodeRepo
 
@@ -189,7 +188,8 @@ async def _edge_names(
     names = collect_call_names(pf, header)
     chains = await _reexport_chains(repo, org, ns, pf)
     names.update(declared for _module, declared in chains.values())
-    requested = names | {name for site in member_sites for name in (site.receiver, site.member)}
+    requested = names | {site.member for site in member_sites}
+    requested.update(site.imported[1] for site in member_sites if site.imported)
     rows = await repo.name_candidates(org, ns, sorted(requested)) if requested else {}
     # A site binds within its language class. A shell program can share a name with C++.
     rows = gate_name_table(rows, pf.lang)
@@ -206,22 +206,17 @@ async def _python_read_edges(
     pf: ParsedFile,
     names: _EdgeNames,
     context: dict[str, Any] | None,
-    callee_returns: dict[str, str],
 ) -> list[Edge]:
     targets = await asyncio.to_thread(
         py_member_reads.receiver_targets, pf, names.member_sites, names.reads, context
     )
-    type_rows = (
-        await repo.return_types_for_qualified(org, ns, sorted(set(targets.values())))
+    types = (
+        await repo.declared_types_for_symbols(org, ns, sorted(set(targets.values())))
         if targets
         else {}
     )
-    types = {
-        name: value for name, value in callee_returns.items() if not name.startswith(NAME_PREFIX)
-    }
-    types.update({name: type_rows[q] for name, q in targets.items() if q in type_rows})
     return await asyncio.to_thread(
-        py_member_reads.read_edges, pf, names.member_sites, names.reads, types, context
+        py_member_reads.read_edges, pf, names.member_sites, names.reads, targets, types, context
     )
 
 
@@ -271,9 +266,7 @@ async def _derive_edges(
             chains,
         )
         if names.member_sites:
-            edges.extend(
-                await _python_read_edges(repo, org, ns, pf, names, lane_context, callee_returns)
-            )
+            edges.extend(await _python_read_edges(repo, org, ns, pf, names, lane_context))
         if pf.lang == "shell":
             misses = drop_program_misses(misses)  # A program is a facet
         if pf.lang in TS_LANGS:

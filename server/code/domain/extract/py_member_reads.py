@@ -10,7 +10,8 @@ from symtable import SymbolTable, symtable
 from typing import Any
 
 from server.code.domain.extract.edges_treesitter import Edge, _caller_spans, _CallResolver
-from server.code.domain.extract.py_receivers import NAME_PREFIX
+from server.code.domain.extract.py_members import KIND_CONST
+from server.code.domain.extract.py_receivers import type_name_of
 from server.code.domain.extract.spans import last_span_at
 from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
 
@@ -32,7 +33,15 @@ class MemberRead:
     line: int
     receiver: str
     member: str
-    imported: bool
+    receiver_type: str = ""
+    imported: tuple[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class _FunctionScope:
+    name: str
+    line: int
+    annotations: dict[str, str]
 
 
 def _is_read(node: Any) -> bool:
@@ -60,46 +69,77 @@ def read_sites(pf: ParsedFile) -> list[MemberRead]:
         module = symtable(pf.source.decode("utf-8"), pf.path, "exec")
     except (SyntaxError, UnicodeDecodeError, RecursionError):
         return []
-    scopes = _function_scopes(module)
+    children = _child_scopes(module)
+    scopes = {
+        (scope.get_name(), scope.get_lineno()): scope
+        for scope in children
+        if scope.get_type() == "function"
+    }
     imports = {
         row.get_name()
         for row in module.get_symbols()
         if row.is_imported() and not row.is_assigned()
     }
+    direct = _direct_imports(pf)
+    imports.difference_update(_global_rebindings(children))
     sites: list[MemberRead] = []
     for line, receiver, member, owner in candidates:
-        scope = scopes.get(owner)
+        scope = scopes.get((owner.name, owner.line))
         if scope is None or receiver not in scope.get_identifiers():
             continue
         binding = scope.lookup(receiver)
-        if binding.is_global() and not binding.is_assigned() and receiver in imports:
-            sites.append(MemberRead(line, receiver, member, True))
-        elif binding.is_local():
-            sites.append(MemberRead(line, receiver, member, False))
+        if binding.is_global() and receiver in imports and (origin := direct.get(receiver)):
+            sites.append(MemberRead(line, receiver, member, imported=origin))
+        elif binding.is_parameter() and not binding.is_assigned():
+            if receiver_type := owner.annotations.get(receiver):
+                sites.append(MemberRead(line, receiver, member, receiver_type))
     return sites
 
 
-def _function_scopes(module: SymbolTable) -> dict[tuple[str, int], SymbolTable]:
-    scopes: dict[tuple[str, int], SymbolTable] = {}
+def _child_scopes(module: SymbolTable) -> list[SymbolTable]:
     todo = list(module.get_children())
-    while todo:
-        scope = todo.pop()
+    for scope in todo:
         todo.extend(scope.get_children())
-        if scope.get_type() == "function":
-            scopes[(scope.get_name(), scope.get_lineno())] = scope
-    return scopes
+    return todo
 
 
-def _attribute_sites(pf: ParsedFile) -> list[tuple[int, str, str, tuple[str, int]]]:
-    sites: list[tuple[int, str, str, tuple[str, int]]] = []
-    stack: list[tuple[Any, tuple[str, int] | None]] = [(pf.tree.root_node, None)]
+def _global_rebindings(children: list[SymbolTable]) -> set[str]:
+    return {
+        row.get_name()
+        for scope in children
+        for row in scope.get_symbols()
+        if row.is_declared_global() and (row.is_assigned() or row.is_imported())
+    }
+
+
+def _annotations(parameters: Any, source: bytes) -> dict[str, str]:
+    types: dict[str, str] = {}
+    for parameter in parameters.named_children if parameters is not None else ():
+        if not (name_type := type_name_of(parameter.child_by_field_name("type"), source)):
+            continue
+        name = parameter.child_by_field_name("name") or next(
+            (child for child in parameter.named_children if child.type == "identifier"), None
+        )
+        if name is not None and name.type == "identifier":
+            types[node_text(name, source)] = name_type
+    return types
+
+
+def _attribute_sites(pf: ParsedFile) -> list[tuple[int, str, str, _FunctionScope]]:
+    sites: list[tuple[int, str, str, _FunctionScope]] = []
+    stack: list[tuple[Any, _FunctionScope | None]] = [(pf.tree.root_node, None)]
     while stack:
         node, owner = stack.pop()
         if node.type == "function_definition":
             name = node.child_by_field_name("name")
             body = node.child_by_field_name("body")
             if name is not None and body is not None:
-                stack.append((body, (node_text(name, pf.source), node.start_point[0] + 1)))
+                owner = _FunctionScope(
+                    node_text(name, pf.source),
+                    node.start_point[0] + 1,
+                    _annotations(node.child_by_field_name("parameters"), pf.source),
+                )
+                stack.append((body, owner))
             continue
         if node.type in {
             "class_definition",
@@ -131,13 +171,12 @@ def _resolver(
     pf: ParsedFile,
     name_table: dict[str, list[tuple[str, str, str]]],
     lane_context: dict[str, Any] | None,
-    types: dict[str, str] | None = None,
 ) -> _CallResolver:
     local: dict[str, list[Symbol]] = defaultdict(list)
     for symbol in pf.symbols:
         if symbol.kind == "function":
             local[symbol.name].append(symbol)
-    return _CallResolver(pf, name_table, local, types, lane_context)
+    return _CallResolver(pf, name_table, local, lane_context=lane_context)
 
 
 def _direct_imports(pf: ParsedFile) -> dict[str, tuple[str, str] | None]:
@@ -165,21 +204,20 @@ def receiver_targets(
     sites: list[MemberRead],
     name_table: dict[str, list[tuple[str, str, str]]],
     lane_context: dict[str, Any] | None,
-) -> dict[str, str]:
-    """Receiver name to imported declaration. An import that can be shadowed
-    supplies no type for a read."""
-    names = {site.receiver for site in sites if site.imported}
-    if not names:
+) -> dict[str, tuple[str, str]]:
+    """Receiver name to the exact qualified name and id of its imported value."""
+    imports = {site.receiver: site.imported for site in sites if site.imported}
+    if not imports:
         return {}
-    resolver = _resolver(pf, name_table, lane_context)
-    direct = _direct_imports(pf)
-    out: dict[str, str] = {}
-    for name in sorted(names):
-        if direct.get(name) is None or direct[name] != resolver.py_bindings.get(name):
+    values = {n: [r for r in rows if r[2] == KIND_CONST] for n, rows in name_table.items()}
+    resolver = _resolver(pf, values, lane_context)
+    out: dict[str, tuple[str, str]] = {}
+    for name, origin in sorted(imports.items()):
+        if origin != resolver.py_bindings.get(name):
             continue
         bound = resolver.import_bound("", name, resolver.candidates(name, name))
-        if isinstance(bound, tuple):
-            out[NAME_PREFIX + name] = bound[1]
+        if isinstance(bound, tuple) and bound[2] == 1.0:
+            out[name] = bound[1], bound[0]
     return out
 
 
@@ -187,11 +225,12 @@ def read_edges(
     pf: ParsedFile,
     sites: list[MemberRead],
     name_table: dict[str, list[tuple[str, str, str]]],
-    types: dict[str, str],
+    targets: dict[str, tuple[str, str]],
+    types: dict[tuple[str, str], str],
     lane_context: dict[str, Any] | None,
 ) -> list[Edge]:
-    """Emit a read only when the receiver has a type and the member binds through it."""
-    resolver = _resolver(pf, name_table, lane_context, types)
+    """Record binding reads and the member each declared type can resolve."""
+    resolver = _resolver(pf, name_table, lane_context)
     functions = [s for s in pf.symbols if s.kind in {"function", "test"} and s.has_body]
     owner_at = last_span_at(_caller_spans(pf, functions))
     out: dict[tuple[str, str, int], Edge] = {}
@@ -199,9 +238,15 @@ def read_edges(
         owner = owner_at(site.line)
         if owner is None:
             continue
-        receiver_type = resolver.typer.type_of(
-            site.line, site.receiver, include_imported=site.imported
-        )
+        target = targets.get(site.receiver) if site.imported is not None else None
+        if target is not None:
+            target_name, target_id = target
+            # A declaration can change even when both member definitions stay live.
+            out[(owner.id, target_id, site.line)] = Edge(
+                "reads", owner.id, target_id, owner.qualified_name, target_name,
+                pf.path, site.line, 1.0,
+            )
+        receiver_type = site.receiver_type or (types.get(target) if target is not None else None)
         if not receiver_type:
             continue
         bound = resolver._named_type_target(
