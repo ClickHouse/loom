@@ -111,6 +111,78 @@ async def test_json_mode_uses_directive_not_prefill(monkeypatch: pytest.MonkeyPa
     assert result.text == '{"facts": []}'
 
 
+_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["peers"],
+    "properties": {"peers": {"type": "array", "items": {"type": "string"}}},
+}
+_SCHEMA_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {"name": "judgement", "strict": True, "schema": _SCHEMA},
+}
+
+
+@pytest.mark.asyncio
+async def test_a_json_schema_is_sent_as_structured_output_and_in_the_directive(
+    monkeypatch: pytest.MonkeyPatch, keyed
+) -> None:
+    """A chat-completions json_schema format becomes the Messages API's
+    output_config.format, and its schema is written into the JSON directive."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_anthropic_effort", "low")
+    stub = _StubHTTP(_canned(text='```json\n{"peers": []}\n```'))
+    monkeypatch.setattr(anthropic_mod, "_http_client", lambda: stub)
+
+    result = await AnthropicLLMClient(model="claude-a").complete(
+        "judge", "notes", response_format=_SCHEMA_FORMAT
+    )
+
+    body = stub.calls[0]["json"]
+    assert body["output_config"] == {
+        "effort": "low",
+        "format": {"type": "json_schema", "schema": _SCHEMA},
+    }
+    system_text = body["system"][0]["text"]
+    assert system_text.startswith("judge\n\n" + anthropic_mod._JSON_DIRECTIVE)
+    assert '"required": ["peers"]' in system_text
+    assert result.text == '{"peers": []}'
+
+
+@pytest.mark.asyncio
+async def test_a_json_schema_keeps_its_directive_where_output_config_is_refused(
+    monkeypatch: pytest.MonkeyPatch, keyed
+) -> None:
+    refusal = {
+        "type": "error",
+        "error": {"message": "output_config: Extra inputs are not permitted"},
+    }
+    stub = _SeqHTTP([(refusal, 400), _canned('{"peers": []}')])
+    monkeypatch.setattr(anthropic_mod, "_http_client", lambda: stub)
+
+    await AnthropicLLMClient(model="claude-old").complete(
+        "judge", "notes", response_format=_SCHEMA_FORMAT
+    )
+
+    assert stub.calls[0]["json"]["output_config"]["format"]["schema"] == _SCHEMA
+    resent = stub.calls[1]["json"]
+    assert "output_config" not in resent
+    assert '"required": ["peers"]' in resent["system"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_json_object_sends_no_output_format(monkeypatch: pytest.MonkeyPatch, keyed) -> None:
+    stub = _StubHTTP(_canned(text="{}"))
+    monkeypatch.setattr(anthropic_mod, "_http_client", lambda: stub)
+
+    await AnthropicLLMClient(model="claude-a").complete(
+        "extract", "msgs", response_format={"type": "json_object"}
+    )
+
+    assert "output_config" not in stub.calls[0]["json"]
+
+
 @pytest.mark.asyncio
 async def test_json_mode_with_empty_system_is_directive_only(
     monkeypatch: pytest.MonkeyPatch, keyed

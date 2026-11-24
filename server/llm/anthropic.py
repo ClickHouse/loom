@@ -1,14 +1,17 @@
 """Anthropic (Claude) chat completion client for `llm_provider == "anthropic"`.
 
-JSON mode: the Messages API has no `response_format` parameter, so the
+JSON mode: the Messages API has no `response_format` parameter. A
 `{"type": "json_object"}` hint is honoured with a system-prompt directive
 plus code-fence stripping on the way out (assistant-prefill 400s on current
-models). Weaker than a hard constraint, but the extraction caller tolerates
-loose output and silently dropping the hint reintroduces parse-failure 500s.
+models). A `json_schema` format is sent as the Messages API's structured
+output (`output_config.format`), which constrains the reply to the schema;
+the schema is also written into the directive, so a model or gateway that
+refuses `output_config` still answers in the caller's shape.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -37,6 +40,32 @@ _JSON_DIRECTIVE = (
 )
 
 
+def _json_schema(response_format: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The JSON Schema a chat-completions `json_schema` response format carries."""
+    if (response_format or {}).get("type") != "json_schema":
+        return None
+    spec = (response_format or {}).get("json_schema")
+    schema = spec.get("schema") if isinstance(spec, dict) else None
+    return schema if isinstance(schema, dict) else None
+
+
+def _json_request(
+    system: str, response_format: dict[str, Any] | None
+) -> tuple[str, dict[str, Any] | None, bool]:
+    """(system prompt, schema, JSON mode) for a chat-completions response format:
+    a JSON format appends the directive, naming the schema when there is one."""
+    kind = (response_format or {}).get("type")
+    if kind not in ("json_object", "json_schema"):
+        if response_format:
+            log.debug("anthropic client ignoring response_format=%s", response_format)
+        return system, None, False
+    schema = _json_schema(response_format)
+    directive = _JSON_DIRECTIVE
+    if schema is not None:
+        directive = f"{directive} The object matches this JSON Schema: {json.dumps(schema)}"
+    return (f"{system}\n\n{directive}" if system else directive), schema, True
+
+
 def _split_cache_writes(usage: dict[str, Any], total_write: int) -> tuple[int, int]:
     """(1-hour, 5-minute) cache-write token counts. The API reports the TTL
     split under `usage.cache_creation.{ephemeral_1h,ephemeral_5m}_input_tokens`;
@@ -61,7 +90,12 @@ def _thinking_starved(data: dict[str, Any]) -> bool:
 
 
 def _payload(
-    model: str, system: str, user: str, max_tokens: int, temperature: float | None
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+    temperature: float | None,
+    schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The request this call would like to send, minus what the model refused."""
     from server.settings import settings
@@ -74,8 +108,13 @@ def _payload(
         "max_tokens": traits.output_cap(model, max_tokens),
         "messages": [{"role": "user", "content": user}],
     }
-    if settings.llm_anthropic_effort and "output_config" not in t.refused:
-        payload["output_config"] = {"effort": settings.llm_anthropic_effort}
+    output_config: dict[str, Any] = {}
+    if settings.llm_anthropic_effort:
+        output_config["effort"] = settings.llm_anthropic_effort
+    if schema is not None:
+        output_config["format"] = {"type": "json_schema", "schema": schema}
+    if output_config and "output_config" not in t.refused:
+        payload["output_config"] = output_config
     if system:
         # Prompt caching: the system prompt is the static prefix of every
         # loom call (extraction instructions, synthesis rules), the user
@@ -155,7 +194,7 @@ class AnthropicLLMClient:
         system: str,
         user: str,
         max_tokens: int = 1024,
-        response_format: dict[str, str] | None = None,
+        response_format: dict[str, Any] | None = None,
         temperature: float | None = 0.0,
     ) -> LLMResult:
         # Before the gateway token and outside `recording`: a call naming no
@@ -163,13 +202,8 @@ class AnthropicLLMClient:
         who = await customer.require()
         client = _http_client()
         data: dict[str, Any] = {}
-        json_mode = (response_format or {}).get("type") == "json_object"
-        if response_format and not json_mode:
-            # No Messages API equivalent for non-json_object formats; ignore loudly.
-            log.debug("anthropic client ignoring response_format=%s", response_format)
-        if json_mode:
-            system = f"{system}\n\n{_JSON_DIRECTIVE}" if system else _JSON_DIRECTIVE
-        payload = _payload(self.model, system, user, max_tokens, temperature)
+        system, schema, json_mode = _json_request(system, response_format)
+        payload = _payload(self.model, system, user, max_tokens, temperature, schema)
         from server.observability.genai import generation_span
         from server.observability.provider_health import recording
         from server.settings import settings
@@ -192,7 +226,9 @@ class AnthropicLLMClient:
                             # A refused field: re-send without it.
                             if not _learn_from_refusal(self.model, r, payload):
                                 break
-                            payload = _payload(self.model, system, user, max_tokens, temperature)
+                            payload = _payload(
+                                self.model, system, user, max_tokens, temperature, schema
+                            )
                             r = await _post(client, self.model, key, payload, who)
                         _raise_for_status(r, "anthropic:messages")
                         data = r.json()
