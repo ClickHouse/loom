@@ -60,6 +60,20 @@ def test_scip_symbol_drops_rendered_description_already_in_source() -> None:
     assert elided["description"] == rendered
 
 
+def test_scip_symbol_keeps_distinct_code_literals_in_docs() -> None:
+    body = 'def send():\n    """Send marker `"a  b"`."""\n    pass\n'
+    rendered = '```python\ndef send():\n```\nSend marker `"a b"`.'
+    out = lean_code(
+        "code.symbol",
+        {
+            "definitions": [
+                {"symbol": "send", "tier": "scip", "body": body, "description": rendered}
+            ]
+        },
+    )
+    assert out["definitions"][0]["description"] == rendered
+
+
 FRESH = {
     "branch": "main",
     "commit": "c15ee82f1020ed8261a2add694a46519457e2d2a",

@@ -273,12 +273,21 @@ def _lean_search(out: dict[str, Any]) -> None:
 _NO_DOC = "No documentation available."
 # Search hits past this rank keep where they are, not what they do.
 _DESCRIBED_HITS = 3
-_RST_ROLE = re.compile(r":[A-Za-z][\w-]*:(?=`)")
+_DOC_MARKUP = re.compile(
+    r"(?<!`)(?::[A-Za-z][\w-]*:)?(?P<literal>(?P<ticks>`+)[^`]+(?P=ticks))(?!`)"
+    r"|\\_|(?:&nbsp;|\s)+"
+)
 
 
 def _fold_doc_markup(text: str) -> str:
     """Fold spacing and escapes from SCIP's rendered source documentation."""
-    return " ".join(_RST_ROLE.sub("", text).replace("&nbsp;", " ").replace(r"\_", "_").split())
+
+    def fold(match: re.Match[str]) -> str:
+        if literal := match.group("literal"):
+            return literal
+        return "_" if match.group() == r"\_" else " "
+
+    return _DOC_MARKUP.sub(fold, text).strip()
 
 
 def _description_repeats_body(description: str, body: str, *, scip: bool) -> bool:
@@ -292,6 +301,8 @@ def _description_repeats_body(description: str, body: str, *, scip: bool) -> boo
     header, closing, excerpt = description.partition("\n```\n")
     signature = header.partition("\n")[2].strip()
     if not closing or not signature or signature not in body:
+        return False
+    if "```" in excerpt or "```" in body:
         return False
     excerpt = _fold_doc_markup(excerpt)
     return bool(excerpt) and excerpt in _fold_doc_markup(body)
