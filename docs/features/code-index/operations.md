@@ -96,8 +96,9 @@ one request. Give the definition name or location if known. Literal `clues`
 can locate the edit target in the named file or across the index when you omit
 `name`. A repository lookup returns source when its verified matches identify
 one file. Competing files return candidate locations. A missing call
-expression can recover source from its qualified argument and report
-`resolved_by: repository_argument`.
+expression can recover source from its qualified argument. It reports
+`resolved_by: file_argument` for a named file or `repository_argument` for a
+repository lookup.
 
 When an exact call expression such as `convert(row.value)` is absent,
 `related_on_miss: true` looks for its qualified argument in the same scope.

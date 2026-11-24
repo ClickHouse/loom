@@ -589,6 +589,17 @@ async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     )
     assert recovered.resolved_by == "repository_argument"
     assert recovered.definitions == clue.definitions
+    scoped = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org,
+            namespace=ns,
+            name="src/cli.py",
+            clues=["decode(self.payload.value)"],
+            include_lessons=False,
+        )
+    )
+    assert scoped.resolved_by == "file_argument"
+    assert scoped.definitions == recovered.definitions
     await _ingest(repo, org, ns, path="src/worker.py", source=b"def run():\n    return 'ok'\n")
     competing_files = await handle_code_edit_context(
         CodeEditContextInput(org=org, namespace=ns, clues=["return 'ok'"], include_lessons=False)

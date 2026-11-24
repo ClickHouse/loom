@@ -606,7 +606,7 @@ Read implementation, indexed tests, and linked notes before editing.
 | `uses_truncated` | `bool` | True when `uses_limit` shortened the list or the token cap withheld `uses_brief`. |
 | `uses_tokens` | `int` | Estimated tokens the compact `uses` block cost out of `token_budget`. |
 | `picked_by` | `str` | Which context key ranked the definitions when `near_paths` / `pr_number` was given — same_file \| same_dir \| co_change \| path_distance \| none. "" and off the wire when no context was given. |
-| `resolved_by` | `str` | Edit context reports `file_clues` for an explicit file, `repository_clues` for a literal repository match, or `repository_argument` for recovery from a missing call expression. |
+| `resolved_by` | `str` | Edit context reports `file_clues` or `repository_clues` for literal matches, and `file_argument` or `repository_argument` for recovery from a missing call expression. |
 | `documented_in` | `list[dict[str, Any]]` | The document sections that cite the definition (the Markdown lane's `reads` edges) — section qualified name, path, line; at most five distinct sections, first by confidence. |
 | `neighbours` | `list[dict[str, Any]]` | The neighbours graph block on the definitions (one entry per definition anchor); empty unless `neighbours` ran. |
 | `anchors` | `int` | How many definitions the `neighbours` block was built for; 0 when it is off. |
@@ -1663,7 +1663,7 @@ Find an exact definition by name or path:line.
 | `uses_truncated` | `bool` | True when `uses_limit` shortened the list or the token cap withheld `uses_brief`. |
 | `uses_tokens` | `int` | Estimated tokens the compact `uses` block cost out of `token_budget`. |
 | `picked_by` | `str` | Which context key ranked the definitions when `near_paths` / `pr_number` was given — same_file \| same_dir \| co_change \| path_distance \| none. "" and off the wire when no context was given. |
-| `resolved_by` | `str` | Edit context reports `file_clues` for an explicit file, `repository_clues` for a literal repository match, or `repository_argument` for recovery from a missing call expression. |
+| `resolved_by` | `str` | Edit context reports `file_clues` or `repository_clues` for literal matches, and `file_argument` or `repository_argument` for recovery from a missing call expression. |
 | `documented_in` | `list[dict[str, Any]]` | The document sections that cite the definition (the Markdown lane's `reads` edges) — section qualified name, path, line; at most five distinct sections, first by confidence. |
 | `neighbours` | `list[dict[str, Any]]` | The neighbours graph block on the definitions (one entry per definition anchor); empty unless `neighbours` ran. |
 | `anchors` | `int` | How many definitions the `neighbours` block was built for; 0 when it is off. |

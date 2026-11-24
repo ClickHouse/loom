@@ -32,7 +32,7 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
     if input.name and not path:
         return EditTarget()
     pattern: str | list[str] = input.clues
-    if not path and len(input.clues) == 1 and qualified_call_argument(input.clues[0]):
+    if len(input.clues) == 1 and qualified_call_argument(input.clues[0]):
         pattern = input.clues[0]
     org, ns = resolve_code_identity(input.org, input.namespace)
     found = await handle_code_grep(
