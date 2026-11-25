@@ -53,6 +53,7 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/",
             "/adoption",
             "/ar",
+            "/ar/enterprise",
             "/cs",
             "/de",
             "/de/enterprise",

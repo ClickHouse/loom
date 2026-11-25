@@ -6,7 +6,7 @@
     "enterprise": "/enterprise",
     "knowledgeFactory": "/knowledge-factory"
   },
-  "ar": { "name": "العربية", "href": "/ar", "docs": null },
+  "ar": { "name": "العربية", "href": "/ar", "docs": null, "enterprise": "/ar/enterprise" },
   "cs": { "name": "Čeština", "href": "/cs", "docs": null },
   "de": { "name": "Deutsch", "href": "/de", "docs": null, "enterprise": "/de/enterprise" },
   "es": {
