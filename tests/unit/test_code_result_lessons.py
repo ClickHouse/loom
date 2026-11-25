@@ -920,7 +920,7 @@ async def test_grep_lessons_use_matched_files_and_respect_opt_out(
     assert calls[0]["paths"] == ["src/a.py", "src/b.py"]
     assert calls[0]["query"] == "ab"
     assert calls[0]["matched_symbols"] == {"src/b.py": {"helper"}}
-    assert calls[0]["grep_lines"].revisions["src/b.py"] == {"a" * 40}
+    assert calls[0]["source"].revisions["src/b.py"] == {"a" * 40}
     assert "_indexed_commit" not in out.model_dump_json()
     calls.clear()
     out = await wrapped(inp.model_copy(update={"include_lessons": False}))

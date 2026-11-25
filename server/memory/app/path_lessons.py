@@ -34,6 +34,7 @@ from server.memory.domain.recall import query_tokens
 from server.memory.store import code_links
 
 logger = logging.getLogger(__name__)
+_LOCATED_STATES = ("fresh", "moved", "changed")
 
 
 def _excerpt(hit: dict[str, Any]) -> str | None:
@@ -110,12 +111,11 @@ class SourceSpans(NamedTuple):
 
     def overlaps_window(self, path: str, checked_commit: str, start: int, end: int) -> bool:
         return (
-            bool(checked_commit)
+            self.windows is not None
+            and bool(checked_commit)
             and self.revisions.get(path) == {checked_commit}
             and 0 < start <= end
-            and any(
-                first <= end and start <= last for first, last in (self.windows or {}).get(path, ())
-            )
+            and any(first <= end and start <= last for first, last in self.windows.get(path, ()))
         )
 
 
@@ -244,7 +244,7 @@ async def _confirmed_omissions(
     for link in links:
         if link["code_namespace"] != trunk_ns:
             continue
-        if not link["complete"] or link["state"] not in ("fresh", "moved", "changed"):
+        if not link["complete"] or link["state"] not in _LOCATED_STATES:
             uncertain.add(link["memory_id"])
         elif source is not None and not source.excludes(
             link["path"], link["checked_commit"], link["start_line"], link["end_line"]
@@ -365,6 +365,7 @@ def _source_lesson(
         link
         for link in links
         if link["complete"]
+        and link["state"] in _LOCATED_STATES
         and link["path"] == path
         and windows.overlaps_window(
             path, link["checked_commit"], link["start_line"], link["end_line"]

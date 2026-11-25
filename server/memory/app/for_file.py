@@ -72,6 +72,9 @@ SELECT
     tags, confidence, pinned, CAST(status AS String) AS status_text, agent, updated_at, actor,
     memory_id, conflict_with, source_resource_id,
     verified_by, verified_sha256, content_sha256,
+    if({{include_source_links:UInt8}}, files, []) AS source_files,
+    if({{include_source_links:UInt8}}, user_id, '') AS source_user_id,
+    if({{include_source_links:UInt8}}, toString(content_sha256), '') AS source_sha,
     ({{full_values:UInt8}} = 0 AND value_len > {_READ_BYTES}) AS value_truncated,
     arrayFilter(f -> {_FILE_MATCH}, files) AS matched_files
 FROM loom.memory FINAL
@@ -460,6 +463,7 @@ async def _rows_for(
     *,
     whole_only: bool = False,
     full_values: bool = False,
+    include_source_links: bool = False,
 ) -> list[dict[str, Any]]:
     """One namespace's rows naming the file or linked to code still in it (`linked`:
     memory_id -> its links here, read alongside the files match; None when that read
@@ -478,6 +482,7 @@ async def _rows_for(
         "whole_bytes": _whole_bytes(),
         "whole_only": int(whole_only),
         "full_values": int(full_values),
+        "include_source_links": int(include_source_links),
     }
     ch = get_client()
     found, read = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
@@ -504,10 +509,33 @@ async def _rows_for(
                     else ""
                     for a in links
                 ],
-                "source_links": links,
+                "source_links": (
+                    _links_for_served_row(input.org, namespace, r, links)
+                    if include_source_links and links
+                    else []
+                ),
             }
         )
     return out
+
+
+def _links_for_served_row(
+    org: str, namespace: str, row: dict[str, Any], links: list[LinkRow]
+) -> list[LinkRow]:
+    """The memory row and the link listing can observe different writes."""
+    from server.memory.app.code_link_reads import inputs_now
+
+    stamp = inputs_now(
+        org,
+        {
+            "namespace": namespace,
+            "tags": row["tags"],
+            "sha": row["source_sha"],
+            "files": row["source_files"],
+            "user_id": row["source_user_id"],
+        },
+    )
+    return [link for link in links if link["inputs_hash"] == stamp]
 
 
 async def _linked(
@@ -577,6 +605,7 @@ async def _merged_rows(
     *,
     whole_only: bool = False,
     full_values: bool = False,
+    include_source_links: bool = False,
 ) -> tuple[list[dict[str, Any]], bool]:
     """(rows, links skipped): the caller's namespace, plus each readable extra namespace
     (tag filter on the caller's only), merged in constraint-first order, deduplicated by
@@ -596,6 +625,7 @@ async def _merged_rows(
             linked,
             whole_only=whole_only,
             full_values=full_values,
+            include_source_links=include_source_links,
         )
         skipped = linked.result() is None  # read by the own read above
         if not extras:
@@ -611,6 +641,7 @@ async def _merged_rows(
                     linked,
                     whole_only=whole_only,
                     full_values=full_values,
+                    include_source_links=include_source_links,
                 )
                 for ns in extras
             ),
@@ -670,7 +701,14 @@ async def listing_rows(
     callers that match the listing to retained source windows."""
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
-    rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only, full_values=True)
+    rows, skipped = await _merged_rows(
+        input,
+        path,
+        base,
+        whole_only=whole_only,
+        full_values=True,
+        include_source_links=include_source_links,
+    )
     return [
         _with_ids(_hit(r, input), r)
         | {"code_symbols": r.get("code_symbols", [])}

@@ -374,7 +374,7 @@ async def test_code_read_requires_a_matching_revision_for_linked_lessons(env, mo
     await _index(BRANCH, env, older, [reader])
     newer = env.commit({reader: on_trunk})
     await _index(TRUNK, env, newer, [reader])
-    await _remember(MEM, "notes/fetch", '`fetch_page` returns "trunk_new".', files=[reader])
+    mid = await _remember(MEM, "notes/fetch", '`fetch_page` returns "trunk_new".', files=[reader])
     await _pass()
 
     read = OPERATIONS_BY_NAME["code.read"].handler
@@ -389,6 +389,49 @@ async def test_code_read_requires_a_matching_revision_for_linked_lessons(env, mo
     assert branch.results[0].indexed_commit == older
     assert "release_old" in branch.results[0].windows[0].text
     assert not branch.lessons
+    await _index(BRANCH, env, newer, [reader])
+    removed = env.commit({reader: on_trunk.split("\ndef fetch_page", 1)[0]})
+    await _index(TRUNK, env, removed, [reader])
+    await _pass()
+    assert (await _links(mid))[0]["state"] in {"missing", "unresolved"}
+    retained = await read(request.model_copy(update={"namespace": BRANCH}))
+    assert retained.results[0].indexed_commit == newer
+    assert "trunk_new" in retained.results[0].windows[0].text
+    assert not retained.lessons
+
+
+async def test_code_read_checks_the_served_memory_against_the_link(env, monkeypatch) -> None:
+    from server.code.api.models_read import CodeReadInput
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.api.models_for_file import MemoryForFileInput
+    from server.memory.app import for_file
+    from server.memory.app.update import handle_memory_update_by_id
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    reader = "src/widgets/reader.py"
+    sha = env.commit({reader: _READER})
+    await _index(TRUNK, env, sha, [reader])
+    mid = await _remember(MEM, "notes/contract", "`fetch_page` returns the URL.", files=[reader])
+    await _pass()
+    listing = MemoryForFileInput(org=ORG, namespace=MEM, path=reader, extra_namespaces=[TRUNK])
+    old_links = await for_file._linked(listing, reader, [MEM, TRUNK])
+    assert old_links and old_links[mid][0]["qualified_name"].endswith("fetch_page")
+    rewritten = await handle_memory_update_by_id(
+        MemoryUpdateByIdInput(org=ORG, memory_id=mid, value="`Reader.read_rows` keeps the limit.")
+    )
+    assert rewritten.updated
+
+    async def read_late_listing(_input, _path, _namespaces):
+        return old_links
+
+    monkeypatch.setattr(for_file, "_linked", read_late_listing)
+    result = await OPERATIONS_BY_NAME["code.read"].handler(
+        CodeReadInput(org=ORG, namespace=TRUNK, ranges=[f"{reader}:6-7"], lesson_namespaces=[MEM])
+    )
+    assert "def fetch_page" in result.results[0].windows[0].text
+    assert not result.lessons
 
 
 @pytest.mark.parametrize("hidden", ["deleted", "high"])
