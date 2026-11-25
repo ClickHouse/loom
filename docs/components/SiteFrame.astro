@@ -16,6 +16,7 @@ const shortLocale = locale.split("-")[0].toUpperCase();
 const labels = frameCopy[locale];
 const locales = Object.entries(siteLocales).map(([language, value]) => ({ language, ...value }));
 const brandHome = siteLocales[locale].href;
+const docs = siteLocales[locale].docs;
 const start = home?.start ?? { href: "/docs/getting-started/quickstart", hreflang: "en" };
 const githubRepository = "https://github.com/ClickHouse/loom";
 const website = {
@@ -35,7 +36,7 @@ const navigation = [
   { label: labels.product, href: "/platform", hreflang: "en" },
   { label: labels.enterprise, href: "/enterprise", hreflang: "en" },
   { label: labels.adoption, href: "/adoption", hreflang: "en" },
-  { label: labels.docs, href: siteLocales[locale].docs, hreflang: locale },
+  { label: labels.docs, href: docs ?? siteLocales.en.docs, hreflang: docs ? locale : "en" },
 ];
 ---
 
@@ -113,7 +114,7 @@ const navigation = [
         </nav>
         <nav class="footer-languages" aria-labelledby="footer-language-label">
           <span id="footer-language-label">{labels.docsLanguages}</span>
-          {locales.map(({ name, language, docs }) => (
+          {locales.map(({ name, language, docs }) => docs && (
             <a href={docs} lang={language} hreflang={language}>{name}</a>
           ))}
         </nav>

@@ -52,8 +52,10 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
         for route in (
             "/",
             "/adoption",
+            "/de",
             "/enterprise",
             "/es",
+            "/fr",
             "/ja",
             "/ko",
             "/platform",

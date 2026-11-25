@@ -1,6 +1,8 @@
 {
   "en": { "name": "English", "href": "/", "docs": "/docs" },
+  "de": { "name": "Deutsch", "href": "/de", "docs": null },
   "es": { "name": "Español", "href": "/es", "docs": "/docs/es/use-cases" },
+  "fr": { "name": "Français", "href": "/fr", "docs": null },
   "ja": { "name": "日本語", "href": "/ja", "docs": "/docs/ja" },
   "ko": { "name": "한국어", "href": "/ko", "docs": "/docs/ko" },
   "pt-BR": { "name": "Português (Brasil)", "href": "/pt-BR", "docs": "/docs/pt-BR" },

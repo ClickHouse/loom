@@ -1,6 +1,8 @@
 {
   "/": "/docs/home",
+  "/de": "/docs/de/home",
   "/es": "/docs/es/home",
+  "/fr": "/docs/fr/home",
   "/ja": "/docs/ja/home",
   "/ko": "/docs/ko/home",
   "/pt-BR": "/docs/pt-BR/home",

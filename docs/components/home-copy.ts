@@ -80,6 +80,53 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     evaluate: "Run an evaluation",
     deploymentOptions: "Review deployment options",
   },
+  de: {
+    title: "Gemeinsames Gedächtnis für KI-Agenten | ClickHouse Loom",
+    description:
+      "Open-Source-Gedächtnis für KI-Agenten. Entscheidungen über Sitzungen hinweg abrufen, Dokumente mit Quellen finden und Wissen mit Quellcode verknüpfen.",
+    deployment: "Open Source · Auf einer eigenen ClickHouse-Instanz",
+    heading: "Gemeinsames Gedächtnis für KI-Agenten",
+    lead: "Loom hält Entscheidungen und Erkenntnisse des Teams auch nach dem Ende einer Sitzung fest. Agenten können sie später abrufen, die Dokumentquellen prüfen und den zugehörigen Quellcode öffnen.",
+    run: "Loom installieren",
+    product: "Produkt kennenlernen",
+    connect: "Coding-Agenten anbinden",
+    sdk: "Mit den SDKs entwickeln",
+    screenshotAlt:
+      "Loom-Dashboard mit einer Entscheidung zum Zahlungsablauf, der verknüpften Funktion und einem Hinweis auf geänderten Code",
+    screenshotCaption: "Die gespeicherte Entscheidung verweist auf die zugehörige Funktion.",
+    contextHeading: "Welche Quellen stützen die nächste Antwort?",
+    contextDetail: "Agenten greifen über MCP, HTTP oder die SDKs für Python und TypeScript auf diese Informationen zu.",
+    memory: {
+      title: "Gemeinsames Gedächtnis",
+      detail:
+        "Entscheidungen, Vorgaben und Erkenntnisse bleiben über Sitzungen hinweg verfügbar. Das Team und seine Agenten können sie prüfen und aktualisieren.",
+      link: "Gedächtnis für Coding-Agenten",
+    },
+    documents: {
+      title: "Dokumentensuche mit Quellen",
+      detail:
+        "Agenten finden die passende Richtlinie, Betriebsanleitung oder Referenz und öffnen den zitierten Abschnitt in der zugehörigen Dokumentversion.",
+      link: "Dokumentensuche und RAG",
+    },
+    code: {
+      title: "Quellcode analysieren",
+      detail:
+        "Symbole suchen, Funktionsaufrufe verfolgen und gespeicherte Erkenntnisse mit dem passenden Quellcode verknüpfen. Loom zeigt, wenn sich der Code seit dem Speichern geändert hat.",
+      link: "Gedächtnis mit Quellcode verknüpfen",
+    },
+    useCasesHeading: "Wissen zwischen Agenten weitergeben",
+    useCasesDetail:
+      "Entscheidungen aus der Entwicklung, Erkenntnisse aus Code-Reviews und Betriebswissen stehen dem nächsten Agenten zur Verfügung.",
+    useCasesLabel: "Einsatzbereiche für das Agentengedächtnis",
+    softwareFactory: "Gedächtnis für eine Software Factory",
+    knowledgeFactory: "Knowledge Factory für KI-Agenten",
+    autonomous: "Gedächtnis für autonome Agenten",
+    selfHosted: "Agentengedächtnis selbst betreiben",
+    evaluationHeading: "Loom im eigenen Team testen",
+    evaluationDetail: "Abruf, Quellenverweise und Zugriffsrechte mit einem Beispiel aus der eigenen Arbeit prüfen.",
+    evaluate: "Loom testen",
+    deploymentOptions: "Optionen für den Betrieb",
+  },
   es: {
     title: "Memoria compartida para agentes de IA | ClickHouse Loom",
     description:
@@ -128,6 +175,54 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
       "Prueba la recuperación, los vínculos a las fuentes y los permisos con una carga de trabajo de tu equipo.",
     evaluate: "Realizar una evaluación",
     deploymentOptions: "Ver opciones de despliegue",
+  },
+  fr: {
+    title: "Mémoire partagée pour agents IA | ClickHouse Loom",
+    description:
+      "Mémoire open source pour agents IA. Retrouvez les décisions entre les sessions, recherchez des documents avec citations et reliez les acquis au code.",
+    deployment: "Open source · À héberger sur votre instance ClickHouse",
+    heading: "Mémoire partagée pour les agents IA",
+    lead: "Loom conserve les décisions et les enseignements de l’équipe d’une session à l’autre. Les agents peuvent les retrouver, vérifier les documents cités et consulter le code concerné.",
+    run: "Installer Loom",
+    product: "Découvrir le produit",
+    connect: "Connecter les agents de programmation",
+    sdk: "Développer avec les SDK",
+    screenshotAlt:
+      "Tableau de bord Loom montrant une décision sur les paiements, la fonction associée et un avertissement lorsque le code a changé",
+    screenshotCaption: "La décision enregistrée renvoie à la fonction concernée.",
+    contextHeading: "Les sources derrière la prochaine réponse",
+    contextDetail: "Les agents accèdent à ces informations via MCP, HTTP ou les SDK Python et TypeScript.",
+    memory: {
+      title: "Mémoire partagée",
+      detail:
+        "Conservez les décisions, les contraintes et les enseignements entre les sessions. L’équipe et ses agents disposent d’un espace commun pour les consulter et les mettre à jour.",
+      link: "Mémoire pour agents de programmation",
+    },
+    documents: {
+      title: "Recherche documentaire avec citations",
+      detail:
+        "Retrouvez la politique, la procédure ou la référence qui répond à la question. Consultez le passage cité dans la version du document utilisée.",
+      link: "Recherche documentaire et RAG",
+    },
+    code: {
+      title: "Analyse du code source",
+      detail:
+        "Retrouvez les symboles, suivez les appels et reliez les enseignements au code. Loom indique si le code a évolué depuis leur enregistrement.",
+      link: "Relier la mémoire au code source",
+    },
+    useCasesHeading: "Transmettre les acquis d’un agent à l’autre",
+    useCasesDetail:
+      "Gardez les décisions de développement, les conclusions des revues de code et les connaissances d’exploitation à la portée du prochain agent.",
+    useCasesLabel: "Cas d’usage de la mémoire pour agents IA",
+    softwareFactory: "Mémoire pour une usine logicielle",
+    knowledgeFactory: "Fabrique de connaissances pour agents IA",
+    autonomous: "Mémoire pour agents autonomes",
+    selfHosted: "Mémoire pour agents IA à auto-héberger",
+    evaluationHeading: "Évaluer Loom dans votre équipe",
+    evaluationDetail:
+      "Vérifiez la recherche, les références aux sources et les droits d’accès sur un cas réel de votre équipe.",
+    evaluate: "Évaluer Loom",
+    deploymentOptions: "Options de déploiement",
   },
   ja: {
     title: "AIエージェントの共有メモリとコード検索 | ClickHouse Loom",
