@@ -14,8 +14,8 @@ publication provenance, signatures or marketplace acceptance.
 Inspection refuses paths over 4096 UTF-8 bytes or 32 components before building
 parent paths. Archive limits are 32 MiB compressed, 128 MiB decompressed,
 8 MiB per file and 20,000 members.
-Only regular files and directories are accepted. Extension headers are refused
-before metadata processing.
+Only POSIX USTAR regular files and directories with octal sizes and unsigned
+checksums are accepted. Extension headers are refused before metadata processing.
 """
 
 from __future__ import annotations
@@ -139,6 +139,29 @@ def member_name(member: tarfile.TarInfo) -> str:
     return name
 
 
+def octal_field(value: bytes) -> int:
+    digits = value.rstrip(b"\x00 ")
+    require(digits and all(48 <= byte <= 55 for byte in digits), "noncanonical TAR number")
+    return int(digits, 8)
+
+
+def archive_header(header: bytes) -> tarfile.TarInfo:
+    require(
+        header[156:157] in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE),
+        "archive extension headers and special files refused",
+    )
+    require(header[257:265] == b"ustar\x0000", "POSIX USTAR header required")
+    size = octal_field(header[124:136])
+    checksum = octal_field(header[148:156])
+    require(
+        checksum == sum(header[:148]) + 8 * 32 + sum(header[156:]),
+        "unsigned TAR checksum required",
+    )
+    member = tarfile.TarInfo.frombuf(header, encoding="utf-8", errors="strict")
+    require(member.size == size, "inconsistent TAR size")
+    return member
+
+
 def archive_files(raw: bytes) -> tuple[dict[str, bytes], int]:
     with gzip.GzipFile(fileobj=io.BytesIO(raw)) as compressed:
         unpacked = compressed.read(MAX_TAR + 1)
@@ -153,11 +176,7 @@ def archive_files(raw: bytes) -> tuple[dict[str, bytes], int]:
         if not any(header):
             break
         require(len(names) < MAX_MEMBERS, "too many archive members")
-        member = tarfile.TarInfo.frombuf(header, encoding="utf-8", errors="strict")
-        require(
-            member.type in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE),
-            "archive extension headers and special files refused",
-        )
+        member = archive_header(header)
         name = member_name(member)
         require(name not in names, "duplicate archive path")
         names.add(name)

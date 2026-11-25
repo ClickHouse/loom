@@ -469,6 +469,54 @@ class ArchiveChecks(unittest.TestCase):
         self.assertEqual(result["file_count"], len(self.files) + 1)
         self.assertEqual(result["runtime"], "UNRUN")
 
+    def patch_license_header(self, changes, signed_checksum=False):
+        self.files[checker.NATIVE + "LICENSE"] = b"license\n"
+        args = self.build()
+        data = bytearray(gzip.decompress(args[0].read_bytes()))
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+            offset = archive.getmember("package/" + checker.NATIVE + "LICENSE").offset
+        header = data[offset : offset + 512]
+        for start, end, value in changes:
+            header[start:end] = value
+        header[148:156] = b"        "
+        checksum = sum(byte - 256 if signed_checksum and byte >= 128 else byte for byte in header)
+        header[148:156] = f"{checksum:06o}\x00 ".encode()
+        data[offset : offset + 512] = header
+        return self.rewrite_tar(args, data)
+
+    def test_prefix_requires_posix_ustar_magic(self):
+        prefix = ("package/" + checker.NATIVE.rstrip("/")).encode().ljust(155, b"\x00")
+        for magic in (b"\x00" * 8, b"ustar  \x00", b"ustar\x0000"):
+            with self.subTest(magic=magic):
+                args = self.patch_license_header(
+                    [(0, 100, b"LICENSE".ljust(100, b"\x00")), (345, 500, prefix), (257, 265, magic)]
+                )
+                code, result = self.invoke_cli(args)
+                self.assertEqual(code, 0 if magic == b"ustar\x0000" else 1)
+                self.assertEqual(result["runtime"], "UNRUN")
+                if code:
+                    self.assertEqual(result["reason"], "POSIX USTAR header required")
+
+    def test_noncanonical_octal_size_is_refused(self):
+        for size in (b"0000000_010\x00", b"+0000000010\x00", b"000000\x000010\x00"):
+            with self.subTest(size=size):
+                args = self.patch_license_header([(124, 136, size)])
+                code, result = self.invoke_cli(args)
+                self.assertEqual(code, 1)
+                self.assertEqual(result["reason"], "noncanonical TAR number")
+                self.assertEqual(result["runtime"], "UNRUN")
+
+    def test_only_unsigned_header_checksum_is_accepted(self):
+        changes = [(265, 297, "é".encode().ljust(32, b"\x00"))]
+        for signed in (False, True):
+            with self.subTest(signed=signed):
+                args = self.patch_license_header(changes, signed_checksum=signed)
+                code, result = self.invoke_cli(args)
+                self.assertEqual(code, int(signed))
+                self.assertEqual(result["runtime"], "UNRUN")
+                if signed:
+                    self.assertEqual(result["reason"], "unsigned TAR checksum required")
+
 
 if __name__ == "__main__":
     unittest.main()
