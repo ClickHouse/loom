@@ -114,7 +114,7 @@ def _address_space() -> int:
         received = _proc_pidinfo()(os.getpid(), _PROC_PIDTASKINFO, 0, ctypes.byref(info), size)
         if received != size or not info.virtual_size:
             raise OSError(ctypes.get_errno() or errno.EIO, "Cannot read parser virtual size")
-        return info.virtual_size
+        return int(info.virtual_size)
     try:
         pages = int(Path("/proc/self/statm").read_text().split()[0])
     except OSError:
