@@ -103,6 +103,8 @@ class _MCPReader:
             mapped: dict[str, FailureCode] = {
                 "denied": "denied",
                 "reconnect": "reconnect",
+                "session_ended": "unavailable",
+                "unavailable": "unavailable",
                 "timeout": "timeout",
             }
             raise ReadFailure(mapped.get(error.code, "unsupported")) from None

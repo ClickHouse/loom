@@ -72,21 +72,23 @@ Save the worker configuration as `config.json`:
   "transport": "tls_proxy_unix",
   "worker_id": "83d061b4-2542-4db7-adc0-4b81b3280c08",
   "issuer": "source-grants",
-  "vault": {"origin": "https://vault.example:8200", "mount": "worker-connections"},
+  "vault": { "origin": "https://vault.example:8200", "mount": "worker-connections" },
   "read_limits": {
     "concurrent": 8,
     "concurrent_per_org": 2,
     "timeout_seconds": 20,
     "content_bytes": 100000
   },
-  "profiles": [{
-    "organizations": ["tenant"],
-    "link_origins": ["https://docs.example"],
-    "config": {
-      "endpoint": "https://mcp.example/rpc",
-      "bearer_audience": "https://mcp.example/rpc"
+  "profiles": [
+    {
+      "organizations": ["tenant"],
+      "link_origins": ["https://docs.example"],
+      "config": {
+        "endpoint": "https://mcp.example/rpc",
+        "bearer_audience": "https://mcp.example/rpc"
+      }
     }
-  }]
+  ]
 }
 ```
 
@@ -159,9 +161,14 @@ lifetime_seconds=10)` on the issuer. Mount only the corresponding public key
 in the worker. Send the resulting grant as the authorization bearer on the
 matching route. For `/v1/check-access`, use operation `check_access`.
 
-Both routes return `200` with `ok` on success, `403` for `denied`, `409` for
+The worker returns `200` with `ok` on success, `403` for `denied`, `409` for
 `reconnect`, `422` for `unsupported`, `429` for `overloaded`, `503` for
-`unavailable`, and `504` for `timeout`. A body or query is rejected with `400`.
+`unavailable`, and `504` for `timeout`. Connection errors, upstream 5xx and an
+expired stateful MCP session return `unavailable`. Any retry needs current
+authority and a new session; the worker does not retry inside the failed read.
+The worker handler refuses a body or query with `400`. The TLS proxy rejects
+query strings and other request targets outside the two routes with `404`, and
+may return `413` when a body exceeds the proxy's limit.
 
 ## Docker Compose
 

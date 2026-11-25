@@ -16,7 +16,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from loom_source_worker import direct_backend, mcp_client
 from loom_source_worker.credential_store import CredentialRecord
-from loom_source_worker.direct_backend import DirectBackend
+from loom_source_worker.direct_backend import ApprovedProfile, DirectBackend
+from loom_source_worker.http_service import create_app
 from loom_source_worker.main import _parse_settings
 from loom_source_worker.mcp_client import MCPLimits, MCPSourceConfig, MCPToolMapping
 from loom_source_worker.protocol import ConnectionBinding, ReadBinding, ReadGrant, issue_read_grant
@@ -99,7 +100,9 @@ class _FragmentedASGI(httpx.ASGITransport):
         )
 
 
-def _resource_server(on_read: Callable[[], None]) -> StreamableHTTPSessionManager:
+def _resource_server(
+    on_read: Callable[[], None], *, stateless: bool = True
+) -> StreamableHTTPSessionManager:
     server: Server[Any, Any] = Server("synthetic-resources")
 
     @server.list_resources()
@@ -112,7 +115,9 @@ def _resource_server(on_read: Callable[[], None]) -> StreamableHTTPSessionManage
         on_read()
         return "resource fixture body"
 
-    return StreamableHTTPSessionManager(app=server, json_response=False, stateless=True)
+    return StreamableHTTPSessionManager(
+        app=server, json_response=not stateless, stateless=stateless
+    )
 
 
 def _tool_server(on_read: Callable[[], None]) -> StreamableHTTPSessionManager:
@@ -381,7 +386,126 @@ async def test_upstream_http_refusal_at_sdk_boundary(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("route", "operation"), [("live", "live"), ("check-access", "check_access")]
+)
+@pytest.mark.parametrize(
+    ("fault", "status"),
+    [("network", 503), ("upstream-503", 503), ("expired-session", 503), ("missing-endpoint", 422)],
+)
+async def test_signed_route_distinguishes_transport_failure_from_unsupported(
+    route: str, operation: str, fault: str, status: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    faulted = True
+    stale_session: bytes | None = None
+    successful_sessions: list[bytes] = []
+    manager = _resource_server(lambda: None, stateless=False)
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        nonlocal stale_session
+        if scope["method"] != "POST":
+            await manager.handle_request(scope, receive, send)
+            return
+        body = await Request(scope, receive).body()
+        method = json.loads(body)["method"]
+        session = dict(scope["headers"]).get(b"mcp-session-id")
+        if method == "initialize" and faulted and fault == "network":
+            raise httpx.ConnectError("synthetic private network detail")
+        refused = None
+        if method == "initialize" and faulted and fault in {"upstream-503", "missing-endpoint"}:
+            assert session is None
+            refused = 503 if fault == "upstream-503" else 404
+        elif method == "resources/read":
+            assert session
+            if faulted and fault == "expired-session":
+                stale_session = session
+                refused = 404
+            else:
+                successful_sessions.append(session)
+        if refused is not None:
+            await send({"type": "http.response.start", "status": refused, "headers": []})
+            await send({"type": "http.response.body", "body": b"synthetic private HTTP detail"})
+            return
+
+        replay_body: bytes | None = body
+
+        async def replay() -> Message:
+            nonlocal replay_body
+            if replay_body is None:
+                return await receive()
+            payload, replay_body = replay_body, None
+            return {"type": "http.request", "body": payload}
+
+        await manager.handle_request(scope, replay, send)
+
+    def routed_client(config, credential, *, validate_access, deadline):
+        return mcp_client.MCPSourceClient(
+            config,
+            credential,
+            validate_access=validate_access,
+            deadline=deadline,
+            _transport=httpx.ASGITransport(app=app),
+        )
+
+    monkeypatch.setattr(direct_backend, "MCPSourceClient", routed_client)
+    monkeypatch.setattr(mcp_client, "resolve_public_address", _synthetic_pin)
+    profile = ApprovedProfile(
+        MCPSourceConfig(endpoint=_ENDPOINT, bearer_audience=_ENDPOINT), ("org",)
+    )
+    binding = ReadBinding(
+        worker_id=uuid4(),
+        org="org",
+        namespace="team",
+        source_id=uuid4(),
+        selection_generation=1,
+        requester="alice",
+        connection_id=uuid4(),
+        connection_generation=1,
+        profile_digest=profile.digest,
+        resource_id=_DOC,
+    )
+    key = Ed25519PrivateKey.generate()
+    service = ReadService(
+        worker_id=binding.worker_id,
+        issuer="loom",
+        verifier=key.public_key(),
+        backend=DirectBackend(_SyntheticAccounts(binding), (profile,)),
+        limits=ReadLimits(
+            concurrent=4, concurrent_per_org=2, timeout_seconds=4, content_bytes=2048
+        ),
+    )
+
+    def headers() -> dict[str, str]:
+        grant = ReadGrant.model_validate(
+            {"request_id": uuid4(), "operation": operation, "binding": binding}
+        )
+        return {
+            "Authorization": "Bearer "
+            + issue_read_grant(grant, issuer="loom", key=key, lifetime_seconds=10)
+        }
+
+    async with (
+        manager.run(),
+        httpx.AsyncClient(
+            base_url="http://worker.test", transport=httpx.ASGITransport(app=create_app(service))
+        ) as worker,
+    ):
+        failed = await worker.post(f"/v1/{route}", headers=headers())
+        assert failed.status_code == status
+        assert failed.json() == {"status": "unavailable" if status == 503 else "unsupported"}
+        assert failed.headers["Cache-Control"] == "no-store"
+        assert not successful_sessions
+        faulted = False
+        succeeded = await worker.post(f"/v1/{route}", headers=headers())
+        assert succeeded.status_code == 200
+        assert (succeeded.json()["document"] is not None) == (route == "live")
+        assert len(successful_sessions) == 1 and successful_sessions[0] != stale_session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delete_status", [200, 404])
 async def test_cancel_terminates_an_active_stateful_sdk_session(
+    delete_status: int,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     started = asyncio.Event()
@@ -401,6 +525,12 @@ async def test_cancel_terminates_an_active_stateful_sdk_session(
     manager = StreamableHTTPSessionManager(app=server, json_response=True, stateless=False)
 
     async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["method"] == "DELETE" and delete_status == 404:
+            terminations.append((dict(scope["headers"])[b"mcp-session-id"], 404))
+            await send({"type": "http.response.start", "status": 404, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return
+
         async def watch(message: Any) -> None:
             if scope["method"] == "DELETE" and message["type"] == "http.response.start":
                 terminations.append((dict(scope["headers"])[b"mcp-session-id"], message["status"]))
@@ -425,4 +555,4 @@ async def test_cancel_terminates_an_active_stateful_sdk_session(
         read.cancel()
         with pytest.raises(asyncio.CancelledError):
             await read
-    assert len(terminations) == 1 and terminations[0][0] and terminations[0][1] == 200
+    assert len(terminations) == 1 and terminations[0][0] and terminations[0][1] == delete_status

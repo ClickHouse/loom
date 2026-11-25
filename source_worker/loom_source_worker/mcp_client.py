@@ -35,6 +35,8 @@ ErrorCode = Literal[
     "unsupported",
     "denied",
     "reconnect",
+    "session_ended",
+    "unavailable",
     "protocol",
     "schema",
     "limit",
@@ -52,6 +54,8 @@ class MCPSourceError(Exception):
             "unsupported",
             "denied",
             "reconnect",
+            "session_ended",
+            "unavailable",
             "protocol",
             "schema",
             "limit",
@@ -68,6 +72,8 @@ def _error_code(error: BaseException) -> ErrorCode:
         return error.code
     if isinstance(error, (TimeoutError, httpx.TimeoutException)):
         return "timeout"
+    if isinstance(error, httpx.NetworkError):
+        return "unavailable"
     if isinstance(error, McpError) and error.error.code == httpx.codes.REQUEST_TIMEOUT:
         return "timeout"
     if isinstance(error, BaseExceptionGroup):
@@ -77,6 +83,8 @@ def _error_code(error: BaseException) -> ErrorCode:
             "reconnect",
             "limit",
             "timeout",
+            "session_ended",
+            "unavailable",
             "schema",
             "unsupported",
             "closed",
@@ -96,12 +104,18 @@ def _guard_state(deadline: float, failure: ErrorCode | None, *, active: bool = T
         raise MCPSourceError("timeout")
 
 
-def _check_response(method: str, response: httpx.Response) -> None:
+def _check_response(method: str, response: httpx.Response, *, has_session: bool) -> None:
     status = response.status_code
     if status == 401:
         raise MCPSourceError("reconnect")
     if response.is_redirect or status == 403:
         raise MCPSourceError("denied")
+    if 500 <= status < 600:
+        raise MCPSourceError("unavailable")
+    if status == 404 and has_session:
+        if method == "DELETE":
+            return
+        raise MCPSourceError("session_ended")
     if status == 405 and method in {"GET", "DELETE"}:
         return
     if method == "DELETE":
@@ -752,7 +766,7 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                 await self._authorize()
                 response = await self.inner.handle_async_request(outgoing)
                 self._check_state()
-                _check_response(request.method, response)
+                _check_response(request.method, response, has_session="mcp-session-id" in headers)
                 if request.method == "DELETE":
                     return httpx.Response(response.status_code, content=b"")
                 # Reject compression so the wire budget bounds decoded protocol bytes.
