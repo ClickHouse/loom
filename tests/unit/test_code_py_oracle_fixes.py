@@ -49,286 +49,70 @@ def _edges(files: dict[str, bytes], rel: str):
     }, misses
 
 
-def test_a_library_method_return_needs_a_typed_receiver():
-    context = b"""class RequestContext:
-    def copy(self) -> RequestContext:
-        return self
-    def describe(self):
-        return 'request'
-"""
-    target = "app/mount.py"
-    unknown = b"""def mount(options):
-    options = options.copy()
-    return options
-"""
-    typed = b"""from app.ctx import RequestContext
-
-def clone_context(options: RequestContext):
-    clone = options.copy()
-    return clone.describe()
-"""
-    copy = "app.ctx::RequestContext::copy"
-    describe = "app.ctx::RequestContext::describe"
-    files = {"app/ctx.py": context, target: unknown}
-    calls, _ = _edges(files, target)
-    assert not any(q == copy for _, q, _ in calls)
-
-    files[target] = typed
-    calls, _ = _edges(files, target)
-    assert calls == {(4, copy, 0.9), (5, describe, 0.9)}
-
-    files[target] = typed + b"\n" + unknown
-    calls, _ = _edges(files, target)
-    assert {(line, q) for line, q, _ in calls if q == copy} == {(4, copy)}
-    assert (5, describe, 0.9) in calls
+def test_a_dictionary_copy_does_not_inherit_an_unrelated_method_type():
+    calls, _ = _edges(
+        {
+            "lib/context.py": b"class Context:\n    def copy(self) -> Context:\n        return self\n",
+            "app/mount.py": b"def mount(options):\n    options = options.copy()\n    return options\n",
+        },
+        "app/mount.py",
+    )
+    assert not calls
 
 
-def test_library_method_return_follows_receiver_bindings_at_each_call_site():
-    target = "app/mount.py"
-    source = b"""class Primary:
-    def copy(self) -> Primary:
-        return self
-    def describe(self):
-        return "primary"
-
-class Alternate:
-    def copy(self) -> Alternate:
-        return self
-    def describe(self):
-        return "alternate"
-
-def mount(value: Primary):
-    first = value.copy(); value = Alternate(); second = value.copy()
-    return first.describe(), second.describe()
-
-def conditional(value: dict, selected: bool):
-    if selected:
-        value = Primary()
-    return value.copy()
-"""
-    calls, _ = _edges({target: source}, target)
-    assert {
-        row for row in calls if row[0] in (14, 15, 20) and row[1].endswith(("::copy", "::describe"))
-    } == {
-        (14, "app.mount::Primary::copy", 0.9),
-        (14, "app.mount::Alternate::copy", 0.9),
-        (15, "app.mount::Primary::describe", 0.9),
-        (15, "app.mount::Alternate::describe", 0.9),
-    }
+@pytest.mark.parametrize(
+    "namesake",
+    [
+        b"def copy() -> Context:\n    return Context()\n",
+        b"class Other:\n    def copy(self) -> Context:\n        return Context()\n",
+    ],
+)
+def test_a_library_call_does_not_use_a_bare_return_annotation(namesake):
+    source = b"class Context:\n    def describe(self):\n        return 'context'\n"
+    source += namesake
+    source += b"def mount(options: dict):\n    return options.copy().describe()\n"
+    calls, _ = _edges({"app/mount.py": source}, "app/mount.py")
+    assert not any(
+        qualified == "app.mount::Context::describe" and confidence >= 0.8
+        for _, qualified, confidence in calls
+    )
 
 
-def test_inherited_library_named_return_ignores_a_bare_namesake():
-    target = "app/mount.py"
+def test_a_library_named_method_keeps_a_local_return_annotation_without_a_store_read():
     source = b"""class Context:
     def copy(self) -> Context:
         return self
     def describe(self):
         return "context"
 
-def copy() -> dict:
-    return {}
-
-class Derived(Context):
-    def mount(self):
-        instance = self.copy()
-        return instance.describe()
+def mount(context: Context):
+    cloned = context.copy()
+    return cloned.describe()
 """
-    calls, _ = _edges({target: source}, target)
-    assert {(line, qualified) for line, qualified, _ in calls if line in (12, 13)} == {
-        (12, "app.mount::Context::copy"),
-        (13, "app.mount::Context::describe"),
-    }
+    parsed = parse_file("app/mount.py", source)
+    edges, _ = extract_edges_and_misses(parsed, {})
+    calls = {(edge.line, edge.to_qualified_name, edge.confidence) for edge in edges}
+    assert (8, "app.mount::Context::copy", 0.9) in calls
+    assert (9, "app.mount::Context::describe", 0.9) in calls
 
 
-def test_a_library_named_member_respects_import_shadowing():
-    target = "app/mount.py"
-    context = b"""class Context:
-    @classmethod
-    def copy(cls) -> Context:
-        return cls()
-    def describe(self):
-        return "ctx"
-"""
+def test_a_library_named_method_keeps_a_fixture_typed_receiver():
     files = {
-        "app/ctx.py": context,
-        target: b"""from app.ctx import Context as value
-
-def mount(value: dict):
-    result = value.copy()
-    return result.describe()
-""",
+        "tests/conftest.py": (
+            b"import pytest\nfrom lib.holder import Holder\n"
+            b"@pytest.fixture\ndef holder() -> Holder:\n    return Holder()\n"
+        ),
+        "lib/holder.py": (
+            b"class Holder:\n    def copy(self) -> Holder:\n        return self\n"
+            b"    def describe(self):\n        return 'holder'\n"
+        ),
+        "tests/test_holder.py": (
+            b"def test_holder(holder):\n    cloned = holder.copy()\n    return cloned.describe()\n"
+        ),
     }
-    calls, _ = _edges(files, target)
-    assert all(confidence < 0.8 for _, _, confidence in calls)
-
-    files[target] = (
-        context
-        + b"""
-def mount():
-    result = Context.copy()
-    return result.describe()
-"""
-    )
-    calls, _ = _edges(files, target)
-    assert (9, "app.mount::Context::copy", 0.9) in calls
-    assert (10, "app.mount::Context::describe", 0.9) in calls
-
-
-_RECEIVER_FLOW_CLASSES = b"""class Primary:
-    def copy(self) -> Primary:
-        return self
-    def describe(self):
-        return "primary"
-
-class Alternate:
-    def copy(self) -> Alternate:
-        return self
-    def describe(self):
-        return "alternate"
-
-"""
-
-
-@pytest.mark.parametrize(
-    ("body", "expected_type"),
-    [
-        (
-            b"""def mount(value: Primary, flag: bool):
-    if flag:
-        value = {}
-    elif not flag:
-        return value.copy().describe()
-""",
-            "Primary",
-        ),
-        (
-            b"""def mount(value: Primary, flag: bool):
-    if flag:
-        value = {}
-    else:
-        return value.copy().describe()
-""",
-            "Primary",
-        ),
-        (
-            b"""def mount(value: Primary):
-    value: Primary
-    with value:
-        return value.copy().describe()
-""",
-            "Primary",
-        ),
-        (
-            b"""def mount(value: Primary):
-    try:
-        raise ValueError()
-    except ValueError:
-        keep = value
-        return value.copy().describe()
-""",
-            "Primary",
-        ),
-        (
-            b"""def mount(value: Primary):
-    for value in value.copy().describe():
-        pass
-""",
-            "Primary",
-        ),
-        (
-            b"""def mount(value: Primary, values):
-    for flag in values:
-        if flag:
-            value = Alternate()
-        else:
-            value.copy().describe()
-""",
-            "",
-        ),
-        (
-            b"""def mount(value: Primary):
-    return [value for value in [value.copy().describe()]]
-""",
-            "Primary",
-        ),
-        (
-            b"""def mount(value: Primary, options: list[Alternate]):
-    return [value.copy().describe() for value in options]
-""",
-            "",
-        ),
-        (
-            b"""def mount(value: Primary, option):
-    match option:
-        case {"v": value}:
-            return value.copy().describe()
-""",
-            "",
-        ),
-        (
-            b"""class Derived(Primary):
-    def mount(self, other: Alternate):
-        self = other
-        return self.copy().describe()
-""",
-            "",
-        ),
-        (
-            b"""class Derived(Primary):
-    def mount(self):
-        self = Alternate()
-        return self.copy().describe()
-""",
-            "Alternate",
-        ),
-        (
-            b"""class Derived(Primary):
-    @staticmethod
-    def mount(self):
-        return self.copy().describe()
-""",
-            "",
-        ),
-        (
-            b"""class Derived(Primary):
-    def mount(other: self, self):
-        return self.copy().describe()
-""",
-            "",
-        ),
-        (
-            b"""class Derived(Primary):
-    def mount(*self):
-        return self.copy().describe()
-""",
-            "",
-        ),
-        (
-            b"""class Derived(Primary):
-    def mount(
-        # This is the bound receiver.
-        self,
-    ):
-        return self.copy().describe()
-""",
-            "Primary",
-        ),
-    ],
-)
-def test_library_call_uses_bindings_on_its_evaluation_path(body, expected_type):
-    target = "app/mount.py"
-    calls, _ = _edges({target: _RECEIVER_FLOW_CLASSES + body}, target)
-    actual = {
-        qualified
-        for _, qualified, confidence in calls
-        if confidence >= 0.8 and qualified.endswith(("::copy", "::describe"))
-    }
-    expected = (
-        {f"app.mount::{expected_type}::{method}" for method in ("copy", "describe")}
-        if expected_type
-        else set()
-    )
-    assert actual == expected
+    calls, _ = _edges(files, "tests/test_holder.py")
+    assert (2, "lib.holder::Holder::copy", 0.9) in calls
+    assert (3, "lib.holder::Holder::describe", 0.9) in calls
 
 
 def test_a_package_member_does_not_import_its_sibling_by_bare_name():
