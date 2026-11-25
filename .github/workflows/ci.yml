@@ -1403,6 +1403,11 @@ jobs:
         run: |
           rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --component rustfmt --component clippy
           rustup override set "${RUST_TOOLCHAIN}"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Check the independent Rust SDK version
+        run: python ../../scripts/release/rust_sdk.py check-version
       # The library leaves dependency locking to its consumers; each toolchain resolves once.
       - name: Resolve dependencies for this toolchain
         run: cargo generate-lockfile
@@ -1444,13 +1449,13 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --no-deps $RUST_SDK_FEATURES
-      - name: Verify the distributable crate and its license
+      - name: Verify the distributable crate against its source
         run: |
+          version=$(python ../../scripts/release/rust_sdk.py check-version)
           cargo package --locked $RUST_SDK_FEATURES
-          for archive in target/package/clickhouse-loom-*.crate; do
-            package="$(basename "$archive" .crate)"
-            tar -xOf "$archive" "$package/LICENSE" | cmp - ../../LICENSE
-          done
+          python ../../scripts/release/rust_sdk.py verify-package \
+            "target/package/clickhouse-loom-$version.crate" \
+            --expected-commit "$(git rev-parse HEAD)"
 
   sdk-typescript:
     needs: validate-ref

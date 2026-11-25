@@ -1,6 +1,6 @@
 # Release process
 
-Loom follows SemVer: the server, both SDKs, the web app, the root skills (`loom-code`, `loom`), the Cursor plugin and the Agent Plugins package that ship them, and the Gemini CLI extension share one version `X.Y.Z`. The Claude Code and Codex plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version. `MIN_SERVER_VERSION` in the plugins' `lib/server-version.mjs` names the oldest server their hooks support: when the server's `GET /v1/health` reports an older `version`, SessionStart prints one `loom:` line asking for a server upgrade, and says nothing when the version cannot be read. It rises with a release ([cutting the release](#cutting-the-release), step 2).
+Loom follows SemVer: the server, Python and TypeScript SDKs, the web app, the root skills (`loom-code`, `loom`), the Cursor plugin and the Agent Plugins package that ship them, and the Gemini CLI extension share one version `X.Y.Z`. The Claude Code and Codex plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version. `MIN_SERVER_VERSION` in the plugins' `lib/server-version.mjs` names the oldest server their hooks support: when the server's `GET /v1/health` reports an older `version`, SessionStart prints one `loom:` line asking for a server upgrade, and says nothing when the version cannot be read. It rises with a release ([cutting the release](#cutting-the-release), step 2).
 
 ## Where the version lives
 
@@ -305,14 +305,15 @@ shown on the release page never points at a missing image.
 
 **On manual dispatch** (`workflow_dispatch` on a tag ref), the same jobs run except
 `release-check`, building no image when the images are already published (below). `build` also
-runs the TypeScript SDK's `npm run check` (lint, types, version, README examples, tests). Then
-three publish jobs run:
+runs the TypeScript SDK's `npm run check` (lint, types, version, README examples, tests).
+The three workflow publish jobs and the separate Rust SDK publication are:
 
-| Job            | Publishes                                                        | How                                                                                                                                                                                                                                   |
+| Publisher      | Publishes                                                        | How                                                                                                                                                                                                                                   |
 | -------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pypi`         | `clickhouse-loom` (the Python SDK only) to PyPI                  | the verified wheel and sdist; trusted publishing (OIDC); files PyPI already has are skipped                                                                                                                                           |
 | `npm`          | `@clickhouse/loom` to npm with provenance                        | the verified tarball; a published version is skipped; `latest` only for the highest final, a prerelease to `next`, a patch to an older line to `release-X.Y`; trusted publishing (OIDC)                                               |
 | `mcp-registry` | `server.json` to the MCP Registry as `io.github.ClickHouse/loom` | the committed file, whose version the `version` job checks against the tag; GitHub OIDC login with a pinned `mcp-publisher`; a listed version and a prerelease are skipped; `preflight` refuses a private repository before any build |
+| Crate owner    | `clickhouse-loom` (Rust SDK) to crates.io                        | independent version in `sdk/rust/Cargo.toml`; CI verifies the crate; the owner publishes with Cargo after a successful dry run, separately from `release.yml`                                                                         |
 
 The images are already published by the tag run: a dispatch on a tag whose images carry the
 version builds and tags none (`scripts/release/published_images.sh`), smoke-tests the published

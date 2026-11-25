@@ -141,6 +141,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [MCP reference](docs/reference/mcp.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
 - [Operations reference](docs/reference/operations.md): An operation (op) is one named unit of work on the Loom wire, such as `memory.set` or `code.search`.
 - [Python SDK reference](docs/reference/python-sdk.md): The Python SDK (`clickhouse-loom`, source in `sdk/python/loom/`) is an async client over the HTTP API.
+- [Rust SDK](docs/reference/rust-sdk.md): The `clickhouse-loom` crate provides typed async and blocking calls for every registered Loom operation.
 - [Schema reference](docs/reference/schema.md): Loom keeps its ClickHouse state in the `loom` and `loom_telemetry` databases.
 - [SQL surface](docs/reference/sql-surface.md): The SQL surface is a set of read-only ClickHouse views over a tenant's memories, memory history, conversations and request ledger.
 - [Status of Loom's surfaces](docs/reference/status.md): This page counts each op group's stable ops, names its experimental ones, and lists every boolean setting that loads false, so a caller can tell, before relying on an op or a switch, whether it is stable and whether it is on by default.
@@ -209,6 +210,6 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Extend Loom](docs/development/extending-loom.md): Loom has one registry per kind of thing: operations, workers, settings, providers, language lanes, extraction steps and tracker sources.
 - [Local development](docs/development/local-development.md): This page sets up a checkout for working on Loom's code.
 - [Migrations](docs/development/migrations.md): This page holds the rules for writing a migration.
-- [Release process](docs/development/release-process.md): Loom follows SemVer: the server, both SDKs, the web app, the root skills (`loom-code`, `loom`), the Cursor plugin and the Agent Plugins package that ship them, and the Gemini CLI extension share one version `X.Y.Z`.
+- [Release process](docs/development/release-process.md): Loom follows SemVer: the server, Python and TypeScript SDKs, the web app, the root skills (`loom-code`, `loom`), the Cursor plugin and the Agent Plugins package that ship them, and the Gemini CLI extension share one version `X.Y.Z`.
 - [Repository guide](docs/development/repository-guide.md): What every top-level directory holds, where a concern lives inside `server/`, the order to read the code in, and the conventions a pull request fails without.
 - [Testing](docs/development/testing.md): Which suite a test belongs in, what each suite needs to run, how tests skip when their environment is missing, which gates CI enforces, and how to regenerate what they pin.
