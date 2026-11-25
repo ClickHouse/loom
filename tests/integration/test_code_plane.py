@@ -802,15 +802,22 @@ async def test_edit_clues_distinguish_overload_locations(code_env, monkeypatch) 
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
     path = "src/overloaded.cpp"
-    source = (
-        b"int probe(int x) {\n  return x + 101;\n}\n\nint probe(double x) {\n  return x + 101;\n}\n"
-    )
+    source = b"int probe(int x) {\n  return x + 101 + 202;\n}\n\nint probe(double x) {\n  return x + 101;\n}\n"
     await _ingest(repo, org, ns, source=source, path=path)
     result = await handle_code_edit_context(
         CodeEditContextInput(org=org, namespace=ns, name=path, clues=["101"], include_lessons=False)
     )
     assert result.ambiguous and not result.definitions
     assert {candidate["start_line"] for candidate in result.candidates} == {2, 6}
+
+    specific = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=path, clues=["101", "202"], include_lessons=False
+        )
+    )
+    (definition,) = specific.definitions
+    assert definition.start_line == 1
+    assert "return x + 101 + 202;" in definition.body
 
 
 async def test_edit_clues_keep_candidates_for_competing_types(code_env, monkeypatch) -> None:

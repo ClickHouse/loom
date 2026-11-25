@@ -72,7 +72,7 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
     )
     targets = _matched_rows(rows, matches)
     if len(targets) != 1 and related is None:
-        supported = _definition_clue_matches(matches, input.clues)
+        supported = _definition_clue_matches(rows, matches, input.clues)
         bound = _matched_rows(rows, supported)
         if len(bound) == 1:
             targets, matches = bound, supported
@@ -124,7 +124,7 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
 
 
 def _definition_clue_matches(
-    matches: list[dict[str, Any]], clues: list[str]
+    rows: list[dict[str, Any]], matches: list[dict[str, Any]], clues: list[str]
 ) -> list[dict[str, Any]]:
     """A complete set of literal witnesses in one indexed source span."""
     required = set(clues)
@@ -133,9 +133,15 @@ def _definition_clue_matches(
         return []
     if any(len(match["text"]) >= GREP_MATCH_TEXT_CHARS for match in matches):
         return []
-    spans: dict[tuple[str, int, int], list[dict[str, Any]]] = defaultdict(list)
+    spans: dict[tuple[str] | tuple[str, int, int], list[dict[str, Any]]] = defaultdict(list)
     for match in matches:
-        key = (match["scope"], match["scope_start_line"], match["scope_end_line"])
+        row = _row_at_match(rows, match)
+        # Overloads share a grep scope. Keep their witnesses separate by declaration.
+        key: tuple[str] | tuple[str, int, int] = (
+            (str(row["symbol_id"]),)
+            if row is not None
+            else (match["scope"], match["scope_start_line"], match["scope_end_line"])
+        )
         spans[key].append(match)
     covers = [
         hits
@@ -151,16 +157,20 @@ def _matched_rows(
     """Bind every hit by its own line. Overloads can share a grep scope name."""
     targets: dict[str, dict[str, Any]] = {}
     for match in matches:
-        choices = [
-            row
-            for row in rows
-            if row["qualified_name"] == match["scope"] and _contains(row, match["line"])
-        ]
-        if len(choices) != 1:
+        row = _row_at_match(rows, match)
+        if row is None:
             return []
-        row = choices[0]
         targets[row["symbol_id"]] = row
     return list(targets.values())
+
+
+def _row_at_match(rows: list[dict[str, Any]], match: dict[str, Any]) -> dict[str, Any] | None:
+    choices = [
+        row
+        for row in rows
+        if row["qualified_name"] == match["scope"] and _contains(row, match["line"])
+    ]
+    return choices[0] if len(choices) == 1 else None
 
 
 def _contains(row: dict[str, Any], line: int) -> bool:
