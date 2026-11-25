@@ -106,13 +106,20 @@ stores a short lesson with the ID of the document version the curator reviewed.
 
 ```sh
 revised_rule='Roll back the deployment if at least 3 health checks fail within 60 seconds.'
-current_doc_id=$(publish_rule "$revised_rule" | jq -er .doc_id)
-find_rule | jq -e --arg revised "$revised_rule" '
-  .results[0] | select(.revision == 2 and (.content | contains($revised))) |
-  {source_uri, section, revision, content}'
-
-lesson_doc_id=$(call "$LOOM_READER_TOKEN" memory.provenance "$lesson" | jq -er .source_resource_id)
-test "$lesson_doc_id" = "$reviewed_doc_id" && test "$lesson_doc_id" != "$current_doc_id"
+current_doc_id=
+if published_doc_id=$(publish_rule "$revised_rule" | jq -er .doc_id) &&
+  test -n "$published_doc_id" &&
+  find_rule | jq -e --arg revised "$revised_rule" '
+    .results[0] | select(.revision == 2 and (.content | contains($revised))) |
+    {source_uri, section, revision, content}' &&
+  lesson_doc_id=$(call "$LOOM_READER_TOKEN" memory.provenance "$lesson" | jq -er .source_resource_id) &&
+  test -n "$lesson_doc_id" &&
+  test "$lesson_doc_id" = "$reviewed_doc_id" &&
+  test "$lesson_doc_id" != "$published_doc_id"; then
+  current_doc_id=$published_doc_id
+else
+  printf '%s\n' 'Check the published revision and the lesson citation before continuing.' >&2
+fi
 ```
 
 Search now returns revision `2` under the same URI. The final check confirms
@@ -126,20 +133,25 @@ to guard the write. If another writer changes the lesson's value before the
 update, Loom returns HTTP 409. Review the current lesson and source before retrying.
 
 ```sh
-lesson_hash=$(call "$LOOM_READER_TOKEN" memory.get "$lesson" |
-  jq -er --arg old "$rule" 'select(.found and .value == $old) | .content_sha256 | select(length > 0)')
+revise_lesson() {
+  test -n "${current_doc_id:-}" || return 1
+  lesson_hash=$(call "$LOOM_READER_TOKEN" memory.get "$lesson" |
+    jq -er --arg old "$rule" 'select(.found and .value == $old) | .content_sha256') || return 1
+  test -n "$lesson_hash" || return 1
 
-call "$LOOM_WRITER_TOKEN" memory.set "$(jq -cn --argjson lesson "$lesson" \
-  --arg value "$revised_rule" --arg doc_id "$current_doc_id" --arg hash "$lesson_hash" \
-  '$lesson + {value: $value, source_resource_id: $doc_id, if_match_sha256: $hash}')" |
-  jq -e .memory_id
+  call "$LOOM_WRITER_TOKEN" memory.set "$(jq -cn --argjson lesson "$lesson" \
+    --arg value "$revised_rule" --arg doc_id "$current_doc_id" --arg hash "$lesson_hash" \
+    '$lesson + {value: $value, source_resource_id: $doc_id, if_match_sha256: $hash}')" |
+    jq -e .memory_id
+}
 
-call "$LOOM_READER_TOKEN" memory.get "$lesson" |
-  jq -e --arg revised "$revised_rule" '.found and .value == $revised'
-call "$LOOM_READER_TOKEN" memory.provenance "$lesson" |
-  jq -e --arg doc_id "$current_doc_id" '.source_resource_id == $doc_id'
-call "$LOOM_READER_TOKEN" memory.history "$lesson" |
-  jq -e --arg old "$rule" 'any(.rows[]; .value == $old)'
+revise_lesson &&
+  call "$LOOM_READER_TOKEN" memory.get "$lesson" |
+    jq -e --arg revised "$revised_rule" '.found and .value == $revised' &&
+  call "$LOOM_READER_TOKEN" memory.provenance "$lesson" |
+    jq -e --arg doc_id "$current_doc_id" '.source_resource_id == $doc_id' &&
+  call "$LOOM_READER_TOKEN" memory.history "$lesson" |
+    jq -e --arg old "$rule" 'any(.rows[]; .value == $old)'
 ```
 
 The checks print `true` for the updated wording, the citation to the reviewed
