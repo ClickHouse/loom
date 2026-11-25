@@ -169,14 +169,21 @@ lifetime_seconds=10)` on the issuer. Mount only the corresponding public key
 in the worker. Send the resulting grant as the authorization bearer on the
 matching route. For `/v1/check-access`, use operation `check_access`.
 
-The worker returns `200` with `ok` on success, `403` for `denied`, `409` for
-`reconnect`, `422` for `unsupported`, `429` for `overloaded`, `503` for
-`unavailable`, and `504` for `timeout`. Connection errors, upstream 5xx and an
-expired stateful MCP session return `unavailable`. Any retry needs current
-authority and a new session; the worker does not retry inside the failed read.
-The worker handler refuses a body or query with `400`. The TLS proxy rejects
-query strings and other request targets outside the two routes with `404`, and
-may return `413` when a body exceeds the proxy's limit.
+The read handler returns JSON: `200` with `ok` on success, `403` for `denied`,
+`409` for `reconnect`, `422` for `unsupported`, `429` for `overloaded`, `503` for
+`unavailable`, and `504` for `timeout`. DNS resolver outages, connection
+errors, upstream 5xx and an expired stateful MCP session return `unavailable`.
+DNS timeouts return `timeout`; prohibited addresses return `denied`. Any retry
+needs current authority and a new session; the worker does not retry inside
+the failed read. The handler refuses a body or query with `400`.
+
+The handler's `429 overloaded` means no read slot is available. The listener
+enforces a separate connection and task limit before the handler runs. When
+that limit is reached, the listener returns a plain-text `503` that the TLS
+proxy passes through. Callers must handle that `503` without expecting the
+worker's JSON envelope. The TLS proxy rejects query strings and other request
+targets outside the two routes with `404`, and may return `413` when a body
+exceeds the proxy's limit.
 
 ## Docker Compose
 

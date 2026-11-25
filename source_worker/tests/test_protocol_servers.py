@@ -11,6 +11,9 @@ from dataclasses import asdict, replace
 from typing import Any
 from uuid import UUID, uuid4
 
+import dns.asyncresolver
+import dns.rdata
+import dns.resolver
 import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -390,19 +393,52 @@ async def test_upstream_http_refusal_at_sdk_boundary(
     ("route", "operation"), [("live", "live"), ("check-access", "check_access")]
 )
 @pytest.mark.parametrize(
-    ("fault", "status"),
-    [("network", 503), ("upstream-503", 503), ("expired-session", 503), ("missing-endpoint", 422)],
+    ("fault", "status", "code"),
+    [
+        ("network", 503, "unavailable"),
+        ("upstream-503", 503, "unavailable"),
+        ("expired-session", 503, "unavailable"),
+        ("missing-endpoint", 422, "unsupported"),
+        ("dns-unavailable", 503, "unavailable"),
+        ("dns-timeout", 504, "timeout"),
+        ("dns-prohibited", 403, "denied"),
+    ],
 )
 async def test_signed_route_distinguishes_transport_failure_from_unsupported(
-    route: str, operation: str, fault: str, status: int, monkeypatch: pytest.MonkeyPatch
+    route: str,
+    operation: str,
+    fault: str,
+    status: int,
+    code: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     faulted = True
     stale_session: bytes | None = None
     successful_sessions: list[bytes] = []
+    upstream_requests: list[str] = []
+    queries: list[str] = []
     manager = _resource_server(lambda: None, stateless=False)
+
+    class Resolver:
+        async def resolve(self, host: str, family: str, **options: Any) -> list[dns.rdata.Rdata]:
+            assert host == "source.example.test"
+            assert options == {"search": False, "raise_on_no_answer": False}
+            queries.append(family)
+            if family == ("A" if route == "live" else "AAAA"):
+                address = "8.8.8.8" if family == "A" else "2600::10"
+            elif faulted and fault == "dns-unavailable":
+                raise dns.resolver.NoNameservers("synthetic private DNS detail")
+            elif faulted and fault == "dns-timeout":
+                raise dns.resolver.LifetimeTimeout(timeout=0.1, errors=[])
+            elif faulted and fault == "dns-prohibited":
+                address = "127.0.0.1" if family == "A" else "::1"
+            else:
+                return []
+            return [dns.rdata.from_text("IN", family, address)]
 
     async def app(scope: Scope, receive: Receive, send: Send) -> None:
         nonlocal stale_session
+        upstream_requests.append(scope["method"])
         if scope["method"] != "POST":
             await manager.handle_request(scope, receive, send)
             return
@@ -448,7 +484,7 @@ async def test_signed_route_distinguishes_transport_failure_from_unsupported(
         )
 
     monkeypatch.setattr(direct_backend, "MCPSourceClient", routed_client)
-    monkeypatch.setattr(mcp_client, "resolve_public_address", _synthetic_pin)
+    monkeypatch.setattr(dns.asyncresolver, "Resolver", Resolver)
     profile = ApprovedProfile(
         MCPSourceConfig(endpoint=_ENDPOINT, bearer_audience=_ENDPOINT), ("org",)
     )
@@ -492,9 +528,12 @@ async def test_signed_route_distinguishes_transport_failure_from_unsupported(
     ):
         failed = await worker.post(f"/v1/{route}", headers=headers())
         assert failed.status_code == status
-        assert failed.json() == {"status": "unavailable" if status == 503 else "unsupported"}
+        assert failed.json() == {"status": code}
         assert failed.headers["Cache-Control"] == "no-store"
         assert not successful_sessions
+        assert sorted(queries) == ["A", "AAAA"]
+        if fault.startswith("dns-"):
+            assert upstream_requests == []
         faulted = False
         succeeded = await worker.post(f"/v1/{route}", headers=headers())
         assert succeeded.status_code == 200

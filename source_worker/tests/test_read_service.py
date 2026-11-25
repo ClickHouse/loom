@@ -1,16 +1,19 @@
 import asyncio
 import hashlib
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from loom_source_worker import read_service
 from loom_source_worker.http_service import create_app
 from loom_source_worker.protocol import (
     ConnectionBinding,
     ReadBinding,
     ReadGrant,
     issue_read_grant,
+    verify_read_grant,
 )
 from loom_source_worker.read_service import (
     BoundReader,
@@ -20,6 +23,8 @@ from loom_source_worker.read_service import (
     ReadLimits,
     ReadService,
 )
+from starlette.responses import JSONResponse
+from starlette.types import Message, Receive, Scope, Send
 
 
 class _Backend:
@@ -162,6 +167,69 @@ class TestReadService(unittest.IsolatedAsyncioTestCase):
             await read
         self.backend.release.set()
         self.assertIsNotNone((await service.execute(self._token(self._live()), "live")).document)
+
+    async def test_http_render_must_finish_before_the_effective_deadline(self) -> None:
+        for budget, read_seconds in (("read", 1), ("grant", 15)):
+            for expired in (False, True):
+                with self.subTest(budget=budget, expired=expired):
+                    await self._assert_render_deadline(read_seconds, expired)
+
+    async def _assert_render_deadline(self, read_seconds: float, expired: bool) -> None:
+        token = self._token(self._live())
+        _, expires_at = verify_read_grant(
+            token, issuer="loom", worker_id=self.binding.worker_id, key=self.key.public_key()
+        )
+        app = create_app(self._service(timeout=read_seconds))
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        budget = min(read_seconds, 10)
+        elapsed = 0.0
+        render = JSONResponse.render
+        frames: list[Message] = []
+
+        def render_with_clock(response: JSONResponse, content: dict[str, object]) -> bytes:
+            nonlocal elapsed
+            encoded = render(response, content)
+            if content["status"] == "ok":
+                elapsed += budget if expired else budget / 2
+            return encoded
+
+        async def record_app(scope: Scope, receive: Receive, send: Send) -> None:
+            async def record(message: Message) -> None:
+                frames.append(message)
+                await send(message)
+
+            await app(scope, receive, record)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=record_app), base_url="http://worker.test"
+        ) as worker:
+            with (
+                patch.object(loop, "time", lambda: now + elapsed),
+                patch.object(read_service, "time") as wall,
+                patch.object(JSONResponse, "render", render_with_clock),
+            ):
+                wall.time.side_effect = lambda: expires_at - 10 + elapsed
+                response = await worker.post(
+                    "/v1/live", headers={"Authorization": f"Bearer {token}"}
+                )
+            self.assertEqual(
+                [frame["type"] for frame in frames],
+                ["http.response.start", "http.response.body"],
+            )
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            if expired:
+                self.assertEqual(
+                    (frames[0]["status"], response.json()), (504, {"status": "timeout"})
+                )
+                self.assertNotIn(self.backend.payload.encode(), frames[1]["body"])
+                retry = await worker.post(
+                    "/v1/live", headers={"Authorization": f"Bearer {self._token(self._live())}"}
+                )
+                self.assertEqual(retry.status_code, 200)
+            else:
+                self.assertEqual(frames[0]["status"], 200)
+                self.assertEqual(response.json()["document"]["text"], self.backend.payload)
 
     async def test_http_body_backpressure_holds_the_org_slot(self) -> None:
         app = create_app(self._service(timeout=3))

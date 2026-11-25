@@ -28,7 +28,7 @@ from pydantic import AnyUrl, ValidationError
 from referencing import Registry
 from referencing.exceptions import Unresolvable
 
-from ._mcp_transport import private_work, resolve_public_address
+from ._mcp_transport import AddressResolutionError, private_work, resolve_public_address
 
 ErrorCode = Literal[
     "config",
@@ -68,7 +68,7 @@ class MCPSourceError(Exception):
 
 
 def _error_code(error: BaseException) -> ErrorCode:
-    if isinstance(error, MCPSourceError):
+    if isinstance(error, (AddressResolutionError, MCPSourceError)):
         return error.code
     if isinstance(error, (TimeoutError, httpx.TimeoutException)):
         return "timeout"

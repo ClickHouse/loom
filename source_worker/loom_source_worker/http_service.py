@@ -74,7 +74,7 @@ class _ReadRoute:
             await send(message)
 
         try:
-            async with self.service.admitted_read(token, self.operation) as reading:
+            async with self.service.admitted_read(token, self.operation) as (reading, deadline):
                 body = {
                     "status": "ok",
                     "request_id": str(reading.request_id),
@@ -82,7 +82,10 @@ class _ReadRoute:
                     "content_sha256": reading.content_sha256,
                     "document": asdict(reading.document) if reading.document else None,
                 }
-                await JSONResponse(body, headers=_CACHE_HEADERS)(scope, receive, emit)
+                response = JSONResponse(body, headers=_CACHE_HEADERS)
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise ReadFailure("timeout")
+                await response(scope, receive, emit)
         except ReadFailure as error:
             if not started:
                 await _error(error.code, _STATUSES[error.code])(scope, receive, send)

@@ -8,13 +8,21 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import Literal
 
 import dns.asyncresolver
 import dns.exception
+import dns.resolver
 
 _PRIVATE = ContextVar("mcp_private_work", default=False)
 _NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
 _Address = ipaddress.IPv4Address | ipaddress.IPv6Address
+
+
+class AddressResolutionError(Exception):
+    def __init__(self, code: Literal["unavailable", "timeout"]) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 class _PrivateFilter(logging.Filter):
@@ -70,11 +78,13 @@ async def resolve_public_address(host: str) -> _Address | None:
                 return_exceptions=True,
             )
             for answer in answers:
-                if isinstance(answer, asyncio.CancelledError):
-                    raise answer
                 if isinstance(answer, BaseException):
-                    return None
+                    raise answer
                 addresses.extend(ipaddress.ip_address(record.to_text()) for record in answer)
-        except (ValueError, OSError, dns.exception.DNSException):
+        except (ValueError, dns.resolver.NXDOMAIN):
             return None
+        except (dns.exception.Timeout, TimeoutError):
+            raise AddressResolutionError("timeout") from None
+        except (dns.exception.DNSException, OSError):
+            raise AddressResolutionError("unavailable") from None
     return addresses[0] if addresses and all(map(_is_public, addresses)) else None
