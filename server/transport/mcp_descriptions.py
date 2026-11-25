@@ -2168,11 +2168,11 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`uses_brief: true` summarizes callers. Check freshness and source elision."
     ),
     "code.grep": (
-        "Find text. Keep bodies for edits. "
-        "Batch code and test-name prefixes. Omit `path_prefix`. "
-        "`path_globs` can cover both. "
-        "`regex: true` uses RE2. Locations use `include_body: false`, `context_lines: 0`. "
-        "Use code.search for behavior and code.edit_context for edits.\n\n"
+        "Exact text. Default bodies for edits. "
+        'Batch `pattern: ["def parse(", "def test_parse"]`. '
+        "Scope both with `path_globs`. "
+        "Use `include_body: false`, `context_lines: 0` for locations. "
+        "Use RE2 with `regex: true`. code.search for behavior, code.edit_context for edits.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
         "Call prefixes and absent call expressions can return related source and linked notes. "
         "Use code.symbol for a definition or code.read for exact lines. Filter with `langs`. "
