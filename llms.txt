@@ -91,6 +91,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Guides](docs/guides/index.md)
 - [Integrate Loom into an agent](docs/guides/agent-integration.md): This guide covers what an agent sends to Loom and how it reads the answers: the client surface, the identity, what to write, and how to read.
 - [Code tools for model integrations](docs/guides/code-tools.md): An indexed code namespace and a token with read access let an SDK tool loop investigate definitions, behavior and relationships with `loom_code_lookup`.
+- [Compare self-hosted memory tools for coding agents](docs/guides/compare-coding-agent-memory.md): Choose memory by what the next coding session needs.
 - [Debug a request](docs/guides/debugging.md): Loom tags everything one request does with the same id, so tracing a request is a join.
 - [Customize the extraction pipeline](docs/guides/extraction-pipeline.md): `memory.set_from_messages` runs its transcript through an ordered list of steps that share one state.
 - [Headless bots](docs/guides/headless-bots.md): A headless bot runs with no person to paste a token, notice a silent failure or say "remember this".

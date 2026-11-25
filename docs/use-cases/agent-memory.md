@@ -38,6 +38,7 @@ to see who saved the lesson and how it changed.
 ## Choosing a memory tool for coding agents
 
 Choose a source based on what the next agent needs to retrieve and who maintains it.
+For observed results, see the [self-hosted memory comparison](../guides/compare-coding-agent-memory.md).
 
 | Source                                      | Use it for                                                              | What to verify                                                                      |
 | ------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |

@@ -9,6 +9,8 @@ seo:
 
 ## Evaluate a workflow
 
+- [Compare self-hosted memory tools for coding agents](compare-coding-agent-memory.md).
+  Try the same handoff, source change, and audit across three setups.
 - [Choose AI software factory tools](software-factory-tools.md). Run a pilot on one
   repository to measure handoffs, required checks, rework, and cost.
 - [Evaluate shared agent memory and code intelligence](../getting-started/evaluate.md).
