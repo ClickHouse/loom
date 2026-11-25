@@ -42,7 +42,10 @@ def config():
             {
                 "organizations": ["tenant"],
                 "link_origins": ["https://docs.example"],
-                "config": {"endpoint": "https://mcp.example/rpc"},
+                "config": {
+                    "endpoint": "https://mcp.example/rpc",
+                    "limits": {"max_wire_bytes": 2_000_000},
+                },
             }
         ],
     }
@@ -65,6 +68,23 @@ def test_resource_profile_and_transport_settings(config):
     assert not transport.access_log
     assert transport.log_config is None
     assert not transport.proxy_headers
+
+
+@pytest.mark.parametrize("limit", ["content", "wire"])
+def test_refuses_slot_limits_above_the_worker_byte_budget(config, limit):
+    settings = config["read_limits"]
+    profile = config["profiles"][0]["config"]
+    if limit == "content":
+        settings["content_bytes"] = 1024 * 1024
+    else:
+        profile["limits"]["max_wire_bytes"] = 2 * 1024 * 1024
+    _parse_settings(json.dumps(config).encode())
+    if limit == "content":
+        settings["content_bytes"] += 1
+    else:
+        profile["limits"]["max_wire_bytes"] += 1
+    with pytest.raises(StartupError, match="^invalid worker configuration$"):
+        _parse_settings(json.dumps(config).encode())
 
 
 def test_mapped_read_profile_is_validated_at_startup(config):

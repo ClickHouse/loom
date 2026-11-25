@@ -47,6 +47,7 @@ _VAULT_CA = Path("/etc/loom-source-worker/vault-ca.pem")
 _VAULT_TOKEN = Path("/run/loom-source-worker/credentials/vault-token")
 _SOCKET = Path("/run/loom-source-worker/socket/worker.sock")
 _CONFIG_BYTES = 2 * 1024 * 1024
+_MAX_ADMITTED_WIRE_BYTES = 16 * 1024 * 1024
 _TOKEN_BYTES = 8192
 _BACKLOG = 64
 _CERTIFICATE = rb"-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----"
@@ -152,6 +153,11 @@ def _parse_settings(raw: bytes) -> _Settings:
                 or not all(_https_origin(origin) for origin in profile.link_origins)
             ):
                 raise ValueError("invalid profile scope")
+            if (
+                settings.read_limits.concurrent * profile.config.limits.max_wire_bytes
+                > _MAX_ADMITTED_WIRE_BYTES
+            ):
+                raise ValueError("worker wire budget exceeded")
             audience = profile.config.bearer_audience
             if audience is not None and not _visible_ascii(audience, 2048):
                 raise ValueError("invalid profile audience")

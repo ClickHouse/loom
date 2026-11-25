@@ -19,6 +19,8 @@ from .protocol import ConnectionBinding, ReadBinding, ReadGrantRefused, verify_r
 FailureCode = Literal["denied", "reconnect", "overloaded", "timeout", "unavailable", "unsupported"]
 CurrentAccess = Callable[[], Awaitable[None]]
 
+_MAX_ADMITTED_CONTENT_BYTES = 8 * 1024 * 1024
+
 
 class ReadFailure(Exception):
     def __init__(self, code: FailureCode) -> None:
@@ -73,6 +75,7 @@ class ReadLimits:
             or not 1 <= self.concurrent_per_org <= self.concurrent <= 256
             or type(self.content_bytes) is not int
             or not 1 <= self.content_bytes <= 4_000_000
+            or self.concurrent * self.content_bytes > _MAX_ADMITTED_CONTENT_BYTES
             or type(self.timeout_seconds) not in (float, int)
             or not math.isfinite(self.timeout_seconds)
             or not 0 < self.timeout_seconds <= 30

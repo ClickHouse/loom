@@ -50,6 +50,13 @@ Keep the signer and worker profile digest in agreement.
 Any account, profile, selection or authority change requires a current grant.
 An access check returns a content digest and fetch time without the body.
 
+Read slots stay occupied until the worker sends the response, the deadline
+expires, or the request disconnects. Startup rejects configurations where
+`concurrent × content_bytes` exceeds 8 MiB, or `concurrent × max_wire_bytes`
+for any profile exceeds 16 MiB. These limits account for admitted document
+and wire bytes. They do not measure process memory or qualify infrastructure
+buffering. Set smaller limits for the intended MCP server and deployment.
+
 A grant is reusable until its expiry for the same read, within the worker's
 capacity limits. It never authorizes a stored write. The issuer must check
 selection and requester authority before issuing it and before delivering a
@@ -85,7 +92,8 @@ Save the worker configuration as `config.json`:
       "link_origins": ["https://docs.example"],
       "config": {
         "endpoint": "https://mcp.example/rpc",
-        "bearer_audience": "https://mcp.example/rpc"
+        "bearer_audience": "https://mcp.example/rpc",
+        "limits": { "max_wire_bytes": 2000000 }
       }
     }
   ]
