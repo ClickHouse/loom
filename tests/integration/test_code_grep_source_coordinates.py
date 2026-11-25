@@ -281,17 +281,24 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
                 org,
                 ns,
                 embedder.model_name,
-                "src/early.py",
+                path,
                 uuid.uuid4(),
                 "function",
-                "repeat_0",
+                scope,
                 1,
                 1,
-                "# def requested\ndef repeat_0():\n",
+                content,
                 [0.0] * settings.embedding_dim,
                 1,
                 "b" * 40,
             ]
+            for path, scope, content in (
+                ("src/early.py", "repeat_0", "# def requested\ndef repeat_0():\n"),
+                ("edges/a.py", "unicode_marker", "needle … line continues\u00a0\n"),
+                ("edges/b.py", "real_needle", "real needle source\n"),
+                ("edges/c.py", "trailing_cr", "target\r\n"),
+                ("edges/d.py", "interior_cr", "real target\r rest\n"),
+            )
         ],
         column_names=[
             "org",
@@ -351,6 +358,17 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             limit=3,
         )
         assert [row["path"] for row in witnesses] == ["src/late.py", "src/tail.py"]
+        exact_lines = await repo.grep_pattern_chunks(
+            org,
+            ns,
+            ["needle", "target\r"],
+            case_sensitive=True,
+            path_prefix="edges/",
+            scope=build_scope(),
+            exclude_paths=[],
+            limit=2,
+        )
+        assert [row["path"] for row in exact_lines] == ["edges/b.py", "edges/d.py"]
 
         async def missing_pool(*args: Any, **kwargs: Any) -> None:
             return None
@@ -363,6 +381,17 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
 
         async def timed_out(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
             raise TimeoutError
+
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                "server.code.app.grep._missing_chunk_patterns",
+                lambda *a, **kw: pytest.fail(
+                    "the supplemental pre-scan requires more than the minimum deadline"
+                ),
+            )
+            short = await handle_code_grep(request.model_copy(update={"deadline_ms": 200}))
+            assert short.matches == path_order.matches
+            assert "batch pattern scan skipped" in short.partial_reason
 
         monkeypatch.setattr(CodeRepo, "grep_pattern_chunks", timed_out)
         partial = await handle_code_grep(request)

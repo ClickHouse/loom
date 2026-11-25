@@ -82,7 +82,9 @@ def grep_pattern_chunks_sql(
         _where(cond, prefix_clause, path_sql),
     )
     return f"""
-            WITH {patterns} AS literals
+            WITH {patterns} AS literals,
+                 concat('[', char(9), '-', char(13), char(28), '-', char(32),
+                        char(194, 133), char(92), 'p{{Z}}]') AS source_space
             SELECT hit.1 AS path, hit.2 AS scope, hit.3 AS symbol_ids, hit.4 AS kind,
                    hit.5 AS start_line, hit.6 AS end_line, hit.7 AS content,
                    hit.8 AS embedding_model, hit.9 AS indexed_commit
@@ -99,8 +101,10 @@ def grep_pattern_chunks_sql(
                                splitByChar(char(10), content) AS source_parts,
                                toInt64(end_line) - toInt64(start_line) + 1 AS span,
                                toInt64(endsWith(content, char(10))) AS trailing_lf,
-                               arraySlice(source_parts, -span - trailing_lf, greatest(0, span))
-                                   AS physical_lines
+                               arrayMap(
+                                   line -> left(line, length(line) - endsWith(line, char(13))),
+                                   arraySlice(source_parts, -span - trailing_lf, greatest(0, span))
+                               ) AS physical_lines
                         FROM {inner}
                         AND kind != 'class_skeleton'
                         AND span > 0 AND length(source_parts) >= span + trailing_lf
@@ -109,9 +113,9 @@ def grep_pattern_chunks_sql(
                             {{unmappable_endings:Array(String)}}
                         )
                         AND NOT arrayExists(line ->
-                            startsWith(trimLeft(line, char(9, 11, 12, 13, 32)),
+                            startsWith(replaceRegexpOne(line, concat('^', source_space, '+'), ''),
                                        {{continued_line_prefix:String}})
-                            OR endsWith(trimRight(line, char(9, 11, 12, 13, 32)),
+                            OR endsWith(replaceRegexpOne(line, concat(source_space, '+$'), ''),
                                         {{continued_line_suffix:String}}),
                             source_parts
                         )
