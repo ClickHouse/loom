@@ -10,12 +10,18 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, TypedDict, cast, get_origin, get_type_hints
 
-from server.core.ch_params import chunks
+from server.core.ch_params import chunks, fitting
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, QueuePosition
+from server.memory.domain.temporal_sql import served_status_sql
+from server.memory.store.sql import FILE_LISTING_VISIBLE
 
 TABLE = "loom.memory_code_links"
+
+# The path hint uses metadata only. Keep the original path order when a
+# broad response cannot be checked within this many links.
+_PATH_HINT_ROWS = 512
 
 
 class Former(TypedDict):
@@ -322,6 +328,75 @@ async def in_code_namespace(
 ) -> list[LinkRow]:
     """Every live link of `code_namespace`."""
     return await _for_code(ch or _default_client(), org, [code_namespace], {})
+
+
+async def _path_hint_rows(sql: str, params: dict[str, Any], until: float) -> list[dict[str, Any]]:
+    remaining = until - time.monotonic()
+    if remaining <= 0:
+        return []
+    rows = await _default_client().query_all(
+        sql,
+        params | {"lim": _PATH_HINT_ROWS + 1},
+        settings={
+            "max_execution_time": remaining,
+            "timeout_before_checking_execution_speed": 0,
+            "timeout_overflow_mode": "throw",
+        },
+    )
+    return rows if len(rows) <= _PATH_HINT_ROWS else []
+
+
+async def path_hint_links(
+    org: str,
+    namespaces: Sequence[str],
+    trunk: str,
+    revisions: list[tuple[str, str]],
+    *,
+    until: float,
+) -> list[dict[str, Any]]:
+    """Current-revision link metadata for the files of one grep response."""
+    if not revisions or fitting(revisions) != revisions:
+        return []
+    return await _path_hint_rows(
+        f"""
+        SELECT path, qualified_name, namespace, toString(memory_id) AS mid, inputs_hash
+        {_LIVE} AND org = {{org:String}} AND code_namespace = {{trunk:String}}
+          AND path IN {{paths:Array(String)}}
+          AND (path, checked_commit) IN {{revisions:Array(Tuple(String, String))}}
+          AND namespace IN {{nss:Array(String)}}
+          AND complete AND qualified_name != '' AND state IN ('fresh', 'moved')
+        LIMIT {{lim:UInt32}}
+        """,
+        {
+            "org": org,
+            "trunk": trunk,
+            "paths": [path for path, _ in revisions],
+            "revisions": revisions,
+            "nss": list(namespaces),
+        },
+        until,
+    )
+
+
+async def path_hint_heads(
+    org: str, candidates: list[tuple[str, str]], *, until: float
+) -> list[dict[str, Any]]:
+    """Eligible memory heads for the hint, without reading their values."""
+    if not candidates or fitting(candidates) != candidates:
+        return []
+    return await _path_hint_rows(
+        f"""
+        SELECT namespace, user_id, toString(memory_id) AS mid,
+               toString(content_sha256) AS sha, tags, files
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
+          AND (namespace, memory_id) IN {{candidates:Array(Tuple(String, UUID))}}
+          AND ({FILE_LISTING_VISIBLE}) AND {served_status_sql()}
+        LIMIT {{lim:UInt32}}
+        """,
+        {"org": org, "nss": sorted({ns for ns, _ in candidates}), "candidates": candidates},
+        until,
+    )
 
 
 async def for_commits(

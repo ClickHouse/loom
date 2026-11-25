@@ -159,3 +159,31 @@ async def test_list_tags_match_in_any_case(agent) -> None:
     every = await agent.memory.list(tags=["API", "docs"], tags_every=True)
     assert keys(every) == {"both"}
     assert every["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_pinned_only_reaches_past_the_rows_read(agent) -> None:
+    """`pinned_only` finds a pinned row older than every row a short read returns, and
+    lists and counts only pinned rows, on the recency and the score paths."""
+    # Written first, under a key that sorts after the others: the list orders by created_at
+    # in whole seconds, then by key, so the row is outside the newest three either way.
+    await agent.memory.pin(
+        "zz_ground_rule", "Every release is tagged from the main branch.", memory_type="semantic"
+    )
+    for i in range(5):
+        await agent.memory.set(f"later{i:02d}", i, memory_type="semantic")
+
+    async def page(**extra: object) -> dict:
+        body = {**agent.memory._identity(None, None), "limit": 3, **extra}
+        return await agent.transport.post("/v1/memory.list", body)
+
+    newest = await page()
+    assert "zz_ground_rule" not in {e["memory_key"] for e in newest["entries"]}
+
+    pinned = await page(pinned_only=True)
+    assert [e["memory_key"] for e in pinned["entries"]] == ["zz_ground_rule"]
+    assert pinned["entries"][0]["pinned"] is True
+    assert pinned["total"] == 1 and pinned["truncated"] is False
+
+    scored = await page(pinned_only=True, sort_by="score")
+    assert [e["memory_key"] for e in scored["entries"]] == ["zz_ground_rule"]

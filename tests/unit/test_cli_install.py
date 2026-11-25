@@ -115,8 +115,16 @@ def test_install_one_gemini_writes_http_url_and_keeps_other_settings(
         assert d["ui"] == {"theme": "Dracula"} and d["mcpServers"]["other"] == other
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "token", ["SECRET", 'secret"quote', "secret\\path", "secret\nline", "secret\U0001f512"]
+)
 def test_install_one_refuses_a_settings_file_with_comments_and_prints_the_entry(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    token: str,
+    dry_run: bool,
 ) -> None:
     cfg = tmp_path / ".gemini" / "settings.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
@@ -125,7 +133,7 @@ def test_install_one_refuses_a_settings_file_with_comments_and_prints_the_entry(
     cfg.write_text(text)
 
     ok = cli._install_one(
-        "gemini", token="SECRET", server_url="https://h", name="loom", dry_run=False
+        "gemini", token=token, server_url="https://h", name="loom", dry_run=dry_run
     )
 
     assert ok is False
@@ -139,7 +147,8 @@ def test_install_one_refuses_a_settings_file_with_comments_and_prints_the_entry(
             "headers": {"Authorization": "Bearer <token>"},
         }
     }
-    assert "SECRET" not in err
+    assert token not in err
+    assert json.dumps(token)[1:-1] not in err
 
 
 def test_has_json_comments_ignores_slashes_inside_strings() -> None:
@@ -467,8 +476,11 @@ def test_install_reads_the_saved_token_and_the_shared_base_url(
     }
 
 
+@pytest.mark.parametrize(
+    "tok", ["NEW.TOKEN.VALUE", 'secret"quote', "secret\\path", "secret\nline", "secret\U0001f512"]
+)
 def test_dry_run_previews_only_the_keys_it_sets_and_masks_the_token(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tok: str
 ) -> None:
     """A dry run printed the whole merged file: this token plus every other
     credential the file already held. It prints only what it would set."""
@@ -485,7 +497,6 @@ def test_dry_run_previews_only_the_keys_it_sets_and_masks_the_token(
     lcfg.parent.mkdir(parents=True)
     lcfg.write_text(json.dumps({"token": "OLD-SECRET", "note": "kept"}))
 
-    tok = "NEW.TOKEN.VALUE"
     assert cli._install_one("cursor", token=tok, server_url="https://h", name="loom", dry_run=True)
     assert cli._install_claude_code_capture("https://h", tok, dry_run=True)
     assert cli._install_codex_capture("https://h", tok, dry_run=True)
@@ -493,11 +504,29 @@ def test_dry_run_previews_only_the_keys_it_sets_and_masks_the_token(
     out = capsys.readouterr().out
     for secret in (tok, "OTHER-SECRET", "sk-ENV-SECRET", "OLD-SECRET"):
         assert secret not in out
+        assert json.dumps(secret)[1:-1] not in out
     assert out.count("<token>") == 3
     assert '"url": "https://h/mcp?toolset=coding"' in out and '"LOOM_BASE_URL": "https://h"' in out
     # nothing was written
     assert json.loads(cfg.read_text()) == other
     assert json.loads(lcfg.read_text()) == {"token": "OLD-SECRET", "note": "kept"}
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_codex_manual_setup_uses_a_token_placeholder(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], dry_run: bool
+) -> None:
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    token = 'secret"token\\value'
+    assert cli._install_one(
+        "codex", token=token, server_url="https://h", name="loom", dry_run=dry_run, toolset="coding"
+    )
+    out = capsys.readouterr().out
+    assert token not in out
+    assert cli._shell_words([token]) not in out
+    assert 'export LOOM_API_KEY="<token>"' in out
 
 
 @pytest.mark.parametrize("client", sorted(set(MCP_CLIENTS) - {"claude-code", "codex"}))
@@ -658,7 +687,8 @@ def test_zed_install_refuses_unmerged_jsonc_without_touching_bytes(
     err = capsys.readouterr().err
     assert "not changed" in err
     assert _ZED_URL in err
-    assert _ZED_TOKEN in err
+    assert _ZED_TOKEN not in err
+    assert "Bearer <token>" in err
     assert "context_servers" in err
 
 
@@ -1589,21 +1619,66 @@ def test_install_opencode_merges_into_an_existing_jsonc_and_keeps_its_comments(
     assert jsonc.read_text() == text
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "token", ["SECRET", 'secret"quote', "secret\\path", "secret\nline", "secret\U0001f512"]
+)
 def test_install_opencode_refuses_a_file_it_cannot_merge_and_prints_the_entry(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    token: str,
+    dry_run: bool,
 ) -> None:
     cfg = tmp_path / "opencode" / "opencode.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
     cfg.parent.mkdir(parents=True)
     cfg.write_text('{"mcp": "not an object"}')
     assert (
-        cli._install_one("opencode", token="T", server_url="https://h", name="loom", dry_run=False)
+        cli._install_one(
+            "opencode", token=token, server_url="https://h", name="loom", dry_run=dry_run
+        )
         is False
     )
     assert cfg.read_text() == '{"mcp": "not an object"}'
     err = capsys.readouterr().err
     assert f"ERROR (opencode): {cfg} could not be merged (mcp is not an object)" in err
     assert 'Add this under "mcp.servers" in that file:' in err and '"type": "remote"' in err
+    snippet = err.split("in that file:\n", 1)[1].split("\nReplace <token>", 1)[0]
+    assert json.loads(snippet) == {"loom": _opencode_entry("<token>")}
+    assert token not in err and json.dumps(token)[1:-1] not in err
+
+
+@pytest.mark.parametrize("client", ["zed", "opencode"])
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize(
+    "token", ["SECRET", 'secret"quote', "secret\\path", "secret\nline", "secret\U0001f512"]
+)
+def test_jsonc_preview_masks_tokens_and_preserves_nesting(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    client: str,
+    existing: bool,
+    token: str,
+) -> None:
+    cfg = tmp_path / "settings.jsonc"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
+    original = '{// keep this comment\n"theme": "dark"}\n'
+    if existing:
+        cfg.write_text(original)
+    assert cli._install_one(client, token=token, server_url="https://h", name="loom", dry_run=True)
+    output = capsys.readouterr().out
+    snippet = output.split("\n", 1)[1].split("\n  (every other key", 1)[0]
+    entry = {"url": "https://h/mcp", "headers": {"Authorization": "Bearer <token>"}}
+    expected = {"context_servers": {"loom": entry}}
+    if client == "opencode":
+        expected = {"mcp": {"servers": {"loom": _opencode_entry("<token>")}}}
+    assert json.loads(snippet) == expected
+    assert token not in output and json.dumps(token)[1:-1] not in output
+    assert cfg.exists() is existing
+    if existing:
+        assert cfg.read_text() == original
 
 
 def test_opencode_config_path_follows_opencode_lookup(

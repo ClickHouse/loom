@@ -354,7 +354,11 @@ def _not_on_mcp(response: Response, payload: Any, error: PermissionError) -> dic
 
     record_auth_refusal(error, transport="mcp")
     response.status_code = 403
-    return _err(_echo_request_id(payload), INVALID_REQUEST, str(error))
+    return _err(
+        _echo_request_id(payload),
+        INVALID_REQUEST,
+        "an end-user token calls the HTTP API (/v1/<op>), not MCP",
+    )
 
 
 def _token_refused(

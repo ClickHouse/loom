@@ -1188,12 +1188,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "conversation.delete": (
         "Soft-delete (tombstone) one conversation thread. Only call on explicit delete request."
     ),
-    # ---- Context pack (the first step of each task) ----
+    # ---- Context pack ----
     "context.pack": (
-        "A task's memories, decisions and procedures: call it first in each task, unless "
-        f"{FIRST_STEP_HOOK}. Pass the task as `query`; working memory and the profile come "
-        "too, `include_knowledge` / `include_conversations` add docs and chats. "
-        "`include_runs=true` adds a manifest of your recent sessions and runs "
+        "Retrieve task context by passing the task as `query`. "
+        "It returns memories, decisions, procedures, "
+        "working memory and the profile; `include_knowledge` / `include_conversations` "
+        "add docs and chats. "
+        "`include_runs=true` lists recent sessions and runs "
         "(goal, outcome, tool calls, files) — shortlist there "
         "before opening one with memory.evidence or memory.digests. For one "
         "fact, prefer loom_search; for activation only, "
@@ -1357,30 +1358,20 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "per-frame grep-and-open loop."
     ),
     "code.grep": (
-        "Exact literal or regex search over the indexed corpus — the "
-        "inside-loom answer to 'grep for this string'. Each hit arrives "
-        "with its ENCLOSING SYMBOL and that unit's scope_start_line / "
-        "scope_end_line (grep gives you a bare line), in one round-trip — "
-        "and the repo's thousands of unindexed .reference fixture files "
-        "never pollute the results. neighbours: true adds each enclosing "
-        "function's callers, callees, tests and citing docs in the same call. "
-        "Literal by default; set "
-        "regex: true for RE2. A regex-shaped literal (`a|b`, `foo\\(`) that "
-        "matches nothing is run once as a regex and `note` says so. For a "
-        "PRINTED error or log message, set mode: 'message' — the rendered "
-        "text finds the statement whose template printed it (`verdict` "
-        "raised_at, `template` with `{}` for the arguments, the ErrorCodes "
-        "name for a `Code: N` prefix); a code line sent there is grepped as a "
-        "literal (`fallback: literal`). deadline_ms returns the hits found "
-        "in that budget (`partial: true`) instead of timing out. "
-        "mode: 'presence' with namespaces: "
-        "[...] (up to 8 release-branch indexes) answers 'which branches "
-        "contain this string' in ONE call: per namespace present / absent / "
-        "unknown with files_total and the first matching file, plus a "
-        "summary — instead of one grep per branch. To find a FILE by name (a "
-        "test number, a glob) use code.files — grep "
-        "matches content, not paths. For your UNCOMMITTED working tree, "
-        "still use shell grep — this index only knows merged code."
+        "Find known text in indexed source. Use code.search for behavior. "
+        "Batch code and test-name prefixes in a `pattern` list. Path filters scope the batch. "
+        "Matches include bodies by default. "
+        "`include_body: false` omits enclosing bodies. Add `context_lines: 0` for locations. "
+        "Use literal strings or one RE2 string with `regex: true`. "
+        "Filter by `path_prefix`, `path_globs` or `langs`. "
+        "`neighbours` adds graph links. `deadline_ms` allows partial results. "
+        "`mode: 'message'` finds printed error templates. "
+        "`mode: 'presence'` checks `namespaces`. "
+        "Check coverage. Use code.files for paths and local tools for uncommitted source."
+    ),
+    "code.read": (
+        "Read inclusive, one-based indexed lines. Pass path, start_line, optional end_line "
+        "or ranges of such objects or path:start-end strings."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
@@ -1415,25 +1406,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "reported, not flagged."
     ),
     "code.search": (
-        "Search the shared code index of this repository (fresh to the last "
-        "merged PR). Use when grep has no name to look for or misses: "
-        "CONCEPTUAL lookups — 'quota enforcement', 'backpressure handling'; "
-        "a name you already know is cheaper to grep. For a full QUESTION you "
-        "want ANSWERED, prefer code.ask (grounded answer with citations, "
-        "often served instantly from the shared cache). Results: ranked "
-        "file:line pointers with descriptions, bodies where the budget allows. "
-        "Arbitration: for a DEFINITION or 'what calls X', "
-        "prefer code.symbol / code.callers (exact, "
-        "compiler-grade). For exact strings, error messages verbatim, or "
-        "anything in your UNCOMMITTED working tree, use grep — this index "
-        "only knows merged code. When the response says abstain: true, "
-        "trust it: grep beats a plausible wrong snippet. Set expand: true "
-        "to bridge natural-language wording to codebase identifiers (one "
-        "extra LLM hop, better recall on vocabulary mismatches). Set "
-        "namespaces: [...] to search several indexed repositories at once "
-        "(ranks interleaved, one budget; each hit says its namespace). "
-        "deadline_ms returns the best page found in that budget "
-        "(`partial: true`, `partial_reason`) instead of timing out."
+        "Find implementations by question, behavior or identifier using `query`. "
+        "Returns indexed source, file:line spans and linked project decisions and lessons. "
+        "Use returned evidence before reading more files. For a definition use "
+        "code.symbol, for callers use code.callers, and for exact text use code.grep. "
+        "Use local tools on request, for uncommitted or unindexed code, or if the index "
+        "is unavailable or abstains. For synthesized answers use code.ask. "
+        "`expand: true` adds a model call for vocabulary. `namespaces` searches indexes. "
+        "`deadline_ms` can return a partial page."
     ),
     "code.ask": (
         "Ask a QUESTION about this codebase and get a grounded answer with "
@@ -1447,36 +1427,24 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "tree. If it abstains, trust it and grep."
     ),
     "code.symbol": (
-        "Exact symbol lookup: definition, signature, doc comment, and body "
-        "of a function/class/enum by (qualified) name — compiler-grade "
-        "where available (tier='scip'), resolved across C++ overloads, "
-        "namespaces, and templates that grep can't disambiguate. Also "
-        "returns the last PRs that touched it, tested usage examples, and "
-        "lessons other agents learned about it. Use FIRST for any "
-        "'what is / where is / show me X' where X is an identifier. "
-        "`uses_brief: true` makes a name that resolves to ONE definition "
-        "carry `uses`: count, files and the top call sites (path, line, "
-        "caller, tier, confidence) from the call graph — ask for it instead "
-        "of grepping the short name; `skipped: 'hub'` means too many "
-        "callers, use code.callers. `uses: true` adds instead the full "
-        "list of lines that mention the name with their enclosing scope (the "
-        "definition excluded, `uses_limit` caps it). "
-        "When SEVERAL definitions match, pass `near_paths: [...]` (the files "
-        "you are looking at, <= 20) or `pr_number` (the PR under review): the "
-        "definitions are ranked by same file, same directory, co-change "
-        "history and path distance — every one stays in the list, and "
-        "`picked_by` says which of those decided. `presence: true` with "
-        "namespaces: [...] (up to 8 release-branch indexes) answers 'does "
-        "this symbol exist on 26.4 / 26.5 / …' in ONE call: per namespace "
-        "present / absent / unknown with the definition's path and span, "
-        "plus a summary; absent means the branch's index answered empty, "
-        "unknown means it did not answer (never folded into absent). A name "
-        "with `(anonymous namespace)::` segments, or over-qualified with a "
-        "namespace the definition does not carry, resolves when exactly one "
-        "definition fits — `resolved_by` says which form bound; a SQL-level "
-        "name (`sumMap`, `indexHint`, `arrayFold::executeImpl`) binds to the "
-        "class that implements it through its registration statement "
-        "(`resolved_by: 'registration'`). `documented_in`: citing doc sections."
+        "Find an exact definition by name or path:line. Get signature, doc comment "
+        "and body, with compiler precision where SCIP is available. Includes recent "
+        "PRs, tested usage examples and linked lessons. `example_context_lines` adds "
+        "source around usage sites. "
+        "`uses_brief: true` adds caller count, files and top call sites for one "
+        "definition. For `skipped: 'hub'`, use code.callers. `uses: true` lists mentions "
+        "outside the definition with enclosing scopes, up to `uses_limit`. "
+        "`near_paths` or `pr_number` rank ambiguous definitions by file, directory, "
+        "co-change and path distance. `picked_by` reports the reason. "
+        "`presence: true` with up to eight `namespaces` checks release branches. "
+        "The verdicts are present, absent and unknown when an index could not answer. "
+        "`resolved_by` names an alternate binding such as an anonymous namespace, "
+        "omitted qualification or SQL registration. `documented_in` lists citing sections."
+    ),
+    "code.edit_context": (
+        "Read implementation, indexed tests, and linked notes before editing. "
+        "Give a definition name, path:symbol, or path:line. "
+        "Use literal clues to find the edit target, with the file path if known."
     ),
     "code.backport_gap": (
         "Which release branches still carry the bug a merged fix removed, "
@@ -1543,36 +1511,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "entry. `indexed: false` means read the file."
     ),
     "code.callers": (
-        "Who calls this symbol — exact reverse call edges (depth<=3), "
-        "compiler-resolved where available; `edge_kinds: ['inherits']` narrows "
-        "the walk to what implements or extends a type. Use before editing "
-        "shared code; pair "
-        "with code.impact for tests + co-change "
-        "history. Edges carry tier: 'scip' is compiler truth, 'treesitter' "
-        "is name-resolved with a confidence score."
-        " `unresolved_calls` / `ambiguous_calls` size the floor: call sites "
-        "named like this symbol that the fast-tier resolver declined to bind "
-        "and that are NOT in edges. `epistemic` says whether the edges are the whole answer "
-        "('exact': compiler-indexed seed files, nothing declined) or a "
-        "'lower_bound', with `causes` naming why; `by_hop_counts` gives the "
-        "true per-hop totals when `truncated`."
-        " `include_ambiguous: true` widens the answer to what MAY call it: "
-        "the declined sites come back as `candidate_sites` (grouped by written "
-        "scope or file, each with a confidence and the reason it was declined; "
-        "never merged into edges, always lower_bound), and a virtual method's "
-        "callers include callers of its overrides and base declaration, tagged "
-        "`via_override`."
-        " An edge with `via: 'registration'` comes from a registration function "
-        "(`REGISTER_FUNCTION(X)`, `registerAggregateFunctionX`): the class is "
-        "reached through a factory that constructs it and drives its interface, "
-        "the static caller of every factory-registered function. A name spelled "
-        "with `(anonymous namespace)::` or with a namespace the definition does "
-        "not carry still resolves when exactly one definition fits; `resolved_by` "
-        "(`anonymous_namespace` | `tail` | `registration`) says so; a SQL-level "
-        "name (`sumMap`) seeds the class its registration hands over."
-        " `pr_number` (an open PR) merges its post-image over the index: a "
-        "function the PR adds is the seed, its own call sites are edges of "
-        "tier 'overlay' (`overlay: true`)."
+        "Find callers before editing shared code. Walk up to three hops. "
+        "`epistemic` and `causes` disclose exact or lower-bound coverage. "
+        "SCIP edges are compiler-resolved. Tree-sitter edges carry confidence. "
+        "`include_ambiguous: true` adds candidate sites and virtual dispatch via overrides. "
+        "For implementations or subclasses, set `edge_kinds: ['inherits']`. "
+        "Use code.impact for tests and co-change history. "
+        "`by_hop_counts` gives totals when results are truncated. "
+        "`resolved_by` discloses alternate naming, including factory registrations. "
+        "`pr_number` overlays an open change's source and call sites."
     ),
     "code.context_pack": (
         "Briefing at the START of a task, instead of exploring file by file. "
@@ -1872,9 +1819,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     # Every listed tool says what it does — the bare "Loom operation `x`
     # (p99 …)" fallback tells a model nothing.
     "code.enclosing": (
-        "Batched `path:line` -> what encloses each line: the function "
-        "(else class) in code; the heading's section in a document; the "
-        "block in a config file. One call for many grep hits."
+        "Resolve path:line locations together: enclosing functions, types, "
+        "document sections or config blocks. include_body: true returns "
+        "complete source when available. Use after code.grep to read several definitions "
+        "in one call instead of separate code.symbol lookups."
     ),
     "namespace.guide_get": (
         "The namespace's guide: Markdown its writers keep on what it holds, its key "
@@ -2211,21 +2159,33 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-# Descriptions for the coding toolset (a trimmed roster). The tier shares
-# TOOL_DESCRIPTIONS; memory.set's text is the core text with the chat-only sentences
-# removed. Derived, not copied, so the prose cannot drift from the core tier.
+# Coding descriptions focus on implementation tasks. Shared policies below are
+# derived from core text so revision and memory guidance stay consistent.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "code.symbol": (
+        "Inspect a definition by name, path:symbol, or path:line. Includes source and links. "
+        "For an edit, use code.edit_context. Set `include_examples: false` to omit examples. "
+        "`uses_brief: true` summarizes callers. Check freshness and source elision."
+    ),
+    "code.grep": (
+        "Read full enclosing definitions for exact text in indexed code. "
+        'For source to edit, use a literal or a list such as ["def parse(", "def test_parse"]. '
+        "Use path_globs to scope code and tests together. Use mode=files for paths only. "
+        "Use regex=true for RE2.\n\n"
+        "Scope with `path_prefix` or `path_globs`. "
+        "Set `include_body: false` and `context_lines: 0` for match locations. "
+        "Use code.search for behavior or code.edit_context for a known definition. "
+        "Call prefixes and misses can return related source and notes. "
+        "Use code.read for exact lines. "
+        "`definitions_partial` flags missing source. Check coverage."
+    ),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.
     "code.impact": (
-        "Blast radius of changing a symbol or a diff: reverse call edges (depth<=2), "
-        "the tests mapped to the impacted files, and files that historically co-change "
-        "with them in merged PRs. `epistemic` ('exact' | 'lower_bound' + `causes`) says "
-        "whether the radius is the whole answer; `risk: 'unknown'` means grep before "
-        "deleting or renaming. An empty radius carries a `verdict`: 'no_indexed_paths' "
-        "(with `paths_seen` classing every touched path — all-test = a test-only change), "
-        "'no_seeds_in_hunks', 'no_static_callers' are answers; 'not_covered' / 'no_match' "
-        "abstain. Pass `pr_number` for an open PR to seed from its own range."
+        "Change impact for a symbol or diff: callers up to two hops, mapped tests, "
+        "and files that co-change. `epistemic` distinguishes exact and lower-bound results. "
+        "Grep before deleting or renaming when `risk` is 'unknown'. Empty results carry a "
+        "`verdict` and `paths_seen` classifies touched paths. Pass `pr_number` for an open PR."
     ),
     # The chat client's routing sentence between two memories goes: on the
     # coding tier the scratchpad is the listed working_memory.set. Every

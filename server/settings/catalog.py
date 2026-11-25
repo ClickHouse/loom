@@ -922,8 +922,8 @@ class CodeSettings(BaseModel):
     # Whether the code ops that return files carry `lessons`, the readable memories about
     # their top files.
     code_result_lessons: Annotated[bool, LIVE] = True
-    # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at
-    # 4 characters a token; 0 means unlimited.
+    # Estimated-token cap on file or symbol `lessons`, counted on serialized rows at
+    # 4 characters a token; 0 means unlimited. Rows are whole or left out.
     code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=0, ge=0)
     # How many of an answer's files, in rank order, its `lessons` are read for.
     code_result_lessons_paths: Annotated[int, LIVE] = Field(default=3, ge=1, le=10)
@@ -2693,9 +2693,9 @@ class McpSettings(BaseModel):
     # "full" (+ outputSchema) or "compact" (first paragraph, argument tree).
     # Per request: `?schema_profile=`.
     mcp_schema_profile: Annotated[Literal["standard", "full", "compact"], CaseFolded] = "standard"
-    # Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad.
-    # Empty leaves loading to the host; set names to keep selected tools upfront.
-    mcp_always_load_tools: str = ""
+    # "auto" loads source lookups upfront for the coding toolset. A comma-separated
+    # list overrides the toolset defaults. Empty leaves loading to the host.
+    mcp_always_load_tools: str = "auto"
     # Seconds without a tool call after which the mcp_session_run_sweep worker
     # closes an MCP session's implicit run (one per token and `Mcp-Session-Id`,
     # begun on the first run-scoped tool call); with no background workers
@@ -4125,6 +4125,9 @@ class ModelSettings(BaseModel):
     # Where `local` models live (relative: under the working directory), one directory per
     # alias and revision; a missing file is fetched there. The image sets it by env.
     local_embedding_model_dir: str = "var/models"
+    # Texts per local ONNX inference batch; smaller values reduce peak memory.
+    # Every input is still embedded, in order; this does not limit input count or length.
+    local_embedding_batch_size: int = Field(default=16, ge=1)
 
     # --- memory -----------------------------------------------------------------
     # memory.ask synthesis (the strong tier when the cascade is on).
@@ -4423,6 +4426,13 @@ class ObservabilitySettings(BaseModel):
     # (operation worker.<name>.pass, kind='worker'); loom.worker_status records
     # every pass.
     worker_ledger_rows: bool = True
+
+    # Self-hosted adoption reports. Set false to stop all adoption reporting.
+    adoption_telemetry_enabled: bool = True
+    # Share verified email domain counts in adoption reports. Off by default.
+    adoption_telemetry_share_domains: bool = False
+    # Seconds between adoption checks and retries. A report covers 12 hours.
+    adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 
     # Master switch for OTel emission. `init_otel()` also refuses under pytest
     # regardless: server/main.py calls it at import, and a test run must never
@@ -4752,8 +4762,8 @@ class ProviderSettings(ModelSettings):
     embedding_retry_attempts: Annotated[int, LIVE] = Field(default=3, ge=1)
     # Longest backoff, in seconds, between two attempts of an embedding call.
     embedding_retry_max_wait_s: Annotated[float, LIVE] = Field(default=10.0, ge=0)
-    # OpenAI's API root, for chat and embeddings: point it at an
-    # OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
+    # OpenAI's API root, for the Responses API (<root>/responses) and embeddings:
+    # point it at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
     openai_base_url: str = "https://api.openai.com/v1"
     # Anthropic's API root (the Messages API is <root>/v1/messages): point it at
     # a gateway in front of Anthropic. Off the default, the key also goes as a
@@ -5124,7 +5134,7 @@ class ProviderSettings(ModelSettings):
 
     # Reasoning effort sent to OpenAI models. "" = the lowest the model accepts
     # (learned from its refusals, see server/llm/traits.py); set to pin one value
-    # for every call.
+    # for every call, raised to that lowest; a refused pin above it sends no effort.
     llm_openai_reasoning_effort: str = ""
     # Thinking effort sent to Claude models as `output_config.effort`: "low" |
     # "medium" | "high"; "" = send none (the model's own default). A model that
@@ -6224,6 +6234,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "code.outcome": 150,
     # one symbol-table read served by the path bloom index + as_of
     "code.outline": 300,
+    "code.read": 800,
     # the verify(reaches) BFS (depth<=4) plus one keyed read of the
     # guards of every hop and, on a miss, one namespace probe
     "code.path_guards": 1500,
@@ -6255,6 +6266,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # one excerpt read, one grep count — gathered
     "code.setting_facts": 1200,
     "code.symbol": 250,
+    "code.edit_context": 250,
     # symbol resolve + two loom reads gathered + items + up to three
     # bounded tracker reads (300 ms each, two gathered)
     "code.symbol_history": 1800,

@@ -443,7 +443,11 @@ async def insert_versions_over_heads(
 
 
 async def insert_documented_versions(
-    rows: list[dict[str, Any]], documents: list[dict[str, Any]], *, ch: _CHClient | None = None
+    rows: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
+    *,
+    ch: _CHClient | None = None,
+    policy: Mapping[tuple[str, str], int] | None = None,
 ) -> bool:
     """Write `rows` with their search documents (`documents`, one embedding row for each),
     rechecking no head. Whether the rows reached ClickHouse: False when their publication
@@ -455,7 +459,7 @@ async def insert_documented_versions(
     if len(documents) != len(rows):
         raise ValueError("one search document per row")
     if not pg.enabled():
-        await insert_memory_versions(rows, ch=ch)
+        await insert_memory_versions(rows, ch=ch, policy=policy)
         try:
             await insert_embedding_rows(documents, ch=ch)
         except Exception as e:  # noqa: BLE001 — the rows stand; the embedding worker stubs one
@@ -463,7 +467,8 @@ async def insert_documented_versions(
         return True
     check_memory_rows(rows)
     owed = pg_memory.MEMORY_ROW | pg_memory.SEARCH_DOC | pg_memory.AUDIT_ROW
-    committed = await pg_publish.commit(rows, targets=owed)
+    admission = pg_memory.Admission(generations=dict(policy)) if policy else None
+    committed = await pg_publish.commit(rows, targets=owed, admission=admission)
     try:
         await pg_publish.publish(committed, documents=documents, ch=ch)
     except pg_lease.PublicationPending:

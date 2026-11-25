@@ -1507,6 +1507,13 @@ bound parameter, on Loom's server and on any warehouse server that joins with it
 bucket's write role is bound to the export's own Kubernetes ServiceAccount, not to the web
 pods, and the upload never replaces an object.
 
+[Adoption telemetry](../features/observability/telemetry.md#self-hosted-adoption)
+reads a 12-hour window from the ordinary request ledger. It sends deployment-wide
+counts and a reporting UUID derived from the storage authority's deployment ID to
+the Loom HTTPS collector. Operators can separately enable sharing of verified domain
+counts. The collector is outside Loom's erasure boundary. Verified company attribution
+uses a separate warehouse enrollment record.
+
 ## The SQL surface
 
 The [SQL surface](../reference/sql-surface.md) lets an org's own SQL user read a

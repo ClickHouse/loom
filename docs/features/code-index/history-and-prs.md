@@ -1,6 +1,8 @@
 ---
 title: PR history and regression candidates in ClickHouse Loom
 description: Inspect merged PRs, review comments and regression candidates in ClickHouse Loom. History collection is opt-in, and candidate rankings do not prove causation.
+seo:
+  title: PR history and regression candidates
 ---
 
 # History, PRs and releases

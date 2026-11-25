@@ -14,6 +14,7 @@ class LoomTest < Minitest::Test
     @saved_env = ENV.to_h.slice("LOOM_BASE_URL", "LOOM_API_KEY")
     ENV.delete("LOOM_BASE_URL")
     ENV.delete("LOOM_API_KEY")
+    Loom.reset_configuration!
   end
 
   def teardown
@@ -21,10 +22,15 @@ class LoomTest < Minitest::Test
     ENV.delete("LOOM_BASE_URL")
     ENV.delete("LOOM_API_KEY")
     @saved_env.each { |name, value| ENV[name] = value }
+    Loom.reset_configuration!
   end
 
+  # One attempt and no wait on a 429, so a test reads the first answer as it came; the
+  # retry tests pass their own policy.
   def client(**options)
-    Loom::Client.new(base_url: @server.base_url, org: "dev", namespace: "local", agent: "assistant", **options)
+    defaults = { base_url: @server.base_url, org: "dev", namespace: "local", agent: "assistant",
+                 retry_policy: { max_attempts: 1 }, rate_limit_max_wait: 0 }
+    Loom::Client.new(**defaults, **options)
   end
 
   def respond_json(status, body, headers = {})

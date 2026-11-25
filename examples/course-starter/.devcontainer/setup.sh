@@ -7,7 +7,7 @@ set -eu
 sudo apt-get update -qq
 sudo apt-get install -y -qq python3-venv
 python3 -m venv .venv
-.venv/bin/pip install --quiet -r requirements.txt
+.venv/bin/pip install --quiet --require-hashes --only-binary=:all: -r requirements.lock
 
 sh .devcontainer/start-loom.sh
 

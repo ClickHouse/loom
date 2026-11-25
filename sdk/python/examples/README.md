@@ -332,5 +332,5 @@ LOOM_BASE_URL=https://loom.example LOOM_API_KEY=… python code_lookup.py \
 
 `--help` sends no requests. Mocked SDK transport tests cover the binding; no live
 result or performance claim is attached to this example. See the
-[code tools guide](https://clickhouse.github.io/loom/guides/code-tools/) for budgets,
+[code tools guide](https://loom.clickhouse.com/docs/guides/code-tools/) for budgets,
 scope and evidence limits.

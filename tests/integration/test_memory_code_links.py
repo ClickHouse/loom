@@ -271,6 +271,89 @@ async def _lessons(ns: str, name: str) -> list[dict[str, Any]]:
     return list(out.definitions[0].lessons) if out.definitions else []
 
 
+@pytest.mark.parametrize("early_paths", [3, 4])
+async def test_grep_reads_a_later_path_with_a_matched_lesson(env, monkeypatch, early_paths) -> None:
+    from server.code.api.models_grep import CodeGrepInput
+    from server.code.app.grep import handle_code_grep
+    from server.code.app.result_lessons import WithLessons, grep_paths
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_result_lessons_paths", 3)
+    target = "src/widgets/z_reader.py"
+    sources = {
+        f"src/widgets/helper_{i}.py": f"def helper_{i}():\n    return 'payload_marker'\n"
+        for i in range(early_paths)
+    }
+    sources[target] = (
+        "class EntryReader:\n    def read_entry(self):\n        return 'payload_marker'\n"
+    )
+    sha = env.commit(sources)
+    await _index(TRUNK, env, sha, list(sources))
+    memory_id = await _remember(
+        MEM,
+        "notes/entry-reader",
+        "`EntryReader.read_entry` reuses the active reader.",
+        files=[target],
+    )
+    await _pass()
+    (anchor,) = await _links(memory_id)
+    assert anchor["path"] == target and anchor["state"] == "fresh"
+
+    result = await WithLessons(handle_code_grep, grep_paths)(
+        CodeGrepInput(org=ORG, namespace=TRUNK, pattern="payload_marker", lesson_namespaces=[MEM])
+    )
+    assert list(dict.fromkeys(match["path"] for match in result.matches)) == list(sources)
+    assert [(row["path"], row["memory_key"], row["code_state"]) for row in result.lessons] == [
+        (target, "notes/entry-reader", "fresh"),
+    ]
+
+
+@pytest.mark.parametrize("hidden", ["deleted", "high"])
+async def test_grep_keeps_visible_lessons_ahead_of_ineligible_links(
+    env, monkeypatch, hidden
+) -> None:
+    from server.code.api.models_grep import CodeGrepInput
+    from server.code.app.grep import handle_code_grep
+    from server.code.app.result_lessons import WithLessons, grep_paths
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from server.memory.app.handlers import handle_memory_delete
+    from server.memory.store import code_links
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_result_lessons_paths", 2)
+    prior, first, last = ("src/a.py", "src/b.py", "src/c.py")
+    sources = {
+        prior: "def file_helper():\n    return 'payload_marker'\n",
+        first: "def first_reader():\n    return 'payload_marker'\n",
+        last: "def last_reader():\n    return 'payload_marker'\n",
+    }
+    sha = env.commit(sources)
+    await _index(TRUNK, env, sha, list(sources))
+    claim = "`first_reader` uses the default buffer."
+    mid = await _remember(MEM, "first", claim, files=[first])
+    await _remember(MEM, "file-rule", "Keep the old interface.", files=[prior])
+    await _remember(MEM, "last", "`last_reader` releases the buffer.", files=[last])
+    await _pass()
+    if hidden == "deleted":
+        await handle_memory_delete(
+            MemoryDeleteInput(org=ORG, namespace=MEM, agent="claude-code", memory_key="first")
+        )
+    else:
+        await _remember(MEM, "first", claim, files=[first], sensitivity="high")
+    assert any(link["state"] == "fresh" for link in await code_links.for_memories(ORG, [mid]))
+
+    result = await WithLessons(handle_code_grep, grep_paths)(
+        CodeGrepInput(org=ORG, namespace=TRUNK, pattern="payload_marker", lesson_namespaces=[MEM])
+    )
+    assert list(dict.fromkeys(match["path"] for match in result.matches)) == list(sources)
+    assert {row["memory_key"]: row["path"] for row in result.lessons} == {
+        "file-rule": prior,
+        "last": last,
+    }
+
+
 async def test_memories_follow_their_code(env, monkeypatch) -> None:
     from server.memory.app import code_link_judge
 

@@ -626,6 +626,74 @@ class DifyApplicationGuards(unittest.TestCase):
         self.assertEqual(tool["tool_parameters"]["query"]["value"], "aisle seats")
         self.assertEqual(tool["tool_configurations"]["top_k"]["value"], 5)
 
+    def test_vanished_process_birth_is_absent_but_other_read_errors_propagate(self):
+        for error in (FileNotFoundError, ProcessLookupError):
+            with self.subTest(error=error), patch.object(Path, "read_text", side_effect=error):
+                self.assertIsNone(smoke.birth(41))
+        for error in (PermissionError, OSError):
+            with self.subTest(error=error), patch.object(Path, "read_text", side_effect=error):
+                with self.assertRaises(error):
+                    smoke.birth(41)
+
+    def test_session_census_keeps_live_members_when_a_process_owner_vanishes(self):
+        for error in (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+            vanished = SimpleNamespace(name="41", stat=Mock(side_effect=error))
+            live = SimpleNamespace(name="42", stat=Mock(return_value=SimpleNamespace(st_uid=1000)))
+            foreign = SimpleNamespace(name="99", stat=Mock())
+            with (
+                self.subTest(error=error),
+                patch.object(Path, "iterdir", return_value=[vanished, live, foreign]),
+                patch.object(smoke, "birth", side_effect=[(8, 41, 41), (9, 41, 41), (10, 99, 99)]),
+            ):
+                if error in (PermissionError, OSError):
+                    with self.assertRaises(error):
+                        smoke.read_session(41)
+                else:
+                    self.assertEqual(smoke.read_session(41), {42: (9, 41, 41, 1000)})
+                    foreign.stat.assert_not_called()
+
+    def test_command_retires_when_an_unrelated_process_exits_during_census(self):
+        runtime = smoke.Runtime.__new__(smoke.Runtime)
+        entry = {"child": SimpleNamespace(pid=41), "birth": 8, "members": {41: (8, 41, 41, 1000)}}
+        runtime.processes = [entry]
+        runtime.persist = Mock()
+        with (
+            patch.object(Path, "iterdir", return_value=[Path("/proc/99")]),
+            patch.object(Path, "read_text", side_effect=ProcessLookupError),
+        ):
+            runtime.retire(entry)
+        self.assertEqual(runtime.processes, [])
+        runtime.persist.assert_called_once_with()
+
+    def test_monitor_tolerates_vanished_status_but_refuses_other_read_errors(self):
+        for error in (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+            runtime = SimpleNamespace(
+                finished=Mock(),
+                root=Path("/owned"),
+                deadline=float("inf"),
+                loom_pid=41,
+                monitor_error=None,
+            )
+            runtime.finished.wait.side_effect = [False, True]
+            with (
+                self.subTest(error=error),
+                patch.object(smoke, "available", return_value=4 * smoke.GIB),
+                patch.object(
+                    smoke.shutil, "disk_usage", return_value=SimpleNamespace(free=4 * smoke.GIB)
+                ),
+                patch.object(Path, "iterdir", return_value=[Path("/proc/41")]),
+                patch.object(smoke, "birth", return_value=(8, 41, 41)),
+                patch.object(Path, "read_text", side_effect=error("status unavailable")),
+                patch.object(smoke.os, "kill") as kill,
+            ):
+                smoke.Runtime.monitor(runtime)
+            if error in (PermissionError, OSError):
+                self.assertEqual(runtime.monitor_error, "status unavailable")
+                kill.assert_called_once_with(smoke.os.getpid(), signal.SIGTERM)
+            else:
+                self.assertIsNone(runtime.monitor_error)
+                kill.assert_not_called()
+
     @staticmethod
     def saved_session():
         return {"pid": 41, "start": 8, "members": {41: (8, 41, 41, 1000)}}

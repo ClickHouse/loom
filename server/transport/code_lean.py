@@ -18,7 +18,12 @@ HTTP and SDK shapes are unchanged; `explain=true` skips all trimming.
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from collections import Counter, defaultdict
+from io import StringIO
+from typing import Any, NamedTuple
+
+from server.code.domain.symbol_documentation import description_repeats_body
 
 # Accounting counters and ranking internals no agent acts on.
 _DROP_KEYS: frozenset[str] = frozenset(
@@ -45,6 +50,7 @@ _HIT_DROP: dict[str, frozenset[str]] = {
     "code.search": frozenset({"score", "lexical_rank", "vector_rank", "via", "unit_id"}),
     "code.ask": frozenset({"unit_id"}),
     "code.symbol": frozenset({"score", "unit_id"}),
+    "code.edit_context": frozenset({"score", "unit_id"}),
 }
 # Flags that only speak when true — false is the default reading.
 _TRUE_ONLY: frozenset[str] = frozenset(
@@ -208,7 +214,7 @@ def _lean_outline(out: dict[str, Any]) -> None:
 
 
 def _lean_grep(out: dict[str, Any]) -> None:
-    """A match's scope without the module form of its own path."""
+    """Keep grep locations and source, omitting metadata the body already supplies."""
     for m in out.get("matches") or []:
         if not isinstance(m, dict):
             continue
@@ -216,6 +222,106 @@ def _lean_grep(out: dict[str, Any]) -> None:
         mod = _module_of_path(path)
         if mod and scope.startswith(mod + "::"):
             m["scope"] = scope[len(mod) + 2 :]
+    definitions = [row for row in out.get("definitions") or [] if isinstance(row, dict)]
+    for definition in definitions:
+        _lean_grep_definition(definition)
+    _share_grep_bodies(definitions)
+    related = out.get("related")
+    if isinstance(related, dict):
+        out["related"] = lean_code("code.grep", related)
+
+
+class _GrepBody(NamedTuple):
+    row: dict[str, Any]
+    start: int
+    end: int
+    lines: list[str]
+
+
+def _grep_body(definition: dict[str, Any]) -> _GrepBody | None:
+    body = definition.get("body")
+    start, end = definition.get("start_line"), definition.get("end_line")
+    if not (
+        isinstance(body, str)
+        and body
+        and isinstance(start, int)
+        and isinstance(end, int)
+        and 0 < start <= end
+        and not definition.get("body_elided")
+    ):
+        return None
+    lines = list(StringIO(body, newline="\n"))
+    return _GrepBody(definition, start, end, lines) if len(lines) == end - start + 1 else None
+
+
+def _share_grep_bodies(definitions: list[dict[str, Any]]) -> None:
+    """Reference an already returned body only when its covered lines are identical."""
+    if len(definitions) < 2:
+        return
+    ids = Counter(str(row.get("symbol_id") or "") for row in definitions)
+    by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in definitions:
+        if (path := row.get("path")) and row.get("body"):
+            by_path[str(path)].append(row)
+    for rows in by_path.values():
+        if len(rows) < 2:
+            continue
+        bodies = [body for row in rows if (body := _grep_body(row))]
+        keep: list[_GrepBody] = []
+        for child in sorted(bodies, key=lambda b: b.start - b.end):
+            parent_id = _containing_grep_body(child, keep)
+            if parent_id:
+                child.row.pop("body")
+                child.row["body_in_symbol_id"] = parent_id
+            elif (symbol_id := child.row.get("symbol_id")) and ids[str(symbol_id)] == 1:
+                keep.append(child)
+
+
+def _containing_grep_body(child: _GrepBody, candidates: list[_GrepBody]) -> str:
+    for parent in candidates:
+        if (parent.start, parent.end) == (child.start, child.end):
+            continue
+        first, last = child.start - parent.start, child.end - parent.start + 1
+        parent_id = str(parent.row["symbol_id"])
+        if not (0 <= first < last <= len(parent.lines) and child.lines == parent.lines[first:last]):
+            continue
+        if _grep_reference_is_smaller(child.row["body"], parent_id):
+            return parent_id
+    return ""
+
+
+def _grep_reference_is_smaller(body: str, symbol_id: str) -> bool:
+    reference = {"body_in_symbol_id": symbol_id}
+    source = {"body": body}
+    if len(json.dumps(reference)) >= len(json.dumps(source)):
+        return False
+    reference_json = json.dumps(reference, ensure_ascii=False)
+    source_json = json.dumps(source, ensure_ascii=False)
+    # Clients can measure structured results in UTF-8 bytes or JavaScript string length.
+    return all(
+        len(reference_json.encode(encoding)) < len(source_json.encode(encoding))
+        for encoding in ("utf-8", "utf-16-le")
+    )
+
+
+def _lean_grep_definition(definition: dict[str, Any]) -> None:
+    body = definition.get("body")
+    if not isinstance(body, str) or not body or definition.get("body_elided"):
+        return
+    symbol = definition.get("symbol")
+    qualified_name = definition.get("qualified_name")
+    if (
+        isinstance(symbol, str)
+        and symbol
+        and isinstance(qualified_name, str)
+        and qualified_name.endswith(f"::{symbol}")
+    ):
+        definition.pop("symbol")
+    signature = definition.get("signature")
+    if isinstance(signature, str) and signature and signature in body.lstrip().partition("\n")[0]:
+        definition.pop("signature")
+    if definition.get("body_elided") is False:
+        definition.pop("body_elided")
 
 
 def _lean_enclosing(out: dict[str, Any]) -> None:
@@ -269,18 +375,13 @@ def _lean_search(out: dict[str, Any]) -> None:
                 r.pop("callees")
 
 
-# A definition body over this many characters (about 1,500 tokens) is left to a
-# ranged Read: an agent reading the unit reads it from its checkout either way,
-# and a body it did not need is paid for on every later turn.
-_BODY_MAX_CHARS = 6000
 _NO_DOC = "No documentation available."
 # Search hits past this rank keep where they are, not what they do.
 _DESCRIBED_HITS = 3
 
 
 def _lean_symbol(out: dict[str, Any]) -> None:
-    """A definition that carries its body leaves out its outline (the body
-    shows the members); a body over `_BODY_MAX_CHARS` becomes a ranged Read.
+    """Keep requested source and leave out an outline the body already supplies.
     Asked for a class, the class answers: definitions of
     its own members that matched the bare name (its constructor) keep their
     path and span, not their bodies; `next` fetches one."""
@@ -288,29 +389,30 @@ def _lean_symbol(out: dict[str, Any]) -> None:
     for d in defs:
         if d.get("body") and d.get("outline"):
             d.pop("outline")
-        if d.get("description") == _NO_DOC:
-            d.pop("description")
+    if defs and defs[0].get("granularity") == "skeleton" and defs[0].get("body"):
+        owner = str(defs[0].get("symbol") or "")
+        for d in defs[1:]:
+            sym = str(d.get("symbol") or "")
+            if owner and sym.startswith(owner + "::") and d.get("body"):
+                d.pop("body")
+                d["elided"] = True
+                d["next"] = f"code.symbol name={sym}"
+    for d in defs:
+        description = d.get("description")
         body = d.get("body")
-        if isinstance(body, str) and len(body) > _BODY_MAX_CHARS and d.get("start_line"):
-            # a long body is read once, from the file, in the range the agent picks
-            d.pop("body")
-            d["elided"] = True
-            span = int(d.get("end_line") or d["start_line"]) - int(d["start_line"]) + 1
-            d["next"] = f"Read {d.get('path')} offset={d['start_line']} limit={span}"
-    if not defs or defs[0].get("granularity") != "skeleton" or not defs[0].get("body"):
-        return
-    owner = str(defs[0].get("symbol") or "")
-    for d in defs[1:]:
-        sym = str(d.get("symbol") or "")
-        if owner and sym.startswith(owner + "::") and d.get("body"):
-            d.pop("body")
-            d["elided"] = True
-            d["next"] = f"code.symbol name={sym}"
+        if description == _NO_DOC or (
+            isinstance(description, str)
+            and isinstance(body, str)
+            and not (d.get("elided") or d.get("granularity") == "skeleton")
+            and description_repeats_body(description, body, scip=d.get("tier") == "scip")
+        ):
+            d.pop("description")
 
 
 _PER_OP = {
     "code.search": _lean_search,
     "code.symbol": _lean_symbol,
+    "code.edit_context": _lean_symbol,
     "code.callers": _lean_callers,
     "code.callees": _lean_callers,
     "code.outline": _lean_outline,
@@ -325,6 +427,7 @@ LEAN_CODE_OPS: frozenset[str] = frozenset(
     {
         "code.search",
         "code.symbol",
+        "code.edit_context",
         "code.callers",
         "code.callees",
         "code.outline",

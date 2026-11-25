@@ -107,9 +107,10 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 8. **Non-embedded rows stop here.** A type in `NON_SEARCHABLE_TYPES` (`episodic`,
    `profile`) or a `high`-sensitivity row gets one insert and no embedding row
    (`server/memory/domain/memory_types.py`, `is_embedded`). No embedding row means no search leg sees
-   it. A confirmed ClickHouse insert attempts the same hash-only audit receipt as an
-   embedded write; audit failures do not fail the write. Under Postgres, the commit
-   already includes the audit row.
+   it. A successful ClickHouse insert requires the same acknowledged hash-only audit
+   receipt as an embedded insert. Receipt failure returns `BACKEND_UNAVAILABLE` after
+   the committed row's safety follow-ups finish; the memory remains written. Under
+   Postgres, the commit already includes the revision audit row.
 9. **Embed** (`_set_embed`) the value and, when the key carries words, the key, in one
    batched call where the embedder supports it.
 10. **Conflict verdict** (`_set_conflict_verdict`, `memory/app/conflicts.py`
@@ -1302,7 +1303,7 @@ and marks it done once the check has run; if its insert fails, the call answers 
 the worker finishes the delete. If the tombstone's insert or the read after it fails, the
 delete answers 503 and retires nothing. The transport audits only a call that succeeds, so
 a 503 writes the op's audit row itself, outcome `deferred`, after the key lock is released
-and best effort like every audit row; the worker that finishes the delete writes none, and
+on a best-effort basis; the worker that finishes the delete writes none, and
 a retry is its own call with its own row.
 
 A check whose tombstone is not in the key's history (its insert failed) runs against a
@@ -1387,7 +1388,10 @@ place; retrying the restore writes the snapshot again.
 An Undo checks before recording its acceptance. Tombstone-only copies remain allowed.
 
 Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head
-at T is the largest version at or before T. Triples, records, summaries and aggregates
+at T is the largest version at or before T. The cutoff is computed with integer
+epoch arithmetic, preserving each datetime microsecond without floating-point rounding.
+Naive datetimes are UTC; equivalent timezone representations have the same cutoff.
+Triples, records, summaries and aggregates
 are rebuilt by their workers (`memory/domain/rollback.py` plans the rollback,
 `memory/app/namespace_rollback.py` applies it, `identity/app/namespace_rollback.py` is the handler).
 
@@ -1584,6 +1588,11 @@ Every write that creates or changes memory leaves one hash-only row in `loom.aud
 (`server/observability/audit.py`): no value, only identity, actor, key, id, content
 hash, source class and verdict. The row hash and the checkpoint chain are described in
 [audit](../features/observability/audit.md).
+
+A successful ClickHouse `memory.set` insert requires an acknowledged receipt. Receipt storage
+failure reports that the memory was written and returns `BACKEND_UNAVAILABLE`; safety
+follow-ups still finish. The separate memory and audit inserts do not form an atomic
+transaction. Postgres keeps the revision receipt and delivery obligation in its commit.
 
 ## Change webhooks
 

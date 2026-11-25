@@ -16,6 +16,8 @@ from server.memory.app.retrieval.summaries import fetch_session_summaries
 from server.memory.store.summary_sources import current_summary_sources
 from tests.unit.test_memory_verify import _row
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 
 def digest(source: Any, **overrides: Any) -> dict[str, Any]:
     return {

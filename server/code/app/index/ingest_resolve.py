@@ -33,7 +33,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("loom.code_index.ingest")
 
-_PY_LAYOUT_CACHE: dict[tuple[str, str], tuple[float, Any]] = {}
+_PY_LAYOUT_CACHE: TtlCache[tuple[str, ...], Any] = TtlCache(
+    lambda: settings.code_ingest_sibling_text_ttl_s
+)
 
 
 async def _py_layout(repo: CodeRepo, org: str, ns: str, present: set[str]) -> Any:
@@ -43,16 +45,14 @@ async def _py_layout(repo: CodeRepo, org: str, ns: str, present: set[str]) -> An
     cached ten minutes; None when the set is not live. A manifest read before it is
     indexed (a first backfill) is not cached, unless every one is known over its cap or
     empty."""
-    import time
-
     from server.code.domain.extract import py_layouts as pl
 
     if _LIVE_PATHS_CACHE.get((org, ns)) is None:
         return None
-    hit = _PY_LAYOUT_CACHE.get((org, ns))
-    now = time.monotonic()
-    if hit is not None and now - hit[0] < settings.code_ingest_sibling_text_ttl_s:
-        return hit[1]
+    key = _source_key(org, ns)
+    hit = _PY_LAYOUT_CACHE.get(key)
+    if hit is not None:
+        return hit
 
     async def _read() -> Any:
         manifests = sorted(
@@ -67,11 +67,11 @@ async def _py_layout(repo: CodeRepo, org: str, ns: str, present: set[str]) -> An
         if all(
             t or _is_empty_verdict(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p, t in texts.items()
         ):
-            _PY_LAYOUT_CACHE[(org, ns)] = (now, layout)
+            _PY_LAYOUT_CACHE.put(key, layout)
         return layout
 
     # One read for every file that misses the cache at once, not a thread each.
-    return await single_flight(("py_layout", org, ns), _read)
+    return await single_flight(("py_layout", *key), _read)
 
 
 async def _py_roots_for(
@@ -344,7 +344,7 @@ async def _go_package_listing(repo: CodeRepo, org: str, ns: str, pkg_dir: str) -
 GO_MOD_MAX_BYTES = 64 * 1024
 # not a setting: like the 200 TypeScript workspace members, the go.mod files read
 GO_MODS_MAX = 200
-_GO_MODULE_INDEX_CACHE: TtlCache[tuple[str, str], list[tuple[str, str]]] = TtlCache(
+_GO_MODULE_INDEX_CACHE: TtlCache[tuple[str, ...], list[tuple[str, str]]] = TtlCache(
     lambda: settings.code_ingest_sibling_text_ttl_s
 )
 
@@ -356,7 +356,7 @@ async def _go_module_index(repo: CodeRepo, org: str, ns: str) -> list[tuple[str,
     one-entry case."""
     from server.code.domain.extract.lang_go import go_module_index
 
-    key = (org, ns)
+    key = _source_key(org, ns)
     hit = _GO_MODULE_INDEX_CACHE.get(key)
     if hit is not None:
         return hit
@@ -379,7 +379,7 @@ async def _go_module_index(repo: CodeRepo, org: str, ns: str) -> list[tuple[str,
 # width) and by count.
 # not a setting: a memory bound on texts the TTL keeps; a miss only re-reads the mirror
 PACKAGE_JSON_CACHE_BYTES = 64 * 1024 * 1024
-_PACKAGE_JSON_CACHE: TtlCache[tuple[str, str, str, int], str] = TtlCache(
+_PACKAGE_JSON_CACHE: TtlCache[tuple[tuple[str, ...], str, int], str] = TtlCache(
     lambda: settings.code_ingest_sibling_text_ttl_s,
     maxsize=50_000,
     weigh=sys.getsizeof,
@@ -416,6 +416,23 @@ def _manifest_view(text: str) -> Manifest | None:
 # milliseconds each, instead of reassembling the file from code_chunks FINAL (~0.33 s
 # and ~6 MiB a read, enough to starve the fast tier of the other repositories).
 _GIT_TEXT_SOURCE: ContextVar[tuple[str, str] | None] = ContextVar("git_text_source", default=None)
+
+
+def _source_key(org: str, ns: str) -> tuple[str, ...]:
+    """Keep indexed text and each pinned Git revision in separate cache entries."""
+    return (org, ns, *(_GIT_TEXT_SOURCE.get() or ()))
+
+
+async def _git_blob_paths(paths: set[str]) -> set[str]:
+    source = _GIT_TEXT_SOURCE.get()
+    if source is None or not paths:
+        return set()
+    from server.code.app.index import gitrepo
+
+    try:
+        return await gitrepo.blob_paths_at(*source, paths)
+    except gitrepo.GitError:
+        return set()
 
 
 @contextmanager
@@ -456,30 +473,36 @@ def _over_cap(key: tuple[str, str, str, int], org: str, ns: str, why: object) ->
     return ""
 
 
-async def _live_text(repo: CodeRepo, org: str, ns: str, path: str, max_bytes: int) -> str:
-    """One file's text: the mirror's blob at the pass's commit when a
-    `git_text_source` is set and holds the path, else the indexed chunks. A file over
-    `max_bytes` reads as "": the repository chose its size, and the caller parses it.
-    The mirror's verdict is kept for its commit; the chunks', which may hold an older
-    version, for the namespace, so a mirror that recovers is asked again."""
+async def _git_text(org: str, ns: str, path: str, max_bytes: int) -> str | None:
+    """The exact sibling source at the indexing pass's commit, when available."""
     src = _GIT_TEXT_SOURCE.get()
-    if src is not None:
-        from server.code.app.index import gitrepo
+    if src is None:
+        return None
+    from server.code.app.index import gitrepo
 
-        at_commit = (*src, path, max_bytes)
-        if _EMPTY_VERDICTS.get(at_commit) is not None:
-            return ""
-        try:
-            blob = await gitrepo.show_file(src[0], src[1], path, max_bytes=max_bytes)
-        except gitrepo.BlobTooLarge as e:
-            return _over_cap(at_commit, org, ns, e)
-        except Exception:  # noqa: BLE001 — a slow or broken mirror falls back
-            blob = None
-        if blob is not None:
-            if not blob:
-                # a fact at this commit, unlike an unindexed file
-                _EMPTY_VERDICTS.put(at_commit, True)
-            return blob.decode("utf-8", "replace")
+    at_commit = (*src, path, max_bytes)
+    if _EMPTY_VERDICTS.get(at_commit) is not None:
+        return ""
+    try:
+        blob = await gitrepo.show_file(src[0], src[1], path, max_bytes=max_bytes)
+    except gitrepo.BlobTooLarge as e:
+        return _over_cap(at_commit, org, ns, e)
+    except Exception:  # noqa: BLE001 — some sibling readers can use indexed chunks
+        return None
+    if not blob and blob is not None:
+        _EMPTY_VERDICTS.put(at_commit, True)
+    return blob.decode("utf-8", "replace") if blob is not None else None
+
+
+async def _live_text(repo: CodeRepo, org: str, ns: str, path: str, max_bytes: int) -> str:
+    """One file's text from the pinned mirror or its indexed chunks.
+
+    A file over `max_bytes` reads as empty. The mirror's verdict is kept for its
+    commit and the chunks', which may hold an older version, for the namespace.
+    """
+    git_text = await _git_text(org, ns, path, max_bytes)
+    if git_text is not None:
+        return git_text
     in_chunks = (org, ns, path, max_bytes)
     if _EMPTY_VERDICTS.get(in_chunks) is not None:
         return ""
@@ -490,10 +513,10 @@ async def _live_text(repo: CodeRepo, org: str, ns: str, path: str, max_bytes: in
     return text
 
 
-_TSCONFIG_CACHE: TtlCache[tuple[str, str, str], Any] = TtlCache(
+_TSCONFIG_CACHE: TtlCache[tuple[str, ...], Any] = TtlCache(
     lambda: settings.code_ingest_sibling_text_ttl_s, maxsize=50_000
 )
-_WORKSPACE_CACHE: TtlCache[tuple[str, str], dict[str, str]] = TtlCache(
+_WORKSPACE_CACHE: TtlCache[tuple[str, ...], dict[str, str]] = TtlCache(
     lambda: settings.code_ingest_sibling_text_ttl_s
 )
 
@@ -512,7 +535,8 @@ async def _workspace_registry(
 
     if _LIVE_PATHS_CACHE.get((org, ns)) is None:
         return {}
-    hit = _WORKSPACE_CACHE.get((org, ns))
+    key = _source_key(org, ns)
+    hit = _WORKSPACE_CACHE.get(key)
     if hit is not None:
         return hit
     read: dict[str, str] = {}
@@ -539,7 +563,7 @@ async def _workspace_registry(
         any(_is_empty_verdict(org, ns, p, PACKAGE_JSON_MAX_BYTES) for p in read)
         and _read_or_empty_verdict(org, ns, read, PACKAGE_JSON_MAX_BYTES)
     ):
-        _WORKSPACE_CACHE.put((org, ns), reg)
+        _WORKSPACE_CACHE.put(key, reg)
     return reg
 
 
@@ -586,7 +610,7 @@ async def _tsconfig_candidates(
     cp = tc.config_path_in(d, configs) if d is not None else None
     if cp is None:
         return {}
-    key = (org, ns, cp)
+    key = (*_source_key(org, ns), cp)
     cfg = _TSCONFIG_CACHE.get(key)
     if cfg is None:
         texts: dict[str, str] = {}
@@ -684,14 +708,15 @@ async def _package_json_text(
     """The live text of one manifest (a package.json, a go.mod), at most `max_bytes`
     from the mirror, cached ten minutes per namespace: a backfill reads it once per
     package, a worker pass a few times."""
-    key = (org, ns, path, max_bytes)
+    source = _source_key(org, ns)
+    key = (source, path, max_bytes)
     hit = _PACKAGE_JSON_CACHE.get(key)
     if hit is not None:
         return hit
     text = cast(
         str,
         await single_flight(
-            ("package", org, ns, path, str(max_bytes)),
+            ("package", *source, path, str(max_bytes)),
             lambda: _live_text(repo, org, ns, path, max_bytes),
         ),
     )
@@ -754,7 +779,7 @@ async def _resolve_package_exports(
     return list(out)
 
 
-_BARREL_CACHE: TtlCache[tuple[str, str, str], tuple[str, ...]] = TtlCache(
+_BARREL_CACHE: TtlCache[tuple[str, ...], tuple[str, ...]] = TtlCache(
     lambda: settings.code_ingest_sibling_text_ttl_s, maxsize=50_000
 )
 
@@ -768,7 +793,7 @@ async def _barrel_targets_of(repo: CodeRepo, org: str, ns: str, path: str) -> tu
         reexport_specs,
     )
 
-    key = (org, ns, path)
+    key = (*_source_key(org, ns), path)
     hit = _BARREL_CACHE.get(key)
     if hit is not None:
         return hit

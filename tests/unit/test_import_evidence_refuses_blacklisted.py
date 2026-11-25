@@ -56,7 +56,7 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> tuple[_CH, list[str]]:
     ch = _CH()
     hits: list[str] = []
 
-    async def _find_match(*, org: str, namespace: str, value: str) -> Any:
+    async def _find_match(*, org: str, namespace: str, value: str, policy=None) -> Any:
         if SECRET in value:
             return SimpleNamespace(pattern_id="p-1", scope="namespace", reason="secret")
         if "too long to check" in value:  # what the regex budget answers past it

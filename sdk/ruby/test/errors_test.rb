@@ -125,6 +125,51 @@ class ErrorsTest < LoomTest
     server&.close
   end
 
+  def test_a_server_code_raises_its_own_class_with_the_whole_detail
+    respond_json(409, { detail: { code: "PINNED_CONFLICT", message: "pinned", category: "input", retryable: false,
+                                  pinned_blocker_id: "m9" } })
+
+    error = assert_raises(Loom::PinnedConflict) { client.memory.set(memory_key: "k", value: "v") }
+
+    assert_kind_of Loom::Error, error
+    assert_equal "PINNED_CONFLICT", error.code
+    assert_equal "m9", error.detail["pinned_blocker_id"]
+  end
+
+  def test_a_rate_limit_raises_rate_limited
+    respond_json(429, { detail: { code: "RATE_LIMITED", message: "slow down" } }, { "Retry-After" => "4" })
+
+    error = assert_raises(Loom::RateLimited) { client.get("k") }
+
+    assert_in_delta 4.0, error.retry_after
+  end
+
+  def test_an_error_answer_that_does_not_echo_the_request_id_keeps_the_one_sent
+    respond_json(422, { detail: { code: "VALIDATION_FAILED", message: "bad" } })
+
+    error = assert_raises(Loom::ValidationFailed) { client.get("k") }
+
+    assert_equal sent.headers["x-request-id"], error.request_id
+    refute_empty error.request_id
+  end
+
+  def test_a_code_with_no_class_raises_error_itself
+    respond_json(418, { detail: { code: "BRAND_NEW_CODE", message: "teapot" } })
+
+    error = assert_raises(Loom::Error) { client.get("k") }
+
+    assert_instance_of Loom::Error, error
+    assert_equal "BRAND_NEW_CODE", error.code
+  end
+
+  def test_every_generated_error_class_names_its_code
+    assert_operator Loom::ERROR_CLASSES.size, :>=, 100
+    Loom::ERROR_CLASSES.each do |code, klass|
+      assert_equal code, klass::CODE
+      assert_operator klass, :<, Loom::Error
+    end
+  end
+
   private
 
   # A TLS listener with a self-signed certificate no client trusts.

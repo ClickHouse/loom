@@ -32,6 +32,9 @@ For a claim your agent writes, `memory.set` accepts `source_resource_id` and
 returns that pointer. The writer supplies it; storing it does not verify that the
 document supports the claim.
 
+The [knowledge factory walkthrough](../use-cases/knowledge-factory.md#run-a-knowledge-factory-walkthrough)
+shows how to compare that pointer with the current runbook revision.
+
 The [read-only Python walkthrough](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/README.md#fact_document_evidencepy)
 retrieves an existing fact and a caller-selected document section, preserving the
 returned provenance and passage fields for operator review. It makes no model call

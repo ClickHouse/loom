@@ -83,7 +83,7 @@ def test_defaults_match_schema_for_omitted_columns() -> None:
 
 
 @pytest.fixture
-def writer(monkeypatch: Any) -> Any:
+def writer(monkeypatch: Any, no_blacklisted_values: Any) -> Any:
     from server.memory import store
     from server.memory.app import digest_chain, session_summary
     from tests.unit.test_memory_verify import _row

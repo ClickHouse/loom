@@ -208,10 +208,34 @@ MCP tool loading. Omitting it loads the MCP schemas into context up front; it do
 show whether the task needed those tools. `--allowedTools` controls permission and
 cannot restore a tool omitted from `--tools`. See [Claude Code tool search](https://code.claude.com/docs/en/mcp#configure-tool-search).
 
-The server leaves eager loading to the host by default. An operator can set
-`LOOM_MCP_ALWAYS_LOAD_TOOLS=code.search,code.symbol` to request those schemas upfront.
-This affects loading metadata, not tool availability or permission. Tool search may
-add a discovery step when a task needs a deferred tool; no task or cost gain is guaranteed.
+The server requests upfront loading for `loom_code_search`, `loom_code_grep`
+and `loom_code_symbol` where listed. In the `coding` toolset, clients can
+discover general search (`loom_search`) and the dispatcher (`loom_op`) when
+needed. Other toolsets request upfront loading for both where listed. The
+published plugin uses the same MCP loading metadata.
+
+`LOOM_MCP_ALWAYS_LOAD_TOOLS=auto` selects the defaults above. Supply a comma-separated
+list of operations such as `code.symbol` or synthetic tool names such as `loom_op`
+to select a different set. An empty value leaves loading to the host. The model
+chooses calls and the server enforces permission in every mode.
+
+MCP connections receive routing for the available Loom capabilities, including
+memory, documents, code, issues, tasks and records. Prefer a fitting listed tool;
+use `loom_op` help to discover an unlisted operation. The assistant toolset has
+only its listed read tools. This guidance does not depend on plugin hooks.
+A first-step memory pack requires a default memory namespace; code tools use
+the supplied code scope. Instructions guide tool choice and do not prove a
+lookup occurred.
+
+Loom returns the complete MCP initialization instructions without a character cap.
+The client can apply its own limits. In Claude Code,
+[`CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH`](https://code.claude.com/docs/en/mcp#change-the-description-length-limits)
+controls the client limit for server instructions and tool descriptions.
+
+The plugin's `loom-mentor` skill can load automatically when the relevant Loom
+operation is unclear. It covers capabilities beyond code and memory and defers
+to a fitting tool the agent already knows. Existing context can satisfy a task;
+tool routing does not require extra lookups or authorize writes.
 
 Managed settings can also set hook environment variables. Clearing the launcher's
 environment does not clear those settings; inspect the effective configuration and

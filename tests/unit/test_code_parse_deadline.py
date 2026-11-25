@@ -108,6 +108,22 @@ def test_a_file_parsed_in_time_keeps_its_symbols() -> None:
     assert pf is not None and len(pf.symbols) == 3000
 
 
+def test_worker_parses_two_files_with_an_address_space_budget() -> None:
+    from server.code.domain.extract.parse_child import DONE, HEADER
+
+    grammar = b"tree_sitter_python:language"
+    source = b"def sample():\n    return 1\n"
+    request = HEADER.pack(len(grammar), len(source), 1.0, 512 << 20) + grammar + source
+    result = subprocess.run(
+        [sys.executable, "-I", str(_EXTRACT / "parse_child.py")],
+        input=request * 2,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout.lower() == DONE * 2
+
+
 def test_a_host_file_whose_shell_parse_stops_keeps_its_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

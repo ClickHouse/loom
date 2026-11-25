@@ -60,7 +60,9 @@ async def test_contended_value_write_publishes_no_embedding(
                 SimpleNamespace(memory_row=memory, embedder=SimpleNamespace(dim=4)), ch, embedding
             )
         elif operation == "set_high":
-            await set_commit._land_plain_row(SimpleNamespace(memory_row=memory), ch, high=True)
+            await set_commit._land_plain_row(
+                SimpleNamespace(memory_row=memory, inserted=False), ch, high=True
+            )
         elif operation == "bulk_high":
             await bulk_set._land_batch(
                 ch, SimpleNamespace(memory_rows=[memory], embedding_rows=[]), None, {}
@@ -230,7 +232,9 @@ async def test_cancelled_high_send_fences_and_preserves_the_cancellation(monkeyp
     ch = CH()
     with pytest.raises(asyncio.CancelledError) as caught:
         if operation == "set":
-            await set_commit._land_plain_row(SimpleNamespace(memory_row=memory), ch, high=True)
+            await set_commit._land_plain_row(
+                SimpleNamespace(memory_row=memory, inserted=False), ch, high=True
+            )
         else:
             await bulk_set._land_batch(
                 ch, SimpleNamespace(memory_rows=[memory], embedding_rows=[]), None, {}

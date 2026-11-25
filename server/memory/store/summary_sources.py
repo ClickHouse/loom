@@ -13,7 +13,7 @@ from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.summary_provenance import render_summary, source_text
-from server.memory.store import pg_memory
+from server.memory.store import blacklist_policy, pg_memory
 from server.memory.store.reads import memory_rows_by_identity_keys
 from server.memory.store.rows import IdentityKey, MemoryRow, _hydrate
 
@@ -104,10 +104,29 @@ async def current_summary_sources(
     as_of_basis: str = "valid_time",
 ) -> list[dict[str, Any]]:
     """Withhold missing, unverifiable and rewritten lineage, including legacy digests."""
+    if not rows:
+        return []
     heads = await _source_heads(ch, rows, org=org, namespace=namespace)
-    return _verified(
+    verified = _verified(
         rows, heads, org=org, namespace=namespace, as_of=as_of, as_of_basis=as_of_basis
     )
+    if not verified:
+        return []
+    policy = await blacklist_policy.current_policy().capture(org)
+    allowed = []
+    for row in verified:
+        for value in _text_values(row):
+            if await blacklist_policy.current_policy().matches(
+                org=org, namespace=namespace, value=value, policy=policy if pg.enabled() else None
+            ):
+                break
+        else:
+            allowed.append(row)
+    return allowed
+
+
+def _text_values(row: Mapping[str, Any]) -> list[str]:
+    return list(dict.fromkeys([row["summary_text"], *row["key_facts"]]))
 
 
 async def verified_summary_batch(ch: _CHClient, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -128,6 +147,15 @@ async def insert_verified_summaries(ch: _CHClient, rows: list[dict[str, Any]]) -
     """Publish only current proven text, fenced against deletion and erasure."""
     from server.memory.store import refusals
 
+    if not rows:
+        return 0
+    generations = await blacklist_policy.current_policy().enforce(
+        [
+            {"org": row["org"], "namespace": row["namespace"], "value": value}
+            for row in rows
+            for value in _text_values(row)
+        ]
+    )
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         groups[(str(row["org"]), str(row["namespace"]))].append(row)
@@ -148,6 +176,12 @@ async def insert_verified_summaries(ch: _CHClient, rows: list[dict[str, Any]]) -
                     )
                     conn = await stack.enter_async_context(pg.transaction())
                     await refusals.lock_postgres(conn, policy)
+                    try:
+                        await pg_memory.check_policy(conn, pg_memory.policy_part(generations, org))
+                    except pg_memory.AdmissionMoved:
+                        raise pg_memory.AdmissionContendedError(
+                            "the blacklist changed while the digest was checked"
+                        ) from None
                     current = await _source_heads(
                         ch, batch, org=org, namespace=namespace, conn=conn
                     )

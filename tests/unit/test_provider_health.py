@@ -58,18 +58,18 @@ def test_success_after_failure_clears_it() -> None:
 
 
 def test_failure_after_success_marks_degraded_again() -> None:
-    ph.record_success("openai:chat")
-    ph.record_failure("openai:chat", "500")
+    ph.record_success("openai:responses")
+    ph.record_failure("openai:responses", "500")
     assert ph.status()["degraded"] is True
 
 
 def test_one_failing_provider_degrades_the_verdict() -> None:
     """Embeddings can be dead while chat is fine; health must not average them."""
-    ph.record_success("openai:chat")
+    ph.record_success("openai:responses")
     ph.record_failure("openai:embeddings", "429")
     st = ph.status()
     assert st["degraded"] is True
-    assert st["providers"]["openai:chat"]["failing"] is False
+    assert st["providers"]["openai:responses"]["failing"] is False
     assert st["providers"]["openai:embeddings"]["failing"] is True
 
 
@@ -104,10 +104,10 @@ def test_health_endpoint_consults_provider_health() -> None:
 def test_outcomes_in_one_clock_tick_keep_their_order(monkeypatch) -> None:
     """A coarse clock gives both records one timestamp; the later one still wins."""
     monkeypatch.setattr(ph.time, "time", lambda: 1000.0)
-    ph.record_success("openai:chat")
-    ph.record_failure("openai:chat", "500")
+    ph.record_success("openai:responses")
+    ph.record_failure("openai:responses", "500")
     assert ph.status()["degraded"] is True
-    ph.record_success("openai:chat")
+    ph.record_success("openai:responses")
     assert ph.status()["degraded"] is False
 
 
@@ -115,12 +115,12 @@ def test_recording_marks_the_outcome_and_ignores_a_cancellation() -> None:
     """The one wrapper every provider client puts around its call."""
     import asyncio
 
-    with ph.recording("openai:chat"):
+    with ph.recording("openai:responses"):
         pass
-    assert ph.status()["providers"]["openai:chat"]["failing"] is False
-    with pytest.raises(RuntimeError), ph.recording("openai:chat"):
+    assert ph.status()["providers"]["openai:responses"]["failing"] is False
+    with pytest.raises(RuntimeError), ph.recording("openai:responses"):
         raise RuntimeError("503")
-    assert ph.status()["providers"]["openai:chat"]["failing"] is True
+    assert ph.status()["providers"]["openai:responses"]["failing"] is True
     with pytest.raises(asyncio.CancelledError), ph.recording("gemini:embeddings"):
         raise asyncio.CancelledError
     assert "gemini:embeddings" not in ph.status()["providers"]
@@ -161,8 +161,8 @@ def test_a_loom_error_is_shown_by_its_code_alone() -> None:
     from server.core.errors import GatewayRequiredError
     from server.observability import degradations
 
-    ph.record_failure("openai:chat", GatewayRequiredError("gw.internal is not listed"))
-    assert ph.status()["providers"]["openai:chat"]["last_error"] == "GATEWAY_REQUIRED"
+    ph.record_failure("openai:responses", GatewayRequiredError("gw.internal is not listed"))
+    assert ph.status()["providers"]["openai:responses"]["last_error"] == "GATEWAY_REQUIRED"
     degradations.note("rerank", "input_order_kept", GatewayRequiredError("gw.internal x"))
     assert ph.status()["providers"]["rerank"]["last_error"] == "GATEWAY_REQUIRED"
 

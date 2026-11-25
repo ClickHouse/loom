@@ -491,6 +491,7 @@ def test_a_private_key_header_without_a_body_holds_only_its_own_chunk() -> None:
 @pytest.mark.asyncio
 async def test_import_holds_a_credential_chunk_and_withholds_an_unproven_digest(
     monkeypatch: pytest.MonkeyPatch,
+    no_blacklisted_values,
 ) -> None:
     import server.embedding as embmod
     from server.memory.api.models_evidence_transfer import (
@@ -658,7 +659,9 @@ def test_a_chunk_key_with_a_credential_version_is_held_back() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential(monkeypatch) -> None:
+async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential(
+    monkeypatch, no_blacklisted_values
+) -> None:
     from unittest.mock import AsyncMock
 
     from server.memory import store

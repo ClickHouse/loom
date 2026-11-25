@@ -106,7 +106,8 @@ async def _symbol_uses(
     over-fetch), with the enclosing unit's span attached, MINUS every line inside a
     returned definition's own span. Path/line ordered, capped at `limit`; the flag says
     when the cap or the chunk over-fetch held. Never raises."""
-    from server.code.app.grep import _unit_spans
+    from server.code.app.grep import _LINE_SCAN_MAX_CHARS, _unit_spans
+    from server.code.app.grep_source import recover_source_chunks
 
     needles = _bare_names(rows)
     if not needles:
@@ -123,6 +124,9 @@ async def _symbol_uses(
                 )
             )
             chunks = [c for part in fetched for c in part]
+            chunks = await recover_source_chunks(
+                repo, org, ns, chunks, max_chars=_LINE_SCAN_MAX_CHARS
+            )
             spans = await _unit_spans(repo, org, ns, chunks)
             span_attrs(sp, chunks_matched=len(chunks))
     except Exception as e:  # noqa: BLE001 — additive, never fatal

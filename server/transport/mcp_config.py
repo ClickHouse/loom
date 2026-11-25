@@ -144,7 +144,7 @@ _LOOM_SEARCH_TOOL_NAME = "loom_search"
 # MCP tool annotations — hints (not enforcement; authz in _call_tool is the
 # security boundary) derived from registry metadata so new ops inherit them.
 _DESTRUCTIVE_NAME_TOKENS: frozenset[str] = frozenset(
-    {"delete", "remove", "redact", "purge", "erase", "erasure"}
+    {"delete", "remove", "redact", "purge", "erase", "erasure", "clear"}
 )
 # Reads even when the group carries a destructive token (erasure.status /
 # erasure.export report on erasure, they don't destroy anything).
