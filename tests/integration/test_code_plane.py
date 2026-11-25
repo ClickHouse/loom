@@ -721,12 +721,11 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
         assert context["text"] == "".join(lines[context["start_line"] - 1 : context["end_line"]])
 
 
-@pytest.mark.parametrize("same_revision", [True, False])
-async def test_edit_context_labels_unresolved_repeated_test_calls(
-    code_env, monkeypatch, same_revision
-):
+@pytest.mark.parametrize("case", ["current", "stale", "compiled_other_receiver"])
+async def test_edit_context_labels_unresolved_repeated_test_calls(code_env, monkeypatch, case):
     from server.code.api.models_symbol import CodeEditContextInput
     from server.code.app.symbol import handle_code_edit_context
+    from server.code.store.index import build_row
     from server.embedding.fake import fake_model_name
     from server.settings import settings
 
@@ -747,29 +746,68 @@ async def test_edit_context_labels_unresolved_repeated_test_calls(
             b"class StubCounter:\n    def submit(self, item, scale):\n        return None\n"
         ),
     )
+    unrelated = "src/unrelated.py"
+    await _ingest(
+        repo, org, ns, path=unrelated, source=b"def other(client, item):\n    client.submit(item)\n"
+    )
     path = "tests/test_counter.py"
     tests = (
-        b"def test_separate_items(client, first, second):\n"
-        b"    client.submit(first, scale=1)\n    client.submit(second, scale=2)\n\n"
-        b"def test_repeated_item(client, item):\n"
-        b"    client.submit(item, scale=1)\n    client.submit(item, scale=2)\n"
+        b"def test_repeated_item(client, first, second, item):\n"
+        b"    client.submit(first, scale=1)\n    client.submit(second, scale=2)\n"
+        + b"\n" * 10
+        + b"    client.submit(item, scale=1)\n    client.submit(item, scale=2)\n"
     )
     await _ingest(
-        repo, org, ns, path=path, source=tests, sha=revision if same_revision else "b" * 40
+        repo, org, ns, path=path, source=tests, sha="b" * 40 if case == "stale" else revision
     )
-    declines = await repo.live_call_misses_for_names(org, ns, ["submit"])
-    assert {row["line"] for row in declines if row["path"] == path} == {2, 3, 6, 7}
+    assert (await repo.live_call_misses_for_names(org, ns, ["submit"], limit=1))[0][
+        "path"
+    ] == unrelated
+    assert (await repo.live_call_misses_for_names(org, ns, ["submit"], limit=1, paths=[path]))[0][
+        "path"
+    ] == path
+    declines = await repo.live_call_misses_for_names(org, ns, ["submit"], paths=[path])
+    repeated = len(tests.splitlines()) - 1
+    assert {row["line"] for row in declines} == {2, 3, repeated, repeated + 1}
+    if case == "compiled_other_receiver":
+        target = (await repo.symbols_by_name(org, ns, "src.counter::StubCounter::submit"))[0]
+        await repo.insert_rows(
+            "code_edges",
+            [
+                build_row(
+                    "code_edges",
+                    org=org,
+                    namespace=ns,
+                    tier="scip",
+                    edge_kind="calls",
+                    path=path,
+                    line=site["line"],
+                    from_symbol_id=site["from_symbol_id"],
+                    from_qualified_name=site["from_qualified_name"],
+                    to_symbol_id=target["symbol_id"],
+                    to_qualified_name=target["qualified_name"],
+                    confidence=1.0,
+                    indexed_commit=revision,
+                )
+                for site in declines
+                if site["line"] >= repeated
+            ],
+        )
     response = await handle_code_edit_context(
         CodeEditContextInput(
             org=org, namespace=ns, name=f"{source_path}:apply", include_lessons=False
         )
     )
     (definition,) = response.definitions
-    if not same_revision:
+    if case != "current":
         assert definition.examples == []
         return
     (example,) = definition.examples
-    assert (example["path"], example["line"], example["evidence"]) == (path, 6, "name_reference")
+    assert (example["path"], example["line"], example["evidence"]) == (
+        path,
+        repeated,
+        "name_reference",
+    )
     assert example["via"] == {
         "symbol": "src.counter::Counter::submit",
         "path": source_path,

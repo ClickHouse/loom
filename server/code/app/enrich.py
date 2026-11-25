@@ -312,36 +312,39 @@ def _via_caller(bridge: dict[str, Any]) -> dict[str, Any]:
 
 
 def _related_test_reference_sites(
-    rows: list[dict[str, Any]], bare: str, path: str, revision: str, radius: int
+    rows: list[dict[str, Any]], bare: str, revision: str, radius: int
 ) -> list[tuple[str, str, set[int], int]]:
-    siblings = set(sibling_test_paths(path))
-    siblings.add(f"tests/test_{PurePosixPath(path).stem}.py")
     lines: dict[tuple[str, str], set[int]] = defaultdict(set)
     for row in rows:
         candidate_path, caller = str(row["path"]), str(row["from_qualified_name"])
         if (
             row["call_text"] == bare
             and row["indexed_commit"] in (revision, revision.encode())
-            and candidate_path in siblings
-            and is_test_unit_path(candidate_path)
             and caller.rsplit("::", 1)[-1].startswith("test_")
             and int(row["line"]) > 0
         ):
             lines[candidate_path, caller].add(int(row["line"]))
-    sites = []
+    ranked = []
     for (candidate_path, caller), locations in lines.items():
-        ordered = sorted(locations)
-        anchor = next(
-            (first for first, second in pairwise(ordered) if second - first <= radius), None
-        )
-        if anchor is not None:
-            sites.append((candidate_path, caller, locations, anchor))
-    return sorted(sites, key=lambda site: (site[0], site[3]))[:6]
+        for index, anchor in enumerate(_distinct_call_windows(locations, radius)):
+            ranked.append((index, candidate_path, anchor, caller, locations))
+    return [
+        (path, caller, locations, anchor)
+        for _, path, anchor, caller, locations in sorted(ranked)[:6]
+    ]
+
+
+def _distinct_call_windows(locations: set[int], radius: int) -> list[int]:
+    anchors: list[int] = []
+    for first, second in pairwise(sorted(locations)):
+        if second - first <= radius and (not anchors or second - anchors[-1] > radius):
+            anchors.append(first)
+    return anchors
 
 
 def _repeated_argument_at(
     context: dict[str, Any], positions: set[int], pattern: re.Pattern[str]
-) -> int:
+) -> tuple[int, int] | None:
     first_seen: dict[tuple[str, str], int] = {}
     for line, text in enumerate(context["text"].splitlines(), context["start_line"]):
         match = pattern.match(text) if line in positions else None
@@ -349,8 +352,8 @@ def _repeated_argument_at(
             receiver, argument = match.group(1), match.group(2)
             previous = first_seen.setdefault((receiver, argument), line)
             if previous != line:
-                return previous
-    return 0
+                return previous, line
+    return None
 
 
 async def _repeated_test_reference(
@@ -366,9 +369,11 @@ async def _repeated_test_reference(
     _, _, bare = str(bridge["from_qualified_name"]).rpartition("::")
     if not bare.isidentifier():
         return None
+    siblings = {*sibling_test_paths(path), f"tests/test_{PurePosixPath(path).stem}.py"}
+    test_paths = sorted(path for path in siblings if is_test_unit_path(path))
     with code_span("enrich.indirect_test_reference"):
-        rows = await repo.live_call_misses_for_names(org, ns, [bare])
-        sites = _related_test_reference_sites(rows, bare, path, revision, radius)
+        rows = await repo.live_call_misses_for_names(org, ns, [bare], paths=test_paths)
+        sites = _related_test_reference_sites(rows, bare, revision, radius)
         if not sites:
             return None
         files = await repo.file_rows_for_paths(
@@ -395,26 +400,39 @@ async def _read_repeated_test_reference(
     pattern = re.compile(rf"\s*(\w+(?:\.\w+)*)\.{re.escape(bare)}\(\s*(\w+)\s*[,)]")
     model = served_model_label(settings.embedding_model)
 
-    async def read(path: str, caller: str, lines: set[int], anchor: int) -> dict[str, Any] | None:
+    async def read(
+        path: str, caller: str, lines: set[int], anchor: int
+    ) -> tuple[dict[str, Any], tuple[int, int]] | None:
         file = files.get(path, {})
         if file.get("indexed_commit") != revision or max(lines) > file.get("loc", 0):
             return None
         site = {"path": path, "caller": caller, "line": anchor}
         example = await _example_context(repo, org, ns, site, radius, model, revision)
         context = example.get("context")
-        line = _repeated_argument_at(context, lines, pattern) if context else 0
-        if line:
+        pair = _repeated_argument_at(context, lines, pattern) if context else None
+        return (example, pair) if pair else None
+
+    candidates = [
+        result for result in await asyncio.gather(*(read(*site) for site in sites)) if result
+    ]
+    locations = sorted({(example["path"], line) for example, pair in candidates for line in pair})
+    contradicted = {
+        (edge["path"], edge["line"])
+        for edge in await repo.member_edges_at_locations(org, ns, locations, bare)
+        if edge["tier"] == "scip"
+        and edge["indexed_commit"] in (revision, revision.encode())
+        and edge["to_qualified_name"] != bridge["from_qualified_name"]
+    }
+    for example, pair in candidates:
+        if not any((example["path"], line) in contradicted for line in pair):
             return {
                 **example,
-                "line": line,
+                "line": pair[0],
                 "tier": "treesitter",
                 "evidence": "name_reference",
                 "via": _via_caller(bridge),
             }
-        return None
-
-    examples = await asyncio.gather(*(read(*site) for site in sites))
-    return next((example for example in examples if example), None)
+    return None
 
 
 def _verified_indirect_sites(

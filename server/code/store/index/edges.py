@@ -354,7 +354,13 @@ class EdgesMixin(CodeRepoBase):
         return out
 
     async def live_call_misses_for_names(
-        self, org: str, ns: str, names: list[str], *, limit: int = 2000
+        self,
+        org: str,
+        ns: str,
+        names: list[str],
+        *,
+        limit: int = 2000,
+        paths: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Live declined-call rows whose bare callee is one of `names`, full
         mirrored columns (the closure repair tombstones some and the
@@ -363,14 +369,16 @@ class EdgesMixin(CodeRepoBase):
         `callee_name` is the third sort-key column after the tenant pair, so
         an IN list of a few hundred names selects a few granules of the
         6-column key and reads them once; no FINAL, the same argMax/HAVING
-        discipline as live_call_misses_for_path. `limit` bounds a hub name
+        discipline as live_call_misses_for_path. An optional path list
+        restricts that slice before limiting it. `limit` bounds a hub name
         (`parse`, `execute`) that thousands of sites declined — the rows
         beyond it are not lost, their paths re-resolve when the paths
         themselves change."""
-        if not names:
+        if not names or paths == []:
             return []
+        path_sql = "AND path IN {paths:Array(String)}" if paths is not None else ""
         rows = await self._ch.query_all(
-            """
+            f"""
             SELECT
                 callee_name, path, line, from_symbol_id,
                 argMax(from_qualified_name, version) AS from_qualified_name,
@@ -382,14 +390,20 @@ class EdgesMixin(CodeRepoBase):
                 max(version) AS max_version,
                 argMax(tombstoned_at IS NULL, version) AS is_live
             FROM loom.code_call_sites_unresolved
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND callee_name IN {names:Array(String)}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND callee_name IN {{names:Array(String)}} {path_sql}
             GROUP BY callee_name, path, line, from_symbol_id
             HAVING is_live = 1
             ORDER BY callee_name, path, line, from_symbol_id
-            LIMIT {limit:UInt32}
+            LIMIT {{limit:UInt32}}
             """,
-            {"org": org, "ns": ns, "names": names[:1000], "limit": int(limit)},
+            {
+                "org": org,
+                "ns": ns,
+                "names": names[:1000],
+                "limit": int(limit),
+                **({"paths": paths} if paths is not None else {}),
+            },
         )
         for r in rows:
             r["org"] = org
