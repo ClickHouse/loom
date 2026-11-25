@@ -46,7 +46,7 @@ One page per need, each saying what Loom does for it and where to start:
 [shared memory for software factories](use-cases/multi-agent.md) ·
 [autonomous agents: recall, audit, erasure](use-cases/autonomous-agents.md) ·
 [runs, traces and PR history](use-cases/runs-and-pr-history.md) ·
-[self-hosted on ClickHouse](use-cases/self-hosted-clickhouse.md) ·
+[self-hosted agent memory with SQL](use-cases/self-hosted-clickhouse.md) ·
 [all use cases](use-cases/index.md).
 
 ## 1. Getting started
