@@ -37,7 +37,7 @@ from .cache_start import (
     study_cache_verified,
     wait_for_expiry,
 )
-from .fairness import audit_fairness
+from .fairness import audit_fairness, fairness_status
 from .judging import load_verdicts, run_judging
 from .launch import native_model
 from .mcp_qualification import STARTUP_COUNTS, verify_catalog
@@ -581,15 +581,7 @@ def export(protocol: dict, job_name="live") -> dict:
         {"attempts": protocol["schedule"], "schedule_sha256": protocol["schedule_sha256"]}, entries
     )
     report.update(analyze_cohorts(protocol, entries))
-    audit_path = output / "fairness-audit.json"
-    audit = read(audit_path) if audit_path.exists() else None
-    fairness_verified = (
-        audit.get("protocol_sha256") == digest(protocol)
-        and len(audit["attempts"]) == len(protocol["schedule"])
-        and audit.get("passed") is True
-        if audit is not None
-        else None
-    )
+    fairness_verified = fairness_status(protocol)
     source_verified = (
         all(
             protocol["schedule"][entry["order"]]["mode"] == "baseline"
@@ -898,6 +890,10 @@ def main():
             costs = audit_provider_costs(protocol, entries)
             audit_fairness(protocol, entries, billing=costs)
         else:
+            if fairness_status(protocol) is not True:
+                raise PermissionError(
+                    "Judging requires a passing fairness-audit.json for this protocol."
+                )
             root = Path(protocol["output_root"]).resolve().parent
             journal = root / "spending.jsonl"
             if not journal.is_file():

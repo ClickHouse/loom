@@ -11,6 +11,7 @@ from unittest.mock import patch
 import httpx
 
 from examples.software_factory.factory.model import digest
+from examples.software_factory.harbor import study
 from examples.software_factory.harbor.fairness import audit_fairness, native_mcp_available
 from examples.software_factory.harbor.index import TABLES
 from examples.software_factory.harbor.mcp_qualification import qualified_catalog, qualify
@@ -20,6 +21,38 @@ from examples.software_factory.harbor.runtime import write
 
 
 class NativeTreatment(TestCase):
+    def test_manual_judge_requires_a_complete_fairness_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "study"
+            root.mkdir()
+            protocol = {"output_root": str(root), "schedule": [{"order": 0}], "model_id": "model"}
+            path = root / "protocol.json"
+            write(path, protocol)
+            write(root / "live-attempts.json", [])
+            write(root.parent / "launch.json", {"budget_usd": 1, "source_root": directory})
+            (root.parent / "spending.jsonl").touch()
+            receipt = {"protocol_sha256": digest(protocol), "attempts": [{"order": 0}]}
+            for audit in (
+                None,
+                {**receipt, "passed": False},
+                {**receipt, "passed": True, "attempts": []},
+                {**receipt, "passed": True, "protocol_sha256": "another-protocol"},
+            ):
+                if audit is not None:
+                    write(root / "fairness-audit.json", audit)
+                with (
+                    self.subTest(audit=audit),
+                    patch("sys.argv", ["study", "judge", "--protocol", str(path)]),
+                    patch.object(study, "verify"),
+                    patch.object(study, "Spending"),
+                    patch.object(study, "native_model"),
+                    patch.object(study, "export", return_value={}),
+                    patch.object(study, "run_judging") as judge,
+                    self.assertRaisesRegex(PermissionError, "fairness-audit.json"),
+                ):
+                    study.main()
+                judge.assert_not_called()
+
     def test_native_mcp_availability_requires_startup_evidence(self):
         for configured, status, tools, passed in (
             (True, "connected", 23, True),

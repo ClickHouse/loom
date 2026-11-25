@@ -26,6 +26,18 @@ def native_mcp_available(result, *, configured):
     return status == "disabled" and tools == 0
 
 
+def fairness_status(protocol):
+    path = Path(protocol["output_root"]) / "fairness-audit.json"
+    if not path.exists():
+        return None
+    audit = read(path)
+    return (
+        audit.get("protocol_sha256") == digest(protocol)
+        and len(audit["attempts"]) == len(protocol["schedule"])
+        and audit.get("passed") is True
+    )
+
+
 def index_certificate_matches(protocol):
     certificate = Path(protocol["index_certificate_file"])
     frozen = read(certificate)
