@@ -409,6 +409,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     user_id, session_id = _row_owner(inp, key, live)
     new_row = repo.build_brief_row(
         live,
+        version_after=int(row["version"]) if row else 0,
         org=inp.org,
         namespace=inp.namespace,
         brief_key=stored_key,

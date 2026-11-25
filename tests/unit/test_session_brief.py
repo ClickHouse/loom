@@ -1308,6 +1308,41 @@ def test_a_late_save_with_a_lower_revision_cannot_restore_deleted_content(mem):
     assert not pinned.found
 
 
+def test_snapshot_delete_and_recreation_outrank_the_observed_head_under_clock_skew(
+    mem, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from server.memory.store import rows
+
+    stamp = 3000
+    monkeypatch.setattr(rows, "time", SimpleNamespace(time_ns=lambda: stamp))
+    key = "handoff/skew"
+
+    def get(**options):
+        return asyncio.run(
+            h.handle_session_brief_get(SessionBriefGetInput(**IDENT, brief_key=key, **options))
+        )
+
+    _save(brief_key=key, sections={"goal": "Before deletion"})
+    source = get()
+    pinned = {"revision": source.revision, "snapshot_id": source.snapshot_id}
+
+    stamp = 2500
+    deleted = asyncio.run(
+        h.handle_session_brief_delete(SessionBriefDeleteInput(**IDENT, brief_key=key))
+    )
+    assert deleted.deleted and not get(**pinned).found
+    tombstone = mem.rows[-1]["version"]
+    assert tombstone > 3000
+
+    stamp = 2000
+    _save(brief_key=key, sections={"goal": "After deletion"})
+    assert mem.rows[-1]["version"] > tombstone
+    assert "After deletion" in get().rendered
+    assert not get(**pinned).found
+
+
 def test_scoped_handoff_has_the_same_locator_for_its_owner_and_namespace_viewers(mem):
     from server.identity.domain.read_scope import ReadFilters, bind_request_read_filters
     from tests.unit.principals import acting_as, principal

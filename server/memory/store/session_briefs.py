@@ -21,7 +21,7 @@ from typing import Any
 from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now as now
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
-from server.memory.store.rows import next_version
+from server.memory.store.rows import version_over
 
 TABLE = "loom.session_briefs"
 REVISIONS = "loom.session_brief_revisions"
@@ -94,9 +94,10 @@ _DEFAULTS: dict[str, Any] = {
 _SELECT = ", ".join(COLUMNS) + ", version"
 
 
-def build_brief_row(prev: dict[str, Any] | None, **changes: Any) -> dict[str, Any]:
-    """A full version row: `prev`'s columns (or the defaults), then
-    `changes`, then a fresh `version`. Unknown keys are a programming error."""
+def build_brief_row(
+    prev: dict[str, Any] | None, *, version_after: int = 0, **changes: Any
+) -> dict[str, Any]:
+    """Merge the row's columns and stamp it above the observed head."""
     unknown = set(changes) - set(COLUMNS)
     if unknown:
         raise KeyError(f"not a loom.session_briefs column: {sorted(unknown)}")
@@ -110,7 +111,7 @@ def build_brief_row(prev: dict[str, Any] | None, **changes: Any) -> dict[str, An
     for c in ("org", "namespace", "brief_key"):
         if not base.get(c):
             raise ValueError(f"session brief row needs {c}")
-    base["version"] = next_version()
+    base["version"] = version_over(max(version_after, int((prev or {}).get("version") or 0)))
     return base
 
 
