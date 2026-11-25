@@ -184,11 +184,11 @@ token classes, `cost_usd` and `unpriced_turns`.
 
 ### Track token usage and cost by session
 
-Finish a turn in a coding client that reports usage. The
-[Claude Code plugin](../integrations/claude-code.md#what-the-hooks-do) does this by default
-when the turn stops. Use a viewer token for the namespace the client wrote to. Replace
-`acme` and `support` with your org and namespace. This request reads today's UTC turns
-and groups them by session.
+Connect a coding client with writer access to the reporting namespace and finish a turn.
+The [Claude Code plugin](../integrations/claude-code.md#what-the-hooks-do) reports usage by
+default when the turn stops. For the report, use a viewer token with `read_scope: namespace`
+and access to the same namespace. Replace `acme` and `support` with your org and namespace.
+This request reads today's UTC turns and groups them by session.
 
 ```bash
 usage_day="$(date -u +%F)"
@@ -213,10 +213,9 @@ model in each session.
 
 If a session spans UTC days, extend the date range to include its turns. For a daily view,
 group by `day`. The server buffers incoming turns, so retry a report for a turn that just
-finished. If the report stays empty, check the client's namespace and `LOOM_USAGE` setting.
-Large reports can hit the
-[row limit](../../reference/operations/cost.md#costagent_summary), so use smaller date
-windows when you need the full set of sessions.
+finished. If it stays empty, check the client's namespace, writer access, and `LOOM_USAGE`
+setting. Large reports can hit the [row limit](../../reference/operations/cost.md#costagent_summary),
+so use smaller date windows when you need the full set of sessions.
 
 ## Which agents are talking to Loom
 
