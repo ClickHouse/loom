@@ -1373,8 +1373,9 @@ jobs:
       # target branch's tip can carry a newer migration by the time the run starts.
       - name: Mixed-version gate
         run: python scripts/gates/mixed_version.py --require --base HEAD~1
-      - name: Published build ordinary-event compatibility
-        run: python scripts/gates/mixed_version.py --require --base 1cbaf0411114512957b96ec5ea7bbb8058828543
+      # v1.3.0 checks the analyst version before probing retired relations.
+      - name: Published build event-view compatibility
+        run: python scripts/gates/mixed_version.py --require --base 47b479dcdae4c089aef2690428fa4c9a8f54554c
 
   sdk-rust:
     needs: validate-ref

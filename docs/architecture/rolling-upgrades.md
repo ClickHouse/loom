@@ -968,6 +968,7 @@ events. The signed view excludes marked rows and reserved namespaces. The
 returning rows. With column grants only on these views, the analyst cannot inspect
 the physical event tables or their storage metadata.
 
+Deploy Loom v1.3.0 or later to each serving replica before installing these views.
 During setup, Loom revokes legacy grants on the physical event tables before
 granting the views. Both versions keep the same analyst login and signed canary.
 Once the new version writes its entities, a query that names `loom.agent_events`
