@@ -21,7 +21,7 @@ namespaces with separate read and write roles. Your agents and orchestrator run 
 - **Shared memory with provenance.** Every row records which agent wrote it, and under the
   default `auto_reinforce` policy a contradiction between two agents is flagged for review
   instead of silently overwritten. [Namespaces and sharing](../features/namespaces-and-sharing.md) ·
-  [Namespace conflict policy](../features/memory/conflicts-and-refusal.md#namespace-conflict-policy)
+  [Test a conflict](#test-a-conflict-in-shared-agent-memory)
 - **Task inboxes.** Each agent has a durable queue with leases, retries and review rules;
   a claimed task has one owner at a time. [Tasks, decisions and policies](../features/tasks-and-decisions.md)
 - **Decisions.** What was decided in a case like this, why, and whether it worked.
@@ -122,6 +122,31 @@ Use the [code-linked lesson example](memory-linked-to-code.md#check-a-lesson-aft
 to evaluate source freshness separately from recall.
 To evaluate the full toolchain, use the [software factory tools pilot](../guides/software-factory-tools.md)
 to check planning, execution, review and release on one repository.
+
+## Test a conflict in shared agent memory
+
+Use a disposable team namespace to check how two agents report different values for the
+same rule. Set its [conflict policy](../features/memory/conflicts-and-refusal.md#namespace-conflict-policy)
+to `manual_review` and give each writer its own [token](../guides/tokens-and-grants.md).
+Use a sample runbook that fixes a service's retry timeout at 30 seconds. Keep its revision
+handy so the reviewer can verify the value against the source.
+
+1. **Check shared recall.** Have the first writer save “The retry timeout for this service
+   is 30 seconds.” with `memory.set` as a `semantic` memory. Leave `user_id` unset for a
+   namespace-wide fact. Wait until the second writer finds its key with `memory.search`
+   using `agent="*"` and `search_mode="semantic"`.
+2. **Check the review queue.** Have the second writer save the same statement with
+   60 seconds under a different key, with `dry_run=true` first. Look for
+   `conflict_verdict="conflict"` and the first memory among the peers. Repeat the write
+   without `dry_run`, then confirm both rows appear in the Review queue or `conflicts.list`.
+   If the dry run returns another [verdict](../features/memory/conflicts-and-refusal.md#verdicts),
+   check the type, scope and namespace policy before evaluating the resolution step.
+3. **Check the correction.** Have a namespace admin check the runbook revision and
+   [keep the supported row](../features/memory/conflicts-and-refusal.md#resolving-conflicts)
+   with `conflicts.resolve`, `decision="revise"` and the source revision in `reason`.
+   Check the resolution in `audit.list`. Have a fresh authorized reader use `memory.get`
+   on both keys. The supported value should be active, the other key should return
+   `found=false`, and the pair should be gone from `conflicts.list`.
 
 ## Start
 
