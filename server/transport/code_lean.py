@@ -285,16 +285,23 @@ def _containing_grep_body(child: _GrepBody, candidates: list[_GrepBody]) -> str:
         parent_id = str(parent.row["symbol_id"])
         if not (0 <= first < last <= len(parent.lines) and child.lines == parent.lines[first:last]):
             continue
-        # Clients can use the text block or encode the structured result as UTF-8.
-        reference = {"body_in_symbol_id": parent_id}
-        body = {"body": child.row["body"]}
-        if all(
-            len(json.dumps(reference, ensure_ascii=ascii_only).encode())
-            < len(json.dumps(body, ensure_ascii=ascii_only).encode())
-            for ascii_only in (True, False)
-        ):
+        if _grep_reference_is_smaller(child.row["body"], parent_id):
             return parent_id
     return ""
+
+
+def _grep_reference_is_smaller(body: str, symbol_id: str) -> bool:
+    reference = {"body_in_symbol_id": symbol_id}
+    source = {"body": body}
+    if len(json.dumps(reference)) >= len(json.dumps(source)):
+        return False
+    reference_json = json.dumps(reference, ensure_ascii=False)
+    source_json = json.dumps(source, ensure_ascii=False)
+    # Clients can measure structured results in UTF-8 bytes or JavaScript string length.
+    return all(
+        len(reference_json.encode(encoding)) < len(source_json.encode(encoding))
+        for encoding in ("utf-8", "utf-16-le")
+    )
 
 
 def _lean_grep_definition(definition: dict[str, Any]) -> None:

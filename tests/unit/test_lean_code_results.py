@@ -434,13 +434,18 @@ def test_lean_grep_refs_exact_nested_source_without_losing_a_body() -> None:
 
 
 def test_lean_grep_near_output_boundary_only_shrinks_the_page() -> None:
-    for value, smaller in (("", False), ("é", False), ("x" * 21, True)):
-        body = f"    def nested(self):\n        return '{value}'\n"
+    cases = (
+        ("    def nested(self):\n        return ''\n", 3, False),
+        ("    def nested(self):\n        return 'é'\n", 3, False),
+        ('    def f(): return "界界界界界界界界"\n', 2, False),
+        (f"    def nested(self):\n        return '{'x' * 21}'\n", 3, True),
+    )
+    for body, end_line, smaller in cases:
         child = {
             "path": "sample.py",
             "symbol_id": "a" * 32,
             "start_line": 2,
-            "end_line": 3,
+            "end_line": end_line,
             "body": body,
         }
         parent = {
@@ -454,10 +459,10 @@ def test_lean_grep_near_output_boundary_only_shrinks_the_page() -> None:
 
         result = lean_code("code.grep", payload)
 
-        for ascii_only in (True, False):
-            assert len(json.dumps(result, ensure_ascii=ascii_only).encode()) <= len(
-                json.dumps(payload, ensure_ascii=ascii_only).encode()
-            )
+        for ascii_only, encoding in ((True, "utf-8"), (False, "utf-8"), (False, "utf-16-le")):
+            before = json.dumps(payload, ensure_ascii=ascii_only).encode(encoding)
+            after = json.dumps(result, ensure_ascii=ascii_only).encode(encoding)
+            assert len(after) <= len(before)
         assert result["definitions_note"] == payload["definitions_note"]
         if smaller:
             assert result["definitions"][1]["body_in_symbol_id"] == parent["symbol_id"]
