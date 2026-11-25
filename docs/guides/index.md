@@ -22,6 +22,8 @@ seo:
   and agent lessons into knowledge a later session can verify.
 - [Answer repository questions without a checkout](repository-questions.md).
   Retrieve code and cite its file, lines, and revision.
+- [Resume an AI agent after a crash](trace-and-resume.md#resume-an-ai-agent-after-a-crash).
+  Retry a committed item and check that its result is stored once.
 
 ## Connect and grant access
 

@@ -1,3 +1,9 @@
+---
+description: Resume an AI agent after a crash with a durable checkpoint. Run a catalog job twice and verify that retrying a saved item creates one result.
+seo:
+  title: How to resume an AI agent after a crash
+---
+
 # Trace and resume long agent runs
 
 A long run (process 300 files, crawl a repository, work through a plan) can stop part way: a
@@ -57,6 +63,78 @@ await agent.working_memory.delete("checkpoint", run_id=RUN)
 
 For a progress log rather than one snapshot, `working_memory.append(..., run_id=RUN)` adds
 to a block and `working_memory.render(run_id=RUN)` reads the blocks back.
+
+## Resume an AI agent after a crash
+
+A job that stops after committing an item's result may retry that item because
+its checkpoint still points there. Save each result with a stable operation
+key and have the destination accept that key once. Advance the checkpoint
+only after the destination confirms the result.
+
+Try both steps on the [single-user quickstart](../getting-started/quickstart.md#fast-path-released-image-no-clone)
+with the [Python SDK](../reference/python-sdk.md). This job keeps its next input
+position in Loom and saves results in a SQLite file. The input order and the
+output file stay the same across both runs. Save this as `catalog.py`.
+
+```python
+import argparse
+import asyncio
+import sqlite3
+from contextlib import closing
+
+from loom import Agent
+
+ITEMS = ("batch-01", "batch-02", "batch-03")
+
+
+async def run(job_id: str, output: str, stop_after_save: bool) -> None:
+    async with Agent(org="dev", namespace="local", agent="catalog-worker") as agent:
+        state = await agent.working_memory.resume(run_id=job_id)
+        start = int(state) if state is not None else 0
+        print(f"Next input index: {start}")
+        with closing(sqlite3.connect(output)) as results:
+            results.execute("CREATE TABLE IF NOT EXISTS completed (key TEXT PRIMARY KEY)")
+            for index in range(start, len(ITEMS)):
+                item = ITEMS[index]
+                with results:
+                    results.execute(
+                        "INSERT INTO completed VALUES (?) ON CONFLICT(key) DO NOTHING",
+                        (f"{job_id}/{item}",),
+                    )
+                if stop_after_save and index == 1:
+                    raise SystemExit("Stopped after committing batch-02")
+                await agent.working_memory.checkpoint(str(index + 1), run_id=job_id)
+            count = results.execute("SELECT count(*) FROM completed").fetchone()[0]
+            print(f"Unique results: {count}")
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("job_id")
+parser.add_argument("output")
+parser.add_argument("--stop-after-save", action="store_true")
+args = parser.parse_args()
+asyncio.run(run(args.job_id, args.output, args.stop_after_save))
+```
+
+```bash
+demo_dir=$(mktemp -d)
+job_id=$(basename "$demo_dir")
+LOOM_BASE_URL=http://localhost:7777 python catalog.py "$job_id" "$demo_dir/catalog.sqlite" --stop-after-save
+```
+
+The first process prints `Next input index: 0` and exits with
+`Stopped after committing batch-02`. The second process reads checkpoint `1`,
+retries `batch-02` with the same key, and reports `Unique results: 3`.
+
+```bash
+LOOM_BASE_URL=http://localhost:7777 python catalog.py "$job_id" "$demo_dir/catalog.sqlite"
+```
+
+Use a checkpoint with one active worker per job. Give a replacement the same
+job ID, identity and input snapshot. Keep the destination's deduplication
+keys for as long as the job can retry. On a shared deployment, configure the
+[agent's own scoped credential](tokens-and-grants.md) and its namespace.
+Clear the checkpoint once your scheduler has recorded the job as finished.
 
 ## Over MCP
 

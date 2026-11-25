@@ -43,7 +43,9 @@ On a shared deployment, [scope the agent's token](../guides/tokens-and-grants.md
 carry the same namespace, agent, user and session identity into the replacement process.
 Record the checkpoint after a batch completes. A crash between a side effect and its
 checkpoint can cause a retry, so use a stable operation ID to deduplicate the side effect.
-See [trace and resume](../guides/trace-and-resume.md) for the Python SDK and MCP equivalents.
+Run the [crash and retry example](../guides/trace-and-resume.md#resume-an-ai-agent-after-a-crash)
+to verify that an item committed before a stop produces one result after recovery.
+The [trace and resume guide](../guides/trace-and-resume.md) also covers MCP.
 
 ## What you get
 
