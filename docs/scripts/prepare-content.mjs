@@ -32,17 +32,26 @@ const localizedSeo = {
   },
   "index.md": {
     ja: {
+      title: "エージェントメモリとコード検索のドキュメント",
       description: "AIエージェント向けの共有メモリ、文書検索、コードインデックスを備えたセルフホスト型MCPサーバー。",
     },
-    ko: { description: "AI 에이전트를 위한 공유 메모리, 문서 검색, 코드 인덱스를 제공하는 자체 호스팅 MCP 서버." },
+    ko: {
+      title: "에이전트 메모리 및 코드 검색 문서",
+      description: "AI 에이전트를 위한 공유 메모리, 문서 검색, 코드 인덱스를 제공하는 자체 호스팅 MCP 서버.",
+    },
     "pt-BR": {
+      title: "Documentação de memória para agentes e busca de código",
       description:
         "Memória compartilhada, busca em documentos e índice de código para agentes de IA em um servidor MCP auto-hospedado.",
     },
-    "zh-CN": { description: "面向 AI 智能体的自托管 MCP 服务器，提供共享记忆、文档检索和代码索引。" },
+    "zh-CN": {
+      title: "智能体记忆与代码搜索文档",
+      description: "面向 AI 智能体的自托管 MCP 服务器，提供共享记忆、文档检索和代码索引。",
+    },
   },
   "use-cases/index.md": {
     es: {
+      title: "Casos de uso de memoria y búsqueda para agentes de IA",
       description:
         "Casos de uso de Loom para agentes de IA: memoria compartida, búsqueda de documentos e índice de código.",
     },

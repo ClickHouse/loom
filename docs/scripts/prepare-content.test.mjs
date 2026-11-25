@@ -134,16 +134,18 @@ test("sets localized search metadata without changing the translated heading or 
   );
 });
 
-test("sets a search description on a translated docs homepage", () => {
+test("sets the search title and description on a translated docs homepage", () => {
   const stamp = "<!-- i18n: source=docs/index.md blob=abc model=test -->";
   const prepared = normalizeTranslatedTitle(`${stamp}\n\n# ClickHouse Loom 문서\n\n문서 본문.\n`, {
+    title: "에이전트 메모리 및 코드 검색 문서",
     description: "AI 에이전트를 위한 공유 메모리와 코드 인덱스.",
   });
 
   assert.equal(
     prepared,
     '---\ntitle: "ClickHouse Loom 문서"\n' +
-      'seo:\n  description: "AI 에이전트를 위한 공유 메모리와 코드 인덱스."\n---\n\n' +
+      'seo:\n  title: "에이전트 메모리 및 코드 검색 문서"\n' +
+      '  description: "AI 에이전트를 위한 공유 메모리와 코드 인덱스."\n---\n\n' +
       `${stamp}\n\n문서 본문.\n`,
   );
 });

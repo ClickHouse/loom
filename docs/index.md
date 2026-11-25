@@ -1,3 +1,8 @@
+---
+seo:
+  title: Agent memory and code search documentation
+---
+
 # ClickHouse Loom documentation
 
 Loom is a memory, document and code-index server for AI agents, stored in ClickHouse,
