@@ -31,12 +31,17 @@ const aliasRedirects = [...publicPages].map(([path, destination]) => ({
   status: 308,
   headers: { Location: path },
 }));
-const publicPaths = new Set(siteRoutes.map(({ src }) => src));
-config.routes = [...aliasRedirects, ...siteRoutes, ...config.routes.filter(({ src }) => !publicPaths.has(src))];
-publishSiteDiscovery(new URL("static/", output), {
+const translationRedirects = publishSiteDiscovery(new URL("static/", output), {
   root: [...publicPages.keys()],
   aliases: [...publicPages.values()],
 });
+const publicPaths = new Set(siteRoutes.map(({ src }) => src));
+config.routes = [
+  ...aliasRedirects,
+  ...translationRedirects,
+  ...siteRoutes,
+  ...config.routes.filter(({ src }) => !publicPaths.has(src)),
+];
 copyFileSync(new URL("../llms-install.md", docs), new URL("static/docs/llms-install.md", output));
 
 if (process.env.VERCEL_TARGET_ENV === "production") {

@@ -6,6 +6,8 @@ memory and knowledge state. Agents and people reach it over MCP, HTTP, the Pytho
 TypeScript SDKs, and the dashboard. Browse the [guides](guides/index.md) by task or
 follow the reading order below.
 
+<a href="https://loom.clickhouse.com/docs/es/use-cases" lang="es" hreflang="es">Casos de uso en español</a>
+
 ![The dashboard's Library: a search for a refund rule answered by cited passages](assets/screenshots/document-search.webp)
 
 <details>

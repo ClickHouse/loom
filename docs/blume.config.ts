@@ -33,6 +33,7 @@ export default defineConfig({
   },
   i18n: {
     defaultLocale: "en",
+    fallbackLocale: null,
     locales: [
       { code: "en", label: "English" },
       { code: "es", label: "Español" },
