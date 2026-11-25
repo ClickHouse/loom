@@ -339,14 +339,16 @@ def test_edit_context_shares_identical_test_source_and_preserves_evidence() -> N
     result = lr.mcp_op_result("code.edit_context", payload, {}, None)
     original, repeated = result["definitions"]
     first, previous, small = repeated["examples"]
-    assert original["examples"][0] == verified
+    assert next(iter(result)) == "test_sources"
+    assert result["test_sources"] == [{"excerpts": [{"text": context["text"]}]}]
     assert first["evidence"] == "indirect_call"
     assert first["context"] == {
         "commit": context["commit"],
         "start_line": 1,
         "end_line": 1,
-        "text_ref": "#/definitions/0/examples/0/context/text",
+        "text_ref": "#/test_sources/0/excerpts/0/text",
     }
+    assert original["examples"][0] == {**verified, "context": first["context"]}
     assert previous == earlier and small == short
     assert payload["definitions"][1]["examples"][0] == duplicate
     assert (
@@ -355,6 +357,24 @@ def test_edit_context_shares_identical_test_source_and_preserves_evidence() -> N
             "context"
         ]
     )
+
+
+def test_edit_context_keeps_source_when_shared_row_would_exceed_an_original_row() -> None:
+    context = {"commit": "a" * 40, "start_line": 1, "end_line": 1}
+    short = {"path": "tests/test_short.py", "context": {**context, "text": "alpha " * 45}}
+    long = {"path": "tests/test_long.py", "context": {**context, "text": "feature " * 100}}
+    payload = {
+        "definitions": [
+            {"symbol": "first", "examples": [short, long]},
+            {"symbol": "second", "examples": [short]},
+            {"symbol": "third", "examples": [long]},
+        ],
+        "edit_targets": [{"name": name} for name in ("first", "second", "third")],
+    }
+
+    result = lr.mcp_op_result("code.edit_context", payload, {}, None)
+    assert "test_sources" not in result
+    assert result["definitions"][1]["examples"] == [short]
 
 
 def test_grep_excerpts_offer_a_batch_for_unread_declarations() -> None:
