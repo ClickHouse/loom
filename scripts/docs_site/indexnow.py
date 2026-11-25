@@ -33,9 +33,13 @@ from scripts.docs_site.paths import page_path  # noqa: E402
 
 DOCS = ROOT / "docs"
 PUBLIC_PAGES_PATH = "docs/scripts/public-pages.json"
+HOME_LOCALES_PATH = "docs/scripts/home-locales.json"
 PUBLIC_PAGE_URLS = {
     f"docs/pages/{destination.removeprefix('/docs/')}.astro": ORIGIN + route
     for route, destination in json.loads((ROOT / PUBLIC_PAGES_PATH).read_text()).items()
+}
+HOME_URLS = {
+    ORIGIN + page["href"] for page in json.loads((ROOT / HOME_LOCALES_PATH).read_text()).values()
 }
 SITE_BUILD_INPUTS = (
     "docs/blume.config.ts",
@@ -50,7 +54,7 @@ PUBLIC_BUILD_INPUTS = (
     "docs/components/",
     "docs/lib/adoption-data.mjs",
     "docs/lib/adoption-view.mjs",
-    "docs/scripts/home-locales.json",
+    HOME_LOCALES_PATH,
     "docs/scripts/mount-site-pages.mjs",
     "docs/scripts/site-discovery.mjs",
     PUBLIC_PAGES_PATH,
@@ -121,6 +125,9 @@ def urls_for(changes: Mapping[str, str], previous_public_routes: Iterable[str] =
     if locale_change or _changed_build_input(changes, BUILD_INPUTS):
         # A deleted page is no longer in the tree, so keep the changed paths' URLs too.
         changed.update(every_page())
+    if locale_change:
+        # Homepage links switch when a translation appears or disappears.
+        changed.update(HOME_URLS)
     if _changed_build_input(changes, PUBLIC_BUILD_INPUTS):
         changed.update(PUBLIC_PAGE_URLS.values())
     if PUBLIC_PAGES_PATH in changes:

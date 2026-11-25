@@ -72,6 +72,15 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
     )
 
 
+def test_changed_translation_availability_submits_homepage_links() -> None:
+    translation = "i18n/ja/docs/use-cases/knowledge-factory.md"
+    for status in ("A", "D"):
+        urls = indexnow.urls_for({translation: status})
+        assert SITE + "ja/use-cases/knowledge-factory/" in urls
+        assert ORIGIN + "/ja" in urls
+        assert ORIGIN + "/platform" not in urls
+
+
 def test_renamed_and_deleted_public_routes_keep_their_previous_urls(monkeypatch) -> None:
     monkeypatch.setattr(
         indexnow, "PUBLIC_PAGE_URLS", {"docs/pages/product.astro": ORIGIN + "/product"}

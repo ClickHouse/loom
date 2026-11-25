@@ -253,6 +253,7 @@ def test_only_route_changes_resubmit_pages_with_alternates_and_rewritten_links(
     assert indexnow.urls_for({"i18n/ja/docs/use-cases/index.md": "M"}) == [
         indexnow.SITE + "ja/use-cases/"
     ]
+    every = sorted([*every, *indexnow.HOME_URLS])
     assert indexnow.urls_for({"i18n/ja/docs/use-cases/index.md": "A"}) == every
     deleted = "i18n/ja/docs/use-cases/deleted.md"
     assert indexnow.urls_for({deleted: "D"}) == sorted(
@@ -267,11 +268,14 @@ def test_deleted_english_source_announces_removed_translated_routes(tmp_path, mo
     _source(tmp_path, "other.md")
     _translation(tmp_path, "ja", "use-cases/index.md", "0" * 40)
     monkeypatch.setattr(indexnow, "DOCS", tmp_path / "docs")
-    assert indexnow.urls_for({"docs/use-cases/index.md": "D"}) == [
-        indexnow.SITE + "ja/use-cases/",
-        indexnow.SITE + "other/",
-        indexnow.SITE + "use-cases/",
-    ]
+    assert indexnow.urls_for({"docs/use-cases/index.md": "D"}) == sorted(
+        [
+            indexnow.SITE + "ja/use-cases/",
+            indexnow.SITE + "other/",
+            indexnow.SITE + "use-cases/",
+            *indexnow.HOME_URLS,
+        ]
+    )
 
 
 def test_removed_untranslated_target_resubmits_translations_with_rewritten_links(
@@ -291,7 +295,7 @@ def test_removed_untranslated_target_resubmits_translations_with_rewritten_links
     (tmp_path / "docs/features/setup.md").unlink()
     assert locales.translated_markdown(body, entry, pages, URL) == body
     assert indexnow.urls_for({"docs/features/setup.md": "D"}) == sorted(
-        [*indexnow.every_page(), indexnow.SITE + "features/setup/"]
+        [*indexnow.every_page(), indexnow.SITE + "features/setup/", *indexnow.HOME_URLS]
     )
 
 
@@ -553,7 +557,7 @@ def test_default_site_publishes_all_five_locales_and_keeps_artifacts(tmp_path, m
         path = f"i18n/{language}/docs/use-cases/index.md"
         assert (tmp_path / path).is_file()
         assert indexnow.page_url(path) == indexnow.SITE + language + "/use-cases/"
-        assert indexnow.urls_for({path: "A"}) == every
+        assert indexnow.urls_for({path: "A"}) == sorted([*every, *indexnow.HOME_URLS])
 
 
 @pytest.mark.parametrize("source", ["use-cases/agent-memory.md", "use-cases/index.md"])

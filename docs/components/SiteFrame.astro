@@ -12,6 +12,7 @@ interface Props {
 
 const { title, description, path, home } = Astro.props;
 const locale = home?.locale ?? "en";
+const shortLocale = locale.split("-")[0].toUpperCase();
 const labels = frameCopy[locale];
 const locales = Object.entries(siteLocales).map(([language, value]) => ({ language, ...value }));
 const brandHome = siteLocales[locale].href;
@@ -73,9 +74,9 @@ const navigation = [
           <a class="header-action" {...start}>{labels.start} <span aria-hidden="true">↗</span></a>
           {home && (
             <details class="site-language">
-              <summary aria-label={`${labels.siteLanguage} · ${siteLocales[locale].name}`}>
+              <summary aria-label={`${labels.siteLanguage} · ${siteLocales[locale].name} (${shortLocale})`}>
                 <span class="site-language-name">{siteLocales[locale].name}</span>
-                <span class="site-language-code" aria-hidden="true">{locale.split("-")[0].toUpperCase()}</span>
+                <span class="site-language-code" aria-hidden="true">{shortLocale}</span>
               </summary>
               <nav class="site-language-list" aria-label={labels.siteLanguage}>
                 {locales.map(({ language, name, href }) => (
