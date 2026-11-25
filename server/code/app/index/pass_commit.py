@@ -94,6 +94,7 @@ async def _ingest_commit(
         embedding_model=embedder.model_name,
         gitrepo=gitrepo,
         ingest_file=ingest_file,
+        denylist=denylist,
         result=result,
     )
     await _refresh_unit_risk(
@@ -457,6 +458,7 @@ async def _resolve_dependents(
     embedding_model: str,
     gitrepo: Any,
     ingest_file: Any,
+    denylist: Any,
     result: CodeIngestResult,
 ) -> None:
     """After a commit's touched files: bind declined sites
@@ -469,7 +471,7 @@ async def _resolve_dependents(
     from server.code.app.index.dependents import CommitDelta, run_for_commit
 
     delta = CommitDelta.from_stats(file_stats, touched)
-    if delta.empty:
+    if delta.empty and not (settings.code_ingest_dependents_enabled and delta.python_binding_files):
         return
     try:
         closure, deps = await run_for_commit(
@@ -488,6 +490,7 @@ async def _resolve_dependents(
             pending_max=settings.code_ingest_dependents_pending_max,
             closure_max_names=settings.code_closure_repair_max_names,
             closure_max_sites=settings.code_closure_repair_max_sites,
+            denylist=denylist,
         )
     except Exception as e:
         result.errors.append(f"{sha[:12]} dependents: {type(e).__name__}: {e}")

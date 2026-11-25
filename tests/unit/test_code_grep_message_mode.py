@@ -467,6 +467,13 @@ def test_literal_hit_is_byte_identical_and_never_falls_back() -> None:
     }, "a matches-mode payload carries no message-mode field"
 
 
+def test_message_literal_fallback_does_not_scan_for_related_arguments() -> None:
+    repo = _Repo(message=[], literal=[], regex=[])
+    out = _grep(repo, pattern="missing(request.path)", mode="message", related_on_miss=True)
+    assert not out.matches and out.related is None
+    assert repo.calls.count(("chunks", False)) == 1
+
+
 def test_regex_shaped_literal_with_no_chunks_is_run_once_as_a_regex() -> None:
     repo = _Repo(literal=[], regex=[LINE_CHUNK])
     out = _grep(repo, pattern="ALIAS|isAlias|Alias")

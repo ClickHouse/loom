@@ -87,14 +87,22 @@ const workflows = [
         <p class="example">{example}</p>
         <div class="site-actions"><a class="text-link" href={href}>{cta} <span aria-hidden="true">↗</span></a></div>
       </div>
-      <Image src={image} format="webp" alt={alt} loading="lazy" decoding="async" />
+      <Image
+        src={image}
+        format="webp"
+        widths={[360, 480, 640, 800, 960, image.width]}
+        sizes="(max-width: 55rem) 92vw, (max-width: 108rem) 52vw, 56rem"
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+      />
     </section>
   ))}
 
   <section class="site-section" id="workflows" aria-labelledby="workflows-title">
     <div class="section-copy">
       <h2 id="workflows-title">Coordinate work across agents</h2>
-      <p>Use the same system to follow agent activity, recover earlier context, and hand work from one agent or tool to another.</p>
+      <p>Follow agent activity, recover earlier context, and hand work between agents. The <a href="/docs/guides/software-factory-tools">AI software factory tools guide</a> shows how to test those handoffs with your repository, CI, and review process.</p>
     </div>
     <div class="site-grid">
       {workflows.map(({ title, detail, href, cta }) => (

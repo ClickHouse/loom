@@ -11,6 +11,9 @@ files. Needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`. How the ind
 built and kept fresh is in [the code index overview](../features/code-index/overview.md);
 what it gives in each language is in [code index by language](code-intelligence-by-language.md).
 
+For a triage agent, design assistant or team chatbot that runs away from the source
+tree, start with [repository Q&A without a checkout](../guides/repository-questions.md).
+
 ## What you get
 
 - **Definitions, callers and impact.** `code.symbol`, `code.callers` and `code.impact`

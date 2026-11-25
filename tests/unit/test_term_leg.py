@@ -735,15 +735,20 @@ async def test_governed_pages_apply_the_requested_bodies_and_budget(
     async def clear(*args: Any) -> list[bool]:
         return [False] * len(args[-1])
 
+    async def finish_read(task: asyncio.Task[term_leg.TermLeg], _wait_s: float) -> term_leg.TermLeg:
+        return await task
+
     monkeypatch.setattr(search_pages, "load_page", load)
     monkeypatch.setattr(output, "_stale_flags", clear)
     monkeypatch.setattr(output, "withheld_definition_flags", clear)
+    monkeypatch.setattr(term_leg, "outcome", finish_read)
     for budget in (200, 4000):
         out = await output._serve_parked_page(
             _input(
                 top_k=1, page="page/" + "a" * 20 + "@0", bodies=bodies, body_budget_tokens=budget
             )
         )
+        assert [hit.memory_key for hit in out.results] == ["definition/arr"]
         hit = out.results[0]
         if bodies in ("unit", "source"):
             assert hit.body_truncated is (budget == 200)

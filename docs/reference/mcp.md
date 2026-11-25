@@ -43,6 +43,10 @@ examples or notes labeled with its verified owning type. Clients can discover
 `code.symbol` and `code.search` as needed.
 An explicit `LOOM_MCP_ALWAYS_LOAD_TOOLS` list controls loading on every profile.
 
+Compact coding connections list grep's common arguments up front. Use
+`loom_op` with `{"op": "help", "query": "code.grep"}` to find related source,
+neighbour and deadline controls. Calls accept the full argument set.
+
 On coding connections, `code.symbol` includes related indexed tests and nearby
 source with the definition. Set `include_examples: false` to omit the tests,
 `test_examples_only: false` for general usage examples, or

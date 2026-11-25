@@ -9,7 +9,7 @@ export class LoomApi implements ICredentialType {
     properties: { headers: { Authorization: "=Bearer {{$credentials.apiKey}}" } },
   };
   test = { request: { baseURL: "={{$credentials.baseUrl}}", url: "/v1/me" } };
-  documentationUrl = "https://clickhouse.github.io/loom/getting-started/quickstart/";
+  documentationUrl = "https://loom.clickhouse.com/docs/getting-started/quickstart/";
   properties: INodeProperties[] = [
     {
       displayName: "Server URL",

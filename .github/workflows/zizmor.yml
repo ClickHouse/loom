@@ -33,7 +33,8 @@ jobs:
         run: |
           tool_dir="$RUNNER_TEMP/zizmor-tool"
           mkdir -p "$tool_dir"
-          curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 \
+          curl --fail --silent --show-error --location \
+            --retry 2 --retry-all-errors --retry-max-time 85 --connect-timeout 10 --max-time 40 \
             https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
             --output "$tool_dir/zizmor.tar.gz"
           echo "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b  $tool_dir/zizmor.tar.gz" | sha256sum --check
@@ -111,7 +112,8 @@ jobs:
         run: |
           tool_dir="$RUNNER_TEMP/zizmor-tool"
           mkdir -p "$tool_dir"
-          curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 \
+          curl --fail --silent --show-error --location \
+            --retry 2 --retry-all-errors --retry-max-time 85 --connect-timeout 10 --max-time 40 \
             https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
             --output "$tool_dir/zizmor.tar.gz"
           echo "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b  $tool_dir/zizmor.tar.gz" | sha256sum --check
@@ -149,7 +151,8 @@ jobs:
         run: |
           tool_dir="$RUNNER_TEMP/zizmor-tool"
           mkdir -p "$tool_dir"
-          curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 \
+          curl --fail --silent --show-error --location \
+            --retry 2 --retry-all-errors --retry-max-time 85 --connect-timeout 10 --max-time 40 \
             https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
             --output "$tool_dir/zizmor.tar.gz"
           echo "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b  $tool_dir/zizmor.tar.gz" | sha256sum --check

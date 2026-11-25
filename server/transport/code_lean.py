@@ -219,6 +219,9 @@ def _lean_grep(out: dict[str, Any]) -> None:
         mod = _module_of_path(path)
         if mod and scope.startswith(mod + "::"):
             m["scope"] = scope[len(mod) + 2 :]
+    related = out.get("related")
+    if isinstance(related, dict):
+        out["related"] = lean_code("code.grep", related)
 
 
 def _lean_enclosing(out: dict[str, Any]) -> None:

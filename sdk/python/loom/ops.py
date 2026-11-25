@@ -6409,7 +6409,7 @@ class CodeEditContextInput(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    name: Required[str]
+    name: NotRequired[str]
     clues: NotRequired[list[str]]
 
 
@@ -6421,7 +6421,7 @@ class CodeEditContextBody(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    name: Required[str]
+    name: NotRequired[str]
     clues: NotRequired[list[str]]
 
 
@@ -6658,6 +6658,9 @@ class CodeGrepInput(TypedDict, total=False):
     consumer: NotRequired[str]
     pattern: Required[Union[str, list[str]]]
     regex: NotRequired[bool]
+    related_on_miss: NotRequired[bool]
+    related_on_prefix: NotRequired[bool]
+    include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
     path_prefix: NotRequired[str]
@@ -6687,6 +6690,9 @@ class CodeGrepBody(TypedDict, total=False):
     consumer: NotRequired[str]
     pattern: Required[Union[str, list[str]]]
     regex: NotRequired[bool]
+    related_on_miss: NotRequired[bool]
+    related_on_prefix: NotRequired[bool]
+    include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
     path_prefix: NotRequired[str]
@@ -6708,6 +6714,7 @@ class CodeGrepOutput(TypedDict, total=False):
     lessons: NotRequired[list[dict[str, Any]]]
     lessons_left_out: NotRequired[int]
     matches: Required[list[dict[str, Any]]]
+    related: NotRequired[Optional["RelatedGrepEvidence"]]
     contexts: NotRequired[list[dict[str, Any]]]
     contexts_partial: NotRequired[bool]
     definitions: NotRequired[list[dict[str, Any]]]
@@ -6737,6 +6744,28 @@ class CodeGrepOutput(TypedDict, total=False):
     partial: NotRequired[bool]
     partial_reason: NotRequired[str]
     fallback: NotRequired[Literal["", "literal"]]
+
+
+class RelatedGrepEvidence(TypedDict, total=False):
+    "Verified lines for a qualified argument or member found by literal recovery."
+
+    pattern: Required[str]
+    matches: Required[list[dict[str, Any]]]
+    contexts: NotRequired[list[dict[str, Any]]]
+    contexts_partial: NotRequired[bool]
+    definitions: NotRequired[list[dict[str, Any]]]
+    definitions_partial: NotRequired[bool]
+    definitions_note: NotRequired[str]
+    truncated: NotRequired[bool]
+    dependencies: NotRequired[list["GrepDependency"]]
+
+
+class GrepDependency(TypedDict, total=False):
+    qualified_name: Required[str]
+    path: Required[str]
+    start_line: Required[int]
+    end_line: Required[int]
+    body: Required[str]
 
 
 class CodeHistoryInput(TypedDict, total=False):

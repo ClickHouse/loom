@@ -1,3 +1,10 @@
+---
+title: Self-hosted agent memory on ClickHouse
+description: Query self-hosted agent memory with SQL. Review decision history and writer provenance with read-only access scoped to an org and namespace.
+seo:
+  title: SQL-queryable agent memory on ClickHouse
+---
+
 # Self-hosted agent memory on ClickHouse
 
 Loom runs on your own infrastructure, with Docker or on Kubernetes with its Helm chart, and
@@ -22,6 +29,87 @@ receive what they process), and what your agents know is queryable with SQL.
 - **Local models.** The released stack embeds on CPU with a bundled local model, and
   the embedding provider accepts an OpenAI-compatible endpoint you run.
   [Models and API keys](../getting-started/models-and-keys.md)
+
+## Query agent memory with SQL
+
+Use the [read-only ClickHouse views](../reference/sql-surface.md) to audit saved facts,
+trace corrections, or pull usage into a reporting job. The ClickHouse user provisioned
+by `loom sql-access` reads only its granted orgs and namespaces. Start with
+[`sql_v1_memories`](../reference/sql-surface.md#sql_v1_memories) for current facts and
+[`sql_v1_memory_history`](../reference/sql-surface.md#sql_v1_memory_history) for versions.
+Agents can keep using MCP or HTTP for semantic recall and writes.
+
+### Audit a changed decision with SQL
+
+Try this on a disposable single-user quickstart deployment with bundled ClickHouse and
+the default `dev/local` scope and database `loom`.
+
+1. Save `deploy_window` using the [first HTTP memory write](../getting-started/quickstart.md#4-first-memory-over-http).
+   Keep its `memory_id`. Pass that ID, `org: "dev"` and a replacement `value` to
+   [`memory.update_by_id`](../reference/operations/memory.md#memoryupdate_by_id).
+   Check that the operation returns `updated: true`.
+2. From the Loom container, create a SQL reader scoped to
+   this namespace. The [SQL access requirements](../reference/sql-surface.md#access) list
+   the privileges the operator needs.
+
+   ```bash
+   docker compose --project-directory "$HOME/.loom" exec loom \
+     loom sql-access grant --user loom_demo_audit --org dev --namespaces local
+   ```
+
+3. Open the bundled ClickHouse client as `loom_demo_audit` and enter the password printed
+   by the grant.
+
+   ```bash
+   docker compose --project-directory "$HOME/.loom" exec clickhouse \
+     clickhouse-client --user loom_demo_audit --ask-password
+   ```
+
+   Query the history of the decision written by the quickstart's `http` agent.
+
+   ```sql
+   SELECT version, actor, updated_at, value, value_withheld
+   FROM loom.sql_v1_memory_history
+   WHERE org = 'dev'
+     AND namespace = 'local'
+     AND agent = 'http'
+     AND memory_key = 'deploy_window'
+   ORDER BY version;
+   ```
+
+The history shows both versions, with each `value` returned as a JSON string. The
+single-user example leaves `actor` blank. On an authenticated deployment, it identifies
+the writer's token subject. The view returns NULL for a redacted `value` or any version
+of a key ever labeled `high` and gives the reason in `value_withheld`. Under the
+Postgres authority, the version appears once it has been
+[published to ClickHouse](../reference/sql-surface.md#freshness).
+
+### Count active memories by agent and source
+
+Use the same SQL reader to see how many active, unexpired memories each agent has by
+provenance class. This report returns counts without memory keys or values.
+
+```sql
+SELECT
+    agent,
+    source_class,
+    count() AS active_memories,
+    countIf(value_withheld != '') AS withheld_values
+FROM loom.sql_v1_memories
+WHERE org = 'dev'
+  AND namespace = 'local'
+  AND status = 'active'
+  AND (expires_at IS NULL OR expires_at > now())
+GROUP BY agent, source_class
+ORDER BY agent, source_class;
+```
+
+`withheld_values` counts active rows whose values the view suppresses for sensitivity or
+redaction. It is a count within `active_memories`. In a reporting job, provision a reader
+for the namespaces the job covers. The view reads the
+[granted scope](../reference/sql-surface.md#what-a-read-costs) before applying the report's filters.
+
+Run `loom sql-access revoke --user loom_demo_audit` in the Loom container when finished.
 
 ## Measured
 

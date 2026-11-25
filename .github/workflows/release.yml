@@ -481,7 +481,7 @@ jobs:
             pin: image.digest
             # Title and description are the repository's, metadata-action's defaults.
             labels: |
-              org.opencontainers.image.documentation=https://clickhouse.github.io/loom/
+              org.opencontainers.image.documentation=https://loom.clickhouse.com/docs/
           - artifact: extractor
             image: ghcr.io/clickhouse/loom-extractor
             file: extractor/Dockerfile
@@ -489,7 +489,7 @@ jobs:
             labels: |
               org.opencontainers.image.title=loom-extractor
               org.opencontainers.image.description=Loom's document extractor service, which parses originals apart from the server
-              org.opencontainers.image.documentation=https://clickhouse.github.io/loom/
+              org.opencontainers.image.documentation=https://loom.clickhouse.com/docs/
           - arch: amd64
             runner: ubuntu-latest
           - arch: arm64

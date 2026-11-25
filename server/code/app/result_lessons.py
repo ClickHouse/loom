@@ -19,7 +19,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
-from server.code.api.models_grep import CodeGrepInput
+from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput, GrepDependency
 from server.code.api.models_navigation import CodeEnclosingInput
 from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import common, enrich, memory_links
@@ -138,7 +138,10 @@ class WithLessons:
         symbols = None
         grep_lines = None
         if isinstance(input, CodeGrepInput) and input.mode == "matches":
-            symbols, grep_lines = _grep_match_scopes(out.matches, out._match_commits)
+            dependencies = out.related.dependencies if out.related is not None else ()
+            symbols, grep_lines = _grep_match_scopes(
+                _grep_matches(out), out._match_commits, dependencies
+            )
         elif isinstance(input, CodeSearchInput):
             symbols = _search_match_symbols(out)
         found = await lessons_for(
@@ -156,8 +159,9 @@ class WithLessons:
 def _grep_match_scopes(
     matches: Iterable[dict[str, Any]],
     commits: dict[tuple[str, int], str],
+    dependencies: Iterable[GrepDependency],
 ) -> tuple[dict[str, set[str]], path_lessons.GrepMatchLines]:
-    """Retain named definitions, unscoped positions and each hit's retained revision."""
+    """Retain the scopes and revisions of hits and their verified dependencies."""
     symbols: dict[str, set[str]] = {}
     lines: dict[str, set[int]] = {}
     revisions: dict[str, set[str]] = {}
@@ -172,6 +176,11 @@ def _grep_match_scopes(
             symbols.setdefault(path, set()).add(scope)
         else:
             lines.setdefault(path, set()).add(line)
+    for dependency in dependencies:
+        if dependency._indexed_commit:
+            scope = local_name(dependency.qualified_name, dependency.path)
+            symbols.setdefault(dependency.path, set()).add(scope)
+            revisions.setdefault(dependency.path, set()).add(dependency._indexed_commit)
     return symbols, path_lessons.GrepMatchLines(lines, revisions)
 
 
@@ -201,11 +210,18 @@ def _symbols_by_path(rows: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
 # The files each code answer returns, best first.
 
 
-def grep_paths(input: Any, out: Any) -> list[str]:
+def _grep_matches(out: CodeGrepOutput) -> list[dict[str, Any]]:
+    return [*out.matches, *out.related.matches] if out.related is not None else out.matches
+
+
+def grep_paths(input: CodeGrepInput, out: CodeGrepOutput) -> list[str]:
     if input.mode == "presence" or out.not_covered:
         return []
-    rows = out.files if input.mode == "files" else out.matches
-    return [str(row.get("path") or "") for row in rows]
+    rows = out.files if input.mode == "files" else _grep_matches(out)
+    paths = [str(row.get("path") or "") for row in rows]
+    if input.mode == "matches" and out.related is not None:
+        paths.extend(d.path for d in out.related.dependencies if d._indexed_commit)
+    return paths
 
 
 def search_paths(input: Any, out: Any) -> list[str]:

@@ -184,7 +184,7 @@ const MEMORY_SERVED_TOOL_RE = /loom_(search|memory_get|memory_search)\b/;
 // Every code op whose response carries a trace_run_id (each server read
 // handler writes a loom.code_search_trace row).
 const CODE_TRACED_TOOL_RE =
-  /loom_code_(search|symbol|ask|trace|callers|callees|impact|verify|grep|context_pack|examples|history|map)\b/;
+  /loom_code_(search|symbol|ask|trace|callers|callees|impact|verify|grep|edit_context|context_pack|examples|history|map)\b/;
 
 /** Repo paths a code op's response points at, whatever its shape. Exported
  *  for tests via handleCodeSignals' behaviour; kept tiny and total. */
@@ -204,9 +204,15 @@ export function codeResponsePaths(body) {
   take(body.impacted_symbols); // impact
   take(body.touched_symbols);
   take(body.matches); // grep
+  take(body.related?.matches);
+  take(body.related?.definitions);
+  take(body.related?.dependencies);
   take(body.evidence); // verify
   take(body.frames); // trace (resolved frames)
   take(body.paths, null); // history (plain strings)
+  if (Array.isArray(body.definitions)) {
+    for (const definition of body.definitions) take(definition?.examples);
+  }
   return [...out].slice(0, 50);
 }
 
@@ -294,10 +300,10 @@ function handleCodeSignals(payload, scope, opts) {
   const stash = readCodeStash(sessionId);
   if (!stash.length) return;
 
-  // 2) Read of a returned path -> opened_file
+  // 2) Read of a returned path -> opened_file on the latest matching trace.
   if (toolName === "Read" && typeof toolInput.file_path === "string") {
     const opened = toolInput.file_path;
-    for (const row of stash) {
+    for (const row of stash.reverse()) {
       if (row.paths.some((p) => opened.endsWith(p) || p.endsWith(opened))) {
         postFireAndForget(
           CODE_OUTCOME_OP,

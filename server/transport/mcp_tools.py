@@ -361,8 +361,7 @@ def _with_identity(schema: dict[str, Any], op: Operation) -> dict[str, Any]:
 
 
 def _without(schema: dict[str, Any], names: set[str]) -> dict[str, Any]:
-    """`schema` without the properties the assistant connection overwrites or drops: a
-    model is not offered an argument the connection sets or discards."""
+    """Omit optional properties from a tool listing."""
     if not isinstance(schema.get("properties"), dict):
         return schema
     # Each has a default, so it is never in `required`.
@@ -523,6 +522,16 @@ def _with_loading_hints(descriptors: list[dict[str, Any]], requested: set[str]) 
             descriptor.setdefault("_meta", {})["anthropic/alwaysLoad"] = True
 
 
+_GREP_ADVANCED_ARGS = {
+    "related_on_miss",
+    "related_on_prefix",
+    "include_dependencies",
+    "neighbours",
+    "neighbour_k",
+    "deadline_ms",
+}
+
+
 async def _tools_descriptor(
     *, schema_profile: str | None = None, toolset: str | None = None
 ) -> list[dict[str, Any]]:
@@ -537,8 +546,10 @@ async def _tools_descriptor(
     override.
     """
     from server.settings import settings
+    from server.transport.mcp_schemas import apply_schema_profile, resolve_schema_profile
 
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
+    profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
     descriptors: list[dict[str, Any]] = []
     ops = listed_ops(toolset)
     listed = _tool_names(ops, toolset)
@@ -569,6 +580,8 @@ async def _tools_descriptor(
                 input_schema, set(ASSISTANT_FORCED_ARGS.get(op.name, {})) | ASSISTANT_DROPPED_ARGS
             )
             input_schema = _with_identity(input_schema, op)
+        if profile == "compact" and toolset == "coding" and op.name == "code.grep":
+            input_schema = _without(input_schema, _GREP_ADVANCED_ARGS)
         if defaults := mcp_argument_defaults(op.name, toolset):
             fields = input_schema.get("properties", {})
             for field, value in defaults.items():
@@ -584,9 +597,6 @@ async def _tools_descriptor(
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
-    from server.transport.mcp_schemas import apply_schema_profile, resolve_schema_profile
-
-    profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
     _with_loading_hints(
         descriptors, _upfront_tools(settings.mcp_always_load_tools, toolset, profile)
     )

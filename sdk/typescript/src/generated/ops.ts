@@ -768,9 +768,9 @@ export interface CodeEditContextInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Definition name, path:symbol, or path:line. With clues, give the file path. */
-  name: string;
-  /** Literal code fragments to locate the edit target in the named file. */
+  /** Definition name, path:symbol, or path:line. File path with clues if known. */
+  name?: string;
+  /** Literal fragments to find the edit target in a file or across the index. */
   clues?: string[];
 }
 
@@ -951,15 +951,21 @@ export interface CodeGrepInput {
   pattern: string | string[];
   /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
+  /** Recover a missing call's qualified argument in a literal or batch, or one member spelling in malformed call alternatives (default true on coding connections). */
+  related_on_miss?: boolean;
+  /** Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. Default true on coding connections. */
+  related_on_prefix?: boolean;
+  /** Include the resolved argument definition and direct helper in related source. */
+  include_dependencies?: boolean;
   case_sensitive?: boolean;
-  /** Retained lines on each side of a match. */
+  /** Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. */
   context_lines?: number;
   path_prefix?: string;
   /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";
-  /** Return bodies by default in matches mode, or set false for lines only. */
+  /** Return full enclosing bodies by default in matches mode. */
   include_body?: boolean;
   limit?: number | null;
   path_globs?: string[];
@@ -971,10 +977,31 @@ export interface CodeGrepInput {
   deadline_ms?: number | null;
 }
 
+export interface RelatedGrepEvidence {
+  pattern: string;
+  matches: Array<Record<string, unknown>>;
+  contexts?: Array<Record<string, unknown>>;
+  contexts_partial?: boolean;
+  definitions?: Array<Record<string, unknown>>;
+  definitions_partial?: boolean;
+  definitions_note?: string;
+  truncated?: boolean;
+  dependencies?: GrepDependency[];
+}
+
+export interface GrepDependency {
+  qualified_name: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  body: string;
+}
+
 export interface CodeGrepOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
+  related?: RelatedGrepEvidence | null;
   contexts?: Array<Record<string, unknown>>;
   contexts_partial?: boolean;
   definitions?: Array<Record<string, unknown>>;

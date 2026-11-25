@@ -316,7 +316,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like c
 
 ## `code.callers`
 
-Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved where available; `edge_kinds: ['inherits']` narrows the walk to what implements or extends a type.
+Find callers before editing shared code.
 
 `POST /v1/code.callers` · MCP `loom_code_callers` · role `viewer` · read
 
@@ -577,7 +577,7 @@ Is this already tested?
 
 ## `code.edit_context`
 
-Read implementation, relevant indexed tests, and linked lessons before editing.
+Read implementation, indexed tests, and linked notes before editing.
 
 `POST /v1/code.edit_context` · MCP `loom_code_edit_context` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -590,8 +590,8 @@ Read implementation, relevant indexed tests, and linked lessons before editing.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `name` | `str` | required | Definition name, path:symbol, or path:line. |
-| `clues` | `list[str]` | *(computed)* | Literal code fragments to locate the edit target in the named file. |
+| `name` | `str` | `''` | Definition name, path:symbol, or path:line. |
+| `clues` | `list[str]` | *(computed)* | Literal fragments to find the edit target in a file or across the index. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -606,7 +606,7 @@ Read implementation, relevant indexed tests, and linked lessons before editing.
 | `uses_truncated` | `bool` | True when `uses_limit` shortened the list or the token cap withheld `uses_brief`. |
 | `uses_tokens` | `int` | Estimated tokens the compact `uses` block cost out of `token_budget`. |
 | `picked_by` | `str` | Which context key ranked the definitions when `near_paths` / `pr_number` was given — same_file \| same_dir \| co_change \| path_distance \| none. "" and off the wire when no context was given. |
-| `resolved_by` | `str` | Which name form bound, or `file_clues` when edit context located the target from literal text. |
+| `resolved_by` | `str` | Edit context reports `file_clues` or `repository_clues` for literal matches, and `file_argument` or `repository_argument` for recovery from a missing call expression. |
 | `documented_in` | `list[dict[str, Any]]` | The document sections that cite the definition (the Markdown lane's `reads` edges) — section qualified name, path, line; at most five distinct sections, first by confidence. |
 | `neighbours` | `list[dict[str, Any]]` | The neighbours graph block on the definitions (one entry per definition anchor); empty unless `neighbours` ran. |
 | `anchors` | `int` | How many definitions the `neighbours` block was built for; 0 when it is off. |
@@ -762,13 +762,16 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `pattern` | `str \| list[str]` | required | Literal text, a list of alternatives, or one RE2 expression with regex=true. |
 | `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
+| `related_on_miss` | `bool` | `False` | Recover a missing call's qualified argument in a literal or batch, or one member spelling in malformed call alternatives (default true on coding connections). |
+| `related_on_prefix` | `bool` | `False` | Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. |
+| `include_dependencies` | `bool` | `False` | Include the resolved argument definition and direct helper in related source. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
-| `context_lines` | `int` | `0` | Retained lines on each side of a match. |
+| `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
 | `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |
 | `mode` | `Literal['matches', 'files', 'presence', 'message']` | `'matches'` | matches: up to `limit` matching LINES with text + enclosing scope. files: up to `limit` matching FILES (path, matching chunk count, first line) and no line text — the coverage question ("which files mention X?") that a 20-line cap cannot… |
-| `include_body` | `bool` | *(computed)* | Return bodies by default in matches mode, or set false for lines only. |
+| `include_body` | `bool` | *(computed)* | Return full enclosing bodies by default in matches mode. |
 | `limit` | `int \| None` | `None` | Default depends on mode: 20 lines, or the 500-file ceiling — a files answer capped at 20 reads like a complete coverage answer to a caller that did not know to send a limit. matches mode is clamped to 200 lines. |
 | `path_globs` | `list[str]` | *(computed)* | File filters, rg `-g` / `-t` style: keep paths matching any glob, drop paths matching any exclude, restrict to a language's extension set. |
 | `exclude_globs` | `list[str]` | *(computed)* | Drop paths matching any of these rg-style globs. |
@@ -783,6 +786,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
 | `matches` | `list[dict[str, Any]]` | {path, line, text, scope, scope_start_line, scope_end_line} per matching LINE, path/line ordered. scope_* is the span of the enclosing unit named by `scope` (0/0 when the line sits in no unit) — enough to decide whether to fetch the body… |
+| `related` | `RelatedGrepEvidence \| None` | Related source for a qualified argument or member, separate from literal matches. |
 | `contexts` | `list[dict[str, Any]]` | Exact retained source windows for this page, with inclusive line bounds. |
 | `contexts_partial` | `bool` |  |
 | `definitions` | `list[dict[str, Any]]` | include_body: distinct enclosing units, in hit order; `lines` names the matching lines each definition covers. |
@@ -1659,7 +1663,7 @@ Find an exact definition by name or path:line.
 | `uses_truncated` | `bool` | True when `uses_limit` shortened the list or the token cap withheld `uses_brief`. |
 | `uses_tokens` | `int` | Estimated tokens the compact `uses` block cost out of `token_budget`. |
 | `picked_by` | `str` | Which context key ranked the definitions when `near_paths` / `pr_number` was given — same_file \| same_dir \| co_change \| path_distance \| none. "" and off the wire when no context was given. |
-| `resolved_by` | `str` | Which name form bound, or `file_clues` when edit context located the target from literal text. |
+| `resolved_by` | `str` | Edit context reports `file_clues` or `repository_clues` for literal matches, and `file_argument` or `repository_argument` for recovery from a missing call expression. |
 | `documented_in` | `list[dict[str, Any]]` | The document sections that cite the definition (the Markdown lane's `reads` edges) — section qualified name, path, line; at most five distinct sections, first by confidence. |
 | `neighbours` | `list[dict[str, Any]]` | The neighbours graph block on the definitions (one entry per definition anchor); empty unless `neighbours` ran. |
 | `anchors` | `int` | How many definitions the `neighbours` block was built for; 0 when it is off. |

@@ -91,8 +91,60 @@ the parentheses. All alternatives share a result limit, and each matching line
 or file appears once.
 `mode: "message"` and `regex: true` require a single string.
 
+To find implementation and existing tests together, batch code text and test
+name prefixes and omit `path_prefix`. To restrict the search, add
+`path_globs` that cover both roots.
+
+Use `code.edit_context` for implementation, indexed tests and linked notes in
+one request. Give the definition name or location if known. Literal `clues`
+can locate the edit target in the named file or across the index when you omit
+`name`. A repository lookup returns source when its verified matches identify
+one file. Competing files return candidate locations. A missing call
+expression can recover source from its qualified argument. It reports
+`resolved_by: file_argument` for a named file or `repository_argument` for a
+repository lookup.
+
+When an exact call expression such as `convert(row.value)` is absent,
+`related_on_miss: true` looks for its qualified argument in the same scope.
+The `related` block names the argument and carries its verified lines and any
+excerpts or bodies. It includes six lines of surrounding source when full
+bodies are disabled and `context_lines` is omitted. Set `context_lines: 0` for
+matching lines only. `matches` stays empty. Linked notes can accompany the
+related hits and their resolved dependency definitions. Coding MCP
+connections enable recovery by default. HTTP and SDK
+callers can opt in.
+
+A literal batch can recover one missing call alongside other exact literals,
+such as an existing test name. The exact matches and related source stay in
+their respective result fields.
+
+Use a list for literal alternatives. When a string of call fragments separated
+by pipes fails to compile as a regex, `related_on_miss` can find qualified uses
+of one shared member spelling in the same search scope. The `related` block
+gives the source lines and identifies the member spelling. Resolved dependency
+bodies require a verified qualified argument.
+
+A literal call prefix such as `convert(row.value` can also show where
+`row.value` appears in other scopes. Coding MCP connections enable this
+with `related_on_prefix`. The exact hit list and its pagination stay separate
+from related source. A batch with one qualified argument can return its other
+uses even when other literals fill the exact page. Use `context_lines` to
+choose the excerpt radius. It defaults to six lines for related excerpts. HTTP
+and SDK callers can opt in. A failed or incomplete related scan sets `partial`
+and keeps the exact matches.
+
+Coding MCP connections can include a resolved Python argument definition and
+its direct helper under `related.dependencies`. The index must bind the same
+argument to one target, and the retained bodies must share the hit's revision
+and satisfy the request's path filters. HTTP and SDK callers can set
+`include_dependencies: true` with `related_on_miss` or `related_on_prefix`.
+Set `include_dependencies: false` or `context_lines: 0` to omit these definitions.
+A literal batch can include the same definitions when its call expressions
+refer to one argument and the exact matches contain its use.
+
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
-lines by default. Pass `include_body=false` for names, lines or locations only.
+lines by default. Pass `include_body=false` to omit bodies and `context_lines=0`
+for matching lines only.
 Each definition appears once. Its `lines` lists the matching
 locations. The same retained-source reader backs `code.enclosing`, including type
 and document-section fallback. The Python index keeps decorators in their
@@ -287,6 +339,11 @@ exists. These call shapes are not captured output from a document/code qualifica
 grade (compiler edges are always 1.0) and `include_ambiguous` to add the call sites the
 resolver declined as a separate `candidate_sites` block. Read `epistemic` and `causes`
 on the answer ([overview.md](overview.md#reading-an-answer)).
+
+On the Python parser tier, `edge_kinds: ["reads"]` can follow member access
+through a top-level function's typed parameter or an imported value with a
+declared type.
+The graph records those accesses separately from function calls.
 
 **Example: impact of a diff.**
 

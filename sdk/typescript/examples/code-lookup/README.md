@@ -19,5 +19,5 @@ availability alone does not guarantee a model will use it.
 
 The implementation is covered by mocked SDK transport tests. No live result or
 performance claim is attached to this example. See the
-[code tools guide](https://clickhouse.github.io/loom/guides/code-tools/) for budgets,
+[code tools guide](https://loom.clickhouse.com/docs/guides/code-tools/) for budgets,
 scoping and evidence limits.

@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/index.md blob=8be60892b839f6ffb2e7ba732e3f70bad9178f68 model=claude-sonnet-5-5 -->
+<!-- i18n: source=docs/index.md blob=173314858f057f518abf314eb98af3afff03c87b model=claude-sonnet-5-5 -->
 > このページは[英語の原文](https://github.com/ClickHouse/loom/blob/main/docs/index.md)の機械翻訳です。内容は英語の原文が優先されます。
 > Machine-translated from the [English page](https://github.com/ClickHouse/loom/blob/main/docs/index.md), which is authoritative.
 
@@ -211,4 +211,4 @@ Loom は、AI エージェント向けのメモリ、ドキュメント、コー
 
 ## 関連ページ
 
-[用語集](glossary.md)：Loom の用語を一か所にまとめて定義しています。[よくある質問](faq.md)：最初に出てくる質問に、それぞれ一段落で答えます。[`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt)：エージェント向けに生成されたドキュメントの索引です。[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt) には、Loom とは何か、どう始めるかを説明するページが 1 つのファイルにまとめられています。
+[用語集](glossary.md)：Loom の用語を一か所にまとめて定義しています。[よくある質問](faq.md)：最初に出てくる質問に、それぞれ一段落で答えます。[`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt)：エージェント向けに生成されたドキュメントの索引です。[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt) には、Loom とは何か、どう始めるかを説明するページが 1 つのファイルにまとめられています。

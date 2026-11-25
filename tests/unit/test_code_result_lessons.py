@@ -11,7 +11,12 @@ from typing import Any
 
 import pytest
 
-from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput
+from server.code.api.models_grep import (
+    CodeGrepInput,
+    CodeGrepOutput,
+    GrepDependency,
+    RelatedGrepEvidence,
+)
 from server.code.api.models_navigation import (
     CodeEnclosingInput,
     CodeEnclosingOutput,
@@ -886,18 +891,37 @@ async def test_grep_lessons_use_matched_files_and_respect_opt_out(
 ) -> None:
     calls: list[dict[str, Any]] = []
     _stub_reads(monkeypatch, ["code-repo"], calls)
+    monkeypatch.setattr(settings, "code_result_lessons_paths", 3)
 
     async def grep(inp: CodeGrepInput) -> CodeGrepOutput:
+        dependency = GrepDependency(
+            qualified_name="src.b::helper",
+            path="src/b.py",
+            start_line=3,
+            end_line=4,
+            body="def helper():\n    pass",
+        )
+        dependency._indexed_commit = "a" * 40
+        unverified = dependency.model_copy(update={"path": "src/c.py"})
+        unverified._indexed_commit = ""
         return CodeGrepOutput(
-            matches=[{"path": "src/a.py", "line": 1}], chunks_matched=1, truncated=False
+            matches=[{"path": "src/a.py", "line": 1}],
+            related=RelatedGrepEvidence(
+                pattern="a.value", matches=[], dependencies=[dependency, unverified]
+            ),
+            chunks_matched=1,
+            truncated=False,
         )
 
     wrapped = result_lessons.WithLessons(grep, result_lessons.grep_paths)
     inp = CodeGrepInput(org="acme", namespace="code-repo", pattern="ab")
     out = await wrapped(inp)
     assert out.lessons[0]["memory_key"] == "k"
-    assert calls[0]["paths"] == ["src/a.py"]
+    assert calls[0]["paths"] == ["src/a.py", "src/b.py"]
     assert calls[0]["query"] == "ab"
+    assert calls[0]["matched_symbols"] == {"src/b.py": {"helper"}}
+    assert calls[0]["grep_lines"].revisions["src/b.py"] == {"a" * 40}
+    assert "_indexed_commit" not in out.model_dump_json()
     calls.clear()
     out = await wrapped(inp.model_copy(update={"include_lessons": False}))
     assert calls == [] and "lessons" not in out.model_dump()

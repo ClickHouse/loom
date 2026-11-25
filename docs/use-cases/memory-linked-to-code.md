@@ -1,3 +1,8 @@
+---
+title: Memory linked to code for coding agents
+description: Link agent lessons to functions, classes and files. Follow those links through refactors and check which lessons refer to changed or removed code.
+---
+
 # Memory linked to code for coding agents
 
 Loom links coding agents' memories to the functions, classes and files they name, follows

@@ -1,13 +1,24 @@
+---
+seo:
+  title: Agent memory and code search documentation
+---
+
 # ClickHouse Loom documentation
 
 Loom is a memory, document and code-index server for AI agents, stored in ClickHouse,
 with [Postgres](architecture/storage-authority.md#why-two-stores) as an option for live
 memory and knowledge state. Agents and people reach it over MCP, HTTP, the Python and
-TypeScript SDKs, and the dashboard. This page lists every page in reading order.
+TypeScript SDKs, and the dashboard. Browse the [guides](guides/index.md) by task or
+follow the reading order below.
+
+<a href="https://loom.clickhouse.com/docs/es/use-cases" lang="es" hreflang="es">Casos de uso en español</a>
 
 ![The dashboard's Library: a search for a refund rule answered by cited passages](assets/screenshots/document-search.webp)
 
-<video src="assets/screenshots/clip-assistant-answer.webm" controls autoplay loop muted playsinline width="100%" aria-label="Ask AI answering a question about refunds, with its numbered sources checked against Loom"><a href="assets/screenshots/clip-assistant-answer.webm">Ask AI answering with checked sources (clip)</a></video>
+<details>
+<summary>Watch the cited-answer demo</summary>
+<video src="assets/screenshots/clip-assistant-answer.webm" controls preload="none" muted playsinline width="100%" aria-label="Ask AI answering a question about refunds, with its numbered sources checked against Loom"><a href="assets/screenshots/clip-assistant-answer.webm">Download the cited-answer clip</a></video>
+</details>
 
 ## Start here
 
@@ -26,7 +37,9 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
 One page per need, each saying what Loom does for it and where to start:
 [agent memory](use-cases/agent-memory.md) ·
 [document search and RAG](use-cases/document-search.md) ·
+[knowledge factory for AI agents](use-cases/knowledge-factory.md) ·
 [code index for coding agents](use-cases/code-intelligence.md) ·
+[repository Q&A without a checkout](guides/repository-questions.md) ·
 [code index by language](use-cases/code-intelligence-by-language.md) ·
 [memory linked to code](use-cases/memory-linked-to-code.md) ·
 [coding-agent model cost](use-cases/coding-agent-cost.md) ·
@@ -90,7 +103,7 @@ One page per need, each saying what Loom does for it and where to start:
 
 [Reference index](reference/index.md) · [HTTP API](reference/http-api.md) ·
 [MCP](reference/mcp.md) · [Python SDK](reference/python-sdk.md) ·
-[TypeScript SDK](reference/typescript-sdk.md) · [Environment](reference/environment.md) ·
+[TypeScript SDK](reference/typescript-sdk.md) · [Go SDK](reference/go-sdk.md) · [Environment](reference/environment.md) ·
 [Operations](reference/operations.md) · [Configuration](reference/configuration.md) ·
 [Workers](reference/workers.md) · [CLI](reference/cli.md) · [Errors](reference/errors.md) ·
 [Status](reference/status.md) · [Schema](reference/schema.md) ·
@@ -102,7 +115,7 @@ client sees one the server no longer reads.
 
 - [Identities and namespaces](concepts/identities-and-namespaces.md): the tuple, roles,
   grants and read scope.
-- [Memory](concepts/memory.md): the row, how a write is judged, time, history,
+- [Agentic memory](concepts/memory.md): working memory, long-term recall, time, history,
   provenance.
 - [Retrieval and ranking](concepts/retrieval-and-ranking.md): legs, fusion, abstain,
   calibration.
@@ -113,6 +126,7 @@ client sees one the server no longer reads.
 [Headless bots](guides/headless-bots.md) ·
 [Tokens and grants](guides/tokens-and-grants.md) ·
 [Trace and resume long runs](guides/trace-and-resume.md) ·
+[Choose AI software factory tools](guides/software-factory-tools.md) ·
 [Optimize a namespace](guides/optimize-namespace.md) ·
 [Investigation-agent memory](guides/investigation-agent-memory.md) ·
 [Extraction pipelines](guides/extraction-pipeline.md) ·
@@ -197,5 +211,5 @@ For contributors: [repository guide](development/repository-guide.md) ·
 
 [Glossary](glossary.md): Loom's terms, defined once. [FAQ](faq.md): the first questions, one
 paragraph each. [`llms.txt`](../llms.txt): a generated index of the docs for agents;
-[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt) holds, in one file, the
+[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt) holds, in one file, the
 pages that say what Loom is and how to start.

@@ -95,6 +95,44 @@ class EdgesMixin(CodeRepoBase):
                 out.setdefault(str(r["path"]), []).append(r)
         return out
 
+    async def member_edges_at_locations(
+        self, org: str, ns: str, sites: list[tuple[str, int]], member: str
+    ) -> list[dict[str, Any]]:
+        """Verified candidates for a named member at exact source locations."""
+        out: list[dict[str, Any]] = []
+        for batch in _batched(sites, 200):
+            rows = await self._ch.query_all(
+                """
+                SELECT tier, to_symbol_id, from_symbol_id, path, line, edge_kind,
+                       argMax(from_qualified_name, version) AS from_qualified_name,
+                       argMax(to_qualified_name, version) AS to_qualified_name,
+                       argMax(indexed_commit, version) AS indexed_commit,
+                       argMax(confidence, version) AS confidence,
+                       argMax(tombstoned_at IS NULL, version) AS is_live
+                FROM loom.code_edges
+                WHERE org = {org:String} AND namespace = {ns:String}
+                  AND path IN {paths:Array(String)}
+                  AND (path, line) IN {sites:Array(Tuple(String, UInt32))}
+                  AND ((tier = 'scip' AND edge_kind = 'calls')
+                       OR (tier = 'treesitter' AND edge_kind = 'reads'))
+                GROUP BY tier, edge_kind, to_symbol_id, from_symbol_id, path, line
+                HAVING is_live = 1 AND confidence >= toFloat32(0.8)
+                  AND endsWith(to_qualified_name, {suffix:String})
+                LIMIT 501
+                """,
+                {
+                    "org": org,
+                    "ns": ns,
+                    "paths": sorted({path for path, _ in batch}),
+                    "sites": batch,
+                    "suffix": f"::{member}",
+                },
+            )
+            if len(rows) == 501:
+                return []  # Incomplete candidates cannot establish a unique definition.
+            out.extend(rows)
+        return out
+
     async def live_call_misses_for_paths(
         self, org: str, ns: str, paths: list[str]
     ) -> dict[str, list[dict[str, Any]]]:

@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 readme = "README.md"
 authors = [{ name = "ClickHouse, Inc." }]
-urls = { Homepage = "https://clickhouse.github.io/loom/", Repository = "https://github.com/ClickHouse/loom" }
+urls = { Homepage = "https://loom.clickhouse.com/docs/", Repository = "https://github.com/ClickHouse/loom" }
 # PEP 541: PyPI rejects uploads whose primary classifier is "Private ::
 # Do Not Upload". Loom's server is a shared-production data plane,
 # deployed multi-user / multi-agent against ClickHouse Cloud or self-
@@ -353,6 +353,7 @@ exclude = [
   "server/code/domain/extract/py_decorated_chunks.py",
   "server/code/domain/extract/py_layouts.py",
   "server/code/domain/extract/py_library_methods.py",
+  "server/code/domain/extract/py_member_reads.py",
   "server/code/domain/extract/py_members.py",
   "server/code/domain/extract/py_receivers.py",
   "server/code/domain/extract/registration.py",
