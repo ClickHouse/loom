@@ -160,6 +160,32 @@ const localizedSeo = {
       description: "通过 Docker 或 Kubernetes 自托管 Loom，并使用 SQL 查询 ClickHouse 中存储的智能体记忆。",
     },
   },
+  "use-cases/document-search.md": {
+    es: {
+      title: "RAG con citas para documentos internos",
+      description:
+        "Permite que los agentes de IA busquen en documentos internos mediante MCP. Recupera pasajes con su fuente y revisión y limita el acceso por espacio de nombres.",
+    },
+    ja: {
+      title: "社内文書を引用付きで検索するRAG",
+      description:
+        "AIエージェントがMCPで社内文書を検索し、根拠となる箇所と文書の版を確認できます。名前空間ごとにアクセスを制御します。",
+    },
+    ko: {
+      title: "출처를 인용하는 사내 문서 RAG 검색",
+      description:
+        "AI 에이전트가 MCP로 사내 문서를 검색하고 근거가 되는 구절과 문서 버전을 확인합니다. 네임스페이스별로 접근을 제한합니다.",
+    },
+    "pt-BR": {
+      title: "RAG com citações para documentos internos",
+      description:
+        "Pesquise documentos internos com agentes de IA via MCP. Recupere trechos com fonte e revisão e controle o acesso por namespace.",
+    },
+    "zh-CN": {
+      title: "带引用的内部文档 RAG 检索",
+      description: "让 AI 智能体通过 MCP 搜索内部文档，获取带来源和版本的文本片段，并按命名空间控制访问权限。",
+    },
+  },
   "use-cases/code-intelligence.md": {
     es: {
       title: "Búsqueda de código con MCP para agentes",

@@ -87,6 +87,9 @@ separately:
 - **Economy:** p50/p95 latency, input/output tokens, model cost, construction cost and
   stored rows.
 
+Use the [internal document citation checks](../use-cases/document-search.md#evaluate-rag-over-internal-documents)
+to cover revised sources, missing evidence, and a reader outside the document namespace.
+
 For an existing memory corpus, save a JSON dataset with this shape (the supplied harness
 targets `memory.search`; use an equivalent scorer for `knowledge.search`):
 

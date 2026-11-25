@@ -1,3 +1,9 @@
+---
+description: Index internal documents and give AI agents cited passages over MCP, HTTP or SDKs. Check source revisions and scope access by namespace.
+seo:
+  title: RAG with citations for internal documents
+---
+
 # Document search and RAG for agents
 
 Loom indexes your documents (Markdown and text, and PDF, `.docx` and `.pptx` files that its
@@ -98,5 +104,21 @@ connecting an MCP client does not turn them on.
 The request above is an example to run against your own indexed documents, not a
 captured search result. See the [unified search contract](../features/unified-search.md#loom_search)
 for the other request fields and result sections.
+
+## Evaluate RAG over internal documents
+
+Pick test questions from your runbooks and policies. Record the expected source,
+revision and supporting passage before running each question. Check retrieval and
+the agent's answer separately so you can tell where a failure occurred.
+
+| Test case           | Pass condition                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Answerable question | The expected passage is in the retrieved results. The agent cites it beside the claim it supports.                   |
+| Updated policy      | After publishing a revision, the citation names that revision and the answer reflects the revised rule.              |
+| Missing evidence    | The agent abstains when none of the retrieved passages supports an answer.                                           |
+| Restricted document | The same question from a reader outside the namespace returns no passage or identifier from the restricted document. |
+
+Use the [RAG evaluation procedure](../getting-started/evaluate.md#memory-and-rag)
+to record retrieval recall and citation correctness separately.
 
 Some ops on this page are marked experimental on the [status page](../reference/status.md).
