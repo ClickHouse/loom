@@ -1,16 +1,20 @@
 ---
 title: Shared memory for AI software factories
-description: Evaluate software-factory memory for coding-agent handoffs, source-linked lessons and reported outcomes, with a runnable evidence-handoff reference.
+description: Choose shared agent memory for a software factory. Test one coding-agent handoff for source freshness, scoped access and evidence a reviewer can reuse.
+seo:
+  title: Choose agent memory for a software factory
 ---
 
 # Shared memory for a software factory and multi-agent workflows
 
 <a id="shared-context-for-multi-agent-workflows"></a>
 
-Loom is a self-hosted MCP server for multi-agent memory, with namespace-scoped tokens and
-separate read and write roles. Agents share context through memory, task inboxes and
-decision records within the namespaces they can access. Your agents and orchestrator run
-the workflow; Loom keeps what they learn and hand over.
+Choose shared agent memory when implementation and review run in separate sessions or tools.
+The review agent should be able to recover the implementer's lesson, issue and source revision
+with its own credentials. Start with a [pilot on one repository](#choosing-memory-for-a-software-factory).
+
+Loom is a self-hosted MCP server. Agents share memory, task inboxes and decision records through
+namespaces with separate read and write roles. Your agents and orchestrator run the workflow.
 
 ## What you get
 
@@ -94,10 +98,12 @@ no captured live output.
 
 ### Choosing memory for a software factory
 
-The best memory tool for a software factory depends on the evidence each stage needs.
-An issue, a conversation transcript, a reusable lesson and a test result serve different
-purposes. Keep the source revision and check results with the handoff so the next agent
-can distinguish a stored claim from a verified result.
+Pick an issue that an implementer and reviewer already handle in your repository. Record the
+starting commit. Save one source-linked lesson during implementation, then start a fresh review
+session with its own token. Push a small edit to the cited code on the indexed branch. Keep
+the lesson as written and wait for the link state to reflect the edit before reading the
+same lesson again. Keep the issue, revision and check results with each handoff so the
+reviewer can reproduce what the implementer saw.
 
 | Question                           | Evidence to collect                                                                                                                                               |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
