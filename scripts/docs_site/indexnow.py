@@ -50,7 +50,9 @@ PUBLIC_BUILD_INPUTS = (
     "docs/components/",
     "docs/lib/adoption-data.mjs",
     "docs/lib/adoption-view.mjs",
+    "docs/scripts/home-locales.json",
     "docs/scripts/mount-site-pages.mjs",
+    "docs/scripts/site-discovery.mjs",
     PUBLIC_PAGES_PATH,
 )
 BUILD_INPUTS = (

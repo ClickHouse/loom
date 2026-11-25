@@ -57,7 +57,7 @@ function translationRedirects(sitemap, staticRoot) {
   });
 }
 
-export function publishSiteDiscovery(staticRoot, { root, aliases }) {
+export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = {} }) {
   const docsSitemap = new URL("docs/sitemap.xml", staticRoot);
   const sitemap = readFileSync(docsSitemap, "utf8");
   if (!sitemap.includes("</urlset>")) {
@@ -69,7 +69,20 @@ export function publishSiteDiscovery(staticRoot, { root, aliases }) {
     const location = entry.match(/<loc>([^<]+)<\/loc>/)?.[1];
     return aliasLocations.has(location) ? "" : entry;
   });
-  const siteEntries = root.map((path) => `  <url><loc>${escape(new URL(path, origin).href)}</loc></url>`);
+  const homes = Object.entries(homeLocales);
+  const homePaths = new Set(homes.map(([, { href }]) => href));
+  if (homes.length && (!homeLocales.en || [...homePaths].some((href) => !root.includes(href)))) {
+    throw new Error("Homepage languages must point to mounted public routes.");
+  }
+  const alternates = homes.length ? [...homes, ["x-default", homeLocales.en]] : [];
+  const alternateLinks = alternates.map(
+    ([language, { href }]) =>
+      `<xhtml:link rel="alternate" hreflang="${escape(language)}" href="${escape(new URL(href, origin).href)}" />`,
+  );
+  const siteEntries = root.map((path) => {
+    const loc = escape(new URL(path, origin).href);
+    return `  <url><loc>${loc}</loc>${homePaths.has(path) ? alternateLinks.join("") : ""}</url>`;
+  });
 
   writeFileSync(docsSitemap, docs);
   writeFileSync(new URL("sitemap.xml", staticRoot), docs.replace("</urlset>", `${siteEntries.join("\n")}\n</urlset>`));

@@ -1,5 +1,10 @@
 {
   "/": "/docs/home",
+  "/es": "/docs/es/home",
+  "/ja": "/docs/ja/home",
+  "/ko": "/docs/ko/home",
+  "/pt-BR": "/docs/pt-BR/home",
+  "/zh-CN": "/docs/zh-CN/home",
   "/platform": "/docs/platform",
   "/enterprise": "/docs/enterprise",
   "/telemetry": "/docs/telemetry",

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import { publishSiteDiscovery } from "./site-discovery.mjs";
 
-function publish(t, sitemap, unlistedPages = []) {
+function staticFixture(t, sitemap, unlistedPages = []) {
   const directory = mkdtempSync(join(tmpdir(), "loom-docs-discovery-"));
   t.after(() => rmSync(directory, { recursive: true }));
   mkdirSync(join(directory, "docs"));
@@ -17,11 +17,52 @@ function publish(t, sitemap, unlistedPages = []) {
     writeFileSync(join(folder, "index.html"), "<title>Published page</title>");
   }
   writeFileSync(join(directory, "docs/sitemap.xml"), sitemap);
-  return publishSiteDiscovery(pathToFileURL(`${directory}/`), {
+  return pathToFileURL(`${directory}/`);
+}
+
+function publish(t, sitemap, unlistedPages) {
+  return publishSiteDiscovery(staticFixture(t, sitemap, unlistedPages), {
     root: ["/platform"],
     aliases: ["/docs/platform"],
   });
 }
+
+test("publishes reciprocal homepage alternates only on canonical product homepages", (t) => {
+  const origin = "https://loom.clickhouse.com";
+  const sitemap = `<urlset xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url><loc>${origin}/docs</loc></url>
+  <url><loc>${origin}/docs/home</loc></url>
+  <url><loc>${origin}/docs/pt-BR/home</loc></url>
+</urlset>`;
+  const output = staticFixture(t, sitemap);
+  const homeLocales = { en: { href: "/" }, "pt-BR": { href: "/pt-BR" } };
+  publishSiteDiscovery(output, {
+    root: ["/", "/pt-BR", "/platform"],
+    aliases: ["/docs/home", "/docs/pt-BR/home", "/docs/platform"],
+    homeLocales,
+  });
+  const publicSitemap = readFileSync(new URL("sitemap.xml", output), "utf8");
+  const locations = new Map(
+    [...publicSitemap.matchAll(/<url><loc>([^<]+)<\/loc>(.*?)<\/url>/g)].map(([, href, content]) => [href, content]),
+  );
+  const alternates = [
+    ["en", origin + "/"],
+    ["pt-BR", origin + "/pt-BR"],
+    ["x-default", origin + "/"],
+  ];
+  for (const path of ["/", "/pt-BR"]) {
+    const content = locations.get(origin + path);
+    assert.deepEqual(
+      [...content.matchAll(/hreflang="([^"]+)" href="([^"]+)"/g)].map(([, lang, href]) => [lang, href]),
+      alternates,
+    );
+  }
+  assert.equal(locations.get(origin + "/platform"), "");
+  assert.equal(locations.get(origin + "/docs"), "");
+  assert.ok(!publicSitemap.includes("/docs/pt-BR/home"));
+  const docsSitemap = readFileSync(new URL("docs/sitemap.xml", output), "utf8");
+  assert.ok(!docsSitemap.includes("/pt-BR"));
+});
 
 test("redirects missing translations and leaves translated and unknown paths alone", (t) => {
   const routes = publish(
