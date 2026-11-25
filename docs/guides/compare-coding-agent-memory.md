@@ -47,6 +47,23 @@ Keep the same tasks, starting revisions, and acceptance tests. Count model use, 
 maintenance, and human review time before assigning a budget. See the
 [paired coding-task scorecard](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory).
 
+## Shared memory between Claude Code and Codex
+
+In two local trials, Claude Code stored a different value over MCP and a fresh Codex
+session retrieved it by key. The clients used the same local model and separate writer
+and viewer credentials for the same namespace. The reader received only the key and
+namespace. An independent MCP read confirmed each write before the reader started.
+
+Tool configuration affects the handoff. An initial Claude Code attempt made no tool
+call. Both trials succeeded when the prompt named the write tool as registered by
+the client and the test allowed only that tool. The reverse attempt stopped when
+Codex's approval policy refused the write. A successful read therefore verifies the
+reader's access. A handoff also requires the writer to execute the write.
+
+Use the [cross-client handoff procedure](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex)
+with your own clients, model, and credentials. Check the tool result for the exact
+value and writer identity as well as the agent's final answer.
+
 ## Reproduce the comparison
 
 Clone the [Loom repository](https://github.com/ClickHouse/loom) and run these commands
@@ -64,10 +81,8 @@ observed author and version records. If a default port is taken, set
 `COMPARISON_CH_HTTP_PORT`, `COMPARISON_CH_NATIVE_PORT`, or `COMPARISON_API_PORT` to
 unused ports before running it.
 
-This is a protocol and storage check for one fixture. It exercises separate MCP
-sessions and does not invoke a coding model. Use the
-[Claude Code-to-Codex handoff](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex)
-to check your clients and credentials. The comparison gives no estimates of model
+The comparison runner checks the protocol and storage for one fixture. It exercises
+separate MCP sessions without a coding model. The comparison gives no estimates of model
 accuracy, semantic recall, latency, throughput, or hosted cost.
 
 [Read how Loom tracks code-linked decisions](../use-cases/memory-linked-to-code.md) or
