@@ -8,22 +8,30 @@ from pydantic import BaseModel, Field
 
 from server.code.api.models_common import _CodeIdentity
 
+_FilePath = Annotated[str, Field(min_length=1, max_length=1024)]
+_SourceLine = Annotated[int, Field(ge=1, lt=2**32)]
+_RangeText = Annotated[str, Field(max_length=1024)]
+
+
+class CodeReadRangeInput(BaseModel):
+    path: _FilePath
+    start_line: _SourceLine
+    end_line: _SourceLine | None = None
+
 
 class CodeReadInput(_CodeIdentity):
-    ranges: list[Annotated[str, Field(max_length=1024)]] = Field(
-        default_factory=list,
-        max_length=32,
-        description="Batch of repo-relative path:start-end ranges with inclusive one-based lines.",
-    )
-    path: str | None = Field(
-        default=None, min_length=1, max_length=1024, description="File for a single range."
-    )
-    start_line: int | None = Field(
-        default=None, ge=1, lt=2**32, description="First line of the single range, one-based."
-    )
-    end_line: int | None = Field(
-        default=None, ge=1, lt=2**32, description="Last line, inclusive. Defaults to start_line."
-    )
+    # Batch of inclusive one-based ranges as path:start-end strings or objects
+    # with path, start_line, and optional end_line.
+    ranges: (
+        Annotated[list[_RangeText], Field(max_length=32)]
+        | Annotated[list[CodeReadRangeInput | _RangeText], Field(max_length=32)]
+    ) = Field(default_factory=list)
+    # Repository-relative file for a single range.
+    path: _FilePath | None = None
+    # First line of a single range, one-based.
+    start_line: _SourceLine | None = None
+    # Inclusive last line, defaulting to start_line.
+    end_line: _SourceLine | None = None
 
 
 class CodeReadWindow(BaseModel):

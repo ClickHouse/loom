@@ -84,11 +84,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
       - name: Install Loom from uv.lock (dev, code extras)
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          uv sync --locked --python "${PYTHON_PATH}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: ruff
         run: ruff check server extractor sdk/python tests scripts .claude
@@ -174,14 +175,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
       - name: Install Loom from uv.lock (dev, code extras)
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          uv sync --locked --python "${PYTHON_PATH}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Fetch origin/main for the migration-number check
         run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
@@ -221,20 +224,21 @@ jobs:
           python -m tests.unit.test_native_worker --mechanism
       - name: pytest unit (this part, random order)
         env:
+          SHARD_PART: ${{ matrix.part }}
           LOOM_TEST_SHARD: ${{ matrix.part }}/${{ strategy.job-total }}
           COVERAGE_FILE: .coverage.unit-${{ matrix.part }}
         run: |
-          SEED="${{ github.run_id }}${{ github.run_attempt }}"
+          SEED="${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
           echo "pytest-randomly seed: $SEED"
           NATIVE_ARGS=()
-          if [ "${{ matrix.part }}" = 3 ]; then
+          if [ "${SHARD_PART}" = 3 ]; then
             ulimit -S -c 0
             NATIVE_ARGS=(--native-worker-signatures)
           fi
           pytest tests/unit -vv -n auto -p randomly -p tests._worker_status --randomly-seed="$SEED" --durations=15 \
             "${NATIVE_ARGS[@]}" \
             --cov=server --cov=sdk/python/loom --cov-branch --cov-report= \
-            --junitxml=junit-unit-${{ matrix.part }}.xml
+            --junitxml="junit-unit-${SHARD_PART}.xml"
       # Also after a failure: the failing part's test times are what a reader needs.
       - name: Upload this part's coverage data and test times
         if: always()
@@ -266,11 +270,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
       - name: Install Loom from uv.lock (dev, code extras)
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          uv sync --locked --python "${PYTHON_PATH}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Download the parts' coverage data and test times
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -300,7 +305,7 @@ jobs:
         run: python -m tests.inventory.coverage_floors coverage.json
       # The published benchmark harnesses' scoring and dataset readers.
       - name: pytest bench harnesses
-        run: pytest bench -q -p randomly --randomly-seed="${{ github.run_id }}${{ github.run_attempt }}"
+        run: pytest bench -q -p randomly --randomly-seed="${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
       # The generic ingest script's dry run goes through this checkout's CLI.
       - name: generic integration sample
         run: PYTHON=python bash integrations/generic/test.sh
@@ -379,11 +384,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
       - name: Install Loom from uv.lock (dev, code extras)
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          uv sync --locked --python "${PYTHON_PATH}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       # prlimit comes with util-linux. Ubuntu 24.04 restricts unprivileged user
       # namespaces through AppArmor; the sandbox needs them.
@@ -396,7 +402,7 @@ jobs:
       - name: pytest hostile sandbox suite
         env:
           LOOM_TEST_REQUIRE_SANDBOX: "1"
-        run: pytest tests/unit/test_repo_job_sandbox_hostile.py -q -p randomly --randomly-seed="${{ github.run_id }}${{ github.run_attempt }}"
+        run: pytest tests/unit/test_repo_job_sandbox_hostile.py -q -p randomly --randomly-seed="${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
 
   schema-check:
     name: schema.sql in sync with migrations
@@ -422,11 +428,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
       - name: Install Loom from uv.lock (no extras)
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}"
+          uv sync --locked --python "${PYTHON_PATH}"
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Start ClickHouse (loom config + lemmagen dictionary)
         run: bash dev/ci_start_clickhouse.sh
@@ -463,8 +470,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          package-manager-cache: false
       - name: Install + build frontend (build runs tsc -b internally)
         working-directory: frontend
         run: |
@@ -488,6 +494,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
       - name: install shfmt v3.10.0
         run: |
           curl -sSfL -o /usr/local/bin/shfmt https://github.com/mvdan/sh/releases/download/v3.10.0/shfmt_v3.10.0_linux_amd64
@@ -624,6 +631,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
       # The hook scripts have no dependencies and run under any Node >= 18;
       # their tests are node:test files beside them.
       - name: node --test (hook scripts shared by the Claude Code and Codex plugins)
@@ -662,8 +670,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          package-manager-cache: false
       - name: npm ci
         working-directory: frontend
         run: npm ci --no-audit --no-fund
@@ -672,7 +679,9 @@ jobs:
       # isolation. jsdom, no browser.
       - name: vitest (unit + component + axe)
         working-directory: frontend
-        run: npm run test -- --shard=${{ matrix.part }}/${{ strategy.job-total }}
+        env:
+          SHARD: ${{ matrix.part }}/${{ strategy.job-total }}
+        run: npm run test -- --shard="$SHARD"
 
   frontend-coverage:
     needs: validate-ref
@@ -692,8 +701,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          package-manager-cache: false
       - name: npm ci
         run: npm ci --no-audit --no-fund
       - name: Collect dashboard unit coverage
@@ -722,8 +730,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          package-manager-cache: false
       - name: npm ci
         working-directory: frontend
         run: npm ci --no-audit --no-fund
@@ -734,7 +741,9 @@ jobs:
       # call answered from fixtures.
       - name: playwright (e2e specs)
         working-directory: frontend
-        run: npm run e2e -- --shard=${{ matrix.part }}/${{ strategy.job-total }}
+        env:
+          SHARD: ${{ matrix.part }}/${{ strategy.job-total }}
+        run: npm run e2e -- --shard="$SHARD"
       - name: Upload screenshots and traces
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -812,11 +821,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
       - name: Install Loom from uv.lock (dev, code extras)
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          uv sync --locked --python "${PYTHON_PATH}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Start ClickHouse (loom config + lemmagen dictionary)
         run: bash dev/ci_start_clickhouse.sh
@@ -827,8 +837,7 @@ jobs:
         if: matrix.part == '1'
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: sdk/typescript/package-lock.json
+          package-manager-cache: false
       - name: Install native framework clients
         if: matrix.part == '1'
         run: |
@@ -1081,11 +1090,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
       - name: Install Loom from uv.lock (dev, code extras)
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          uv sync --locked --python "${PYTHON_PATH}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Start ClickHouse (loom config + lemmagen dictionary)
         run: bash dev/ci_start_clickhouse.sh
@@ -1343,8 +1353,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          package-manager-cache: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         id: python
         with:
@@ -1352,11 +1361,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
       - name: Install Loom from uv.lock
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          uv sync --locked --python "${PYTHON_PATH}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       # The base is HEAD~1: the previous commit on a push, and on a pull request the
       # first parent of its merge commit, the target branch as the merge was made. The
@@ -1388,9 +1398,11 @@ jobs:
           persist-credentials: false
           fetch-depth: 2
       - name: Install Rust with format and lint components
+        env:
+          RUST_TOOLCHAIN: ${{ matrix.rust }}
         run: |
-          rustup toolchain install "${{ matrix.rust }}" --profile minimal --component rustfmt --component clippy
-          rustup override set "${{ matrix.rust }}"
+          rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --component rustfmt --component clippy
+          rustup override set "${RUST_TOOLCHAIN}"
       # The library leaves dependency locking to its consumers; each toolchain resolves once.
       - name: Resolve dependencies for this toolchain
         run: cargo generate-lockfile
@@ -1457,11 +1469,12 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
       - name: Install Loom from uv.lock (no extras)
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}"
+          uv sync --locked --python "${PYTHON_PATH}"
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       # The SDK's operation table and wire types are generated from the
       # server's registry; a server change that alters a
@@ -1471,8 +1484,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: sdk/typescript/package-lock.json
+          package-manager-cache: false
       - name: npm ci
         working-directory: sdk/typescript
         run: npm ci --no-audit --no-fund
@@ -1540,7 +1552,9 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
       - name: Adapter tests and mypy --strict
-        run: make test-sdk-adapters SDK_ADAPTERS_PYTHON="$(which python)" SDK_ADAPTERS_RESOLUTION="${{ matrix.lowest && 'lowest-direct' || 'highest' }}"
+        env:
+          RESOLUTION: ${{ matrix.lowest && 'lowest-direct' || 'highest' }}
+        run: make test-sdk-adapters SDK_ADAPTERS_PYTHON="$(which python)" SDK_ADAPTERS_RESOLUTION="${RESOLUTION}"
 
   sdk-python-package:
     needs: validate-ref

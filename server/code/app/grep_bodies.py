@@ -22,7 +22,20 @@ async def definitions_for(
     budget: Budget | None,
     *,
     match_commits: dict[tuple[str, int], str],
+    covered_by: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if input.include_body and covered_by:
+        matches = [
+            hit
+            for hit in matches
+            if not any(
+                row["path"] == hit["path"]
+                and row["start_line"] <= hit["line"] <= row["end_line"]
+                and row.get("body")
+                and _agrees_with_hit(row, hit)
+                for row in covered_by
+            )
+        ]
     if not input.include_body or not matches:
         return {}
     from server.code.app.symbol.enclosing import (

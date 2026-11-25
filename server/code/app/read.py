@@ -6,7 +6,13 @@ import asyncio
 from collections import defaultdict
 
 from server.code.api.models_common import _safe_path
-from server.code.api.models_read import CodeReadInput, CodeReadOutput, CodeReadRange, CodeReadWindow
+from server.code.api.models_read import (
+    CodeReadInput,
+    CodeReadOutput,
+    CodeReadRange,
+    CodeReadRangeInput,
+    CodeReadWindow,
+)
 from server.code.app.common import (
     index_as_of,
     require_code_intel,
@@ -25,22 +31,25 @@ from server.settings import settings
 _SOURCE_BYTES_PER_REQUEST = 8_000_000
 
 
-def _parse_range(value: str) -> tuple[str, int, int]:
-    path, colon, lines = value.rpartition(":")
+def _checked_range(path: str, start: int, end: int | None) -> tuple[str, int, int]:
     path = path.removeprefix("./")
-    first, dash, last = lines.partition("-")
-    last = last if dash else first
-    if (
-        not colon
-        or not _safe_path(path)
-        or "\0" in path
-        or not all(text.isascii() and text.isdecimal() for text in (first, last))
-    ):
-        raise ValidationError("ranges must use repo-relative path:start-end")
-    start, end = int(first), int(last)
+    if not _safe_path(path) or "\0" in path:
+        raise ValidationError("Source ranges must use a repo-relative path")
+    end = start if end is None else end
     if not 1 <= start <= end < 2**32:
         raise ValidationError("ranges must have a positive start and an end at or after the start")
     return path, start, end
+
+
+def _parse_range(value: str | CodeReadRangeInput) -> tuple[str, int, int]:
+    if isinstance(value, CodeReadRangeInput):
+        return _checked_range(value.path, value.start_line, value.end_line)
+    path, colon, lines = value.rpartition(":")
+    first, dash, last = lines.partition("-")
+    last = last if dash else first
+    if not colon or not all(text.isascii() and text.isdecimal() for text in (first, last)):
+        raise ValidationError("ranges must use repo-relative path:start-end")
+    return _checked_range(path, int(first), int(last))
 
 
 def _request_ranges(input: CodeReadInput) -> list[tuple[str, int, int]]:
@@ -48,8 +57,7 @@ def _request_ranges(input: CodeReadInput) -> list[tuple[str, int, int]]:
     if single:
         if input.ranges or input.path is None or input.start_line is None:
             raise ValidationError("Provide ranges or path and start_line with optional end_line")
-        end = input.end_line if input.end_line is not None else input.start_line
-        return [_parse_range(f"{input.path}:{input.start_line}-{end}")]
+        return [_checked_range(input.path, input.start_line, input.end_line)]
     if not input.ranges:
         raise ValidationError("Provide at least one source range")
     return [_parse_range(value) for value in input.ranges]

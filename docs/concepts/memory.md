@@ -1,4 +1,17 @@
-# Memory
+---
+description: Learn how agentic memory works, when to use working and long-term memory, and how Loom keeps facts, sources and revisions available across runs.
+seo:
+  title: What is agentic memory?
+---
+
+# Agentic memory
+
+<a id="memory"></a>
+
+Agentic memory lets an AI agent store, retrieve and revise information as it works.
+It keeps selected facts, past actions and procedures available across sessions and
+runs. The agent or application decides what to save and which parts to bring into
+the model's context for the current request.
 
 A memory is one claim an agent should find again: "deploys happen on Tuesdays", "the
 payments team owns the billing service". Loom stores each claim as a row in
@@ -6,6 +19,23 @@ payments team owns the billing service". Loom stores each claim as a row in
 from and whether anyone vouched for it. This page covers the row, how a write is judged
 against what is stored, and how rows change over time.
 [Retrieval and ranking](retrieval-and-ranking.md) covers how rows are found.
+
+## Working memory and long-term memory
+
+The context window holds the input supplied to the model for one request.
+[Working memory](../features/memory/working-memory-and-profiles.md#working-memory)
+holds small pieces of task state, such as a cursor or the checks already completed.
+A replacement process can read the block again with the same identity and run ID.
+Long-term memory carries reusable information across runs. It can include facts,
+past events and procedures for recurring tasks. See [memory types](#memory-types)
+for how Loom stores each one.
+
+For a support agent processing a return, put the order and completed checks in
+working memory. Save a reviewed refund rule as a short claim and link it to the
+[source policy](../features/knowledge.md#how-do-agents-connect-a-memory-to-a-source-document).
+A later session can retrieve the rule within its authorized namespace. When the
+policy changes, [review the source and correct the saved claim](../use-cases/knowledge-factory.md#check-the-lesson-after-a-runbook-change)
+so readers can see which version they used.
 
 ## Rows in ClickHouse
 

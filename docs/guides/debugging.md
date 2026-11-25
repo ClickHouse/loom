@@ -130,6 +130,7 @@ For a completed code call, inspect the handler result's content counts and work:
 ```sql
 SELECT request_id, trace_id, operation, latency_ms, response_tokens,
        args['out_grep_match_lines'] AS grep_lines,
+       args['out_grep_related_lines'] AS grep_related_lines,
        args['out_source_bodies'] AS bodies,
        args['out_source_chars'] AS source_chars,
        args['out_elided_bodies'] AS elided_bodies,

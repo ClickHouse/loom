@@ -1,14 +1,8 @@
 import { daysBefore } from "./adoption-view.mjs";
 
-const database = "loom_product_analytics";
-const queries = {
-  totals: "public_adoption_totals",
-  versions: "public_adoption_versions ORDER BY installations DESC, loom_version, clickhouse_version LIMIT 12",
-  retention: "public_adoption_retention ORDER BY age",
-  activity: "public_adoption_activity ORDER BY period",
-  lifecycle: "public_adoption_lifecycle ORDER BY bucket",
-  oss: "public_oss_adoption ORDER BY day, source, metric LIMIT 4000",
-};
+const datasets = ["totals", "versions", "retention", "activity", "lifecycle", "oss"];
+const queryApiOrigin = "https://queries.clickhouse.cloud";
+const queryApiPath = /^\/run\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 async function readSource(url, options, decode = (response) => response.json()) {
   try {
@@ -26,37 +20,34 @@ async function readSource(url, options, decode = (response) => response.json()) 
 
 async function loadWarehouse(env) {
   const {
-    LOOM_ADOPTION_PUBLIC_CLICKHOUSE_URL: address,
-    LOOM_ADOPTION_PUBLIC_CLICKHOUSE_USER: user,
-    LOOM_ADOPTION_PUBLIC_CLICKHOUSE_PASSWORD: password,
+    LOOM_ADOPTION_QUERY_ENDPOINT_URL: address,
+    LOOM_ADOPTION_QUERY_KEY_ID: keyId,
+    LOOM_ADOPTION_QUERY_KEY_SECRET: keySecret,
   } = env;
-  if (!address || !user || !password) return {};
+  if (!address || !keyId || !keySecret) return {};
 
   const url = URL.parse(address);
-  if (url?.protocol !== "https:" || url.username || url.password) {
-    console.warn("Adoption dashboard requires an HTTPS warehouse URL without credentials.");
+  if (url?.origin !== queryApiOrigin || !queryApiPath.test(url.pathname) || url.username || url.password) {
+    console.warn("Adoption dashboard requires a ClickHouse Cloud Query API URL.");
     return {};
   }
   url.search = "";
-  url.searchParams.set("output_format_json_quote_64bit_integers", "0");
-  const headers = {
-    Authorization: `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`,
-  };
-  const results = await Promise.all(
-    Object.entries(queries).map(async ([key, statement]) => {
-      const response = await readSource(url, {
-        method: "POST",
-        headers,
-        body: `SELECT * FROM ${database}.${statement} FORMAT JSON`,
-      });
-      if (!Array.isArray(response?.data)) {
-        console.warn(`Adoption warehouse data unavailable for ${key}.`);
-        return [key, null];
-      }
-      return [key, response.data];
-    }),
-  );
-  return Object.fromEntries(results);
+  url.hash = "";
+  url.searchParams.set("format", "JSON");
+  const response = await readSource(url, {
+    headers: { Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}` },
+  });
+  const row = response?.data?.[0];
+  if (datasets.every((name) => Array.isArray(row?.[name]))) {
+    try {
+      return Object.fromEntries(datasets.map((name) => [name, row[name].map((json) => JSON.parse(json))]));
+    } catch {
+      console.warn("Adoption Query API returned invalid data.");
+      return {};
+    }
+  }
+  console.warn("Adoption Query API is unavailable.");
+  return {};
 }
 
 async function containerPulls() {

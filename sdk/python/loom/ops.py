@@ -63,6 +63,7 @@ OpName = Literal[
     "code.coverage.unwatch",
     "code.coverage.watch",
     "code.coverage_claim",
+    "code.edit_context",
     "code.enclosing",
     "code.examples",
     "code.files",
@@ -443,6 +444,7 @@ OP_NAMES: tuple[str, ...] = (
     "code.coverage.unwatch",
     "code.coverage.watch",
     "code.coverage_claim",
+    "code.edit_context",
     "code.enclosing",
     "code.examples",
     "code.files",
@@ -1084,6 +1086,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         1200,
+        False,
+        True,
+    ),
+    "code.edit_context": OpSpec(
+        "code.edit_context",
+        "CodeEditContextInput",
+        "CodeEditContextBody",
+        "CodeSymbolOutput",
+        True,
+        "viewer",
+        "experimental",
+        250,
         False,
         True,
     ),
@@ -6387,6 +6401,84 @@ class CodeCoverageClaimOutput(TypedDict, total=False):
     trace_run_id: NotRequired[str]
 
 
+class CodeEditContextInput(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    consumer: NotRequired[str]
+    name: NotRequired[str]
+    clues: NotRequired[list[str]]
+
+
+class CodeEditContextBody(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    consumer: NotRequired[str]
+    name: NotRequired[str]
+    clues: NotRequired[list[str]]
+
+
+class CodeSymbolOutput(TypedDict, total=False):
+    definitions: Required[list["CodeUnit"]]
+    lessons_left_out: NotRequired[int]
+    ambiguous: NotRequired[bool]
+    hierarchy: NotRequired[dict[str, list[dict[str, Any]]]]
+    candidates: NotRequired[list[dict[str, Any]]]
+    tokens_returned: NotRequired[int]
+    trace_run_id: NotRequired[str]
+    uses: NotRequired[Union[list[dict[str, Any]], dict[str, Any]]]
+    uses_truncated: NotRequired[bool]
+    uses_tokens: NotRequired[int]
+    picked_by: NotRequired[str]
+    resolved_by: NotRequired[str]
+    documented_in: NotRequired[list[dict[str, Any]]]
+    neighbours: NotRequired[list[dict[str, Any]]]
+    anchors: NotRequired[int]
+    neighbour_tokens: NotRequired[int]
+    presence: NotRequired[list[dict[str, Any]]]
+    summary: NotRequired[dict[str, list[str]]]
+
+
+class CodeUnit(TypedDict, total=False):
+    "One whole semantic unit of code, as returned by every code.* op."
+
+    unit_id: NotRequired[str]
+    path: Required[str]
+    start_line: NotRequired[int]
+    end_line: NotRequired[int]
+    symbol: NotRequired[str]
+    kind: NotRequired[str]
+    signature: NotRequired[str]
+    body: NotRequired[str]
+    elided: NotRequired[bool]
+    body_hash: NotRequired[str]
+    description: NotRequired[str]
+    tier: NotRequired[str]
+    score: NotRequired[float]
+    recent_prs: NotRequired[list[dict[str, Any]]]
+    examples: NotRequired[list[dict[str, Any]]]
+    lessons: NotRequired[list[dict[str, Any]]]
+    churn: NotRequired[int]
+    amp: NotRequired[int]
+    tested: NotRequired[bool]
+    callees: NotRequired[list[dict[str, Any]]]
+    granularity: NotRequired[str]
+    next: NotRequired[str]
+    outline: NotRequired[list[dict[str, Any]]]
+    fan_in: NotRequired[int]
+    via: NotRequired[str]
+    lexical_rank: NotRequired[int]
+    vector_rank: NotRequired[int]
+    namespace: NotRequired[str]
+
+
 class CodeEnclosingInput(TypedDict, total=False):
     "Batched `path:line` -> enclosing function. Built for the grep shim:"
 
@@ -6566,6 +6658,9 @@ class CodeGrepInput(TypedDict, total=False):
     consumer: NotRequired[str]
     pattern: Required[Union[str, list[str]]]
     regex: NotRequired[bool]
+    related_on_miss: NotRequired[bool]
+    related_on_prefix: NotRequired[bool]
+    include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
     path_prefix: NotRequired[str]
@@ -6595,6 +6690,9 @@ class CodeGrepBody(TypedDict, total=False):
     consumer: NotRequired[str]
     pattern: Required[Union[str, list[str]]]
     regex: NotRequired[bool]
+    related_on_miss: NotRequired[bool]
+    related_on_prefix: NotRequired[bool]
+    include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
     path_prefix: NotRequired[str]
@@ -6616,6 +6714,7 @@ class CodeGrepOutput(TypedDict, total=False):
     lessons: NotRequired[list[dict[str, Any]]]
     lessons_left_out: NotRequired[int]
     matches: Required[list[dict[str, Any]]]
+    related: NotRequired[Optional["RelatedGrepEvidence"]]
     contexts: NotRequired[list[dict[str, Any]]]
     contexts_partial: NotRequired[bool]
     definitions: NotRequired[list[dict[str, Any]]]
@@ -6645,6 +6744,28 @@ class CodeGrepOutput(TypedDict, total=False):
     partial: NotRequired[bool]
     partial_reason: NotRequired[str]
     fallback: NotRequired[Literal["", "literal"]]
+
+
+class RelatedGrepEvidence(TypedDict, total=False):
+    "Verified lines for the qualified argument of a literal call."
+
+    pattern: Required[str]
+    matches: Required[list[dict[str, Any]]]
+    contexts: NotRequired[list[dict[str, Any]]]
+    contexts_partial: NotRequired[bool]
+    definitions: NotRequired[list[dict[str, Any]]]
+    definitions_partial: NotRequired[bool]
+    definitions_note: NotRequired[str]
+    truncated: NotRequired[bool]
+    dependencies: NotRequired[list["GrepDependency"]]
+
+
+class GrepDependency(TypedDict, total=False):
+    qualified_name: Required[str]
+    path: Required[str]
+    start_line: Required[int]
+    end_line: Required[int]
+    body: Required[str]
 
 
 class CodeHistoryInput(TypedDict, total=False):
@@ -7112,9 +7233,15 @@ class CodeReadInput(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    ranges: NotRequired[list[str]]
+    ranges: NotRequired[Union[list[str], list[Union["CodeReadRangeInput", str]]]]
     path: NotRequired[Optional[str]]
     start_line: NotRequired[Optional[int]]
+    end_line: NotRequired[Optional[int]]
+
+
+class CodeReadRangeInput(TypedDict, total=False):
+    path: Required[str]
+    start_line: Required[int]
     end_line: NotRequired[Optional[int]]
 
 
@@ -7124,7 +7251,7 @@ class CodeReadBody(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    ranges: NotRequired[list[str]]
+    ranges: NotRequired[Union[list[str], list[Union["CodeReadRangeInput", str]]]]
     path: NotRequired[Optional[str]]
     start_line: NotRequired[Optional[int]]
     end_line: NotRequired[Optional[int]]
@@ -7779,39 +7906,6 @@ class CodeSearchOutput(TypedDict, total=False):
     partial_reason: NotRequired[str]
 
 
-class CodeUnit(TypedDict, total=False):
-    "One whole semantic unit of code, as returned by every code.* op."
-
-    unit_id: NotRequired[str]
-    path: Required[str]
-    start_line: NotRequired[int]
-    end_line: NotRequired[int]
-    symbol: NotRequired[str]
-    kind: NotRequired[str]
-    signature: NotRequired[str]
-    body: NotRequired[str]
-    elided: NotRequired[bool]
-    body_hash: NotRequired[str]
-    description: NotRequired[str]
-    tier: NotRequired[str]
-    score: NotRequired[float]
-    recent_prs: NotRequired[list[dict[str, Any]]]
-    examples: NotRequired[list[dict[str, Any]]]
-    lessons: NotRequired[list[dict[str, Any]]]
-    churn: NotRequired[int]
-    amp: NotRequired[int]
-    tested: NotRequired[bool]
-    callees: NotRequired[list[dict[str, Any]]]
-    granularity: NotRequired[str]
-    next: NotRequired[str]
-    outline: NotRequired[list[dict[str, Any]]]
-    fan_in: NotRequired[int]
-    via: NotRequired[str]
-    lexical_rank: NotRequired[int]
-    vector_rank: NotRequired[int]
-    namespace: NotRequired[str]
-
-
 class CodeSettingFactsInput(TypedDict, total=False):
     "One ClickHouse setting, the four places that define it: its"
 
@@ -7905,27 +7999,6 @@ class CodeSymbolBody(TypedDict, total=False):
     presence: NotRequired[bool]
     neighbours: NotRequired[Optional[bool]]
     neighbour_k: NotRequired[int]
-
-
-class CodeSymbolOutput(TypedDict, total=False):
-    definitions: Required[list["CodeUnit"]]
-    lessons_left_out: NotRequired[int]
-    ambiguous: NotRequired[bool]
-    hierarchy: NotRequired[dict[str, list[dict[str, Any]]]]
-    candidates: NotRequired[list[dict[str, Any]]]
-    tokens_returned: NotRequired[int]
-    trace_run_id: NotRequired[str]
-    uses: NotRequired[Union[list[dict[str, Any]], dict[str, Any]]]
-    uses_truncated: NotRequired[bool]
-    uses_tokens: NotRequired[int]
-    picked_by: NotRequired[str]
-    resolved_by: NotRequired[str]
-    documented_in: NotRequired[list[dict[str, Any]]]
-    neighbours: NotRequired[list[dict[str, Any]]]
-    anchors: NotRequired[int]
-    neighbour_tokens: NotRequired[int]
-    presence: NotRequired[list[dict[str, Any]]]
-    summary: NotRequired[dict[str, list[str]]]
 
 
 class CodeSymbolHistoryInput(TypedDict, total=False):

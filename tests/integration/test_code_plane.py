@@ -132,6 +132,20 @@ async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
         CodeReadInput(org=org, namespace=ns, path="src/S.cpp", start_line=5, end_line=6)
     )
     assert single.results == response.results[:1]
+    mixed = await read.handle_code_read(
+        CodeReadInput.model_validate(
+            {
+                "org": org,
+                "namespace": ns,
+                "ranges": [
+                    {"path": "src/S.cpp", "start_line": 5, "end_line": 6},
+                    {"path": "./src/S.cpp", "start_line": 10},
+                    "src/missing.cpp:1",
+                ],
+            }
+        )
+    )
+    assert mixed.results == response.results[:3]
 
 
 async def test_read_verifies_mirror_blob_after_incremental_ingest(code_env, monkeypatch) -> None:
@@ -490,15 +504,24 @@ async def test_symbol_reads_test_examples_with_the_definition(code_env, monkeypa
 async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     code_env, monkeypatch
 ) -> None:
-    from server.code.api.models_symbol import CodeSymbolInput
-    from server.code.app.symbol import handle_code_symbol
+    from server.code.api.models_symbol import CodeEditContextInput, CodeSymbolInput
+    from server.code.app.symbol import handle_code_edit_context, handle_code_symbol
     from server.embedding.fake import fake_model_name
     from server.settings import settings
 
     repo, org, ns = code_env
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
-    await _ingest(repo, org, ns, source=b"class EntryPoint:\n    pass\n", path="src/cli.py")
+    await _ingest(
+        repo,
+        org,
+        ns,
+        source=(
+            b"class EntryPoint:\n    def run(self):\n"
+            b"        self.seen = self.payload.value\n        return 'ok'\n"
+        ),
+        path="src/cli.py",
+    )
     path = "tests/test_cli.py"
     source = b"from src.cli import EntryPoint\n\ndef test_entrypoint():\n    @register(cls=EntryPoint)\n    def cli():\n        pass\n"
     await _ingest(repo, org, ns, source=source, path=path)
@@ -517,6 +540,264 @@ async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     assert (example["path"], example["line"], example["evidence"]) == (path, 4, "name_reference")
     assert example["context"]["commit"] == "a" * 40
     assert "@register(cls=EntryPoint)" in example["context"]["text"]
+    edit = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name="src/cli.py:EntryPoint", include_lessons=False
+        )
+    )
+    assert edit.definitions[0].body == response.definitions[0].body
+    (bundled,) = edit.definitions[0].examples
+    assert bundled["context"]["commit"] == "a" * 40
+    assert "@register(cls=EntryPoint)" in bundled["context"]["text"]
+    method = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name="src/cli.py:EntryPoint.run", include_lessons=False
+        )
+    )
+    (member,) = method.definitions
+    assert "def run(self)" in member.body
+    assert "class EntryPoint" not in member.body
+    (related,) = member.examples
+    assert related["owner_symbol"] == edit.definitions[0].symbol
+    assert related["context"] == bundled["context"]
+    location = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=f"src/cli.py:{member.start_line + 1}", include_lessons=False
+        )
+    )
+    (located,) = location.definitions
+    assert located.body == member.body
+    assert located.examples == member.examples
+    clue = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name="src/cli.py", clues=["return 'ok'"], include_lessons=False
+        )
+    )
+    (matched,) = clue.definitions
+    assert clue.resolved_by == "file_clues"
+    assert matched.body == member.body
+    assert matched.examples == member.examples
+    inferred = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, clues=["return 'ok'"], include_lessons=False)
+    )
+    assert inferred.resolved_by == "repository_clues"
+    assert inferred.definitions == clue.definitions
+    recovered = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, clues=["decode(self.payload.value)"], include_lessons=False
+        )
+    )
+    assert recovered.resolved_by == "repository_argument"
+    assert recovered.definitions == clue.definitions
+    scoped = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org,
+            namespace=ns,
+            name="src/cli.py",
+            clues=["decode(self.payload.value)"],
+            include_lessons=False,
+        )
+    )
+    assert scoped.resolved_by == "file_argument"
+    assert scoped.definitions == recovered.definitions
+    await _ingest(
+        repo,
+        org,
+        ns,
+        path="src/worker.py",
+        source=b"def run(self):\n    return 'ok' if self.payload.value_extra else ''\n",
+    )
+    near_miss = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org,
+            namespace=ns,
+            name="src/worker.py",
+            clues=["decode(self.payload.value)"],
+            include_lessons=False,
+        )
+    )
+    assert not near_miss.definitions and not near_miss.candidates
+    competing_files = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, clues=["return 'ok'"], include_lessons=False)
+    )
+    assert not competing_files.definitions and competing_files.ambiguous
+    assert {candidate["path"] for candidate in competing_files.candidates} == {
+        "src/cli.py",
+        "src/worker.py",
+    }
+    missing = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org,
+            namespace=ns,
+            name="src/cli.py",
+            clues=["not in this file"],
+        )
+    )
+    assert not missing.definitions and not missing.candidates
+    await _ingest(
+        repo,
+        org,
+        ns,
+        path="src/other.py",
+        source=b"def first():\n    return 'same'\n\ndef second():\n    return 'same'\n",
+    )
+    ambiguous = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, name="src/other.py", clues=["return 'same'"])
+    )
+    assert not ambiguous.definitions and ambiguous.ambiguous
+    assert {c["qualified_name"] for c in ambiguous.candidates} == {
+        "src.other::first",
+        "src.other::second",
+    }
+
+
+async def test_edit_context_reads_matched_members_of_large_type(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.code.app.symbol.outline import AUTO_OUTLINE_MIN_LINES
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    path = "src/large.py"
+    source = (
+        b"class Group:\n"
+        b"    def first(self):\n        return 'match first'\n"
+        b"    def second(self):\n        return 'match second'\n"
+        b"    def unrelated(self):\n"
+        + b"        # A long unrelated implementation.\n" * AUTO_OUTLINE_MIN_LINES
+        + b"        return 'unrelated'\n"
+    )
+    await _ingest(repo, org, ns, source=source, path=path)
+    result = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=path, clues=["match "], include_lessons=False
+        )
+    )
+    assert result.resolved_by == "file_clues" and not result.ambiguous
+    assert {unit.symbol.rsplit("::", 1)[-1] for unit in result.definitions} == {"first", "second"}
+    assert all(
+        "match " in unit.body and "unrelated" not in unit.body for unit in result.definitions
+    )
+
+
+async def test_edit_clues_bind_the_exact_file_and_read_its_new_body(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.index.ingest import ingest_file
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    path = "src/ordered read.cpp"
+    source = b"namespace scope {\nint probe(int x) {\n  return x + 101;\n}\n}\n"
+    sibling = (
+        b"namespace scope {\nint probe(double x) {\n"
+        + b"  x += 101;\n" * 32
+        + b"  return x;\n}\n}\n"
+    )
+    await _ingest(repo, org, ns, source=source, path=path)
+    await _ingest(repo, org, ns, source=sibling, path=path + ".extra.cpp")
+
+    async def lookup(clue: str) -> str:
+        out = await handle_code_edit_context(
+            CodeEditContextInput(
+                org=org, namespace=ns, name=path, clues=[clue], include_lessons=False
+            )
+        )
+        (definition,) = out.definitions
+        assert out.resolved_by == "file_clues" and definition.path == path
+        return definition.body
+
+    assert "return x + 101;" in await lookup("101")
+    await ingest_file(
+        repo,
+        org,
+        ns,
+        path=path,
+        source=source.replace(b"101", b"202"),
+        commit_sha="c" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    assert "return x + 202;" in await lookup("202")
+
+
+async def test_edit_clues_distinguish_overload_locations(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    path = "src/overloaded.cpp"
+    source = (
+        b"int probe(int x) {\n  return x + 101;\n}\n\nint probe(double x) {\n  return x + 101;\n}\n"
+    )
+    await _ingest(repo, org, ns, source=source, path=path)
+    result = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, name=path, clues=["101"], include_lessons=False)
+    )
+    assert result.ambiguous and not result.definitions
+    assert {candidate["start_line"] for candidate in result.candidates} == {2, 6}
+
+
+async def test_edit_clues_keep_candidates_for_competing_types(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    path = "src/competing.py"
+    source = (
+        b"class First:\n    def choose(self):\n"
+        b"        option = 1\n        option += 2\n        return option\n\n"
+        b"class Second:\n    def choose(self):\n"
+        b"        option = 3\n        return option\n"
+    )
+    await _ingest(repo, org, ns, source=source, path=path)
+    result = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=path, clues=["option"], include_lessons=False
+        )
+    )
+    assert result.ambiguous and not result.definitions
+    assert len({candidate["qualified_name"] for candidate in result.candidates}) == 2
+
+
+async def test_edit_clues_retain_hits_outside_the_resolved_type(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    path = "src/scope.py"
+    source = (
+        b"class First:\n    def choose(self):\n"
+        b"        option = 1\n        option += 2\n        return option\n\n"
+        b"def standalone():\n    option = 3\n    return option\n"
+    )
+    await _ingest(repo, org, ns, source=source, path=path)
+    result = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=path, clues=["option"], include_lessons=False
+        )
+    )
+    assert result.definitions[0].symbol.endswith("::First")
+    assert {candidate["start_line"] for candidate in result.candidates} == {8, 9}
 
 
 async def test_deletion_tombstones_everything(code_env) -> None:

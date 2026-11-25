@@ -501,14 +501,15 @@ def test_translated_readme_links_to_its_existing_site_landing(tmp_path, monkeypa
     assert "https://example.com" not in t.language_line("i18n/es/README.md")
 
 
-def test_generated_readme_uses_the_same_site_base_as_mkdocs() -> None:
+def test_generated_readme_uses_the_mkdocs_default_site_base() -> None:
     import yaml
 
     from scripts.docs_site import indexnow
 
     config = yaml.compose((ROOT / "mkdocs.yml").read_text())
-    site_url = next(value.value for key, value in config.value if key.value == "site_url")
-    assert site_url == indexnow.SITE
+    site_url = next(value for key, value in config.value if key.value == "site_url")
+    assert site_url.tag == "!ENV"
+    assert [item.value for item in site_url.value] == ["LOOM_LEGACY_DOCS_URL", indexnow.SITE]
 
 
 @pytest.mark.parametrize(

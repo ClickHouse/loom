@@ -4,7 +4,7 @@
   "displayName": "ClickHouse Loom",
   "description": "Shared long-term memory, document search and a code index for Cursor from a self-hosted ClickHouse Loom server, over MCP, with the loom and loom-code skills that say when to recall, save and ask the code index.",
   "author": { "name": "ClickHouse" },
-  "homepage": "https://clickhouse.github.io/loom/features/integrations/cursor/",
+  "homepage": "https://loom.clickhouse.com/docs/features/integrations/cursor/",
   "repository": "https://github.com/ClickHouse/loom",
   "license": "Apache-2.0",
   "keywords": [

@@ -8,10 +8,38 @@ from typing import Any
 
 from server.code.app.symbol.resolve import _indexed_commit
 from server.code.app.symbol_uses import TYPE_KINDS, single_declaration
+from server.code.domain.anchor import local_name
 from server.code.domain.symbol_body import retained_source_lines, retained_source_window
 from server.code.store.index import CodeRepo
 from server.embedding.embedder import served_model_label
 from server.settings import settings
+
+
+async def owning_type(
+    repo: CodeRepo, org: str, ns: str, method: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The method's named container with a body span at the same indexed revision."""
+    qualified = str(method.get("qualified_name") or "")
+    owner, separator, _ = qualified.rpartition("::")
+    path = str(method.get("path") or "")
+    revision = _indexed_commit(method.get("indexed_commit") or method.get("extent_commit"))
+    line = int(method.get("start_line") or 0)
+    if (
+        method.get("kind") not in {"method", "function", "symbol"}
+        or not (separator and owner and path and revision and line > 0)
+        or "." not in local_name(qualified, path)
+    ):
+        return None
+    types = await repo.types_for_paths(org, ns, [path], with_revision=True)
+    matches = [
+        row
+        for row in types
+        if row["qualified_name"] == owner
+        and row["kind"] in TYPE_KINDS
+        and _indexed_commit(row.get("extent_commit")) == revision
+        and row["start_line"] <= line <= row["end_line"]
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 async def named_test_examples(

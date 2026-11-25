@@ -127,7 +127,7 @@ jobs:
       # Every version file names the tag's final, the candidate order holds, and the
       # chart's own version moved (release-process.md); check-tag skips off the tag's
       # commit in a dry run. `previous` is the tag the generated release notes start
-      # from (github-release's previous_tag).
+      # from (the release CLI's --notes-start-tag).
       - name: Version files, the candidate order and the chart
         id: checks
         env:
@@ -208,8 +208,10 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
       - name: Install Loom from uv.lock (no extras)
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
         run: |
-          uv sync --locked --python "${{ steps.python.outputs.python-path }}"
+          uv sync --locked --python "${PYTHON_PATH}"
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       # release_clickhouse.sh decides which release, in order of
       # preference. A downgrade is refused here so the run stops before it
@@ -249,6 +251,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
       # The SDK sources carry the tag's version, so every published file names it.
       # The Python SDK takes its PEP 440 form (1.2.0rc1 for 1.2.0-rc.1): the
       # build backend writes the version into METADATA as given, and the verify
@@ -478,7 +481,7 @@ jobs:
             pin: image.digest
             # Title and description are the repository's, metadata-action's defaults.
             labels: |
-              org.opencontainers.image.documentation=https://clickhouse.github.io/loom/
+              org.opencontainers.image.documentation=https://loom.clickhouse.com/docs/
           - artifact: extractor
             image: ghcr.io/clickhouse/loom-extractor
             file: extractor/Dockerfile
@@ -486,7 +489,7 @@ jobs:
             labels: |
               org.opencontainers.image.title=loom-extractor
               org.opencontainers.image.description=Loom's document extractor service, which parses originals apart from the server
-              org.opencontainers.image.documentation=https://clickhouse.github.io/loom/
+              org.opencontainers.image.documentation=https://loom.clickhouse.com/docs/
           - arch: amd64
             runner: ubuntu-latest
           - arch: arm64
@@ -708,8 +711,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          package-manager-cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-files
@@ -817,44 +819,46 @@ jobs:
               ;;
             *) exit "$status" ;;
           esac
-      # Notes are generated only when this run creates the release: on an existing
-      # one the action appends them again, under notes edited by hand.
       - name: Is there a release for this tag already
         id: existing
         env:
           GH_TOKEN: ${{ github.token }}
-        # Only a 404 means there is none: any other failure would regenerate the notes.
+        # A single lookup includes drafts and keeps API failures distinct from absence.
         run: |
-          if out=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>&1); then
-            echo "release=true" >>"$GITHUB_OUTPUT"
-          elif grep -q "(HTTP 404)" <<<"$out"; then
-            echo "release=false" >>"$GITHUB_OUTPUT"
-          else
-            echo "$out" >&2
-            echo "::error::could not tell whether $GITHUB_REF_NAME has a release"
-            exit 1
-          fi
-      # An existing release for the tag is updated and its other files replaced,
-      # so a re-run or the later dispatch leaves the published bytes attached.
+          release=$(gh api graphql \
+            -f query='query($owner: String!, $name: String!, $tag: String!) {
+              repository(owner: $owner, name: $name) {
+                release(tagName: $tag) { id }
+              }
+            }' \
+            -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY#*/}" -f tag="$GITHUB_REF_NAME" \
+            --jq '.data.repository | if has("release") then .release != null else error("Missing release result") end')
+          echo "release=$release" >>"$GITHUB_OUTPUT"
       - name: Create or update the release with notes and files
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          generate_release_notes: ${{ steps.existing.outputs.release != 'true' }}
-          # Since the previous final release, not the candidate on this commit.
-          previous_tag: ${{ needs.version.outputs.previous }}
-          draft: false
-          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
-          make_latest: ${{ steps.latest.outputs.latest }}
-          overwrite_files: true
-          fail_on_unmatched_files: true
-          files: |
-            release/python/*
-            release/npm/*.tgz
-            release/plugins/*.zip
-            release/stack/*
-            release/agent/agent-setup.txt
+        id: publish-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_EXISTS: ${{ steps.existing.outputs.release }}
+          PREVIOUS_TAG: ${{ needs.version.outputs.previous }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          LATEST: ${{ steps.latest.outputs.latest }}
+        run: |
+          files=(release/python/* release/npm/*.tgz release/plugins/*.zip release/stack/* release/agent/agent-setup.txt)
+          for file in "${files[@]}"; do
+            test -f "$file" || { echo "::error::Missing release file $file"; exit 1; }
+          done
+          if [ "$VERSION_EXISTS" = true ]; then
+            # Keep the existing notes, which may include edits from maintainers.
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            notes=(--generate-notes)
+            if [ -n "$PREVIOUS_TAG" ]; then notes+=(--notes-start-tag "$PREVIOUS_TAG"); fi
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" --draft --verify-tag --title "$GITHUB_REF_NAME" \
+              "${notes[@]}" --prerelease="$PRERELEASE" --repo "$GITHUB_REPOSITORY"
+          fi
+          # Publish separately so a failed response leaves the release and its assets available.
+          gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --draft=false \
+            --prerelease="$PRERELEASE" --latest="$LATEST" --repo "$GITHUB_REPOSITORY"
 
   # Signs the files the release serves, downloaded as users download them, when
   # they are the bytes this run built (sign_release_files.sh). Its own job, so
@@ -969,6 +973,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
+          package-manager-cache: false
           registry-url: https://registry.npmjs.org
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

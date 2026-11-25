@@ -136,7 +136,7 @@
   "bugs": {
     "url": "https://github.com/ClickHouse/loom/issues"
   },
-  "homepage": "https://clickhouse.github.io/loom/reference/typescript-sdk/",
+  "homepage": "https://loom.clickhouse.com/docs/reference/typescript-sdk/",
   "engines": {
     "node": ">=20.0.0"
   },

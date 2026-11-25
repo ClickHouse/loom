@@ -1,6 +1,6 @@
 # clickhouse-loom
 
-Use [ClickHouse Loom](https://clickhouse.github.io/loom/) from Rust. Loom is a
+Use [ClickHouse Loom](https://loom.clickhouse.com/docs/) from Rust. Loom is a
 self-hosted server for shared long-term AI agent memory, document search and
 code indexing.
 

@@ -28,7 +28,7 @@ eight code tools, the duplicate check, bisect candidates, PR check and blast
 radius, `loom_search`, `loom_activate`, `loom_op`), ~9k
 tokens per `tools/list`; every other op runs through `loom_op {op, arguments}`. The
 `toolset` plugin setting selects another listing, including a union such as `coding+tracker`. See
-[MCP clients](https://clickhouse.github.io/loom/features/integrations/mcp-clients/).
+[MCP clients](https://loom.clickhouse.com/docs/features/integrations/mcp-clients/).
 
 > **Bare mode skips hooks.** `claude --bare` (chosen by some agent harnesses for prompt-cache and cost reasons) does not run PreToolUse hooks, so the token shunt and the outcome capture in this plugin do not fire there. A harness that wants the shunt under bare mode needs the SDK backend's hook path instead.
 
@@ -72,17 +72,17 @@ A client-side redaction removes common credential shapes from what the hooks
 send; it is best effort, not a guarantee, and MCP tool arguments and a brief the
 `loom-session` skill saves are sent without it. What is sent, with each item's
 off switch, is listed in
-[data handling](https://clickhouse.github.io/loom/features/integrations/claude-code/#data-handling).
+[data handling](https://loom.clickhouse.com/docs/features/integrations/claude-code/#data-handling).
 
 The server keeps this in its own databases (ClickHouse, and Postgres when the
 operator stores memories there) and passes text to an LLM or embedding provider
 only if its operator configured one
-([models and keys](https://clickhouse.github.io/loom/getting-started/models-and-keys/));
+([models and keys](https://loom.clickhouse.com/docs/getting-started/models-and-keys/));
 deleting data is covered in
-[retention and erasure](https://clickhouse.github.io/loom/features/memory/retention-and-erasure/).
+[retention and erasure](https://loom.clickhouse.com/docs/features/memory/retention-and-erasure/).
 Users whose grants allow them to read a stored row, such as teammates, and the
 server's operator can read it
-([namespaces and sharing](https://clickhouse.github.io/loom/features/namespaces-and-sharing/)).
+([namespaces and sharing](https://loom.clickhouse.com/docs/features/namespaces-and-sharing/)).
 
 The plugin's hooks and its MCP header helper (the script that adds the token to
 Loom's MCP requests) run `node`, `git` and `grep` on your machine: `git` reads
@@ -178,7 +178,7 @@ PATH, a version manager's default (or its newest install when the default
 cannot be read or is older than 18), and the usual install directories. With
 none, it exits 1 with one line naming the Node it found too old, or none, and
 `LOOM_NODE`
-([requirements](https://clickhouse.github.io/loom/features/integrations/claude-code/#requirements)
+([requirements](https://loom.clickhouse.com/docs/features/integrations/claude-code/#requirements)
 has the platforms).
 
 ## Safety model: fire-and-forget, hard-bounded
@@ -495,7 +495,7 @@ Codex's hook wiring — at
 the plugin bundles its MCP entry with the URL and
 `toolset=core,coding,tracker,tasks` fixed (Codex plugins have no install-time
 options). See
-[Codex](https://clickhouse.github.io/loom/features/integrations/codex/).
+[Codex](https://loom.clickhouse.com/docs/features/integrations/codex/).
 The scripts learn which client runs them from their third argument
 (`… PostToolUse codex`); unnamed, they are Claude Code's.
 
@@ -510,4 +510,4 @@ absent.
 Captures POST to the `observe.record` wire op and crystallization to
 `observe.crystallize`. A failed POST is swallowed — the primer (`context.pack`)
 and the safety model work regardless. See
-[Claude Code](https://clickhouse.github.io/loom/features/integrations/claude-code/).
+[Claude Code](https://loom.clickhouse.com/docs/features/integrations/claude-code/).

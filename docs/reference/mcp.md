@@ -30,9 +30,22 @@ Query parameters on the URL select what `tools/list` shows for that connection:
   `full` (adds `outputSchema`) or `compact` (the first paragraph and the
   argument tree).
 
-With the automatic loading policy, compact coding connections load `code.symbol`
-and `code.grep` up front. Clients can discover `code.search` when they need it.
+Compact coding connections describe the common source workflows in the
+startup instructions. Find the other tools through discovery. When the
+`coding` toolset is bound to a repository, the primer uses the task context pack
+for prior decisions or procedures beyond the lessons returned with indexed source.
+
+With the automatic loading policy, compact coding connections load
+`code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
+definition name or location to read implementation, indexed tests, and linked
+lessons together. A method with no direct tests or lessons can receive
+examples or notes labeled with its verified owning type. Clients can discover
+`code.symbol` and `code.search` as needed.
 An explicit `LOOM_MCP_ALWAYS_LOAD_TOOLS` list controls loading on every profile.
+
+Compact coding connections list grep's common arguments up front. Use
+`loom_op` with `{"op": "help", "query": "code.grep"}` to find related source,
+neighbour and deadline controls. Calls accept the full argument set.
 
 On coding connections, `code.symbol` includes related indexed tests and nearby
 source with the definition. Set `include_examples: false` to omit the tests,

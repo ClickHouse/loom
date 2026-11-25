@@ -1,6 +1,6 @@
 # Loom Go client
 
-A minimal Go client for [ClickHouse Loom](https://clickhouse.github.io/loom/)'s memory
+A minimal Go client for [ClickHouse Loom](https://loom.clickhouse.com/docs/)'s memory
 operations: `memory.set`, `memory.get`, `memory.search` and `memory.delete`. It depends
 on the standard library only (`net/http`), and every call takes a `context.Context`.
 

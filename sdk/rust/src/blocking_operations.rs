@@ -4696,6 +4696,23 @@ impl crate::blocking::Client {
     ) -> Result<crate::CallResult<crate::CodeSymbolOutput>, crate::CallFailure> {
         self.call("code.symbol", &request, options)
     }
+    /// Call `code.edit_context`.
+    pub fn code_edit_context(
+        &self,
+        request: crate::CodeEditContextInput,
+    ) -> Result<crate::CodeSymbolOutput, crate::Error> {
+        self.code_edit_context_with_options(request, crate::CallOptions::default())
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+    /// Call `code.edit_context` with per-request options and metadata.
+    pub fn code_edit_context_with_options(
+        &self,
+        request: crate::CodeEditContextInput,
+        options: crate::CallOptions,
+    ) -> Result<crate::CallResult<crate::CodeSymbolOutput>, crate::CallFailure> {
+        self.call("code.edit_context", &request, options)
+    }
     /// Call `code.callers`.
     pub fn code_callers(
         &self,

@@ -423,6 +423,18 @@ def _source_key(org: str, ns: str) -> tuple[str, ...]:
     return (org, ns, *(_GIT_TEXT_SOURCE.get() or ()))
 
 
+async def _git_blob_paths(paths: set[str]) -> set[str]:
+    source = _GIT_TEXT_SOURCE.get()
+    if source is None or not paths:
+        return set()
+    from server.code.app.index import gitrepo
+
+    try:
+        return await gitrepo.blob_paths_at(*source, paths)
+    except gitrepo.GitError:
+        return set()
+
+
 @contextmanager
 def git_text_source(git_dir: str, sha: str) -> Iterator[None]:
     """Read sibling texts from `git_dir` at `sha` inside the block; tasks
@@ -461,30 +473,36 @@ def _over_cap(key: tuple[str, str, str, int], org: str, ns: str, why: object) ->
     return ""
 
 
-async def _live_text(repo: CodeRepo, org: str, ns: str, path: str, max_bytes: int) -> str:
-    """One file's text: the mirror's blob at the pass's commit when a
-    `git_text_source` is set and holds the path, else the indexed chunks. A file over
-    `max_bytes` reads as "": the repository chose its size, and the caller parses it.
-    The mirror's verdict is kept for its commit; the chunks', which may hold an older
-    version, for the namespace, so a mirror that recovers is asked again."""
+async def _git_text(org: str, ns: str, path: str, max_bytes: int) -> str | None:
+    """The exact sibling source at the indexing pass's commit, when available."""
     src = _GIT_TEXT_SOURCE.get()
-    if src is not None:
-        from server.code.app.index import gitrepo
+    if src is None:
+        return None
+    from server.code.app.index import gitrepo
 
-        at_commit = (*src, path, max_bytes)
-        if _EMPTY_VERDICTS.get(at_commit) is not None:
-            return ""
-        try:
-            blob = await gitrepo.show_file(src[0], src[1], path, max_bytes=max_bytes)
-        except gitrepo.BlobTooLarge as e:
-            return _over_cap(at_commit, org, ns, e)
-        except Exception:  # noqa: BLE001 — a slow or broken mirror falls back
-            blob = None
-        if blob is not None:
-            if not blob:
-                # a fact at this commit, unlike an unindexed file
-                _EMPTY_VERDICTS.put(at_commit, True)
-            return blob.decode("utf-8", "replace")
+    at_commit = (*src, path, max_bytes)
+    if _EMPTY_VERDICTS.get(at_commit) is not None:
+        return ""
+    try:
+        blob = await gitrepo.show_file(src[0], src[1], path, max_bytes=max_bytes)
+    except gitrepo.BlobTooLarge as e:
+        return _over_cap(at_commit, org, ns, e)
+    except Exception:  # noqa: BLE001 — some sibling readers can use indexed chunks
+        return None
+    if not blob and blob is not None:
+        _EMPTY_VERDICTS.put(at_commit, True)
+    return blob.decode("utf-8", "replace") if blob is not None else None
+
+
+async def _live_text(repo: CodeRepo, org: str, ns: str, path: str, max_bytes: int) -> str:
+    """One file's text from the pinned mirror or its indexed chunks.
+
+    A file over `max_bytes` reads as empty. The mirror's verdict is kept for its
+    commit and the chunks', which may hold an older version, for the namespace.
+    """
+    git_text = await _git_text(org, ns, path, max_bytes)
+    if git_text is not None:
+        return git_text
     in_chunks = (org, ns, path, max_bytes)
     if _EMPTY_VERDICTS.get(in_chunks) is not None:
         return ""

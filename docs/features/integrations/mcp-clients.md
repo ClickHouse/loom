@@ -1,4 +1,13 @@
-# Connecting an MCP client
+---
+title: Self-hosted MCP memory server for coding agents
+description: Connect Claude Code, Codex, Cursor and other MCP clients to Loom. Check shared recall through separate writer and reader sessions.
+---
+
+# Connect to Loom's MCP memory server
+
+An MCP memory server lets AI agents save and retrieve durable facts through the
+Model Context Protocol. With Loom, agents in different clients can use the same
+server and recall decisions saved in a namespace they have permission to read.
 
 Loom serves its operations as MCP tools at `<loom>/mcp`. A streamable-HTTP client connects
 with a URL and a bearer token (none on a single-user server; Cursor and VS Code have
@@ -493,6 +502,84 @@ a Loom JWT for the signed-in user. Details: [MCP reference](../../reference/mcp.
   token resolves to the namespace you expect.
 - `loom install --dry-run` shows exactly what would be written, for comparing with a
   config file that behaves unexpectedly.
+
+## Verify shared memory through MCP
+
+Use this check to test a save and recall through two independent MCP sessions.
+Use an [authenticated Loom server](../../getting-started/quickstart.md#2-open-the-dashboard)
+and a disposable memory namespace. Set `LOOM_BASE_URL` to the server URL and set
+`LOOM_ORG` and `LOOM_NAMESPACE` to the scope. Set `LOOM_WRITER_TOKEN` and
+`LOOM_READER_TOKEN` to [tokens for different subjects](../../guides/tokens-and-grants.md#mint-a-token)
+with writer and viewer access to that namespace, respectively.
+
+In a scratch directory, run `npm install @modelcontextprotocol/sdk@1`. Save the
+following as `check-loom-memory.mjs` and run `node check-loom-memory.mjs`:
+
+```js
+import assert from "node:assert/strict";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const url = new URL("/mcp?toolset=core", process.env.LOOM_BASE_URL);
+const fact = {
+  org: process.env.LOOM_ORG,
+  namespace: process.env.LOOM_NAMESPACE,
+  agent: "example-author",
+  memory_key: "example/mcp-memory-check",
+};
+const value = "Review the rollout checklist before deployment.";
+
+async function withClient(name, token, run) {
+  const client = new Client({ name, version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(url, {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  try {
+    await client.connect(transport);
+    await run(client);
+  } finally {
+    try {
+      await transport.terminateSession();
+    } finally {
+      await client.close();
+    }
+  }
+}
+
+await withClient("example-writer", process.env.LOOM_WRITER_TOKEN, async (client) => {
+  const saved = await client.callTool({
+    name: "loom_memory_set",
+    arguments: { ...fact, value, if_match_sha256: "absent" },
+  });
+  assert.ok(!saved.isError && saved.structuredContent?.memory_id, "The write must succeed");
+});
+
+await withClient("example-reader", process.env.LOOM_READER_TOKEN, async (client) => {
+  const read = await client.callTool({ name: "loom_memory_get", arguments: fact });
+  assert.ok(!read.isError && read.structuredContent?.found, "The reader must find the fact");
+  assert.equal(read.structuredContent.value, value);
+  assert.equal(read.structuredContent.agent, fact.agent);
+
+  const denied = await client.callTool({
+    name: "loom_memory_set",
+    arguments: {
+      ...fact,
+      memory_key: "example/mcp-viewer-write",
+      value,
+      if_match_sha256: "absent",
+    },
+  });
+  assert.ok(denied.isError);
+  assert.equal(denied.structuredContent?.code, "AUTH_INSUFFICIENT");
+});
+
+console.log("A separate MCP reader recalled the fact and its write was refused.");
+```
+
+The writer's precondition requires a fresh key. Use a fresh disposable namespace
+for another run. A passing check establishes exact-key recall and the viewer's role
+on that namespace. [Evaluate team memory](../../getting-started/evaluate.md#shared-memory-across-clients)
+for the cross-namespace and revoked-credential checks.
 
 ## Related
 

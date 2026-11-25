@@ -89,6 +89,34 @@ class SymbolsMixin(CodeRepoBase):
                 out[str(r["qualified_name"])] = rt
         return out
 
+    async def declared_types_for_symbols(
+        self, org: str, ns: str, keys: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], tuple[str, str]]:
+        """Declared types of the exact live parser-tier definitions selected by a binding."""
+        out: dict[tuple[str, str], tuple[str, str]] = {}
+        for batch in _batched(keys, 500):
+            key_match, key_params = _reconcile_key_match(batch)
+            rows = await self._ch.query_all(
+                f"""
+                SELECT qualified_name, symbol_id, path, return_type
+                FROM loom.code_symbols FINAL
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND tier = 'treesitter' AND {key_match}
+                  AND tombstoned_at IS NULL AND return_type != ''
+                """,
+                {"org": org, "ns": ns, **key_params},
+            )
+            out.update(
+                {
+                    (str(r["qualified_name"]), str(r["symbol_id"])): (
+                        str(r["path"]),
+                        str(r["return_type"]),
+                    )
+                    for r in rows
+                }
+            )
+        return out
+
     async def live_symbols_for_path(
         self, org: str, ns: str, path: str, tier: str
     ) -> list[dict[str, Any]]:

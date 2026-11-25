@@ -47,6 +47,7 @@ _HIT_DROP: dict[str, frozenset[str]] = {
     "code.search": frozenset({"score", "lexical_rank", "vector_rank", "via", "unit_id"}),
     "code.ask": frozenset({"unit_id"}),
     "code.symbol": frozenset({"score", "unit_id"}),
+    "code.edit_context": frozenset({"score", "unit_id"}),
 }
 # Flags that only speak when true — false is the default reading.
 _TRUE_ONLY: frozenset[str] = frozenset(
@@ -218,6 +219,9 @@ def _lean_grep(out: dict[str, Any]) -> None:
         mod = _module_of_path(path)
         if mod and scope.startswith(mod + "::"):
             m["scope"] = scope[len(mod) + 2 :]
+    related = out.get("related")
+    if isinstance(related, dict):
+        out["related"] = lean_code("code.grep", related)
 
 
 def _lean_enclosing(out: dict[str, Any]) -> None:
@@ -308,6 +312,7 @@ def _lean_symbol(out: dict[str, Any]) -> None:
 _PER_OP = {
     "code.search": _lean_search,
     "code.symbol": _lean_symbol,
+    "code.edit_context": _lean_symbol,
     "code.callers": _lean_callers,
     "code.callees": _lean_callers,
     "code.outline": _lean_outline,
@@ -322,6 +327,7 @@ LEAN_CODE_OPS: frozenset[str] = frozenset(
     {
         "code.search",
         "code.symbol",
+        "code.edit_context",
         "code.callers",
         "code.callees",
         "code.outline",

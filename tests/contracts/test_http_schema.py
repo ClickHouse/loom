@@ -1,4 +1,7 @@
-"""Generate real HTTP transport requests with synthetic backing-store seams."""
+"""Generate real HTTP transport requests with synthetic backing-store seams.
+
+Import the transport at collection so Hypothesis caches source constants before drawing cases.
+"""
 
 from __future__ import annotations
 
@@ -14,9 +17,13 @@ from hypothesis import HealthCheck, given
 from hypothesis import settings as generated
 from hypothesis import strategies as st
 
+from server.auth import authz
 from server.auth.jwt import mint_token
+from server.memory.store import blacklist
 from server.operations.base import Role
+from server.operations.registry import ALL_OPERATIONS
 from server.settings import settings
+from server.transport import http
 
 _PATH = "/v1/blacklist.list"
 _ORG, _NS = "contract-a", "shared"
@@ -24,11 +31,6 @@ _ORG, _NS = "contract-a", "shared"
 
 @pytest.fixture
 def transport(monkeypatch: pytest.MonkeyPatch):
-    from server.auth import authz
-    from server.memory.store import blacklist
-    from server.operations.registry import ALL_OPERATIONS
-    from server.transport import http
-
     calls: list[tuple[str, str]] = []
 
     async def no_grant(*args: Any, **kwargs: Any) -> None:

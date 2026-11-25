@@ -5020,6 +5020,24 @@ impl crate::Client {
     ) -> Result<crate::CallResult<crate::CodeSymbolOutput>, crate::CallFailure> {
         self.call("code.symbol", &request, options).await
     }
+    /// Call `code.edit_context`.
+    pub async fn code_edit_context(
+        &self,
+        request: crate::CodeEditContextInput,
+    ) -> Result<crate::CodeSymbolOutput, crate::Error> {
+        self.code_edit_context_with_options(request, crate::CallOptions::default())
+            .await
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+    /// Call `code.edit_context` with per-request options and metadata.
+    pub async fn code_edit_context_with_options(
+        &self,
+        request: crate::CodeEditContextInput,
+        options: crate::CallOptions,
+    ) -> Result<crate::CallResult<crate::CodeSymbolOutput>, crate::CallFailure> {
+        self.call("code.edit_context", &request, options).await
+    }
     /// Call `code.callers`.
     pub async fn code_callers(
         &self,

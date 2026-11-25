@@ -34,6 +34,7 @@ from server.operations.base import MCP_HIDDEN
 
 
 GrepText = Annotated[str, Field(min_length=2, max_length=1000)]
+RELATED_GREP_CONTEXT_LINES = 6
 
 
 class CodeGrepInput(_CodeIdentity, _ResultLessons):
@@ -50,6 +51,24 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         default=False,
         description="Use RE2 syntax without lookaround or backreferences when true.",
     )
+    related_on_miss: bool = Field(
+        default=False,
+        description=(
+            "Find a missing literal call's qualified argument, including in a batch with one call. "
+            "Default true on coding connections."
+        ),
+    )
+    related_on_prefix: bool = Field(
+        default=False,
+        description=(
+            "For a literal call prefix with one qualified argument, include its uses in other "
+            "scopes as excerpts. Default true on coding connections."
+        ),
+    )
+    include_dependencies: bool = Field(
+        default=False,
+        description="Include the resolved argument definition and direct helper in related source.",
+    )
     # False matches `pattern` regardless of letter case.
     case_sensitive: bool = True
     include_lessons: bool = Field(
@@ -60,7 +79,13 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         ),
     )
     context_lines: int = Field(
-        default=0, ge=0, le=20, description="Retained lines on each side of a match."
+        default=0,
+        ge=0,
+        le=20,
+        description=(
+            f"Excerpt radius, {RELATED_GREP_CONTEXT_LINES} by default for related hits "
+            "without bodies, or 0 for match lines only."
+        ),
     )
     # Only paths under this repo-relative prefix; '' = the whole index. A prefix outside
     # the indexed ones answers `not_covered`.
@@ -98,7 +123,7 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     mode: Literal["matches", "files", "presence", "message"] = "matches"
     include_body: bool = Field(
         default_factory=lambda data: data["mode"] == "matches",
-        description="Return bodies by default in matches mode, or set false for lines only.",
+        description="Return full enclosing bodies by default in matches mode.",
     )
     # Default depends on mode: 20 lines, or the 500-file ceiling — a files
     # answer capped at 20 reads like a complete coverage answer to a caller
@@ -162,6 +187,36 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         return min(self.limit or 20, 200)
 
 
+class GrepDependency(BaseModel):
+    qualified_name: str
+    path: str
+    start_line: int
+    end_line: int
+    body: str
+    _indexed_commit: str = PrivateAttr(default="")
+
+
+class RelatedGrepEvidence(BaseModel):
+    """Verified lines for the qualified argument of a literal call."""
+
+    pattern: str
+    matches: list[dict[str, Any]]
+    contexts: list[dict[str, Any]] = Field(default_factory=list)
+    contexts_partial: bool = False
+    definitions: list[dict[str, Any]] = Field(default_factory=list)
+    definitions_partial: bool = False
+    definitions_note: str = ""
+    truncated: bool = False
+    dependencies: list[GrepDependency] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_dependencies(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not data.get("dependencies"):
+            data.pop("dependencies", None)
+        return data
+
+
 class CodeGrepOutput(_LessonsOut):
     # File lessons omitted by symbol focus, a token budget, truncation or supersession.
     lessons_left_out: int = 0
@@ -188,6 +243,8 @@ class CodeGrepOutput(_LessonsOut):
         for k in ("partial", "partial_reason", "fallback"):
             if not data.get(k):
                 data.pop(k, None)
+        if data.get("related") is None:
+            data.pop("related", None)
         return _drop_empty_lessons(data)
 
     # {path, line, text, scope, scope_start_line, scope_end_line} per matching
@@ -195,6 +252,8 @@ class CodeGrepOutput(_LessonsOut):
     # by `scope` (0/0 when the line sits in no unit) — enough to decide whether
     # to fetch the body, or to skip it when that unit is already on screen.
     matches: list[dict[str, Any]]
+    # Related source for a qualified argument, separate from literal matches.
+    related: RelatedGrepEvidence | None = None
     # Exact retained source windows for this page, with inclusive line bounds.
     contexts: list[dict[str, Any]] = Field(default_factory=list)
     contexts_partial: bool = False

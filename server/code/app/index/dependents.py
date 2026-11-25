@@ -44,13 +44,18 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.code.domain.extract.edges_treesitter import (
     REPO_WIDE_CONFIDENCE,
     candidates_for_call,
 )
+from server.code.domain.extract.py_member_reads import READ_DEPENDENCY
+from server.code.domain.extract.treesitter import file_symbol_id
 from server.code.store.index import CodeRepo, build_row
+
+if TYPE_CHECKING:
+    from server.code.app.index.denylist import Denylist
 
 logger = logging.getLogger("loom.code_index.dependents")
 
@@ -84,6 +89,12 @@ class CommitDelta:
     def empty(self) -> bool:
         return not (self.names_added or self.names_removed or self.symbols_tombstoned)
 
+    @property
+    def python_binding_files(self) -> list[str]:
+        return [
+            file_symbol_id(p) for p in sorted(self.touched_paths) if p.endswith((".py", ".pyi"))
+        ]
+
 
 @dataclass
 class ClosureRepairResult:
@@ -110,6 +121,7 @@ class DependentsResult:
     misses_tombstoned: int = 0
     misses_refreshed: int = 0  # verdict rewritten under the same site key
     errors: int = 0
+    retry_paths: list[str] = field(default_factory=list)
     by_source: dict[str, int] = field(default_factory=dict)  # a/b/d -> paths
     ms: int = 0
 
@@ -248,6 +260,8 @@ async def reextract_paths(
     show_file: Any,
     ingest_file: Any,
     embedding_model: str,
+    stop_after: float | None = None,
+    denylist: Denylist | None = None,
 ) -> DependentsResult:
     """ingest_file(edges_only=True) for each path at `commit_sha`. A path
     absent at that commit (deleted later in the same window) is skipped;
@@ -260,6 +274,9 @@ async def reextract_paths(
 
     size = round_size()
     for batch in rounds(list(paths), size):
+        if stop_after is not None and time.monotonic() >= stop_after:
+            out.retry_paths.extend(batch)
+            continue
         # A batch's per-path reads (edges, declined sites, guards, the call names) from
         # one statement each, like a commit's round, and its rows one INSERT per table.
         # Dependents write no symbols, so the prefetched name table holds for the whole
@@ -267,7 +284,7 @@ async def reextract_paths(
         reads = RoundReads(repo, org, ns) if size > 0 else repo
         sources = await _batch_sources(batch, git_dir, commit_sha, show_file, out)
         if size > 0:
-            await reads.prefetch(sources)
+            await reads.prefetch(sources, denylist)
         try:
             await asyncio.gather(
                 *(
@@ -282,6 +299,8 @@ async def reextract_paths(
                         commit_sha=commit_sha,
                         embedding_model=embedding_model,
                         ingest_file=ingest_file,
+                        stop_after=stop_after,
+                        denylist=denylist,
                     )
                     for path in batch
                     if path in sources
@@ -336,10 +355,19 @@ async def _reextract_one(
     commit_sha: str,
     embedding_model: str,
     ingest_file: Any,
+    stop_after: float | None,
+    denylist: Denylist | None,
 ) -> None:
     parsed = getattr(repo, "parsed", None)
-    extra = {"parsed": parsed[path]} if isinstance(parsed, dict) and path in parsed else {}
+    extra: dict[str, Any] = (
+        {"parsed": parsed[path]} if isinstance(parsed, dict) and path in parsed else {}
+    )
+    if denylist is not None:
+        extra["denylist"] = denylist
     async with sem:
+        if stop_after is not None and time.monotonic() >= stop_after:
+            out.retry_paths.append(path)
+            return
         try:
             stats = await ingest_file(
                 repo,
@@ -355,10 +383,15 @@ async def _reextract_one(
             )
         except Exception as e:  # noqa: BLE001 — per path
             out.errors += 1
+            out.retry_paths.append(path)
             logger.warning("dependents: %s failed: %s", path, e)
             return
         if getattr(stats, "skipped", False):
             out.skipped += 1
+            return
+        if getattr(stats, "error", ""):
+            out.errors += 1
+            out.retry_paths.append(path)
             return
         out.reingested += 1
         out.edges_new += int(getattr(stats, "edges_new", 0))
@@ -390,12 +423,15 @@ async def run_for_commit(
     pending_max: int,
     closure_max_names: int,
     closure_max_sites: int,
+    stop_after: float | None = None,
+    denylist: Denylist | None = None,
 ) -> tuple[ClosureRepairResult | None, DependentsResult | None]:
     """Closure repair first (it retires miss rows the dependents set would
     otherwise re-extract), then the bounded dependents re-extraction. Every
     read is a key read: misses by callee_name, edges by to_symbol_id,
     definitions by name."""
-    if delta.empty or not (dependents_enabled or closure_enabled):
+    binding_files = delta.python_binding_files if dependents_enabled else []
+    if (delta.empty and not binding_files) or not (dependents_enabled or closure_enabled):
         return None, None
 
     # the same per-commit cap on each side: a generated file that adds
@@ -473,7 +509,7 @@ async def run_for_commit(
         if (str(m["callee_name"]), str(m["path"]), int(m["line"]), str(m["from_symbol_id"]))
         not in resolved_keys
     ]
-    tomb_ids = sorted(delta.symbols_tombstoned)
+    tomb_ids = sorted(delta.symbols_tombstoned) + binding_files
     tomb_paths = (
         [
             str(r["path"])
@@ -481,7 +517,7 @@ async def run_for_commit(
                 org,
                 ns,
                 tomb_ids,
-                edge_kinds=["calls", "inherits", "fixture_use"],
+                edge_kinds=["calls", "inherits", "fixture_use", "reads", READ_DEPENDENCY],
             )
         ]
         if tomb_ids
@@ -521,9 +557,12 @@ async def run_for_commit(
         show_file=show_file,
         ingest_file=ingest_file,
         embedding_model=embedding_model,
+        stop_after=stop_after,
+        denylist=denylist,
     )
     deps.candidates = len(paths)
     deps.by_source = by_source
+    overflow.extend(deps.retry_paths)
     if overflow:
         deps.queued, deps.pending_total, deps.dropped = await enqueue_pending(
             repo,
@@ -556,14 +595,17 @@ async def drain_pending(
     show_file: Any,
     ingest_file: Any,
     embedding_model: str,
+    load_rules: Any = None,
+    stop_after: float | None = None,
 ) -> DrainResult:
     """Re-extract up to `budget` queued paths at `head` and write the rest
     back. Called by reconcile ahead of its stale-path heal, inside the
     heal's own per-pass budget."""
     paths, detail = await read_pending(repo, org, ns)
     out = DrainResult(remaining=len(paths))
-    if not paths or budget <= 0:
+    if not paths or budget <= 0 or (stop_after is not None and time.monotonic() >= stop_after):
         return out
+    denylist = await load_rules() if load_rules is not None else None
     now, rest = paths[:budget], paths[budget:]
     res = await reextract_paths(
         repo,
@@ -575,8 +617,11 @@ async def drain_pending(
         show_file=show_file,
         ingest_file=ingest_file,
         embedding_model=embedding_model,
+        stop_after=stop_after,
+        denylist=denylist,
     )
     out.files, out.skipped, out.errors = res.reingested, res.skipped, res.errors
+    rest.extend(sorted(res.retry_paths))
     out.remaining = len(rest)
     await write_pending(
         repo,

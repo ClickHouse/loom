@@ -1,3 +1,10 @@
+---
+title: Evaluate Loom
+description: Test memory across coding agents, check recall and namespace isolation, and compare code search, latency, and cost against your team's workload.
+seo:
+  title: How to evaluate memory for coding agents
+---
+
 # Evaluate Loom
 
 Evaluate the decision you need to make, not every harness in the repository. This guide
@@ -79,6 +86,9 @@ separately:
 - **Answer:** correctness under one pinned reader and judge, plus citation correctness.
 - **Economy:** p50/p95 latency, input/output tokens, model cost, construction cost and
   stored rows.
+
+Use the [internal document citation checks](../use-cases/document-search.md#evaluate-rag-over-internal-documents)
+to cover revised sources, missing evidence, and a reader outside the document namespace.
 
 For an existing memory corpus, save a JSON dataset with this shape (the supplied harness
 targets `memory.search`; use an equivalent scorer for `knowledge.search`):

@@ -8710,6 +8710,101 @@ fn code_symbol() {
     );
 }
 #[test]
+fn code_edit_context() {
+    let value: clickhouse_loom::CodeEditContextInput = serde_json::from_str("{}").unwrap();
+    let encoded = serde_json::to_value(value).unwrap();
+    assert!(encoded.is_object());
+    let value: clickhouse_loom::CodeSymbolOutput =
+        serde_json::from_str("{\"definitions\":[]}").unwrap();
+    let encoded = serde_json::to_value(value).unwrap();
+    assert!(encoded.is_object());
+    assert_eq!(
+        encoded["lessons_left_out"],
+        serde_json::from_str::<serde_json::Value>("0").unwrap(),
+        "code.edit_context:lessons_left_out"
+    );
+    assert_eq!(
+        encoded["ambiguous"],
+        serde_json::from_str::<serde_json::Value>("false").unwrap(),
+        "code.edit_context:ambiguous"
+    );
+    assert_eq!(
+        encoded["hierarchy"],
+        serde_json::from_str::<serde_json::Value>("{}").unwrap(),
+        "code.edit_context:hierarchy"
+    );
+    assert_eq!(
+        encoded["candidates"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.edit_context:candidates"
+    );
+    assert_eq!(
+        encoded["tokens_returned"],
+        serde_json::from_str::<serde_json::Value>("0").unwrap(),
+        "code.edit_context:tokens_returned"
+    );
+    assert_eq!(
+        encoded["trace_run_id"],
+        serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
+        "code.edit_context:trace_run_id"
+    );
+    assert_eq!(
+        encoded["uses"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.edit_context:uses"
+    );
+    assert_eq!(
+        encoded["uses_truncated"],
+        serde_json::from_str::<serde_json::Value>("false").unwrap(),
+        "code.edit_context:uses_truncated"
+    );
+    assert_eq!(
+        encoded["uses_tokens"],
+        serde_json::from_str::<serde_json::Value>("0").unwrap(),
+        "code.edit_context:uses_tokens"
+    );
+    assert_eq!(
+        encoded["picked_by"],
+        serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
+        "code.edit_context:picked_by"
+    );
+    assert_eq!(
+        encoded["resolved_by"],
+        serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
+        "code.edit_context:resolved_by"
+    );
+    assert_eq!(
+        encoded["documented_in"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.edit_context:documented_in"
+    );
+    assert_eq!(
+        encoded["neighbours"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.edit_context:neighbours"
+    );
+    assert_eq!(
+        encoded["anchors"],
+        serde_json::from_str::<serde_json::Value>("0").unwrap(),
+        "code.edit_context:anchors"
+    );
+    assert_eq!(
+        encoded["neighbour_tokens"],
+        serde_json::from_str::<serde_json::Value>("0").unwrap(),
+        "code.edit_context:neighbour_tokens"
+    );
+    assert_eq!(
+        encoded["presence"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.edit_context:presence"
+    );
+    assert_eq!(
+        encoded["summary"],
+        serde_json::from_str::<serde_json::Value>("{}").unwrap(),
+        "code.edit_context:summary"
+    );
+}
+#[test]
 fn code_callers() {
     let value: clickhouse_loom::CodeCallersInput = serde_json::from_str("{}").unwrap();
     let encoded = serde_json::to_value(value).unwrap();
@@ -10181,6 +10276,11 @@ fn code_grep() {
         encoded["lessons_left_out"],
         serde_json::from_str::<serde_json::Value>("0").unwrap(),
         "code.grep:lessons_left_out"
+    );
+    assert_eq!(
+        encoded["related"],
+        serde_json::from_str::<serde_json::Value>("null").unwrap(),
+        "code.grep:related"
     );
     assert_eq!(
         encoded["contexts"],

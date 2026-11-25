@@ -576,6 +576,7 @@ async def _maybe_reconcile(
                 head,
                 budget=heal_budget,
                 embedding_model=get_embedder().model_name,
+                stop_after=budget.stop_after if budget is not None else None,
             )
             heal_budget = max(0, heal_budget - drained.files)
             result.dependents_drained += drained.files

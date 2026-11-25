@@ -1,3 +1,9 @@
+---
+description: Index internal documents and give AI agents cited passages over MCP, HTTP or SDKs. Check source revisions and scope access by namespace.
+seo:
+  title: RAG with citations for internal documents
+---
+
 # Document search and RAG for agents
 
 Loom indexes your documents (Markdown and text, and PDF, `.docx` and `.pptx` files that its
@@ -26,6 +32,16 @@ model writes the answer from the passages Loom returns.
   instead of handing the model a weak passage. [`loom_search`](../features/unified-search.md#loom_search)
 - **Access control on every passage.** Documents live in namespaces with viewer, writer and
   admin roles. [Namespaces and sharing](../features/namespaces-and-sharing.md)
+
+## Build a knowledge base agents can cite
+
+Start with documents the team already maintains, such as runbooks, architecture
+decisions and policies. Group sources in namespaces with the same readership. Give
+each agent access to the namespaces it needs and register sources for the documents
+that change outside Loom. A search hit gives the agent a passage, source and revision
+to check against the question. Store a decision an agent makes while applying a
+policy in [shared agent memory](agent-memory.md) so future agents can find it alongside
+the original evidence. Follow the [knowledge factory guide](knowledge-factory.md) to review and publish answers to recurring gaps.
 
 ## Measured
 
@@ -88,5 +104,21 @@ connecting an MCP client does not turn them on.
 The request above is an example to run against your own indexed documents, not a
 captured search result. See the [unified search contract](../features/unified-search.md#loom_search)
 for the other request fields and result sections.
+
+## Evaluate RAG over internal documents
+
+Pick test questions from your runbooks and policies. Record the expected source,
+revision and supporting passage before running each question. Check retrieval and
+the agent's answer separately so you can tell where a failure occurred.
+
+| Test case           | Pass condition                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Answerable question | The expected passage is in the retrieved results. The agent cites it beside the claim it supports.                   |
+| Updated policy      | After publishing a revision, the citation names that revision and the answer reflects the revised rule.              |
+| Missing evidence    | The agent abstains when none of the retrieved passages supports an answer.                                           |
+| Restricted document | The same question from a reader outside the namespace returns no passage or identifier from the restricted document. |
+
+Use the [RAG evaluation procedure](../getting-started/evaluate.md#memory-and-rag)
+to record retrieval recall and citation correctness separately.
 
 Some ops on this page are marked experimental on the [status page](../reference/status.md).

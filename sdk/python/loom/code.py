@@ -109,8 +109,11 @@ class CodeClient:
         regex: bool = False,
         path_prefix: str = "",
         limit: int | None = None,
-        context_lines: int = 0,
+        context_lines: int | None = None,
         include_body: bool | None = None,
+        related_on_miss: bool = False,
+        related_on_prefix: bool = False,
+        include_dependencies: bool = False,
         mode: str = "matches",
         path_globs: list[str] | None = None,
         exclude_globs: list[str] | None = None,
@@ -122,8 +125,16 @@ class CodeClient:
         (`scope_start_line` / `scope_end_line`, 0 outside any unit), so a
         caller can skip `enclosing()` for a hit inside a function it has
         already shown. Matches include distinct enclosing bodies by default.
-        Pass `include_body=False` for names or locations only.
+        Pass `include_body=False` to omit enclosing bodies.
         `context_lines` adds nearby retained source in matches mode.
+        Pass `related_on_miss=True` to find the qualified argument of a missing
+        call expression under `related`. Those hits include excerpts when
+        bodies are disabled and `context_lines` is omitted. Set it to 0 for
+        matching lines only.
+        Pass `related_on_prefix=True` to see excerpts for other uses of a
+        literal call prefix's qualified argument alongside exact matches.
+        With `related_on_miss` or `related_on_prefix`, `include_dependencies=True`
+        returns retained definitions for a uniquely bound argument and its direct helper.
         `mode="files"` answers "which files
         mention X" (no line text) — use it for coverage questions. `limit`
         defaults per mode: 20 lines, or the 500-file ceiling, so a files
@@ -148,10 +159,16 @@ class CodeClient:
             body["namespaces"] = list(namespaces)
         if limit is not None:
             body["limit"] = limit
-        if context_lines:
+        if context_lines is not None:
             body["context_lines"] = context_lines
         if include_body is not None:
             body["include_body"] = include_body
+        if related_on_miss:
+            body["related_on_miss"] = True
+        if related_on_prefix:
+            body["related_on_prefix"] = True
+        if include_dependencies:
+            body["include_dependencies"] = True
         if path_globs:
             body["path_globs"] = list(path_globs)
         if exclude_globs:

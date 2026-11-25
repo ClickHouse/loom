@@ -75,6 +75,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.coverage.unwatch": ("sdk_method",),
     "code.coverage.watch": ("sdk_method",),
     "code.coverage_claim": ("sdk_method",),
+    "code.edit_context": ("sdk_method",),
     "code.enclosing": (
         "sdk_method",
         "plugin_hook",

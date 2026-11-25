@@ -349,6 +349,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.coverage.unwatch": _CODE_INDEX,
     "code.coverage.watch": _CODE_INDEX,
     "code.coverage_claim": _CODE_INDEX,
+    "code.edit_context": _CODE_LESSONS,
     "code.enclosing": _CODE_LESSONS,
     "code.examples": _CODE_INDEX,
     "code.files": _CODE_INDEX,
