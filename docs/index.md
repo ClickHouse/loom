@@ -1,24 +1,17 @@
 ---
+description: Share memory across AI agents, search documents and link lessons to code. Find Loom setup, evaluation and deployment guides.
 seo:
   title: Agent memory and code search documentation
 ---
 
 # ClickHouse Loom documentation
 
-Loom is a memory, document and code-index server for AI agents, stored in ClickHouse,
-with [Postgres](architecture/storage-authority.md#why-two-stores) as an option for live
-memory and knowledge state. Agents and people reach it over MCP, HTTP, the Python and
-TypeScript SDKs, and the dashboard. Browse the [guides](guides/index.md) by task or
-follow the reading order below.
+Loom stores memory, documents and code indexes in ClickHouse, with
+[Postgres](architecture/storage-authority.md#why-two-stores) as an option for live
+memory and knowledge state. Connect through a coding-agent plugin, MCP, HTTP,
+the Python and TypeScript SDKs or the dashboard.
 
 <a href="https://loom.clickhouse.com/docs/es/use-cases" lang="es" hreflang="es">Casos de uso en español</a>
-
-![The dashboard's Library: a search for a refund rule answered by cited passages](assets/screenshots/document-search.webp)
-
-<details>
-<summary>Watch the cited-answer demo</summary>
-<video src="assets/screenshots/clip-assistant-answer.webm" controls preload="none" muted playsinline width="100%" aria-label="Ask AI answering a question about refunds, with its numbered sources checked against Loom"><a href="assets/screenshots/clip-assistant-answer.webm">Download the cited-answer clip</a></video>
-</details>
 
 ## Start here
 
@@ -48,6 +41,13 @@ One page per need, each saying what Loom does for it and where to start:
 [runs, traces and PR history](use-cases/runs-and-pr-history.md) ·
 [self-hosted agent memory with SQL](use-cases/self-hosted-clickhouse.md) ·
 [all use cases](use-cases/index.md).
+
+![The dashboard's Library: a search for a refund rule answered by cited passages](assets/screenshots/document-search.webp)
+
+<details>
+<summary>Watch the cited-answer demo</summary>
+<video src="assets/screenshots/clip-assistant-answer.webm" controls preload="none" muted playsinline width="100%" aria-label="Ask AI answering a question about refunds, with its numbered sources checked against Loom"><a href="assets/screenshots/clip-assistant-answer.webm">Download the cited-answer clip</a></video>
+</details>
 
 ## 1. Getting started
 
