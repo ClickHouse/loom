@@ -60,7 +60,7 @@ For each task record:
   hosting are allocated across tasks. Count each charge once.
 - **Elapsed time.** Report time to an accepted answer as well as model cost.
 
-The [usage summary](../features/observability/cost-and-usage.md#the-coding-agents-own-spend)
+The [per-session usage summary](../features/observability/cost-and-usage.md#track-token-usage-and-cost-by-session)
 reports model token classes, cost and unpriced turns. Unpriced usage is unknown, not
 free. Preserve missing prices and missing task outcomes rather than count them as zero.
 The [evaluation guide](../getting-started/evaluate.md) describes the paired setup.
