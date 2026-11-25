@@ -122,6 +122,8 @@ the agent's answer separately so you can tell where a failure occurred.
 | Restricted document | The same question from a reader outside the namespace returns no passage or identifier from the restricted document. |
 
 Use the [RAG evaluation procedure](../getting-started/evaluate.md#memory-and-rag)
-to record retrieval recall and citation correctness separately.
+to record retrieval recall and citation correctness separately. When a question
+keeps going unanswered, [triage the missing answer](knowledge-factory.md#triage-an-unanswered-agent-question)
+before changing the source.
 
 Some ops on this page are marked experimental on the [status page](../reference/status.md).

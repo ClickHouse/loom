@@ -49,6 +49,24 @@ rollback. Use the question to test the workflow end to end:
    it supports the answer. Check separately that an agent outside the intended
    namespace cannot read it.
 
+### Triage an unanswered agent question
+
+Repeat the question with the same namespace and access as the agent. Note the
+source you expected to answer it and the supporting passage if you know it.
+
+- **Access.** Have a namespace admin check the reader's
+  [grants](../features/namespaces-and-sharing.md#membership-and-grants). A reader can
+  only retrieve passages from namespaces it may read.
+- **Source sync.** For a synced runbook, inspect the
+  [source's last sync](../reference/operations/knowledge.md#knowledgesourceinspect)
+  and compare the document revision in Loom with the approved runbook.
+- **Retrieval.** If the current source supports the answer, run a
+  [document search evaluation](document-search.md#evaluate-rag-over-internal-documents).
+  Check whether the expected passage was retrieved and whether the answer cited it.
+- **Missing knowledge.** If the current sources leave the rule open, ask the source
+  owner to confirm the answer. Publish it in the runbook and repeat the test from a
+  fresh session.
+
 ## Run a knowledge factory walkthrough
 
 Use a disposable namespace on a [Loom server with authentication enabled](../getting-started/quickstart.md#2-open-the-dashboard),
