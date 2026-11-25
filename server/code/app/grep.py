@@ -416,6 +416,7 @@ async def _grep_lines(
             scope=scope,
             matches=scan.matches if isinstance(input.pattern, list) else matches,
             match_commits=scan.match_commits,
+            exact_definitions=bodies.get("definitions", []),
             limit=served_limit,
             budget=budget,
         )
@@ -563,7 +564,7 @@ def _label_related(
             "No exact match in the indexed scope. Related source matches the call's argument.",
         )
     if extra and extra.matches:
-        note = "Related source shows the call's argument in other scopes."
+        note = "Related source shows where the call's argument is used."
         if not matches:
             note = "No exact match in the indexed scope. " + note
     return extra, note
@@ -717,6 +718,7 @@ async def _extra_related_source(
     scope: Any,
     matches: list[dict[str, Any]],
     match_commits: dict[tuple[str, int], str],
+    exact_definitions: list[dict[str, Any]],
     limit: int,
     budget: code_deadline.Budget | None,
 ) -> tuple[RelatedGrepEvidence | None, dict[str, Any]]:
@@ -742,7 +744,13 @@ async def _extra_related_source(
         logger.debug("%s failed: %s", stage, type(error).__name__)
         return None, {"partial": True, "partial_reason": f"{stage} failed"}
     if batch and evidence is not None:
-        bodies = await definitions_for(input, evidence.matches, budget, match_commits=match_commits)
+        bodies = await definitions_for(
+            input,
+            evidence.matches,
+            budget,
+            match_commits=match_commits,
+            covered_by=exact_definitions,
+        )
         evidence = evidence.model_copy(update=bodies)
     return evidence, coverage
 
@@ -784,11 +792,15 @@ async def _read_related_source(
     exact_lines = {(match["path"], match["line"]) for match in matches}
     exact_revisions = match_revisions(matches, match_commits)
     related_revisions = match_revisions(candidates, commits)
+    prefix = isinstance(input.pattern, str)
     other_sites = [
         match
         for match in candidates
         if (match["path"], match["line"]) not in exact_lines
-        and not any(_shares_grep_scope(match, hit) for hit in exact_by_path.get(match["path"], ()))
+        and not (
+            prefix
+            and any(_shares_grep_scope(match, hit) for hit in exact_by_path.get(match["path"], ()))
+        )
     ]
     related = [
         match

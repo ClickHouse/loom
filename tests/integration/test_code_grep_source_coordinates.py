@@ -124,6 +124,9 @@ class Client:
         return helper()
 
 def use(client: Client):
+    # A short excerpt for the definition does not reach the call.
+    # A related match can still be in the same function.
+
     return consume(client.option, extra=True)
 """,
         commit_sha="a" * 40,
@@ -184,3 +187,14 @@ def use(client: Client):
     assert enriched.related.dependencies == out.related.dependencies
     scoped = await handle_code_grep(mixed.model_copy(update={"path_prefix": "tests/"}))
     assert scoped.matches == exact.matches and scoped.related is None
+    same_scope = args.model_copy(
+        update={"pattern": ["consume(client.option)", "def use(client:"], "context_lines": 2}
+    )
+    excerpts = await handle_code_grep(same_scope)
+    assert not any("client.option" in row["text"] for row in excerpts.contexts)
+    assert excerpts.related and excerpts.related.matches == out.related.matches
+    assert excerpts.related.dependencies == out.related.dependencies
+    full = await handle_code_grep(same_scope.model_copy(update={"include_body": True}))
+    assert full.related and full.related.matches == out.related.matches
+    assert "consume(client.option, extra=True)" in full.definitions[0]["body"]
+    assert not full.related.definitions
