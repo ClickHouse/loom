@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from server.code.api.models_grep import CodeGrepInput, GrepDependency
-from server.code.app import grep_dependencies
+from server.code.api.models_grep import CodeGrepInput, GrepDependency, RelatedGrepEvidence
+from server.code.app import grep, grep_dependencies
 from server.code.app.grep_dependencies import _allowed, _one_helper
 from server.code.domain.search_scope import build_scope
 
@@ -15,6 +15,35 @@ def test_related_definition_uses_grep_glob_semantics_for_newline_paths() -> None
     args = CodeGrepInput(pattern="call(obj.attr)")
     assert _allowed(path, args, build_scope(path_globs=["pkg/**"]))
     assert not _allowed(path, args, build_scope(exclude_globs=["pkg/**"]))
+
+
+@pytest.mark.asyncio
+async def test_batch_dependencies_use_exact_and_related_witnesses(monkeypatch) -> None:
+    exact = {"path": "exact.py", "line": 2}
+    focused = {"path": "related.py", "line": 3}
+    related = RelatedGrepEvidence(pattern="obj.attr", matches=[focused])
+
+    async def add(repo, org, ns, input, evidence, scope, commits, budget):
+        assert evidence.matches == [exact, focused]
+        return ""
+
+    monkeypatch.setattr(grep, "add_dependencies", add)
+    scan = grep._GrepLineScan([], [exact], {}, 1, False, "", "", "")
+    repo: Any = object()
+    result, reason = await grep._related_dependencies(
+        repo,
+        "o",
+        "n",
+        CodeGrepInput(pattern=["consume(obj.attr", "marker"], include_dependencies=True),
+        build_scope(),
+        scan,
+        [exact],
+        related,
+        budget=None,
+        incomplete=False,
+        whole_page=True,
+    )
+    assert reason == "" and result and result.matches == [focused]
 
 
 @pytest.mark.asyncio
