@@ -82,6 +82,22 @@ export function outputPointers(text) {
   return out;
 }
 
+// Keep only recognizable runner summaries. Full shell output can contain unrelated data.
+const CHECK_SUMMARY =
+  /^(?:(?:Tests\s+)?\d+ (?:passed|failed|skipped)(?:, \d+ (?:passed|failed|skipped|deselected|xfailed|xpassed|warnings?|errors?))*(?: \(\d+\))?(?: in [\d.]+s)?|All checks passed[.!]?|Success: no issues found in \d+ source files?)$/i;
+
+function recordVerification(call, text, ts, ref, out) {
+  if (!call.command) return;
+  const summary = text
+    .slice(-4000)
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^=+\s*|\s*=+$/g, ""))
+    .findLast((line) => CHECK_SUMMARY.test(line));
+  if (summary) {
+    out.push({ kind: "note", text: clip(`verification: ${call.command} — ${summary}`, 400), ts, ref });
+  }
+}
+
 function todoNote(input) {
   const todos = Array.isArray(input && input.todos) ? input.todos : [];
   const open = todos.filter((t) => t && t.status !== "completed");
@@ -165,6 +181,7 @@ function claudeEvents(o, calls, out) {
           const ptrs = outputPointers(text);
           if (ptrs.length) out.push({ kind: "note", text: `output: ${ptrs.join(" ")}`, ts, ref });
         }
+        recordVerification(call, text, ts, ref, out);
       }
       return;
     }
@@ -184,7 +201,7 @@ function claudeEvents(o, calls, out) {
     if (!b || b.type !== "tool_use") continue;
     const name = normalizeToolName(b.name);
     const files = extractFiles(b.input);
-    calls.set(b.id, { name, path: files[0] || "" });
+    calls.set(b.id, { name, path: files[0] || "", command: name === "Bash" ? commandText(b.input) : "" });
     out.push(...toolEvent(b.name, b.input, ts, ref));
   }
 }
@@ -226,8 +243,9 @@ function codexEvents(o, calls, out) {
       return;
     }
     const obj = typeof input === "object" && input ? input : { command: String(input || "") };
-    calls.set(p.call_id, { name: normalizeToolName(name) });
-    out.push(...toolEvent(["exec", "exec_command", "shell"].includes(name) ? "Bash" : name, obj, ts, ref));
+    const tool = name === "exec" ? "Bash" : normalizeToolName(name);
+    calls.set(p.call_id, { name: tool, command: tool === "Bash" ? commandText(obj) : "" });
+    out.push(...toolEvent(tool, obj, ts, ref));
     return;
   }
   if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
@@ -239,6 +257,7 @@ function codexEvents(o, calls, out) {
       const ptrs = outputPointers(text);
       if (ptrs.length) out.push({ kind: "note", text: `output: ${ptrs.join(" ")}`, ts, ref });
     }
+    recordVerification(call, text, ts, ref, out);
   }
 }
 
@@ -291,7 +310,7 @@ export function worthSaving(events, { firstSave = true } = {}) {
 export function briefCheckout(cwd, head) {
   if (!head) return undefined;
   const opts = { timeoutMs: 750, fallback: null };
-  const status = git(["--no-optional-locks", "status", "--porcelain"], cwd, opts);
+  const status = git(["--no-optional-locks", "status", "--porcelain", "--untracked-files=normal"], cwd, opts);
   const remote = git(["for-each-ref", "--count=1", `--contains=${head}`, "refs/remotes/"], cwd, opts);
   return {
     dirty: status === null ? null : Boolean(status),

@@ -420,7 +420,8 @@ SYSTEM_PROMPT = (
     "findings, measurements and reasons); edit = a file changed; command = a "
     "shell command with its description; error = a failed tool call; read = "
     "files read or searched; note = client notes (todo lists, identifiers a "
-    "command printed); summary = the summary the client itself wrote when it "
+    "command printed, verification outcomes); summary = the summary the client "
+    "itself wrote when it "
     "compacted this session's context — dense and reliable about everything "
     "before it: mine it for decisions, done work, dead ends and rules, but keep "
     "what the previous brief already holds.\n\n"
@@ -876,9 +877,18 @@ def deterministic_revision(events: list[BriefEvent]) -> WindowRevision:
         cmd = next((c for c in reversed(events[:i]) if c.kind == "command"), None)
         what = _clip(cmd.text.split(" — $ ", 1)[0], TEXT_CAP) if cmd else "command output"
         done.append(BriefDone(what=what, ref=_clip(e.text[len("output: ") :], 200)))
+    verification = next(
+        (
+            e.text.removeprefix("verification: ")
+            for e in reversed(events)
+            if e.kind == "note" and e.text.startswith("verification: ")
+        ),
+        "",
+    )
     state = BriefSections(
         goal=goal,
         status=status,
+        verification=_clip(verification, TEXT_CAP),
         open_questions=open_q[-LIST_CAPS["open_questions"] :],
         files=files[: LIST_CAPS["files"]],
         constraints=_union_str(

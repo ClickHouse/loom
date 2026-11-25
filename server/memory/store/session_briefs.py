@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now as now
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.store.rows import next_version
@@ -123,8 +124,6 @@ async def current(
     delete continues the revision count), inside the read `scope`. Read with
     sequential consistency: the previous save is often seconds old
     (PreCompact, then SessionEnd)."""
-    from server.core.ch import own_write_reads
-
     params: dict[str, Any] = {"org": org, "ns": namespace, "key": brief_key}
     with own_write_reads():
         row = await ch.query_one(
@@ -150,26 +149,34 @@ async def by_revision(
     scope: ReadFilters,
     snapshot: int | None = None,
 ) -> dict[str, Any] | None:
-    """Read a revision inside the read scope, pinned to one write for a handoff."""
+    """Read a revision after the last delete. A delete shares the last live
+    revision number, so a later save can start a new history at the next one.
+    """
     params: dict[str, Any] = {"org": org, "ns": namespace, "key": brief_key, "rev": int(revision)}
     snapshot_clause = ""
     if snapshot is not None:
         params["snapshot"] = snapshot
         snapshot_clause = " AND version = {snapshot:UInt64}"
-    row = await ch.query_one(
-        f"""
-        SELECT brief_key, revision, agent, user_id, session_id, head_sha, trigger,
-               author, sections, rendered, events_total, source_chars, brief_chars,
-               actor, updated_at, tombstoned_at, version
-        FROM {REVISIONS}
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND brief_key = {{key:String}} AND revision = {{rev:UInt32}}{snapshot_clause}
-          {scope_and(scope, params)}
-        ORDER BY version DESC
-        LIMIT 1
-        """,
-        params=params,
-    )
+    with own_write_reads():
+        row = await ch.query_one(
+            f"""
+            SELECT brief_key, revision, agent, user_id, session_id, head_sha, trigger,
+                   author, sections, rendered, events_total, source_chars, brief_chars,
+                   actor, updated_at, tombstoned_at, version
+            FROM {REVISIONS}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND brief_key = {{key:String}} AND revision = {{rev:UInt32}}{snapshot_clause}
+              AND revision > (
+                  SELECT max(revision) FROM {REVISIONS}
+                  WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                    AND brief_key = {{key:String}} AND tombstoned_at IS NOT NULL
+              )
+              {scope_and(scope, params)}
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            params=params,
+        )
     return dict(row) if row else None
 
 
@@ -234,8 +241,6 @@ async def listing(
     if from_session:
         where.append("has(source_sessions, {sid:String})")
         params["sid"] = from_session
-    from server.core.ch import own_write_reads
-
     with own_write_reads():
         rows = await ch.query_all(_latest_sql(where, True), params=params)
     return [dict(r) for r in rows or []]

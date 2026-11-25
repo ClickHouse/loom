@@ -232,3 +232,12 @@ async def test_a_brief_carries_one_line_of_work_across_sessions(
         assert not after["found"] and after["deleted"]
         empty = await _call(c, teammate, "session.brief_list", {**base})
         assert empty["briefs"] == []
+        recreated = await _call(
+            c,
+            me,
+            "session.brief_save",
+            {**base, "brief_key": snapshot["brief_key"], "sections": {"goal": "New work"}},
+        )
+        assert recreated["revision"] == 4
+        expired = await _call(c, teammate, "session.brief_get", snapshot)
+        assert not expired["found"] and not expired["rendered"]

@@ -218,6 +218,43 @@ test("a Codex rollout becomes the same kinds of events", () => {
   assert.equal(ev[3].path, "server/x.py");
 });
 
+test("both transcripts keep the check summary without copying its raw output", () => {
+  const output = "private diagnostic output\n====== 9 passed in 0.12s ======\n";
+  const claude = [
+    {
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "pytest -q" } }] },
+    },
+    {
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "t1", content: output }] },
+    },
+  ];
+  const codex = [
+    {
+      type: "response_item",
+      payload: { type: "function_call", call_id: "t1", name: "exec_command", arguments: '{"cmd":"pytest -q"}' },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: "t1",
+        output: "Process exited with code 0\nOutput:\n" + output,
+      },
+    },
+  ];
+  for (const input of [claude, codex]) {
+    const events = transcriptEvents(input);
+    assert.deepEqual(
+      events.map((event) => event.kind),
+      ["command", "note"],
+    );
+    assert.equal(events[1].text, "verification: pytest -q — 9 passed in 0.12s");
+    assert.doesNotMatch(JSON.stringify(events), /private diagnostic output/);
+  }
+});
+
 test("a window over the cap keeps its head and tail", () => {
   const many = Array.from({ length: MAX_EVENTS + 500 }, (_, i) => ({
     type: "assistant",
@@ -464,6 +501,7 @@ test("checkout observations distinguish local changes from commits known to a re
     const head = git("rev-parse", "HEAD");
     assert.deepEqual(briefCheckout(tmp, head), { dirty: false, head_in_remote_refs: false });
     git("update-ref", "refs/remotes/origin/test", head);
+    git("config", "status.showUntrackedFiles", "no");
     fs.writeFileSync(path.join(tmp, "untracked"), "local");
     assert.deepEqual(briefCheckout(tmp, head), { dirty: true, head_in_remote_refs: true });
     assert.deepEqual(briefCheckout(path.join(tmp, "missing"), head), { dirty: null, head_in_remote_refs: null });

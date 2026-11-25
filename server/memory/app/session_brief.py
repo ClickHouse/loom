@@ -528,18 +528,7 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
             scope=scope,
             snapshot=snapshot,
         )
-        # A revision from before a delete belongs to the forgotten brief: the
-        # current life of the key started at its `created_at`.
-        born = row.get("created_at")
-        if (
-            past is None
-            or past.get("tombstoned_at") is not None
-            or (
-                born is not None
-                and past.get("updated_at") is not None
-                and past["updated_at"] < born
-            )
-        ):
+        if past is None:
             return SessionBriefGetOutput(found=False, **base)
         row = {**row, **past}
     deleted = False

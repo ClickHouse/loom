@@ -372,11 +372,19 @@ class _MemCH:
         if "uniqExact(revision)" in sql:
             return {"n": len({r["revision"] for r in self.revisions if r["brief_key"] == p["key"]})}
         if "FROM loom.session_brief_revisions" in sql:
-            hits = [
+            assert "revision > (" in sql
+            history = [
                 r
                 for r in self.revisions
-                if r["brief_key"] == p["key"]
-                and r["revision"] == p["rev"]
+                if (r["org"], r["namespace"], r["brief_key"]) == (p["org"], p["ns"], p["key"])
+            ]
+            last_delete = max(
+                (r["revision"] for r in history if r["tombstoned_at"] is not None), default=0
+            )
+            hits = [
+                r
+                for r in history
+                if r["revision"] == p["rev"] > last_delete
                 and ("snapshot" not in p or r["version"] == p["snapshot"])
             ]
             return max(hits, key=lambda r: r["version"]) if hits else None
@@ -1216,6 +1224,48 @@ def test_handoff_pins_a_write_even_if_two_saves_share_its_revision(mem) -> None:
     assert "absent from the sender" in pinned.rendered
     assert not read("1").found
     assert not read(str(2**64)).found
+
+
+def test_deleted_handoff_stays_unavailable_after_same_millisecond_recreation(mem, monkeypatch):
+    stamp = h.naive_utc_now().replace(microsecond=123_000)
+    monkeypatch.setattr(h, "naive_utc_now", lambda: stamp)
+    key = "handoff/reuse"
+    first = _save(brief_key=key, sections={"goal": "Deleted goal"})
+    snapshot = str(mem.rows[-1]["version"])
+
+    def read(revision: int, snapshot_id: str):
+        return asyncio.run(
+            h.handle_session_brief_get(
+                SessionBriefGetInput(
+                    **IDENT, brief_key=key, revision=revision, snapshot_id=snapshot_id
+                )
+            )
+        )
+
+    assert read(first.revision, snapshot).found
+    deleted = asyncio.run(
+        h.handle_session_brief_delete(SessionBriefDeleteInput(**IDENT, brief_key=key))
+    )
+    assert deleted.deleted
+    assert not read(first.revision, snapshot).found
+    replacement = _save(brief_key=key, sections={"goal": "Replacement"})
+    assert replacement.revision > first.revision
+    assert read(replacement.revision, str(mem.rows[-1]["version"])).found
+    assert not read(first.revision, snapshot).found
+    assert not read(first.revision, "").found
+
+
+def test_deterministic_revision_uses_the_latest_recorded_verification():
+    events = [
+        E(kind="note", text="verification: pytest -q — 1 failed"),
+        E(kind="command", text="$ pytest -q"),
+        E(kind="note", text="verification: pytest -q — 9 passed"),
+        E(kind="note", text="output: commit 0123456789"),
+    ]
+
+    state = sb.deterministic_revision(events).state
+
+    assert state.verification == "pytest -q — 9 passed"
 
 
 def test_under_a_policy_a_revised_brief_takes_no_summary_from_the_events(mem, monkeypatch) -> None:
