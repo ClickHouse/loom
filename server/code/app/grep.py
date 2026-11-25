@@ -695,7 +695,11 @@ def _malformed_alternative_member(pattern: str) -> str:
     terms = [term.strip() for term in pattern.split("|")]
     if len(terms) < 2 or any(not _PLAIN_CALL_ALTERNATIVE.fullmatch(term) for term in terms):
         return ""
-    members = {arg.rsplit(".", 1)[-1] for term in terms if (arg := qualified_call_argument(term))}
+    members = {
+        call[1].rsplit(".", 1)[-1]
+        for term in terms
+        if (call := _QUALIFIED_ARGUMENT_PREFIX.match(term))
+    }
     if len(members) != 1:
         return ""
     return "." + members.pop()
