@@ -42,3 +42,14 @@ jobs:
         run: |
           git rev-parse HEAD
           "$RUNNER_TEMP/source-worker/bin/python" -m pytest -q source_worker/tests
+      - name: Verify the installed worker over owned TLS sockets
+        if: runner.environment == 'github-hosted'
+        timeout-minutes: 2
+        env:
+          QUALIFICATION_SHA: ${{ github.event.pull_request.head.sha }}
+          LOOM_SOURCE_WORKER_REAL_TLS: "1"
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$(git rev-parse HEAD)" = "$QUALIFICATION_SHA"
+          "$RUNNER_TEMP/source-worker/bin/python" -I -m pytest -q source_worker/qualification/test_real_tls.py
