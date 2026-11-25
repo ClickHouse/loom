@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from server.code.api.models_navigation import CodeExamplesInput
-from server.code.app.enrich import _example_context, usage_examples
+from server.code.app.enrich import _example_context, indirect_test_examples, usage_examples
 from server.code.app.symbol import examples as h
 from server.code.store.index import CodeRepo
 from server.core.errors import NotFoundError, PreconditionFailedError
@@ -158,6 +158,92 @@ def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None
     examples = asyncio.run(usage_examples(repo, "org", "code", ["s"], tests_only=True))  # type: ignore[arg-type]
 
     assert [site["line"] for site in examples] == [25, 10, 40]
+
+
+@pytest.mark.asyncio
+async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch) -> None:
+    revision = "a" * 40
+    bridge_path = "web/app.py"
+    bridge_name = "web.app::App::register_blueprint"
+    target = {
+        "path": "web/blueprints.py",
+        "kind": "method",
+        "qualified_name": "web.blueprints::Blueprint::register",
+    }
+    test_path = "tests/test_routes.py"
+
+    def incoming(path, line, caller, from_id, to_id, callee, commit=revision):
+        return {
+            **_edge(path, line, caller),
+            "from_symbol_id": from_id,
+            "to_symbol_id": to_id,
+            "to_qualified_name": callee,
+            "indexed_commit": commit,
+            "confidence": 0.9,
+        }
+
+    class Repo:
+        async def edges_for_symbols(self, org, ns, ids, **options):
+            assert (org, ns) == ("org", "code")
+            if ids == ["register"]:
+                return [
+                    incoming(
+                        bridge_path, 9, bridge_name, "wrapper", "register", target["qualified_name"]
+                    )
+                ]
+            assert ids == ["wrapper"] and options["tests_only"]
+            assert options["caller_revision"] == revision and options["sites_per_caller"] == 2
+            return [
+                incoming("tests/a_support.py", 4, "setup", "setup", "wrapper", bridge_name),
+                incoming("tests/test_async.py", 5, "test_async", "async", "wrapper", bridge_name),
+                incoming(test_path, 10, "test_blueprint_hook", "hook", "wrapper", bridge_name),
+                incoming(
+                    test_path, 40, "test_blueprint_defaults", "defaults", "wrapper", bridge_name
+                ),
+                incoming(
+                    test_path, 42, "test_blueprint_defaults", "defaults", "wrapper", bridge_name
+                ),
+                incoming(
+                    test_path, 75, "test_blueprint_old", "old", "wrapper", bridge_name, "b" * 40
+                ),
+                incoming(
+                    test_path,
+                    90,
+                    "test_blueprint_wrong_target",
+                    "wrong",
+                    "wrapper",
+                    "other::register_blueprint",
+                ),
+            ]
+
+        async def file_rows_for_paths(self, org, ns, paths):
+            return {path: {"loc": 125, "indexed_commit": revision} for path in paths}
+
+        async def source_chunks_for_span(self, org, ns, path, start, end, model, **options):
+            assert options["with_revision"]
+            return [
+                {
+                    "path": path,
+                    "start_line": start,
+                    "end_line": end,
+                    "indexed_commit": revision,
+                    "content": "    app.register_blueprint(bp)\n" * (end - start + 1),
+                }
+            ]
+
+    monkeypatch.setattr(settings, "embedding_model", "fake-ngram-3072")
+    repo: Any = Repo()
+    examples = await indirect_test_examples(repo, "org", "code", ["register"], target, revision, 2)
+
+    assert [(e["caller"], e["line"]) for e in examples] == [
+        ("test_blueprint_defaults", 40),
+        ("test_blueprint_hook", 10),
+        ("test_async", 5),
+    ]
+    assert all(
+        e["evidence"] == "indirect_call" and e["via"]["symbol"] == bridge_name for e in examples
+    )
+    assert all(e["context"]["commit"] == revision for e in examples)
 
 
 @pytest.mark.parametrize(

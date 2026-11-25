@@ -26,6 +26,8 @@ from server.settings import settings
 
 logger = logging.getLogger(__name__)
 
+_EXAMPLE_CANDIDATE_LIMIT = 50
+
 
 async def bounded[T](coro: Awaitable[T], fallback: T, seconds: float | None = None) -> T:
     """`coro`'s answer within `seconds` (`code_enrich_timeout_s` when None), else
@@ -74,7 +76,7 @@ async def usage_examples(
             ns,
             symbol_ids,
             direction="callers",
-            limit=50,
+            limit=_EXAMPLE_CANDIDATE_LIMIT,
             with_revision=with_context,
             tests_only=tests_only,
         ),
@@ -181,7 +183,7 @@ async def indirect_test_examples(
         limit=12,
         min_confidence=0.8,
         with_revision=True,
-        distinct_callers_at=revision,
+        caller_revision=revision,
     )
     bridges: dict[str, dict[str, Any]] = {}
     for edge in callers:
@@ -200,11 +202,12 @@ async def indirect_test_examples(
         ns,
         list(bridges),
         direction="callers",
-        limit=30,
+        limit=_EXAMPLE_CANDIDATE_LIMIT,
         min_confidence=0.8,
         with_revision=True,
         tests_only=True,
-        distinct_callers_at=revision,
+        caller_revision=revision,
+        sites_per_caller=2,
     )
     if not tests:
         return []
@@ -215,16 +218,25 @@ async def indirect_test_examples(
     if files.get(path, {}).get("indexed_commit") != revision:
         return []
     sites = _verified_indirect_sites(tests, bridges, files, revision)
-    candidates = _prefer_distinct_test_windows(sites, context_lines)[:6]
-    for site in candidates:
-        site.pop("indexed_commit")
+    candidates = _prefer_distinct_test_windows(_rank_test_sites(sites), context_lines)[:6]
     model = served_model_label(settings.embedding_model)
-    examples = await asyncio.gather(
-        *(
-            _example_context(repo, org, ns, site, context_lines, model, revision)
-            for site in candidates
-        )
-    )
+    reads = []
+    for edge in candidates:
+        bridge = bridges[str(edge["to_symbol_id"])]
+        site = {
+            "caller": str(edge["from_qualified_name"]),
+            "path": str(edge["path"]),
+            "line": int(edge["line"]),
+            "tier": str(edge["tier"]),
+            "evidence": "indirect_call",
+            "via": {
+                "symbol": str(bridge["from_qualified_name"]),
+                "path": str(bridge["path"]),
+                "line": int(bridge["line"]),
+            },
+        }
+        reads.append(_example_context(repo, org, ns, site, context_lines, model, revision))
+    examples = await asyncio.gather(*reads)
     return [row for row in examples if "context" in row][:3]
 
 
@@ -253,22 +265,7 @@ def _verified_indirect_sites(
         ):
             continue
         path, line = str(edge["path"]), int(edge["line"])
-        by_location.setdefault(
-            (path, line),
-            {
-                "caller": str(edge["from_qualified_name"]),
-                "path": path,
-                "line": line,
-                "tier": str(edge["tier"]),
-                "indexed_commit": revision,
-                "evidence": "indirect_call",
-                "via": {
-                    "symbol": str(bridge["from_qualified_name"]),
-                    "path": str(bridge["path"]),
-                    "line": int(bridge["line"]),
-                },
-            },
-        )
+        by_location.setdefault((path, line), edge)
     return list(by_location.values())
 
 
