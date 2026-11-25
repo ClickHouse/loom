@@ -524,8 +524,6 @@ def _with_loading_hints(descriptors: list[dict[str, Any]], requested: set[str]) 
 
 _COMPACT_CODING_GREP_OMITTED_ARGS = {
     "prioritize_patterns",
-    "include_body",
-    "context_lines",
     "related_on_miss",
     "related_on_prefix",
     "include_dependencies",

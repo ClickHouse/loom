@@ -2169,12 +2169,11 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`uses_brief: true` summarizes callers. Check freshness and source elision."
     ),
     "code.grep": (
-        "Read full enclosing definitions for exact text in indexed code. "
-        'For source to edit, use a literal or a list such as ["def parse(", "def test_parse"]. '
-        "Use path_globs to scope code and tests together. Use mode=files for paths only. "
-        "Use regex=true for RE2.\n\n"
+        "Batch exact code and test literals with path_globs. Matches include bodies by default. "
+        "For source excerpts, set `include_body: false` and `context_lines`. "
+        "Use mode=files for paths only and regex=true for RE2.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
-        "Set `include_body: false` and `context_lines: 0` for match locations. "
+        "Use a zero radius for match locations. "
         "Use code.search for behavior or code.edit_context for a known definition. "
         "Call prefixes and misses can return related source and notes. "
         "Use code.read for exact lines. "

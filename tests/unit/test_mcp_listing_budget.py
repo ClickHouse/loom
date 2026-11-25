@@ -399,17 +399,17 @@ def test_the_compact_profile_keeps_the_tool_names():
 def test_compact_coding_grep_advertises_full_definitions_and_batch_scope():
     compact = {t["name"]: t for t in _listing("coding", True, "compact")}
     description = compact["loom_code_grep"]["description"]
-    assert "Read full enclosing definitions for exact text" in description
-    assert '["def parse(", "def test_parse"]' in description
-    assert "Use path_globs to scope code and tests together" in description
+    assert "Matches include bodies by default" in description
+    assert "Batch exact code and test literals with path_globs" in description
     assert "mode=files for paths only" in description
     assert "regex=true for RE2" in description
-    assert "include_body" not in description and "context_lines" not in description
+    assert "For source excerpts" in description
+    assert "`include_body: false`" in description and "`context_lines`" in description
 
     full = {t["name"]: t for t in _listing("coding", True, "full")}
     full_description = full["loom_code_grep"]["description"]
     assert "Scope with `path_prefix` or `path_globs`" in full_description
-    assert "`include_body: false` and `context_lines: 0` for match locations" in full_description
+    assert "Use a zero radius for match locations" in full_description
     assert "loom_code_edit_context for a known definition" in full_description
 
 
@@ -427,8 +427,6 @@ def test_compact_coding_grep_advertises_common_args_and_help_lists_the_rest():
         return set(tool["inputSchema"]["properties"])
 
     advanced = {
-        "include_body",
-        "context_lines",
         "related_on_miss",
         "related_on_prefix",
         "include_dependencies",
@@ -439,7 +437,16 @@ def test_compact_coding_grep_advertises_common_args_and_help_lists_the_rest():
     assert advanced <= props("standard") and advanced <= props("full")
     compact = props("compact")
     assert not compact & advanced
-    assert {"pattern", "path_prefix", "path_globs", "regex", "mode", "cursor"} <= compact
+    assert {
+        "pattern",
+        "path_prefix",
+        "path_globs",
+        "regex",
+        "mode",
+        "cursor",
+        "include_body",
+        "context_lines",
+    } <= compact
     help_row = next(
         op for op in mcp_op.catalog("code.grep", toolset="coding")["ops"] if op["op"] == "code.grep"
     )
