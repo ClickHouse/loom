@@ -392,6 +392,8 @@ async def _enrichment(
                 linked["linked_symbols"].append(name)
         return list(notes.values())
 
+    ready_examples: list[dict[str, Any]] = []
+
     async def examples_for_definition() -> list[dict[str, Any]]:
         callers = code_enrich.usage_examples(
             repo,
@@ -400,6 +402,7 @@ async def _enrichment(
             sids,
             context_lines=input.example_context_lines,
             tests_only=input.test_examples_only,
+            ready=ready_examples,
         )
         if not (input.test_examples_only and _uses_brief.single_declaration(head)):
             return await callers
@@ -417,9 +420,16 @@ async def _enrichment(
             with code_span("enrich.indirect_examples"):
                 return await code_enrich.bounded(
                     code_enrich.indirect_test_examples(
-                        repo, org, ns, sids, definition, revision, input.example_context_lines
+                        repo,
+                        org,
+                        ns,
+                        sids,
+                        definition,
+                        revision,
+                        input.example_context_lines,
+                        ready=ready_examples,
                     ),
-                    [],
+                    ready_examples,
                 )
         by_line = {(site["path"], site["line"]): site for site in sites}
         named = [by_line.pop((site["path"], site["line"]), site) for site in named]
@@ -437,7 +447,9 @@ async def _enrichment(
             else none(),
             _staged(
                 "enrich.examples",
-                _soft(examples_for_definition(), None),
+                _soft(
+                    examples_for_definition(), ready_examples if input.test_examples_only else None
+                ),
             )
             if input.include_examples
             else none(),

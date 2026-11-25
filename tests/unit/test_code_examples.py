@@ -10,7 +10,12 @@ from typing import Any
 import pytest
 
 from server.code.api.models_navigation import CodeExamplesInput
-from server.code.app.enrich import _example_context, indirect_test_examples, usage_examples
+from server.code.app.enrich import (
+    _example_context,
+    bounded,
+    indirect_test_examples,
+    usage_examples,
+)
 from server.code.app.symbol import examples as h
 from server.code.store.index import CodeRepo
 from server.core.errors import NotFoundError, PreconditionFailedError
@@ -211,10 +216,8 @@ async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("missing_promoted_source", [False, True])
-async def test_indirect_examples_rank_related_tests_ahead_of_setup(
-    monkeypatch, missing_promoted_source
-) -> None:
+@pytest.mark.parametrize("promoted", ["present", "missing", "timeout"])
+async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, promoted) -> None:
     revision = "a" * 40
     bridge_path = "web/app.py"
     bridge_name = "web.app::App::register_blueprint"
@@ -247,7 +250,7 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(
                 ]
             assert ids == ["wrapper"] and options["tests_only"]
             assert options["caller_revision"] == revision and options["sites_per_caller"] == 2
-            if missing_promoted_source:
+            if promoted != "present":
                 return [
                     incoming(
                         test_path, line, f"test_other_{line}", str(line), "wrapper", bridge_name
@@ -294,6 +297,8 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(
             assert options["with_revision"]
             if path == "tests/test_z.py":
                 await fallback_started.wait()
+                if promoted == "timeout":
+                    await asyncio.Future()
                 return []
             fallback_started.set()
             return [
@@ -308,17 +313,19 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(
 
     monkeypatch.setattr(settings, "embedding_model", "fake-ngram-3072")
     repo: Any = Repo()
-    async with asyncio.timeout(0.15):
-        examples = await indirect_test_examples(
-            repo, "org", "code", ["register"], target, revision, 2
-        )
+    ready: list[dict[str, Any]] = []
+    examples = await bounded(
+        indirect_test_examples(repo, "org", "code", ["register"], target, revision, 2, ready=ready),
+        ready,
+        seconds=0.15,
+    )
 
     expected = [
         ("test_blueprint_defaults", 40),
         ("test_blueprint_hook", 10),
         ("test_async", 5),
     ]
-    if missing_promoted_source:
+    if promoted != "present":
         expected = [("test_other_10", 10), ("test_other_40", 40), ("test_other_70", 70)]
     assert [(e["caller"], e["line"]) for e in examples] == expected
     assert all(

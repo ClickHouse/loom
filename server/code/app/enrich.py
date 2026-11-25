@@ -68,6 +68,7 @@ async def usage_examples(
     limit: int = 3,
     context_lines: int = 0,
     tests_only: bool = False,
+    ready: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Call sites of the symbol, optionally restricted to indexed tests."""
     with_context = bool(context_lines and settings.embedding_model)
@@ -122,7 +123,7 @@ async def usage_examples(
     preferred = _prefer_distinct_test_windows(ranked, context_lines)[:limit]
     baseline = sites[:limit]
     backups = _prefer_distinct_test_windows(sites, context_lines)[:limit] + baseline
-    backed = await _retained_examples(preferred, backups, limit=limit, read=read)
+    backed = await _retained_examples(preferred, backups, limit=limit, read=read, ready=ready)
     found = {(example["path"], example["line"]) for example in backed}
     locations = [location(edge) for edge in baseline if (edge["path"], edge["line"]) not in found]
     return (backed + locations)[:limit]
@@ -134,13 +135,23 @@ async def _retained_examples(
     *,
     limit: int,
     read: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
+    ready: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    """Read ranked and fallback windows within one shared deadline."""
+    """Read together and publish each verified window to the caller's timeout fallback."""
     candidates: dict[tuple[str, int], dict[str, Any]] = {}
     for edge in (*preferred, *backups):
         candidates.setdefault((edge["path"], edge["line"]), edge)
-    examples = await asyncio.gather(*(read(edge) for edge in candidates.values()))
-    return [example for example in examples if "context" in example][:limit]
+    completed: list[dict[str, Any] | None] = [None] * len(candidates)
+
+    async def capture(index: int, edge: dict[str, Any]) -> None:
+        example = await read(edge)
+        if "context" in example:
+            completed[index] = example
+            if ready is not None:
+                ready[:] = [row for row in completed if row is not None][:limit]
+
+    await asyncio.gather(*(capture(i, edge) for i, edge in enumerate(candidates.values())))
+    return [row for row in completed if row is not None][:limit]
 
 
 def _test_name_words(name: str) -> set[str]:
@@ -179,6 +190,8 @@ async def indirect_test_examples(
     definition: dict[str, Any],
     revision: str,
     context_lines: int,
+    *,
+    ready: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Verified test source reached through one non-test caller at the same revision."""
     if not (revision and context_lines and settings.embedding_model):
@@ -254,7 +267,7 @@ async def indirect_test_examples(
         }
         return await _example_context(repo, org, ns, site, context_lines, model, revision)
 
-    return await _retained_examples(candidates, backups, limit=3, read=read)
+    return await _retained_examples(candidates, backups, limit=3, read=read, ready=ready)
 
 
 def _verified_indirect_sites(
