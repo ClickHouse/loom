@@ -288,17 +288,17 @@ The script needs no `LOOM_API_KEY`: every call runs as one of its two end users,
 4. A shared request for `channel:support`: the same two ops, with the search naming the support collection alone.
 5. Six tool calls that try to widen the shared request, and a private reply sent to the shared conversation: the host refuses each without a request.
 6. A destination the host cannot resolve and one the person is not known to be in: no search.
-7. `knowledge.get` through a citation of the shared conversation, then `grants.revoke` as the lead: the shared request gets nothing and the citation no longer opens.
-8. `knowledge.delete` and `collection.delete` ×2 in a `finally`, also when a step fails: the note is tombstoned and both collections are erased. The person's personal collection stays, without a live document, until that user is erased. A collection that is not deleted fails the run.
+7. `knowledge.get` through a citation of the shared conversation, then `grants.revoke` as the lead: the shared request gets nothing, the citation no longer opens, and a reply drafted before the revoke is not delivered.
+8. `knowledge.delete` and `collection.delete` ×2 in a `finally`, also when a step fails: the note is tombstoned and both collections are erased. The person's personal collection stays, without a live document, until that user is erased. Each delete is tried on its own, and one that fails or leaves its target behind fails the run.
 
 The script exits 1 when a check fails.
 
 A run against a local Loom server from source (ClickHouse 26.10, auth on, the `fake-ngram-1024` embedder). Each scope holds at most three documents and the search asks for ten passages, so the checks do not depend on the embedder. The user ids and citation handles change from run to run:
 
 ```text
-private reply to ana-7040e9 may draw on:
-  The finance sheet says the renewal discount ceiling is 12 percent.
+private reply to ana-521646 may draw on:
   My note: the customer hinted that they may not renew.
+  The finance sheet says the renewal discount ceiling is 12 percent.
   The support runbook says renewal reminders go out 30 days before the term ends.
 
 shared reply in channel:support may draw on:
@@ -308,17 +308,18 @@ scope expansion attempts in channel:support:
   refused: search(namespaces, query) is not a tool call
   refused: search(namespace_scope, query) is not a tool call
   refused: search(query, user_id) is not a tool call
-  refused: c-79c97a37 is not a citation of this conversation
+  refused: c-cc952f60 is not a citation of this conversation
   refused: open_citation(handle, namespace, source_uri) is not a tool call
   refused: knowledge.get(namespace, source_uri) is not a tool call
-  refused: a reply built for dm:ana-7040e9 cannot go to channel:support
+  refused: a reply built for dm:ana-521646 cannot go to channel:support
 
 channel:unknown: 0 passage(s)
 
 channel:leads: 0 passage(s)
 
 after the revoke, channel:support: 0 passage(s)
-  refused: c-9c870898 is no longer in scope
+  refused: c-b434b06d is no longer in scope
+  refused: channel:support changed its readers or sources since the search
 all checks passed
 ```
 

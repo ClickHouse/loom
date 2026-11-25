@@ -39,14 +39,18 @@ class Server:
         searches_everything: bool = False,
         keeps_grants: bool = False,
         keeps_collections: bool = False,
+        keeps_notes: bool = False,
     ) -> None:
         self.searches_everything = searches_everything
         self.keeps_grants = keeps_grants
         self.keeps_collections = keeps_collections
+        self.keeps_notes = keeps_notes
         self.grants: dict[str, set[str]] = {}  # collection → users who read it
         self.docs: dict[tuple[str, str], str] = {}  # (collection, source_uri) → content
         self.calls: list[tuple[str, str, dict[str, Any]]] = []  # (user, op, body)
         self.deleted: list[str] = []
+        self.distances: dict[tuple[str, str], float] = {}  # a document's, when not 0.2
+        self.during_list: Any = None  # called while a collection.list is in flight
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
@@ -78,6 +82,8 @@ class Server:
 
         ns = name(body.get("namespace", "@me"))
         if op == "collection.list":
+            if self.during_list:
+                self.during_list()
             rows = [{"namespace": own, "personal": True, "role": "admin"}]
             rows += [
                 {"namespace": c, "personal": False, "role": "viewer"}
@@ -104,12 +110,16 @@ class Server:
         elif op == "knowledge.add":
             self.docs[(ns, body["source_uri"])] = body["content"]
         elif op == "knowledge.delete":
+            if self.keeps_notes and ns == own:
+                return httpx.Response(400, json={"detail": {"code": "VALIDATION_ERROR"}})
             self.docs.pop((ns, body["source_uri"]), None)
             self.deleted.append(ns)
         elif op == "knowledge.get":
             content = self.docs.get((ns, body["source_uri"]))
             return httpx.Response(200, json={"found": content is not None, "content": content})
         elif op == "knowledge.search":
+            if len(body.get("namespaces", [])) > 100:  # NamedNamespaces' max_length
+                return httpx.Response(422, json={"detail": {"code": "VALIDATION_ERROR"}})
             named = {ns, *map(name, body.get("namespaces", []))}
             if not all(reads(n) for n in named):
                 return httpx.Response(403, json={"detail": {"code": "AUTH_INSUFFICIENT"}})
@@ -120,7 +130,7 @@ class Server:
                     "chunk_idx": 0,
                     "content": content,
                     "tags": [],
-                    "distance": 0.2,
+                    "distance": self.distances.get((collection, uri), 0.2),
                     "similarity": 0.8,
                     "namespace": collection,
                 }
@@ -191,8 +201,11 @@ async def test_a_refused_tool_call_and_an_unknown_destination_send_nothing_to_lo
     assert await host.call_tool(unknown, "search", {"query": "q"}) == []
     assert server.calls == []
     with pytest.raises(example.ScopeRefused):
-        host.deliver(talk, "channel:unknown", "reply")
-    assert host.deliver(talk, "channel:leads", "reply") == "reply"
+        await host.deliver(talk, "channel:unknown", "reply")
+    for nowhere in (unknown, talk):
+        with pytest.raises(example.ScopeRefused, match="not a destination"):
+            await host.deliver(nowhere, nowhere.destination, "reply")
+    assert server.calls == []
 
 
 async def test_a_hit_from_outside_the_named_collections_stops_the_run(
@@ -216,7 +229,9 @@ async def test_a_grant_that_stays_after_the_revoke_fails_the_run(
     assert await example.main(sign=str) == 1
     out = capsys.readouterr().out
     assert "still came back after the revoke" in out
-    assert "a citation opened after the revoke" in out and "2 check(s) failed" in out
+    assert "a citation opened after the revoke" in out
+    assert "a reply drafted before the revoke was delivered" in out
+    assert "3 check(s) failed" in out
 
 
 async def test_a_collection_that_is_not_deleted_fails_the_run(
@@ -228,3 +243,92 @@ async def test_a_collection_that_is_not_deleted_fails_the_run(
     assert await example.main(sign=str) == 1
     out = capsys.readouterr().out
     assert out.count("was not deleted") == 2 and "2 check(s) failed" in out
+
+
+@pytest.mark.parametrize("sources_after", [(), ("col-a",)])
+async def test_a_reply_is_dropped_when_its_destination_gains_a_reader(
+    monkeypatch: pytest.MonkeyPatch, sources_after: tuple[str, ...]
+) -> None:
+    server = Server()
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    server.grants["col-a"] = {"ana", "lead"}
+    server.docs[("col-a", "docs://a")] = "shared text"
+    host = example.Host(
+        "acme", str, {"channel:a": example.Destination(frozenset({"ana", "lead"}), ("col-a",))}
+    )
+    talk = host.conversation("ana", "channel:a")
+    assert len(await host.call_tool(talk, "search", {"query": "q"})) == 1
+    assert await host.deliver(talk, "channel:a", "reply") == "reply"
+
+    host.destinations["channel:a"] = example.Destination(
+        frozenset({"ana", "lead", "guest"}), sources_after
+    )
+    with pytest.raises(example.ScopeRefused, match="changed its readers or sources"):
+        await host.deliver(talk, "channel:a", "reply")
+    assert not talk.passages, "the context the reply was drafted from is gone"
+    assert talk.readers is None
+    # The next request starts over, for the readers the destination has now.
+    again = await host.call_tool(talk, "search", {"query": "q"})
+    assert len(again) == len(sources_after)
+    assert await host.deliver(talk, "channel:a", "a new reply") == "a new reply"
+
+
+async def test_a_scope_wider_than_one_search_takes_is_searched_in_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    collections = [f"col-{n:03}" for n in range(101)]  # with the personal one: 102
+    server.grants.update({collection: {"ana"} for collection in collections})
+    server.docs[("col-me-ana", "docs://note")] = "my note"
+    server.docs[(collections[-1], "docs://last")] = "the last collection"
+    host = example.Host(
+        "acme", str, {"dm:ana": example.Destination(frozenset({"ana"}), private=True)}
+    )
+    found = await host.call_tool(host.conversation("ana", "dm:ana"), "search", {"query": "q"})
+    assert {p["content"] for p in found} == {"my note", "the last collection"}
+    named = [collections for _, collections in server.searches()]
+    assert [len(batch) for batch in named] == [101, 1]
+    assert set().union(*named) == {"col-me-ana", *collections}
+
+    # Across batches the nearest passages win, whichever batch they came in.
+    monkeypatch.setattr(example, "TOP_K", 1)
+    server.distances[("col-me-ana", "docs://note")] = 0.1
+    found = await host.call_tool(host.conversation("ana", "dm:ana"), "search", {"query": "q"})
+    assert [p["content"] for p in found] == ["my note"]
+
+
+@pytest.mark.parametrize(
+    ("members", "sources"), [({"ana", "lead", "guest"}, ("col-a",)), ({"ana", "lead"}, ())]
+)
+async def test_a_record_changed_while_delivery_lists_collections_stops_the_reply(
+    monkeypatch: pytest.MonkeyPatch, members: set[str], sources: tuple[str, ...]
+) -> None:
+    server = Server()
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    server.grants["col-a"] = {"ana", "lead"}
+    server.docs[("col-a", "docs://a")] = "shared text"
+    host = example.Host(
+        "acme", str, {"channel:a": example.Destination(frozenset({"ana", "lead"}), ("col-a",))}
+    )
+    talk = host.conversation("ana", "channel:a")
+    assert len(await host.call_tool(talk, "search", {"query": "q"})) == 1
+    changed = example.Destination(frozenset(members), sources)
+    server.during_list = lambda: host.destinations.update({"channel:a": changed})
+    with pytest.raises(example.ScopeRefused, match="changed its readers or sources"):
+        await host.deliver(talk, "channel:a", "reply")
+
+
+async def test_a_note_that_is_not_deleted_still_lets_both_collections_go(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server = Server(keeps_notes=True)
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    assert await example.main(sign=str) == 1
+    out = capsys.readouterr().out
+    assert "the note was not deleted" in out and "1 check(s) failed" in out
+    assert not server.grants, "both collections were still deleted"

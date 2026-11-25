@@ -27,7 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from loom import Agent, AuthInsufficient
+from loom import Agent, AuthInsufficient, LoomError
+from loom.knowledge import SearchHit
 
 QUESTION = "What do we know about the renewal?"
 # One document per source, each answering the question with a sentence of its own.
@@ -36,6 +37,9 @@ SUPPORT = "The support runbook says renewal reminders go out 30 days before the 
 FINANCE = "The finance sheet says the renewal discount ceiling is 12 percent."
 SOURCE_URI = "docs://example/renewal.md"
 TOP_K = 10
+# `knowledge.search` takes `namespace` and at most 100 `namespaces`; a wider scope is
+# searched in batches of this size.
+SEARCH_COLLECTIONS = 101
 REVOKE_WAIT_S = 10
 
 # Everything the agent may ask of Loom, and every argument each tool takes. The person,
@@ -64,6 +68,9 @@ class Conversation:
     person: str
     destination: str
     passages: dict[str, dict[str, str]] = field(default_factory=dict)  # handle → passage
+    # The destination's members at every search so far: the readers the passages were
+    # chosen for. None until a search retrieves for them.
+    readers: frozenset[str] | None = None
 
 
 class Host:
@@ -104,6 +111,10 @@ class Host:
                 cursor = page.get("next_cursor")
                 if not cursor:
                     break
+        # Read the record again: it may have changed while the listing was in flight.
+        where = self.destinations.get(destination)
+        if where is None or person not in where.members:
+            return []
         if where.private:
             return sorted(readable)
         return [ns for ns in where.sources if ns in readable and not readable[ns]]
@@ -121,13 +132,22 @@ class Host:
         scope = await self.scope(talk.person, talk.destination)
         if not scope:
             return []
+        members = self.destinations[talk.destination].members
+        talk.readers = members if talk.readers is None else talk.readers & members
+        hits: list[SearchHit] = []
         try:
             # `namespace` and `namespaces` name every collection searched; Loom checks
             # each as a read by this person and refuses the call if one is closed.
-            async with self.as_person(talk.person, scope[0]) as loom:
-                hits = await loom.knowledge.search(query, top_k=TOP_K, namespaces=scope[1:])
+            for start in range(0, len(scope), SEARCH_COLLECTIONS):
+                first, *rest = scope[start : start + SEARCH_COLLECTIONS]
+                async with self.as_person(talk.person, first) as loom:
+                    hits += await loom.knowledge.search(query, top_k=TOP_K, namespaces=rest)
         except AuthInsufficient:
             return []  # a grant went away after the listing: no context for this request
+        if len(scope) > SEARCH_COLLECTIONS:
+            # Each batch came back in Loom's own ranking; across batches the nearest
+            # win (one embedding model serves the org, so distances compare).
+            hits = sorted(hits, key=lambda hit: hit.distance)[:TOP_K]
         found = []
         for hit in hits:
             if hit.namespace not in scope:  # never expected: Loom searched what was named
@@ -150,10 +170,22 @@ class Host:
             document = await loom.knowledge.get(passage["source_uri"])
         return str(document["content"]) if document else ""
 
-    def deliver(self, talk: Conversation, destination: str, reply: str) -> str:
-        """The last check before a reply leaves: it goes where its context was chosen for."""
+    async def deliver(self, talk: Conversation, destination: str, reply: str) -> str:
+        """The last check before a reply leaves: it goes where its context was chosen
+        for, and that destination still has the readers and the sources it had then. If
+        those changed, the context goes with the reply and the next request starts over."""
         if destination != talk.destination:
             raise ScopeRefused(f"a reply built for {talk.destination} cannot go to {destination}")
+        scope = await self.scope(talk.person, destination)
+        # Read after the await, so no change to the record slips in between the checks.
+        where = self.destinations.get(destination)
+        if where is None or talk.person not in where.members:
+            raise ScopeRefused(f"{destination} is not a destination {talk.person} is in")
+        new_reader = talk.readers is not None and not where.members <= talk.readers
+        if new_reader or any(p["namespace"] not in scope for p in talk.passages.values()):
+            talk.passages.clear()
+            talk.readers = None
+            raise ScopeRefused(f"{destination} changed its readers or sources since the search")
         return reply  # a real host posts it to the destination here
 
 
@@ -190,6 +222,7 @@ async def main(sign: Callable[[str], str] | None = None) -> int:
             "channel:leads": Destination(frozenset({lead}), (support, finance)),
         },
     )
+    failures: list[str] = []
     leftovers: list[str] = []
     try:
         # The lead shares two collections with the person; the note is the person's own.
@@ -202,16 +235,26 @@ async def main(sign: Callable[[str], str] | None = None) -> int:
             await loom.knowledge.add(f"# Renewal\n\n{NOTE}\n", source_uri=SOURCE_URI)
         failures = await ask_in_private_then_in_shared(host, person, lead, support)
     finally:
-        # Delete the note and both collections, even when a step failed.
-        async with host.as_person(person) as loom:
-            await loom.knowledge.delete(SOURCE_URI)
+        # Delete the note and both collections, even when a step failed. Each delete is
+        # tried on its own, so one that fails does not leave the others behind.
+        try:
+            async with host.as_person(person) as loom:
+                await loom.knowledge.delete(SOURCE_URI)
+        except LoomError as error:
+            leftovers.append(f"the note was not deleted: {error}")
         for collection in (support, finance):
-            async with host.as_person(lead, collection) as loom:
-                gone = await loom.call("collection.delete")
+            try:
+                async with host.as_person(lead, collection) as loom:
+                    gone = await loom.call("collection.delete")
+            except LoomError as error:
+                leftovers.append(f"{collection} was not deleted: {error}")
+                continue
             if not gone.get("deleted") or gone.get("erasure_status") != "completed":
                 leftovers.append(f"{collection} was not deleted: {gone}")
+        for leftover in leftovers:
+            print(f"FAIL: {leftover}")
 
-    for failure in failures + leftovers:
+    for failure in failures:
         print(f"FAIL: {failure}")
     failed = len(failures) + len(leftovers)
     print("all checks passed" if not failed else f"{failed} check(s) failed")
@@ -274,10 +317,12 @@ async def ask_in_private_then_in_shared(
     if _texts(await host.call_tool(shared, "search", {"query": asked})) != {SUPPORT}:
         failures.append("the wording of a query changed the scope")
     try:
-        host.deliver(private, "channel:support", "a reply built from the private context")
+        await host.deliver(private, "channel:support", "a reply built from the private context")
         failures.append("a private reply was delivered to the shared conversation")
     except ScopeRefused as refusal:
         print(f"  refused: {refusal}")
+    if await host.deliver(shared, "channel:support", "a shared reply") != "a shared reply":
+        failures.append("the shared reply was not delivered to its own conversation")
 
     # 4. A destination the host cannot resolve, or one it does not know the person to
     # be in, gets no context at all.
@@ -304,6 +349,12 @@ async def ask_in_private_then_in_shared(
         failures.append(f"{len(left)} passage(s) still came back after the revoke")
     if not await _refused(host, shared, "open_citation", {"handle": cited}):
         failures.append("a citation opened after the revoke")
+    # A reply drafted from the passages retrieved before the revoke is dropped too.
+    try:
+        await host.deliver(shared, "channel:support", "a reply drafted before the revoke")
+        failures.append("a reply drafted before the revoke was delivered")
+    except ScopeRefused as refusal:
+        print(f"  refused: {refusal}")
     return failures
 
 

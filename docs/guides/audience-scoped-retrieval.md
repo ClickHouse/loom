@@ -35,6 +35,9 @@ A reply may draw on a collection when both hold:
 The host passes the result to `knowledge.search` as `namespace` and `namespaces`, which
 search those collections and no others. It never sends `namespace_scope: "all_mine"`
 for a shared destination: that widens the search to everything the person reads.
+One call takes `namespace` and at most 100 `namespaces`, so the example searches a
+wider scope in batches of 101: each batch returns its top passages in Loom's ranking,
+and the example keeps the nearest of those.
 
 ```python
 async def scope(self, person: str, destination: str) -> list[str]:
@@ -42,6 +45,9 @@ async def scope(self, person: str, destination: str) -> list[str]:
     if where is None or person not in where.members:
         return []
     ...  # `readable`: collection.list as the person
+    where = self.destinations.get(destination)  # again: it may have changed meanwhile
+    if where is None or person not in where.members:
+        return []
     if where.private:
         return sorted(readable)
     return [ns for ns in where.sources if ns in readable and not readable[ns]]
@@ -76,9 +82,18 @@ reaches the other. The host keeps one state per person and destination: the pass
 it retrieved and the handles it issued. Summaries and cached answers built from that
 context belong in the same state, never in a store keyed by the person alone.
 
-Before a reply leaves, the host compares its target with the destination the context
-was chosen for and refuses a mismatch. A reply moved to another destination is a new
-request with a new scope.
+Before a reply leaves, the host checks three things and refuses the reply when one
+fails:
+
+1. Its target is the destination the context was chosen for. A reply moved to another
+   destination is a new request with a new scope.
+2. The destination has no reader it did not have when the passages were retrieved.
+3. Every passage's collection is still in the scope, computed again at delivery.
+
+So a reply drafted before a member joined, or before a grant was revoked, does not
+reach the conversation afterwards. When the second or third check fails, the host also
+drops the passages the reply was drafted from, and the next request starts over with
+the readers and the sources the destination has then.
 
 ## What Loom enforces and what the host does
 
@@ -93,6 +108,7 @@ request with a new scope.
 | The agent's tool arguments cannot name a collection, a user or a search scope   | Host                                                         |
 | Retrieved text stays in the conversation it was retrieved for                   | Host                                                         |
 | A reply goes to the destination its context was chosen for                      | Host                                                         |
+| A reply is dropped when its destination gained a reader or lost a source        | Host                                                         |
 
 Loom has no principal for "who will read the answer". The second half of the table is
 a convention of the host, not a disclosure guarantee of the server: see
@@ -107,8 +123,8 @@ a convention of the host, not a disclosure guarantee of the server: see
    private notes changes nothing, and a private reply is not delivered to the shared
    conversation.
 4. An unknown destination, and one the person is not known to be in, get no passage.
-5. After `grants.revoke`, the shared request gets no passage and its earlier citation
-   no longer opens.
+5. After `grants.revoke`, the shared request gets no passage, its earlier citation no
+   longer opens, and a reply drafted before the revoke is not delivered.
 
 `tests/unit/test_sdk_example_audience_scoped_retrieval.py` runs them against a scripted
 server, and `tests/integration/test_sdk_example_audience_scoped_retrieval.py` against a
