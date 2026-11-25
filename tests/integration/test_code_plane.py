@@ -556,6 +556,66 @@ async def test_edit_context_prefers_distinct_test_source_windows(
     assert "DB::doWork();\n    DB::doWork();" in definition.examples[0]["context"]["text"]
 
 
+@pytest.mark.parametrize(
+    "case", ["indirect", "different_test_revision", "different_caller_revision", "direct"]
+)
+async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monkeypatch, case):
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    source_path = "src/sample.py"
+    await _ingest(repo, org, ns, source=b"def value():\n    return 7\n", path=source_path)
+    caller_path = "src/action.py"
+    await _ingest(
+        repo,
+        org,
+        ns,
+        source=b"from src.sample import value\n\ndef run():\n    return value()\n",
+        path=caller_path,
+        sha="b" * 40 if case == "different_caller_revision" else "a" * 40,
+    )
+    path = "tests/test_action.py"
+    tests = b"from src.action import run\nfrom src.sample import value\n\ndef test_action():\n    assert run() == 7\n"
+    if case == "direct":
+        tests += b"\ndef test_value():\n    assert value() == 7\n"
+    await _ingest(
+        repo,
+        org,
+        ns,
+        source=tests,
+        path=path,
+        sha="b" * 40 if case == "different_test_revision" else "a" * 40,
+    )
+
+    response = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=f"{source_path}:value", include_lessons=False
+        )
+    )
+    (definition,) = response.definitions
+    if case in {"different_test_revision", "different_caller_revision"}:
+        assert definition.examples == []
+        return
+    (example,) = definition.examples
+    assert example["path"] == path
+    assert example["context"]["commit"] == "a" * 40
+    if case == "direct":
+        assert example["line"] == 8
+        assert "via" not in example
+    else:
+        assert example["line"] == 5
+        assert example["evidence"] == "indirect_call"
+        assert example["via"] == {"symbol": "src.action::run", "path": caller_path, "line": 4}
+        context = example["context"]
+        lines = tests.decode().splitlines(keepends=True)
+        assert context["text"] == "".join(lines[context["start_line"] - 1 : context["end_line"]])
+
+
 async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     code_env, monkeypatch
 ) -> None:
