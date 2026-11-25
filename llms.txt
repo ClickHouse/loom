@@ -74,7 +74,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Conflicts and refusal](docs/features/memory/conflicts-and-refusal.md): Every memory write is judged against the facts the namespace already holds.
 - [Extraction from transcripts](docs/features/memory/extraction.md): `memory.set_from_messages` takes a transcript and the server decides what in it is durable.
 - [History and provenance](docs/features/memory/history-and-provenance.md): Every write to memory makes a new version; nothing is edited in place.
-- [Procedures and learnings](docs/features/memory/procedures-and-learnings.md): This page covers what an agent learns from doing, as opposed to facts it is told: procedures ("how to do X", a graph of steps learned from reported runs), reflections (lessons written at the end of a run) and learnings (a review queue of…
+- [Procedures and learnings](docs/features/memory/procedures-and-learnings.md): Procedural memory gives AI agents reusable steps for recurring tasks and evidence from earlier runs.
 - [Retention and erasure](docs/features/memory/retention-and-erasure.md): Loom deletes no memory unless its writer, the namespace owner or the operator asks.
 - [Search and ask](docs/features/memory/search-and-ask.md): `memory.search` returns ranked hits for the agent to read.
 - [Working memory and profiles](docs/features/memory/working-memory-and-profiles.md): Two planes hold text an agent is given every time instead of finding it by search:

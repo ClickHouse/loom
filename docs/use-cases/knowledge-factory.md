@@ -12,12 +12,13 @@ evidence behind it.
 
 ## Decide what to keep
 
-| What you learned                                      | Where to keep it                                  | What the next agent can inspect                                     |
-| ----------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
-| A policy, runbook, or architectural reference         | [Knowledge documents](../features/knowledge.md)   | A cited passage, document revision, and source identifier           |
-| A decision or correction that applies across sessions | [Shared agent memory](agent-memory.md)            | The claim, who wrote it, and how it changed                         |
-| A lesson about a specific implementation              | [Memory linked to code](memory-linked-to-code.md) | The definition it refers to and whether that definition has changed |
-| What an agent tried and how the task ended            | [Agent runs](../features/runs.md)                 | The goal, outcome, and recorded activity                            |
+| What you learned                                      | Where to keep it                                                                                               | What the next agent can inspect                                           |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| A policy, runbook, or architectural reference         | [Knowledge documents](../features/knowledge.md)                                                                | A cited passage, document revision, and source identifier                 |
+| A decision or correction that applies across sessions | [Shared agent memory](agent-memory.md)                                                                         | The claim, who wrote it, and how it changed                               |
+| A lesson about a specific implementation              | [Memory linked to code](memory-linked-to-code.md)                                                              | The definition it refers to and whether that definition has changed       |
+| What an agent tried and how the task ended            | [Agent runs](../features/runs.md)                                                                              | The goal, outcome, and recorded activity                                  |
+| Steps agents can reuse for a recurring task           | [Procedural memory](../features/memory/procedures-and-learnings.md#use-procedural-memory-for-a-recurring-task) | The matching procedure, its trust status, and outcomes from reported runs |
 
 Group sources by readership. Grant agents access to the namespaces their work needs
 and give write access to the people and agents who maintain those sources.
