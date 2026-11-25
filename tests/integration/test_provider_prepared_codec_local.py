@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -18,13 +19,14 @@ def local_sql(sql):
     executable = shutil.which("clickhouse")
     if executable is None:
         pytest.skip("clickhouse-local is not installed")
-    result = subprocess.run(
-        [executable, "local", "--multiquery", "--query", sql],
-        check=False,
-        text=True,
-        capture_output=True,
-        timeout=60,
-    )
+    with TemporaryDirectory(prefix="loom-clickhouse-local-") as data_path:
+        result = subprocess.run(
+            [executable, "local", "--path", data_path, "--multiquery", "--query", sql],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
     assert result.returncode == 0, result.stderr
     return result.stdout
 
