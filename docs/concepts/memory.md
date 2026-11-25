@@ -499,8 +499,10 @@ The links are read where the code is:
   never enters the search memo, and is skipped for `include_lessons: false`, with
   `code_result_lessons` off, or for a token narrowed to its own user or session.
 - `code.grep` in matches mode focuses inline lessons on the definitions its
-  matches name in trunk files. `code.search` focuses a file's lessons when a
-  returned definition has a complete linked lesson.
+  matches name in trunk files. When selecting files to read, grep prefers
+  files with a current lesson linked to a matched definition at the returned
+  revision. `code.search` focuses a file's lessons when a returned definition
+  has a complete linked lesson.
   They count omitted lessons in `lessons_left_out`. Grep keeps lessons when
   the matches and links cannot be checked at the same revision. A line with no
   enclosing definition also keeps lessons with overlapping or unverified ranges.

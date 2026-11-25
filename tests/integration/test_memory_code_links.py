@@ -271,6 +271,44 @@ async def _lessons(ns: str, name: str) -> list[dict[str, Any]]:
     return list(out.definitions[0].lessons) if out.definitions else []
 
 
+@pytest.mark.parametrize("early_paths", [3, 4])
+async def test_grep_reads_a_later_path_with_a_matched_lesson(env, monkeypatch, early_paths) -> None:
+    from server.code.api.models_grep import CodeGrepInput
+    from server.code.app.grep import handle_code_grep
+    from server.code.app.result_lessons import WithLessons, grep_paths
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_result_lessons_paths", 3)
+    target = "src/widgets/z_reader.py"
+    sources = {
+        f"src/widgets/helper_{i}.py": f"def helper_{i}():\n    return 'payload_marker'\n"
+        for i in range(early_paths)
+    }
+    sources[target] = (
+        "class EntryReader:\n    def read_entry(self):\n        return 'payload_marker'\n"
+    )
+    sha = env.commit(sources)
+    await _index(TRUNK, env, sha, list(sources))
+    memory_id = await _remember(
+        MEM,
+        "notes/entry-reader",
+        "`EntryReader.read_entry` reuses the active reader.",
+        files=[target],
+    )
+    await _pass()
+    (anchor,) = await _links(memory_id)
+    assert anchor["path"] == target and anchor["state"] == "fresh"
+
+    result = await WithLessons(handle_code_grep, grep_paths)(
+        CodeGrepInput(org=ORG, namespace=TRUNK, pattern="payload_marker", lesson_namespaces=[MEM])
+    )
+    assert list(dict.fromkeys(match["path"] for match in result.matches)) == list(sources)
+    assert [(row["path"], row["memory_key"], row["code_state"]) for row in result.lessons] == [
+        (target, "notes/entry-reader", "fresh"),
+    ]
+
+
 async def test_memories_follow_their_code(env, monkeypatch) -> None:
     from server.memory.app import code_link_judge
 

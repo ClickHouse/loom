@@ -24,7 +24,7 @@ from server.code.api.models_navigation import CodeEnclosingInput
 from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import common, enrich, memory_links
 from server.code.app.search_legs import resolve_deadline_ms
-from server.code.app.spans import code_span
+from server.code.app.spans import code_span, span_attrs
 from server.code.domain import deadline as code_deadline
 from server.code.domain.anchor import local_name
 from server.identity.app import request_scope
@@ -36,11 +36,34 @@ PathsOf = Callable[[Any, Any], Iterable[str]]
 logger = logging.getLogger(__name__)
 
 
-def _top_paths(paths: Iterable[str]) -> list[str]:
-    """The answer's first distinct files, in its order, as many as the setting reads,
-    spelled as the index stores them (code.impact passes the caller's `files` as given)."""
-    distinct = dict.fromkeys(filter(None, map(common.repo_relative, paths)))
-    return list(distinct)[: settings.code_result_lessons_paths]
+def _result_paths(paths: Iterable[str]) -> list[str]:
+    """Distinct result paths in order, spelled as the index stores them."""
+    return list(dict.fromkeys(filter(None, map(common.repo_relative, paths))))
+
+
+async def _grep_lesson_paths(
+    org: str,
+    namespaces: list[str],
+    trunk: str,
+    paths: list[str],
+    symbols: dict[str, set[str]],
+    grep_lines: path_lessons.GrepMatchLines,
+    remaining: float,
+) -> list[str]:
+    limit = settings.code_result_lessons_paths
+    if len(paths) <= limit or not trunk or not namespaces or not symbols:
+        return paths[:limit]
+    # Keep most of the shared deadline for reading the actual lessons.
+    with code_span("enrich.lesson_paths", seeds=len(paths)) as sp:
+        linked = await enrich.bounded(
+            path_lessons.paths_with_matched_links(
+                org, namespaces, trunk, paths, symbols, grep_lines
+            ),
+            set(),
+            seconds=remaining / 3,
+        )
+        span_attrs(sp, results=len(linked))
+    return sorted(paths, key=lambda path: path not in linked)[:limit]
 
 
 def _searched_namespace(input: Any) -> str:
@@ -77,8 +100,8 @@ async def lessons_for(
     """The completed lessons for the answer's top `paths`; none when off, narrowed,
     past the call's deadline, or unable to read the scope. `started` is the call's
     monotonic start."""
-    top = _top_paths(paths)
-    if not (input.include_lessons and settings.code_result_lessons and top):
+    offered_paths = _result_paths(paths)
+    if not (input.include_lessons and settings.code_result_lessons and offered_paths):
         return path_lessons.Lessons([])
     if request_scope.request_narrowed():
         return path_lessons.Lessons([])  # a token that may not read every user's memories
@@ -101,6 +124,14 @@ async def lessons_for(
         if resolved is None or remaining <= 0:
             return path_lessons.Lessons([])
         org, nss, trunk, on_trunk = resolved
+        top = offered_paths[: settings.code_result_lessons_paths]
+        if on_trunk and grep_lines is not None and matched_symbols:
+            top = await _grep_lesson_paths(
+                org, nss, trunk, offered_paths, matched_symbols, grep_lines, remaining
+            )
+            remaining = bound - (time.monotonic() - read_started)
+            if remaining <= 0:
+                return path_lessons.Lessons([])
         if isinstance(input, CodeSearchInput):
             query = input.query
         elif isinstance(input, CodeGrepInput):

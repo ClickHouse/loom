@@ -23,6 +23,7 @@ from typing import Any, NamedTuple
 
 from server.code.domain.anchor import local_name
 from server.memory.api.models_for_file import MemoryForFileInput
+from server.memory.app.code_link_reads import current_links
 from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
 from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
@@ -106,6 +107,34 @@ class GrepMatchLines(NamedTuple):
             return True
         start, end = link["start_line"], link["end_line"]
         return 0 < start <= end and all(line > 0 and not start <= line <= end for line in lines)
+
+
+async def paths_with_matched_links(
+    org: str,
+    namespaces: Sequence[str],
+    trunk_ns: str,
+    paths: Sequence[str],
+    symbols: dict[str, set[str]],
+    grep_lines: GrepMatchLines,
+) -> set[str]:
+    """Files with a current lesson for a named scope at the returned revision."""
+    links = await code_links.for_paths(
+        org,
+        [trunk_ns],
+        [path for path in paths if path in symbols],
+        namespaces=namespaces,
+        states=("fresh", "moved"),
+    )
+    matches = [
+        link
+        for link in links
+        if (path := link["path"]) in symbols
+        and link["complete"]
+        and link["checked_commit"]
+        and grep_lines.revisions.get(path) == {link["checked_commit"]}
+        and local_name(link["qualified_name"], path) in symbols[path]
+    ]
+    return {link["path"] for link in await current_links(org, matches)} if matches else set()
 
 
 def _ordered_candidates(
