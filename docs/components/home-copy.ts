@@ -125,6 +125,53 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     evaluate: "جرّب Loom",
     deploymentOptions: "خيارات النشر",
   },
+  cs: {
+    title: "Sdílená paměť pro AI agenty | ClickHouse Loom",
+    description:
+      "Dlouhodobá paměť pro programovací agenty na vlastním ClickHouse. Uchovávejte rozhodnutí mezi relacemi, hledejte v dokumentech a propojujte poznatky s kódem.",
+    deployment: "Otevřený zdrojový kód · Provoz na vlastním ClickHouse",
+    heading: "Sdílená paměť pro AI agenty",
+    lead: "Loom uchovává týmová rozhodnutí a poznatky mezi relacemi. Agenti mohou dohledat, co už tým zjistil, ověřit citované dokumenty a otevřít související zdrojový kód.",
+    run: "Nainstalovat Loom (anglicky)",
+    product: "Prohlédnout funkce",
+    connect: "Připojit programovací agenty (anglicky)",
+    sdk: "Vyvíjet pomocí SDK (anglicky)",
+    screenshotAlt: "Přehled Loomu s rozhodnutím o platbách, odkazem na související funkci a upozorněním na změnu kódu",
+    screenshotCaption: "Uložené rozhodnutí odkazuje na funkci, které se týká.",
+    contextHeading: "Podklady pro další odpověď",
+    contextDetail: "Agenti mohou pracovat s pamětí, dokumenty i kódem přes MCP, HTTP nebo SDK pro Python a TypeScript.",
+    memory: {
+      title: "Dlouhodobá sdílená paměť",
+      detail:
+        "Ukládejte rozhodnutí, omezení a poznatky pro další relace. Tým i jeho agenti si je mohou prohlížet a upravovat na jednom místě.",
+      link: "Paměť pro programovací agenty (anglicky)",
+    },
+    documents: {
+      title: "Vyhledávání v dokumentech s citacemi",
+      detail:
+        "Najděte interní pravidlo, provozní postup nebo technický podklad. Otevřete citovanou pasáž v příslušné verzi dokumentu.",
+      link: "Vyhledávání v dokumentech a RAG (anglicky)",
+    },
+    code: {
+      title: "Orientace ve zdrojovém kódu",
+      detail:
+        "Hledejte symboly, sledujte volání funkcí a propojte poznatky s konkrétním kódem. Loom ukáže, zda se kód od uložení poznatku změnil.",
+      link: "Paměť propojená s kódem (anglicky)",
+    },
+    useCasesHeading: "Předávejte poznatky mezi agenty",
+    useCasesDetail:
+      "Zpřístupněte dalšímu agentovi rozhodnutí z implementace, zjištění z kontroly kódu a provozní zkušenosti.",
+    useCasesLabel: "Využití paměti pro AI agenty",
+    softwareFactory: "Paměť pro softwarovou továrnu",
+    knowledgeFactory: "Znalostní továrna pro AI agenty",
+    autonomous: "Paměť pro autonomní agenty",
+    selfHosted: "Paměť agentů na vlastním serveru",
+    evaluationHeading: "Ověřte Loom na práci svého týmu",
+    evaluationDetail:
+      "Na konkrétní úloze ověřte, co agent dohledá, na jaké zdroje odkáže a kdo má k uloženým údajům přístup.",
+    evaluate: "Vyzkoušet na vlastní úloze (anglicky)",
+    deploymentOptions: "Možnosti nasazení (anglicky)",
+  },
   de: {
     title: "Gemeinsames Gedächtnis für KI-Agenten | ClickHouse Loom",
     description:
