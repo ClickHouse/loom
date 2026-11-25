@@ -12,16 +12,18 @@ whose callee's return annotation is known (`x = make_client()` with
 `def make_client() -> Client`). This module reads those bindings once per
 file and answers "what is the receiver written at this line", the shape of
 `ts_receivers.ReceiverTyper` so the call ladder's rung 2b
-narrows the candidates of `query` to `…::Client::query` unchanged.
+narrows the candidates of `query` to `…::Client::query` unchanged. A direct
+loop can also bind names unpacked from a list of fixed tuples declared on the
+instance in its initializer.
 
-Pure over the parse; no I/O. Imported by `edges_treesitter` at call time and
-by `lang_python` for return annotations, so it imports neither.
+Pure over the parse; no I/O.
 """
 
 from __future__ import annotations
 
+import ast
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -53,6 +55,7 @@ _FIXTURE_PREFIX = "fixture:"  # a parameter typed by the fixture it requests
 # `conf.getboolean(...)`, imported) typed by its definition's annotation
 NAME_PREFIX = "name:"
 _FUNCTION_NODES: frozenset[str] = frozenset({"function_definition"})
+_IMPORTS = frozenset({"import_statement", "import_from_statement"})
 
 
 def _last(name: str) -> str:
@@ -291,6 +294,259 @@ def _class_bindings(class_node: Any, source: bytes) -> dict[str, str]:
     return out
 
 
+def _generic_parts(node: Any, source: bytes) -> tuple[str, list[Any]]:
+    if node is None:
+        return "", []
+    if node.type == "type" and len(node.named_children) == 1:
+        node = node.named_children[0]
+    parts = node.named_children
+    if node.type == "subscript" and parts:
+        return node_text(parts[0], source), parts[1:]
+    if node.type == "generic_type" and len(parts) == 2 and parts[1].type == "type_parameter":
+        return node_text(parts[0], source), parts[1].named_children
+    return "", []
+
+
+def _typing_container(head: str, imports: dict[str, tuple[str, str]]) -> str:
+    if not head:
+        return ""
+    owner, _, name = head.partition(".")
+    if name:
+        binding = imports.get(owner)
+        return name.lower() if binding == ("typing", "") and name in ("List", "Tuple") else ""
+    if (imported := imports.get(owner)) is not None:
+        module, member = imported
+        return member.lower() if module == "typing" and member in ("List", "Tuple") else ""
+    return owner if owner in ("list", "tuple") else ""
+
+
+def _tuple_items(
+    annotation: Any, source: bytes, imports: dict[str, tuple[str, str]]
+) -> tuple[str, ...]:
+    head, args = _generic_parts(annotation, source)
+    if _typing_container(head, imports) != "list" or len(args) != 1:
+        return ()
+    item_head, fields = _generic_parts(args[0], source)
+    if _typing_container(item_head, imports) != "tuple" or any(
+        node_text(field, source).strip() == "..." for field in fields
+    ):
+        return ()
+    items = [
+        f.named_children[0] if f.type == "type" and len(f.named_children) == 1 else f
+        for f in fields
+    ]
+    return tuple(
+        type_name_of(item, source) if item.type in {"identifier", "attribute", "string"} else ""
+        for item in items
+    )
+
+
+def _method_body(node: Any, source: bytes) -> Any:
+    if node.type != "function_definition":
+        return None
+    params = node.child_by_field_name("parameters")
+    if params is None or not params.named_children:
+        return None
+    receiver = params.named_children[0]
+    if receiver.type != "identifier" or node_text(receiver, source) != "self":
+        return None
+    return node.child_by_field_name("body")
+
+
+def _self_field(node: Any, source: bytes) -> str:
+    if node is None or node.type != "attribute":
+        return ""
+    obj, member = (node.child_by_field_name(k) for k in ("object", "attribute"))
+    if obj is None or member is None or obj.type != "identifier":
+        return ""
+    return "self." + node_text(member, source) if node_text(obj, source) == "self" else ""
+
+
+def _body_nodes(body: Any) -> Iterator[Any]:
+    stack = list(reversed(body.named_children))
+    while stack:
+        node = stack.pop()
+        yield node
+        if node.type not in _FUNCTION_NODES and node.type not in ("class_definition", "lambda"):
+            stack.extend(reversed(node.named_children))
+
+
+def _named_definitions(body: Any) -> Iterator[Any]:
+    for child in body.named_children:
+        node = (
+            child.child_by_field_name("definition")
+            if child.type == "decorated_definition"
+            else child
+        )
+        if node is not None and node.type == "function_definition":
+            yield node
+
+
+def _binding_imports(node: Any, source: bytes) -> dict[str, tuple[str, str]]:
+    try:
+        (statement,) = ast.parse(node_text(node, source)).body
+    except (SyntaxError, ValueError):
+        return {}
+    if not isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return {}
+    imports = {}
+    for alias in statement.names:
+        head = alias.asname or alias.name.split(".", 1)[0]
+        if isinstance(statement, ast.Import):
+            imports[head] = (alias.name if alias.asname else head, "")
+        else:
+            imports[head] = ("." * statement.level + (statement.module or ""), alias.name)
+    return imports
+
+
+def _loop_type_imports(module: Any, source: bytes) -> dict[str, tuple[str, str]]:
+    imports: dict[str, tuple[str, str]] = {}
+    for node in _body_nodes(module):
+        if node.type == "match_statement":
+            return dict.fromkeys(("list", "tuple"), ("", ""))
+        if node.type not in _IMPORTS:
+            continue
+        aliases = _binding_imports(node, source)
+        if "*" in aliases:
+            return dict.fromkeys(("list", "tuple"), ("", ""))
+        if node.parent.type != "module":
+            aliases = dict.fromkeys(aliases, ("", ""))
+        imports.update(aliases)
+    dependent = imports.keys() | {"list", "tuple"}
+    for name in _written_names(module, source, imports=False) & dependent:
+        imports[name] = ("", "")
+    return imports
+
+
+def _written_names(body: Any, source: bytes, *, imports: bool = True) -> set[str]:
+    names: set[str] = set()
+    for node in _body_nodes(body):
+        if node.type in _BINDING_NODES or node.type == "delete_statement":
+            names.update(_bound_identifiers(node, source))
+        elif imports and node.type in _IMPORTS:
+            names.update(_binding_imports(node, source))
+        elif node.type in ("function_definition", "class_definition"):
+            n = node.child_by_field_name("name")
+            if n is not None:
+                names.add(node_text(n, source))
+    return names
+
+
+def _written_fields(target: Any, source: bytes) -> Iterator[str]:
+    if target is None:
+        return
+    if name := _self_field(target, source):
+        yield name
+    elif target.type in {"pattern_list", "tuple_pattern", "list_pattern", "list_splat_pattern"}:
+        for child in target.named_children:
+            yield from _written_fields(child, source)
+
+
+def _tuple_fields(
+    body: Any, source: bytes, imports: dict[str, tuple[str, str]]
+) -> dict[str, tuple[str, ...]]:
+    methods = list(_named_definitions(body))
+    initializers = [
+        n
+        for n in methods
+        if (name := n.child_by_field_name("name")) is not None
+        and node_text(name, source) == "__init__"
+    ]
+    if len(initializers) != 1 or initializers[0].parent.type != "block":
+        return {}
+    if (init := _method_body(initializers[0], source)) is None:
+        return {}
+    if any(n.type == "match_statement" for n in _body_nodes(init)):
+        return {}
+    own_names = _written_names(init, source)
+    if "self" in own_names:
+        return {}
+    own_names.update(_bound_identifiers(initializers[0].child_by_field_name("parameters"), source))
+    local_imports = {**imports, **dict.fromkeys(own_names, ("", ""))}
+    fields: dict[str, tuple[int, tuple[str, ...]]] = {}
+    for stmt in init.named_children:
+        if stmt.type != "expression_statement" or len(stmt.named_children) != 1:
+            continue
+        assign = stmt.named_children[0]
+        if assign.type == "assignment" and (
+            name := _self_field(assign.child_by_field_name("left"), source)
+        ):
+            items = _tuple_items(assign.child_by_field_name("type"), source, local_imports)
+            if items and any(items):
+                fields[name] = (assign.start_byte, items)
+    for method in methods:
+        if not fields or (commands := method.child_by_field_name("body")) is None:
+            continue
+        for child in _body_nodes(commands):
+            field = _BINDING_FIELDS.get(child.type)
+            if field:
+                for name in _written_fields(child.child_by_field_name(field), source):
+                    if name in fields and child.start_byte != fields[name][0]:
+                        fields.pop(name)
+    return {name: items for name, (_, items) in fields.items()}
+
+
+def _tuple_loop_scope(
+    node: Any, fields: dict[str, tuple[str, ...]], source: bytes
+) -> _Scope | None:
+    if (items := fields.get(_self_field(node.child_by_field_name("right"), source))) is None:
+        return None
+    target, body = (node.child_by_field_name(k) for k in ("left", "body"))
+    if (
+        target is None
+        or body is None
+        or target.type not in {"pattern_list", "tuple_pattern", "list_pattern"}
+    ):
+        return None
+    targets = target.named_children
+    if len(targets) != len(items) or any(t.type != "identifier" for t in targets):
+        return None
+    names = [node_text(t, source) for t in targets]
+    if len(set(names)) != len(names):
+        return None
+    bound: set[str] = set()
+    for child in _body_nodes(body):
+        if child.type in {
+            "class_definition",
+            "function_definition",
+            "lambda",
+            "match_statement",
+            "import_statement",
+            "import_from_statement",
+        }:
+            return None
+        if child.type in _BINDING_NODES or child.type == "delete_statement":
+            bound.update(_bound_identifiers(child, source))
+    bindings = {
+        name: item for name, item in zip(names, items, strict=True) if item and name not in bound
+    }
+    return _Scope(body.start_point[0] + 1, body.end_point[0] + 1, bindings) if bindings else None
+
+
+def _class_tuple_loop_scopes(
+    node: Any, source: bytes, imports: dict[str, tuple[str, str]]
+) -> list[_Scope]:
+    body = node.child_by_field_name("body")
+    if body is None:
+        return []
+    methods = [
+        statement
+        for child in body.named_children
+        if (statement := _method_body(child, source)) is not None
+    ]
+    if not (fields := _tuple_fields(body, source, imports)):
+        return []
+    return [
+        scope
+        for method in methods
+        if "self" not in _written_names(method, source)
+        and not any(item.type == "match_statement" for item in _body_nodes(method))
+        for block in _body_nodes(method)
+        if block.type == "for_statement"
+        and (scope := _tuple_loop_scope(block, fields, source)) is not None
+    ]
+
+
 class PyReceiverTyper:
     """Answers `type_of(line, receiver)` for one parsed Python file."""
 
@@ -307,7 +563,9 @@ class PyReceiverTyper:
         self._fixture_params: dict[int, set[str]] = {}
         for _req, param, line in getattr(pf, "fixture_requests", ()) or ():
             self._fixture_params.setdefault(int(line), set()).add(param)
+        self._imports: dict[str, tuple[str, str]] = {}
         if pf.tree is not None:
+            self._imports = _loop_type_imports(pf.tree.root_node, pf.source)
             self._collect(pf.tree.root_node, pf.source, class_bindings=None)
             _body_bindings(pf.tree.root_node, pf.source, self._module.bindings, fields=False)
             self._collect_receiver_callees(pf.tree.root_node, pf.source)
@@ -376,6 +634,7 @@ class PyReceiverTyper:
     def _collect(self, node: Any, source: bytes, class_bindings: dict[str, str] | None) -> None:
         for child in node.named_children:
             if child.type == "class_definition":
+                self._scopes.extend(_class_tuple_loop_scopes(child, source, self._imports))
                 self._collect(child, source, _class_bindings(child, source))
                 continue
             if child.type in _FUNCTION_NODES:

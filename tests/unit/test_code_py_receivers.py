@@ -111,3 +111,66 @@ def test_typed_receivers_narrow_the_candidates_and_self_calls_stay_on_the_class(
     # `plain.insert(2)`: untyped receiver, two candidates → declined, recorded as a miss
     assert not any(e.line == 22 and e.to_qualified_name.endswith("Table::insert") for e in edges)
     assert any(m.callee_name == "insert" and m.line == 22 for m in misses)
+
+
+_TYPED_TUPLE_LOOP = """import typing as t
+
+class Worker:
+    def __init__(self):
+        self.rows: t.List[t.Tuple["Worker", dict]] = []
+
+    def run(self):
+        for worker, options in self.rows:
+            options = options.copy()
+            worker.execute()
+        worker.finish()
+"""
+
+
+def test_receiver_type_from_an_annotated_tuple_loop_field() -> None:
+    parsed = parse_file("app/worker.py", _TYPED_TUPLE_LOOP.encode())
+    typer = PyReceiverTyper(parsed)
+    assert typer.type_of(10, "worker") == "Worker"
+    assert typer.type_of(11, "worker") == ""
+    imported = _TYPED_TUPLE_LOOP.replace(
+        "        for worker,", "        import math\n        for worker,"
+    )
+    assert (
+        PyReceiverTyper(parse_file("app/worker.py", imported.encode())).type_of(11, "worker")
+        == "Worker"
+    )
+    table = _table(
+        ("execute", "app.worker::Worker::execute"),
+        ("execute", "other.task::Task::execute"),
+    )
+    edges, _ = extract_edges_and_misses(parsed, table, None)
+    assert [(e.to_qualified_name, e.confidence) for e in edges if e.line == 10] == [
+        ("app.worker::Worker::execute", TYPED_RECEIVER_CONFIDENCE)
+    ]
+
+
+def test_tuple_loop_leaves_unknown_rebinds_and_shapes_untyped() -> None:
+    original = _TYPED_TUPLE_LOOP
+    cases = [
+        original.replace('t.Tuple["Worker", dict]', 't.Tuple["Worker", ...]'),
+        original.replace('t.Tuple["Worker", dict]', 't.Tuple["Worker", dict, int]'),
+        original.replace("import typing as t", "import another as t"),
+        original.replace("class Worker:", "t = another\nclass Worker:"),
+        original.replace(
+            "            worker.execute()",
+            "            worker = get_unknown()\n            worker.execute()",
+        ),
+        original.replace(
+            "        for worker,", "        self = get_unknown()\n        for worker,"
+        ),
+        original.replace(
+            "        for worker,", "        import another as self\n        for worker,"
+        ),
+        original + "\n    @decorator\n    def reset(self):\n        self.rows = get_unknown()\n",
+    ]
+    for source in cases:
+        line = next(
+            i for i, text in enumerate(source.splitlines(), 1) if "worker.execute()" in text
+        )
+        parsed = parse_file("app/worker.py", source.encode())
+        assert PyReceiverTyper(parsed).type_of(line, "worker") == ""
