@@ -10253,6 +10253,12 @@ pub struct CodeGrepInput {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present_value"
     )]
+    pub prioritize_patterns: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
     pub regex: Option<bool>,
     #[serde(
         default,
@@ -10374,6 +10380,7 @@ impl CodeGrepInput {
             user_id: None,
             consumer: None,
             pattern,
+            prioritize_patterns: None,
             regex: None,
             related_on_miss: None,
             related_on_prefix: None,
@@ -10424,6 +10431,10 @@ impl CodeGrepInput {
     }
     pub fn consumer(mut self, consumer: impl Into<String>) -> Self {
         self.consumer = Some(consumer.into());
+        self
+    }
+    pub fn prioritize_patterns(mut self, prioritize_patterns: bool) -> Self {
+        self.prioritize_patterns = Some(prioritize_patterns);
         self
     }
     pub fn regex(mut self, regex: bool) -> Self {
