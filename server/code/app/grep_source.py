@@ -194,6 +194,11 @@ async def recover_source_chunks(
             recovered[key] = [dict(row, path=path, embedding_model=model) for row in rows]
     if not recovered:
         return chunks
+    source_locs = {
+        (row["path"], row.get("indexed_commit")): loc
+        for row in chunks
+        if (loc := row.get("source_loc"))
+    }
     output = [
         row
         for row in chunks
@@ -202,6 +207,9 @@ async def recover_source_chunks(
         not in recovered
     ]
     for rows in recovered.values():
+        for row in rows:
+            if loc := source_locs.get((row["path"], row.get("indexed_commit"))):
+                row["source_loc"] = loc
         output.extend(rows)
     output.sort(key=lambda row: (str(row["path"]), int(row["start_line"]), int(row["end_line"])))
     return output

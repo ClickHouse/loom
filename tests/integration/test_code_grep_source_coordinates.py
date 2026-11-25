@@ -241,6 +241,36 @@ def use(client: Client):
 
 
 @pytest.mark.asyncio
+async def test_ending_proof_survives_recovery_of_nested_class_source(
+    ch_client, monkeypatch
+) -> None:
+    org, ns = unique_org("grep-recovered-ending"), "source"
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    await get_client().connect()
+    repo = CodeRepo()
+    path = "nested.py"
+    pattern = "def exact():\n"
+    await ingest_file(
+        repo,
+        org,
+        ns,
+        path=path,
+        source=b"class Outer:\n    class Middle:\n        class Inner:\n            def exact():\n                return 1\n",
+        commit_sha="b" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    pool = await repo.grep_chunks(org, ns, pattern, limit=3)
+    assert [row["kind"] for row in pool] == ["class_skeleton"] * 3
+    result = await handle_code_grep(CodeGrepInput(org=org, namespace=ns, pattern=pattern, limit=1))
+    assert [(row["path"], row["line"], row["text"]) for row in result.matches] == [
+        (path, 4, "def exact():"),
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("early_hits", [4, 20])
 @pytest.mark.parametrize("tail_pattern", ["def tail_requested", "def tail_requested():\n"])
 async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
@@ -306,6 +336,8 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
                 ("endings/d.py", "older_chunk", "check_ending()\n"),
                 ("projected/a.reference", "", "check_ending()\n… clipped reference\n"),
                 ("projected/b.ipynb", "cell", "def cell():\n    check_ending()\n"),
+                ("projected/c.ipynb", "cell", "def cell():\n    check_ending()\n"),
+                ("projected/z.py", "physical", "def physical():\n    check_ending()\n"),
             )
         ],
         column_names=[
@@ -334,6 +366,8 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             [org, ns, "endings/d.py", "python", 2, "c" * 40],
             [org, ns, "projected/a.reference", "reference", 3, "b" * 40],
             [org, ns, "projected/b.ipynb", "python", 5, "b" * 40],
+            [org, ns, "projected/c.ipynb", "python", 5, "b" * 40],
+            [org, ns, "projected/z.py", "python", 3, "b" * 40],
         ],
         column_names=["org", "namespace", "path", "lang", "loc", "indexed_commit"],
     )
@@ -413,12 +447,19 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             CodeGrepInput(org=org, namespace=ns, pattern=endings[0], path_prefix="endings/")
         )
         assert [row["path"] for row in scalar_ending.matches] == ["endings/b.py"]
-        projected = CodeGrepInput(org=org, namespace=ns, pattern=endings, path_prefix="projected/")
+        projected = CodeGrepInput(
+            org=org,
+            namespace=ns,
+            pattern=endings,
+            path_prefix="projected/",
+            exclude_globs=["projected/z.py"],
+        )
         assert not (await handle_code_grep(projected)).matches
         plain = await handle_code_grep(projected.model_copy(update={"pattern": "check_ending()"}))
         assert [row["path"] for row in plain.matches] == [
             "projected/a.reference",
             "projected/b.ipynb",
+            "projected/c.ipynb",
         ]
         assert not await repo.grep_pattern_chunks(
             org,
@@ -426,10 +467,16 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             endings,
             case_sensitive=True,
             path_prefix="projected/",
-            scope=build_scope(),
+            scope=build_scope(exclude_globs=["projected/z.py"]),
             exclude_paths=[],
             limit=3,
         )
+        physical = await handle_code_grep(
+            CodeGrepInput(
+                org=org, namespace=ns, pattern=endings[0], path_prefix="projected/", limit=1
+            )
+        )
+        assert [row["path"] for row in physical.matches] == ["projected/z.py"]
 
         async def missing_pool(*args: Any, **kwargs: Any) -> None:
             return None

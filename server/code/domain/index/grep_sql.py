@@ -77,6 +77,7 @@ def grep_chunks_sql(
     extra_settings: str = "",
     *,
     with_endings: bool = False,
+    endings_only: bool = False,
 ) -> str:
     """mode=matches: whole chunk rows in (path, start_line) order, chunk_id
     breaking ties so the page edge is deterministic."""
@@ -89,10 +90,12 @@ def grep_chunks_sql(
     if with_endings:
         inner = _with_source_loc(inner, prefix_clause, path_sql)
         loc_col = ", source_loc"
+    valid_positions = "WHERE start_line < ifNull(source_loc, 0)" if endings_only else ""
     return f"""
             SELECT path, scope, symbol_ids, kind, start_line, end_line, content,
                    embedding_model, toString(indexed_commit) AS indexed_commit{loc_col}
             FROM {inner}
+            {valid_positions}
             ORDER BY path, start_line, chunk_id
             LIMIT {{limit:UInt32}}
             {GREP_SCAN_SETTINGS}{extra_settings}
