@@ -321,7 +321,8 @@ async def _owner_context(
     owner = await owning_type(repo, org, ns, method)
     if owner is None:
         return {}
-    reads: dict[str, Awaitable[list[dict[str, Any]]]] = {}
+    # an owner's lessons cut off (None) are dropped like none: they only fill in for the method's
+    reads: dict[str, Awaitable[list[dict[str, Any]] | None]] = {}
     if want_examples:
         reads["examples"] = named_test_examples(repo, org, ns, owner, input.example_context_lines)
     if want_lessons:
