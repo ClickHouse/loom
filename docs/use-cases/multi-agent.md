@@ -91,10 +91,25 @@ before relying on the deployment for team work.
 
 The [Python software-factory reference](https://github.com/ClickHouse/loom/tree/main/sdk/python/examples#software_factory_memorypy)
 implements this evidence handoff with separate implementation and review credentials.
-Start with its indexed public repository and review-inbox setup. It compares the served
-function body and reports operation receipts; it does not generate a patch, decide whether
-a lesson is true or run code review. The example documents cleanup limits and supplies
-no captured live output.
+Start with its indexed public repository and review-inbox setup.
+
+### Check the handoff output
+
+In a run against an authenticated Loom server with [development providers](../development/local-development.md#fake-providers),
+the implementation and review agents use separate credentials to read the same
+[indexed source revision](https://github.com/pallets/itsdangerous/blob/672971d66a2ef9f85151e53283113f33d642dabd/src/itsdangerous/serializer.py#L309-L320).
+The reviewer retrieves the implementation agent's lesson, compares the returned function
+body with the saved digest, and completes the handoff. The run emits these JSON lines
+among its operation receipts.
+
+```jsonl
+{"source_recheck": "unchanged_body", "claim_truth": "not_verified", "merge_ready": false, "source_tier": "treesitter"}
+{"cleanup": "generated_memory_missing", "history": "retained"}
+```
+
+`unchanged_body` records a matching path, symbol, and function-body digest. Use the
+repository's review and CI results to decide whether to merge. The cleanup step
+removes the example's generated memory from live reads and retains its history.
 
 ### Choosing memory for a software factory
 
