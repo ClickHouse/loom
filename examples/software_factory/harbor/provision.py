@@ -187,13 +187,17 @@ class Provisioner:
         return self._create("container", name, command)
 
     def remove_container(self, name, identifier):
-        self._owned("container", identifier)
-        logs = self._cmd(["docker", "logs", identifier])
-        target = self.output / "logs" / (identifier + ".log")
-        target.parent.mkdir(exist_ok=True)
-        target.write_text(logs.stdout + logs.stderr)
-        os.chmod(target, 0o600)
-        self._cmd(["docker", "rm", "-f", "-v", identifier])
+        try:
+            self._owned("container", identifier)
+            logs = self._cmd(["docker", "logs", identifier])
+            target = self.output / "logs" / (identifier + ".log")
+            target.parent.mkdir(exist_ok=True)
+            target.write_text(logs.stdout + logs.stderr)
+            os.chmod(target, 0o600)
+            self._cmd(["docker", "rm", "-f", "-v", identifier])
+        except subprocess.CalledProcessError as error:
+            if f"No such container: {identifier}" not in (error.stderr or ""):
+                raise
         self._record("removed", kind="container", name=name, id=identifier)
 
     def build_image(self, tag, context, iidfile, *, flags=()):

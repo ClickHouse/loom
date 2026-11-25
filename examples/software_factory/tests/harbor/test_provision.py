@@ -201,6 +201,19 @@ class ProvisioningContracts(unittest.TestCase):
         self.assertEqual(result["removed"], [{"kind": "image", "id": identifier, "name": tag}])
         self.assertIn(["docker", "image", "rm", "--no-prune", tag], commands)
 
+    def test_cleanup_recovers_a_container_removal_before_its_journal_update(self):
+        name, identifier = "owned-compiler", "c" * 64
+        self.provision._record("created", kind="container", name=name, id=identifier)
+        inspect = ["docker", "container", "inspect", identifier]
+        self.run.side_effect = subprocess.CalledProcessError(
+            1, inspect, stderr=f"Error response from daemon: No such container: {identifier}"
+        )
+        result = self.provision.cleanup()
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["removed"], [{"kind": "container", "id": identifier, "name": name}])
+        self.assertTrue(self.provision.cleanup()["complete"])
+        self.run.assert_called_once()
+
     def test_cleanup_removes_each_registered_image_tag_with_the_same_digest(self):
         identifier = "sha256:" + "d" * 64
         tags = ["factory-dependency:one", "factory-dependency:two"]
