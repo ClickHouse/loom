@@ -58,6 +58,7 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/es",
             "/fr",
             "/hi",
+            "/id",
             "/it",
             "/ja",
             "/ko",
@@ -65,6 +66,7 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/pt-BR",
             "/ru",
             "/telemetry",
+            "/tr",
             "/zh-CN",
         )
     )

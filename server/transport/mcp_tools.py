@@ -522,7 +522,9 @@ def _with_loading_hints(descriptors: list[dict[str, Any]], requested: set[str]) 
             descriptor.setdefault("_meta", {})["anthropic/alwaysLoad"] = True
 
 
-_GREP_ADVANCED_ARGS = {
+_COMPACT_CODING_GREP_OMITTED_ARGS = {
+    "include_body",
+    "context_lines",
     "related_on_miss",
     "related_on_prefix",
     "include_dependencies",
@@ -581,7 +583,7 @@ async def _tools_descriptor(
             )
             input_schema = _with_identity(input_schema, op)
         if profile == "compact" and toolset == "coding" and op.name == "code.grep":
-            input_schema = _without(input_schema, _GREP_ADVANCED_ARGS)
+            input_schema = _without(input_schema, _COMPACT_CODING_GREP_OMITTED_ARGS)
         if defaults := mcp_argument_defaults(op.name, toolset):
             fields = input_schema.get("properties", {})
             for field, value in defaults.items():
