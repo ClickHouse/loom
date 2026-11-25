@@ -504,19 +504,20 @@ An earlier 12-issue SWE-bench agent sample is withdrawn: its with-Loom agent cal
 `bench/fixtures/code_intel_qa.jsonl`, replayed as `git grep` over a ClickHouse checkout:
 once for the bare name as a whole word, and once for a literal substring. The substring
 search used `Class::name` where available (7 of the 10 definitions) and the bare name
-otherwise. Tokens are characters / 4. For Loom's definition
-results, a first result counts when its path starts with the expected directory prefix.
+otherwise. Tokens are characters / 4. Loom scores the first definition result by
+whether its path starts with the expected directory prefix.
 
-| Question    | Whole-word grep, median                                         | Substring grep, median     | Loom                                         |
-| ----------- | --------------------------------------------------------------- | -------------------------- | -------------------------------------------- |
-| Definitions | 29,061 tokens over 227 files                                    | 1,623 tokens over 25 files | 1,678 tokens; expected prefix first in 10/10 |
-| Callers     | 558 tokens; 4 of 12 expected caller names matched as substrings | 101 tokens                 | 12 of 12 expected callers                    |
+| Question    | Whole-word grep, median                                               | Substring grep, median     | Loom                                         |
+| ----------- | --------------------------------------------------------------------- | -------------------------- | -------------------------------------------- |
+| Definitions | 29,061 tokens over 227 files                                          | 1,623 tokens over 25 files | 1,678 tokens; expected prefix first in 10/10 |
+| Callers     | 558 tokens; 4 of 12 expected caller entries matched by name substring | 101 tokens                 | 12 of 12 expected callers                    |
 
 For the three definition searches that used bare names (`executeQuery`, `parseQuery`,
 `Field`), substring grep returns roughly 35,000 to 490,000 estimated tokens;
 Loom returns about 1,200 to 2,500. For callers, the harness searches the whole-word
 grep output for each unqualified expected caller name as a substring. The searched
-symbol can satisfy that check by itself: `executeQueryImpl` contains `executeQuery`.
+symbols suffice for all four matches: `executeQueryImpl` contains `executeQuery` for
+one entry, and `readFromParts` contains `read` for three entries.
 The harness does not verify call sites or score caller coverage for substring grep.
 
 **Repeated `code.ask` questions.** Over 30 days of one deployment's real (non-bench)
