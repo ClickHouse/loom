@@ -110,6 +110,35 @@ server and project namespace. The new session can retrieve decisions already sav
 Use the [authenticated Claude Code-to-Codex check](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex)
 to verify the handoff on a disposable key before switching a project.
 
+## Share memory across repositories
+
+Give each repository its own memory namespace. Put reviewed rules that both teams
+can read in a shared namespace. Use a separate writer to maintain those rules.
+Create three disposable memory namespaces in the same org and grant the roles below
+with repeatable `--namespace-role` options. [Tokens and grants](../guides/tokens-and-grants.md)
+
+| Token holder            | `web-app`      | `worker-app`   | `team-rules` |
+| ----------------------- | -------------- | -------------- | ------------ |
+| Web repository agent    | Writer         | Access refused | Viewer       |
+| Worker repository agent | Access refused | Writer         | Viewer       |
+| Rules maintainer        | Access refused | Access refused | Writer       |
+
+For plugin capture, set `LOOM_PROJECT_SCOPE=namespace` and match the project name to
+its repository namespace. Set `LOOM_PROJECT_NAME` when the checkout directory has a
+different name. In the default `tag` mode, project tags label rows in the configured
+namespace. Namespace roles enforce access. [Plugin configuration](../features/integrations/claude-code.md#configuration)
+
+Pass the explicit `org`, `namespace` and `memory_key` in each tool call in this exercise.
+
+1. In each repository, use its writer token and `loom_memory_set` to save a different
+   local release check under `example/repo/release-review`. Use the maintainer's token to
+   write a rule for both teams under `example/team/release-review` in `team-rules`.
+2. Open a fresh session with each repository token and call `loom_memory_get` for its
+   local and shared rules. Each session should read its own local rule and the same team rule.
+3. Use each repository token to read the other repository's local key by naming that
+   namespace. Require an access refusal without the value. Try writing the shared key
+   with each repository token. Require a refusal and verify the shared rule's value.
+
 ## What you get
 
 - **One claim per key, in a namespace.** `memory.set` saves a fact; `memory.get` reads it
