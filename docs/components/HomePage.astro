@@ -4,7 +4,7 @@ import data from "blume:data";
 import dashboard from "../assets/screenshots/memory-linked-code.webp";
 import SiteFrame from "./SiteFrame.astro";
 import { homeCopy } from "./home-copy";
-import { siteLocales, type SiteLocale } from "./site-locales";
+import { enterpriseLink, siteLocales, type SiteLocale } from "./site-locales";
 
 interface Props {
   locale: SiteLocale;
@@ -21,6 +21,7 @@ function docLink(path: string) {
     : { href: `/docs${path}`, hreflang: "en" };
 }
 const start = docLink("/getting-started/quickstart");
+const enterprise = enterpriseLink(locale);
 const capabilities = [
   { ...copy.memory, ...docLink("/use-cases/agent-memory") },
   { ...copy.documents, ...docLink("/use-cases/document-search") },
@@ -106,7 +107,7 @@ const useCases = [
     </div>
     <div class="site-actions">
       <a class="secondary" {...docLink("/getting-started/evaluate")}>{copy.evaluate}</a>
-      <a class="text-link" href="/enterprise" hreflang="en">{copy.deploymentOptions}</a>
+      <a class="text-link" {...enterprise}>{copy.deploymentOptions}</a>
     </div>
   </section>
 </SiteFrame>

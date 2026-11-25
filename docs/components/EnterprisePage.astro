@@ -1,0 +1,82 @@
+---
+import SiteFrame from "./SiteFrame.astro";
+import { enterpriseCopy } from "./enterprise-copy";
+import { enterpriseAlternates, enterpriseLink } from "./site-locales";
+
+interface Props {
+  locale: keyof typeof enterpriseCopy;
+}
+
+const { locale } = Astro.props;
+const copy = enterpriseCopy[locale];
+const { href: path } = enterpriseLink(locale);
+const english = copy.englishLabel ? ` (${copy.englishLabel})` : "";
+const deployment = [
+  { ...copy.docker, href: "/docs/getting-started/quickstart" },
+  { ...copy.kubernetes, href: "/docs/operations/kubernetes" },
+];
+const controls = [
+  { ...copy.identity, href: "/docs/operations/sso" },
+  { ...copy.audit, href: "/docs/features/observability/audit" },
+  { ...copy.erasure, href: "/docs/features/memory/retention-and-erasure" },
+  { ...copy.backup, href: "/docs/operations/backup-and-recovery" },
+];
+---
+
+<SiteFrame title={copy.title} description={copy.description} path={path} locale={locale} alternates={enterpriseAlternates}>
+  <h1>{copy.heading}</h1>
+  <p class="lead">{copy.lead}</p>
+  <div class="site-actions">
+    <a class="primary" href="/docs/operations/deployment" hreflang="en">{copy.plan}{english}</a>
+    <a class="secondary" href="/docs/architecture/security" hreflang="en">{copy.security}{english}</a>
+  </div>
+
+  <section class="site-section" aria-labelledby="deploy-title">
+    <div class="section-copy">
+      <h2 id="deploy-title">{copy.deploymentHeading}</h2>
+      <p>{copy.deploymentIntro}</p>
+    </div>
+    <div class="site-grid">
+      {deployment.map(({ title, detail, href, label }) => (
+        <article class="site-panel">
+          <h3>{title}</h3>
+          <p>{detail}</p>
+          <a href={href} hreflang="en">{label}{english} <span aria-hidden="true">↗</span></a>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="site-section" aria-labelledby="controls-title">
+    <div class="section-copy">
+      <h2 id="controls-title">{copy.controlsHeading}</h2>
+      <p>{copy.controlsIntro}</p>
+    </div>
+    <div class="site-grid">
+      {controls.map(({ title, detail, href, label }) => (
+        <article class="site-panel">
+          <h3>{title}</h3>
+          <p>{detail}</p>
+          <a href={href} hreflang="en">{label}{english} <span aria-hidden="true">↗</span></a>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="site-section" aria-labelledby="evaluate-title">
+    <div class="section-copy">
+      <h2 id="evaluate-title">{copy.evaluateHeading}</h2>
+      <p>{copy.evaluateIntro}</p>
+    </div>
+    <div class="site-actions">
+      <a class="primary" href="/docs/getting-started/evaluate" hreflang="en">{copy.evaluate}{english}</a>
+      <a class="text-link" href="/docs/benchmarks/results" hreflang="en">{copy.benchmarks}{english}</a>
+      <a class="text-link" href="/docs/use-cases/self-hosted-clickhouse#choose-self-hosted-memory-for-coding-agents" hreflang="en">{copy.boundary}{english}</a>
+      <a class="text-link" href="/docs/operations/monitoring" hreflang="en">{copy.monitoring}{english}</a>
+    </div>
+  </section>
+</SiteFrame>
+
+<style>
+  h1 { text-wrap: balance; overflow-wrap: anywhere; }
+</style>

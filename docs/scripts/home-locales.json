@@ -1,9 +1,9 @@
 {
-  "en": { "name": "English", "href": "/", "docs": "/docs" },
+  "en": { "name": "English", "href": "/", "docs": "/docs", "enterprise": "/enterprise" },
   "ar": { "name": "العربية", "href": "/ar", "docs": null },
-  "de": { "name": "Deutsch", "href": "/de", "docs": null },
+  "de": { "name": "Deutsch", "href": "/de", "docs": null, "enterprise": "/de/enterprise" },
   "es": { "name": "Español", "href": "/es", "docs": "/docs/es/use-cases" },
-  "fr": { "name": "Français", "href": "/fr", "docs": null },
+  "fr": { "name": "Français", "href": "/fr", "docs": null, "enterprise": "/fr/enterprise" },
   "hi": { "name": "हिन्दी", "href": "/hi", "docs": null },
   "id": { "name": "Bahasa Indonesia", "href": "/id", "docs": null },
   "it": { "name": "Italiano", "href": "/it", "docs": null },

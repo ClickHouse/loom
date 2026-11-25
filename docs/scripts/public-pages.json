@@ -17,6 +17,8 @@
   "/zh-Hant": "/docs/zh-Hant/home",
   "/platform": "/docs/platform",
   "/enterprise": "/docs/enterprise",
+  "/de/enterprise": "/docs/de/enterprise",
+  "/fr/enterprise": "/docs/fr/enterprise",
   "/telemetry": "/docs/telemetry",
   "/adoption": "/docs/adoption"
 }

@@ -2,20 +2,26 @@
 import { publisher, repositoryUrl, software, website } from "../lib/site-identity.mjs";
 import loomLogo from "../public/loom.svg?raw";
 import { frameCopy } from "./site-frame-copy";
-import { homeAlternates, siteLocales, type SiteLocale } from "./site-locales";
+import { enterpriseLink, homeAlternates, siteLocales, type LocaleAlternate, type SiteLocale } from "./site-locales";
 
 interface Props {
   title: string;
   description: string;
   path: string;
+  locale?: SiteLocale;
+  alternates?: LocaleAlternate[];
   home?: { locale: SiteLocale; start: { href: string; hreflang: string } };
 }
 
-const { title, description, path, home } = Astro.props;
-const locale = home?.locale ?? "en";
+const { title, description, path, home, locale: pageLocale, alternates } = Astro.props;
+const locale = home?.locale ?? pageLocale ?? "en";
 const shortLocale = locale === "zh-CN" ? "简体" : locale === "zh-Hant" ? "繁體" : locale.split("-")[0].toUpperCase();
 const labels = frameCopy[locale];
 const locales = Object.entries(siteLocales).map(([language, value]) => ({ language, ...value }));
+const pageAlternates = home ? homeAlternates : (alternates ?? []);
+const languageMenu = pageAlternates.flatMap(({ language, href }) =>
+  language === "x-default" ? [] : [{ language, href, name: siteLocales[language].name }],
+);
 const brandHome = siteLocales[locale].href;
 const docs = siteLocales[locale].docs;
 const start = home?.start ?? { href: "/docs/getting-started/quickstart", hreflang: "en" };
@@ -43,7 +49,7 @@ const searchVerification = {
 };
 const navigation = [
   { label: labels.product, href: "/platform", hreflang: "en" },
-  { label: labels.enterprise, href: "/enterprise", hreflang: "en" },
+  { label: labels.enterprise, ...enterpriseLink(locale) },
   { label: labels.adoption, href: "/adoption", hreflang: "en" },
   { label: labels.docs, href: docs ?? siteLocales.en.docs, hreflang: docs ? locale : "en" },
 ];
@@ -61,7 +67,7 @@ const navigation = [
     <meta property="og:url" content={canonical} />
     <link rel="canonical" href={canonical} />
     <link rel="describedby" type="text/plain" href="/docs/llms.txt" />
-    {home && homeAlternates.map(({ language, href }) => (
+    {pageAlternates.map(({ language, href }) => (
       <link rel="alternate" hreflang={language} href={new URL(href, Astro.site)} />
     ))}
     <link rel="icon" href="/docs/favicon.svg" type="image/svg+xml" />
@@ -84,14 +90,14 @@ const navigation = [
         </nav>
         <div class="header-actions">
           <a class="header-action" {...start}>{labels.start} <span aria-hidden="true">↗</span></a>
-          {home && (
+          {languageMenu.length > 0 && (
             <details class="site-language">
               <summary aria-label={`${labels.siteLanguage} · ${siteLocales[locale].name} (${shortLocale})`}>
                 <span class="site-language-name">{siteLocales[locale].name}</span>
                 <span class="site-language-code" aria-hidden="true">{shortLocale}</span>
               </summary>
               <nav class="site-language-list" aria-label={labels.siteLanguage}>
-                {locales.map(({ language, name, href }) => (
+                {languageMenu.map(({ language, name, href }) => (
                   <a href={href} lang={language} dir="auto" hreflang={language} aria-current={language === locale ? "page" : undefined}>
                     {name}
                   </a>
