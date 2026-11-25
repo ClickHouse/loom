@@ -14,6 +14,11 @@ from server.code.domain.index.grep_plan import (
     content_predicate,
 )
 from server.code.domain.search_scope import SearchScope
+from server.code.domain.symbol_body import (
+    CONTINUED_LINE_PREFIX,
+    CONTINUED_LINE_SUFFIX,
+    UNMAPPABLE_SOURCE_ENDINGS,
+)
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched, _scope_path_sql
 from server.core.ch_params import chunks
@@ -265,6 +270,9 @@ class GrepMixin(CodeRepoBase):
                 **literals,
                 "prefix": path_prefix,
                 "limit": limit,
+                "unmappable_endings": list(UNMAPPABLE_SOURCE_ENDINGS),
+                "continued_line_prefix": CONTINUED_LINE_PREFIX,
+                "continued_line_suffix": CONTINUED_LINE_SUFFIX,
                 **excluded_params,
                 **path_params,
             },

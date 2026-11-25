@@ -277,21 +277,25 @@ class _GrepLineScan:
     route: str
     note: str
     related_pattern: str
+    batch_partial_reason: str = ""
 
 
 def _missing_chunk_patterns(
     patterns: list[str], chunks: list[dict[str, Any]], *, case_sensitive: bool, excluded: set[str]
 ) -> list[str]:
     fold = str if case_sensitive else ascii_lower
-    contents = [
-        fold(str(chunk["content"])) for chunk in chunks if str(chunk["path"]) not in excluded
-    ]
-    folded = {pattern: fold(pattern) for pattern in dict.fromkeys(patterns)}
-    return [
-        pattern
-        for pattern, literal in folded.items()
-        if not any(literal in content for content in contents)
-    ]
+    remaining = dict.fromkeys(fold(pattern) for pattern in patterns)
+    for chunk in chunks:
+        if str(chunk["path"]) in excluded:
+            continue
+        for line in retained_source_lines(chunk) or ():
+            source = fold(line.removesuffix("\n").removesuffix("\r"))
+            for literal in tuple(remaining):
+                if literal in source:
+                    remaining.pop(literal)
+            if not remaining:
+                return []
+    return list(remaining)
 
 
 async def _cover_batch_chunks(
@@ -303,10 +307,10 @@ async def _cover_batch_chunks(
     scope: SearchScope,
     budget: code_deadline.Budget | None,
     page_limit: int,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], str]:
     patterns = input.pattern
     if not isinstance(patterns, list) or len(patterns) < 2:
-        return chunks
+        return chunks, ""
     missing = await asyncio.to_thread(
         _missing_chunk_patterns,
         patterns,
@@ -315,20 +319,27 @@ async def _cover_batch_chunks(
         excluded=set(input.exclude_unit_ids),
     )
     if not missing or not _second_scan_allowed(budget, "batch pattern scan"):
-        return chunks
-    witnesses: list[dict[str, Any]] = await _bounded_scan(
-        budget,
-        repo.grep_pattern_chunks,
-        org,
-        ns,
-        missing,
-        case_sensitive=input.case_sensitive,
-        path_prefix=input.path_prefix,
-        scope=scope,
-        exclude_paths=input.exclude_unit_ids,
-        limit=page_limit,
-    )
-    return chunks + witnesses
+        return chunks, ""
+    try:
+        async with asyncio.timeout(None if budget is None else budget.left_ms() / 1000):
+            witnesses: list[dict[str, Any]] = await _bounded_scan(
+                budget,
+                repo.grep_pattern_chunks,
+                org,
+                ns,
+                missing,
+                case_sensitive=input.case_sensitive,
+                path_prefix=input.path_prefix,
+                scope=scope,
+                exclude_paths=input.exclude_unit_ids,
+                limit=page_limit,
+            )
+    except TimeoutError:
+        return chunks, "batch pattern scan timed out"
+    except Exception as error:  # noqa: BLE001 — preserve exact hits on optional read failure
+        logger.debug("batch pattern scan failed: %s", type(error).__name__)
+        return chunks, "batch pattern scan failed"
+    return sorted(chunks + witnesses, key=lambda row: (row["path"], row["start_line"])), ""
 
 
 async def _scan_grep_lines(
@@ -346,6 +357,7 @@ async def _scan_grep_lines(
     page_limit: int,
 ) -> _GrepLineScan:
     scan_limit = min(200, limit * 3)
+    batch_partial_reason = ""
     with code_span("grep.chunks", route=route) as sp:
         # over-fetch chunks: several lines can match inside one chunk, and
         # several chunks can be windows of one oversized unit
@@ -378,7 +390,7 @@ async def _scan_grep_lines(
             route += "+related_member" if related_pattern.startswith(".") else "+related_argument"
         if input.prioritize_patterns and len(chunks) >= scan_limit:
             with code_span("grep.batch_coverage", route=route):
-                chunks = await _cover_batch_chunks(
+                chunks, batch_partial_reason = await _cover_batch_chunks(
                     repo, org, ns, input, chunks, scope, budget, page_limit
                 )
         span_attrs(sp, chunks_matched=len(chunks))
@@ -405,6 +417,7 @@ async def _scan_grep_lines(
         route=route,
         note=note,
         related_pattern=related_pattern,
+        batch_partial_reason=batch_partial_reason,
     )
 
 
@@ -466,7 +479,9 @@ async def _grep_lines(
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
         repo, org, ns, input, matches, route, budget=budget
     )
-    exact_coverage = await asyncio.to_thread(_line_coverage_fields, scan.chunks, budget)
+    exact_coverage = await asyncio.to_thread(
+        _line_coverage_fields, scan.chunks, budget, additional_reason=scan.batch_partial_reason
+    )
     coverage = dict(exact_coverage)
     extra_related = None
     if not (related_pattern or offset or coverage.get("partial")):
@@ -1200,7 +1215,7 @@ def _grep_params_hash(input: CodeGrepInput) -> str:
     }
     if input.context_lines:
         parts["context_lines"] = input.context_lines
-    # Ordering is stored in the pool. Either version of the caller can page it.
+    # Ordering is stored in the pool so either server version can read a live page.
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -1372,6 +1387,8 @@ async def _grep_page_by_rerun(
     offset, serve the slice past it, disclose why."""
     from server.code.app import search_cursor as paging
 
+    if input.prioritize_patterns and isinstance(input.pattern, list) and len(input.pattern) > 1:
+        raise ValidationError(f"grep cursor unavailable ({reason}); start a new search")
     limit = input.effective_limit
     fresh = input.model_copy(update={"cursor": "", "limit": min(200, offset + limit)})
     out = await _code_grep(fresh, started=started, offset=offset, page_limit=limit)
@@ -1714,9 +1731,12 @@ def _line_coverage_fields(
     budget: code_deadline.Budget | None,
     *,
     previous: CodeGrepOutput | None = None,
+    additional_reason: str = "",
 ) -> dict[str, Any]:
     fields = _partial_fields(budget)
-    reasons = [str(fields.get("partial_reason") or "")]
+    reasons = [str(fields.get("partial_reason") or ""), additional_reason]
+    if additional_reason:
+        fields["partial"] = True
     scanned = 0
     for chunk in chunks:
         scanned += len(str(chunk.get("content") or ""))

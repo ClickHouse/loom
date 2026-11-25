@@ -12,8 +12,10 @@ from server.code.app import message_grep
 from server.code.app.grep import _matching_lines, handle_code_grep
 from server.code.app.index.ingest import ingest_file
 from server.code.app.symbol.uses import _uses_lines
+from server.code.domain.search_scope import build_scope
 from server.code.store.index import CodeRepo
 from server.core.ch import get_client
+from server.core.errors import ValidationError
 from server.embedding.fake import FakeNGramEmbedder
 from server.settings import settings
 from tests.integration._resources import unique_org
@@ -258,7 +260,8 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             "src/early.py",
             "".join(f"def repeat_{index}():\n    return 1\n\n" for index in range(early_hits)),
         ),
-        ("src/late.py", "def requested():\n    return 2\n"),
+        ("src/late.py", "def requested():  # match_alpha match_beta\n    return 2\n"),
+        ("src/tail.py", "def tail_requested():\n    return 4\n"),
         ("outside.py", "def forbidden():\n    return 3\n"),
     ):
         await ingest_file(
@@ -271,10 +274,52 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             embedding_model=embedder.model_name,
             embedder=embedder,
         )
+    ch_client.insert(
+        "loom.code_chunks",
+        [
+            [
+                org,
+                ns,
+                embedder.model_name,
+                "src/early.py",
+                uuid.uuid4(),
+                "function",
+                "repeat_0",
+                1,
+                1,
+                "# def requested\ndef repeat_0():\n",
+                [0.0] * settings.embedding_dim,
+                1,
+                "b" * 40,
+            ]
+        ],
+        column_names=[
+            "org",
+            "namespace",
+            "embedding_model",
+            "path",
+            "chunk_id",
+            "kind",
+            "scope",
+            "start_line",
+            "end_line",
+            "content",
+            "embedding",
+            "version",
+            "indexed_commit",
+        ],
+    )
     args = {
         "org": org,
         "namespace": ns,
-        "pattern": ["def ", "def REQUESTED", "def forbidden"],
+        "pattern": [
+            "def ",
+            "def REQUESTED",
+            "match_alpha",
+            "match_beta",
+            "def tail_requested",
+            "def forbidden",
+        ],
         "path_globs": ["src/**"],
         "case_sensitive": False,
         "limit": 3,
@@ -285,7 +330,7 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
     request = CodeGrepInput(**mcp_default_arguments("code.grep", args, toolset="coding"))
     page = await handle_code_grep(request)
     assert len(page.matches) == 3
-    assert [row["path"] for row in page.matches] == ["src/early.py", "src/early.py", "src/late.py"]
+    assert [row["path"] for row in page.matches] == ["src/early.py", "src/late.py", "src/tail.py"]
     assert any("def requested():" in row.get("body", "") for row in page.definitions)
 
     assert page.next_cursor
@@ -293,3 +338,34 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
     first_hits = {(row["path"], row["line"]) for row in page.matches}
     assert next_page.matches
     assert not first_hits.intersection((row["path"], row["line"]) for row in next_page.matches)
+
+    if early_hits == 20:
+        witnesses = await repo.grep_pattern_chunks(
+            org,
+            ns,
+            ["def REQUESTED", "match_alpha", "match_beta", "def tail_requested", "def forbidden"],
+            case_sensitive=False,
+            path_prefix="",
+            scope=build_scope(path_globs=["src/**"]),
+            exclude_paths=[],
+            limit=3,
+        )
+        assert [row["path"] for row in witnesses] == ["src/late.py", "src/tail.py"]
+
+        async def missing_pool(*args: Any, **kwargs: Any) -> None:
+            return None
+
+        with monkeypatch.context() as patch:
+            patch.setattr("server.code.app.grep._read_pool_settling", missing_pool)
+            cursor_request = request.model_copy(update={"cursor": page.next_cursor})
+            with pytest.raises(ValidationError, match="start a new search"):
+                await handle_code_grep(cursor_request)
+
+        async def timed_out(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            raise TimeoutError
+
+        monkeypatch.setattr(CodeRepo, "grep_pattern_chunks", timed_out)
+        partial = await handle_code_grep(request)
+        assert partial.matches == path_order.matches
+        assert partial.partial
+        assert "batch pattern scan" in partial.partial_reason

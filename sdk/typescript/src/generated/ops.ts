@@ -963,7 +963,7 @@ export interface CodeGrepInput {
   /** Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. */
   context_lines?: number;
   path_prefix?: string;
-  /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
+  /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. */
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";

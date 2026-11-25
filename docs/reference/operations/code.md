@@ -769,7 +769,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
-| `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. |
+| `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |
 | `mode` | `Literal['matches', 'files', 'presence', 'message']` | `'matches'` | matches: up to `limit` matching LINES with text + enclosing scope. files: up to `limit` matching FILES (path, matching chunk count, first line) and no line text — the coverage question ("which files mention X?") that a 20-line cap cannot… |
 | `include_body` | `bool` | *(computed)* | Return full enclosing bodies by default in matches mode. |

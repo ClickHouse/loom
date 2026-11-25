@@ -105,7 +105,7 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         max_length=1024,
         description=(
             "In matches mode, pass `next_cursor` with the original search arguments "
-            "and omit it to start a new search."
+            "and omit it to start a new search when a prioritized batch cursor is unavailable."
         ),
     )
     # The caller's seen-set. Grep serves no unit ids, so these are PATHS
