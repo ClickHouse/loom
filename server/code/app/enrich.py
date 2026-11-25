@@ -14,7 +14,7 @@ import asyncio
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from server.code.app.spans import code_span
@@ -27,6 +27,7 @@ from server.settings import settings
 logger = logging.getLogger(__name__)
 
 _EXAMPLE_CANDIDATE_LIMIT = 50
+_INDIRECT_TEST_CALLER_LIMIT = 30
 
 
 async def bounded[T](coro: Awaitable[T], fallback: T, seconds: float | None = None) -> T:
@@ -95,47 +96,59 @@ async def usage_examples(
     for edge in ranked:
         by_location.setdefault((str(edge["path"]), int(edge["line"])), edge)
     sites = list(by_location.values())
-    baseline = sites[: max(1, limit)]
-    if tests_only:
-        sites = _rank_test_sites(sites)
-    requested = sites[: len(baseline)]
-    if tests_only and with_context:
-        preferred = _prefer_distinct_test_windows(sites, context_lines)[: len(baseline)]
-        requested = preferred + [edge for edge in baseline if edge not in preferred]
-    out = []
-    revisions: list[str] = []
-    for e in requested:
-        out.append(
-            {
-                "caller": str(e["from_qualified_name"]),
-                "path": str(e["path"]),
-                "line": int(e["line"]),
-                "tier": str(e["tier"]),
-                "test_covered": str(e["path"]) in tested_paths,
-            }
-        )
-        if with_context:
-            revisions.append(str(e.get("indexed_commit") or "").rstrip("\0"))
-    if with_context:
-        model = served_model_label(settings.embedding_model)
-        examples = await asyncio.gather(
-            *(
-                _example_context(repo, org, ns, site, context_lines, model, revision)
-                for site, revision in zip(out, revisions, strict=True)
-            )
-        )
-        if not tests_only:
-            return examples
-        # Example ranking can promote callers whose source is no longer retained.
-        # Keep source-backed fallbacks ahead of location-only rows.
-        backed = [example for example in examples if "context" in example]
-        locations = [
-            example
-            for edge, example in zip(requested, examples, strict=True)
-            if edge in baseline and "context" not in example
-        ]
-        return (backed + locations)[: len(baseline)]
-    return out
+    limit = max(1, limit)
+    ranked = _rank_test_sites(sites) if tests_only else sites
+
+    def location(edge: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "caller": str(edge["from_qualified_name"]),
+            "path": str(edge["path"]),
+            "line": int(edge["line"]),
+            "tier": str(edge["tier"]),
+            "test_covered": str(edge["path"]) in tested_paths,
+        }
+
+    if not with_context:
+        return [location(edge) for edge in ranked[:limit]]
+
+    model = served_model_label(settings.embedding_model)
+
+    async def read(edge: dict[str, Any]) -> dict[str, Any]:
+        revision = str(edge.get("indexed_commit") or "").rstrip("\\0")
+        return await _example_context(repo, org, ns, location(edge), context_lines, model, revision)
+
+    if not tests_only:
+        return await asyncio.gather(*(read(edge) for edge in ranked[:limit]))
+    preferred = _prefer_distinct_test_windows(ranked, context_lines)[:limit]
+    baseline = sites[:limit]
+    backups = _prefer_distinct_test_windows(sites, context_lines)[:limit] + baseline
+    backed = await _retained_examples(preferred, backups, limit=limit, read=read)
+    found = {(example["path"], example["line"]) for example in backed}
+    locations = [location(edge) for edge in baseline if (edge["path"], edge["line"]) not in found]
+    return (backed + locations)[:limit]
+
+
+async def _retained_examples(
+    preferred: list[dict[str, Any]],
+    backups: list[dict[str, Any]],
+    *,
+    limit: int,
+    read: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Read the previous candidates when ranked sites cannot fill the source slots."""
+    examples = await asyncio.gather(*(read(edge) for edge in preferred))
+    backed = [example for example in examples if "context" in example]
+    if len(backed) < limit:
+        seen = {(edge["path"], edge["line"]) for edge in preferred}
+        pending = []
+        for edge in backups:
+            key = (edge["path"], edge["line"])
+            if key not in seen:
+                seen.add(key)
+                pending.append(edge)
+        fallback = await asyncio.gather(*(read(edge) for edge in pending))
+        backed.extend(example for example in fallback if "context" in example)
+    return backed[:limit]
 
 
 def _test_name_words(name: str) -> set[str]:
@@ -207,7 +220,7 @@ async def indirect_test_examples(
         ns,
         list(bridges),
         direction="callers",
-        limit=_EXAMPLE_CANDIDATE_LIMIT,
+        limit=2 * _INDIRECT_TEST_CALLER_LIMIT,
         min_confidence=0.8,
         with_revision=True,
         tests_only=True,
@@ -224,9 +237,16 @@ async def indirect_test_examples(
         return []
     sites = _verified_indirect_sites(tests, bridges, files, revision)
     candidates = _prefer_distinct_test_windows(_rank_test_sites(sites), context_lines)[:6]
+    by_caller: dict[str, dict[str, Any]] = {}
+    for edge in tests:
+        by_caller.setdefault(str(edge["from_symbol_id"]), edge)
+    original = _verified_indirect_sites(
+        list(by_caller.values())[:_INDIRECT_TEST_CALLER_LIMIT], bridges, files, revision
+    )
+    backups = _prefer_distinct_test_windows(original, context_lines)[:6]
     model = served_model_label(settings.embedding_model)
-    reads = []
-    for edge in candidates:
+
+    async def read(edge: dict[str, Any]) -> dict[str, Any]:
         bridge = bridges[str(edge["to_symbol_id"])]
         site = {
             "caller": str(edge["from_qualified_name"]),
@@ -240,9 +260,9 @@ async def indirect_test_examples(
                 "line": int(bridge["line"]),
             },
         }
-        reads.append(_example_context(repo, org, ns, site, context_lines, model, revision))
-    examples = await asyncio.gather(*reads)
-    return [row for row in examples if "context" in row][:3]
+        return await _example_context(repo, org, ns, site, context_lines, model, revision)
+
+    return await _retained_examples(candidates, backups, limit=3, read=read)
 
 
 def _verified_indirect_sites(

@@ -161,24 +161,30 @@ def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None
 
 
 @pytest.mark.asyncio
-async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(monkeypatch):
+@pytest.mark.parametrize("stale_setup", [False, True])
+async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(
+    monkeypatch, stale_setup
+):
     revision = "a" * 40
-    target = "lib::register"
+    older = "b" * 40
     names = ["one", "two", "three"]
+    prefix = (
+        [("tests/test_a.py", line, "setup", older) for line in (4, 5, 6)] if stale_setup else []
+    )
+    candidates = [
+        (f"tests/test_{suffix}.py", 10, f"test_other_{name}", revision)
+        for suffix, name in zip(("b", "c", "d"), names, strict=True)
+    ] + [(f"tests/test_z_{name}.py", 10, f"test_register_{name}", older) for name in names]
 
     class Repo:
         async def edges_for_symbols(self, *args, **kw):
             return [
                 {
-                    **_edge(path, line, prefix + name),
+                    **_edge(path, line, caller),
                     "indexed_commit": commit,
-                    "to_qualified_name": target,
+                    "to_qualified_name": "lib::register",
                 }
-                for path, prefix, commit in (
-                    ("tests/test_a.py", "test_other_", revision),
-                    ("tests/test_z.py", "test_register_", "b" * 40),
-                )
-                for line, name in zip((10, 20, 30), names, strict=True)
+                for path, line, caller, commit in prefix + candidates
             ]
 
         async def test_map_for(self, *args):
@@ -199,12 +205,16 @@ async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(m
     examples = await usage_examples(
         repo, "org", "code", ["register"], tests_only=True, context_lines=2
     )
-    assert [site["caller"] for site in examples] == [f"test_other_{name}" for name in names]
-    assert all(site["context"]["commit"] == revision for site in examples)
+    current = [site for site in examples if site.get("context", {}).get("commit") == revision]
+    expected = names[:2] if stale_setup else names
+    assert [site["caller"] for site in current] == [f"test_other_{name}" for name in expected]
 
 
 @pytest.mark.asyncio
-async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch) -> None:
+@pytest.mark.parametrize("missing_promoted_source", [False, True])
+async def test_indirect_examples_rank_related_tests_ahead_of_setup(
+    monkeypatch, missing_promoted_source
+) -> None:
     revision = "a" * 40
     bridge_path = "web/app.py"
     bridge_name = "web.app::App::register_blueprint"
@@ -236,6 +246,23 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch) 
                 ]
             assert ids == ["wrapper"] and options["tests_only"]
             assert options["caller_revision"] == revision and options["sites_per_caller"] == 2
+            if missing_promoted_source:
+                return [
+                    incoming(
+                        test_path, line, f"test_other_{line}", str(line), "wrapper", bridge_name
+                    )
+                    for line in (10, 40, 70)
+                ] + [
+                    incoming(
+                        "tests/test_z.py",
+                        line,
+                        f"test_blueprint_{line}",
+                        str(line),
+                        "wrapper",
+                        bridge_name,
+                    )
+                    for line in (11, 21, 31, 41, 51, 61)
+                ]
             return [
                 incoming("tests/a_support.py", 4, "setup", "setup", "wrapper", bridge_name),
                 incoming("tests/test_async.py", 5, "test_async", "async", "wrapper", bridge_name),
@@ -264,6 +291,8 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch) 
 
         async def source_chunks_for_span(self, org, ns, path, start, end, model, **options):
             assert options["with_revision"]
+            if path == "tests/test_z.py":
+                return []
             return [
                 {
                     "path": path,
@@ -278,11 +307,14 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch) 
     repo: Any = Repo()
     examples = await indirect_test_examples(repo, "org", "code", ["register"], target, revision, 2)
 
-    assert [(e["caller"], e["line"]) for e in examples] == [
+    expected = [
         ("test_blueprint_defaults", 40),
         ("test_blueprint_hook", 10),
         ("test_async", 5),
     ]
+    if missing_promoted_source:
+        expected = [("test_other_10", 10), ("test_other_40", 40), ("test_other_70", 70)]
+    assert [(e["caller"], e["line"]) for e in examples] == expected
     assert all(
         e["evidence"] == "indirect_call" and e["via"]["symbol"] == bridge_name for e in examples
     )
