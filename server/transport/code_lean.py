@@ -501,21 +501,44 @@ def _structured_chars(value: dict[str, Any]) -> int:
     return len(rendered.encode("utf-16-le", errors="surrogatepass")) // 2
 
 
+def _shared_excerpt(
+    path: str, body: str, definitions: list[Any], locations: list[tuple[int, int]]
+) -> dict[str, Any]:
+    # Capture must read the source and its identifiers in the same piece.
+    callers = dict.fromkeys(
+        caller
+        for i, j in locations
+        if isinstance((caller := definitions[i]["examples"][j].get("caller")), str) and caller
+    )
+    owners = dict.fromkeys(
+        (str(definition.get("symbol") or ""), str(definition.get("path") or ""))
+        for i, _ in locations
+        if (definition := definitions[i])
+    )
+    return {
+        "path": path,
+        "callers": list(callers),
+        "definitions": [{"symbol": symbol, "path": owner_path} for symbol, owner_path in owners],
+        "text": body,
+    }
+
+
 def _share_edit_test_source(out: dict[str, Any]) -> dict[str, Any]:
     """Keep shared text in a standalone result row for clients that split top-level lists."""
     if "test_sources" in out:
         return out
     definitions = out["definitions"]
-    sources: list[dict[str, str]] = []
+    sources: list[dict[str, Any]] = []
     references: dict[tuple[int, int], str] = {}
-    for (_, _, _, _, body), locations in _edit_test_sources(definitions).items():
+    for (path, _, _, _, body), locations in _edit_test_sources(definitions).items():
         if len(locations) < 2:
             continue
         pointer = f"#/test_sources/0/excerpts/{len(sources)}/text"
         text_size = len(json.dumps({"text": body}))
         ref_size = len(json.dumps({"text_ref": pointer}))
-        if (len(locations) - 1) * text_size > len(locations) * ref_size:
-            sources.append({"text": body})
+        excerpt = _shared_excerpt(path, body, definitions, locations)
+        if len(locations) * text_size > len(json.dumps(excerpt)) + len(locations) * ref_size:
+            sources.append(excerpt)
             references.update(dict.fromkeys(locations, pointer))
     if not sources:
         return out

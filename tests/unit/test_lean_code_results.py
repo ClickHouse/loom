@@ -322,16 +322,22 @@ def test_edit_context_shares_identical_test_source_and_preserves_evidence() -> N
         "commit": "a" * 40,
         "start_line": 1,
         "end_line": 1,
-        "text": "test source " * 16,
+        "text": "test source " * 32,
     }
-    verified = {"path": "tests/test_use.py", "line": 1, "context": context, "tier": "scip"}
+    verified = {
+        "path": "tests/test_use.py",
+        "line": 1,
+        "caller": "test_use",
+        "context": context,
+        "tier": "scip",
+    }
     duplicate = {**verified, "evidence": "indirect_call"}
     earlier = {**verified, "context": {**context, "commit": "b" * 40}}
     short = {**verified, "context": {**context, "text": "ok"}}
     payload = {
         "definitions": [
-            {"symbol": "entry", "examples": [verified, short]},
-            {"symbol": "impl", "examples": [duplicate, earlier, short]},
+            {"symbol": "entry", "path": "src/entry.py", "examples": [verified, short]},
+            {"symbol": "impl", "path": "src/impl.py", "examples": [duplicate, earlier, short]},
         ],
         "edit_targets": [{"name": "entry"}, {"name": "impl"}],
     }
@@ -340,7 +346,21 @@ def test_edit_context_shares_identical_test_source_and_preserves_evidence() -> N
     original, repeated = result["definitions"]
     first, previous, small = repeated["examples"]
     assert next(iter(result)) == "test_sources"
-    assert result["test_sources"] == [{"excerpts": [{"text": context["text"]}]}]
+    assert result["test_sources"] == [
+        {
+            "excerpts": [
+                {
+                    "path": "tests/test_use.py",
+                    "callers": ["test_use"],
+                    "definitions": [
+                        {"symbol": "entry", "path": "src/entry.py"},
+                        {"symbol": "impl", "path": "src/impl.py"},
+                    ],
+                    "text": context["text"],
+                }
+            ]
+        }
+    ]
     assert first["evidence"] == "indirect_call"
     assert first["context"] == {
         "commit": context["commit"],
