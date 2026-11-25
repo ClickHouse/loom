@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -25,8 +26,20 @@ def local_sql(sql):
     if executable is None:
         pytest.skip("clickhouse-local is not installed")
     with TemporaryDirectory(prefix="loom-clickhouse-local-") as data_path:
+        config = Path(data_path) / "config.xml"
+        config.write_text("<clickhouse/>", encoding="utf-8")
         result = subprocess.run(
-            [executable, "local", "--path", data_path, "--multiquery", "--query", sql],
+            [
+                executable,
+                "local",
+                "--path",
+                data_path,
+                "--config-file",
+                str(config),
+                "--multiquery",
+                "--query",
+                sql,
+            ],
             check=False,
             text=True,
             capture_output=True,
@@ -41,10 +54,13 @@ def local_sql(sql):
 async def test_coded_candidate_retains_metadata_and_cleared_vector_placeholders(dimensions):
     if os.environ.get("LOOM_PROVIDER_CODEC_LOCAL_TEST") != "1":
         pytest.skip("Set LOOM_PROVIDER_CODEC_LOCAL_TEST=1 with a codec-capable clickhouse-local")
-    listed = local_sql(
-        f"SELECT count() FROM system.settings WHERE name = '{CODEC_SETTING}'"
-    ).strip()
-    codec_gate = CODEC_SETTING if listed == "1" else EXPERIMENTAL_CODEC_SETTING
+    settings = json.loads(
+        local_sql(
+            f"SELECT count() > 0 AS listed FROM system.settings WHERE name = '{CODEC_SETTING}' "
+            "FORMAT JSONEachRow"
+        )
+    )
+    codec_gate = CODEC_SETTING if settings["listed"] else EXPERIMENTAL_CODEC_SETTING
     source = (
         f"SET {codec_gate}=1; SET {CHAIN_SETTING}=1; "
         "CREATE DATABASE loom ENGINE=Atomic; "
