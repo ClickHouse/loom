@@ -321,7 +321,8 @@ async def _owner_context(
     owner = await owning_type(repo, org, ns, method)
     if owner is None:
         return {}
-    # an owner's lessons cut off (None) are dropped like none: they only fill in for the method's
+    # an owner read cut off (None) is dropped like an empty one: owner lessons only stand in
+    # for the method's own, so they do not set lessons_unread
     reads: dict[str, Awaitable[list[dict[str, Any]] | None]] = {}
     if want_examples:
         reads["examples"] = named_test_examples(repo, org, ns, owner, input.example_context_lines)
@@ -366,7 +367,8 @@ async def _enrichment(
     async def none() -> None:
         return None
 
-    unread: list[str] = []  # members whose lessons read was cut off or failed
+    # members whose lessons read was cut off or failed; non-empty sets lessons_unread
+    unread: list[str] = []
 
     async def lessons() -> list[dict[str, Any]] | None:
         if request_narrowed():

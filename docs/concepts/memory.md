@@ -504,8 +504,9 @@ The links are read where the code is:
   They come from the repository's team namespace and the `lesson_namespaces` the call
   names (over MCP the caller's memory home when it names none), never from every
   namespace the caller can read. The read is bounded by `code_enrich_timeout_s` and
-  serves at most three; when it fails or runs past that bound, the definition carries
-  `lessons_unread: true` instead, so a caller can tell it apart from a symbol with none.
+  serves at most three; when it, or one matched member's read, fails or runs past that
+  bound, the definition carries `lessons_unread: true`, so a caller can tell it apart from
+  a symbol with none. The lessons it still carries may then be incomplete.
 - `code.search`, `code.callers`, `code.callees`, `code.impact`, `code.outline` and a task's
   `code.context_pack` attach `lessons` for the answer's top files
   (`code_result_lessons_paths`): from the same namespaces, less any other repository's code
