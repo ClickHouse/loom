@@ -1,4 +1,5 @@
 use super::*;
+mod recording_identity;
 mod targeted_mutations;
 use clickhouse_loom::{
     CallOptions, CollectionCreateInput, CollectionDeleteInput, CollectionMoveInput,

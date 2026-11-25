@@ -187,6 +187,34 @@ def test_source_and_conversation_mutation_targets_are_defaulted(
 
 
 @pytest.mark.parametrize(
+    ("name", "expected_stamped", "expected_defaults"),
+    [
+        (
+            "procedure.record_run",
+            {"org", "namespace"},
+            {"agent", "user_id", "session_id"},
+        ),
+        (
+            "conversation.create",
+            {"org", "namespace", "agent", "user_id", "run_id"},
+            set(),
+        ),
+        (
+            "conversation.append",
+            {"org", "namespace", "agent", "user_id", "run_id"},
+            set(),
+        ),
+    ],
+)
+def test_recording_policy_distinguishes_procedure_targets_from_conversation_authorship(
+    name: str, expected_stamped: set[str], expected_defaults: set[str]
+) -> None:
+    op = gen.selected_operations((name,))[0]
+    stamped, defaults = gen.operation_identity_fields(op)
+    assert (stamped, defaults) == (expected_stamped, expected_defaults)
+
+
+@pytest.mark.parametrize(
     "schema",
     [
         {"oneOf": [{"type": "string"}, {"type": "integer"}]},

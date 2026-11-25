@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 from pathlib import Path
 from typing import Any
 
@@ -49,11 +50,15 @@ async def test_rust_sdk_live_contracts(control_plane_url: str, mint_test_token: 
         env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        start_new_session=True,
     )
     try:
         output, _ = await asyncio.wait_for(process.communicate(), timeout=300)
     finally:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
+        # A test child can keep the output pipe open after Cargo exits.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await process.communicate()
     assert process.returncode == 0, output.decode(errors="replace")

@@ -656,7 +656,6 @@ def operation_identity_fields(op: Any) -> tuple[set[str], set[str]]:
         "run.begin",
         "cost.record_turns",
         "procedure.add",
-        "procedure.record_run",
         "procedure.fork",
     } or (op.name.startswith("conversation.") and op.name not in CONVERSATION_TARGETS):
         identity |= keys & {"agent", "user_id", "session_id"}
@@ -667,6 +666,8 @@ def operation_identity_fields(op: Any) -> tuple[set[str], set[str]]:
         "memory.link",
         "decision.record",
         "observe.record",
+        "conversation.create",
+        "conversation.append",
     }:
         identity |= keys & {"run_id"}
     if op.name.startswith(("namespace.", "collection.")):

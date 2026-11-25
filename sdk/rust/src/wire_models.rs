@@ -815,14 +815,14 @@ pub(crate) const OP_POLICIES: &[OperationPolicy] = &[
         "conversation.create",
         true,
         false,
-        &["agent", "namespace", "org", "user_id"],
+        &["agent", "namespace", "org", "run_id", "user_id"],
         &[],
     ),
     (
         "conversation.append",
         true,
         false,
-        &["agent", "namespace", "org", "user_id"],
+        &["agent", "namespace", "org", "run_id", "user_id"],
         &[],
     ),
     (
@@ -1334,8 +1334,8 @@ pub(crate) const OP_POLICIES: &[OperationPolicy] = &[
         "procedure.record_run",
         false,
         false,
-        &["agent", "namespace", "org", "session_id", "user_id"],
-        &[],
+        &["namespace", "org"],
+        &["agent", "session_id", "user_id"],
     ),
     (
         "procedure.evolve",

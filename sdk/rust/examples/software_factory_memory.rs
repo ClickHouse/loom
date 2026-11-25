@@ -13,7 +13,7 @@ use clickhouse_loom::{
 };
 use common::{received, require, Args, Result};
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{collections::HashMap, env};
 
 const IMPLEMENTER: &str = "factory-implementation";
@@ -88,6 +88,7 @@ fn validate(args: &Args) -> Result<()> {
 struct SourceEvidence {
     repo: String,
     commit: String,
+    index_commit: String,
     symbol: String,
     tier: String,
     path: String,
@@ -153,7 +154,8 @@ async fn source(code: &Client, repo: &str, symbol: &str) -> Result<SourceEvidenc
     let range = &read.results[0];
     require(
         range.status == CodeReadRangeStatus::Complete
-            && range.indexed_commit == *commit
+            && commit_valid(&range.indexed_commit)
+            && read.as_of.get("commit").and_then(Value::as_str) == Some(commit.as_str())
             && range.path == unit.path
             && range.start_line == unit.start_line
             && range.end_line == unit.end_line
@@ -169,7 +171,8 @@ async fn source(code: &Client, repo: &str, symbol: &str) -> Result<SourceEvidenc
     )?;
     Ok(SourceEvidence {
         repo: repo.into(),
-        commit: commit.clone(),
+        commit: range.indexed_commit.clone(),
+        index_commit: commit.clone(),
         symbol: symbol.into(),
         tier: if unit.tier.is_empty() {
             "unknown".into()
@@ -220,14 +223,14 @@ async fn run() -> Result<()> {
     )
     .await?;
     require(
-        baseline.commit == args.required("commit")?,
+        baseline.index_commit == args.required("commit")?,
         "The index is not at the requested commit",
     )?;
     let key = format!("example/software-factory/{}", uuid::Uuid::new_v4());
     let source_url = format!(
         "https://github.com/{}/blob/{}/{}",
         args.required("repo")?,
-        args.required("commit")?,
+        baseline.commit,
         baseline.path
     );
     let note = json!(format!(

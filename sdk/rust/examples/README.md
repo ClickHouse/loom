@@ -367,9 +367,12 @@ cargo run --manifest-path sdk/rust/Cargo.toml --example software_factory_memory 
   --review-inbox review --lesson 'Operator claim to examine'
 ```
 
-Checks repository, full commit, fetch freshness and compiler-tier commits;
+Checks repository, full index commit, fetch freshness and compiler-tier commits;
 reads one complete symbol body and verifies its bytes against a complete
-`code.read` range at the same `indexed_commit`.
+`code.read` range whose index snapshot matches the initial status. An unchanged
+file can retain an older `indexed_commit`. Source evidence records that file
+commit separately from `index_commit`, and the source link names the verified
+file commit.
 Hashes the verified body with SHA-256, records the operator claim as a derived
 memory linked to its source and opens a run. The reviewer claims and heartbeats
 the task, reads the note by receipt ID with provenance checks and re-reads the

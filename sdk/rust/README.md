@@ -116,7 +116,9 @@ Empty environment values are treated as unset.
 
 Builder identity values apply to declared caller and authorship fields.
 `knowledge_add` and `knowledge_upsert` receive agent and session identity;
-`observe_record` receives user, session and run identity. Recall filters keep
+`observe_record` receives user, session and run identity. `conversation_create`
+and `conversation_append` receive the bound run identity. Procedure run recording
+keeps explicit procedure author and session selectors. Recall filters keep
 their explicit values. A bound run labels reads through `X-Loom-Run-Id`;
 `run_get` and `run_complete` keep the request's target run ID.
 Search defaults to `agent="*"` and omits user, session and namespace-scope filters.

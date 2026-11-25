@@ -91,7 +91,7 @@ NAMESPACE_FILTERS = {
     "admin.users",
 }
 
-PROCEDURE_TARGETS = {"procedure.evolve", "procedure.revise"}
+PROCEDURE_TARGETS = {"procedure.evolve", "procedure.revise", "procedure.record_run"}
 
 SOURCE_TARGETS = {"memory.promote", "memory.verify"}
 CONVERSATION_TARGETS = {
