@@ -49,6 +49,39 @@ def _edges(files: dict[str, bytes], rel: str):
     }, misses
 
 
+def test_a_library_method_return_needs_a_typed_receiver():
+    context = b"""class RequestContext:
+    def copy(self) -> RequestContext:
+        return self
+    def describe(self):
+        return 'request'
+"""
+    target = "app/mount.py"
+    unknown = b"""def mount(options):
+    options = options.copy()
+    return options
+"""
+    typed = b"""from app.ctx import RequestContext
+
+def clone_context(options: RequestContext):
+    clone = options.copy()
+    return clone.describe()
+"""
+    copy = "app.ctx::RequestContext::copy"
+    describe = "app.ctx::RequestContext::describe"
+    files = {"app/ctx.py": context, target: unknown}
+    calls, _ = _edges(files, target)
+    assert not any(q == copy for _, q, _ in calls)
+
+    files[target] = typed
+    calls, _ = _edges(files, target)
+    assert calls == {(4, copy, 0.9), (5, describe, 0.9)}
+
+    files[target] = typed + b"\n" + unknown
+    calls, _ = _edges(files, target)
+    assert {(line, q) for line, q, _ in calls if q == copy} == {(4, copy)}
+
+
 def test_a_package_member_does_not_import_its_sibling_by_bare_name():
     present = {
         "pydantic/__init__.py",

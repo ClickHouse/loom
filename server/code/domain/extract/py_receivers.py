@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.code.domain.extract.py_library_methods import PY_LIBRARY_METHODS
 from server.code.domain.extract.spans import first_span_at
 from server.code.domain.extract.treesitter import node_text
 
@@ -302,6 +303,7 @@ class PyReceiverTyper:
         # `get_client().query_all()` — the receiver is a call;
         # its callee's return type types it (`type_of_call`)
         self._receiver_callees: set[str] = set()
+        self._library_call_lines: dict[str, set[int]] = {}
         self._receiver_names: set[str] = set()  # bare receivers the file names
         self._bound_names: set[str] = set()  # every name the file binds itself
         self._fixture_params: dict[int, set[str]] = {}
@@ -332,6 +334,12 @@ class PyReceiverTyper:
                 obj = None
                 if fn is not None and fn.type == "attribute":
                     obj = fn.child_by_field_name("object")
+                    member = fn.child_by_field_name("attribute")
+                    if member is not None and node_text(member, source) in PY_LIBRARY_METHODS:
+                        if written := callee_text(child, source):
+                            self._library_call_lines.setdefault(written, set()).add(
+                                child.start_point[0] + 1
+                            )
                 if obj is not None and obj.type == "identifier":
                     name = node_text(obj, source)
                     if name and name[0].islower() and name not in ("self", "cls"):
@@ -346,6 +354,12 @@ class PyReceiverTyper:
                         if not _last(part)[0].isupper():
                             self._receiver_callees.add(part)
             self._collect_receiver_callees(child, source)
+
+    def library_call_lines(self, callee: str) -> set[int] | None:
+        """Call sites for a member name shared with a Python library method."""
+        if "." not in callee or _last(callee) not in PY_LIBRARY_METHODS:
+            return None
+        return self._library_call_lines.get(callee, set())
 
     def type_of_expr(self, line: int, text: str) -> str:
         """The named type of a receiver expression — a name

@@ -3481,28 +3481,38 @@ def callee_targets(
         receiver = callee.rsplit(".", 1)[0] if "." in callee else ""
         if bare in typed_here:
             continue  # the same file answers without a read
-        candidates = resolver.candidates(bare, bare)
-        bound = resolver.go_package_bound(receiver, bare, candidates)
-        if bound is None and receiver == "" and resolver.go and pf.symbols:
-            # A bare `Conn(t)` is this package's helper first
-            bound = resolver.go_same_package(pf.symbols[0], bare, candidates)
-        if bound is None:
-            bound = resolver.go_clause_bound(receiver, bare, candidates)
-        if bound is None:
-            bound = resolver.import_bound(receiver, bare, candidates)
-        if bound is False:
-            continue
-        if isinstance(bound, tuple):
-            out[callee] = bound[1]
-            continue
-        typed = resolver.typed_target(receiver, bare, 0) if receiver else None
-        if typed is not None:
-            out[callee] = typed[1]
-            continue
-        sole = resolver.sole_definition(candidates, receiver)
-        if sole is not None:
-            out[callee] = sole
+        lines = typer.library_call_lines(callee) if resolver.python else None
+        if target := _callee_return_target(resolver, pf, receiver, bare, lines):
+            out[callee] = target
     return out
+
+
+def _callee_return_target(
+    resolver: _CallResolver, pf: ParsedFile, receiver: str, bare: str,
+    library_call_lines: set[int] | None,
+) -> str | None:
+    candidates = resolver.candidates(bare, bare)
+    bound = resolver.go_package_bound(receiver, bare, candidates)
+    if bound is None and receiver == "" and resolver.go and pf.symbols:
+        # A bare `Conn(t)` is this package's helper first
+        bound = resolver.go_same_package(pf.symbols[0], bare, candidates)
+    if bound is None:
+        bound = resolver.go_clause_bound(receiver, bare, candidates)
+    if bound is None:
+        bound = resolver.import_bound(receiver, bare, candidates)
+    if bound is False:
+        return None
+    if isinstance(bound, tuple):
+        return bound[1]
+    if library_call_lines is not None:
+        # The return binding is shared across occurrences of the same text.
+        known = {resolver.typed_target(receiver, bare, line) for line in library_call_lines}
+        if len(known) == 1:
+            (target,) = known
+            return target[1] if target is not None else None
+        return None
+    typed = resolver.typed_target(receiver, bare, 0) if receiver else None
+    return typed[1] if typed is not None else resolver.sole_definition(candidates, receiver)
 
 
 def _bind_name_receiver(resolver: _CallResolver, callee: str, out: dict[str, str]) -> None:
