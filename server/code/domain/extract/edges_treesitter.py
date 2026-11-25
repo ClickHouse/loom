@@ -2523,7 +2523,7 @@ class _CallResolver:
         hits = [c for c in narrowed if shared(c) == best]
         return hits if len(hits) == 1 and best > 0 else narrowed
 
-    def _py_receiver_type(self, line: int, receiver: str) -> str:
+    def _py_receiver_type(self, line: int, receiver: str, position: int = -1) -> str:
         """The receiver's named type: a name's binding at `line`, or a call
         receiver's (`f()`) callee return type."""
         if self.typer is None or not receiver:
@@ -2531,7 +2531,7 @@ class _CallResolver:
         as_class = self._py_class_object(receiver)
         if as_class:
             return as_class
-        return str(self.typer.type_of_expr(line, receiver) or "")  # chains too
+        return str(self.typer.type_of_expr(line, receiver, position) or "")  # chains too
 
     def _py_narrow_by_class(
         self, tname: str, narrowed: list[tuple[str, str, str]],
@@ -3123,7 +3123,15 @@ class _CallResolver:
             return own[0][0], own[0][1], SAME_PACKAGE_CONFIDENCE
         return None
 
-    def typed_target(self, receiver: str, bare: str, line: int) -> tuple[str, str] | None:
+    def _call_receiver_type(self, receiver: str, bare: str, line: int, position: int) -> str:
+        if not self.python:
+            return str(self.typer.type_of(line, receiver) or "")
+        local = cast(str | None, self.typer.library_receiver_at(receiver, bare, position))
+        return self._py_receiver_type(line, receiver, position) if local is None else local
+
+    def typed_target(
+        self, receiver: str, bare: str, line: int, position: int = -1,
+    ) -> tuple[str, str] | None:
         """Rung 2b: `client.query()` where the tree types
         `client` as `ClickHouseClient` binds to the one `…::ClickHouseClient::query`
         the table holds — a parameter annotation, a typed declaration, a
@@ -3134,9 +3142,7 @@ class _CallResolver:
         (promotion), in this file's declaration order."""
         if self.typer is None or not receiver:
             return None
-        tname = self._py_receiver_type(line, receiver) if self.python else self.typer.type_of(
-            line, receiver,
-        )
+        tname = self._call_receiver_type(receiver, bare, line, position)
         if not tname:
             return None
         candidates = self._once(("typed", bare), lambda: _with_local_rows(
@@ -3209,6 +3215,7 @@ class _CallResolver:
 
     def resolve(
         self, caller: Symbol, name: str, bare: str, line: int, receiver: str = "",
+        position: int = -1,
     ) -> Edge | None:
         if self.python and receiver == "super()":
             return self.py_super_target(caller, bare, line)
@@ -3219,14 +3226,14 @@ class _CallResolver:
             # The same for Python — `lease.acquire()` on a
             # `lease = MigrationLease(...)` is that class's method, not the
             # test double's `acquire` this file defines beside it
-            typed = self.typed_target(receiver, bare, line)
+            typed = self.typed_target(receiver, bare, line, position)
             if typed is not None:
                 return Edge(
                     "calls", caller.id, typed[0], caller.qualified_name,
                     typed[1], self.path, line, TYPED_RECEIVER_CONFIDENCE,
                 )
             if self.go and self.typer is not None and self.typer.type_of(line, receiver):
-                return self._resolve_repo_wide(caller, name, bare, line, receiver)
+                return self._resolve_repo_wide(caller, name, bare, line, receiver, position)
         # 0) `super.m()` is the bound base's `m`, never a
         # same-file namesake — the derived method itself is usually one
         if receiver == "super" and not self.go:
@@ -3248,7 +3255,10 @@ class _CallResolver:
                 s for s in self._local(bare).syms if _in_scope(s.qualified_name, qualifier, bare)
             ]))
         n, target = names.one("", caller.qualified_name)
-        if self.python and receiver and receiver not in ("self", "cls"):
+        if self.python and receiver and (
+            receiver not in ("self", "cls")
+            or self.typer.library_call_site(f"{receiver}.{bare}@{position}") is not None
+        ):
             n = 0
         elif self.lang == "cpp" and receiver and receiver != "this":
             # `volume->getDisk()` is the receiver's method —
@@ -3306,13 +3316,13 @@ class _CallResolver:
                 if inherited is not None:
                     return inherited
         # 2b) the receiver's type names the class
-        typed = self.typed_target(receiver, bare, line)
+        typed = self.typed_target(receiver, bare, line, position)
         if typed is not None:
             return Edge(
                 "calls", caller.id, typed[0], caller.qualified_name,
                 typed[1], self.path, line, TYPED_RECEIVER_CONFIDENCE,
             )
-        return self._resolve_repo_wide(caller, name, bare, line, receiver)
+        return self._resolve_repo_wide(caller, name, bare, line, receiver, position)
 
     def _repo_wide_pool(
         self, candidates: list[tuple[str, str, str]], bare_call: bool, outside_this: bool,
@@ -3385,6 +3395,7 @@ class _CallResolver:
 
     def _resolve_repo_wide(
         self, caller: Symbol, name: str, bare: str, line: int, receiver: str,
+        position: int = -1,
     ) -> Edge | None:
         # 2c) the file's import names the module — or, in
         # Go, the package directory the module index resolves
@@ -3396,7 +3407,9 @@ class _CallResolver:
             bound = self.go_same_package(caller, bare, candidates)
         if bound is None:
             bound = self.go_clause_bound(receiver, bare, candidates)
-        if bound is None:
+        if bound is None and not (
+            self.python and self.typer.library_import_shadowed(receiver, bare, position)
+        ):
             bound = self.import_bound(receiver, bare, candidates)
         if bound is False:
             return None
@@ -3459,10 +3472,8 @@ def callee_targets(
     typed_here = {s.name for s in pf.symbols if s.kind == "function" and s.return_type}
     out: dict[str, str] = {}
     typer: Any
-    if pf.lang == "python":
-        from server.code.domain.extract.py_receivers import PyReceiverTyper
-
-        typer = PyReceiverTyper(pf)
+    if resolver.python:
+        typer = resolver.typer
     elif pf.lang == "go":
         from server.code.domain.extract.go_receivers import GoReceiverTyper
 
@@ -3471,8 +3482,11 @@ def callee_targets(
         typer = ReceiverTyper(pf)
     if pf.lang == "python":
         out.update(_fixture_targets(pf, name_table))
-    for callee in typer.callees():
-        if callee.startswith("fixture:"):
+    callees = typer.callees()
+    if resolver.python:
+        out.update(_library_return_targets(pf, resolver, callees))
+    for callee in callees:
+        if callee.startswith("fixture:") or (resolver.python and "@" in callee):
             continue
         if callee.startswith("name:"):
             _bind_name_receiver(resolver, callee, out)
@@ -3481,15 +3495,39 @@ def callee_targets(
         receiver = callee.rsplit(".", 1)[0] if "." in callee else ""
         if bare in typed_here:
             continue  # the same file answers without a read
-        lines = typer.library_call_lines(callee) if resolver.python else None
-        if target := _callee_return_target(resolver, pf, receiver, bare, lines):
+        if target := _callee_return_target(resolver, pf, receiver, bare):
             out[callee] = target
+    return out
+
+
+def _library_return_targets(
+    pf: ParsedFile, resolver: _CallResolver, callees: set[str],
+) -> dict[str, str]:
+    sites = [
+        (key, call) for key in callees
+        if "@" in key and (call := resolver.typer.library_call_site(key)) is not None
+    ]
+    if not sites:
+        return {}
+    symbols = [s for s in pf.symbols if s.kind in ("function", "test") and s.has_body]
+    enclosing = last_span_at(_caller_spans(pf, symbols))
+    fallback = _fallback_caller(pf)
+    out = {}
+    for key, call in sites:
+        line = call.start_point[0] + 1
+        name = _call_name(call, pf.source)
+        caller = enclosing(line) or fallback(line)
+        if caller is None or not name:
+            continue
+        receiver = _receiver_text(call, pf.source)
+        edge = resolver.resolve(caller, name, name, line, receiver, call.start_byte)
+        if edge is not None and edge.confidence > REPO_WIDE_CONFIDENCE:
+            out[key] = edge.to_qualified_name
     return out
 
 
 def _callee_return_target(
     resolver: _CallResolver, pf: ParsedFile, receiver: str, bare: str,
-    library_call_lines: set[int] | None,
 ) -> str | None:
     candidates = resolver.candidates(bare, bare)
     bound = resolver.go_package_bound(receiver, bare, candidates)
@@ -3504,13 +3542,6 @@ def _callee_return_target(
         return None
     if isinstance(bound, tuple):
         return bound[1]
-    if library_call_lines is not None:
-        # The return binding is shared across occurrences of the same text.
-        known = {resolver.typed_target(receiver, bare, line) for line in library_call_lines}
-        if len(known) == 1:
-            (target,) = known
-            return target[1] if target is not None else None
-        return None
     typed = resolver.typed_target(receiver, bare, 0) if receiver else None
     return typed[1] if typed is not None else resolver.sole_definition(candidates, receiver)
 
@@ -3681,14 +3712,15 @@ def extract_edges_and_misses(
                 # `client.query()` on a receiver the tree types
                 # is a call somebody asks about, whatever `query` is elsewhere
                 if caller is not None and name and not _declined(receiver, line) and (
-                    bare not in noise or _typed_receiver_target(receiver, bare, line) is not None
+                    bare not in noise
+                    or _typed_receiver_target(receiver, bare, line, child.start_byte) is not None
                     or receiver in _MODULE_SELF  # exports.f() is this module's f
                     or _imported_noise(resolver, receiver, bare, name_table)
                     # `cht.New()` on a repository package is that package's New
                     or (resolver.go and receiver in resolver.go_aliases
                         and bool(resolver.go_packages.get(receiver)))
                 ):
-                    edge = _resolve_call(caller, name, bare, line, receiver)
+                    edge = _resolve_call(caller, name, bare, line, receiver, child.start_byte)
                     if edge is not None:
                         edges.append(edge)
                     elif not (

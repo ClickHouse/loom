@@ -80,6 +80,98 @@ def clone_context(options: RequestContext):
     files[target] = typed + b"\n" + unknown
     calls, _ = _edges(files, target)
     assert {(line, q) for line, q, _ in calls if q == copy} == {(4, copy)}
+    assert (5, describe, 0.9) in calls
+
+
+def test_library_method_return_follows_receiver_bindings_at_each_call_site():
+    target = "app/mount.py"
+    source = b"""class Primary:
+    def copy(self) -> Primary:
+        return self
+    def describe(self):
+        return "primary"
+
+class Alternate:
+    def copy(self) -> Alternate:
+        return self
+    def describe(self):
+        return "alternate"
+
+def mount(value: Primary):
+    first = value.copy(); value = Alternate(); second = value.copy()
+    return first.describe(), second.describe()
+
+def conditional(value: dict, selected: bool):
+    if selected:
+        value = Primary()
+    return value.copy()
+"""
+    calls, _ = _edges({target: source}, target)
+    assert {
+        row for row in calls if row[0] in (14, 15, 20) and row[1].endswith(("::copy", "::describe"))
+    } == {
+        (14, "app.mount::Primary::copy", 0.9),
+        (14, "app.mount::Alternate::copy", 0.9),
+        (15, "app.mount::Primary::describe", 0.9),
+        (15, "app.mount::Alternate::describe", 0.9),
+    }
+
+
+def test_inherited_library_named_return_ignores_a_bare_namesake():
+    target = "app/mount.py"
+    source = b"""class Context:
+    def copy(self) -> Context:
+        return self
+    def describe(self):
+        return "context"
+
+def copy() -> dict:
+    return {}
+
+class Derived(Context):
+    def mount(self):
+        instance = self.copy()
+        return instance.describe()
+"""
+    calls, _ = _edges({target: source}, target)
+    assert {(line, qualified) for line, qualified, _ in calls if line in (12, 13)} == {
+        (12, "app.mount::Context::copy"),
+        (13, "app.mount::Context::describe"),
+    }
+
+
+def test_a_library_named_member_respects_import_shadowing():
+    target = "app/mount.py"
+    context = b"""class Context:
+    @classmethod
+    def copy(cls) -> Context:
+        return cls()
+    def describe(self):
+        return "ctx"
+"""
+    files = {
+        "app/ctx.py": context,
+        target: b"""from app.ctx import Context as value
+
+def mount(value: dict):
+    result = value.copy()
+    return result.describe()
+""",
+    }
+    calls, _ = _edges(files, target)
+    assert all(confidence < 0.8 for _, _, confidence in calls)
+
+    files[target] = (
+        context
+        + b"""
+def mount():
+    result = Context.copy()
+    return result.describe()
+"""
+    )
+    calls, _ = _edges(files, target)
+    assert (9, "app.mount::Context::copy", 0.9) in calls
+    assert (10, "app.mount::Context::describe", 0.9) in calls
 
 
 def test_a_package_member_does_not_import_its_sibling_by_bare_name():
