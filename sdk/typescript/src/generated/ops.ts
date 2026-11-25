@@ -949,6 +949,8 @@ export interface CodeGrepInput {
   consumer?: string;
   /** Literal text, a list of alternatives, or one RE2 expression with regex=true. */
   pattern: string | string[];
+  /** For a literal list, give distinct patterns a first-page slot before repeat hits (default true on coding connections). */
+  prioritize_patterns?: boolean;
   /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
   /** Recover a missing call's qualified argument in a literal or batch, or one member spelling in malformed call alternatives (default true on coding connections). */

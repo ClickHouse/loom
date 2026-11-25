@@ -236,3 +236,60 @@ def use(client: Client):
         wide.model_copy(update={"cursor": focused.next_cursor, "related_on_prefix": True})
     )
     assert next_focused.matches == next_exact.matches and next_focused.related is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("early_hits", [4, 20])
+async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
+    ch_client: Any, monkeypatch: pytest.MonkeyPatch, early_hits: int
+) -> None:
+    from server.transport.mcp_defaults import mcp_default_arguments
+
+    org, ns = unique_org("grep-batch-coverage"), "source"
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_search_cursor_enabled", True)
+    monkeypatch.setattr(settings, "jwt_secret", "grep-test-batch-cursor-signing-value")
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    await get_client().connect()
+    repo = CodeRepo()
+    for path, source in (
+        (
+            "src/early.py",
+            "".join(f"def repeat_{index}():\n    return 1\n\n" for index in range(early_hits)),
+        ),
+        ("src/late.py", "def requested():\n    return 2\n"),
+        ("outside.py", "def forbidden():\n    return 3\n"),
+    ):
+        await ingest_file(
+            repo,
+            org,
+            ns,
+            path=path,
+            source=source.encode(),
+            commit_sha="b" * 40,
+            embedding_model=embedder.model_name,
+            embedder=embedder,
+        )
+    args = {
+        "org": org,
+        "namespace": ns,
+        "pattern": ["def ", "def REQUESTED", "def forbidden"],
+        "path_globs": ["src/**"],
+        "case_sensitive": False,
+        "limit": 3,
+    }
+    path_order = await handle_code_grep(CodeGrepInput(**args))
+    assert [row["path"] for row in path_order.matches] == ["src/early.py"] * 3
+
+    request = CodeGrepInput(**mcp_default_arguments("code.grep", args, toolset="coding"))
+    page = await handle_code_grep(request)
+    assert len(page.matches) == 3
+    assert [row["path"] for row in page.matches] == ["src/early.py", "src/early.py", "src/late.py"]
+    assert any("def requested():" in row.get("body", "") for row in page.definitions)
+
+    assert page.next_cursor
+    next_page = await handle_code_grep(request.model_copy(update={"cursor": page.next_cursor}))
+    first_hits = {(row["path"], row["line"]) for row in page.matches}
+    assert next_page.matches
+    assert not first_hits.intersection((row["path"], row["line"]) for row in next_page.matches)

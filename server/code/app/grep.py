@@ -51,6 +51,7 @@ from server.code.app.spans import (
 )
 from server.code.domain import deadline as code_deadline
 from server.code.domain.index.grep_plan import ascii_lower
+from server.code.domain.search_scope import SearchScope
 from server.code.domain.symbol_body import retained_source_lines
 from server.code.store.index import CodeRepo
 from server.core.caller_regex import compile_caller_regex
@@ -278,6 +279,58 @@ class _GrepLineScan:
     related_pattern: str
 
 
+def _missing_chunk_patterns(
+    patterns: list[str], chunks: list[dict[str, Any]], *, case_sensitive: bool, excluded: set[str]
+) -> list[str]:
+    fold = str if case_sensitive else ascii_lower
+    contents = [
+        fold(str(chunk["content"])) for chunk in chunks if str(chunk["path"]) not in excluded
+    ]
+    folded = {pattern: fold(pattern) for pattern in dict.fromkeys(patterns)}
+    return [
+        pattern
+        for pattern, literal in folded.items()
+        if not any(literal in content for content in contents)
+    ]
+
+
+async def _cover_batch_chunks(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    input: CodeGrepInput,
+    chunks: list[dict[str, Any]],
+    scope: SearchScope,
+    budget: code_deadline.Budget | None,
+    page_limit: int,
+) -> list[dict[str, Any]]:
+    patterns = input.pattern
+    if not isinstance(patterns, list) or len(patterns) < 2:
+        return chunks
+    missing = await asyncio.to_thread(
+        _missing_chunk_patterns,
+        patterns,
+        chunks,
+        case_sensitive=input.case_sensitive,
+        excluded=set(input.exclude_unit_ids),
+    )
+    if not missing or not _second_scan_allowed(budget, "batch pattern scan"):
+        return chunks
+    witnesses: list[dict[str, Any]] = await _bounded_scan(
+        budget,
+        repo.grep_pattern_chunks,
+        org,
+        ns,
+        missing,
+        case_sensitive=input.case_sensitive,
+        path_prefix=input.path_prefix,
+        scope=scope,
+        exclude_paths=input.exclude_unit_ids,
+        limit=page_limit,
+    )
+    return chunks + witnesses
+
+
 async def _scan_grep_lines(
     repo: CodeRepo,
     org: str,
@@ -290,6 +343,7 @@ async def _scan_grep_lines(
     budget: code_deadline.Budget | None,
     first_page: bool,
     limit: int,
+    page_limit: int,
 ) -> _GrepLineScan:
     scan_limit = min(200, limit * 3)
     with code_span("grep.chunks", route=route) as sp:
@@ -322,6 +376,11 @@ async def _scan_grep_lines(
             )
             line_re = _qualified_argument_line_re(related_pattern, input.case_sensitive)
             route += "+related_member" if related_pattern.startswith(".") else "+related_argument"
+        if input.prioritize_patterns and len(chunks) >= scan_limit:
+            with code_span("grep.batch_coverage", route=route):
+                chunks = await _cover_batch_chunks(
+                    repo, org, ns, input, chunks, scope, budget, page_limit
+                )
         span_attrs(sp, chunks_matched=len(chunks))
 
     matched_chunks = len(chunks)
@@ -334,6 +393,7 @@ async def _scan_grep_lines(
         line_re,
         limit + _GREP_POOL_EXTRA,
         budget,
+        priority_limit=page_limit if input.prioritize_patterns else 0,
     )
 
     return _GrepLineScan(
@@ -377,6 +437,7 @@ async def _grep_lines(
         budget=budget,
         first_page=not offset,
         limit=limit,
+        page_limit=served_limit,
     )
     route, related_pattern, note = scan.route, scan.related_pattern, scan.note
     trace_run_id = new_trace_run_id()
@@ -735,6 +796,8 @@ async def _read_line_matches(
     line_re: Any,
     keep: int,
     budget: code_deadline.Budget | None,
+    *,
+    priority_limit: int = 0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[tuple[str, int], str], bool]:
     chunks = await recover_source_chunks(
         repo, org, ns, chunks, max_chars=_LINE_SCAN_MAX_CHARS, budget=budget
@@ -743,7 +806,14 @@ async def _read_line_matches(
     # Scanning up to 200 chunks must not stall other requests on this worker.
     commits: dict[tuple[str, int], str] = {}
     matches, capped = await asyncio.to_thread(
-        _matching_lines, chunks, spans, input, line_re, keep, match_commits=commits
+        _matching_lines,
+        chunks,
+        spans,
+        input,
+        line_re,
+        keep,
+        match_commits=commits,
+        priority_limit=priority_limit,
     )
     return chunks, matches, commits, capped
 
@@ -973,6 +1043,22 @@ _LINE_SCAN_MAX_CHARS = 2_000_000
 _GREP_LINE_MAPPING_VERSION = 2
 
 
+def _promote_pattern_hits(
+    matches: list[dict[str, Any]], first_hits: dict[str, int], limit: int
+) -> list[dict[str, Any]]:
+    if not first_hits:
+        return matches
+    order = dict.fromkeys(index for index in first_hits.values() if index >= 0)
+    promoted = set(list(order)[:limit])
+    if all(index < limit for index in promoted):
+        return matches
+    head = [row for index, row in enumerate(matches) if index in promoted]
+    tail = [row for index, row in enumerate(matches) if index not in promoted]
+    fill = limit - len(head)
+    first_page = sorted(head + tail[:fill], key=lambda row: (row["path"], row["line"]))
+    return first_page + tail[fill:]
+
+
 def _matching_lines(
     chunks: list[dict[str, Any]],
     spans: dict[tuple[str, str], tuple[int, int]],
@@ -981,9 +1067,11 @@ def _matching_lines(
     keep: int,
     *,
     match_commits: dict[tuple[str, int], str] | None = None,
+    priority_limit: int = 0,
 ) -> tuple[list[dict[str, Any]], bool]:
     """(matching lines, capped): the lines of `chunks` the pattern matches, stopping past
-    `keep` lines or `_LINE_SCAN_MAX_CHARS` of text (capped=True). Pure; runs in a thread."""
+    `keep` lines plus first hits for requested literals, or `_LINE_SCAN_MAX_CHARS` of text
+    (capped=True). Pure; runs in a thread."""
     pattern = input.pattern
     # ClickHouse's case-insensitive multiSearch folds ASCII only.
     fold_case = ascii_lower if isinstance(pattern, list) else str.lower
@@ -993,6 +1081,12 @@ def _matching_lines(
             if isinstance(pattern, str)
             else [fold_case(text) for text in pattern]
         )
+    first_hits = (
+        dict.fromkeys(pattern, -1)
+        if priority_limit and line_re is None and isinstance(pattern, list) and len(pattern) > 1
+        else {}
+    )
+    pending = set(first_hits)
     excluded_paths = set(input.exclude_unit_ids)
     matches: list[dict[str, Any]] = []
     seen: set[tuple[str, int]] = set()
@@ -1003,7 +1097,7 @@ def _matching_lines(
         content = str(c["content"])
         scanned += len(content)
         if scanned > _LINE_SCAN_MAX_CHARS:
-            return matches, True
+            return _promote_pattern_hits(matches, first_hits, priority_limit), True
         lines = retained_source_lines(c)
         if lines is None:
             continue
@@ -1011,10 +1105,10 @@ def _matching_lines(
         span = spans.get((str(c["path"]), scope), (0, 0)) if scope else (0, 0)
         for off, line in enumerate(lines):
             line = line.removesuffix("\n").removesuffix("\r")
+            hay = line if input.case_sensitive else fold_case(line)
             if line_re is not None:
                 hit = line_re.search(line)
             else:
-                hay = line if input.case_sensitive else fold_case(line)
                 hit = (
                     pattern in hay
                     if isinstance(pattern, str)
@@ -1029,7 +1123,15 @@ def _matching_lines(
                     match_commits[key] = ""
             if key in seen:
                 continue  # the same span indexed twice (re-parse race)
+            new_patterns = {literal for literal in pending if literal in hay}
+            if len(matches) > keep and not new_patterns:
+                if not pending:
+                    return _promote_pattern_hits(matches, first_hits, priority_limit), False
+                continue
             seen.add(key)
+            for literal in new_patterns:
+                first_hits[literal] = len(matches)
+            pending.difference_update(new_patterns)
             matches.append(
                 {
                     "path": key[0],
@@ -1040,9 +1142,9 @@ def _matching_lines(
                     "scope_end_line": span[1],
                 }
             )
-            if len(matches) > keep:
-                return matches, False
-    return matches, False
+            if len(matches) > keep and not pending:
+                return _promote_pattern_hits(matches, first_hits, priority_limit), False
+    return _promote_pattern_hits(matches, first_hits, priority_limit), False
 
 
 # Matching lines extracted past the served page and kept in the pool row.
@@ -1068,6 +1170,7 @@ def _grep_trace_args(input: CodeGrepInput, *, context_lines: int | None = None) 
         input,
         "mode",
         "regex",
+        "prioritize_patterns",
         "case_sensitive",
         "path_globs",
         "exclude_globs",
@@ -1097,6 +1200,7 @@ def _grep_params_hash(input: CodeGrepInput) -> str:
     }
     if input.context_lines:
         parts["context_lines"] = input.context_lines
+    # Ordering is stored in the pool. Either version of the caller can page it.
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
 
 
