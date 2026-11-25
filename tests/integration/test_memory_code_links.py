@@ -434,6 +434,57 @@ async def test_code_read_checks_the_served_memory_against_the_link(env, monkeypa
     assert not result.lessons
 
 
+async def test_code_read_keeps_restored_copy_links_in_their_namespace(env, monkeypatch) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.code.api.models_read import CodeReadInput
+    from server.identity.api.models import NamespaceRestoreInput, NamespaceSnapshotInput
+    from server.identity.app.namespace_snapshot import (
+        handle_namespace_restore,
+        handle_namespace_snapshot,
+    )
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    reader = "src/widgets/reader.py"
+    sha = env.commit({reader: _READER})
+    await _index(TRUNK, env, sha, [reader])
+    mid = await _remember(MEM, "notes/fetch", "`fetch_page` returns the URL.", files=[reader])
+    await _pass()
+    assert (await _links(mid))[0]["state"] == "fresh"
+    set_current_auth(
+        AuthInfo(
+            subject="it@example.com",
+            org=ORG,
+            namespaces=("*",),
+            roles=(Role.ADMIN,),
+            is_service_account=False,
+        )
+    )
+    try:
+        snapshot = await handle_namespace_snapshot(
+            NamespaceSnapshotInput(org=ORG, namespace=MEM, include_audit_tail_n=0)
+        )
+        copy = await handle_namespace_restore(
+            NamespaceRestoreInput(org=ORG, target_namespace=FLAGGED, payload=snapshot)
+        )
+    finally:
+        set_current_auth(None)
+    assert copy.restored
+
+    result = await OPERATIONS_BY_NAME["code.read"].handler(
+        CodeReadInput(
+            org=ORG, namespace=TRUNK, ranges=[f"{reader}:6-7"], lesson_namespaces=[MEM, FLAGGED]
+        )
+    )
+    assert {row["namespace"]: row["code_state"] for row in result.lessons} == {
+        MEM: "fresh",
+        FLAGGED: "",
+    }
+
+
 @pytest.mark.parametrize("hidden", ["deleted", "high"])
 async def test_grep_keeps_visible_lessons_ahead_of_ineligible_links(
     env, monkeypatch, hidden

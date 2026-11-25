@@ -74,6 +74,7 @@ SELECT
     verified_by, verified_sha256, content_sha256,
     if({{include_source_links:UInt8}}, files, []) AS source_files,
     if({{include_source_links:UInt8}}, user_id, '') AS source_user_id,
+    if({{include_source_links:UInt8}}, session_id, '') AS source_session_id,
     if({{include_source_links:UInt8}}, toString(content_sha256), '') AS source_sha,
     ({{full_values:UInt8}} = 0 AND value_len > {_READ_BYTES}) AS value_truncated,
     arrayFilter(f -> {_FILE_MATCH}, files) AS matched_files
@@ -487,16 +488,47 @@ async def _rows_for(
     ch = get_client()
     found, read = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
     links_of = read or {}
+    if include_source_links:
+        # A restored copy can retain an ID without owning the original link.
+        links_of = {
+            mid: owned
+            for mid, links in links_of.items()
+            if (owned := [link for link in links if link["namespace"] == namespace])
+        }
     ids = sorted(m for m, links in links_of.items() if {a["state"] for a in links} != {"missing"})
     # a hot file's links are bound a slice at a time; the best of the files match and
     # of each slice's own top `lim` are the namespace's
     if ids:
         found = found + await query_all_sliced(ch, _LINKED_SQL, params | {"linked": ids}, "linked")
-    unique = {str(r["memory_id"]): r for r in found}.values()
-    rows = sorted(unique, key=_order_key)[: int(input.top_k)]
+    unique = {
+        (
+            str(r["memory_id"]),
+            r["memory_key"],
+            r["agent"],
+            r["source_user_id"],
+            r["source_session_id"],
+        )
+        if include_source_links
+        else str(r["memory_id"]): r
+        for r in found
+    }
     out = []
-    for r in rows:
+    for r in sorted(unique.values(), key=_order_key):
         links = links_of.get(str(r.get("memory_id")), [])
+        source_links = []
+        if include_source_links:
+            links = [
+                link
+                for link in links
+                if link["memory_key"] == r["memory_key"]
+                and link["agent"] == r["agent"]
+                and link["user_id"] == r["source_user_id"]
+                and link["session_id"] == r["source_session_id"]
+            ]
+            if links:
+                source_links = _links_for_served_row(input.org, namespace, r, links)
+            if not (source_links or r["matched_files"]):
+                continue
         out.append(
             {
                 **r,
@@ -509,20 +541,18 @@ async def _rows_for(
                     else ""
                     for a in links
                 ],
-                "source_links": (
-                    _links_for_served_row(input.org, namespace, r, links)
-                    if include_source_links and links
-                    else []
-                ),
+                "source_links": source_links,
             }
         )
+        if len(out) == int(input.top_k):
+            break
     return out
 
 
 def _links_for_served_row(
     org: str, namespace: str, row: dict[str, Any], links: list[LinkRow]
 ) -> list[LinkRow]:
-    """The memory row and the link listing can observe different writes."""
+    """Recheck the owned links against the memory snapshot selected by the listing."""
     from server.memory.app.code_link_reads import inputs_now
 
     stamp = inputs_now(
