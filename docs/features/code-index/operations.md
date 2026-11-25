@@ -92,8 +92,8 @@ or file appears once.
 `mode: "message"` and `regex: true` require a single string.
 
 To find implementation and existing tests together, batch code text and test
-name prefixes. Use `path_globs` that cover both roots or omit path filters.
-A `path_prefix` applies to the whole batch.
+name prefixes and omit `path_prefix`. To restrict the search, add
+`path_globs` that cover both roots.
 
 Use `code.edit_context` for implementation, indexed tests and linked notes in
 one request. Give the definition name or location if known. Literal `clues`

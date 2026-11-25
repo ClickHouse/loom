@@ -1359,8 +1359,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.grep": (
         "Find known text in indexed source. Use code.search for behavior. "
-        "Batch literal alternatives in `pattern`, including code text and test-name prefixes. "
-        "Path filters apply to every alternative. "
+        "Batch code and test-name prefixes in a `pattern` list. Path filters scope the batch. "
         "Matches include bodies by default. "
         "`include_body: false` omits enclosing bodies. Add `context_lines: 0` for locations. "
         "Use literal strings or one RE2 string with `regex: true`. "
@@ -2170,7 +2169,8 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.grep": (
         "Find text. Keep bodies for edits. "
-        "Batch code and test-name prefixes. Scope both with `path_globs` or omit `path_prefix`. "
+        "Batch code and test-name prefixes. Omit `path_prefix`. "
+        "`path_globs` can cover both. "
         "`regex: true` uses RE2. Locations use `include_body: false`, `context_lines: 0`. "
         "Use code.search for behavior and code.edit_context for edits.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
