@@ -649,6 +649,60 @@ async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
         "src.other::first",
         "src.other::second",
     }
+    tied = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, name="src/other.py", clues=["return", "'same'"])
+    )
+    assert not tied.definitions and tied.ambiguous
+    assert tied.candidates == ambiguous.candidates
+
+
+@pytest.mark.parametrize(
+    ("clues", "symbol"),
+    [
+        (["def mount(self, app", "name_prefix", "self._children"], "mount"),
+        (["def mount_child(self", "_children.append(", "self._children"], "mount_child"),
+    ],
+)
+async def test_edit_clues_choose_definition_that_covers_every_fragment(
+    code_env, monkeypatch, clues: list[str], symbol: str
+) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    path = "src/entry.py"
+    await _ingest(
+        repo,
+        org,
+        ns,
+        path=path,
+        source=b"""class Setup:
+    def prepare(self, name_prefix):
+        return name_prefix
+
+class Entry:
+    def __init__(self):
+        self._children = []
+
+    def mount_child(self, child):
+        self._children.append(child)
+
+    def mount(self, app):
+        name_prefix = app.prefix
+        return (name_prefix, self._children)
+""",
+    )
+    result = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, name=path, clues=clues, include_lessons=False)
+    )
+    (definition,) = result.definitions
+    assert definition.symbol == f"src.entry::Entry::{symbol}"
+    assert all(clue in definition.body for clue in clues)
+    assert result.resolved_by == "file_clues" and not result.candidates
 
 
 async def test_edit_context_reads_matched_members_of_large_type(code_env, monkeypatch) -> None:
@@ -681,6 +735,16 @@ async def test_edit_context_reads_matched_members_of_large_type(code_env, monkey
     assert all(
         "match " in unit.body and "unrelated" not in unit.body for unit in result.definitions
     )
+    separate = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org,
+            namespace=ns,
+            name=path,
+            clues=["return 'match first'", "return 'match second'"],
+            include_lessons=False,
+        )
+    )
+    assert separate.definitions == result.definitions
 
 
 async def test_edit_clues_bind_the_exact_file_and_read_its_new_body(code_env, monkeypatch) -> None:
