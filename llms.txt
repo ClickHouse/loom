@@ -194,6 +194,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Running the benchmarks](docs/benchmarks/running.md): Run every command from the repository root with the checkout's interpreter and the root first on `PYTHONPATH`:
 - [SDK issue resolution](docs/benchmarks/sdk-issue-resolution.md): The SDK issue harness measures proposed patches with and without Loom code lookup.
 - [Skill eval](docs/benchmarks/skill-eval.md): The skill eval grades the `loom-memory` skill by the namespace an agent leaves behind.
+- [Proposed software factory pilot](docs/benchmarks/software-factory-pilot.md): This draft measures whether application-owned context retrieval changes objective resolution, total calls, tokens, cost per successful resolution and elapsed time.
 
 ## Optional
 

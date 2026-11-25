@@ -4,18 +4,22 @@ export type SiteLocale = keyof typeof homeLocales;
 export const siteLocales = homeLocales;
 export type LocaleAlternate = { language: SiteLocale | "x-default"; href: string };
 const localeKeys = Object.keys(homeLocales) as SiteLocale[];
-export const homeAlternates: LocaleAlternate[] = [
-  ...localeKeys.map((language) => ({ language, href: homeLocales[language].href })),
-  { language: "x-default", href: homeLocales.en.href },
-];
+type LocalizedField = "href" | "enterprise" | "knowledgeFactory";
+const localizedPaths: Record<SiteLocale, Partial<Record<LocalizedField, string>>> = homeLocales;
 
-export const enterpriseAlternates: LocaleAlternate[] = [
-  ...localeKeys.flatMap((language) => {
-    const locale = homeLocales[language];
-    return "enterprise" in locale ? [{ language, href: locale.enterprise }] : [];
-  }),
-  { language: "x-default", href: homeLocales.en.enterprise },
-];
+function localizedAlternates(field: LocalizedField): LocaleAlternate[] {
+  return [
+    ...localeKeys.flatMap((language) => {
+      const href = localizedPaths[language][field];
+      return href ? [{ language, href }] : [];
+    }),
+    { language: "x-default", href: homeLocales.en[field] },
+  ];
+}
+
+export const homeAlternates = localizedAlternates("href");
+export const enterpriseAlternates = localizedAlternates("enterprise");
+export const knowledgeFactoryAlternates = localizedAlternates("knowledgeFactory");
 
 export function enterpriseLink(language: SiteLocale) {
   const locale = homeLocales[language];

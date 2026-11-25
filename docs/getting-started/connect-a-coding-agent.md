@@ -313,6 +313,7 @@ self-signup leaves the session without a token, and the primer says how to get o
 
 ## Next
 
+- [Switch coding agents with shared project memory](../use-cases/agent-memory.md#switch-coding-agents-with-shared-project-memory).
 - [Your first agent](first-agent.md): the same memory from your own code with the SDK.
 - [Agent integration](../guides/agent-integration.md): what to save, when to search, and
   mistakes to avoid.

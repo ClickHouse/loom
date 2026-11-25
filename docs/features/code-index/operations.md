@@ -178,6 +178,13 @@ and the reference makes the reply smaller. Its value is the enclosing
 definition's `symbol_id`. Use the nested definition's own line range to read
 its source within that body. `explain=true` returns each body separately.
 
+`code.read` reads exact indexed source lines in one file or across a batch of
+`ranges`. The reply includes lessons with verified links overlapping those
+windows at the returned revision. File-wide lessons, decisions, constraints
+and pins remain eligible. A retained decision, constraint or pin with an
+unverified link is marked `unresolved`. Set `include_lessons=false`
+when the session already has the relevant notes.
+
 A caller with a clock of its own passes `deadline_ms` to `code.grep` or `code.search`
 (clamped to 200–60000; 0 means none, and unset takes `LOOM_CODE_SEARCH_DEADLINE_MS`):
 the request stops starting new work when the budget runs out and returns what it has,

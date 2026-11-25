@@ -88,6 +88,25 @@ with questions that do not name the key, including questions the store cannot an
 To measure the effect on completed work, [compare coding tasks with and without memory](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
 using the same acceptance tests.
 
+## Switch coding agents with shared project memory
+
+To switch from Claude Code to Codex or Cursor, connect the new client to the same Loom
+server and project namespace. The new session can retrieve decisions already saved there.
+
+1. Pick a reviewed decision the next agent needs, such as why a retry needs an idempotency
+   key. If it only exists in client-local notes or a transcript, check it against the
+   source, then explicitly save the decision in the shared namespace. Keep rules that
+   apply to every checkout in version control.
+2. On an authenticated server, give the new client its own token scoped to the project
+   namespace. Start a fresh session and give it the exact key and scope shown in the
+   saved memory. Compare the returned value and writer with the original. Check the
+   current source before applying a code-linked decision.
+3. For work in progress, include the branch, commit, and remaining checks in the task
+   handoff. Keep each client's local configuration and session history with that client.
+
+Use the [authenticated Claude Code-to-Codex check](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex)
+to verify the handoff on a disposable key before switching a project.
+
 ## What you get
 
 - **One claim per key, in a namespace.** `memory.set` saves a fact; `memory.get` reads it

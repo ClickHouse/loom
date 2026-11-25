@@ -309,6 +309,182 @@ async def test_grep_reads_a_later_path_with_a_matched_lesson(env, monkeypatch, e
     ]
 
 
+async def test_code_read_focuses_lessons_on_returned_source_windows(env, monkeypatch) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.code.api.models_read import CodeReadInput
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_result_lessons_paths", 1)
+    helper, reader = "src/widgets/helper.py", "src/widgets/reader.py"
+    sha = env.commit({helper: _UTIL, reader: _READER})
+    await _index(TRUNK, env, sha, [helper, reader])
+    await _remember(MEM, "notes/read-rows", "Use `Reader.read_rows` for paging.", files=[reader])
+    await _remember(MEM, "notes/fetch", "Use `fetch_page` to keep URLs intact.", files=[reader])
+    await _pass()
+
+    read = OPERATIONS_BY_NAME["code.read"].handler
+    request = CodeReadInput(
+        org=ORG,
+        namespace=TRUNK,
+        ranges=[f"{helper}:1", f"{reader}:2-3", f"{reader}:99"],
+        lesson_namespaces=[MEM],
+    )
+    result = await read(request)
+    assert [row.status for row in result.results] == ["complete", "complete", "out_of_range"]
+    assert [(row["memory_key"], row["code_state"]) for row in result.lessons] == [
+        ("notes/read-rows", "fresh"),
+    ]
+    assert result.lessons_left_out == 1
+    disabled = await read(request.model_copy(update={"include_lessons": False}))
+    assert disabled.results == result.results
+    assert "lessons" not in disabled.model_dump()
+    unavailable = await read(request.model_copy(update={"ranges": [f"{reader}:99"]}))
+    assert "lessons" not in unavailable.model_dump()
+    set_current_auth(
+        AuthInfo(
+            subject="code-reader@example.com",
+            org=ORG,
+            namespaces=(TRUNK,),
+            roles=(Role.VIEWER,),
+            is_service_account=False,
+        )
+    )
+    try:
+        scoped = await read(request)
+    finally:
+        set_current_auth(None)
+    assert scoped.results == result.results
+    assert "lessons" not in scoped.model_dump()
+
+
+async def test_code_read_requires_a_matching_revision_for_linked_lessons(env, monkeypatch) -> None:
+    from server.code.api.models_read import CodeReadInput
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    reader = "src/widgets/reader.py"
+    on_branch = _READER.replace("return url", 'return "release_old"')
+    on_trunk = _READER.replace("return url", 'return "trunk_new"')
+    older = env.commit({reader: on_branch})
+    await _index(BRANCH, env, older, [reader])
+    newer = env.commit({reader: on_trunk})
+    await _index(TRUNK, env, newer, [reader])
+    mid = await _remember(MEM, "notes/fetch", '`fetch_page` returns "trunk_new".', files=[reader])
+    await _pass()
+
+    read = OPERATIONS_BY_NAME["code.read"].handler
+    request = CodeReadInput(
+        org=ORG, namespace=TRUNK, ranges=[f"{reader}:6-7"], lesson_namespaces=[MEM]
+    )
+    trunk = await read(request)
+    assert [(row["memory_key"], row["code_state"]) for row in trunk.lessons] == [
+        ("notes/fetch", "fresh"),
+    ]
+    branch = await read(request.model_copy(update={"namespace": BRANCH}))
+    assert branch.results[0].indexed_commit == older
+    assert "release_old" in branch.results[0].windows[0].text
+    assert not branch.lessons
+    await _index(BRANCH, env, newer, [reader])
+    removed = env.commit({reader: on_trunk.split("\ndef fetch_page", 1)[0]})
+    await _index(TRUNK, env, removed, [reader])
+    await _pass()
+    assert (await _links(mid))[0]["state"] in {"missing", "unresolved"}
+    retained = await read(request.model_copy(update={"namespace": BRANCH}))
+    assert retained.results[0].indexed_commit == newer
+    assert "trunk_new" in retained.results[0].windows[0].text
+    assert not retained.lessons
+
+
+async def test_code_read_checks_the_served_memory_against_the_link(env, monkeypatch) -> None:
+    from server.code.api.models_read import CodeReadInput
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.api.models_for_file import MemoryForFileInput
+    from server.memory.app import for_file
+    from server.memory.app.update import handle_memory_update_by_id
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    reader = "src/widgets/reader.py"
+    sha = env.commit({reader: _READER})
+    await _index(TRUNK, env, sha, [reader])
+    mid = await _remember(MEM, "notes/contract", "`fetch_page` returns the URL.", files=[reader])
+    await _pass()
+    listing = MemoryForFileInput(org=ORG, namespace=MEM, path=reader, extra_namespaces=[TRUNK])
+    old_links = await for_file._linked(listing, reader, [MEM, TRUNK])
+    assert old_links and old_links[mid][0]["qualified_name"].endswith("fetch_page")
+    rewritten = await handle_memory_update_by_id(
+        MemoryUpdateByIdInput(org=ORG, memory_id=mid, value="`Reader.read_rows` keeps the limit.")
+    )
+    assert rewritten.updated
+
+    async def read_late_listing(_input, _path, _namespaces):
+        return old_links
+
+    monkeypatch.setattr(for_file, "_linked", read_late_listing)
+    result = await OPERATIONS_BY_NAME["code.read"].handler(
+        CodeReadInput(org=ORG, namespace=TRUNK, ranges=[f"{reader}:6-7"], lesson_namespaces=[MEM])
+    )
+    assert "def fetch_page" in result.results[0].windows[0].text
+    assert not result.lessons
+
+
+async def test_code_read_keeps_restored_copy_links_in_their_namespace(env, monkeypatch) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.code.api.models_read import CodeReadInput
+    from server.identity.api.models import NamespaceRestoreInput, NamespaceSnapshotInput
+    from server.identity.app.namespace_snapshot import (
+        handle_namespace_restore,
+        handle_namespace_snapshot,
+    )
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    reader = "src/widgets/reader.py"
+    sha = env.commit({reader: _READER})
+    await _index(TRUNK, env, sha, [reader])
+    mid = await _remember(MEM, "notes/fetch", "`fetch_page` returns the URL.", files=[reader])
+    await _pass()
+    assert (await _links(mid))[0]["state"] == "fresh"
+    set_current_auth(
+        AuthInfo(
+            subject="it@example.com",
+            org=ORG,
+            namespaces=("*",),
+            roles=(Role.ADMIN,),
+            is_service_account=False,
+        )
+    )
+    try:
+        snapshot = await handle_namespace_snapshot(
+            NamespaceSnapshotInput(org=ORG, namespace=MEM, include_audit_tail_n=0)
+        )
+        copy = await handle_namespace_restore(
+            NamespaceRestoreInput(org=ORG, target_namespace=FLAGGED, payload=snapshot)
+        )
+    finally:
+        set_current_auth(None)
+    assert copy.restored
+
+    result = await OPERATIONS_BY_NAME["code.read"].handler(
+        CodeReadInput(
+            org=ORG, namespace=TRUNK, ranges=[f"{reader}:6-7"], lesson_namespaces=[MEM, FLAGGED]
+        )
+    )
+    assert {row["namespace"]: row["code_state"] for row in result.lessons} == {
+        MEM: "fresh",
+        FLAGGED: "",
+    }
+
+
 @pytest.mark.parametrize("hidden", ["deleted", "high"])
 async def test_grep_keeps_visible_lessons_ahead_of_ineligible_links(
     env, monkeypatch, hidden

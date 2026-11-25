@@ -27,12 +27,14 @@ from server.memory.api.models_for_file import MemoryForFileInput
 from server.memory.app.code_link_reads import inputs_now
 from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
+from server.memory.domain import code_change
 from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
 from server.memory.domain.lemmatize import snowball_stem_tokens
 from server.memory.domain.recall import query_tokens
 from server.memory.store import code_links
 
 logger = logging.getLogger(__name__)
+_LOCATED_STATES = ("fresh", "moved", "changed")
 
 
 def _excerpt(hit: dict[str, Any]) -> str | None:
@@ -89,25 +91,32 @@ class Lessons(NamedTuple):
     left_out: int = 0
 
 
-class GrepMatchLines(NamedTuple):
-    """Retained revisions of all grep matches and line numbers of unscoped matches."""
+class SourceSpans(NamedTuple):
+    """Retained revisions and unscoped lines or windows in a source answer."""
 
     unscoped: dict[str, set[int]]
     revisions: dict[str, set[str]]
+    windows: dict[str, list[tuple[int, int]]] | None = None
 
-    def excludes(self, link: code_links.LinkRow) -> bool:
-        path = link["path"]
+    def excludes(self, path: str, checked_commit: str, start: int, end: int) -> bool:
         revisions = self.revisions.get(path)
         if revisions is None:
             return True
-        checked_commit = link["checked_commit"]
         if not checked_commit or revisions != {checked_commit}:
             return False
-        lines = self.unscoped.get(path)
+        lines = self.unscoped.get(path, set())
         if not lines:
             return True
-        start, end = link["start_line"], link["end_line"]
         return 0 < start <= end and all(line > 0 and not start <= line <= end for line in lines)
+
+    def overlaps_window(self, path: str, checked_commit: str, start: int, end: int) -> bool:
+        return (
+            self.windows is not None
+            and bool(checked_commit)
+            and self.revisions.get(path) == {checked_commit}
+            and 0 < start <= end
+            and any(first <= end and start <= last for first, last in self.windows.get(path, ()))
+        )
 
 
 async def paths_with_matched_links(
@@ -116,17 +125,17 @@ async def paths_with_matched_links(
     trunk_ns: str,
     paths: Sequence[str],
     symbols: dict[str, set[str]],
-    grep_lines: GrepMatchLines,
+    source: SourceSpans,
     *,
     timeout_s: float,
 ) -> set[str]:
-    """Files with a visible, current lesson for a named scope in the response."""
+    """Files with a visible, current lesson for the returned source."""
     until = time.monotonic() + timeout_s
     revisions = [
         (path, next(iter(commits)))
         for path in paths
         if path in symbols
-        and len(commits := grep_lines.revisions.get(path, set())) == 1
+        and len(commits := source.revisions.get(path, set())) == 1
         and "" not in commits
     ]
     links = await code_links.path_hint_links(org, namespaces, trunk_ns, revisions, until=until)
@@ -134,6 +143,9 @@ async def paths_with_matched_links(
         link
         for link in links
         if local_name(link["qualified_name"], path := link["path"]) in symbols[path]
+        or source.overlaps_window(
+            path, link["checked_commit"], link["start_line"], link["end_line"]
+        )
     ]
     if not matches:
         return set()
@@ -209,7 +221,7 @@ async def _confirmed_omissions(
     symbols: dict[str, set[str]],
     focused: set[str],
     timeout_s: float | None,
-    grep_lines: GrepMatchLines | None,
+    source: SourceSpans | None,
 ) -> set[tuple[str, str]]:
     """Path reads miss pending links. Check only the rows being considered for omission."""
     omitted = {
@@ -232,9 +244,11 @@ async def _confirmed_omissions(
     for link in links:
         if link["code_namespace"] != trunk_ns:
             continue
-        if not link["complete"] or link["state"] not in ("fresh", "moved", "changed"):
+        if not link["complete"] or link["state"] not in _LOCATED_STATES:
             uncertain.add(link["memory_id"])
-        elif grep_lines is not None and not grep_lines.excludes(link):
+        elif source is not None and not source.excludes(
+            link["path"], link["checked_commit"], link["start_line"], link["end_line"]
+        ):
             uncertain.add(link["memory_id"])
         else:
             resolved[(link["path"], link["memory_id"])].append(link["qualified_name"])
@@ -256,7 +270,7 @@ async def lessons_for_paths(
     timeout_s: float | None = None,
     query: str = "",
     matched_symbols: dict[str, set[str]] | None = None,
-    grep_lines: GrepMatchLines | None = None,
+    source: SourceSpans | None = None,
 ) -> Lessons:
     """The live memories of `namespaces` (each already checked readable) that name or are
     linked to code in `paths`, in path order, then each file's memory.for_file order (past
@@ -272,8 +286,8 @@ async def lessons_for_paths(
     when the conflict check linked one. `timeout_s` bounds the file reads together;
     failed or unfinished reads leave the completed files' rows intact. A nonempty `query`
     ranks matching excerpts after constraints and pins across the selected paths,
-    preserving path and listing order on ties. Uncapped grep matches focus lessons on
-    the returned definitions. Search focuses a file when a matched definition has a
+    preserving path and listing order on ties. Uncapped grep and read answers focus
+    lessons on the returned source. Search focuses a file when a matched definition has a
     complete lesson. File-wide or uncertain links, decisions, constraints and pins
     remain eligible."""
     if not namespaces or not paths:
@@ -294,7 +308,8 @@ async def lessons_for_paths(
         for p in paths
         for group in groups
     ]
-    per_read = await _read_paths(reads, timeout_s)
+    windows = source if source is not None and source.windows is not None else None
+    per_read = await _read_paths(reads, timeout_s, include_source_links=windows is not None)
     # every row a row read here replaces, whichever file or read it came from
     superseded = {i for hits, _ in per_read for h in hits for i in h.get("supersedes_ids") or []}
     out: list[dict[str, Any]] = []
@@ -309,13 +324,15 @@ async def lessons_for_paths(
     ]
     symbols = (matched_symbols or {}) if not token_budget else {}
     focused = (
-        set(symbols) if grep_lines is not None else _focused_paths(candidates, symbols, superseded)
+        set(symbols) if source is not None else _focused_paths(candidates, symbols, superseded)
     )
     remaining = (
         None if timeout_s is None else timeout_s - (asyncio.get_running_loop().time() - started)
     )
-    omitted = await _confirmed_omissions(
-        org, trunk_ns, candidates, symbols, focused, remaining, grep_lines
+    omitted = (
+        await _confirmed_omissions(org, trunk_ns, candidates, symbols, focused, remaining, source)
+        if windows is None
+        else set()
     )
     for path, hit in _ordered_candidates(candidates, query):
         key = (str(hit["namespace"]), str(hit["memory_key"]))
@@ -325,7 +342,7 @@ async def lessons_for_paths(
             left.add(key)
             continue
         stale = str(hit.get("memory_id")) in superseded
-        lesson = None if stale else _lesson(hit, path)
+        lesson = None if stale else _source_lesson(hit, path, windows)
         cost = _tokens(lesson) if lesson else 0
         if lesson is None or (
             token_budget and spent + cost > token_budget
@@ -338,11 +355,51 @@ async def lessons_for_paths(
     return Lessons(out, len(left - seen))
 
 
+def _source_lesson(
+    hit: dict[str, Any], path: str, windows: SourceSpans | None
+) -> dict[str, Any] | None:
+    links = hit.get("source_links", [])
+    if windows is None or not (links or hit.get("code_state")):
+        return _lesson(hit, path)
+    matching = [
+        link
+        for link in links
+        if link["complete"]
+        and link["state"] in _LOCATED_STATES
+        and link["path"] == path
+        and windows.overlaps_window(
+            path, link["checked_commit"], link["start_line"], link["end_line"]
+        )
+    ]
+    if matching:
+        return _lesson(
+            hit
+            | {
+                "code_state": code_change.worst([link["state"] for link in matching]),
+                "code_changed_since": code_change.worst_commit(matching),
+            },
+            path,
+        )
+    if hit.get("pinned") or is_whole_row(hit.get("memory_type", ""), hit.get("tags") or []):
+        return _lesson(hit | {"code_state": "unresolved", "code_changed_since": ""}, path)
+    return None
+
+
 async def _read_paths(
-    reads: Sequence[MemoryForFileInput], timeout_s: float | None
+    reads: Sequence[MemoryForFileInput],
+    timeout_s: float | None,
+    *,
+    include_source_links: bool = False,
 ) -> list[tuple[list[dict[str, Any]], bool]]:
     """Keep completed file reads when another fails or runs past the shared bound."""
-    tasks = [asyncio.create_task(listing_rows(inp)) for inp in reads]
+    tasks = [
+        asyncio.create_task(
+            listing_rows(inp, include_source_links=True)
+            if include_source_links
+            else listing_rows(inp)
+        )
+        for inp in reads
+    ]
     try:
         done, _ = await asyncio.wait(tasks, timeout=timeout_s)
         return [

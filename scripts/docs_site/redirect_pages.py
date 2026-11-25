@@ -105,6 +105,25 @@ def redirect_pages(site: Path, legacy_site_url: str) -> None:
 """,
             encoding="utf-8",
         )
+    (site / "404.html").write_text(
+        f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Page not found | ClickHouse Loom</title>
+</head>
+<body>
+  <main>
+    <h1>Page not found</h1>
+    <p>Find the page in the <a href="{escape(DOCS_URL)}">ClickHouse Loom documentation</a>.</p>
+  </main>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
     _retarget_exports(site, legacy_site_url, destinations)
 
 
