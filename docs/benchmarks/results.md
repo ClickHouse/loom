@@ -504,8 +504,8 @@ An earlier 12-issue SWE-bench agent sample is withdrawn: its with-Loom agent cal
 `bench/fixtures/code_intel_qa.jsonl`, replayed as `git grep` over a ClickHouse checkout:
 once for the bare name as a whole word, and once for a literal substring. The substring
 search used `Class::name` where available (7 of the 10 definitions) and the bare name
-otherwise. Tokens are characters / 4. Loom scores the first definition result by
-whether its path starts with the expected directory prefix.
+otherwise. Tokens are characters / 4. The harness counts a definition as a match if
+the first Loom result's path starts with the expected directory prefix.
 
 | Question    | Whole-word grep, median                                               | Substring grep, median     | Loom                                         |
 | ----------- | --------------------------------------------------------------------- | -------------------------- | -------------------------------------------- |
