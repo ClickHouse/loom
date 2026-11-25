@@ -409,7 +409,7 @@ def test_compact_coding_grep_advertises_full_definitions_and_batch_scope():
     full = {t["name"]: t for t in _listing("coding", True, "full")}
     full_description = full["loom_code_grep"]["description"]
     assert "Scope with `path_prefix` or `path_globs`" in full_description
-    assert "Use a zero radius for match locations" in full_description
+    assert "For locations, set `include_body: false`, `context_lines: 0`" in full_description
     assert "loom_code_edit_context for a known definition" in full_description
 
 
