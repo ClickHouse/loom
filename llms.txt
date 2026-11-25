@@ -63,14 +63,14 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Claude Code plugin](docs/features/integrations/claude-code.md): The `loom` plugin for Claude Code does three things in one install:
 - [ClickStack and HyperDX](docs/features/integrations/clickstack.md): Loom always emits OpenTelemetry; the HyperDX sources, dashboards and the erasure step need configuring.
 - [Codex plugin](docs/features/integrations/codex.md): The Codex plugin gives Codex the same Loom integration as Claude Code: MCP tools, hooks that capture the session and load a primer, and the code shunt.
-- [Cursor](docs/features/integrations/cursor.md): Cursor gets Loom in three pieces:
+- [Cursor](docs/features/integrations/cursor.md): Connect Cursor to Loom to save decisions and reuse lessons from earlier sessions.
 - [Agent frameworks and orchestrators](docs/features/integrations/frameworks.md): The SDKs ship adapters that present Loom through a framework's own memory or retrieval interface.
 - [The grep shim](docs/features/integrations/grep-shim.md): The grep shim is a `grep`/`rg` wrapper that appends each hit's enclosing function, from the code index, to the match line; it needs Node 18 or later, a viewer token and a repository in the code index.
 - [Langfuse](docs/features/integrations/langfuse.md): Needs `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; nothing is sent until both are set.
 - [LibreChat](docs/features/integrations/librechat.md): Needs LibreChat v0.8.8 (MIT), a Loom server that serves the assistant toolset, and one Loom `viewer` token per person.
 - [Connect to Loom's MCP memory server](docs/features/integrations/mcp-clients.md): An MCP memory server lets AI agents save and retrieve durable facts through the Model Context Protocol.
 - [OKF bundles](docs/features/integrations/okf.md): A namespace can be rendered as an OKF (Open Knowledge Format) v0.2 bundle: one Markdown file per memory with YAML frontmatter, an `index.md` per directory listing each concept with a one-line description, and a `log.md` of changes.
-- [VS Code](docs/features/integrations/vscode.md): VS Code's agent mode (GitHub Copilot) connects to Loom as a remote MCP server over streamable HTTP.
+- [VS Code](docs/features/integrations/vscode.md): GitHub Copilot in VS Code can save and retrieve project decisions through Loom's MCP server over streamable HTTP.
 - [Conflicts and refusal](docs/features/memory/conflicts-and-refusal.md): Every memory write is judged against the facts the namespace already holds.
 - [Extraction from transcripts](docs/features/memory/extraction.md): `memory.set_from_messages` takes a transcript and the server decides what in it is durable.
 - [History and provenance](docs/features/memory/history-and-provenance.md): Every write to memory makes a new version; nothing is edited in place.
