@@ -342,6 +342,10 @@ async def _owner_context(
     }
 
 
+async def _no_enrichment() -> None:
+    return None
+
+
 async def _enrichment(
     repo: CodeRepo,
     org: str,
@@ -363,9 +367,6 @@ async def _enrichment(
     paths = list(dict.fromkeys(str(r.get("path") or "") for r in head if r.get("path")))
     sids = _seed_ids_of(head)
     symbol = str(head[0].get("qualified_name") or "") or input.name
-
-    async def none() -> None:
-        return None
 
     # members whose lessons read was cut off or failed; non-empty sets lessons_unread
     unread: list[str] = []
@@ -452,7 +453,7 @@ async def _enrichment(
         prs, examples, lessons_out = await asyncio.gather(
             _staged("enrich.prs", _soft(code_enrich.recent_prs(repo, org, ns, paths), None))
             if input.include_history
-            else none(),
+            else _no_enrichment(),
             _staged(
                 "enrich.examples",
                 _soft(
@@ -460,8 +461,10 @@ async def _enrichment(
                 ),
             )
             if input.include_examples
-            else none(),
-            _staged("enrich.lessons", _soft(lessons(), None)) if input.include_lessons else none(),
+            else _no_enrichment(),
+            _staged("enrich.lessons", _soft(lessons(), None))
+            if input.include_lessons
+            else _no_enrichment(),
         )
     out: dict[str, Any] = {}
     if prs is not None:
