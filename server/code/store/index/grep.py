@@ -215,9 +215,16 @@ class GrepMixin(CodeRepoBase):
         cond, cond_params = _scan_predicate(pattern, regex=regex, case_sensitive=case_sensitive)
         prefix_clause = "AND startsWith(path, {prefix:String})" if path_prefix else ""
         path_sql, path_params = _scope_path_sql(scope)
+        literals = [pattern] if isinstance(pattern, str) else pattern
+        endings = [literal for literal in literals if not regex and literal.endswith("\n")]
         return await self._ch.query_all(
             grep_sql.grep_chunks_sql(
-                cond, prefix_clause, path_sql, code_deadline.break_settings(max_execution_s)
+                cond,
+                prefix_clause,
+                path_sql,
+                code_deadline.break_settings(max_execution_s),
+                with_endings=bool(endings),
+                endings_only=bool(endings) and len(endings) == len(literals),
             ),
             {
                 "org": org,
@@ -263,6 +270,7 @@ class GrepMixin(CodeRepoBase):
                 pattern_expr,
                 position,
                 code_deadline.break_settings(max_execution_s),
+                with_endings=any(pattern.endswith("\n") for pattern in patterns),
             ),
             {
                 "org": org,

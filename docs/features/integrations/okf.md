@@ -1,3 +1,9 @@
+---
+description: Export saved AI agent memory as readable Markdown. Preview an import into another Loom namespace and verify the copied fact and its provenance.
+seo:
+  title: Export agent memory as Markdown
+---
+
 # OKF bundles
 
 A namespace can be rendered as an OKF (Open Knowledge Format) v0.2 bundle: one Markdown
@@ -149,6 +155,42 @@ schedule.
 
 `--verify` never forges an attestation. The server decides the actor from the token; the
 bundle's original verifier is recorded in the memory's tags for provenance.
+
+## Test agent memory portability
+
+Use two empty test namespaces to check whether a saved decision can travel to another
+Loom. The namespaces can be on the same deployment for this test. Save a synthetic
+fact under the key `example/review-rule` in the source, using the
+[HTTP write example](../../getting-started/quickstart.md#4-first-memory-over-http).
+Choose a value you can check exactly. Leave the destination empty.
+
+Set `SOURCE_URL` and `TARGET_URL` to the server URLs. Set `SOURCE_NAMESPACE` and
+`TARGET_NAMESPACE` to the respective namespace names. Use a source viewer token
+(`SOURCE_VIEWER`) and a target writer token (`TARGET_WRITER`) with
+[access to their respective namespaces](../../guides/tokens-and-grants.md).
+
+```bash
+bundle=$(mktemp -d)
+LOOM_API_KEY="$SOURCE_VIEWER" loom export-okf --server-url "$SOURCE_URL" \
+  --namespace "$SOURCE_NAMESPACE" --no-evidence --out "$bundle"
+loom okf-lint "$bundle"
+LOOM_API_KEY="$TARGET_WRITER" loom import-okf "$bundle" --server-url "$TARGET_URL" \
+  --namespace "$TARGET_NAMESPACE" --agent portability-check --no-evidence --dry-run
+```
+
+Open the concept Markdown in the bundle and check the key and value without a Loom
+connection. The preview should report one row to write. Check that the key is still
+absent on the destination. Then run the import command again without `--dry-run`.
+
+Use [`memory.get`](../../reference/operations/memory.md#memoryget) on the destination
+with the same key and `agent: portability-check`. Compare the returned value and check
+that its `source_trace` begins with `okf:` and its `actor` identifies the importing
+token's subject. Record the key, value and import result with your evaluation.
+
+The bundle carries the saved concept. This exercise skips raw chunks and session
+digests with `--no-evidence`. A bundle does not carry the source's grants, full version
+history or document originals. Use the [backup and recovery plan](../../operations/backup-and-recovery.md)
+to rehearse recovery of a deployment.
 
 ## CI gate
 

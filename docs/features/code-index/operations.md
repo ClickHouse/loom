@@ -104,6 +104,9 @@ expression can recover source from its qualified argument. It reports
 `resolved_by: file_argument` for a named file or `repository_argument` for a
 repository lookup. When several test calls are close together, Loom prefers
 examples from different source windows when it can verify their excerpts.
+When direct examples are absent, edit context can show tests that reach the
+definition through one indexed caller. Such examples carry `evidence:
+indirect_call` and a `via` source location.
 
 When an exact call expression such as `convert(row.value)` is absent,
 `related_on_miss: true` looks for its qualified argument in the same scope.
@@ -118,6 +121,11 @@ callers can opt in.
 A literal batch can recover one missing call alongside other exact literals,
 such as an existing test name. The exact matches and related source stay in
 their respective result fields.
+
+In matches mode, a literal can end with `\n` or `\r\n` to match that physical
+line ending. The check uses file metadata from the same indexed revision.
+Notebook projections and reference excerpts support literal text matches.
+The returned match text excludes the terminator.
 
 Use a list for literal alternatives. When a string of call fragments separated
 by pipes fails to compile as a regex, `related_on_miss` can find qualified uses
@@ -142,6 +150,11 @@ and satisfy the request's path filters. HTTP and SDK callers can set
 Set `include_dependencies: false` or `context_lines: 0` to omit these definitions.
 A literal batch can include the same definitions when its call expressions
 refer to one argument and the exact matches contain its use.
+When a literal names a Python function whose body forwards to a single call,
+`include_dependencies` can also return the bound target under
+`related.dependencies`. The related pattern names the forwarding function.
+This case requires enclosing bodies. The target must share the match's indexed
+revision and satisfy the path filters.
 
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
 lines by default. Pass `include_body=false` to omit bodies and `context_lines=0`
@@ -166,6 +179,19 @@ matching lines remain available with `definitions_partial=true` and a
 `definitions_note`. Unresolved or elided definitions retain their structural
 disclosures and next lookup when available. Check those fields before treating a
 missing body as missing code. The flag is rejected outside matches mode.
+
+For MCP replies, a nested definition can carry `body_in_symbol_id` when its
+exact source lines are already present in an enclosing body on the same page
+and the reference makes the reply smaller. Its value is the enclosing
+definition's `symbol_id`. Use the nested definition's own line range to read
+its source within that body. `explain=true` returns each body separately.
+
+`code.read` reads exact indexed source lines in one file or across a batch of
+`ranges`. The reply includes lessons with verified links overlapping those
+windows at the returned revision. File-wide lessons, decisions, constraints
+and pins remain eligible. A retained decision, constraint or pin with an
+unverified link is marked `unresolved`. Set `include_lessons=false`
+when the session already has the relevant notes.
 
 A caller with a clock of its own passes `deadline_ms` to `code.grep` or `code.search`
 (clamped to 200–60000; 0 means none, and unset takes `LOOM_CODE_SEARCH_DEADLINE_MS`):

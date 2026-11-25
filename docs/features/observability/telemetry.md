@@ -142,16 +142,18 @@ this table.
 
 Successful `code.*` answers also carry numeric content counts in `args`:
 
-| Ledger key                                                                                                  | Meaning                                                                                               |
-| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `out_source_bodies`, `out_source_chars`                                                                     | Nonempty definition bodies and their character count. Includes `related.definitions` on grep answers. |
-| `out_elided_bodies`                                                                                         | Rows with `body_elided=true`, including an empty body                                                 |
-| `out_lesson_rows`, `out_lesson_chars`                                                                       | Returned lesson rows and their excerpt character count                                                |
-| `out_lesson_fresh`, `out_lesson_moved`, `out_lesson_changed`, `out_lesson_unresolved`, `out_lesson_missing` | Lesson counts by code-link state                                                                      |
-| `out_lesson_unclassified`                                                                                   | Lessons with an absent or unrecognized code-link state                                                |
-| `out_lesson_rows_omitted`                                                                                   | Omitted lessons when the response discloses `lessons_left_out`                                        |
-| `out_grep_match_lines`                                                                                      | Lines in the primary `code.grep` match list, including zero for an empty list                         |
-| `out_grep_related_lines`                                                                                    | Lines in the separate `related.matches` list when a missing call expression returns related source    |
+| Ledger key                                                                                                  | Meaning                                                                                            |
+| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `out_source_bodies`                                                                                         | Nonempty definition bodies, including `related.definitions` on grep answers                        |
+| `out_source_windows`                                                                                        | Nonempty source windows in `code.read` replies                                                     |
+| `out_source_chars`                                                                                          | Characters in returned definition bodies and `code.read` source windows                            |
+| `out_elided_bodies`                                                                                         | Rows with `body_elided=true`, including an empty body                                              |
+| `out_lesson_rows`, `out_lesson_chars`                                                                       | Returned lesson rows and their excerpt character count                                             |
+| `out_lesson_fresh`, `out_lesson_moved`, `out_lesson_changed`, `out_lesson_unresolved`, `out_lesson_missing` | Lesson counts by code-link state                                                                   |
+| `out_lesson_unclassified`                                                                                   | Lessons with an absent or unrecognized code-link state                                             |
+| `out_lesson_rows_omitted`                                                                                   | Omitted lessons when the response discloses `lessons_left_out`                                     |
+| `out_grep_match_lines`                                                                                      | Lines in the primary `code.grep` match list, including zero for an empty list                      |
+| `out_grep_related_lines`                                                                                    | Lines in the separate `related.matches` list when a missing call expression returns related source |
 
 The same counts appear on the active span as `loom.response.code.<name>`, without
 the `out_` prefix, in both trace exporters. No source text, excerpts, paths or memory

@@ -1,6 +1,8 @@
 ---
 title: Memory linked to code for coding agents
-description: Link agent lessons to functions, classes and files. Follow those links through refactors and check which lessons refer to changed or removed code.
+description: Link agent lessons to functions, classes and files. Check what stays current across trunk and release branches as code changes, moves or disappears.
+seo:
+  title: Code-linked agent memory
 ---
 
 # Memory linked to code for coding agents
@@ -95,9 +97,9 @@ one definition. After the link pass, read that definition with `code.symbol` and
 the saved memory under `lessons`. When included, it carries `code_state: "fresh"`.
 Include the memory's namespace in `lesson_namespaces` when the call needs it.
 
-Change an expression in the function's body, such as `return url` to `return url.strip()`,
-and commit it on trunk. After the index and link worker process that commit, read the
-definition again in the same trunk namespace. Under the default policy, a returned
+Change an expression in the function's body, such as `return url` to `return url.strip()`.
+Commit the edit and push it to the indexed trunk. After the index and link worker process
+the commit, read the definition again in the same trunk namespace. Under the default policy, a returned
 lesson carries `code_state: "changed"`; `changed_since` names the indexed
 commit. This marks changed code, not a judgment that the lesson is false. Read the
 current body before applying it. Uncommitted editor changes do not trigger this check.
@@ -122,5 +124,29 @@ tool selection are not tested.
 
 For removal, held-memory exceptions and model-backed revision, see the
 [link policies](../concepts/memory.md#memories-linked-to-code).
+
+## Compare a code-linked lesson across branches
+
+When trunk and a maintained release branch diverge, a lesson can still apply to one of
+them. Index both branches of the same repository in [separate code namespaces](../features/code-index/overview.md#one-namespace-is-one-branch)
+and run this check on a Loom host with local git mirrors (`LOOM_GIT_HISTORY=local`).
+Use credentials that can read both code namespaces and the lesson.
+
+1. Start with the same definition on both branches. [Save a lesson](#start) about it and
+   use `code.symbol` in each code namespace. Pass the same `lesson_namespaces` list when
+   reading a separate memory namespace. Check that both responses include the same
+   lesson and that its `code_state` is `fresh`.
+2. Push a commit to the indexed trunk and leave the release branch unchanged. After the
+   index and link worker process that commit, read each branch again. Run either example
+   from the original definition.
+
+   | Change on trunk                                         | What to check on trunk                      | What to check on the unchanged release branch    |
+   | ------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------ |
+   | Change an expression inside the function                | The lesson reads `changed`.                 | The same lesson reads `fresh`.                   |
+   | Rename a nonrecursive function without editing its body | Look up the new name and check for `moved`. | Look up the original name and check for `fresh`. |
+
+3. Review the definition on the branch you are about to edit. `fresh` means the linked
+   code still matches on that branch. Check that the lesson's claim applies to the task
+   before using it.
 
 Some ops on this page are marked experimental on the [status page](../reference/status.md).

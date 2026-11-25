@@ -17,6 +17,7 @@ from collections.abc import Awaitable
 from typing import Any
 
 from server.code.app.spans import code_span
+from server.code.domain.index.test_conventions import is_test_unit_path
 from server.code.domain.symbol_body import retained_source_window
 from server.code.store.index import CodeRepo
 from server.embedding.embedder import served_model_label
@@ -125,6 +126,119 @@ async def usage_examples(
             if "context" in example or edge in baseline
         ][: len(baseline)]
     return out
+
+
+async def indirect_test_examples(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    symbol_ids: list[str],
+    definition: dict[str, Any],
+    revision: str,
+    context_lines: int,
+) -> list[dict[str, Any]]:
+    """Verified test source reached through one non-test caller at the same revision."""
+    if not (revision and context_lines and settings.embedding_model):
+        return []
+    if definition["kind"] not in {"function", "method"}:
+        return []
+    callers = await repo.edges_for_symbols(
+        org,
+        ns,
+        symbol_ids,
+        direction="callers",
+        limit=12,
+        min_confidence=0.8,
+        with_revision=True,
+        distinct_callers_at=revision,
+    )
+    bridges: dict[str, dict[str, Any]] = {}
+    for edge in callers:
+        caller = str(edge["from_symbol_id"])
+        if (
+            caller not in symbol_ids
+            and not is_test_unit_path(str(edge["path"]))
+            and edge["to_qualified_name"] == definition["qualified_name"]
+            and str(edge["indexed_commit"]).rstrip("\0") == revision
+        ):
+            bridges.setdefault(caller, edge)
+    if not bridges:
+        return []
+    tests = await repo.edges_for_symbols(
+        org,
+        ns,
+        list(bridges),
+        direction="callers",
+        limit=30,
+        min_confidence=0.8,
+        with_revision=True,
+        tests_only=True,
+        distinct_callers_at=revision,
+    )
+    if not tests:
+        return []
+    path = str(definition["path"])
+    files = await repo.file_rows_for_paths(
+        org, ns, [path, *(str(e["path"]) for e in (*bridges.values(), *tests))]
+    )
+    if files.get(path, {}).get("indexed_commit") != revision:
+        return []
+    sites = _verified_indirect_sites(tests, bridges, files, revision)
+    candidates = _prefer_distinct_test_windows(sites, context_lines)[:6]
+    for site in candidates:
+        site.pop("indexed_commit")
+    model = served_model_label(settings.embedding_model)
+    examples = await asyncio.gather(
+        *(
+            _example_context(repo, org, ns, site, context_lines, model, revision)
+            for site in candidates
+        )
+    )
+    return [row for row in examples if "context" in row][:3]
+
+
+def _verified_indirect_sites(
+    tests: list[dict[str, Any]],
+    bridges: dict[str, dict[str, Any]],
+    files: dict[str, dict[str, Any]],
+    revision: str,
+) -> list[dict[str, Any]]:
+    def current(edge: dict[str, Any]) -> bool:
+        file = files.get(str(edge["path"]), {})
+        return (
+            file.get("indexed_commit") == revision
+            and str(edge["indexed_commit"]).rstrip("\0") == revision
+            and 0 < int(edge["line"]) <= file.get("loc", 0)
+        )
+
+    by_location: dict[tuple[str, int], dict[str, Any]] = {}
+    for edge in tests:
+        bridge = bridges.get(str(edge["to_symbol_id"]))
+        if (
+            bridge is None
+            or not is_test_unit_path(str(edge["path"]))
+            or edge["to_qualified_name"] != bridge["from_qualified_name"]
+            or not (current(edge) and current(bridge))
+        ):
+            continue
+        path, line = str(edge["path"]), int(edge["line"])
+        by_location.setdefault(
+            (path, line),
+            {
+                "caller": str(edge["from_qualified_name"]),
+                "path": path,
+                "line": line,
+                "tier": str(edge["tier"]),
+                "indexed_commit": revision,
+                "evidence": "indirect_call",
+                "via": {
+                    "symbol": str(bridge["from_qualified_name"]),
+                    "path": str(bridge["path"]),
+                    "line": int(bridge["line"]),
+                },
+            },
+        )
+    return list(by_location.values())
 
 
 def _prefer_distinct_test_windows(edges: list[dict[str, Any]], radius: int) -> list[dict[str, Any]]:

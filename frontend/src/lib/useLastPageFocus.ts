@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 export interface LastPageFocusOptions {
   /** A Load more read is in flight. */
@@ -25,7 +25,8 @@ export function useLastPageFocus({
   fallback,
 }: LastPageFocusOptions): (shown: Iterable<string>) => void {
   const before = useRef<Set<string> | null>(null);
-  useEffect(() => {
+  // Finish with this commit so an older passive effect cannot consume a new mark.
+  useLayoutEffect(() => {
     const had = before.current;
     if (had === null || loading) return;
     before.current = null;

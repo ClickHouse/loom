@@ -17,6 +17,8 @@ recording, PR history and the tracker are each off until turned on. An agent or 
 can then ask what was tried before, what was decided and which changes to investigate
 for a regression.
 
+To inspect requests associated with a saved decision, [trace its agent run with SQL](self-hosted-clickhouse.md#trace-a-saved-memory-to-its-agent-run).
+
 Duplicate checks need a registered tracker source and a namespace the caller may read.
 The [bug draft to candidate PRs](../features/tracker/overview.md#from-a-bug-draft-to-candidate-prs)
 walkthrough covers tracker access and PR-history setup for both operations. Candidate ranking neither runs a bisect nor proves

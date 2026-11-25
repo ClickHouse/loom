@@ -765,7 +765,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
 | `related_on_miss` | `bool` | `False` | Recover a missing call's qualified argument in a literal or batch, or one member spelling in malformed call alternatives (default true on coding connections). |
 | `related_on_prefix` | `bool` | `False` | Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. |
-| `include_dependencies` | `bool` | `False` | Include the resolved argument definition and direct helper in related source. |
+| `include_dependencies` | `bool` | `False` | Include verified argument definitions, helpers, or forwarding call targets. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
@@ -1140,6 +1140,8 @@ Read inclusive, one-based indexed lines.
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `include_lessons` | `bool` | `True` | Attach `lessons`: the memories about the answer's top files (for code.context_pack, a `task` briefing's only). |
+| `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces `lessons` reads besides the repository's team rules (over MCP the caller's memory home, filled in); one the caller cannot read is skipped. |
 | `org` | `str` | `''` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | `''` | The namespace the op reads or writes. |
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
@@ -1152,6 +1154,8 @@ Read inclusive, one-based indexed lines.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `results` | `list[CodeReadRange]` |  |
 | `as_of` | `dict[str, Any]` |  |
 

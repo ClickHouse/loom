@@ -42,6 +42,7 @@ async def test_batch_dependencies_use_exact_and_related_witnesses(monkeypatch) -
         budget=None,
         incomplete=False,
         whole_page=True,
+        definitions=[],
     )
     assert reason == "" and result and result.matches == [focused]
 

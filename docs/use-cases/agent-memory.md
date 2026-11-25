@@ -1,6 +1,8 @@
 ---
 title: Memory for coding agents across sessions and tools
-description: Choose and evaluate shared memory for coding agents with cross-session recall, scoped access, corrected facts and lessons linked to current code.
+description: Compare repository instructions, session history, and shared memory for coding agents. Test recall, scoped access, and lessons linked to code.
+seo:
+  title: Shared memory for coding agents
 ---
 
 # Memory for coding agents across sessions and tools
@@ -35,10 +37,20 @@ to see who saved the lesson and how it changed.
 
 ## Choosing a memory tool for coding agents
 
-The best memory tool for a coding agent depends on what it needs to remember. Keep
-repository instructions in version control when every checkout needs the same rules.
-Use a shared memory service when a correction, project decision or past fix must be
-available across sessions, tools or teammates, with control over who can read it.
+Choose a source based on what the next agent needs to retrieve and who maintains it.
+
+| Source                                      | Use it for                                                              | What to verify                                                                      |
+| ------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Repository instructions such as `AGENTS.md` | Build commands and reviewed rules every checkout needs.                 | The client loads the expected instructions at the target revision.                  |
+| Session history                             | The exact command, tool output or discussion from a past session.       | The client can find the original event and respects its access and retention rules. |
+| [Document search](document-search.md)       | A passage from an approved runbook, policy or design document.          | The passage cites the source and revision that support the answer.                  |
+| Shared agent memory                         | A decision, correction or lesson another authorized client should find. | A fresh session retrieves the current claim and can check its writer and evidence.  |
+
+For a retry-policy change, keep the required test command in repository instructions.
+Keep a failed test's exact output in its session history or CI record. Save why
+the team changed the retry behavior as a shared lesson, and link it to the
+definition that implements the change. When the policy comes from a document, use
+[memory and document retrieval together](../concepts/memory.md#how-agent-memory-and-rag-work-together).
 
 Check these requirements before choosing Loom:
 
@@ -48,6 +60,7 @@ Check these requirements before choosing Loom:
 | Shared context across tools    | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript. |
 | Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false.    |
 | Access and operations          | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers.           |
+| Data portability               | [Export a decision as Markdown and check it in a fresh namespace](../features/integrations/okf.md#test-agent-memory-portability).              |
 
 Follow [coding-agent setup](../getting-started/connect-a-coding-agent.md) for the plugin
 or MCP connection your client supports. Read its capture settings before using private
@@ -77,6 +90,25 @@ An exact-key read checks storage and wiring. Evaluate semantic retrieval separat
 with questions that do not name the key, including questions the store cannot answer.
 To measure the effect on completed work, [compare coding tasks with and without memory](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
 using the same acceptance tests.
+
+## Switch coding agents with shared project memory
+
+To switch from Claude Code to Codex or Cursor, connect the new client to the same Loom
+server and project namespace. The new session can retrieve decisions already saved there.
+
+1. Pick a reviewed decision the next agent needs, such as why a retry needs an idempotency
+   key. If it only exists in client-local notes or a transcript, check it against the
+   source, then explicitly save the decision in the shared namespace. Keep rules that
+   apply to every checkout in version control.
+2. On an authenticated server, give the new client its own token scoped to the project
+   namespace. Start a fresh session and give it the exact key and scope shown in the
+   saved memory. Compare the returned value and writer with the original. Check the
+   current source before applying a code-linked decision.
+3. For work in progress, include the branch, commit, and remaining checks in the task
+   handoff. Keep each client's local configuration and session history with that client.
+
+Use the [authenticated Claude Code-to-Codex check](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex)
+to verify the handoff on a disposable key before switching a project.
 
 ## What you get
 

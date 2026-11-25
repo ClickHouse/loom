@@ -61,6 +61,21 @@ def test_legacy_exports_cite_and_link_to_the_published_docs(tmp_path: Path) -> N
     assert f'content="0; url={canonical}"' in (tmp_path / "index.html").read_text()
 
 
+def test_legacy_not_found_page_points_readers_to_current_docs(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text("old HTML")
+    error_page = tmp_path / "404.html"
+    error_page.write_text('<nav><a href="/loom/guides/">Old navigation</a></nav>')
+
+    redirect_pages(tmp_path, _CONFIG["site_url"])
+
+    html = error_page.read_text()
+    assert '<meta name="robots" content="noindex">' in html
+    assert '<a href="https://loom.clickhouse.com/docs">ClickHouse Loom documentation</a>' in html
+    assert "Old navigation" not in html
+    assert 'http-equiv="refresh"' not in html
+    assert 'rel="canonical"' not in html
+
+
 @pytest.mark.parametrize("homepage", [True, False])
 def test_page_metadata_identifies_the_software_or_document(homepage: bool) -> None:
     config = {**_CONFIG, "site_name": "ClickHouse Loom", "site_description": "Agent memory."}

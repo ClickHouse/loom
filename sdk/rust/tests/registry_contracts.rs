@@ -10432,6 +10432,16 @@ fn code_read() {
         serde_json::from_str("{\"results\":[],\"as_of\":{}}").unwrap();
     let encoded = serde_json::to_value(value).unwrap();
     assert!(encoded.is_object());
+    assert_eq!(
+        encoded["lessons"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.read:lessons"
+    );
+    assert_eq!(
+        encoded["lessons_left_out"],
+        serde_json::from_str::<serde_json::Value>("0").unwrap(),
+        "code.read:lessons_left_out"
+    );
 }
 #[test]
 fn code_tests_for() {

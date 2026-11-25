@@ -51,6 +51,16 @@ def code_response_counts(result: dict[str, Any], *, op_name: str = "") -> dict[s
         counts["grep_match_lines"] = len(matches)
     if isinstance(related, dict) and isinstance(matches := related.get("matches"), list):
         counts["grep_related_lines"] = len(matches)
+    if op_name == "code.read":
+        windows = [
+            window["text"]
+            for row in rows[1:]
+            if isinstance(row.get("windows"), list)
+            for window in row["windows"]
+            if isinstance(window, dict) and isinstance(window.get("text"), str) and window["text"]
+        ]
+        counts["source_windows"] = len(windows)
+        counts["source_chars"] += sum(map(len, windows))
     omitted = result.get("lessons_left_out")
     if type(omitted) is int and omitted >= 0:
         counts["lesson_rows_omitted"] = omitted
@@ -72,6 +82,7 @@ def record_response_counts(projected: dict[str, str]) -> None:
         names = (
             "source_bodies",
             "source_chars",
+            "source_windows",
             "elided_bodies",
             "lesson_rows",
             "lesson_chars",

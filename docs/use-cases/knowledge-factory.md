@@ -10,6 +10,9 @@ that teams can review and reuse. Loom stores versioned documents, shared memorie
 and links from lessons to code, so a later agent can retrieve a decision and see the
 evidence behind it.
 
+Use the [knowledge factory pilot scorecard](https://loom.clickhouse.com/knowledge-factory#pilot-scorecard)
+to choose what to check before running this walkthrough.
+
 ## Decide what to keep
 
 | What you learned                                      | Where to keep it                                                                                               | What the next agent can inspect                                           |

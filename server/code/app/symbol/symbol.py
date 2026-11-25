@@ -43,6 +43,7 @@ from server.code.app.symbol.neighbours import (
 )
 from server.code.app.symbol.outline import _container_skeleton, _is_large_container
 from server.code.app.symbol.resolve import (
+    _indexed_commit,
     _parse_location,
     _resolve_symbols,
     _seed_ids_of,
@@ -162,7 +163,7 @@ class _SymbolLegs:
         input: CodeSymbolInput,
         rows: list[dict[str, Any]],
         *,
-        include_owner: bool,
+        for_edit: bool,
         matched_members: bool,
     ) -> None:
         head = rows if matched_members else rows[:10]
@@ -197,7 +198,7 @@ class _SymbolLegs:
                 ns,
                 input,
                 head,
-                include_owner=include_owner,
+                for_edit=for_edit,
                 matched_members=matched_members,
             )
         )
@@ -346,7 +347,7 @@ async def _enrichment(
     input: CodeSymbolInput,
     head: list[dict[str, Any]],
     *,
-    include_owner: bool = False,
+    for_edit: bool = False,
     matched_members: bool = False,
 ) -> dict[str, Any]:
     """Enrichment of the first definition (recent PRs, usage examples, lessons), the
@@ -408,6 +409,18 @@ async def _enrichment(
             ),
             callers,
         )
+        if for_edit and len(head) == 1 and not (named or sites):
+            definition = head[0]
+            revision = _indexed_commit(
+                definition.get("extent_commit") or definition.get("indexed_commit")
+            )
+            with code_span("enrich.indirect_examples"):
+                return await code_enrich.bounded(
+                    code_enrich.indirect_test_examples(
+                        repo, org, ns, sids, definition, revision, input.example_context_lines
+                    ),
+                    [],
+                )
         by_line = {(site["path"], site["line"]): site for site in sites}
         named = [by_line.pop((site["path"], site["line"]), site) for site in named]
         if by_line and all(site.get("evidence") == "name_reference" for site in named):
@@ -437,7 +450,7 @@ async def _enrichment(
         out["examples"] = examples
     if lessons_out is not None:
         out["lessons"] = lessons_out
-    if include_owner and (matched_members or _uses_brief.single_declaration(head)):
+    if for_edit and (matched_members or _uses_brief.single_declaration(head)):
         with code_span("enrich.owner_context"):
             out.update(
                 await code_enrich.bounded(_owner_context(repo, org, ns, input, head[0], out), {})
@@ -645,7 +658,7 @@ async def handle_code_symbol(
         ns,
         input,
         rows,
-        include_owner=op_name == "code.edit_context",
+        for_edit=op_name == "code.edit_context",
         matched_members=matched_members,
     )
     try:

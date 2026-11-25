@@ -8,7 +8,8 @@ lessons are); a slow or failed file leaves completed files' lessons intact. A to
 narrowed below its namespaces reads none (the memory rows are not filtered by user),
 as code.symbol's lessons do.
 `include_lessons: false` or `code_result_lessons` off skips the read. Search and
-grep can focus a file's lessons on returned definitions. `code.symbol` reads the
+grep can focus a file's lessons on returned definitions, and code.read on returned
+source windows. `code.symbol` reads the
 lessons linked to the requested symbol itself."""
 
 from __future__ import annotations
@@ -21,12 +22,14 @@ from typing import Any
 
 from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput, GrepDependency
 from server.code.api.models_navigation import CodeEnclosingInput
+from server.code.api.models_read import CodeReadInput, CodeReadOutput
 from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import common, enrich, memory_links
 from server.code.app.search_legs import resolve_deadline_ms
-from server.code.app.spans import code_span
+from server.code.app.spans import code_span, span_attrs
 from server.code.domain import deadline as code_deadline
 from server.code.domain.anchor import local_name
+from server.core.ch import caller_shaped
 from server.identity.app import request_scope
 from server.memory.app import code_plane_reads, path_lessons
 from server.settings import settings
@@ -36,11 +39,35 @@ PathsOf = Callable[[Any, Any], Iterable[str]]
 logger = logging.getLogger(__name__)
 
 
-def _top_paths(paths: Iterable[str]) -> list[str]:
-    """The answer's first distinct files, in its order, as many as the setting reads,
-    spelled as the index stores them (code.impact passes the caller's `files` as given)."""
-    distinct = dict.fromkeys(filter(None, map(common.repo_relative, paths)))
-    return list(distinct)[: settings.code_result_lessons_paths]
+def _result_paths(paths: Iterable[str]) -> list[str]:
+    """Distinct result paths in order, spelled as the index stores them."""
+    return list(dict.fromkeys(filter(None, map(common.repo_relative, paths))))
+
+
+async def _scoped_lesson_paths(
+    org: str,
+    namespaces: list[str],
+    trunk: str,
+    paths: list[str],
+    symbols: dict[str, set[str]],
+    source: path_lessons.SourceSpans,
+    remaining: float,
+) -> list[str]:
+    limit = settings.code_result_lessons_paths
+    if not trunk or not namespaces or not any(path in symbols for path in paths[limit:]):
+        return paths[:limit]
+    # Keep most of the shared deadline for reading the actual lessons.
+    timeout_s = remaining / 3
+    with code_span("enrich.lesson_paths", seeds=len(paths)) as sp, caller_shaped():
+        linked = await enrich.bounded(
+            path_lessons.paths_with_matched_links(
+                org, namespaces, trunk, paths, symbols, source, timeout_s=timeout_s
+            ),
+            set(),
+            seconds=timeout_s,
+        )
+        span_attrs(sp, results=len(linked))
+    return sorted(paths, key=lambda path: path not in linked)[:limit]
 
 
 def _searched_namespace(input: Any) -> str:
@@ -72,13 +99,13 @@ async def lessons_for(
     *,
     query: str = "",
     matched_symbols: dict[str, set[str]] | None = None,
-    grep_lines: path_lessons.GrepMatchLines | None = None,
+    source: path_lessons.SourceSpans | None = None,
 ) -> path_lessons.Lessons:
     """The completed lessons for the answer's top `paths`; none when off, narrowed,
     past the call's deadline, or unable to read the scope. `started` is the call's
     monotonic start."""
-    top = _top_paths(paths)
-    if not (input.include_lessons and settings.code_result_lessons and top):
+    offered_paths = _result_paths(paths)
+    if not (input.include_lessons and settings.code_result_lessons and offered_paths):
         return path_lessons.Lessons([])
     if request_scope.request_narrowed():
         return path_lessons.Lessons([])  # a token that may not read every user's memories
@@ -101,6 +128,14 @@ async def lessons_for(
         if resolved is None or remaining <= 0:
             return path_lessons.Lessons([])
         org, nss, trunk, on_trunk = resolved
+        top = offered_paths[: settings.code_result_lessons_paths]
+        if on_trunk and source is not None and matched_symbols:
+            top = await _scoped_lesson_paths(
+                org, nss, trunk, offered_paths, matched_symbols, source, remaining
+            )
+            remaining = bound - (time.monotonic() - read_started)
+            if remaining <= 0:
+                return path_lessons.Lessons([])
         if isinstance(input, CodeSearchInput):
             query = input.query
         elif isinstance(input, CodeGrepInput):
@@ -114,7 +149,7 @@ async def lessons_for(
                 token_budget=settings.code_result_lessons_tokens,
                 timeout_s=remaining,
                 matched_symbols=matched_symbols if on_trunk else None,
-                grep_lines=grep_lines,
+                source=source,
                 query=query,
             )
         except Exception as e:  # noqa: BLE001 — lesson enrichment must not fail the code answer
@@ -136,12 +171,14 @@ class WithLessons:
         out = await self.handler(input)
         query = _enclosing_query(out) if isinstance(input, CodeEnclosingInput) else ""
         symbols = None
-        grep_lines = None
+        source = None
         if isinstance(input, CodeGrepInput) and input.mode == "matches":
             dependencies = out.related.dependencies if out.related is not None else ()
-            symbols, grep_lines = _grep_match_scopes(
+            symbols, source = _grep_match_scopes(
                 _grep_matches(out), out._match_commits, dependencies
             )
+        elif isinstance(input, CodeReadInput):
+            symbols, source = _read_match_scopes(out)
         elif isinstance(input, CodeSearchInput):
             symbols = _search_match_symbols(out)
         found = await lessons_for(
@@ -150,7 +187,7 @@ class WithLessons:
             started,
             query=query,
             matched_symbols=symbols,
-            grep_lines=grep_lines,
+            source=source,
         )
         out.lessons, out.lessons_left_out = found.rows, found.left_out
         return out
@@ -160,7 +197,7 @@ def _grep_match_scopes(
     matches: Iterable[dict[str, Any]],
     commits: dict[tuple[str, int], str],
     dependencies: Iterable[GrepDependency],
-) -> tuple[dict[str, set[str]], path_lessons.GrepMatchLines]:
+) -> tuple[dict[str, set[str]], path_lessons.SourceSpans]:
     """Retain the scopes and revisions of hits and their verified dependencies."""
     symbols: dict[str, set[str]] = {}
     lines: dict[str, set[int]] = {}
@@ -181,7 +218,19 @@ def _grep_match_scopes(
             scope = local_name(dependency.qualified_name, dependency.path)
             symbols.setdefault(dependency.path, set()).add(scope)
             revisions.setdefault(dependency.path, set()).add(dependency._indexed_commit)
-    return symbols, path_lessons.GrepMatchLines(lines, revisions)
+    return symbols, path_lessons.SourceSpans(lines, revisions)
+
+
+def _read_match_scopes(out: CodeReadOutput) -> tuple[dict[str, set[str]], path_lessons.SourceSpans]:
+    revisions: dict[str, set[str]] = {}
+    windows: dict[str, list[tuple[int, int]]] = {}
+    for result in out.results:
+        if result.windows:
+            revisions.setdefault(result.path, set()).add(result.indexed_commit)
+            windows.setdefault(result.path, []).extend(
+                (window.start_line, window.end_line) for window in result.windows
+            )
+    return {path: set() for path in windows}, path_lessons.SourceSpans({}, revisions, windows)
 
 
 def _search_match_symbols(out: CodeSearchOutput) -> dict[str, set[str]]:
@@ -208,6 +257,10 @@ def _symbols_by_path(rows: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
 
 
 # The files each code answer returns, best first.
+
+
+def read_paths(_input: CodeReadInput, out: CodeReadOutput) -> list[str]:
+    return [result.path for result in out.results if result.windows]
 
 
 def _grep_matches(out: CodeGrepOutput) -> list[dict[str, Any]]:

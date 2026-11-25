@@ -74,7 +74,7 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     )
     include_dependencies: bool = Field(
         default=False,
-        description="Include the resolved argument definition and direct helper in related source.",
+        description="Include verified argument definitions, helpers, or forwarding call targets.",
     )
     # False matches `pattern` regardless of letter case.
     case_sensitive: bool = True

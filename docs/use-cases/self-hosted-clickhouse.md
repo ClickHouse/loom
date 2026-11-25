@@ -115,6 +115,35 @@ of a key ever labeled `high` and gives the reason in `value_withheld`. Under the
 Postgres authority, the version appears once it has been
 [published to ClickHouse](../reference/sql-surface.md#freshness).
 
+### Trace a saved memory to its agent run
+
+Use the same SQL reader to inspect the requests recorded for the run attached to a
+memory. For a test, [start a run](../reference/operations/run.md#runbegin) and pass
+its `run_id` to [`memory.set`](../reference/operations/memory.md#memoryset) with
+the same identity. Keep the `memory_id` from the write. Reopen the ClickHouse client
+with the same reader and add `--param_memory_id=<uuid>`, using the returned ID.
+
+```sql
+SELECT ts, run_id, operation, success, request_id
+FROM loom.sql_v1_agent_events
+WHERE (org, namespace, agent, user_id, session_id, run_id) IN (
+    SELECT org, namespace, agent, user_id, session_id, run_id
+    FROM loom.sql_v1_memories
+    WHERE org = 'dev'
+      AND namespace = 'local'
+      AND memory_id = {memory_id:UUID}
+      AND run_id NOT IN ('', '-')
+)
+ORDER BY ts, request_id;
+```
+
+Read the timestamps, operation statuses and request IDs to see what the agent did
+during the run. The query matches the saved memory's org, namespace, agent, user,
+session and run ID. It returns no rows for a memory without a run or for a run
+with no requests in the [ledger's retention window](../reference/sql-surface.md#sql_v1_agent_events).
+Allow the [ledger to flush](../reference/sql-surface.md#freshness) before checking
+requests that just finished.
+
 ### Count active memories by agent and source
 
 Use the same SQL reader to see how many active, unexpired memories each agent has by

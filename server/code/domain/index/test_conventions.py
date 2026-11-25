@@ -23,6 +23,7 @@ from server.code.domain.index import coverage_claim as cc
 _PAYLOAD_SEGMENTS: frozenset[str] = frozenset(
     {"testdata", "fixtures", "__fixtures__", "__snapshots__"}
 )
+TEST_PAYLOAD_PATH_PATTERN = rf"(?:^|/)(?:{'|'.join(sorted(_PAYLOAD_SEGMENTS))})/"
 _TEST_DIR_SEGMENTS: frozenset[str] = frozenset({"tests", "test"})
 _JS_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 _TS_TEST_RE = re.compile(r"\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$")
@@ -171,4 +172,10 @@ def sibling_test_paths(path: str) -> list[str]:
     return [x for x in dict.fromkeys(out) if x != p][:_MAX_SIBLINGS]
 
 
-__all__ = ["is_test_unit_path", "sibling_test_paths", "snake", "test_unit_names"]
+__all__ = [
+    "TEST_PAYLOAD_PATH_PATTERN",
+    "is_test_unit_path",
+    "sibling_test_paths",
+    "snake",
+    "test_unit_names",
+]

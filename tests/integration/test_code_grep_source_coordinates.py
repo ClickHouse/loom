@@ -241,9 +241,116 @@ def use(client: Client):
 
 
 @pytest.mark.asyncio
+async def test_named_forwarder_returns_its_verified_implementation(ch_client, monkeypatch) -> None:
+    org, ns = unique_org("grep-forwarding"), "source"
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    await get_client().connect()
+    await ingest_file(
+        CodeRepo(),
+        org,
+        ns,
+        path="src/service.py",
+        source=b'''def implement(value):
+    return value + 1
+
+def dispatch(value):
+    """Delegate implementation to the internal handler."""
+    return implement(value)
+
+class Queue:
+    def dispatch(self, value):
+        return self.pending.append(value)
+
+def alternate(value):
+    return value - 1
+
+def other_dispatch(value):
+    return alternate(value)
+
+def conditional(value):
+    if value:
+        return implement(value)
+    return 0
+
+class Service:
+    def implementation(self, value):
+        return value * 2
+
+    def forward(self, value):
+        return self.implementation(value)
+''',
+        commit_sha="a" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    args = CodeGrepInput(
+        org=org,
+        namespace=ns,
+        pattern=["def dispatch", "def conditional"],
+        include_dependencies=True,
+    )
+    out = await handle_code_grep(args)
+    exact = await handle_code_grep(args.model_copy(update={"include_dependencies": False}))
+    assert out.matches == exact.matches
+    assert out.definitions == exact.definitions
+    assert out.related and not out.related.matches and exact.related is None
+    assert out.related.pattern == "src.service::dispatch"
+    [dependency] = out.related.dependencies
+    assert dependency.qualified_name == "src.service::implement"
+    assert dependency.body.splitlines() == ["def implement(value):", "    return value + 1"]
+    for changes in (
+        {"include_body": False},
+        {"context_lines": 0},
+        {"pattern": "dispatch"},
+        {"pattern": "def conditional"},
+        {"pattern": ["def dispatch", "def other_dispatch"]},
+        {"pattern": ["def dispatch", "def implement"]},
+    ):
+        assert (await handle_code_grep(args.model_copy(update=changes))).related is None
+    enclosed = await handle_code_grep(
+        args.model_copy(update={"pattern": ["class Service", "def forward"]})
+    )
+    assert any("return value * 2" in d.get("body", "") for d in enclosed.definitions)
+    assert enclosed.related is None
+
+
+@pytest.mark.asyncio
+async def test_ending_proof_survives_recovery_of_nested_class_source(
+    ch_client, monkeypatch
+) -> None:
+    org, ns = unique_org("grep-recovered-ending"), "source"
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    await get_client().connect()
+    repo = CodeRepo()
+    path = "nested.py"
+    pattern = "def exact():\n"
+    await ingest_file(
+        repo,
+        org,
+        ns,
+        path=path,
+        source=b"class Outer:\n    class Middle:\n        class Inner:\n            def exact():\n                return 1\n",
+        commit_sha="b" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    pool = await repo.grep_chunks(org, ns, pattern, limit=3)
+    assert [row["kind"] for row in pool] == ["class_skeleton"] * 3
+    result = await handle_code_grep(CodeGrepInput(org=org, namespace=ns, pattern=pattern, limit=1))
+    assert [(row["path"], row["line"], row["text"]) for row in result.matches] == [
+        (path, 4, "def exact():"),
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("early_hits", [4, 20])
+@pytest.mark.parametrize("tail_pattern", ["def tail_requested", "def tail_requested():\n"])
 async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
-    ch_client: Any, monkeypatch: pytest.MonkeyPatch, early_hits: int
+    ch_client: Any, monkeypatch: pytest.MonkeyPatch, early_hits: int, tail_pattern: str
 ) -> None:
     from server.transport.mcp_defaults import mcp_default_arguments
 
@@ -286,7 +393,7 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
                 "function",
                 scope,
                 1,
-                1,
+                2 if path.startswith("projected/") else 1,
                 content,
                 [0.0] * settings.embedding_dim,
                 1,
@@ -298,6 +405,15 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
                 ("edges/b.py", "real_needle", "real needle source\n"),
                 ("edges/c.py", "trailing_cr", "target\r\n"),
                 ("edges/d.py", "interior_cr", "real target\r rest\n"),
+                ("endings/0.py", "synthetic_end", "check_ending()\n"),
+                ("endings/a.py", "unterminated", "check_ending()"),
+                ("endings/b.py", "line_feed", "check_ending()\n"),
+                ("endings/c.py", "carriage_return", "check_ending()\r\n"),
+                ("endings/d.py", "older_chunk", "check_ending()\n"),
+                ("projected/a.reference", "", "check_ending()\n… clipped reference\n"),
+                ("projected/b.ipynb", "cell", "def cell():\n    check_ending()\n"),
+                ("projected/c.ipynb", "cell", "def cell():\n    check_ending()\n"),
+                ("projected/z.py", "physical", "def physical():\n    check_ending()\n"),
             )
         ],
         column_names=[
@@ -316,6 +432,21 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             "indexed_commit",
         ],
     )
+    ch_client.insert(
+        "loom.code_files",
+        [
+            [org, ns, "endings/0.py", "python", 1, "b" * 40],
+            [org, ns, "endings/a.py", "python", 1, "b" * 40],
+            [org, ns, "endings/b.py", "python", 2, "b" * 40],
+            [org, ns, "endings/c.py", "python", 2, "b" * 40],
+            [org, ns, "endings/d.py", "python", 2, "c" * 40],
+            [org, ns, "projected/a.reference", "reference", 3, "b" * 40],
+            [org, ns, "projected/b.ipynb", "python", 5, "b" * 40],
+            [org, ns, "projected/c.ipynb", "python", 5, "b" * 40],
+            [org, ns, "projected/z.py", "python", 3, "b" * 40],
+        ],
+        column_names=["org", "namespace", "path", "lang", "loc", "indexed_commit"],
+    )
     args = {
         "org": org,
         "namespace": ns,
@@ -324,7 +455,7 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             "def REQUESTED",
             "match_alpha",
             "match_beta",
-            "def tail_requested",
+            tail_pattern,
             "def forbidden",
         ],
         "path_globs": ["src/**"],
@@ -350,7 +481,7 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
         witnesses = await repo.grep_pattern_chunks(
             org,
             ns,
-            ["def REQUESTED", "match_alpha", "match_beta", "def tail_requested", "def forbidden"],
+            ["def REQUESTED", "match_alpha", "match_beta", tail_pattern, "def forbidden"],
             case_sensitive=False,
             path_prefix="",
             scope=build_scope(path_globs=["src/**"]),
@@ -369,6 +500,59 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             limit=2,
         )
         assert [row["path"] for row in exact_lines] == ["edges/b.py", "edges/d.py"]
+        endings = ["check_ending()\n", "check_ending()\r\n"]
+        ending_witnesses = await repo.grep_pattern_chunks(
+            org,
+            ns,
+            endings,
+            case_sensitive=True,
+            path_prefix="endings/",
+            scope=build_scope(),
+            exclude_paths=[],
+            limit=3,
+        )
+        ending_hits = await handle_code_grep(
+            CodeGrepInput(org=org, namespace=ns, pattern=endings, path_prefix="endings/")
+        )
+        assert [row["path"] for row in ending_witnesses] == ["endings/b.py", "endings/c.py"]
+        assert [(row["path"], row["line"], row["text"]) for row in ending_hits.matches] == [
+            ("endings/b.py", 1, "check_ending()"),
+            ("endings/c.py", 1, "check_ending()"),
+        ]
+        scalar_ending = await handle_code_grep(
+            CodeGrepInput(org=org, namespace=ns, pattern=endings[0], path_prefix="endings/")
+        )
+        assert [row["path"] for row in scalar_ending.matches] == ["endings/b.py"]
+        projected = CodeGrepInput(
+            org=org,
+            namespace=ns,
+            pattern=endings,
+            path_prefix="projected/",
+            exclude_globs=["projected/z.py"],
+        )
+        assert not (await handle_code_grep(projected)).matches
+        plain = await handle_code_grep(projected.model_copy(update={"pattern": "check_ending()"}))
+        assert [row["path"] for row in plain.matches] == [
+            "projected/a.reference",
+            "projected/b.ipynb",
+            "projected/c.ipynb",
+        ]
+        assert not await repo.grep_pattern_chunks(
+            org,
+            ns,
+            endings,
+            case_sensitive=True,
+            path_prefix="projected/",
+            scope=build_scope(exclude_globs=["projected/z.py"]),
+            exclude_paths=[],
+            limit=3,
+        )
+        physical = await handle_code_grep(
+            CodeGrepInput(
+                org=org, namespace=ns, pattern=endings[0], path_prefix="projected/", limit=1
+            )
+        )
+        assert [row["path"] for row in physical.matches] == ["projected/z.py"]
 
         async def missing_pool(*args: Any, **kwargs: Any) -> None:
             return None

@@ -1371,7 +1371,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.read": (
         "Read inclusive, one-based indexed lines. Pass path, start_line, optional end_line "
-        "or ranges of such objects or path:start-end strings."
+        "or ranges of such objects or path:start-end strings. Returns linked notes with "
+        "the source. Set include_lessons=false when you already have them."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "

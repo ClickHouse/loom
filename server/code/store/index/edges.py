@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.code.domain.index.test_conventions import TEST_PAYLOAD_PATH_PATTERN
 from server.code.domain.index.test_gate import TEST_PATH_PATTERN
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched
@@ -457,6 +458,7 @@ class EdgesMixin(CodeRepoBase):
         per_match: int | None = None,
         with_revision: bool = False,
         tests_only: bool = False,
+        distinct_callers_at: str = "",
     ) -> list[dict[str, Any]]:
         """One hop of live edges. Both tiers returned with tier marked; the
         service layer prefers scip edges per (from,to) pair.
@@ -495,16 +497,28 @@ class EdgesMixin(CodeRepoBase):
         graph expansion that ignores edge confidence ranks worse.
 
         `tests_only` filters call-site paths before LIMIT so production callers
-        cannot crowd out test examples."""
+        cannot crowd out test examples. `distinct_callers_at` caps distinct
+        incoming caller IDs after selecting live edges at that source revision.
+        With `tests_only`, that read also excludes fixture and data paths.
+        """
         if not symbol_ids:
             return []
+        if distinct_callers_at and (direction != "callers" or per_match or not with_revision):
+            raise ValueError(
+                "Distinct caller reads require incoming revisioned edges without per_match"
+            )
         match_col = "to_symbol_id" if direction == "callers" else "from_symbol_id"
         kinds = edge_kinds or ["calls"]
         per_match_sql = f"LIMIT {{per_match:UInt32}} BY {match_col}" if per_match else ""
+        if distinct_callers_at:
+            per_match_sql = "LIMIT 1 BY from_symbol_id"
         revision_sql = (
             ", toString(argMax(indexed_commit, version)) AS indexed_commit" if with_revision else ""
         )
         tests_sql = "AND match(path, {test_path_pattern:String})" if tests_only else ""
+        if tests_only and distinct_callers_at:
+            tests_sql += " AND NOT match(path, {payload_path_pattern:String})"
+        current_sql = "AND indexed_commit = {source_revision:String}" if distinct_callers_at else ""
         rows = await self._ch.query_all(
             f"""
             SELECT tier, edge_kind, to_symbol_id, from_symbol_id, path, line,
@@ -519,6 +533,7 @@ class EdgesMixin(CodeRepoBase):
               {tests_sql}
             GROUP BY tier, edge_kind, to_symbol_id, from_symbol_id, path, line
             HAVING is_live = 1 AND confidence >= {{minc:Float32}}
+              {current_sql}
             ORDER BY tier DESC, confidence DESC, path, line, to_qualified_name, from_qualified_name,
                      to_symbol_id, from_symbol_id
             {per_match_sql}
@@ -532,6 +547,12 @@ class EdgesMixin(CodeRepoBase):
                 "limit": limit,
                 "minc": float(min_confidence),
                 **({"test_path_pattern": TEST_PATH_PATTERN} if tests_only else {}),
+                **({"source_revision": distinct_callers_at} if distinct_callers_at else {}),
+                **(
+                    {"payload_path_pattern": TEST_PAYLOAD_PATH_PATTERN}
+                    if tests_only and distinct_callers_at
+                    else {}
+                ),
                 **({"per_match": int(per_match)} if per_match else {}),
             },
         )

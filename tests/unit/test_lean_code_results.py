@@ -4,6 +4,7 @@ and drops the bookkeeping of how it was found."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import server.transport.lean_results as lr
@@ -388,6 +389,85 @@ def test_lean_grep_omits_redundant_metadata_only_with_complete_source() -> None:
     assert lean["related"]["definitions"] == [expected]
     assert definition["signature"] == "(self, value: str)"
     assert definition["body_elided"] is False
+
+
+def test_lean_grep_refs_exact_nested_source_without_losing_a_body() -> None:
+    method = {
+        "path": "a.py",
+        "symbol_id": "method",
+        "start_line": 3,
+        "end_line": 4,
+        "body": "        def read(self):\r\n            return 'source\u2028data'\r\n",
+    }
+    inner = {
+        "path": "a.py",
+        "symbol_id": "inner",
+        "start_line": 2,
+        "end_line": 4,
+        "body": "    class Inner:\r\n" + method["body"],
+    }
+    outer = {
+        "path": "a.py",
+        "symbol_id": "outer",
+        "start_line": 1,
+        "end_line": 4,
+        "body": "class Outer:\r\n" + inner["body"],
+    }
+    other_file = {**method, "symbol_id": "other", "path": "b.py"}
+    altered = {**method, "symbol_id": "changed", "body": method["body"].replace("data", "code")}
+    elided = {**method, "symbol_id": "elided", "body_elided": True}
+    payload = {
+        "definitions": [method, inner, outer, other_file, altered, elided],
+        "definitions_note": "One definition was elided.",
+    }
+
+    result = lean_code("code.grep", payload)
+
+    rows = {row["symbol_id"]: row for row in result["definitions"]}
+    assert rows["method"]["body_in_symbol_id"] == rows["inner"]["body_in_symbol_id"] == "outer"
+    assert "body" not in rows["method"] and "body" not in rows["inner"]
+    assert [rows[r["symbol_id"]]["body"] for r in (outer, other_file, altered, elided)] == [
+        r["body"] for r in (outer, other_file, altered, elided)
+    ]
+    assert result["definitions_note"] == payload["definitions_note"]
+    assert method["body"] and inner["body"]
+
+
+def test_lean_grep_near_output_boundary_only_shrinks_the_page() -> None:
+    cases = (
+        ("    def nested(self):\n        return ''\n", 3, False),
+        ("    def nested(self):\n        return 'é'\n", 3, False),
+        ('    def f(): return "界界界界界界界界"\n', 2, False),
+        (f"    def nested(self):\n        return '{'x' * 21}'\n", 3, True),
+    )
+    for body, end_line, smaller in cases:
+        child = {
+            "path": "sample.py",
+            "symbol_id": "a" * 32,
+            "start_line": 2,
+            "end_line": end_line,
+            "body": body,
+        }
+        parent = {
+            **child,
+            "symbol_id": "b" * 32,
+            "start_line": 1,
+            "body": "class Outer:\n" + body,
+        }
+        payload = {"definitions": [parent, child], "definitions_note": ""}
+        payload["definitions_note"] = "x" * (49_970 - len(json.dumps(payload)))
+
+        result = lean_code("code.grep", payload)
+
+        for ascii_only, encoding in ((True, "utf-8"), (False, "utf-8"), (False, "utf-16-le")):
+            before = json.dumps(payload, ensure_ascii=ascii_only).encode(encoding)
+            after = json.dumps(result, ensure_ascii=ascii_only).encode(encoding)
+            assert len(after) <= len(before)
+        assert result["definitions_note"] == payload["definitions_note"]
+        if smaller:
+            assert result["definitions"][1]["body_in_symbol_id"] == parent["symbol_id"]
+        else:
+            assert result["definitions"][1] == child
 
 
 def test_symbol_keeps_ids_only_when_several_definitions_answer() -> None:

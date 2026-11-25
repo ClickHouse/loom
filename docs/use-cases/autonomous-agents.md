@@ -2,7 +2,7 @@
 title: Auditable memory for autonomous agents
 description: Give autonomous AI agents self-hosted long-term memory. Resume a stopped job, reuse facts across runs, and audit who wrote each fact.
 seo:
-  title: Self-hosted memory for autonomous AI agents
+  title: Memory for autonomous AI agents
 ---
 
 # Memory, recall, audit and erasure for autonomous agents
