@@ -2173,7 +2173,7 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "For source excerpts, set `include_body: false` and `context_lines`. "
         "Use mode=files for paths only and regex=true for RE2.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
-        "Use a zero radius for match locations. "
+        "For locations, set `include_body: false`, `context_lines: 0`. "
         "Use code.search for behavior or code.edit_context for a known definition. "
         "Call prefixes and misses can return related source and notes. "
         "Use code.read for exact lines. "
