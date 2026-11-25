@@ -1050,6 +1050,10 @@ settings:
   # How many of an answer's files, in rank order, its `lessons` are read for. [live]
   # code_result_lessons_paths: 3
 
+  # Maximum metadata rows per query when ordering paths with matching lessons. Above
+  # this limit, the answer keeps its original path order. [restart]
+  # code_lesson_path_hint_rows: 512
+
   # --- repository access ---
 
   # True lets every authenticated principal of the org read every configured code

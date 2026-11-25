@@ -927,6 +927,9 @@ class CodeSettings(BaseModel):
     code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=0, ge=0)
     # How many of an answer's files, in rank order, its `lessons` are read for.
     code_result_lessons_paths: Annotated[int, LIVE] = Field(default=3, ge=1, le=10)
+    # Maximum metadata rows per query when ordering paths with matching lessons.
+    # Above this limit, the answer keeps its original path order.
+    code_lesson_path_hint_rows: int = Field(default=512, ge=1, le=512)
     # --- repository access ---
     # True lets every authenticated principal of the org read every configured
     # code namespace (right for public or org-internal repos); false leaves reads
