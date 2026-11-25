@@ -1,17 +1,17 @@
 import { defineConfig } from "blume";
 import { vercel } from "blume/deploy";
+import { publisher, siteDescription, siteUrl, website } from "./lib/site-identity.mjs";
 
 export default defineConfig({
-  title: "ClickHouse Loom",
+  title: website.name,
   logo: {
-    href: "https://loom.clickhouse.com/",
+    href: siteUrl,
     image: "/loom.svg",
-    text: "ClickHouse Loom",
+    text: website.name,
   },
-  description:
-    "Self-hosted MCP server that gives AI agents shared long-term memory, document search with citations, and a code index stored in ClickHouse.",
+  description: siteDescription,
   deployment: vercel({
-    site: "https://loom.clickhouse.com",
+    site: new URL(siteUrl).origin,
     base: "/docs",
   }),
   content: {
@@ -20,6 +20,10 @@ export default defineConfig({
   },
   seo: {
     sitemap: { alternates: true },
+    jsonLd: {
+      websiteId: website["@id"],
+      organizationId: publisher["@id"],
+    },
   },
   lastModified: "frontmatter",
   agents: {
