@@ -231,28 +231,45 @@ Connect both plugins to the same authenticated Loom server. Give each client its
 writer token for the same disposable namespace. The example uses org `acme` and namespace
 `team-check`. Substitute the scope in your tokens.
 
-In Claude Code, ask the agent to call `loom_memory_set` with these arguments:
+In Claude Code, ask the agent to call `loom_op` with this input:
 
 ```json
 {
-  "org": "acme",
-  "namespace": "team-check",
-  "agent": "handoff-example",
-  "user_id": "-",
-  "session_id": "-",
-  "memory_key": "example/cross-client/release-review",
-  "value": "Review the rollout checklist before deploying the sample service.",
-  "if_match_sha256": "absent"
+  "op": "memory.set",
+  "arguments": {
+    "org": "acme",
+    "namespace": "team-check",
+    "agent": "handoff-example",
+    "user_id": "-",
+    "session_id": "-",
+    "memory_key": "example/cross-client/release-review",
+    "value": "Review the rollout checklist before deploying the sample service.",
+    "if_match_sha256": "absent"
+  }
 }
 ```
 
 Record the returned `memory_id`. If the key already exists, use a fresh test key and
 keep the precondition.
 
-Open a fresh Codex session. Ask it to call `loom_memory_get` with the same `org`,
-`namespace`, `agent`, `user_id`, `session_id` and `memory_key`. Give Codex only these
-fields so it has to retrieve the value. Require `found: true`, the same `memory_id`,
-the exact value and the Claude Code credential's principal in `actor`.
+Open a fresh Codex session and give it only this read input for `loom_op`:
+
+```json
+{
+  "op": "memory.get",
+  "arguments": {
+    "org": "acme",
+    "namespace": "team-check",
+    "agent": "handoff-example",
+    "user_id": "-",
+    "session_id": "-",
+    "memory_key": "example/cross-client/release-review"
+  }
+}
+```
+
+Require `found: true`, the same `memory_id`, the exact value and the Claude Code
+credential's principal in `actor`.
 
 Delete the sample memory in the dashboard when finished. This check verifies a handoff
 by exact key. For semantic recall and denied-access cases, follow the
