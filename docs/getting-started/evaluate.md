@@ -139,6 +139,9 @@ Record the server-enforced namespace access for each identity. Report cross-clie
 recall and denied-access results separately, with the client, operation and expected
 response.
 
+[Reuse a SQL lesson across sessions](../use-cases/self-hosted-clickhouse.md#reuse-sql-lessons-across-agent-sessions)
+to check how a fresh client handles a saved predicate after a schema change.
+
 ### Compare coding agents with and without memory
 
 Replay the same coding tasks with and without access to saved lessons. Grade the
