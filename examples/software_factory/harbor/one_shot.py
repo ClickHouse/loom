@@ -106,7 +106,7 @@ def checked_protocol_path(receipt: dict) -> Path:
 
 
 def spending_summary(meter, output):
-    """Keep native solver cost separate from metered setup, Loom and judge traffic."""
+    """Keep native solver and judge costs separate from metered setup and Loom traffic."""
     gateway = meter.summary()
     path = output / "study/live-attempts.json"
     entries = read(path) if path.exists() else []
@@ -115,8 +115,17 @@ def spending_summary(meter, output):
     protocol = output / "study/protocol.json"
     expected = len(read(protocol)["schedule"]) if protocol.exists() else None
     complete = expected is not None and len(costs) == expected and len(known) == expected
+    judge_path = output / "study/judgements/summary.json"
+    judge = read(judge_path) if judge_path.exists() else {}
+    judge_status = judge.get("status")
+    if judge_status is None and any(judge_path.parent.glob("pair-*.intent.json")):
+        judge_status = "unsettled"
     return {
-        "metered_setup_loom_judging": gateway,
+        "metered_setup_and_loom": gateway,
+        "native_judge": {
+            "status": judge_status,
+            "reported_cost_usd": judge.get("generation_cost_usd"),
+        },
         "native_solver": {
             "observed_attempts": len(costs),
             "expected_attempts": expected,

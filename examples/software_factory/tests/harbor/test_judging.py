@@ -53,7 +53,12 @@ class BlindJudging(unittest.TestCase):
             "schedule_sha256": digest(self.schedule),
             "model_id": "claude-haiku-5-5",
             "index_tier": "per-arm",
-            "judge": {"enabled": True, "seed": 741, "output_tokens": 4096},
+            "judge": {
+                "enabled": True,
+                "seed": 741,
+                "model_id": "claude-haiku-5-5",
+                "runtime": "claude-code",
+            },
         }
         self.history = self.root / "public-history.json"
         self.history.write_text(json.dumps({"public_documents": {}}))
@@ -72,17 +77,10 @@ class BlindJudging(unittest.TestCase):
 
     def response(self):
         return {
-            "blocks": [
-                {
-                    "toolUse": {
-                        "name": "record_verdict",
-                        "input": {
-                            "fixed": {"A": True, "B": None, "C": False, "D": True, "E": False},
-                            "reason": "Source assessment.",
-                        },
-                    }
-                }
-            ],
+            "structured_output": {
+                "fixed": {"A": True, "B": None, "C": False, "D": True, "E": False},
+                "reason": "Source assessment.",
+            },
             "generation_cost_usd": 0.01,
         }
 
@@ -117,11 +115,11 @@ class BlindJudging(unittest.TestCase):
     def test_structured_verdict_preserves_unknown_and_rejects_nonboolean_or_multiple(self):
         self.assertIsNone(parse_verdict(self.response(), "ABCDE")["fixed"]["B"])
         invalid = self.response()
-        invalid["blocks"][0]["toolUse"]["input"]["fixed"]["A"] = 1
+        invalid["structured_output"]["fixed"]["A"] = 1
         with self.assertRaises(ValueError):
             parse_verdict(invalid, "ABCDE")
         invalid = self.response()
-        invalid["blocks"] *= 2
+        invalid["structured_output"] = [self.response()["structured_output"]] * 2
         with self.assertRaises(ValueError):
             parse_verdict(invalid, "ABCDE")
 
@@ -139,13 +137,13 @@ class BlindJudging(unittest.TestCase):
         self.protocol["memory_histories"]["issue"]["fixture_sha256"] = hashlib.sha256(
             self.history.read_bytes()
         ).hexdigest()
-        provider = Mock(step=Mock(return_value=self.response()))
+        judge = Mock(return_value=self.response())
         with patch(
             "examples.software_factory.harbor.judging.task_inputs",
             return_value=(None, None, self.task, None),
         ):
-            run_judging(self.protocol, self.entries, provider=provider)
-        blocks = provider.step.call_args.args[0][0]["content"]
+            run_judging(self.protocol, self.entries, judge=judge)
+        blocks = judge.call_args.args[2]
         text = "\n".join(block["text"] for block in blocks)
         self.assertIn("Preserve the documented zero-value behavior.", text)
         self.assertNotIn("HIDDEN_WORKING_SENTINEL", text)
@@ -158,72 +156,57 @@ class BlindJudging(unittest.TestCase):
         self.assertEqual(base, self.task.files["src/flask/app.py"])
 
     def test_missing_or_mutated_history_refuses_before_judge_dispatch(self):
-        provider = Mock(step=Mock(return_value=self.response()))
+        judge = Mock(return_value=self.response())
         self.history.write_text('{"public_documents": {"changed": "data"}}')
         with patch(
             "examples.software_factory.harbor.judging.task_inputs",
             return_value=(None, None, self.task, None),
         ):
             with self.assertRaises(PermissionError):
-                run_judging(self.protocol, self.entries, provider=provider)
-        provider.step.assert_not_called()
+                run_judging(self.protocol, self.entries, judge=judge)
+        judge.assert_not_called()
 
-    def test_owned_judge_uses_only_the_frozen_opaque_inference_route(self):
-        token = self.root / "opaque.env"
-        token.write_text("ANTHROPIC_API_KEY=OPAQUE_GATEWAY_TOKEN\n")
-        self.protocol["inference"] = {
-            "base_url": "http://127.0.0.1:12345",
-            "credentials_file": str(token),
-        }
-        self.protocol["credentials_file"] = "/unreadable/legacy.env"
-        self.protocol["judge"]["model_id"] = self.protocol["model_id"]
-        provider = Mock(step=Mock(return_value=self.response()))
+    def test_owned_judge_receives_the_frozen_protocol_and_verdict_schema(self):
         with (
             patch(
-                "examples.software_factory.factory.anthropic_provider.AnthropicProvider"
-            ) as constructor,
-            patch("examples.software_factory.harbor.runtime.native_audit"),
-            patch(
-                "examples.software_factory.harbor.runtime.ObservedProvider", return_value=provider
-            ),
+                "examples.software_factory.harbor.judging.native_judge",
+                return_value=self.response(),
+            ) as judge,
             patch(
                 "examples.software_factory.harbor.judging.task_inputs",
                 return_value=(None, None, self.task, None),
             ),
         ):
             run_judging(self.protocol, self.entries)
-        constructor.assert_called_once_with(
-            "OPAQUE_GATEWAY_TOKEN",
-            self.protocol["model_id"],
-            approved_model_id=self.protocol["model_id"],
-            base_url="http://127.0.0.1:12345",
-            role="judge",
-        )
+        judge.assert_called_once()
+        protocol, task_id, _sections, schema = judge.call_args.args
+        self.assertIs(protocol, self.protocol)
+        self.assertEqual(task_id, "issue")
+        self.assertEqual(set(schema["properties"]["fixed"]["required"]), set("ABCDE"))
 
     def test_judging_is_once_per_complete_pair_with_independent_cost_and_no_raw_edits(self):
-        provider = Mock(step=Mock(return_value=self.response()))
+        judge = Mock(return_value=self.response())
         before = {p: p.read_bytes() for p in self.root.glob("trial-*/verifier/candidate.json")}
         with patch(
             "examples.software_factory.harbor.judging.task_inputs",
             return_value=(None, None, self.task, None),
         ):
-            result = run_judging(self.protocol, self.entries, provider=provider)
-            repeated = run_judging(self.protocol, self.entries, provider=provider)
-        self.assertEqual(provider.step.call_count, 1)
+            result = run_judging(self.protocol, self.entries, judge=judge)
+            repeated = run_judging(self.protocol, self.entries, judge=judge)
+        self.assertEqual(judge.call_count, 1)
         self.assertEqual(result["generation_cost_usd"], 0.01)
         self.assertEqual(result["attempts"], repeated["attempts"])
         self.assertEqual({p: p.read_bytes() for p in before}, before)
-        sent = provider.step.call_args.args[0]
-        self.assertEqual(len(sent), 1)
+        sent = judge.call_args.args[2]
         self.assertNotIn("hidden_grade", json.dumps(sent))
 
     def test_incomplete_cohort_and_interrupted_intent_never_dispatch_automatically(self):
-        provider = Mock()
-        result = run_judging(self.protocol, self.entries[:1], provider=provider)
+        judge = Mock()
+        result = run_judging(self.protocol, self.entries[:1], judge=judge)
         self.assertEqual(result["status"], "awaiting_complete_cohort")
         folder = self.root / "judgements"
         folder.mkdir()
         (folder / "pair-00.intent.json").write_text("{}")
         with self.assertRaises(PermissionError):
-            run_judging(self.protocol, self.entries, provider=provider)
-        provider.step.assert_not_called()
+            run_judging(self.protocol, self.entries, judge=judge)
+        judge.assert_not_called()

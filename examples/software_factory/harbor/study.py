@@ -845,8 +845,6 @@ async def run(protocol_path: Path, kind: str, *, meter=None, cache_quiet_since=N
             raise PermissionError(
                 "A Loom session returned no indexed source. See the fairness audit."
             )
-        if meter is not None:
-            meter.set_phase("judge")
         await asyncio.to_thread(
             run_judging,
             protocol,

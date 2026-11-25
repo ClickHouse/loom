@@ -94,6 +94,9 @@ recorded subagent activity. Loom's server ledger supplies attributed provider
 usage and persisted memory writes. Missing measurements stay unknown. Provider
 cost combines solver and Loom usage; setup and posthoc judging stay separate.
 Infrastructure and invoice reconciliation are outside that cost measure.
+The blind judge uses the pinned Claude Code image with structured output and
+separate native usage receipts. It receives the public issue, base source and
+anonymized candidate changes in a read-only environment.
 
 The launcher automates dependencies, isolated services, indexes, historical
 memory and native Harbor jobs. Coding, control solutions, indexing, builds and

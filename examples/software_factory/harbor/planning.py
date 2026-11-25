@@ -120,7 +120,7 @@ def freeze_plan(
             "enabled": True,
             "model_id": lock["model_id"],
             "seed": 741,
-            "output_tokens": 128000,
+            "runtime": "claude-code",
         },
         "success_target": {
             name: {"quality": 1, "provider_cost_ratio_max": 0.8, "agent_time_ratio_max": 0.8}
