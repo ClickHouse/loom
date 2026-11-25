@@ -51,7 +51,7 @@ Before reading a single score, check from the run's own output or the server's l
 - Check cost and time targets for the same arm and matched baseline within each cache state. Leave the cost target unresolved when only fallback estimates or incomplete upstream charges are available. Compare memory cost, time and quality with the same index tier alone. Report linked facts delivered alongside hidden tests and the blind judge.
 - Compare complete sessions for the same task, repeat and cache start. Join model usage and tool replies by tool call ID. Inspect the request and available source after a miss. For a hidden-test failure, check the submitted edit against the verifier and inspect the source and lesson states delivered before the edit.
 - Count model responses as well as tools. Check the next model response before crediting a smaller payload or a batched lookup with saving a turn. See [coding-agent overhead](../../../docs/guides/debugging.md#diagnose-coding-agent-overhead).
-- When excerpts lead to separate implementation and test reads, replay the original clues with default bodies and the test-name clue in one literal batch. Scope both roots with globs and omit `path_prefix`. Compare the evidence and size with all original responses. Check the working revision before counting an edited-file read as replaceable.
+- When literal `code.grep` excerpts lead to separate implementation and test reads, replay the original clues with default bodies and the test-name clue in one batch. Scope both roots with globs and omit `path_prefix`. Compare the evidence and size with all original responses. Check the working revision before counting an edited-file read as replaceable.
 
 ## 5. Write it up
 
