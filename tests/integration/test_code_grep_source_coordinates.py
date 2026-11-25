@@ -242,8 +242,9 @@ def use(client: Client):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("early_hits", [4, 20])
+@pytest.mark.parametrize("tail_pattern", ["def tail_requested", "def tail_requested():\n"])
 async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
-    ch_client: Any, monkeypatch: pytest.MonkeyPatch, early_hits: int
+    ch_client: Any, monkeypatch: pytest.MonkeyPatch, early_hits: int, tail_pattern: str
 ) -> None:
     from server.transport.mcp_defaults import mcp_default_arguments
 
@@ -298,6 +299,9 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
                 ("edges/b.py", "real_needle", "real needle source\n"),
                 ("edges/c.py", "trailing_cr", "target\r\n"),
                 ("edges/d.py", "interior_cr", "real target\r rest\n"),
+                ("endings/a.py", "unterminated", "check_ending()"),
+                ("endings/b.py", "line_feed", "check_ending()\n"),
+                ("endings/c.py", "carriage_return", "check_ending()\r\n"),
             )
         ],
         column_names=[
@@ -324,7 +328,7 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             "def REQUESTED",
             "match_alpha",
             "match_beta",
-            "def tail_requested",
+            tail_pattern,
             "def forbidden",
         ],
         "path_globs": ["src/**"],
@@ -350,7 +354,7 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
         witnesses = await repo.grep_pattern_chunks(
             org,
             ns,
-            ["def REQUESTED", "match_alpha", "match_beta", "def tail_requested", "def forbidden"],
+            ["def REQUESTED", "match_alpha", "match_beta", tail_pattern, "def forbidden"],
             case_sensitive=False,
             path_prefix="",
             scope=build_scope(path_globs=["src/**"]),
@@ -369,6 +373,25 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             limit=2,
         )
         assert [row["path"] for row in exact_lines] == ["edges/b.py", "edges/d.py"]
+        endings = ["check_ending()\n", "check_ending()\r\n"]
+        ending_witnesses = await repo.grep_pattern_chunks(
+            org,
+            ns,
+            endings,
+            case_sensitive=True,
+            path_prefix="endings/",
+            scope=build_scope(),
+            exclude_paths=[],
+            limit=3,
+        )
+        ending_hits = await handle_code_grep(
+            CodeGrepInput(org=org, namespace=ns, pattern=endings, path_prefix="endings/")
+        )
+        assert [row["path"] for row in ending_witnesses] == ["endings/b.py", "endings/c.py"]
+        assert [(row["path"], row["line"], row["text"]) for row in ending_hits.matches] == [
+            ("endings/b.py", 1, "check_ending()"),
+            ("endings/c.py", 1, "check_ending()"),
+        ]
 
         async def missing_pool(*args: Any, **kwargs: Any) -> None:
             return None

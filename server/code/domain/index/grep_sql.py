@@ -73,13 +73,35 @@ def grep_chunks_sql(cond: str, prefix_clause: str, path_sql: str, extra_settings
 
 
 def grep_pattern_chunks_sql(
-    cond: str, prefix_clause: str, path_sql: str, patterns: str, position: str, extra_settings: str
+    cond: str,
+    prefix_clause: str,
+    path_sql: str,
+    patterns: str,
+    position: str,
+    extra_settings: str,
+    *,
+    with_endings: bool = False,
 ) -> str:
     """First live chunk with a physical match per uncovered literal."""
     inner = newest_live(
         "path, scope, symbol_ids, kind, start_line, end_line, content, chunk_id, embedding_model, "
         "indexed_commit",
         _where(cond, prefix_clause, path_sql),
+    )
+    raw_lines = (
+        """
+        , arrayMap(
+            (line, i) -> concat(line, if(i < span OR trailing_lf, char(10), '')),
+            physical_parts, arrayEnumerate(physical_parts)
+        ) AS physical_lines_with_endings
+    """
+        if with_endings
+        else ""
+    )
+    match_lines = (
+        "if(endsWith(literals[i], char(10)), physical_lines_with_endings, physical_lines)"
+        if with_endings
+        else "physical_lines"
     )
     return f"""
             WITH {patterns} AS literals,
@@ -101,10 +123,12 @@ def grep_pattern_chunks_sql(
                                splitByChar(char(10), content) AS source_parts,
                                toInt64(end_line) - toInt64(start_line) + 1 AS span,
                                toInt64(endsWith(content, char(10))) AS trailing_lf,
+                               arraySlice(source_parts, -span - trailing_lf, greatest(0, span))
+                                   AS physical_parts,
                                arrayMap(
                                    line -> left(line, length(line) - endsWith(line, char(13))),
-                                   arraySlice(source_parts, -span - trailing_lf, greatest(0, span))
-                               ) AS physical_lines
+                                   physical_parts
+                               ) AS physical_lines {raw_lines}
                         FROM {inner}
                         AND kind != 'class_skeleton'
                         AND span > 0 AND length(source_parts) >= span + trailing_lf
@@ -121,7 +145,7 @@ def grep_pattern_chunks_sql(
                         )
                     )
                     ARRAY JOIN arrayFilter(
-                        i -> arrayExists(line -> {position}(line, literals[i]) > 0, physical_lines),
+                        i -> arrayExists(line -> {position}(line, literals[i]) > 0, {match_lines}),
                         arrayEnumerate(literals)
                     ) AS pattern_index
                     GROUP BY pattern_index

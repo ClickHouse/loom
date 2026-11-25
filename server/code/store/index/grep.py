@@ -263,6 +263,7 @@ class GrepMixin(CodeRepoBase):
                 pattern_expr,
                 position,
                 code_deadline.break_settings(max_execution_s),
+                with_endings=any(pattern.endswith("\n") for pattern in patterns),
             ),
             {
                 "org": org,
