@@ -18,6 +18,7 @@ HTTP and SDK shapes are unchanged; `explain=true` skips all trimming.
 
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 from io import StringIO
 from typing import Any, NamedTuple
@@ -224,10 +225,7 @@ def _lean_grep(out: dict[str, Any]) -> None:
     definitions = [row for row in out.get("definitions") or [] if isinstance(row, dict)]
     for definition in definitions:
         _lean_grep_definition(definition)
-    if _share_grep_bodies(definitions):
-        note = "A body_in value names the symbol_id containing these source lines on this page."
-        existing = out.get("definitions_note")
-        out["definitions_note"] = f"{existing} {note}" if existing else note
+    _share_grep_bodies(definitions)
     related = out.get("related")
     if isinstance(related, dict):
         out["related"] = lean_code("code.grep", related)
@@ -256,16 +254,15 @@ def _grep_body(definition: dict[str, Any]) -> _GrepBody | None:
     return _GrepBody(definition, start, end, lines) if len(lines) == end - start + 1 else None
 
 
-def _share_grep_bodies(definitions: list[dict[str, Any]]) -> bool:
+def _share_grep_bodies(definitions: list[dict[str, Any]]) -> None:
     """Reference an already returned body only when its covered lines are identical."""
     if len(definitions) < 2:
-        return False
+        return
     ids = Counter(str(row.get("symbol_id") or "") for row in definitions)
     by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in definitions:
         if (path := row.get("path")) and row.get("body"):
             by_path[str(path)].append(row)
-    changed = False
     for rows in by_path.values():
         if len(rows) < 2:
             continue
@@ -275,11 +272,9 @@ def _share_grep_bodies(definitions: list[dict[str, Any]]) -> bool:
             parent_id = _containing_grep_body(child, keep)
             if parent_id:
                 child.row.pop("body")
-                child.row["body_in"] = parent_id
-                changed = True
+                child.row["body_in_symbol_id"] = parent_id
             elif (symbol_id := child.row.get("symbol_id")) and ids[str(symbol_id)] == 1:
                 keep.append(child)
-    return changed
 
 
 def _containing_grep_body(child: _GrepBody, candidates: list[_GrepBody]) -> str:
@@ -288,10 +283,15 @@ def _containing_grep_body(child: _GrepBody, candidates: list[_GrepBody]) -> str:
             continue
         first, last = child.start - parent.start, child.end - parent.start + 1
         parent_id = str(parent.row["symbol_id"])
-        if (
-            0 <= first < last <= len(parent.lines)
-            and len(child.row["body"]) > len(parent_id) + len('"body_in":""')
-            and child.lines == parent.lines[first:last]
+        if not (0 <= first < last <= len(parent.lines) and child.lines == parent.lines[first:last]):
+            continue
+        # Clients can use the text block or encode the structured result as UTF-8.
+        reference = {"body_in_symbol_id": parent_id}
+        body = {"body": child.row["body"]}
+        if all(
+            len(json.dumps(reference, ensure_ascii=ascii_only).encode())
+            < len(json.dumps(body, ensure_ascii=ascii_only).encode())
+            for ascii_only in (True, False)
         ):
             return parent_id
     return ""
