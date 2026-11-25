@@ -89,6 +89,10 @@ class HarborCharts(unittest.TestCase):
                 "Agent time",
                 "Test runs by the agent",
                 "Loom tool calls",
+                "Loom body characters",
+                "Loom line-match characters",
+                "Loom grep context characters",
+                "Loom caller context characters",
                 "Total tool calls",
                 "Memory rows written",
                 "Solver LLM tokens",
@@ -201,6 +205,22 @@ class HarborCharts(unittest.TestCase):
         self.assertEqual(data["run_status"], "grading")
         self.views["evaluation_complete"] = True
         self.assertEqual(chart_data(self.protocol, entries, self.views)["run_status"], "complete")
+
+    def test_source_delivery_does_not_determine_comparison_status(self):
+        entries = [
+            {"order": slot["order"], "result": copy.deepcopy(self.entries[0]["result"])}
+            for slot in self.protocol["schedule"]
+        ]
+        self.views.update(fairness_verified=True, loom_source_verified=False)
+        data = chart_data(self.protocol, entries, self.views)
+        self.assertEqual(data["run_status"], "complete")
+        self.assertTrue(data["fairness_verified"])
+        self.assertFalse(data["loom_source_verified"])
+        self.assertTrue(all(row["comparison_included"] for row in data["attempts"]))
+        self.views.update(fairness_verified=False, loom_source_verified=True)
+        self.assertEqual(
+            chart_data(self.protocol, entries, self.views)["run_status"], "unqualified"
+        )
 
     def test_comparison_requires_every_arm_in_the_same_task_and_repeat(self):
         arms = list(self.views["views"])

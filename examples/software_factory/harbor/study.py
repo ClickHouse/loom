@@ -583,11 +583,20 @@ def export(protocol: dict, job_name="live") -> dict:
     report.update(analyze_cohorts(protocol, entries))
     audit_path = output / "fairness-audit.json"
     audit = read(audit_path) if audit_path.exists() else None
-    routing_verified = (
+    fairness_verified = (
         audit.get("protocol_sha256") == digest(protocol)
         and len(audit["attempts"]) == len(protocol["schedule"])
-        and all(row.get("loom_source_used") is True for row in audit["attempts"])
+        and audit.get("passed") is True
         if audit is not None
+        else None
+    )
+    source_verified = (
+        all(
+            protocol["schedule"][entry["order"]]["mode"] == "baseline"
+            or type(entry["result"].get("first_loom_source_result_event_main")) is int
+            for entry in entries
+        )
+        if len(entries) == len(protocol["schedule"])
         else None
     )
     cache_policy = protocol.get("prompt_cache_isolation")
@@ -598,9 +607,10 @@ def export(protocol: dict, job_name="live") -> dict:
         else "fresh_prompt_cache_verified"
     )
     for comparison in (report, *report["cohorts"].values()):
-        comparison["loom_source_verified"] = routing_verified
+        comparison["fairness_verified"] = fairness_verified
+        comparison["loom_source_verified"] = source_verified
         comparison[cache_field] = cache_verified
-        if routing_verified is not True or cache_verified is False:
+        if fairness_verified is not True or cache_verified is False:
             comparison["observed_targets"]["efficiency_vs_no_loom"] = {}
             comparison["observed_targets"]["memory_vs_code_index"] = {}
     write(output / "paired-report.json", report)
@@ -699,10 +709,14 @@ def export(protocol: dict, job_name="live") -> dict:
                 merged = {**entry["result"], **protocol["schedule"][entry["order"]]}
                 writer.writerow({k: merged.get(k) for k in columns})
     summary["reporting"] = generate_reports(
-        protocol, entries, job_name=job_name, loom_source_verified=routing_verified
+        protocol,
+        entries,
+        job_name=job_name,
+        fairness_verified=fairness_verified,
+        loom_source_verified=source_verified,
     )
-    summary["fairness_verified"] = audit.get("passed") if audit else None
-    summary["loom_source_verified"] = routing_verified
+    summary["fairness_verified"] = fairness_verified
+    summary["loom_source_verified"] = source_verified
     if protocol.get("public_reproduction"):
         summary["public_export"] = export_public(protocol, output / "public-results")
     write(output / "summary.json", summary)
@@ -850,9 +864,9 @@ async def run(protocol_path: Path, kind: str, *, meter=None, cache_quiet_since=N
             audit_fairness, protocol, read(output / "live-attempts.json"), billing=costs
         )
         summary = export(protocol)
-        if not summary["loom_source_verified"]:
+        if not summary["fairness_verified"]:
             raise PermissionError(
-                "A Loom session returned no indexed source. See the fairness audit."
+                "A trial failed the configuration audit. See fairness-audit.json."
             )
         await asyncio.to_thread(
             run_judging,

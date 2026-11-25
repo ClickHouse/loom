@@ -11,7 +11,7 @@ from unittest.mock import patch
 import httpx
 
 from examples.software_factory.factory.model import digest
-from examples.software_factory.harbor.fairness import audit_fairness
+from examples.software_factory.harbor.fairness import audit_fairness, native_mcp_available
 from examples.software_factory.harbor.index import TABLES
 from examples.software_factory.harbor.mcp_qualification import qualified_catalog, qualify
 from examples.software_factory.harbor.native_environment import agent_settings, mcp_settings
@@ -20,6 +20,25 @@ from examples.software_factory.harbor.runtime import write
 
 
 class NativeTreatment(TestCase):
+    def test_native_mcp_availability_requires_startup_evidence(self):
+        for configured, status, tools, passed in (
+            (True, "connected", 23, True),
+            (True, "connected", 0, False),
+            (True, "failed", 23, False),
+            (True, "disabled", 0, False),
+            (True, None, None, False),
+            (False, "disabled", 0, True),
+            (False, "connected", 23, False),
+            (False, "disabled", False, False),
+        ):
+            with self.subTest(configured=configured, status=status, tools=tools):
+                result = {
+                    "loom_connection_at_start": status,
+                    "loom_tools_advertised": tools,
+                    "first_loom_source_result_event_main": None,
+                }
+                self.assertIs(native_mcp_available(result, configured=configured), passed)
+
     def test_mcp_startup_counts_measure_advertised_bytes_and_loading_hints(self):
         instructions = "Use loom_code_grep for café"
         eager = {
@@ -219,7 +238,16 @@ class PublicPromptBytes(TestCase):
                     }
                 },
             }
-            entries = [{"order": 0, "result": {"harbor_trial": str(trial)}}]
+            entries = [
+                {
+                    "order": 0,
+                    "result": {
+                        "harbor_trial": str(trial),
+                        "loom_connection_at_start": "disabled",
+                        "loom_tools_advertised": 0,
+                    },
+                }
+            ]
             billing = {"attempts": {"0": {"proof_status": "known"}}}
             for candidate, expected in (
                 (task_instruction(problem).encode("utf-8"), True),

@@ -37,20 +37,20 @@ to historical knowledge and native memory capability, rather than linking alone.
 
 All arms start from the same agent image. The four Loom arms add one image
 layer with [project instructions](harbor/project-guidance.md) in
-`/workspace/CLAUDE.md`. Claude uses Loom for covered unchanged source and
-linked project history. Local tools handle edits, tests, Git, working-copy reads
-and uncovered source. The baseline uses the common image and local tools. The
-protocol freezes the instruction text and hash. Published runs retain the
-guidance from their serving revision.
+`/workspace/CLAUDE.md`. The guide describes indexed definitions, callers,
+tests and linked history. Claude chooses its tools. The baseline uses the
+common image and local tools. The protocol freezes the instruction text and
+hash. Published runs retain the guidance from their serving revision.
 
 This example uses MCP directly; it does not install the Loom plugin or its hooks.
 The server supplies initialization guidance. Reports record startup connection
 state, advertised Loom tools and loaded Loom skills separately from selected calls.
 
-A Loom session must receive indexed source through MCP to qualify. Harbor keeps
-every trial result. The routing audit withholds comparative target verdicts when
-any Loom session lacks source evidence. Local grep remains available for files
-with working-copy changes, untracked files and paths outside Loom’s coverage.
+Setup verifies that the scoped MCP server returns source from the frozen index.
+The fairness audit checks the scheduled configuration and native startup receipt.
+Harbor scores every completed attempt, including sessions that receive no Loom
+source. The comparison reports source delivery and selected tool calls alongside
+the outcome. Local search remains available to every arm.
 
 Three public issues, five arms and three repeats produce 45 coding sessions.
 Six base/reference controls qualify the grader without model calls. Nine blind

@@ -28,8 +28,8 @@ only when all expected attempts in that arm have completed. Unknown cost and
 tool counts remain unknown.
 
 Every solver receives the same native Claude Code options. The source guidance
-covers the first unchanged-code lookup when Loom is connected. The offline plan
-shows these options and the study compares them with each native attempt receipt.
+describes the context Loom can supply when connected. The offline plan shows
+these options and the study checks them against each native attempt receipt.
 
 `diagnostics/attempt-NN.json` records a passive main-session trace summary after
 each attempt. It counts model responses, tool errors, source characters, lesson

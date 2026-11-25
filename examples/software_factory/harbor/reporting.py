@@ -464,7 +464,9 @@ def _table(arms):
     return "\n".join(lines) + "\n"
 
 
-def generate_reports(protocol, entries, *, job_name="live", loom_source_verified=None):
+def generate_reports(
+    protocol, entries, *, job_name="live", fairness_verified=None, loom_source_verified=None
+):
     """Regenerate aggregates and add each finalized trial's native assets once.
 
     Protocol `reporting` optionally sets viewer_jobs_root, viewer_base_url and
@@ -477,11 +479,21 @@ def generate_reports(protocol, entries, *, job_name="live", loom_source_verified
     with (output / "reporting.lock").open("a") as guard:
         fcntl.flock(guard, fcntl.LOCK_EX)
         return _generate(
-            protocol, entries, output, jobs, base, names, job_name, loom_source_verified
+            protocol,
+            entries,
+            output,
+            jobs,
+            base,
+            names,
+            job_name,
+            fairness_verified,
+            loom_source_verified,
         )
 
 
-def _generate(protocol, entries, output, jobs, base, names, job_name, loom_source_verified):
+def _generate(
+    protocol, entries, output, jobs, base, names, job_name, fairness_verified, loom_source_verified
+):
     from examples.software_factory.harbor.cache_start import study_cache_verified
     from examples.software_factory.harbor.charts import generate_charts
 
@@ -529,6 +541,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name, loom_sourc
         "views": native["views"],
         "links": links,
         "observed_attempts": len(observed),
+        "fairness_verified": fairness_verified,
         "loom_source_verified": loom_source_verified,
         "prompt_cache_isolation": protocol.get("prompt_cache_isolation"),
         "prompt_cache_verified": study_cache_verified(protocol, entries),
@@ -704,6 +717,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name, loom_sourc
         "complete": len(observed) == len(schedule),
         "expected_attempts": len(schedule),
         "observed_attempts": len(observed),
+        "fairness_verified": fairness_verified,
         "loom_source_verified": loom_source_verified,
         "prompt_cache_isolation": views_manifest["prompt_cache_isolation"],
         "prompt_cache_verified": views_manifest["prompt_cache_verified"],
@@ -739,8 +753,10 @@ def _generate(protocol, entries, output, jobs, base, names, job_name, loom_sourc
         "Historical issues and authored experiments are reported separately. "
         "Native Harbor comparison links include all scenarios.\n\n"
     )
+    if fairness_verified is False:
+        text += "Trial configuration failed the fairness audit.\n\n"
     if loom_source_verified is False:
-        text += "At least one Loom session lacked indexed source evidence.\n\n"
+        text += "At least one Loom session completed without recorded indexed source.\n\n"
     if report["prompt_cache_verified"] is False:
         text += "Provider receipts failed the configured prompt-cache verification.\n\n"
     text += _table(primary) + "\n"

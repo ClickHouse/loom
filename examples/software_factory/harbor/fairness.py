@@ -16,6 +16,16 @@ from .runtime import read, verify, write
 from .scopes import selected_scopes
 
 
+def native_mcp_available(result, *, configured):
+    status = result.get("loom_connection_at_start")
+    tools = result.get("loom_tools_advertised")
+    if type(tools) is not int:
+        return False
+    if configured:
+        return status == "connected" and tools > 0
+    return status == "disabled" and tools == 0
+
+
 def index_certificate_matches(protocol):
     certificate = Path(protocol["index_certificate_file"])
     frozen = read(certificate)
@@ -88,8 +98,9 @@ def audit_fairness(protocol, entries, *, billing=None):
                 and hashlib.sha256((build / "loom-guidance/CLAUDE.md").read_bytes()).hexdigest()
                 == protocol["project_guidance"]["sha256"]
             ),
-            "loom_source_used": slot["mode"] == "baseline"
-            or type(result.get("first_loom_source_result_event_main")) is int,
+            "native_mcp_available": native_mcp_available(
+                result, configured=slot["mode"] != "baseline"
+            ),
             "mcp_treatment": servers
             == tomllib.loads(mcp_settings(protocol, slot))
             .get("environment", {})

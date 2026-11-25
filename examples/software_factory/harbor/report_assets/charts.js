@@ -228,7 +228,7 @@ function chart(rows, plannedRows) {
   const target =
     metric.kind === "rate"
       ? 1
-      : data.loom_source_verified === true &&
+      : data.fairness_verified === true &&
           (!data.prompt_cache_isolation || data.prompt_cache_verified === true) &&
           data.complete &&
           rows.length === plannedRows.length &&
@@ -376,7 +376,7 @@ function render() {
   document.querySelector("h1").textContent = "Software factory evaluation";
   byId("run-notice").hidden = !["interrupted", "failed", "unqualified"].includes(status);
   const verificationFailures = [];
-  if (data.loom_source_verified === false) verificationFailures.push("At least one Loom session lacked indexed source evidence.");
+  if (data.fairness_verified === false) verificationFailures.push("Trial configuration failed the fairness audit.");
   if (data.prompt_cache_verified === false) verificationFailures.push("Provider receipts failed the configured prompt-cache verification.");
   byId("run-notice").textContent =
     status === "unqualified"
@@ -404,6 +404,7 @@ function render() {
   byId("study-disclosure").textContent = [
     data.study_role ? `Study role: ${data.study_role}.` : "",
     data.loom_schema_profile ? `All Loom arms use the ${data.loom_schema_profile} MCP catalog.` : "",
+    data.loom_source_verified === false ? "At least one Loom session completed without recorded indexed source." : "",
     ...Object.values(data.memory_treatment || {}),
     `${group.task_ids.length} distinct issues; repeats are not additional issues.`,
   ]

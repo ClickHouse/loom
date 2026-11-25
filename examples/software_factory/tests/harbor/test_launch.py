@@ -123,7 +123,6 @@ class PublicLauncher(unittest.TestCase):
         (self.root / "server/.env").write_text("CREDENTIAL_SENTINEL")
         self.output = self.root / "factory-run"
         agent = self.root / launch.HERE / "agent.json"
-        agent.parent.mkdir(parents=True)
         shutil.copyfile(launch.ROOT / launch.HERE / "agent.json", agent)
         for relative in ("embedding/local_models.py", "core/llm_provider.py"):
             destination = self.root / "server" / relative

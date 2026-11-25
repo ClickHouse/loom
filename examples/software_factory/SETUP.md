@@ -48,8 +48,8 @@ Keep the repository's existing build, test and contribution instructions.
 
 For headless launches, also apply the conditional
 `append_system_prompt` from [agent.json](harbor/agent.json). The instruction
-uses Loom for the first unchanged-source lookup when Loom is connected. The
-project instructions cover subsequent indexed reads, batching and local fallback.
+describes which source and history Loom can retrieve when connected. The project
+instructions cover query shape, batching and when local tools help.
 
 From the Loom checkout, run the plan command to render the exact Flask pilot
 configuration. It makes no model requests. The examples use `jq` to extract
@@ -89,9 +89,8 @@ jq -r 'select(.type == "assistant") | .message.content[]? |
 
 Check that the corresponding `tool_result` contains the expected indexed source.
 For the memory setup, check that a relevant result carries the expected linked
-lesson and inspect its `code_state`. A connected MCP server can still receive
-zero calls. Check follow-up source lookups too, since Claude can use Loom first
-and later search the same indexed roots locally.
+lesson and inspect its `code_state`. Review the session's follow-up lookups to
+see whether Claude reused the returned source or searched the same area again.
 
 Use the [Flask reproduction instructions](evals/flask/REPRODUCE.md) for a paired
 coding comparison. Keep both arms' local tools available. Compare hidden-test

@@ -167,10 +167,10 @@ def chart_data(protocol, entries, views_manifest):
         row["comparison_included"] = row["order"] in paired
     complete = len(observed) == len(protocol["schedule"])
     evaluation_complete = complete and views_manifest.get("evaluation_complete", complete)
-    loom_source_verified = views_manifest.get("loom_source_verified")
+    fairness_verified = views_manifest.get("fairness_verified")
     cache_verified = views_manifest.get("prompt_cache_verified")
     default_status = "complete" if evaluation_complete else "grading" if complete else "partial"
-    if loom_source_verified is False or cache_verified is False:
+    if fairness_verified is False or cache_verified is False:
         default_status = "unqualified"
     return {
         "schema_version": 1,
@@ -192,7 +192,8 @@ def chart_data(protocol, entries, views_manifest):
         "run_status": views_manifest.get("run_status", default_status),
         "interruption_reason": views_manifest.get("interruption_reason", ""),
         "evaluation_complete": evaluation_complete,
-        "loom_source_verified": loom_source_verified,
+        "fairness_verified": fairness_verified,
+        "loom_source_verified": views_manifest.get("loom_source_verified"),
         "prompt_cache_isolation": views_manifest.get("prompt_cache_isolation"),
         "prompt_cache_verified": cache_verified,
         "comparison_url": views_manifest.get("links", {}).get("comparison"),
