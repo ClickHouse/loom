@@ -280,7 +280,7 @@ async function main() {
     (r.snapshot_id !== handoff.snapshot ||
       r.revision !== handoff.revision ||
       r.head_sha !== handoff.commit ||
-      r.brief_key !== handoff.key)
+      r.snapshot_key !== handoff.key)
   ) {
     process.stdout.write("The server did not return the snapshot named by this handoff.\n");
     process.exitCode = 1;

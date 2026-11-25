@@ -12,7 +12,7 @@ type BriefScope = { org: string; namespace: string };
 export function briefHandoffUrl(scope: BriefScope, brief: BriefGetResponse): string | null {
   const ref = {
     ...scope,
-    brief: brief.brief_key,
+    brief: brief.snapshot_key ?? "",
     revision: String(brief.revision),
     snapshot: brief.snapshot_id ?? "",
     commit: brief.head_sha,
@@ -35,7 +35,7 @@ function HandoffPreview({ handoff }: { handoff: SessionHandoffRef }) {
         if (active)
           setResult(
             brief.found &&
-              brief.brief_key === key &&
+              brief.snapshot_key === key &&
               brief.revision === revision &&
               brief.snapshot_id === snapshot &&
               brief.head_sha === commit

@@ -467,7 +467,12 @@ async def _find(inp: SessionBriefGetInput) -> dict[str, Any] | None:
     ch = get_client()
     scope = request_scope()
     if inp.brief_key:
-        key = _stored_key(inp.brief_key, scope)
+        if inp.snapshot_id and inp.brief_key.startswith("~"):
+            key = inp.brief_key
+            if scope.narrowed and not sb.brief_key_ok(_shown_key(key, scope)):
+                return None
+        else:
+            key = _stored_key(inp.brief_key, scope)
         return await repo.current(ch, inp.org, inp.namespace, key, scope=scope)
     rows = await repo.listing(
         ch,
@@ -538,6 +543,7 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
         found=True,
         revision=int(row.get("revision") or 0),
         snapshot_id=str(row.get("version") or ""),
+        snapshot_key=key,
         rendered=sb_render.with_client_summary(rendered, sections) if inp.full else rendered,
         sections=sections if inp.include_sections else None,
         head_sha=str(row.get("head_sha") or ""),

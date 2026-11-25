@@ -10,6 +10,7 @@ export interface BriefGetResponse {
   brief_key: string;
   revision: number;
   snapshot_id?: string;
+  snapshot_key?: string;
   rendered: string;
   project: string;
   branch: string;

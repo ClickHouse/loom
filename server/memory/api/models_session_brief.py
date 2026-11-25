@@ -117,6 +117,7 @@ class SessionBriefGetInput(_Identity):
 
     # The brief to load; takes precedence over `from_session` and `project`.
     # A namespace-wide token may pass a `~<user>~…` key as session.brief_list shows it.
+    # An owner-scoped token may pass its own stored key when reading a snapshot.
     brief_key: str = Field(default="", max_length=STORED_KEY_MAX, pattern=_KEY_OR_EMPTY)
     # Load the newest brief this session id contributed to.
     from_session: str = Field(default="", max_length=200)
@@ -145,6 +146,8 @@ class SessionBriefGetOutput(BaseModel):
     revision: int = 0
     # The database version as a decimal string so JavaScript can preserve every digit.
     snapshot_id: str = ""
+    # The stored key used to address this snapshot across caller scopes.
+    snapshot_key: str = ""
     # The brief as text, with the client's compaction summary appended when `full`.
     rendered: str = ""
     # The structured brief; None unless `include_sections` was set.

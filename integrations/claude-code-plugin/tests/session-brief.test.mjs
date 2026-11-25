@@ -253,6 +253,15 @@ test("both transcripts keep the check summary without copying its raw output", (
     assert.equal(events[1].text, "verification: pytest -q — 9 passed in 0.12s");
     assert.doesNotMatch(JSON.stringify(events), /private diagnostic output/);
   }
+
+  const command = "pytest " + "tests/integration/test_feature.py ".repeat(30);
+  claude[0].message.content[0].input.command = command;
+  codex[0].payload.arguments = JSON.stringify({ cmd: command });
+  for (const input of [claude, codex]) {
+    const note = transcriptEvents(input)[1].text;
+    assert.ok(note.length <= 400);
+    assert.match(note, / — 9 passed in 0\.12s$/);
+  }
 });
 
 test("a window over the cap keeps its head and tail", () => {
@@ -432,7 +441,7 @@ test("handoff restore uses the link's namespace and pinned snapshot on both plug
   const exec = promisify(execFile);
   const commit = "a".repeat(40);
   const snapshot = "9007199254740997";
-  const key = "handoff/feat+x";
+  const key = "~alice~handoff/feat+x";
   try {
     await withServer(
       200,
@@ -477,9 +486,10 @@ test("handoff restore uses the link's namespace and pinned snapshot on both plug
       },
       {
         found: true,
-        brief_key: key,
+        brief_key: "handoff/feat+x",
         revision: 1,
         snapshot_id: snapshot,
+        snapshot_key: key,
         head_sha: commit,
         rendered: "Last recorded verification: pytest passed",
       },

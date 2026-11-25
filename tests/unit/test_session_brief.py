@@ -372,19 +372,20 @@ class _MemCH:
         if "uniqExact(revision)" in sql:
             return {"n": len({r["revision"] for r in self.revisions if r["brief_key"] == p["key"]})}
         if "FROM loom.session_brief_revisions" in sql:
-            assert "revision > (" in sql
+            assert "version > (" in sql
             history = [
                 r
                 for r in self.revisions
                 if (r["org"], r["namespace"], r["brief_key"]) == (p["org"], p["ns"], p["key"])
             ]
             last_delete = max(
-                (r["revision"] for r in history if r["tombstoned_at"] is not None), default=0
+                (r["version"] for r in history if r["tombstoned_at"] is not None), default=0
             )
             hits = [
                 r
                 for r in history
-                if r["revision"] == p["rev"] > last_delete
+                if r["revision"] == p["rev"]
+                and r["version"] > last_delete
                 and ("snapshot" not in p or r["version"] == p["snapshot"])
             ]
             return max(hits, key=lambda r: r["version"]) if hits else None
@@ -1253,6 +1254,76 @@ def test_deleted_handoff_stays_unavailable_after_same_millisecond_recreation(mem
     assert read(replacement.revision, str(mem.rows[-1]["version"])).found
     assert not read(first.revision, snapshot).found
     assert not read(first.revision, "").found
+
+
+def test_a_late_save_with_a_lower_revision_cannot_restore_deleted_content(mem):
+    key = "handoff/late"
+    _save(brief_key=key, sections={"goal": "First"})
+    _save(brief_key=key, sections={"goal": "Second"})
+    before = _save(brief_key=key, sections={"goal": "Before deletion"})
+    old_snapshot = str(mem.rows[-1]["version"])
+
+    # A slower save read revision 1 and wrote its revision 2 after revision 3.
+    late = repo.build_brief_row(mem.rows[1])
+    asyncio.run(mem.insert(repo.TABLE, [late]))
+    deleted = asyncio.run(
+        h.handle_session_brief_delete(SessionBriefDeleteInput(**IDENT, brief_key=key))
+    )
+    assert deleted.revision == 2
+    replacement = _save(brief_key=key, sections={"goal": "After deletion"})
+    assert before.revision == replacement.revision == 3
+
+    pinned = asyncio.run(
+        h.handle_session_brief_get(
+            SessionBriefGetInput(**IDENT, brief_key=key, revision=3, snapshot_id=old_snapshot)
+        )
+    )
+
+    assert not pinned.found
+
+
+def test_scoped_handoff_has_the_same_locator_for_its_owner_and_namespace_viewers(mem):
+    from server.identity.domain.read_scope import ReadFilters, bind_request_read_filters
+    from tests.unit.principals import acting_as, principal
+
+    key = "handoff/owner"
+
+    def get(**options):
+        return asyncio.run(h.handle_session_brief_get(SessionBriefGetInput(**{**IDENT, **options})))
+
+    alice = principal("writer", org="o", namespaces=("ns",), read_user_id="alice")
+    with acting_as(alice):
+        _save(brief_key=key, user_id="alice", sections={"goal": "Owner's handoff"})
+        source = get(brief_key=key)
+        assert source.brief_key == key
+        assert source.snapshot_key == "~alice~handoff/owner"
+        link = {
+            "brief_key": source.snapshot_key,
+            "revision": source.revision,
+            "snapshot_id": source.snapshot_id,
+        }
+        assert get(**link).rendered == source.rendered
+
+    assert get(**link).rendered == source.rendered
+    bob = principal("viewer", org="o", namespaces=("ns",), read_user_id="bob")
+    with acting_as(bob):
+        assert not get(**link).found
+
+    session_token = principal("writer", org="o", namespaces=("ns",), read_scope="own_session")
+    with acting_as(session_token) as auth:
+        bind_request_read_filters(auth, ReadFilters("own_session", "alice", "s1"))
+        _save(brief_key=key, user_id="alice", sections={"goal": "Session's handoff"})
+        session = get(brief_key=key)
+        session_link = {
+            "brief_key": session.snapshot_key,
+            "revision": session.revision,
+            "snapshot_id": session.snapshot_id,
+        }
+        assert get(**session_link).found
+
+    with acting_as(alice):
+        assert not get(**session_link).found
+    assert get(**session_link).found
 
 
 def test_deterministic_revision_uses_the_latest_recorded_verification():

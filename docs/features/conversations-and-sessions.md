@@ -272,7 +272,8 @@ on the same line of work revises the same brief, or `session/<session_id>` when 
 is known. Keys match `^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,159}$`. A token bounded to one
 user (or session) stores its briefs as `~<user>~<key>` (or `~<user>~<session>~<key>`) and
 sees them as `<key>`; a namespace-wide token lists them with that prefix and can get or
-delete them by it. A bounded token can't send a `~` key.
+delete them by it. An owner-scoped token uses its short key for ordinary reads and writes
+and can use its own stored key when reading a handoff snapshot.
 
 **Revising.** A save with `events` (kinds `user`, `assistant`, `edit`, `command`,
 `error`, `read`, `search`, `tool`, `note`, `summary`; up to 4,000 per call) is condensed

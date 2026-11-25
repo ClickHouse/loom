@@ -9603,6 +9603,7 @@ export interface SessionBriefGetOutput {
   brief_key?: string;
   revision?: number;
   snapshot_id?: string;
+  snapshot_key?: string;
   rendered?: string;
   sections?: BriefSections | null;
   project?: string;

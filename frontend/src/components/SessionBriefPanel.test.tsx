@@ -73,9 +73,23 @@ describe("SessionBriefPanel", () => {
 
   it("copies the selected snapshot, including the revision and exact commit", async () => {
     const commit = "b".repeat(40);
+    const snapshotKey = "~alice~auto/loom/feat-x";
     getBrief
-      .mockResolvedValueOnce(found({ snapshot_id: "9007199254740999", head_sha: "a".repeat(40) }))
-      .mockResolvedValueOnce(found({ revision: 1, snapshot_id: "9007199254740997", head_sha: commit }));
+      .mockResolvedValueOnce(
+        found({
+          snapshot_id: "9007199254740999",
+          snapshot_key: snapshotKey,
+          head_sha: "a".repeat(40),
+        }),
+      )
+      .mockResolvedValueOnce(
+        found({
+          revision: 1,
+          snapshot_id: "9007199254740997",
+          snapshot_key: snapshotKey,
+          head_sha: commit,
+        }),
+      );
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", Object.create(navigator, { clipboard: { value: { writeText } } }));
     try {
@@ -90,7 +104,7 @@ describe("SessionBriefPanel", () => {
       expect(Object.fromEntries(url.searchParams)).toEqual({
         org: "o",
         namespace: "ns",
-        brief: "auto/loom/feat-x",
+        brief: snapshotKey,
         revision: "1",
         snapshot: "9007199254740997",
         commit,

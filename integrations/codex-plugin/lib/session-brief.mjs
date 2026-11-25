@@ -94,7 +94,8 @@ function recordVerification(call, text, ts, ref, out) {
     .map((line) => line.trim().replace(/^=+\s*|\s*=+$/g, ""))
     .findLast((line) => CHECK_SUMMARY.test(line));
   if (summary) {
-    out.push({ kind: "note", text: clip(`verification: ${call.command} — ${summary}`, 400), ts, ref });
+    const verification = `verification: ${clip(call.command, 220)} — ${clip(summary, 160)}`;
+    out.push({ kind: "note", text: verification, ts, ref });
   }
 }
 

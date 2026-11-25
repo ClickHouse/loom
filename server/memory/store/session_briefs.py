@@ -149,8 +149,8 @@ async def by_revision(
     scope: ReadFilters,
     snapshot: int | None = None,
 ) -> dict[str, Any] | None:
-    """Read a revision after the last delete. A delete shares the last live
-    revision number, so a later save can start a new history at the next one.
+    """Read a revision written after the last delete. Version orders writes
+    even when concurrent saves reuse or move the revision number backwards.
     """
     params: dict[str, Any] = {"org": org, "ns": namespace, "key": brief_key, "rev": int(revision)}
     snapshot_clause = ""
@@ -166,8 +166,8 @@ async def by_revision(
             FROM {REVISIONS}
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND brief_key = {{key:String}} AND revision = {{rev:UInt32}}{snapshot_clause}
-              AND revision > (
-                  SELECT max(revision) FROM {REVISIONS}
+              AND version > (
+                  SELECT max(version) FROM {REVISIONS}
                   WHERE org = {{org:String}} AND namespace = {{ns:String}}
                     AND brief_key = {{key:String}} AND tombstoned_at IS NOT NULL
               )

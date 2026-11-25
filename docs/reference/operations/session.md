@@ -58,6 +58,7 @@ Load a brief: by `brief_key`, else the newest brief a given session wrote (`from
 | `brief_key` | `str` | Key of the brief that matched. |
 | `revision` | `int` | The revision returned (the current one unless `revision` was asked for). |
 | `snapshot_id` | `str` | The database version as a decimal string so JavaScript can preserve every digit. |
+| `snapshot_key` | `str` | The stored key used to address this snapshot across caller scopes. |
 | `rendered` | `str` | The brief as text, with the client's compaction summary appended when `full`. |
 | `sections` | `BriefSections \| None` | The structured brief; None unless `include_sections` was set. |
 | `project` | `str` | Project stored on the brief. |

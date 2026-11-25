@@ -19520,6 +19520,7 @@ class SessionBriefGetOutput(TypedDict, total=False):
     brief_key: NotRequired[str]
     revision: NotRequired[int]
     snapshot_id: NotRequired[str]
+    snapshot_key: NotRequired[str]
     rendered: NotRequired[str]
     sections: NotRequired[Optional["BriefSections"]]
     project: NotRequired[str]

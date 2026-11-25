@@ -83,12 +83,14 @@ describe("Conversations keeps the open thread in its URL", () => {
   it("opens the pinned handoff in Conversations after a reload", async () => {
     const head = "c".repeat(40);
     const brief = "handoff/case";
+    const key = "~alice~handoff/case";
     const snapshot = "9007199254740997";
     vi.mocked(getBrief).mockResolvedValueOnce({
       found: true,
       brief_key: brief,
       revision: 1,
       snapshot_id: snapshot,
+      snapshot_key: key,
       rendered: "Last recorded verification: pytest passed. Next: ship the fix.",
       project: "proj",
       branch: "fix/case",
@@ -107,13 +109,13 @@ describe("Conversations keeps the open thread in its URL", () => {
     history.replaceState(
       null,
       "",
-      `/conversations?namespace=ns&org=dev&brief=handoff%2Fcase&revision=1&snapshot=${snapshot}&commit=${head}`,
+      `/conversations?namespace=ns&org=dev&brief=${encodeURIComponent(key)}&revision=1&snapshot=${snapshot}&commit=${head}`,
     );
     useStore.getState().bootView("sessions");
     render(<Conversations />);
     expect(await screen.findByText(/Next: ship the fix/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy restore prompt" })).toBeInTheDocument();
-    expect(getBrief).toHaveBeenCalledWith({ org: "dev", namespace: "ns" }, brief, {
+    expect(getBrief).toHaveBeenCalledWith({ org: "dev", namespace: "ns" }, key, {
       revision: 1,
       snapshotId: snapshot,
     });
