@@ -361,6 +361,36 @@ async def test_code_read_focuses_lessons_on_returned_source_windows(env, monkeyp
     assert "lessons" not in scoped.model_dump()
 
 
+async def test_code_read_requires_a_matching_revision_for_linked_lessons(env, monkeypatch) -> None:
+    from server.code.api.models_read import CodeReadInput
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    reader = "src/widgets/reader.py"
+    on_branch = _READER.replace("return url", 'return "release_old"')
+    on_trunk = _READER.replace("return url", 'return "trunk_new"')
+    older = env.commit({reader: on_branch})
+    await _index(BRANCH, env, older, [reader])
+    newer = env.commit({reader: on_trunk})
+    await _index(TRUNK, env, newer, [reader])
+    await _remember(MEM, "notes/fetch", '`fetch_page` returns "trunk_new".', files=[reader])
+    await _pass()
+
+    read = OPERATIONS_BY_NAME["code.read"].handler
+    request = CodeReadInput(
+        org=ORG, namespace=TRUNK, ranges=[f"{reader}:6-7"], lesson_namespaces=[MEM]
+    )
+    trunk = await read(request)
+    assert [(row["memory_key"], row["code_state"]) for row in trunk.lessons] == [
+        ("notes/fetch", "fresh"),
+    ]
+    branch = await read(request.model_copy(update={"namespace": BRANCH}))
+    assert branch.results[0].indexed_commit == older
+    assert "release_old" in branch.results[0].windows[0].text
+    assert not branch.lessons
+
+
 @pytest.mark.parametrize("hidden", ["deleted", "high"])
 async def test_grep_keeps_visible_lessons_ahead_of_ineligible_links(
     env, monkeypatch, hidden

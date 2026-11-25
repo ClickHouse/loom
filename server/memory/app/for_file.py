@@ -504,6 +504,7 @@ async def _rows_for(
                     else ""
                     for a in links
                 ],
+                "source_links": links,
             }
         )
     return out
@@ -658,19 +659,23 @@ def _hit(r: dict[str, Any], input: MemoryForFileInput) -> _MemoryForFileHit:
 
 
 async def listing_rows(
-    input: MemoryForFileInput, *, whole_only: bool = False
+    input: MemoryForFileInput, *, whole_only: bool = False, include_source_links: bool = False
 ) -> tuple[list[dict[str, Any]], bool]:
     """(rows, links skipped) for a reader that lists several files' rows itself: each row the
     hit memory.for_file serves with its `memory_id` and `supersedes_ids` (the older rows it
     is placed above), and whether the code-links read failed (a row reached only by a link
     is then missing). Values are complete so the reader can apply its own output budget.
     `whole_only` keeps decisions and constraints (typed `decision`, or tagged `decision`
-    or `constraint`)."""
+    or `constraint`). `include_source_links` carries private checked link metadata for
+    callers that match the listing to retained source windows."""
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
     rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only, full_values=True)
     return [
-        _with_ids(_hit(r, input), r) | {"code_symbols": r.get("code_symbols", [])} for r in rows
+        _with_ids(_hit(r, input), r)
+        | {"code_symbols": r.get("code_symbols", [])}
+        | ({"source_links": r.get("source_links", [])} if include_source_links else {})
+        for r in rows
     ], skipped
 
 
