@@ -28,7 +28,7 @@ from server.code.app.common import (
     schedule_code_trace,
 )
 from server.code.app.grep_bodies import definitions_for, definitions_tokens
-from server.code.app.grep_dependencies import add_dependencies
+from server.code.app.grep_dependencies import add_dependencies, forwarded_dependency
 from server.code.app.grep_source import (
     GREP_MATCH_TEXT_CHARS,
     ContextSource,
@@ -549,6 +549,7 @@ async def _grep_lines(
         budget=budget,
         incomplete=bool(coverage.get("partial")),
         whole_page=not offset and len(matches) == len(scan.matches),
+        definitions=bodies.get("definitions", []) if not offset else [],
     )
     if missing:
         coverage.update(
@@ -578,9 +579,7 @@ async def _grep_lines(
     risk = "low" if returned else "abstain"
     if (matches and related_pattern) or (extra_related and extra_related.matches):
         risk = "medium"
-    related_tokens = (
-        _extra_related_chars(extra_related) + sum(len(d.body) for d in dependencies)
-    ) // 4
+    related_chars = _extra_related_chars(extra_related) + sum(len(d.body) for d in dependencies)
     schedule_code_trace(
         org=org,
         ns=ns,
@@ -594,7 +593,7 @@ async def _grep_lines(
         top_k=served_limit,
         tokens_returned=sum(len(m["text"]) for m in returned) // 4
         + _context_tokens(context)
-        + related_tokens
+        + related_chars // 4
         + neighbour_tokens
         + definitions_tokens(bodies),
         abstain=not returned,
@@ -756,6 +755,7 @@ async def _related_dependencies(
     budget: code_deadline.Budget | None,
     incomplete: bool,
     whole_page: bool,
+    definitions: list[dict[str, Any]],
 ) -> tuple[RelatedGrepEvidence | None, str]:
     if incomplete or not input.include_dependencies:
         return related, ""
@@ -772,11 +772,13 @@ async def _related_dependencies(
         )
         related.dependencies = evidence.dependencies
         return related, reason
-    if not matches or not whole_page or scan.truncated:
-        return None, ""
-    argument = _batch_dependency_argument(input)
+    argument = (
+        _batch_dependency_argument(input) if matches and whole_page and not scan.truncated else ""
+    )
     if not argument:
-        return None, ""
+        return await forwarded_dependency(
+            repo, org, ns, input, scope, definitions, matches, scan.match_commits, budget
+        )
     evidence = RelatedGrepEvidence(pattern=argument, matches=matches)
     reason = await add_dependencies(
         repo, org, ns, input, evidence, scope, scan.match_commits, budget

@@ -957,7 +957,7 @@ export interface CodeGrepInput {
   related_on_miss?: boolean;
   /** Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. Default true on coding connections. */
   related_on_prefix?: boolean;
-  /** Include the resolved argument definition and direct helper in related source. */
+  /** Include verified argument definitions, helpers, or forwarding call targets. */
   include_dependencies?: boolean;
   case_sensitive?: boolean;
   /** Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. */
