@@ -220,7 +220,7 @@ client afterwards.
 | Emacs with mcp.el and gptel                                         | `mcp-hub-servers` in your init file, then `gptel-mcp-connect`                                                                                                                                                                                                                      | `(setq mcp-hub-servers '(("loom" . (:url "URL"))))` (single-user server only: no header field is documented)                                                                                                                                                                                                                                                        |                                                                    |
 | OpenCode                                                            | `opencode.json` or `.opencode/opencode.json` in the project or a folder above it, or `~/.config/opencode/opencode.json`                                                                                                                                                            | `loom install --client opencode`, or `opencode mcp add loom --url URL --header "Authorization=Bearer <JWT>"`, which in OpenCode 2.x writes `{"mcp": {"servers": {"loom": {"type": "remote", "url": "URL", "headers": {…}}}}}`; the 1.x `opencode-ai` npm package takes `{"mcp": {"loom": {"type": "remote", "url": "URL", "headers": {…}}}}`, which 2.x still reads | configuration checked; connectivity unverified                     |
 | Kilo Code (extension and CLI)                                       | `kilo.jsonc` in the project, or `~/.config/kilo/kilo.jsonc`                                                                                                                                                                                                                        | `{"mcp": {"loom": {"type": "remote", "url": "URL", "headers": {…}}}}`                                                                                                                                                                                                                                                                                               | connected (CLI)                                                    |
-| Cline CLI                                                           | `~/.cline/data/settings/cline_mcp_settings.json`                                                                                                                                                                                                                                   | `cline mcp add loom URL --transport http --header "Authorization: Bearer <JWT>" --yes` (the Cline extension: [`loom install`](#what-it-writes-per-client))                                                                                                                                                                                                          | accepted                                                           |
+| [Cline CLI](#use-shared-memory-in-cline-cli)                        | `~/.cline/data/settings/cline_mcp_settings.json`                                                                                                                                                                                                                                   | `cline mcp add loom URL --transport http --header "Authorization: Bearer <JWT>" --yes` (the Cline extension: [`loom install`](#what-it-writes-per-client))                                                                                                                                                                                                          | verified read                                                      |
 | Google Antigravity                                                  | `~/.gemini/config/mcp_config.json`, or `.agents/mcp_config.json` in the workspace                                                                                                                                                                                                  | `{"mcpServers": {"loom": {"serverUrl": "URL", "headers": {…}}}}` (`url` also works)                                                                                                                                                                                                                                                                                 |                                                                    |
 | Devin Desktop and Devin CLI                                         | `.devin/mcp_config.local.json` in the project (git-ignored, for the token), or `~/.config/devin/mcp_config.json`                                                                                                                                                                   | `{"mcpServers": {"loom": {"url": "URL", "transport": "http", "headers": {…}}}}` (`loom install --client windsurf` writes the older `~/.codeium/windsurf/` path)                                                                                                                                                                                                     | accepted (CLI 3000.12.57 configuration only); Desktop unmeasured   |
 | Qwen Code                                                           | `~/.qwen/settings.json`, or `.qwen/settings.json`                                                                                                                                                                                                                                  | `qwen mcp add --transport http loom URL --header "Authorization: Bearer <JWT>"`                                                                                                                                                                                                                                                                                     | connected (`qwen mcp list`)                                        |
@@ -266,13 +266,16 @@ client afterwards.
 - `starts`: the client's check started the extension, which a rejected token stops (goose
   1.59.1).
 - `accepted`: the client wrote or accepted the entry; a successful server connection was
-  not established (Cline CLI 3.0.74, GitHub Copilot CLI 1.0.110, Amp 0.0.1794715238,
+  not established (GitHub Copilot CLI 1.0.110, Amp 0.0.1794715238,
   Auggie CLI 0.37.1, Qoder and Qoder CN 1.1.90, Muse Code 1.4.20, Grok Build 1.0.77,
   Devin CLI 3000.12.57).
   The Qoder, Muse and Grok checks used a nonworking test URL without credentials; their
   token/header handling was not tested.
 - `installed`: version and help were checked, without an MCP connection or successful
   MCP configuration check (Junie 26.11.1, Kimi Code 2.5.3, MiniMax mcode 0.7.7, Kiro CLI 3.3.0).
+- `verified read`: Cline CLI 3.0.75 retrieved a value saved over HTTP from a
+  loopback Loom server. The check used a scripted local model provider to invoke the
+  actual MCP tool.
 - `qualified`: the linked page's qualification cases were run through that entry, with the
   results it tables.
 
@@ -355,6 +358,28 @@ Checked with Copilot CLI 1.0.112: the install, the update, the marketplace insta
 `copilot mcp get loom`, and MCP `initialize` and `tools/list` through the entry pointed at
 a local Loom on another port. A Copilot session needs a sign-in and was not run, so whether
 a session offers the tools to the model is untested.
+
+### Use shared memory in Cline CLI
+
+Start the [single-user quickstart](../../getting-started/quickstart.md), then add its
+Streamable HTTP URL to Cline CLI.
+
+```bash
+cline mcp add loom http://127.0.0.1:7777/mcp --transport http --yes
+```
+
+For a team deployment, use its HTTPS MCP URL and pass
+`--header "Authorization: Bearer $LOOM_API_KEY"` with a token scoped to the namespace
+the client should read. For an isolated CLI test, set `CLINE_MCP_SETTINGS_PATH` to an
+explicit settings file in the test directory before adding the server and keep it set
+when launching Cline.
+
+Save an example fact from another client or through
+[the HTTP quickstart](../../getting-started/quickstart.md#4-first-memory-over-http).
+Start a fresh Cline session and ask it to call `loom_memory_get` with the key. Check
+the tool response for `found: true` and the exact saved value. This checks that Cline
+reads shared memory through the configured server without copying the earlier
+conversation into its prompt.
 
 ### Hosted builders and chat apps
 
