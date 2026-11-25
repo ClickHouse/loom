@@ -78,15 +78,22 @@ function fetchCopyHistory(repository, revision) {
 
 function productDatesAt(repository, revision, publicPages, dates) {
   const result = {};
+  const sharedDates = [
+    "docs/components/SiteFrame.astro",
+    "docs/components/documentation-link.ts",
+    "docs/components/site-locales.ts",
+    "docs/scripts/home-locales.json",
+    "docs/lib/site-identity.mjs",
+  ].map((path) => dates.get(path));
   for (const [route, destination] of Object.entries(publicPages)) {
     if (route === "/adoption") continue; // Live adoption data changes outside Git.
     const page = destination.slice("/docs/".length);
     const [name, locale = "en"] = page.split("/").reverse();
-    const pageDate = dates.get(`docs/pages/${page}.astro`);
+    let pageDate = dates.get(`docs/pages/${page}.astro`);
     if (!pageDate) continue;
 
     const files = localizedPages[name];
-    const updates = [pageDate, dates.get("docs/components/SiteFrame.astro"), dates.get("docs/lib/site-identity.mjs")];
+    let componentDate;
     if (files) {
       const [component, copy] = files;
       const key = locale.includes("-") ? JSON.stringify(locale) : locale;
@@ -101,9 +108,13 @@ function productDatesAt(repository, revision, publicPages, dates) {
         `/^  ${key}: {$/,/^  },$/:docs/components/${copy}`,
       ]);
       if (!date) continue;
-      updates.push(new Date(date).toISOString(), dates.get(`docs/components/${component}`));
+      const copyDate = new Date(date).toISOString();
+      if (copyDate > pageDate) pageDate = copyDate;
+      componentDate = dates.get(`docs/components/${component}`);
     }
-    result[route] = updates.filter(Boolean).sort().at(-1);
+    // A shared edit can change only one variant. Its file date cannot prove when this page changed.
+    if ([...sharedDates, componentDate].some((date) => date && date > pageDate)) continue;
+    result[route] = pageDate;
   }
   return result;
 }

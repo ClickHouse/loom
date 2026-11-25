@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { readSiteDates } from "./content-dates.mjs";
 
-test("dates a localized page only when its own copy or shared content changes", (t) => {
+test("dates a localized page from page-specific changes and skips ambiguous shared edits", (t) => {
   const repository = mkdtempSync(join(tmpdir(), "loom-product-page-dates-"));
   t.after(() => rmSync(repository, { recursive: true, force: true }));
 
@@ -64,8 +64,17 @@ test("dates a localized page only when its own copy or shared content changes", 
   write("components/HomePage.astro", "<main>Shared main content and a new link</main>");
   commit("2026-01-03T00:00:00Z");
   assert.deepEqual(readSiteDates(repository, pages).productDates, {
-    "/": "2026-01-03T00:00:00.000Z",
-    "/pt-BR": "2026-01-03T00:00:00.000Z",
+    "/platform": "2026-01-01T00:00:00.000Z",
+  });
+  write(
+    "components/home-copy.ts",
+    homeCopy
+      .replace("Agent memory", "Shared agent memory")
+      .replace("Memória para agentes", "Memória compartilhada para agentes"),
+  );
+  commit("2026-01-04T00:00:00Z");
+  assert.deepEqual(readSiteDates(repository, pages).productDates, {
+    "/pt-BR": "2026-01-04T00:00:00.000Z",
     "/platform": "2026-01-01T00:00:00.000Z",
   });
 });
