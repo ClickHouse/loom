@@ -154,12 +154,15 @@ found a lesson. A patch score measures whether it completed the work.
    ancestors, including in its Git objects and refs. Keep the fix, later
    discussions, and evaluator tests out of the inputs, memory, and index.
    Restrict remote repository and issue access that could reveal the solution.
-   Keep the same code index, ordinary tools, model, time, and token budgets in both
-   runs when measuring memory alone. When a tool also changes search or capture,
-   describe the result as a comparison of the complete setups.
+   For a comparison of memory alone, index the same source in both setups and
+   keep the model, ordinary tools, and budgets fixed. Give each setup its own
+   memory scope and credentials. Start the baseline with an empty store and
+   verify that its code lookups and hook-injected context contain no saved
+   lessons. When a tool changes search or capture too, compare the complete
+   setups.
 3. **Use fresh sessions and separate workspaces.** Start both runs at the recorded
    commit and apply the same acceptance tests in an evaluator workspace. Restore
-   the starting memory snapshot before each replay so one run cannot teach the
+   each setup's memory snapshot before each replay so one run cannot teach the
    next. Give each timeout, missing patch, and failed required check a failing
    outcome and keep the reason in the report.
 4. **Record the result per task.** Keep both test outcomes, elapsed times, and
