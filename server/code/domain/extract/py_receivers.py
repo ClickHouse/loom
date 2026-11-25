@@ -13,8 +13,8 @@ whose callee's return annotation is known (`x = make_client()` with
 file and answers "what is the receiver written at this line", the shape of
 `ts_receivers.ReceiverTyper` so the call ladder's rung 2b
 narrows the candidates of `query` to `…::Client::query` unchanged. A direct
-loop can also bind names unpacked from a list of fixed tuples declared on the
-instance in its initializer.
+loop can also recover a recursive call to the owning class when an initializer's
+instance field declares that class in a fixed tuple position.
 
 Pure over the parse; no I/O.
 """
@@ -322,7 +322,7 @@ def _typing_container(head: str, imports: dict[str, tuple[str, str]]) -> str:
 
 
 def _tuple_items(
-    annotation: Any, source: bytes, imports: dict[str, tuple[str, str]]
+    annotation: Any, source: bytes, imports: dict[str, tuple[str, str]], owner: str
 ) -> tuple[str, ...]:
     head, args = _generic_parts(annotation, source)
     if _typing_container(head, imports) != "list" or len(args) != 1:
@@ -336,33 +336,39 @@ def _tuple_items(
     ]
     # A starred type or Unpack can describe any number of positions.
     if any(
-        item.type not in {"identifier", "attribute", "string"}
+        item.type not in {"identifier", "string"}
         or (item.type == "string" and not _NAME_RE.fullmatch(node_text(item, source)[1:-1]))
         for item in items
     ):
         return ()
-    return tuple(type_name_of(item, source) for item in items)
+    return tuple(owner if type_name_of(item, source) == owner else "" for item in items)
+
+
+def _first_parameter(node: Any, source: bytes) -> str:
+    params = node.child_by_field_name("parameters")
+    if params is None or not params.named_children:
+        return ""
+    first = params.named_children[0]
+    if first.type in {"default_parameter", "typed_default_parameter"}:
+        first = first.child_by_field_name("name")
+    elif first.type == "typed_parameter":
+        first = first.named_children[0] if first.named_children else None
+    return node_text(first, source) if first is not None and first.type == "identifier" else ""
 
 
 def _method_body(node: Any, source: bytes) -> Any:
-    if node.type != "function_definition":
-        return None
-    params = node.child_by_field_name("parameters")
-    if params is None or not params.named_children:
-        return None
-    receiver = params.named_children[0]
-    if receiver.type != "identifier" or node_text(receiver, source) != "self":
-        return None
-    return node.child_by_field_name("body")
+    if node.type == "function_definition" and _first_parameter(node, source) == "self":
+        return node.child_by_field_name("body")
+    return None
 
 
-def _self_field(node: Any, source: bytes) -> str:
+def _self_field(node: Any, source: bytes, receiver: str = "self") -> str:
     if node is None or node.type != "attribute":
         return ""
     obj, member = (node.child_by_field_name(k) for k in ("object", "attribute"))
     if obj is None or member is None or obj.type != "identifier":
         return ""
-    return "self." + node_text(member, source) if node_text(obj, source) == "self" else ""
+    return "self." + node_text(member, source) if node_text(obj, source) == receiver else ""
 
 
 def _body_nodes(body: Any) -> Iterator[Any]:
@@ -428,17 +434,17 @@ def _written_names(
     return names
 
 
-def _written_fields(target: Any, source: bytes) -> Iterator[str]:
+def _written_fields(target: Any, source: bytes, receiver: str) -> Iterator[str]:
     if target is None:
         return
-    if name := _self_field(target, source):
+    if name := _self_field(target, source, receiver):
         yield name
     elif target.type in {
         "pattern_list", "tuple_pattern", "list_pattern", "list_splat_pattern",
-        "as_pattern_target", "delete_statement", "expression_list",
+        "as_pattern_target", "delete_statement", "expression_list", "parenthesized_expression",
     }:
         for child in target.named_children:
-            yield from _written_fields(child, source)
+            yield from _written_fields(child, source, receiver)
 
 
 def _field_write_target(node: Any) -> Any:
@@ -452,7 +458,7 @@ def _field_write_target(node: Any) -> Any:
 
 
 def _tuple_fields(
-    body: Any, source: bytes, loop_imports: Callable[[], dict[str, tuple[str, str]]]
+    body: Any, source: bytes, loop_imports: Callable[[], dict[str, tuple[str, str]]], owner: str
 ) -> dict[str, tuple[str, ...]]:
     initializers = [
         n
@@ -464,7 +470,9 @@ def _tuple_fields(
     if len(initializers) != 1:
         return {}
     (initializer,) = initializers
-    if (init := _method_body(initializer, source)) is None:
+    if initializer.child_by_field_name("type_parameters") is not None or (
+        init := _method_body(initializer, source)
+    ) is None:
         return {}
     declarations = []
     for stmt in init.named_children:
@@ -488,26 +496,32 @@ def _tuple_fields(
     if "self" in own_names:
         return {}
     own_names.update(_bound_identifiers(initializer.child_by_field_name("parameters"), source))
+    if owner in own_names:
+        return {}
     local_imports = {**loop_imports(), **dict.fromkeys(own_names, ("", ""))}
     fields = {
         name: (byte_offset, items)
         for name, byte_offset, annotation in declarations
-        if any(items := _tuple_items(annotation, source, local_imports))
+        if any(items := _tuple_items(annotation, source, local_imports, owner))
     }
     if not fields:
         return {}
     class_nodes = list(_body_nodes(body))
-    if "__init__" in _written_names(body, source, ignore_definition=initializer) or any(
+    class_writes = _written_names(body, source, ignore_definition=initializer)
+    if class_writes & {"__init__", "__getattribute__", "__setattr__"} or any(
         n.type == "match_statement" for n in class_nodes
     ):
         return {}
+    for name in class_writes:
+        fields.pop(f"self.{name}", None)
     for method in class_nodes:
         if method.type != "function_definition" or (
             commands := method.child_by_field_name("body")
         ) is None:
             continue
+        receiver = _first_parameter(method, source)
         for child in _body_nodes(commands):
-            for name in _written_fields(_field_write_target(child), source):
+            for name in _written_fields(_field_write_target(child), source, receiver):
                 if name in fields and child.start_byte != fields[name][0]:
                     fields.pop(name)
         if not fields:
@@ -556,7 +570,18 @@ def _class_tuple_loop_scopes(
     node: Any, source: bytes, loop_imports: Callable[[], dict[str, tuple[str, str]]]
 ) -> list[_Scope]:
     body = node.child_by_field_name("body")
-    if body is None or not (fields := _tuple_fields(body, source, loop_imports)):
+    name = node.child_by_field_name("name")
+    if (
+        node.parent.type != "module"
+        or node.child_by_field_name("type_parameters") is not None
+        or body is None
+        or name is None
+    ):
+        return []
+    owner = node_text(name, source)
+    if not (fields := _tuple_fields(body, source, loop_imports, owner)) or owner in _written_names(
+        node.parent, source, ignore_definition=node
+    ):
         return []
     methods = [
         statement

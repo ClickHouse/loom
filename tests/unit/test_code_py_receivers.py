@@ -6,6 +6,8 @@ call whose return annotation is known — narrowing rung 3's candidates to
 
 from __future__ import annotations
 
+from textwrap import indent
+
 from server.code.app.index.ingest_parse import parse_file
 from server.code.domain.extract.edges_treesitter import (
     TYPED_RECEIVER_CONFIDENCE,
@@ -154,6 +156,9 @@ def test_tuple_loop_leaves_unknown_rebinds_and_shapes_untyped() -> None:
     cases = [
         original.replace('t.Tuple["Worker", dict]', 't.Tuple["Worker", ...]'),
         original.replace('t.Tuple["Worker", dict]', 't.Tuple["Worker", dict, int]'),
+        original.replace('t.Tuple["Worker", dict]', "t.Tuple[other.Worker, dict]"),
+        original.replace('t.Tuple["Worker", dict]', "t.Tuple[Other, dict]"),
+        "def factory():\n" + indent(original, "    "),
         original.replace('t.Tuple["Worker", dict]', 't.Tuple["Worker", *t.Tuple[dict, ...]]'),
         original.replace('t.Tuple["Worker", dict]', 't.Tuple["Worker", t.Unpack[t.Tuple[dict]]]'),
         original.replace("import typing as t", "import another as t"),
@@ -182,6 +187,10 @@ def test_tuple_loop_leaves_unknown_rebinds_and_shapes_untyped() -> None:
         ),
         original.replace("        for worker,", "        del self.rows\n        for worker,"),
         original + "\n    if use_override:\n        def reset(self): self.rows = get_unknown()\n",
+        original + "\n    def reset(other): other.rows = get_unknown()\n",
+        original + "\n    def reset(self): (self.rows) = get_unknown()\n",
+        original + "\n    @property\n    def rows(self): return get_unknown()\n",
+        original + "\nfrom another import Other as Worker\n",
     ]
     for source in cases:
         line = next(
