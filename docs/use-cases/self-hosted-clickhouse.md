@@ -84,6 +84,31 @@ of a key ever labeled `high` and gives the reason in `value_withheld`. Under the
 Postgres authority, the version appears once it has been
 [published to ClickHouse](../reference/sql-surface.md#freshness).
 
+### Count active memories by agent and source
+
+Use the same SQL reader to see how many active, unexpired memories each agent has by
+provenance class. This report returns counts without memory keys or values.
+
+```sql
+SELECT
+    agent,
+    source_class,
+    count() AS active_memories,
+    countIf(value_withheld != '') AS withheld_values
+FROM loom.sql_v1_memories
+WHERE org = 'dev'
+  AND namespace = 'local'
+  AND status = 'active'
+  AND (expires_at IS NULL OR expires_at > now())
+GROUP BY agent, source_class
+ORDER BY agent, source_class;
+```
+
+`withheld_values` counts active rows whose values the view suppresses for sensitivity or
+redaction. It is a count within `active_memories`. In a reporting job, provision a reader
+for the namespaces the job covers. The view reads the
+[granted scope](../reference/sql-surface.md#what-a-read-costs) before applying the report's filters.
+
 Run `loom sql-access revoke --user loom_demo_audit` in the Loom container when finished.
 
 ## Measured
