@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import errno
 import importlib
 import math
 import os
@@ -22,6 +23,7 @@ import resource
 import struct
 import sys
 import time
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,24 @@ DONE, STOPPED = b"d", b"s"
 CHUNK = 256
 _PR_SET_DUMPABLE = 4
 _RETIRE_GROWTH = 64 << 20  # room for every grammar's mapping and heap a parse kept
+_PROC_PIDTASKINFO = 4
+
+
+class _ProcTaskInfo(ctypes.Structure):
+    # libproc fills the whole proc_taskinfo record defined in sys/proc_info.h.
+    _fields_ = [
+        ("virtual_size", ctypes.c_uint64),
+        ("timings_and_resident", ctypes.c_uint64 * 5),
+        ("counters", ctypes.c_int32 * 12),
+    ]
+
+
+@cache
+def _proc_pidinfo() -> Any:
+    read = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True).proc_pidinfo
+    read.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    read.restype = ctypes.c_int
+    return read
 
 
 def language(grammar: str) -> Any:
@@ -87,7 +107,14 @@ def _cpu() -> float:
 
 
 def _address_space() -> int:
-    """This process's address space in bytes now (0 off Linux)."""
+    """Current virtual size in bytes, as counted by the kernel's address-space limit."""
+    if sys.platform == "darwin":
+        info = _ProcTaskInfo()
+        size = ctypes.sizeof(info)
+        received = _proc_pidinfo()(os.getpid(), _PROC_PIDTASKINFO, 0, ctypes.byref(info), size)
+        if received != size or not info.virtual_size:
+            raise OSError(ctypes.get_errno() or errno.EIO, "Cannot read parser virtual size")
+        return info.virtual_size
     try:
         pages = int(Path("/proc/self/statm").read_text().split()[0])
     except OSError:
