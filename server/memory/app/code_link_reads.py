@@ -14,8 +14,10 @@ from typing import Any, cast
 from server.code.app import memory_links as code
 from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import configured_repos
+from server.core.hashing import hash_text
 from server.memory.api.models_crud import CodeLink
 from server.memory.domain import code_change
+from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.store import code_links as store
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
@@ -125,6 +127,58 @@ async def readable_namespaces(org: str, namespaces: set[str]) -> set[str]:
         *(row_in_scope(org, ns, Role.VIEWER, hides_answer=False) for ns in names)
     )
     return {ns for ns, ok in zip(names, allowed, strict=True) if ok}
+
+
+def guidance_link_state(links: Sequence[LinkRow], readable: set[str]) -> str:
+    """Current links only. An observed problem outweighs incomplete coverage."""
+    visible = [a for a in links if a["code_namespace"] in readable]
+    state = code_change.worst([a["state"] for a in visible])
+    if state in code_change.DEMOTED:
+        return state
+    if not settings.memory_code_links_enabled or len(visible) != len(links):
+        return "unknown"
+    if not visible or any(not a["complete"] or a["state"] == "pending" for a in visible):
+        return "unknown"
+    return state or "unknown"
+
+
+async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Classify every readable link made from the evidence in the served memory revision."""
+    states = ["unknown"] * len(rows)
+    candidates: dict[int, tuple[str, str, str, str]] = {}
+    for index, row in enumerate(rows):
+        if not {"namespace", "tags", "files", "user_id"} <= row.keys():
+            continue
+        ns = str(row["namespace"])
+        tags = [str(tag) for tag in row["tags"] or ()]
+        cns = code_namespace_for(org, ns, tags)
+        if not cns:
+            if not any(tag.startswith("repo:") for tag in tags):
+                states[index] = "not_applicable"
+            continue
+        sha = hash_text(row.get("content_sha256"))
+        if row.get("memory_id") and is_content_hash(sha):
+            files = [str(path) for path in row["files"] or ()]
+            inputs = inputs_hash(sha, files, cns, str(row["user_id"]))
+            candidates[index] = (str(row["memory_id"]), ns, cns, inputs)
+    if not candidates:
+        return states
+    try:
+        readable = await readable_namespaces(org, {cns for _, _, cns, _ in candidates.values()})
+        mids = sorted({mid for mid, _, cns, _ in candidates.values() if cns in readable})
+        if not mids:
+            return states
+        links = await store.for_memories(org, mids)
+    except Exception as error:  # noqa: BLE001 — unavailable links leave guidance uncertain
+        log.debug("Guidance code links unavailable: %s", type(error).__name__)
+        return states
+    by_revision: dict[tuple[str, str, str, str], list[LinkRow]] = defaultdict(list)
+    for link in links:
+        key = (link["memory_id"], link["namespace"], link["code_namespace"], link["inputs_hash"])
+        by_revision[key].append(link)
+    for index, key in candidates.items():
+        states[index] = guidance_link_state(by_revision.get(key, ()), readable)
+    return states
 
 
 # ---- reads ----------------------------------------------------------------------------

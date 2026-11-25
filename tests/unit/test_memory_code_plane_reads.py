@@ -160,8 +160,13 @@ def test_code_search_runs_as_the_pinned_user_whatever_the_body_says() -> None:
 
 
 def _link(mid: str, *, qn: str = "src.a::Reader::read", state: str = "fresh", **kw: Any) -> dict:
+    from server.memory.app.code_link_reads import inputs_hash
+
     return LINK_COLS | {
         "memory_id": mid,
+        "namespace": "agent-a",
+        "code_namespace": "code-a",
+        "inputs_hash": inputs_hash("a" * 64, [], "code-a", "user"),
         "qualified_name": qn,
         "path": kw.get("path", "src/a.py"),
         "former": kw.get("former", []),
@@ -175,6 +180,11 @@ def _link(mid: str, *, qn: str = "src.a::Reader::read", state: str = "fresh", **
 def _excerpt(mid: str, key: str, *, pinned: int = 0) -> dict:
     return {
         "mid": mid,
+        "memory_id": mid,
+        "content_sha256": b"a" * 64,
+        "user_id": "user",
+        "files": [],
+        "tags": [],
         "memory_key": key,
         "namespace": "agent-a",
         "excerpt": key,
@@ -238,7 +248,12 @@ async def _lessons(
     monkeypatch.setattr(memory_links, "indexed_head", head)
     monkeypatch.setattr(memory_links, "parsed", parsed)
     monkeypatch.setattr(memory_links, "mirror_here", mirror_here)
+
+    async def for_memories(org, ids):
+        return [link for link in links if link["memory_id"] in ids]
+
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, n: "code-a")
+    monkeypatch.setattr(code_links, "for_memories", for_memories)
     monkeypatch.setattr(store, "served_excerpts", served)
     monkeypatch.setattr("server.memory.app.code_link_reads.current_links", current)
     return await code_plane_reads.lessons_for_symbol(
@@ -256,9 +271,41 @@ async def test_symbol_lessons_keep_whole_values_and_honor_an_opt_in_budget(monke
     whole = await _lessons(monkeypatch, links, excerpts, definitions)
     assert whole[0]["excerpt"] == value
     assert len(whole) == 2
-    monkeypatch.setattr(settings, "code_result_lessons_tokens", 80)
+    assert whole[1]["use_guidance"]["next_step"] == "validate_lead"
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 180)
     bounded = await _lessons(monkeypatch, links, excerpts, definitions)
     assert [row["memory_key"] for row in bounded] == ["short"]
+
+
+@pytest.mark.asyncio
+async def test_code_guidance_reads_only_authorized_repository_bindings(monkeypatch) -> None:
+    from server.memory.app import code_link_reads
+
+    allowed = _excerpt("m1", "allowed") | {"namespace": "code-a"}
+    hidden = _excerpt("m2", "hidden") | {"namespace": "code-hidden"}
+    unresolved = _excerpt("m3", "unresolved") | {"namespace": "unbound", "tags": ["repo:abc"]}
+    unbound = _excerpt("m4", "unbound") | {"namespace": "unbound"}
+    visible = _link("m1", state="changed") | {"namespace": "code-a"}
+    stale = _link("m1", state="missing") | {"namespace": "code-a", "inputs_hash": "old"}
+
+    async def readable(org, namespaces):
+        assert namespaces == {"code-a", "code-hidden"}
+        return {"code-a"}
+
+    async def links(org, ids):
+        assert ids == ["m1"]
+        return [visible, stale]
+
+    monkeypatch.setattr(
+        code_link_reads,
+        "code_namespace_for",
+        lambda org, ns, tags: ns if ns.startswith("code-") else "",
+    )
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    monkeypatch.setattr(code_link_reads.store, "for_memories", links)
+    assert await code_link_reads.guidance_code_states(
+        "o", [allowed, hidden, unresolved, unbound]
+    ) == ["changed", "unknown", "unknown", "not_applicable"]
 
 
 @pytest.mark.asyncio
@@ -289,6 +336,17 @@ async def test_a_lesson_reads_changed_where_the_definition_differs_from_the_link
     branch = [("src/a.py", "src.a::Reader::read", "h0")]
     out = await _lessons(monkeypatch, links, excerpts, branch, ns="code-a-26-8")
     assert {o["memory_key"]: o["code_state"] for o in out} == {"k1": "changed", "k2": "fresh"}
+    assert out[0]["use_guidance"]["freshness"]["code"] == "changed"
+    assert out[1]["use_guidance"]["freshness"]["code"] == "changed"
+    assert out[1]["use_guidance"]["next_step"] == "recheck_source"
+
+
+@pytest.mark.asyncio
+async def test_symbol_lesson_ignores_a_link_for_a_different_value(monkeypatch) -> None:
+    links = [_link("m1")]
+    excerpts = [_excerpt("m1", "k1") | {"content_sha256": b"b" * 64}]
+    definitions = [("src/a.py", "src.a::Reader::read", "h1")]
+    assert await _lessons(monkeypatch, links, excerpts, definitions) == []
 
 
 @pytest.mark.asyncio

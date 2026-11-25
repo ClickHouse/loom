@@ -9,11 +9,13 @@ import pytest
 
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app import search_pages as sp
+from server.memory.app.search import guidance
+from server.memory.store.rows import IdentityKey
 from tests.unit._memory_search_pkg import patch_handler_name
 
 
 def _hit(key: str, rank: float, ns: str = "ns", session: str = "") -> _MemorySearchHit:
-    return _MemorySearchHit(
+    hit = _MemorySearchHit(
         memory_key=key,
         memory_type="semantic",
         content_excerpt=f"about {key}",
@@ -22,7 +24,18 @@ def _hit(key: str, rank: float, ns: str = "ns", session: str = "") -> _MemorySea
         rank_score=rank,
         namespace=ns,
         session_id=session,
+        version=7,
     )
+    hit._row_identity = ("writer", "user", session or "-")
+    return hit
+
+
+@pytest.fixture(autouse=True)
+def _current_heads(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def heads(keys: list[IdentityKey]) -> dict[IdentityKey, dict[str, Any]]:
+        return {key: {"version": 7, "status": "active"} for key in keys}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
 
 
 def _encode(top_k: int, candidates_total: int, tail: list[_MemorySearchHit], **lists: Any) -> str:
@@ -196,7 +209,7 @@ async def test_serve_parked_page_slices_and_hands_back_the_next_handle(monkeypat
     assert out.next_page == sp.make_handle(key, 2) and out.abstain is False
     # Every page says what the first call read and what the cap left out.
     assert out.namespaces_searched == ["n", "work"] and out.namespaces_skipped == ["home"]
-    # No retrieval ran: the only statement was the blob read.
+    # The blob reader does no new retrieval. Guidance reads the exact authorized heads.
     assert len(ch.queries) == 1 and ch.inserts == []
 
     out2 = await h.handle_memory_search(inp.model_copy(update={"page": out.next_page}))

@@ -41,3 +41,10 @@ def test_selected_contracts_and_default_fixtures_are_generated_without_a_toolcha
     assert "pub flag: Option<bool>" in fixture
     assert 'serde_json::from_str("false")' in fixture
     assert "DefaultsLabel::Empty" in fixture
+
+
+def test_unified_search_sections_keep_rust_map_access(monkeypatch) -> None:
+    monkeypatch.setattr(gen, "rustfmt", lambda text: text)
+    source = gen.build(("search.query",))
+    for section in ("memory", "knowledge"):
+        assert f"pub {section}: std::collections::HashMap<String, Value>" in source

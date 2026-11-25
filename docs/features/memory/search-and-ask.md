@@ -364,3 +364,5 @@ Per namespace, `namespace.register` sets `retrieval_defaults` (`search_mode`, `t
 - [Writing memory](./writing.md)
 - [Runs](../runs.md): reporting which memories a task relied on.
 - [Performance tuning](../../guides/performance-tuning.md)
+
+See [Using retrieved guidance](history-and-provenance.md#using-retrieved-guidance) for the next step on a maintained result.

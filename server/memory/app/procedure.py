@@ -32,9 +32,11 @@ from server.memory.api.models_procedure import (
     _ProcedureSummary,
 )
 from server.memory.api.models_search import MemorySearchInput
+from server.memory.app.stack import recall_guidance_for_rows
 from server.memory.domain.procedure_evidence import two_axis_score
 from server.memory.domain.procedure_graph import utility_from_stats
 from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX
+from server.memory.domain.trust import row_content_sha256
 
 log = logging.getLogger(__name__)
 _REJECTED_PUBLIC_KEYS = ("revision", "digest", "reason", "before", "after", "steps")
@@ -259,6 +261,7 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
     rows_by_key = await _procedure_rows(input, keys_by_ns)
 
     matches: list[_ProcedureMatch] = []
+    guidance_rows: list[dict[str, Any]] = []
     for hit in hits:
         row = rows_by_key.get((hit.namespace or input.namespace, hit.memory_key))
         value = row.value if row is not None else {}
@@ -341,6 +344,16 @@ async def handle_procedure_match(input: ProcedureMatchInput) -> ProcedureMatchOu
                 ],
             )
         )
+        guidance_rows.append(
+            dict(row.model_dump(), content_sha256=row_content_sha256(row))
+            if hasattr(row, "model_dump")
+            else {}
+        )
+    guidance = await recall_guidance_for_rows(
+        input.org, guidance_rows, procedure_statuses=[match.status for match in matches]
+    )
+    for match, use_guidance in zip(matches, guidance, strict=True):
+        match.use_guidance = use_guidance
     # Fused score within a tier (situation×goal axes + tool overlap boost +
     # weighted ledger utility; equals similarity when no goal and no
     # recent_tools were given and the utility weight is 0); candidates

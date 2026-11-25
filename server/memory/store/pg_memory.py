@@ -1654,6 +1654,27 @@ async def heads_by_keys(
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
 
 
+async def guidance_heads(
+    keys: Sequence[IdentityKey], columns: tuple[str, ...]
+) -> dict[IdentityKey, dict[str, Any]]:
+    """Small current-head projections for authorized exact identities."""
+    keys = [k for k in keys if not pg.unstorable(k)]
+    if not keys:
+        return {}
+    rows = await pg.fetch(
+        f"""
+        SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key,
+               (SELECT jsonb_object_agg(k, c.row->k) FROM unnest($7::text[]) AS f(k)
+                WHERE c.row ? k) AS evidence
+        {_EXACT_KEYS}
+        """,
+        *_key_arrays(keys),
+        list(columns),
+    )
+    decoded = ((identity_key(r), decode_row(r["evidence"] or {})) for r in rows)
+    return {key: {c: row[c] for c in columns if c in row} for key, row in decoded}
+
+
 async def heads_on_connection(
     conn: Any,
     keys: Sequence[IdentityKey],

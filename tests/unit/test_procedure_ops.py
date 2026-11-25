@@ -89,6 +89,10 @@ def test_match_labels_status_and_lists_candidates_last(monkeypatch: pytest.Monke
     )
     assert [m.memory_key for m in out.matches] == ["p:auth", "p:run", "p:tpl", "p:mined"]
     assert [m.status for m in out.matches] == ["authored", "exercised", "template", "candidate"]
+    assert [
+        match["use_guidance"]["lifecycle"]["procedure_status"]
+        for match in out.model_dump()["matches"]
+    ] == ["authored", "exercised", "template", "candidate"]
 
     out = asyncio.run(
         handle_procedure_match(

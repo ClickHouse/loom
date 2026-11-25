@@ -3,6 +3,7 @@ recent recall, procedures, knowledge) one call assembles."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import nullcontext
@@ -16,7 +17,10 @@ from server.identity.domain.read_scope import scope_and
 from server.knowledge.app.source_access import ReadPlan
 from server.knowledge.app.source_search_proofs import SearchProofs
 from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput, _StackEntry
+from server.memory.app.code_link_reads import guidance_code_states
 from server.memory.app.stack_knowledge import StackKnowledge
+from server.memory.app.use_guidance import guidance_source_states
+from server.memory.domain.use_guidance import UseGuidance, guidance_for_row
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +44,29 @@ def _value_str(v: Any) -> str:
 
 def _est_tokens(s: str) -> int:
     return max(1, len(s) // 4)
+
+
+async def recall_guidance_for_rows(
+    org: str, rows: list[dict[str, Any]], *, procedure_statuses: list[str] | None = None
+) -> list[UseGuidance]:
+    """Project guidance from the authorized revisions whose bodies supply recall."""
+    code_states, source_states = await asyncio.gather(
+        guidance_code_states(org, rows), guidance_source_states(org, rows)
+    )
+    statuses = (
+        procedure_statuses
+        if procedure_statuses is not None
+        else [
+            "unknown" if row.get("memory_type") == "procedural" else "not_applicable"
+            for row in rows
+        ]
+    )
+    return [
+        guidance_for_row(row, code_state=code, source_state=source, procedure_status=status)
+        for row, code, source, status in zip(
+            rows, code_states, source_states, statuses, strict=True
+        )
+    ]
 
 
 @dataclass
@@ -118,7 +145,10 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
     scope = scope_and(request_scope(), params)
     pinned_rows = await ch.query_all(
         f"""
-        SELECT memory_key, memory_type, value, recall_count, last_recalled_at, actor
+        SELECT memory_key, memory_type, value, recall_count, last_recalled_at, actor,
+               status, source_class, requires_review, verified_by, verified_sha256,
+               content_sha256, source_resource_id, source_trace, conflict_with,
+               memory_id, namespace, tags, files, user_id
         FROM loom.memory FINAL
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -136,7 +166,8 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
         """,
         params=params,
     )
-    for r in pinned_rows:
+    guidance = await recall_guidance_for_rows(input.org, pinned_rows)
+    for r, use_guidance in zip(pinned_rows, guidance, strict=True):
         val = _value_str(r.get("value"))
         cost = _est_tokens(val)
         if not fill.fits(cost):
@@ -152,6 +183,7 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
                 recall_count=int(r.get("recall_count") or 0),
                 last_recalled_at=r.get("last_recalled_at"),
                 actor=str(r.get("actor") or ""),
+                use_guidance=use_guidance,
             )
         )
 
@@ -180,7 +212,10 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
     recent_rows = await ch.query_all(
         f"""
         SELECT memory_key, memory_type, value, recall_count,
-               evidence_count, last_recalled_at, actor
+               evidence_count, last_recalled_at, actor,
+               status, source_class, requires_review, verified_by, verified_sha256,
+               content_sha256, source_resource_id, source_trace, conflict_with,
+               memory_id, namespace, tags, files, user_id
         FROM loom.memory FINAL
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -202,7 +237,8 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
         params=params,
     )
     most_recent_excerpt = ""
-    for r in recent_rows:
+    guidance = await recall_guidance_for_rows(input.org, recent_rows)
+    for r, use_guidance in zip(recent_rows, guidance, strict=True):
         if r["memory_key"] in pinned_keys:
             continue
         val = _value_str(r.get("value"))
@@ -221,6 +257,7 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
                 recall_count=int(r.get("recall_count") or 0),
                 last_recalled_at=r.get("last_recalled_at"),
                 actor=str(r.get("actor") or ""),
+                use_guidance=use_guidance,
             )
         )
     return most_recent_excerpt
@@ -263,6 +300,7 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
                     actor=m.actor,
                     # a procedure can be matched in another of the caller's namespaces
                     namespace=m.namespace if m.namespace != input.namespace else "",
+                    use_guidance=getattr(m, "use_guidance", None),
                 )
             )
     except Exception as e:  # noqa: BLE001 — a failed procedure section must not fail the stack
@@ -285,6 +323,9 @@ def _render(fill: _StackFill, hits: list[Any]) -> MemoryStackOutput:
                 memory_type="knowledge",
                 value=value,
                 tokens=cost,
+                use_guidance=guidance_for_row(
+                    {"source_class": getattr(hit, "source_class", "")}, code_state="not_applicable"
+                ),
             )
         )
     return MemoryStackOutput(

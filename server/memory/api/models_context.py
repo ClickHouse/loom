@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from server.core.naming import SENTINEL
 from server.memory.api.models_common import _Identity
+from server.memory.domain.use_guidance import UseGuidance
 from server.operations.base import MCP_HIDDEN
 
 
@@ -119,6 +120,13 @@ class ContextBlock(BaseModel):
     source_count: int = 0
 
 
+class ContextUseGuidance(BaseModel):
+    section: str
+    citation: str
+    item_index: int = Field(description="Zero-based item index within the rendered section.")
+    use_guidance: UseGuidance
+
+
 class ContextPackOutput(BaseModel):
     # The (namespace, memory_key) of each stored row whose item line `rendered` still
     # holds, which the op records as served to the agent. Private, never on the wire.
@@ -132,6 +140,10 @@ class ContextPackOutput(BaseModel):
     # One entry per non-empty section: label, body, token estimate, citations,
     # source count, and `priority` (its position in block order).
     blocks: list[ContextBlock] = Field(default_factory=list)
+    use_guidance: list[ContextUseGuidance] = Field(
+        default_factory=list,
+        description="Guidance for the cited items retained in the rendered pack.",
+    )
     # Per-section details by name: source count, citations, whether it was cut, its
     # size, its token budget and fill ratio (above 1.0 means it was cut).
     section_meta: dict[str, dict[str, Any]] = Field(default_factory=dict)

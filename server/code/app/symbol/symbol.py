@@ -52,6 +52,7 @@ from server.code.app.symbol.resolve import (
     symbol_body,
 )
 from server.code.app.symbol.uses import _mention_leg, _symbol_uses
+from server.code.domain.lesson import code_lessons
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
 from server.identity.app.request_scope import request_narrowed
@@ -496,7 +497,9 @@ def _apply_enrichment(units: list[Any], enrichment: dict[str, Any]) -> None:
     if not units or not enrichment:
         return
     for field, value in enrichment.items():
-        setattr(units[0], field, value)
+        setattr(
+            units[0], field, code_lessons.validate_python(value) if field == "lessons" else value
+        )
 
 
 def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any], int, int]:

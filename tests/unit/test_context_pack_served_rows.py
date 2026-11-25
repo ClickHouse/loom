@@ -13,6 +13,7 @@ import pytest
 from server.memory.api.models_context import ContextPackInput
 from server.memory.app.context_pack import handle_context_pack
 from server.memory.domain.context_layout import served_rows
+from server.memory.domain.use_guidance import guidance_for_row
 from tests.unit.checked_pack_fakes import install_pack_stack, install_pack_target
 
 
@@ -67,6 +68,8 @@ def test_a_stack_section_cut_to_its_budget_records_the_rows_it_kept(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entries = [_entry("profile", "role", 20)] + [_entry("pinned", f"p{i}", 150) for i in range(6)]
+    for i, entry in enumerate(entries[1:]):
+        entry.use_guidance = guidance_for_row({"status": "conflicted" if i % 2 else "active"})
     _stub_all_but_the_stack(monkeypatch, entries)
     out = asyncio.run(
         handle_context_pack(
@@ -88,6 +91,9 @@ def test_a_stack_section_cut_to_its_budget_records_the_rows_it_kept(
     # every recorded row's line is in what the agent got; the profile line is no row
     assert all(f"[pinned/{k} by=" in shown for k in kept)
     assert f"[pinned/p{len(kept)} by=" not in shown
+    assert [(item.citation, item.item_index, item.use_guidance) for item in out.use_guidance] == [
+        (f"stack:pinned/{key}", i + 1, entries[i + 1].use_guidance) for i, key in enumerate(kept)
+    ]
 
 
 def test_a_chunk_the_pack_serves_records_its_parent_fact(monkeypatch: pytest.MonkeyPatch) -> None:

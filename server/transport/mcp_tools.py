@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterator, Set
 from contextlib import contextmanager
 from typing import Any, get_args
 
-from server.memory.api.models_loom_search import SearchInput
+from server.memory.api.models_loom_search import SearchInput, SearchOutput
 from server.memory.app.loom_search.answer_first import withheld_note
 from server.memory.app.loom_search.tracker_leg import tracker_text_lines
 from server.operations.base import Operation
@@ -130,6 +130,9 @@ def _synthetic_tool_descriptors(
 
 
 def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
+    search_schema = _shape_schema(model_schema(SearchOutput))
+    # MCP omits the optional live section until connected sources answer.
+    search_schema["properties"]["live"] = {"type": "object"}
     return [
         dict(LOOM_OP_DESCRIPTOR),
         {
@@ -234,18 +237,7 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
                 },
                 "required": ["query"],
             },
-            # Must declare every section structuredContent returns — strict
-            # client validators reject keys absent from the declared schema.
-            "outputSchema": {
-                "type": "object",
-                "properties": {
-                    "memory": {"type": "object"},
-                    "knowledge": {"type": "object"},
-                    "profile": {"type": "object"},
-                    "conversations": {"type": "object"},
-                    "live": {"type": "object"},
-                },
-            },
+            "outputSchema": search_schema,
             "annotations": {
                 "readOnlyHint": True,
                 "destructiveHint": False,
@@ -730,6 +722,11 @@ def _instructions_due(session_id: str, *, now: float | None = None) -> bool:
     return True
 
 
+def _next_step(hit: dict[str, Any]) -> str:
+    guidance = hit.get("use_guidance")
+    return str(guidance.get("next_step") or "") if isinstance(guidance, dict) else ""
+
+
 def _memory_section_lines(
     memory: dict[str, Any],
     mem_hits: list[dict[str, Any]],
@@ -782,6 +779,7 @@ def _memory_section_lines(
         why = why_note(h) if explain else (h.get("explanation") or "").replace("\n", " ").strip()
         out.append(
             f"  - [{h.get('memory_key')}] (ns={ns_label}) {excerpt[:200]}"
+            + (f" [use: {step}]" if (step := _next_step(h)) else "")
             + ((f" [why: {why}]" if explain else f" ({why})") if why else "")
         )
     return out
@@ -841,7 +839,8 @@ def search_answer(
         for h in know_hits[:top_k]:
             uri = h.get("source_uri") or "-"
             excerpt = " ".join((h.get("content") or "").split())[:200] if show_body else ""
-            lines.append(f"  - [{uri}] {excerpt}".rstrip())
+            guidance = f" [use: {step}]" if (step := _next_step(h)) else ""
+            lines.append(f"  - [{uri}] {excerpt}".rstrip() + guidance)
     if conv_hits:
         lines.append("\nConversation hits:")
         for h in conv_hits[:top_k]:

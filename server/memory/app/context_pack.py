@@ -21,12 +21,18 @@ from server.core.diagnostics import private_work
 from server.core.naming import SENTINEL as _WM_SENTINEL
 from server.core.naming import named
 from server.identity.app.request_scope import request_scope
-from server.memory.api.models_context import ContextBlock, ContextPackInput, ContextPackOutput
+from server.memory.api.models_context import (
+    ContextBlock,
+    ContextPackInput,
+    ContextPackOutput,
+    ContextUseGuidance,
+)
 from server.memory.api.models_lifecycle import MemoryStackInput
 from server.memory.api.models_procedure import ProcedureMatchInput
 from server.memory.api.models_profile import ProfileRenderInput
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.api.models_working_memory import WorkingMemoryRenderInput
+from server.memory.app.stack import recall_guidance_for_rows
 from server.memory.domain import code_change
 from server.memory.domain.context_layout import (
     _BLOCK_LABELS,
@@ -46,12 +52,15 @@ from server.memory.domain.context_layout import (
     escape_data,
     label_part,
     one_item,
+    served_item_counts,
     served_rows,
 )
-from server.memory.domain.decision_statement import states_reason
+from server.memory.domain.decision_statement import memory_value, states_reason
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 from server.memory.domain.memory_types import excluded_from_unfiltered_search
 from server.memory.domain.search_types import SHARED_AGENT, hit_row, hit_row_key, names_row
+from server.memory.domain.trust import row_content_sha256
+from server.memory.domain.use_guidance import UseGuidance
 
 if TYPE_CHECKING:
     from server.knowledge.api.models_knowledge import _SearchHit
@@ -203,6 +212,7 @@ class _PackState:
     # order; None for an item that is no stored row. The rows whose line the rendered pack
     # still holds are what the op records as served (`served_rows`).
     item_rows: dict[str, list[tuple[str, str] | None]] = field(default_factory=dict)
+    item_guidance: dict[str, list[ContextUseGuidance | None]] = field(default_factory=dict)
 
     def put(
         self,
@@ -213,12 +223,24 @@ class _PackState:
         source_count: int = 0,
         extra_meta: dict[str, Any] | None = None,
         rows: list[tuple[str, str] | None] | None = None,
+        guidance: list[UseGuidance | None] | None = None,
     ) -> None:
         input = self.input
         default_section_tokens = self.default_section_tokens
         if not body:
             return
         self.item_rows[name] = list(rows or [])
+        if guidance is not None:
+            self.item_guidance[name] = [
+                ContextUseGuidance(
+                    section=name, citation=citation, item_index=index, use_guidance=item
+                )
+                if item is not None
+                else None
+                for index, (citation, item) in enumerate(
+                    zip(citations or [], guidance, strict=True)
+                )
+            ]
         if name in RECALLED_SECTIONS:
             body = escape_data(body)
         trimmed, was_truncated = _trim(
@@ -297,12 +319,14 @@ def _put_memory_stack(st: _PackState, out: MemoryStackOutput) -> None:
     citations: list[str] = []
     rows: list[tuple[str, str] | None] = []
     layers: list[str] = []
+    guidance: list[UseGuidance | None] = []
     for entry in out.entries:
         layer = entry.section
         if layer not in layers:
             layers.append(layer)
         cite = f"stack:{layer}/{entry.memory_key or entry.memory_type}"
         citations.append(cite)
+        guidance.append(getattr(entry, "use_guidance", None))
         stored = layer in STACK_ROW_LAYERS and entry.memory_key
         rows.append((entry.namespace or input.namespace, entry.memory_key) if stored else None)
         author = author_label([entry.actor]) if layer in STACK_ROW_LAYERS else ""
@@ -313,6 +337,7 @@ def _put_memory_stack(st: _PackState, out: MemoryStackOutput) -> None:
         "\n".join(lines),
         citations=citations,
         rows=rows,
+        guidance=guidance,
         source_count=len(out.entries),
         extra_meta={
             "stack_layers": layers,
@@ -414,6 +439,13 @@ async def _pack_startup_recall(st: _PackState) -> None:
     if not rows:
         return
 
+    guidance_rows = [
+        dict(row.model_dump(), content_sha256=row_content_sha256(row))
+        if hasattr(row, "model_dump")
+        else {}
+        for row in rows
+    ]
+    guidance = await recall_guidance_for_rows(input.org, guidance_rows)
     evidence = [
         EvidenceItem(
             citation=f"memory:{input.namespace}/{r.memory_key}",
@@ -430,8 +462,9 @@ async def _pack_startup_recall(st: _PackState) -> None:
             ),
             conflict=(r.status == "conflicted"),
             author=author_label([getattr(r, "actor", "")]),
+            use_guidance=use_guidance,
         )
-        for r in rows
+        for r, use_guidance in zip(rows, guidance, strict=True)
     ]
     packed = pack_evidence(
         evidence,
@@ -447,6 +480,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
         packed.rendered,
         citations=packed.citations,
         rows=[(input.namespace, row_of[c]) for c in packed.citations],
+        guidance=[packed.use_guidance.get(c) for c in packed.citations],
         source_count=packed.source_count,
         extra_meta={
             "recall_mode": "startup_pins_recency",
@@ -543,10 +577,15 @@ async def _pack_decisions_from_hits(
     for h in decision_hits:
         ns = getattr(h, "namespace", "") or input.namespace
         rec = records.get(str(h.memory_key)) or {}
-        scenario = (
-            str(rec.get("scenario") or "").strip()
-            or str(getattr(h, "content_excerpt", "") or "").strip()
-        )
+        excerpt = str(getattr(h, "content_excerpt", "") or "").strip()
+        # Structured records are read by key. A guided line may use their
+        # rendering only when it describes the selected hit's statement.
+        if getattr(h, "use_guidance", None) is not None and (
+            ns != input.namespace
+            or (rec and memory_value(rec, proposed=rec.get("stage") == "proposed") != excerpt)
+        ):
+            rec = {}
+        scenario = str(rec.get("scenario") or "").strip() or excerpt
         outcome = str(rec.get("outcome") or "").strip()
         realized = str(rec.get("realized_outcome") or "").strip()
         reasoning = str(rec.get("reasoning") or "").strip()
@@ -572,6 +611,7 @@ async def _pack_decisions_from_hits(
         # An abstaining search's rows are no answer: the answer marks them so, and a
         # client drops them (the prompt-recall hook does), so none counts as served.
         rows=None if abstained else [hit_row(h, input.namespace) for h in decision_hits],
+        guidance=[getattr(h, "use_guidance", None) for h in decision_hits],
         source_count=len(decision_hits),
     )
 
@@ -671,6 +711,7 @@ async def _pack_memories(st: _PackState) -> None:
                     author=_hit_author(actors, input, h),
                     derived_from=tuple(getattr(h, "derived_from", None) or ()),
                     code_state=code_change.label(*_code_state_and_commit(h)),
+                    use_guidance=getattr(h, "use_guidance", None),
                 )
             )
         packed = pack_evidence(
@@ -689,6 +730,7 @@ async def _pack_memories(st: _PackState) -> None:
             citations=packed.citations,
             # see _pack_decisions_from_hits: an abstaining search shows no answer
             rows=None if out.abstain else [row_of[c] for c in packed.citations],
+            guidance=[packed.use_guidance.get(c) for c in packed.citations],
             source_count=packed.source_count,
             extra_meta={
                 "evidence_groups": packed.groups,
@@ -760,6 +802,7 @@ async def _pack_procedures(st: _PackState) -> None:
             "\n".join(lines),
             citations=citations,
             rows=[(str(m.namespace or input.namespace), str(m.memory_key)) for m in matches],
+            guidance=[getattr(m, "use_guidance", None) for m in matches],
             source_count=len(matches),
             extra_meta=explore_meta or None,
         )
@@ -791,6 +834,7 @@ def _put_knowledge(st: _PackState, results: list[_SearchHit]) -> None:
                 source="knowledge",
                 group=h.source_uri,
                 score=float(getattr(h, "score", 0.0) or 0.0),
+                use_guidance=getattr(h, "use_guidance", None),
             )
             for h in results
         ]
@@ -806,6 +850,7 @@ def _put_knowledge(st: _PackState, results: list[_SearchHit]) -> None:
             "knowledge",
             packed.rendered,
             citations=packed.citations,
+            guidance=[packed.use_guidance.get(c) for c in packed.citations],
             source_count=packed.source_count,
             extra_meta={
                 "evidence_groups": packed.groups,
@@ -975,6 +1020,7 @@ def _clone_pack(prefix: _PackState) -> _PackState:
         shown_procedures=list(prefix.shown_procedures),
         withheld_procedures=list(prefix.withheld_procedures),
         item_rows={name: list(rows) for name, rows in prefix.item_rows.items()},
+        item_guidance={name: list(items) for name, items in prefix.item_guidance.items()},
     )
 
 
@@ -1027,6 +1073,12 @@ def _render_checked_pack(
         rendered=rendered,
         sections=sections,
         blocks=blocks,
+        use_guidance=[
+            item
+            for name, lines in served_item_counts(rendered, [name for name, _ in present]).items()
+            for item in st.item_guidance.get(name, [])[:lines]
+            if item is not None
+        ],
         section_meta=section_meta,
         section_count=len([v for v in sections.values() if v]),
         truncated=truncated,

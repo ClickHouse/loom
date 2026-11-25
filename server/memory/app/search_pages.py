@@ -62,16 +62,13 @@ def split_tail(pool: list[Any], final: list[Any]) -> tuple[int, list[Any]]:
 
 def _parked(hit: Any) -> dict[str, Any]:
     """A hit as a page stores it, with what a later page's checks read, off the wire: the
-    row's identity, which tells a shared definition, and under the Postgres authority what
-    its check reads (`row_chunk`, `row_version`, `chunk_typed`)."""
+    row's identity and revision, plus Postgres chunk validation fields."""
     if not hasattr(hit, "model_dump"):
-        return dict(hit)
-    out: dict[str, Any] = hit.model_dump()
+        return {key: value for key, value in dict(hit).items() if key != "use_guidance"}
+    out: dict[str, Any] = hit.model_dump(exclude={"use_guidance"})
     if getattr(hit, "_row_identity", None) is not None:
         out["row_identity"] = list(hit._row_identity)
-    if not pg.enabled():
-        return out
-    if getattr(hit, "_row_chunk", None) is not None:
+    if pg.enabled() and getattr(hit, "_row_chunk", None) is not None:
         out["row_chunk"] = list(hit._row_chunk)
     if getattr(hit, "_row_version", 0):
         out["row_version"] = int(hit._row_version)
@@ -86,6 +83,7 @@ def unparked(row: dict[str, Any]) -> _MemorySearchHit | None:
     from server.memory.api.models_search import _MemorySearchHit
 
     r = dict(row)
+    r.pop("use_guidance", None)
     identity, chunk = r.pop("row_identity", None), r.pop("row_chunk", None)
     row_version = int(r.pop("row_version", 0) or 0)
     chunk_typed = bool(r.pop("chunk_typed", False))

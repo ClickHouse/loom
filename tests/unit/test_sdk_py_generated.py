@@ -87,3 +87,13 @@ def test_type_names_follow_the_model_not_the_op_order() -> None:
         assert spec.output == name(op.name, "Output", op.output_model), op.name
     text = (ROOT / "sdk" / "python" / "loom" / "ops.py").read_text()
     assert "MemoryGetOutput2" not in text and "MemoryPinInput" not in text
+
+
+def test_unified_search_sections_keep_python_dict_access() -> None:
+    from typing import Any, get_type_hints
+
+    from loom import ops
+
+    hints = get_type_hints(ops.SearchQueryOutput)
+    assert hints["memory"] == dict[str, Any]
+    assert hints["knowledge"] == dict[str, Any]

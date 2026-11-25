@@ -457,6 +457,40 @@ export interface CodeCallersInput {
   edge_kinds?: string[];
 }
 
+export interface CodeLesson {
+  memory_key?: string;
+  namespace?: string;
+  excerpt?: string;
+  code_state?: string;
+  path?: string;
+  changed_since?: string;
+  supersedes_key?: string;
+  suggestion?: string;
+  owner_symbol?: string;
+  use_guidance?: UseGuidance;
+}
+
+export interface UseGuidance {
+  next_step: "inspect_only" | "clarify_dispute" | "recheck_source" | "obtain_review" | "validate_lead" | "follow_if_applicable";
+  reasons: Array<"diagnostic_only" | "dispute_unresolved" | "source_recheck_needed" | "code_recheck_needed" | "review_pending" | "review_hash_mismatch" | "required_evidence_unknown" | "procedure_candidate" | "human_review_current" | "process_review_current" | "no_attestation" | "review_unknown" | "source_asserted" | "source_unchanged" | "code_unchanged" | "freshness_unknown" | "dispute_unknown">;
+  source_class: "asserted" | "extracted" | "observed" | "derived" | "imported" | "external" | "unknown";
+  lifecycle: GuidanceLifecycle;
+  review: "human" | "process" | "stale" | "none" | "unknown";
+  freshness: GuidanceFreshness;
+  dispute: "unresolved" | "none" | "unknown";
+}
+
+export interface GuidanceLifecycle {
+  status: string;
+  procedure_status: "candidate" | "exercised" | "authored" | "quarantined" | "template" | "not_applicable" | "unknown";
+  review_requirement: "pending" | "none" | "unknown";
+}
+
+export interface GuidanceFreshness {
+  source: "unchanged" | "changed" | "missing" | "not_applicable" | "unknown";
+  code: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "not_applicable" | "unknown";
+}
+
 export interface CodeEdgeWire {
   edge_kind: string;
   from_symbol: string;
@@ -502,7 +536,7 @@ export interface CodeCandidateSiteWire {
 }
 
 export interface CodeCallersOutput {
-  lessons?: Array<Record<string, unknown>>;
+  lessons?: CodeLesson[];
   lessons_left_out?: number;
   edges: CodeEdgeWire[];
   seed_symbols: string[];
@@ -541,7 +575,7 @@ export interface CodeContextPackInput {
 }
 
 export interface CodeContextPackOutput {
-  lessons?: Array<Record<string, unknown>>;
+  lessons?: CodeLesson[];
   lessons_left_out?: number;
   context: string;
   tokens_used: number;
@@ -792,7 +826,7 @@ export interface CodeUnit {
   score?: number;
   recent_prs?: Array<Record<string, unknown>>;
   examples?: Array<Record<string, unknown>>;
-  lessons?: Array<Record<string, unknown>>;
+  lessons?: CodeLesson[];
   lessons_unread?: boolean;
   churn?: number;
   amp?: number;
@@ -863,7 +897,7 @@ export interface CodeEnclosingInput {
 }
 
 export interface CodeEnclosingOutput {
-  lessons?: Array<Record<string, unknown>>;
+  lessons?: CodeLesson[];
   lessons_left_out?: number;
   results: Array<Record<string, unknown>>;
   resolved: number;
@@ -1016,7 +1050,7 @@ export interface GrepDependency {
 }
 
 export interface CodeGrepOutput {
-  lessons?: Array<Record<string, unknown>>;
+  lessons?: CodeLesson[];
   lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
   related?: RelatedGrepEvidence | null;
@@ -1098,7 +1132,7 @@ export interface CodeImpactInput {
 }
 
 export interface CodeImpactOutput {
-  lessons?: Array<Record<string, unknown>>;
+  lessons?: CodeLesson[];
   lessons_left_out?: number;
   impacted_symbols: Array<Record<string, unknown>>;
   impacted_tests: Array<Record<string, unknown>>;
@@ -1292,7 +1326,7 @@ export interface CodeOutlineInput {
 }
 
 export interface CodeOutlineOutput {
-  lessons?: Array<Record<string, unknown>>;
+  lessons?: CodeLesson[];
   lessons_left_out?: number;
   path: string;
   entries: Array<Record<string, unknown>>;
@@ -1395,7 +1429,7 @@ export interface CodeReadWindow {
 }
 
 export interface CodeReadOutput {
-  lessons?: Array<Record<string, unknown>>;
+  lessons?: CodeLesson[];
   lessons_left_out?: number;
   results: CodeReadRange[];
   as_of: Record<string, unknown>;
@@ -1761,7 +1795,7 @@ export interface CodeSearchInput {
 }
 
 export interface CodeSearchOutput {
-  lessons?: Array<Record<string, unknown>>;
+  lessons?: CodeLesson[];
   lessons_left_out?: number;
   results: CodeUnit[];
   route: string;
@@ -2369,10 +2403,20 @@ export interface ContextBlock {
   source_count?: number;
 }
 
+export interface ContextUseGuidance {
+  section: string;
+  citation: string;
+  /** Zero-based item index within the rendered section. */
+  item_index: number;
+  use_guidance: UseGuidance;
+}
+
 export interface ContextPackOutput {
   rendered: string;
   sections: Record<string, string>;
   blocks?: ContextBlock[];
+  /** Guidance for the cited items retained in the rendered pack. */
+  use_guidance?: ContextUseGuidance[];
   section_meta?: Record<string, Record<string, unknown>>;
   section_count: number;
   truncated?: boolean;
@@ -4379,6 +4423,7 @@ export interface KnowledgeSearchInput {
 }
 
 export interface SearchHit {
+  use_guidance?: UseGuidance | null;
   source_uri: string;
   chunk_idx: number;
   content: string;
@@ -5155,6 +5200,7 @@ export interface MemorySearchHit {
   source_resource_id?: string;
   source_class?: string;
   verified?: boolean;
+  use_guidance?: UseGuidance | null;
   explanation?: string;
   session_id?: string;
   speaker?: string;
@@ -5985,6 +6031,7 @@ export interface MemoryForFileHit {
   source_resource_id?: string;
   verification?: "human" | "process" | "stale" | "none";
   code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
+  use_guidance?: UseGuidance | null;
 }
 
 export interface MemoryForFileOutput {
@@ -7469,6 +7516,7 @@ export interface MemoryStackInput {
 }
 
 export interface StackEntry {
+  use_guidance?: UseGuidance | null;
   section: "profile" | "pinned" | "recent_recall" | "procedure" | "knowledge";
   memory_key?: string;
   memory_type?: string;
@@ -9137,6 +9185,7 @@ export interface ProcedureMatchInput {
 }
 
 export interface ProcedureMatch {
+  use_guidance?: UseGuidance | null;
   name: string;
   situation: string;
   steps: string[];
@@ -9539,11 +9588,22 @@ export interface LiveSearchHit {
   live?: true;
 }
 
+export interface SearchSection {
+  results?: SearchSectionHit[];
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface SearchSectionHit {
+  use_guidance?: UseGuidance | null;
+  [key: string]: unknown;
+}
+
 export interface SearchQueryOutput {
   tracker?: Record<string, unknown> | null;
   live?: LiveSearchResults | null;
-  memory?: Record<string, unknown>;
-  knowledge?: Record<string, unknown>;
+  memory?: SearchSection;
+  knowledge?: SearchSection;
   profile?: Record<string, unknown>;
   conversations?: Record<string, unknown>;
   withheld?: Record<string, unknown> | null;

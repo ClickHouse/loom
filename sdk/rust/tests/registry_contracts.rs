@@ -4972,6 +4972,11 @@ fn context_pack() {
         "context.pack:blocks"
     );
     assert_eq!(
+        encoded["use_guidance"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "context.pack:use_guidance"
+    );
+    assert_eq!(
         encoded["section_meta"],
         serde_json::from_str::<serde_json::Value>("{}").unwrap(),
         "context.pack:section_meta"

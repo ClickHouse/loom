@@ -413,7 +413,7 @@ async def test_an_escaped_constraint_under_the_ceiling_prints_whole(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     assert out.truncated is False
-    assert out.rendered.splitlines()[1] == f"- rules/zh [constraint]: {text}"
+    assert out.rendered.splitlines()[1] == f"- rules/zh [constraint]: {text} [use: validate_lead]"
 
 
 @pytest.mark.asyncio
@@ -432,7 +432,9 @@ async def test_an_emoji_constraint_under_the_ceiling_prints_whole(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     assert out.truncated is False
-    assert out.rendered.splitlines()[1] == f"- rules/emoji [constraint]: {text}"
+    assert (
+        out.rendered.splitlines()[1] == f"- rules/emoji [constraint]: {text} [use: validate_lead]"
+    )
 
 
 def test_a_more_line_from_a_left_out_constraint_fits_the_budget(
@@ -742,7 +744,7 @@ async def test_the_source_is_read_into_the_hit_and_the_block(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     assert out.rendered.splitlines()[1] == (
-        f"- design/spill [decision] (pinned): Decided X because Y. — source: {_SOURCE}"
+        f"- design/spill [decision] (pinned): Decided X because Y. — source: {_SOURCE} [use: validate_lead]"
     )
     assert out.hits[0].source_resource_id == _SOURCE
 
@@ -979,27 +981,36 @@ def test_a_cut_object_value_prints_as_stored() -> None:
 
 def test_a_decision_whose_source_changed_says_so_pinned_or_not() -> None:
     tags = ["decision", "source-changed"]
-    pinned = _lines([_decision("design/p", tags=tags)])[1]
+    evidence = {"use_guidance": {"freshness": {"source": "changed"}, "next_step": "recheck_source"}}
+    pinned = _lines([_decision("design/p", tags=tags) | evidence])[1]
     assert pinned.startswith("- Decision (by alice, 3 days ago) (pinned) (source changed): ")
-    own = _lines([_decision("design/u", tags=tags, pinned=False, namespace="me")])[1]
+    own = _lines([_decision("design/u", tags=tags, pinned=False, namespace="me") | evidence])[1]
     assert own.startswith("- design/u [decision] (source changed): ")
     # A fact carrying the tag is no decision: nothing is added.
     fact = _row("fact", json.dumps("A plain fact."), tags=["source-changed"], namespace="me")
-    assert "(source changed" not in _lines([fact])[1]
+    assert "(source changed" not in _lines([fact | evidence])[1]
 
 
 @pytest.mark.asyncio
-async def test_the_served_block_marks_a_decision_whose_source_changed(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("source_state", ["changed", "unknown"])
+async def test_the_served_block_marks_only_a_checked_source_change(
+    monkeypatch: pytest.MonkeyPatch, source_state: str
 ) -> None:
     rows = [
         _decision("extracted", "Decided spill.", pinned=False, tags=["decision", "source-changed"])
     ]
+
+    async def states(org, selected):
+        assert len(selected) == 1 and selected[0]["memory_key"] == "extracted"
+        return [source_state]
+
+    monkeypatch.setattr(mff, "guidance_source_states", states)
     monkeypatch.setattr(mff, "get_client", lambda: _CH(rows))
     out = await mff.handle_memory_for_file(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp", token_budget=300)
     )
-    assert "- extracted [decision] (source changed): Decided spill." in out.rendered
+    assert ("(source changed)" in out.rendered) is (source_state == "changed")
+    assert out.hits[0].use_guidance.freshness.source == source_state
 
 
 def test_an_attested_decision_whose_source_changed_reads_source_changed() -> None:
@@ -1007,6 +1018,7 @@ def test_an_attested_decision_whose_source_changed_reads_source_changed() -> Non
     hit = _decision(
         "design/a", pinned=False, tags=["decision", "source-changed"], verification="human"
     )
+    hit["use_guidance"] = {"freshness": {"source": "changed"}, "next_step": "recheck_source"}
     line = _lines([hit])[1]
     assert line.startswith("- Decision (by alice, 3 days ago) (source changed): ")
 

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from server.memory.api.models_common import _Identity
 from server.memory.domain.definition_check import LapseReason
+from server.memory.domain.use_guidance import UseGuidance
 
 # ============================================================
 # memory.promote / memory.demote — shared memory plane
@@ -393,6 +394,7 @@ class MemoryStackInput(_Identity):
 
 
 class _StackEntry(BaseModel):
+    use_guidance: UseGuidance | None = None
     section: Literal["profile", "pinned", "recent_recall", "procedure", "knowledge"]
     memory_key: str = ""
     memory_type: str = ""

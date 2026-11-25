@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.trust import VerificationState
+from server.memory.domain.use_guidance import UseGuidance
 
 
 class MemoryForFileInput(BaseModel):
@@ -100,6 +101,7 @@ class _MemoryForFileHit(BaseModel):
     # file in `files`): `fresh`, `moved`, `changed` (that code changed since the row was
     # written), `unresolved` (renamed or removed and not followed) or `missing` (gone).
     code_state: CodeState | Literal[""] = ""
+    use_guidance: UseGuidance | None = None
 
 
 class MemoryForFileOutput(BaseModel):

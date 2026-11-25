@@ -81,6 +81,8 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
         lesson["changed_since"] = str(hit["code_changed_since"])
     if hit.get("supersedes_key"):
         lesson["supersedes_key"] = str(hit["supersedes_key"])
+    if hit.get("use_guidance"):
+        lesson["use_guidance"] = hit["use_guidance"]
     return lesson
 
 

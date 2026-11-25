@@ -87,6 +87,15 @@ describe("memory tool evidence", () => {
     async (code_state) => {
       const metadata = {
         code_state,
+        use_guidance: {
+          next_step: "clarify_dispute",
+          reasons: ["dispute_unresolved", "review_unknown"],
+          source_class: "external",
+          lifecycle: { status: "conflicted", procedure_status: "not_applicable", review_requirement: "unknown" },
+          review: "unknown",
+          freshness: { code: code_state, source: "unknown" },
+          dispute: "unresolved",
+        },
         status: "conflicted",
         source_class: "external",
         source_resource_id: "src/reader.py",

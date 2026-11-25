@@ -29,6 +29,7 @@ from server.code.app.search_legs import resolve_deadline_ms
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain import deadline as code_deadline
 from server.code.domain.anchor import local_name
+from server.code.domain.lesson import code_lessons
 from server.core.ch import caller_shaped
 from server.identity.app import request_scope
 from server.memory.app import code_plane_reads, path_lessons
@@ -189,7 +190,7 @@ class WithLessons:
             matched_symbols=symbols,
             source=source,
         )
-        out.lessons, out.lessons_left_out = found.rows, found.left_out
+        out.lessons, out.lessons_left_out = code_lessons.validate_python(found.rows), found.left_out
         return out
 
 

@@ -14,9 +14,10 @@ from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app import search_pages
-from server.memory.app.search import handler, output, pg_validation
+from server.memory.app.search import guidance, handler, output, pg_validation
 from server.memory.app.search.shared_definitions import without_withheld_definitions
 from server.memory.store import MemoryRow
+from server.memory.store.rows import IdentityKey
 from server.observability import degradations
 
 
@@ -52,7 +53,12 @@ async def _fresh(_org: str, _ns: str, hits: list[Any]) -> list[bool]:
 def _parked(key: str, agent: str) -> dict[str, Any]:
     """A hit as a parked page stores it."""
     hit = _MemorySearchHit(
-        memory_key=key, memory_type="definition", content_excerpt="x", distance=0.1, similarity=0.9
+        memory_key=key,
+        memory_type="definition",
+        content_excerpt="x",
+        distance=0.1,
+        similarity=0.9,
+        version=1,
     )
     hit._row_identity = (agent, "-", "-")
     return search_pages._parked(hit)
@@ -71,6 +77,10 @@ def sources(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         held = state["heads"].get(identity.namespace, {})
         return [held[k] for k in keys if k in held]
 
+    async def guidance_heads(keys: list[IdentityKey]) -> dict[IdentityKey, dict[str, Any]]:
+        return {key: {"version": 1, "status": "active"} for key in keys}
+
+    monkeypatch.setattr(guidance, "guidance_heads", guidance_heads)
     monkeypatch.setattr(memory_repo, "get_many_by_keys", heads)
     return state
 

@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 if TYPE_CHECKING:
     from loom.agent import Agent
+    from loom.ops import UseGuidance
 
 # Free-form string. The default taxonomy is episodic/semantic/procedural/
 # preference, but namespaces with a registered tag_registry accept any name.
@@ -454,6 +455,7 @@ class MemorySearchHit:
     source_class: str = ""
     source_resource_id: str = ""
     verified: bool = False
+    use_guidance: UseGuidance | None = field(default=None, kw_only=True)
     # The identity axes the row was written under, when the server read them.
     agent: str = field(default="", kw_only=True)
     user_id: str = ""
@@ -647,6 +649,7 @@ def _parse_search_hit(r: dict[str, Any]) -> MemorySearchHit:
         source_class=str(r.get("source_class") or ""),
         source_resource_id=str(r.get("source_resource_id") or ""),
         verified=bool(r.get("verified") or False),
+        use_guidance=r.get("use_guidance"),
         agent=str(r.get("agent") or ""),
         user_id=str(r.get("user_id") or ""),
         session_id=str(r.get("session_id") or ""),

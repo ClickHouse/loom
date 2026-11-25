@@ -1818,22 +1818,35 @@ def _page_input(top_k: int) -> Any:
     return MemorySearchInput(org="o", namespace="n", query="q", top_k=top_k)
 
 
+@pytest.fixture
+def current_parked_heads(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.memory.app.search import guidance
+
+    async def heads(keys: list[tuple[str, ...]]) -> dict[tuple[str, ...], dict[str, Any]]:
+        return {key: {"version": 42 if key[-1] == "k1" else 5, "status": "active"} for key in keys}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+
+
 @pytest.mark.asyncio
-async def test_a_parked_page_keeps_each_hits_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_parked_page_keeps_each_hits_identity(
+    monkeypatch: pytest.MonkeyPatch, current_parked_heads: None
+) -> None:
     from server.core import pg
     from server.memory.app.search.output import _parked_slice
 
     with monkeypatch.context() as m:  # parked under the Postgres authority
         m.setattr(pg, "enabled", lambda: True)
-        payload = _parked_page([_hit("k1"), _hit("k2", user=None)])
+        payload = _parked_page([_hit("k1", version=42), _hit("k2", user=None)])
     hits, nxt, _ = await _parked_slice(_page_input(2), payload, 0, {"n"})
-    assert [h._row_identity for h in hits] == [("a", "u", "s"), None]
+    assert [h._row_identity for h in hits] == [("a", "u", "s")]
     assert nxt == -1
 
 
 @pytest.mark.asyncio
 async def test_a_parked_page_reads_on_past_stale_rows_and_resumes_after_the_last_served(
     monkeypatch: pytest.MonkeyPatch,
+    current_parked_heads: None,
 ) -> None:
     from server.memory.app.search import pg_validation
     from server.memory.app.search.output import _parked_slice
@@ -1851,7 +1864,9 @@ async def test_a_parked_page_reads_on_past_stale_rows_and_resumes_after_the_last
 
 
 @pytest.mark.asyncio
-async def test_an_as_of_replays_pages_are_served_unchecked(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_an_as_of_replay_page_does_not_inherit_current_guidance(
+    monkeypatch: pytest.MonkeyPatch, current_parked_heads: None
+) -> None:
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app import search_pages
     from server.memory.app.search import output, pg_validation
@@ -1876,6 +1891,9 @@ async def test_an_as_of_replays_pages_are_served_unchecked(monkeypatch: pytest.M
     )
     out = await output._serve_parked_page(page)
     assert [h.memory_key for h in out.results] == ["a", "b"] and out.stale_dropped == 0
+    assert all(
+        h.use_guidance is not None and h.use_guidance.review == "unknown" for h in out.results
+    )
 
 
 @pytest.mark.parametrize("namespace", ["*", ""])
@@ -1890,13 +1908,14 @@ async def test_a_namespace_named_like_a_policy_scope_is_refused(namespace: str) 
         await pg_memory.commit_versions([row], [{}])
 
 
-def test_a_page_parked_under_clickhouse_carries_no_postgres_fields() -> None:
+def test_a_page_parked_under_clickhouse_carries_revision_without_chunk_identity() -> None:
     from server.memory.app.search_pages import _parked
 
     hit = _hit("k1")
     hit._row_version, hit._row_chunk = 42, ("a", "u", 3, "sha")
     parked = _parked(hit)
-    assert not {"row_chunk", "row_version"} & set(parked)
+    assert "row_chunk" not in parked
+    assert parked["row_version"] == 42
     # The row's identity is kept: a later page tells a shared definition by it.
     assert "row_identity" in parked
 
@@ -1904,6 +1923,7 @@ def test_a_page_parked_under_clickhouse_carries_no_postgres_fields() -> None:
 @pytest.mark.asyncio
 async def test_a_parked_page_keeps_each_hits_chunk_and_version(
     monkeypatch: pytest.MonkeyPatch,
+    current_parked_heads: None,
 ) -> None:
     from server.core import pg
     from server.memory.app.search.output import _parked_slice
@@ -2380,9 +2400,11 @@ async def test_a_stale_row_only_in_the_tail_still_lowers_the_ledgers_total(
 
 
 @pytest.mark.asyncio
-async def test_a_parked_page_under_clickhouse_resumes_past_the_rows_a_caller_lost() -> None:
-    """Without the Postgres authority nothing is checked; a full page followed by rows of a
-    namespace the caller lost hands the next page the first of them."""
+async def test_a_parked_page_under_clickhouse_resumes_past_the_rows_a_caller_lost(
+    current_parked_heads: None,
+) -> None:
+    """A full page followed by rows of a namespace the caller lost hands the next page
+    the first of them."""
     from server.memory.app.search.output import _parked_slice
 
     lost = _hit("lost")
@@ -2992,7 +3014,9 @@ async def test_a_cancel_before_the_commit_is_not_marked(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_a_parked_page_checks_at_most_two_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_parked_page_checks_at_most_two_windows(
+    monkeypatch: pytest.MonkeyPatch, current_parked_heads: None
+) -> None:
     """A tail mostly stale is not read a window at a time: the first window, then four
     rows for each hit still missing, in one check; a page still short hands on the rest."""
     from server.memory.app.search import pg_validation
@@ -3018,6 +3042,7 @@ async def test_a_parked_page_checks_at_most_two_windows(monkeypatch: pytest.Monk
 @pytest.mark.asyncio
 async def test_an_empty_parked_page_with_more_behind_it_does_not_abstain(
     monkeypatch: pytest.MonkeyPatch,
+    current_parked_heads: None,
 ) -> None:
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app import search_pages

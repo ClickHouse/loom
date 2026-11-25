@@ -10,26 +10,31 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from server.code.app.common import repo_relative
+from server.core import pg
 from server.core.ch import get_client
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.core.hashing import hash_text
 from server.core.repo_base import query_all_sliced
 from server.memory.api.models_for_file import (
     MemoryForFileInput,
     MemoryForFileOutput,
     _MemoryForFileHit,
 )
+from server.memory.app.code_link_reads import guidance_code_states
+from server.memory.app.use_guidance import guidance_source_states
 from server.memory.domain import code_change
 from server.memory.domain.decision_schema import (
     CONSTRAINT_TAG,
     DECISION_TAG,
     FAILURE_TAG,
     SCHEMA_NAME,
-    SOURCE_CHANGED_TAG,
     is_decision,
     is_whole_row,
 )
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import row_verification
+from server.memory.domain.use_guidance import guidance_for_row
+from server.memory.store import reads as memory_reads
 from server.memory.store.sql import FILE_LISTING_VISIBLE
 from server.settings import settings
 
@@ -70,7 +75,8 @@ SELECT
     memory_key, memory_type,
     if({{full_values:UInt8}}, value, substring(value, 1, {_READ_BYTES})) AS value,
     tags, confidence, pinned, CAST(status AS String) AS status_text, agent, updated_at, actor,
-    memory_id, conflict_with, source_resource_id,
+    memory_id, user_id, session_id, version, files, conflict_with,
+    source_resource_id, source_trace, source_class, requires_review,
     verified_by, verified_sha256, content_sha256,
     if({{include_source_links:UInt8}}, files, []) AS source_files,
     if({{include_source_links:UInt8}}, user_id, '') AS source_user_id,
@@ -189,18 +195,24 @@ def _body(hit: dict[str, Any], *, decision: bool, whole: bool = True) -> str:
 
 
 def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
-    """`(pinned)` for a pinned row, `(source changed)` for a decision tagged
-    `source-changed`, `(outcome: failed)` for a decision whose recorded outcome failed,
+    """`(pinned)` for a pinned row, `(source changed)` for a decision with a readable
+    changed source, `(outcome: failed)` for a decision whose recorded outcome failed,
     and a note when its linked code changed or went. An extracted decision nobody pinned
     is the normal case and carries no pin mark."""
     tags = hit.get("tags") or []
     out = " (pinned)" if hit.get("pinned") else ""
-    if decision and SOURCE_CHANGED_TAG in tags:
+    freshness = (hit.get("use_guidance") or {}).get("freshness", {})
+    if decision and freshness.get("source") == "changed":
         out += " (source changed)"
     if decision and FAILURE_TAG in tags:
         out += " (outcome: failed)"
     state, commit = str(hit.get("code_state") or ""), str(hit.get("code_changed_since") or "")
     return out + code_change.note(state, commit)
+
+
+def _use_note(hit: dict[str, Any]) -> str:
+    guidance = hit.get("use_guidance")
+    return f" [use: {guidance['next_step']}]" if guidance else ""
 
 
 def _marker(hit: dict[str, Any], *, show_decision: bool) -> str:
@@ -226,7 +238,10 @@ def _team_line(hit: dict[str, Any], now: datetime, *, decision: bool) -> str:
     label = "Decision" if decision else "Team rule"
     head = f"{label} ({who})" if who else label
     marks = _marker(hit, show_decision=False) + _status_notes(hit, decision=decision)
-    return f"- {head}{marks}: {_body(hit, decision=decision)} [id: {hit['memory_key']}]"
+    return (
+        f"- {head}{marks}: {_body(hit, decision=decision)}"
+        f" [id: {hit['memory_key']}]{_use_note(hit)}"
+    )
 
 
 def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
@@ -286,7 +301,7 @@ def _row_line(h: dict[str, Any], now: datetime, home: str, *, whole: bool = True
     if _is_team(h, home):
         return _team_line(h, now, decision=decision)
     marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
-    return f"- {h['memory_key']}{marks}: {_body(h, decision=decision, whole=whole)}"
+    return f"- {h['memory_key']}{marks}: {_body(h, decision=decision, whole=whole)}{_use_note(h)}"
 
 
 def listing_line(hit: dict[str, Any]) -> str:
@@ -582,13 +597,13 @@ async def _linked(
     try:
         trunks = [t for ns in input.extra_namespaces if (t := trunk_namespace(input.org, ns))]
         trunks = trunks or [t for t in [namespace_for_tags(input.org, input.tags)] if t]
-        if not trunks:
+        seen = await readable_namespaces(input.org, set(trunks)) if trunks else set()
+        if not seen:
             return {}
         links = await code_links.for_paths(
-            input.org, trunks, [path], namespaces=nss, states=list(code_change.STATE_RANK)
+            input.org, sorted(seen), [path], namespaces=nss, states=list(code_change.STATE_RANK)
         )
         links = await current_links(input.org, links)
-        seen = await readable_namespaces(input.org, {a["code_namespace"] for a in links})
     except Exception as e:  # noqa: BLE001 — the links are additive; the files match stands
         log.debug("memory.for_file: code links skipped: %s", e)
         return None
@@ -659,7 +674,7 @@ async def _merged_rows(
         )
         skipped = linked.result() is None  # read by the own read above
         if not extras:
-            return _supersede_order(own), skipped
+            return _supersede_order(await current_file_rows(input.org, own)), skipped
         got = await asyncio.gather(
             *(
                 _rows_for(
@@ -692,7 +707,8 @@ async def _merged_rows(
         if k not in seen:
             seen.add(k)
             merged.append(r)
-    return _supersede_order(merged[: int(input.top_k)]), skipped
+    current = await current_file_rows(input.org, merged[: int(input.top_k)])
+    return _supersede_order(current), skipped
 
 
 def _hit(r: dict[str, Any], input: MemoryForFileInput) -> _MemoryForFileHit:
@@ -716,7 +732,57 @@ def _hit(r: dict[str, Any], input: MemoryForFileInput) -> _MemoryForFileHit:
         source_resource_id=str(r.get("source_resource_id") or ""),
         verification=row_verification(r),
         code_state=r.get("code_state", ""),
+        use_guidance=r["use_guidance"],
     )
+
+
+async def current_file_rows(org: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Postgres owns visibility and metadata when enabled."""
+    if not rows or not pg.enabled():
+        return rows
+    keys = [
+        (org, r["namespace"], r["agent"], r["user_id"], r["session_id"], r["memory_key"])
+        for r in rows
+    ]
+    heads = await memory_reads.guidance_heads(keys)
+    now = naive_utc_now()
+    kept = []
+    for row, key in zip(rows, keys, strict=True):
+        head = heads.get(key)
+        if (
+            head
+            and int(head.get("version") or 0) == int(row["version"])
+            and str(head.get("memory_id")) == str(row["memory_id"])
+            and hash_text(head.get("content_sha256")) == hash_text(row.get("content_sha256"))
+            and head.get("status") in ("active", "conflicted")
+            and head.get("sensitivity") != "high"
+            and head.get("tombstoned_at") is None
+            and head.get("redacted_at") is None
+            and all(
+                head.get(column) is None
+                or ((end := parse_iso_dt(head[column])) is not None and end > now)
+                for column in ("expires_at", "valid_to")
+            )
+        ):
+            kept.append(row | head | {"status_text": head["status"]})
+    return kept
+
+
+async def guided_file_rows(
+    org: str, rows: list[dict[str, Any]], *, local_code_changes: set[str] | None = None
+) -> None:
+    """Project guidance from visible memory revisions, independently of their path links."""
+    code_states, source_states = await asyncio.gather(
+        guidance_code_states(org, rows), guidance_source_states(org, rows)
+    )
+    for row, state, source_state in zip(rows, code_states, source_states, strict=True):
+        if (
+            local_code_changes
+            and str(row["memory_id"]) in local_code_changes
+            and state not in code_change.DEMOTED
+        ):
+            state = "changed"
+        row["use_guidance"] = guidance_for_row(row, code_state=state, source_state=source_state)
 
 
 async def listing_rows(
@@ -739,6 +805,7 @@ async def listing_rows(
         full_values=True,
         include_source_links=include_source_links,
     )
+    await guided_file_rows(input.org, rows)
     return [
         _with_ids(_hit(r, input), r)
         | {"code_symbols": r.get("code_symbols", [])}
@@ -763,6 +830,7 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
     rows, _skipped = await _merged_rows(input, path, base)
+    await guided_file_rows(input.org, rows)
 
     hits: list[_MemoryForFileHit] = []
     to_render: list[dict[str, Any]] = []

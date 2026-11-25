@@ -1,7 +1,5 @@
 """What every code.* input shares: the identity block, the `namespaces` list rule,
 and the serializer helpers that keep a disclosure off the wire until it fired.
-
-A leaf: it imports nothing from the package.
 """
 
 from __future__ import annotations
@@ -17,6 +15,7 @@ from pydantic import (
     model_validator,
 )
 
+from server.code.domain.lesson import CodeLesson
 from server.core.naming import present
 from server.operations.base import MCP_HIDDEN
 
@@ -76,7 +75,7 @@ class _LessonsOut(BaseModel):
     # written against; '' for a row that names the file only. `changed_since` is the commit
     # that put its code in a `changed`, `unresolved` or `missing` state, when known;
     # `supersedes_key` the key of the older row it replaces.
-    lessons: list[dict[str, Any]] = Field(default_factory=list)
+    lessons: list[CodeLesson] = Field(default_factory=list)
     # How many rows about those files the lessons' token cap or a cut left out, with
     # the rows another row read for the answer supersedes.
     lessons_left_out: int = 0

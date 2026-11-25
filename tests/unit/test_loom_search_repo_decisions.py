@@ -635,6 +635,71 @@ async def test_the_real_search_serves_only_decision_rows_from_the_repository(
 
 
 @pytest.mark.asyncio
+async def test_merged_repository_decision_keeps_exact_authorized_guidance(
+    search_env,
+    monkeypatch,
+) -> None:
+    from dataclasses import replace
+
+    from server.memory.app.search import guidance, handle_memory_search
+
+    visible = replace(
+        _svc_hit("decision:evict", sim=0.9, mtype="decision"),
+        identity=("a", "alice", "s1"),
+        version=42,
+    )
+    hidden = replace(
+        _svc_hit("decision:private", sim=0.8, mtype="decision"),
+        identity=("a", "bob", "s1"),
+        version=43,
+    )
+    search_env.hits_by_ns[TRUNK] = [visible, hidden]
+    key = (ORG, TRUNK, "a", "alice", "s1", visible.memory_key)
+    seen: list[tuple[str, ...]] = []
+
+    async def heads(keys: list[tuple[str, ...]]) -> dict[tuple[str, ...], dict[str, Any]]:
+        seen.extend(keys)
+        return {
+            key: {
+                "version": 42,
+                "status": "active",
+                "source_class": "asserted",
+                "verified_by": "human:reviewer",
+                "verified_sha256": "a" * 64,
+                "content_sha256": "a" * 64,
+            }
+        }
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    inp = BASE.model_copy(update={"render": "", "tags": [], "namespace_scope": "this"})
+    set_current_auth(
+        AuthInfo(
+            subject="sa:bot",
+            org=ORG,
+            namespaces=("me", TRUNK),
+            roles=(),
+            is_service_account=True,
+            read_user_id="alice",
+        )
+    )
+    try:
+        direct = await handle_memory_search(
+            inp.model_copy(update={"namespace": TRUNK, "memory_type": "decision"})
+        )
+        merged = await repo_decisions.memory_with_repo_decisions(inp, repo_namespace=TRUNK)
+        payload = await _assemble(monkeypatch, merged, explain=True)
+    finally:
+        set_current_auth(None)
+
+    (direct_hit,) = direct.results
+    assert direct_hit.use_guidance is not None and direct_hit.use_guidance.review == "human"
+    (row,) = payload["memory"]["results"]
+    assert row["memory_key"] == visible.memory_key
+    assert row.get("use_guidance") == direct_hit.use_guidance.model_dump()
+    assert seen == [key, key]
+
+
+@pytest.mark.asyncio
 async def test_an_empty_repository_is_searched_once(search_env, monkeypatch) -> None:
     """The merged pass runs no read-your-writes re-read: an empty trunk is
     not searched again with sequential consistency. The trade-off: a decision

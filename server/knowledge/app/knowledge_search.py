@@ -30,6 +30,7 @@ from server.knowledge.app.source_corpus import LostCorpus
 from server.knowledge.app.source_search_proofs import SearchProofs
 from server.knowledge.domain.chunking import embedding_text
 from server.memory.app.log_once import LogOnce
+from server.memory.domain.use_guidance import guidance_for_row
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -94,6 +95,11 @@ class _SearchRenderer:
             await _narrow_spans(self.embedder, self.query_vec, top, proofs=proofs)
         if proofs is not None:
             await proofs.check()
+        for hit in top:
+            # Publication checks establish access to this revision, independent of factual review.
+            hit.use_guidance = guidance_for_row(
+                {"source_class": hit.source_class}, code_state="not_applicable"
+            )
         if _missed(self.input, top, skipped=bool(self.skipped), dropped=bool(dropped)):
             gaps_app.record_miss(
                 op="knowledge.search",

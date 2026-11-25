@@ -279,3 +279,5 @@ The SDK's `Session.offload` / `Session.fetch` wrap the pair for one session.
 - [Retrieval and ranking](../concepts/retrieval-and-ranking.md): why a hit ranks where it does.
 - [MCP reference](../reference/mcp.md): toolsets, identity defaults and the code-scope header.
 - [Tracker](./tracker/overview.md): the duplicate check behind the tracker leg.
+
+See [Using retrieved guidance](memory/history-and-provenance.md#using-retrieved-guidance) for the next step on a maintained result.

@@ -15,6 +15,7 @@ from server.memory.api.models_search import MemorySearchInput, MemorySearchOutpu
 from server.memory.app.search import pg_validation, term_leg
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.evidence import _decorate_hits
+from server.memory.app.search.guidance import attach_search_guidance, hit_in_read_scope
 from server.memory.app.search.knobs import _ground_relative_excerpts_enabled
 from server.memory.app.search.payload import (
     _apply_bodies,
@@ -90,12 +91,18 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
     readable = await _readable_namespaces(input.org, input.namespace, payload)
     hits, nxt, stale_dropped = await _parked_slice(input, payload, offset, readable)
     # Hits from a namespace the caller lost are neither served nor counted; the
-    # count is over the whole parked list, the same on every page while the
-    # caller's readable namespaces do not change.
-    withheld = sum(1 for h in payload.get("hits") or [] if h.get("namespace", "") not in readable)
+    # first page was never parked. If scope narrowed, only the visible tail can
+    # be counted.
+    parked_rows = payload.get("hits") or []
+    withheld = sum(
+        1
+        for row in parked_rows
+        if row.get("namespace", "") not in readable
+        or not hit_in_read_scope(row.get("row_identity"))
+    )
     # Rows the authority no longer serves stay in it, counted per page in `stale_dropped`;
     # a shared definition withheld since the first page stays in it too, counted nowhere.
-    total = max(0, int(payload.get("candidates_total") or 0) - withheld)
+    total = len(parked_rows) - withheld if withheld else int(payload.get("candidates_total") or 0)
     # A parked page was serialised without tags unless the first call asked; fill on this
     # call's own switch.
     await _fill_hit_tags(hits, input)
@@ -184,8 +191,8 @@ async def _parked_slice(
     """Up to `top_k` readable, still-served hits from `offset`; the next offset (-1 at the
     end) and how many were stale. Checked in two windows at most: `top_k` readable rows,
     then, when the page is still short, `_REFILL_PER_MISSING_HIT` for each hit missing.
-    A replay page skips the authority's check; the shared-definition check runs on every
-    page."""
+    A replay page does not adopt the current head's guidance. On every page the
+    current checks can withhold inaccessible content."""
     from server.memory.app import search_pages as _pages
 
     rows = list(payload.get("hits") or [])
@@ -200,7 +207,7 @@ async def _parked_slice(
         window: list[tuple[int, _MemorySearchHit]] = []
         while j < len(rows) and len(window) < size:
             hit = _pages.unparked(rows[j]) if rows[j].get("namespace", "") in readable else None
-            if hit is not None:
+            if hit is not None and hit_in_read_scope(hit._row_identity):
                 window.append((j, hit))
             j += 1
         window_hits = [h for _, h in window]
@@ -216,13 +223,26 @@ async def _parked_slice(
                 whole=input.bodies in ("unit", "source"),
             ),
         )
+        current = await attach_search_guidance(
+            input,
+            [
+                h
+                for h, stale_hit, withheld_hit in zip(
+                    refreshed, stale, definitions_withheld, strict=True
+                )
+                if h is not None and not stale_hit and not withheld_hit
+            ],
+            parked=True,
+            replay=bool(payload.get("replay")),
+        )
+        current_ids = {id(h) for h in current}
         for (at, _), is_stale, is_withheld, hit in zip(
             window, stale, definitions_withheld, refreshed, strict=True
         ):
             if len(hits) == top_k:
                 j = at  # the first row of the next page
                 break
-            if is_stale:
+            if is_stale or (not is_withheld and hit is not None and id(hit) not in current_ids):
                 dropped += 1
             elif not is_withheld and hit is not None:
                 hits.append(hit)
@@ -292,6 +312,7 @@ async def _shape_final_hits(
             code_change.spend_marks(final_hits)
         else:
             final_hits = move_stale(final_hits, input)
+    final_hits = await attach_search_guidance(input, final_hits, replay=input.as_of is not None)
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)
     )

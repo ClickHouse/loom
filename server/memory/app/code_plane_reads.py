@@ -13,6 +13,7 @@ from typing import Any, NamedTuple
 from server.code.domain.anchor import Definition, bare_name, local_name
 from server.code.domain.declaration import fingerprint_version
 from server.code.domain.extract import bounded_parse
+from server.core.hashing import hash_text
 from server.identity.domain.read_scope import ReadFilters
 from server.memory.domain.code_change import worst
 from server.memory.domain.decision_schema import CONSTRAINT_TAG
@@ -79,11 +80,14 @@ async def lessons_for_symbol(
     each with the state of the symbol's code on the branch read (trunk's state where
     the branch's files cannot be read here)."""
     from server.code.app import memory_links as code
-    from server.memory.app.code_link_reads import current_links
+    from server.memory.app.code_link_reads import current_links, inputs_now, readable_namespaces
+    from server.memory.app.for_file import current_file_rows, guided_file_rows
 
     if not namespaces:
         return []
     trunk = code.trunk_namespace(org, code_namespace) or code_namespace
+    if not await readable_namespaces(org, {trunk}):
+        return []
     stored, head = await asyncio.gather(
         links_store.for_paths(
             org, [trunk], list(paths), include_former=True, namespaces=list(namespaces)
@@ -117,15 +121,22 @@ async def lessons_for_symbol(
         limit=limit,
         changed=[mid for mid, state in states.items() if state == "changed"],
     )
+    served = await current_file_rows(org, served)
     rows = {str(r["mid"]): r for r in served}
-    out: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
+    out: dict[str, tuple[tuple[Any, ...], dict[str, Any], dict[str, Any]]] = {}
+    local_code_changes: set[str] = set()
     for a, state, suggestion in matched:
         row = rows.get(a["memory_id"])
         if row is None or row["mid"] in out:
             continue
+        if inputs_now(org, row | {"sha": hash_text(row["content_sha256"])}) != a["inputs_hash"]:
+            continue
+        if state == "changed":
+            local_code_changes.add(a["memory_id"])
         rank = (state == "changed", not row.get("pinned"), -float(row.get("confidence") or 0))
         out[row["mid"]] = (
             rank,
+            row,
             {
                 "memory_key": str(row["memory_key"]),
                 "namespace": str(row["namespace"]),
@@ -135,8 +146,13 @@ async def lessons_for_symbol(
                 "suggestion": suggestion,
             },
         )
-    ranked = [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
-    return fit_symbol_lessons(ranked)
+    ranked = sorted(out.values(), key=lambda x: x[0])[:limit]
+    await guided_file_rows(
+        org, [row for _, row, _ in ranked], local_code_changes=local_code_changes
+    )
+    return fit_symbol_lessons(
+        [lesson | {"use_guidance": row["use_guidance"].model_dump()} for _, row, lesson in ranked]
+    )
 
 
 def fit_symbol_lessons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

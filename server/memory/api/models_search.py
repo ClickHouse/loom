@@ -17,6 +17,7 @@ from server.memory.api.models_common import MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.rerank_names import RerankName
 from server.memory.domain.search_types import ChunkRef
+from server.memory.domain.use_guidance import UseGuidance
 from server.operations.base import MCP_HIDDEN
 
 # ============================================================
@@ -489,6 +490,8 @@ class _MemorySearchHit(BaseModel):
         data: dict[str, Any] = handler(self)
         if self.tags is None:
             data.pop("tags", None)
+        if self.use_guidance is None:
+            data.pop("use_guidance", None)
         # Same rule for the reliance counters (`include_usage`).
         for name in _USAGE_FIELDS:
             if getattr(self, name, None) is None:
@@ -658,6 +661,8 @@ class _MemorySearchHit(BaseModel):
     # Provenance: how the content entered memory and whether
     # an attestation is live — so a caller can filter on trust post-hoc.
     verified: bool = False
+    # Use guidance for maintained memory, derived from evidence for the served revision.
+    use_guidance: UseGuidance | None = None
     # Compact agent-facing provenance so a hit can be cited without search_trace.
     explanation: str = ""
     # Provenance: the `session_id` the memory was written under; "" when the

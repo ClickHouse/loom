@@ -22,6 +22,7 @@ from server.knowledge.domain.answer_plan import CALCULATION_SOURCE
 from server.knowledge.domain.datasets import DatasetType
 from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
 from server.memory.domain.rerank_names import RerankName
+from server.memory.domain.use_guidance import UseGuidance
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 
@@ -118,6 +119,7 @@ class KnowledgeUpsertOutput(BaseModel):
 
 
 class _SearchHit(BaseModel):
+    use_guidance: UseGuidance | None = None
     source_uri: str
     chunk_idx: int
     content: str

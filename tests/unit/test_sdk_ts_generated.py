@@ -46,3 +46,14 @@ def test_type_names_follow_the_model_not_the_op_order() -> None:
     declared = re.findall(r"^export (?:interface|type) (\w+)", text, re.M)
     assert len(declared) == len(set(declared))
     assert not [n for n in declared if re.fullmatch(r"\w+\d", n) and n[:-1] in declared]
+
+
+def test_unified_search_results_have_typed_guidance_and_open_fields() -> None:
+    from server.memory.api.models_loom_search import SearchOutput
+
+    emitter = sdk_ts_gen.Emitter()
+    emitter.declare("SearchQueryOutput", SearchOutput.model_json_schema())
+    assert "results?: SearchSectionHit[];" in emitter.decls["SearchSection"]
+    assert "use_guidance?: UseGuidance | null;" in emitter.decls["SearchSectionHit"]
+    for name in ("SearchSection", "SearchSectionHit"):
+        assert "[key: string]: unknown;" in emitter.decls[name]

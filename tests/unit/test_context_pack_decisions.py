@@ -306,3 +306,39 @@ def test_every_governed_definition_leads_the_memories_block(
     block = out.sections["memories"]
     positions = [block.index(f"term {i}") for i in range(4)]
     assert positions == sorted(positions) and positions[-1] < block.index("a resource row")
+
+
+@pytest.mark.parametrize("matches", [True, False])
+def test_guided_decision_uses_the_served_statement(
+    monkeypatch: pytest.MonkeyPatch, matches: bool
+) -> None:
+    from server.memory.domain.decision_statement import memory_value
+    from server.memory.domain.use_guidance import guidance_for_row
+
+    _dead_other_sections(monkeypatch)
+    record = {"scenario": "pick a store", "outcome": "use SQLite", "stage": "decided"}
+    selected = record if matches else {**record, "outcome": "use ClickHouse"}
+    guidance = guidance_for_row({"status": "conflicted"})
+    hit = NS(
+        **{
+            **vars(_DECISION),
+            "content_excerpt": memory_value(selected),
+            "use_guidance": guidance,
+        }
+    )
+    monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search_stub([hit]))
+
+    async def records(ch: Any, org: str, ns: str, keys: list[str]) -> dict[str, Any]:
+        return {"d1": record}
+
+    monkeypatch.setattr("server.memory.app.decision._decision_records", records)
+    out = asyncio.run(
+        handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="store"))
+    )
+
+    assert selected["outcome"] in out.sections["decisions"]
+    assert ("use SQLite" in out.sections["decisions"]) is matches
+    assert ("decided:" in out.sections["decisions"]) is matches
+    (item,) = out.use_guidance
+    assert item.citation == "decision:ns/d1"
+    assert item.use_guidance == guidance

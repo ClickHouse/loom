@@ -297,3 +297,5 @@ admins, including their queue counts and lineage. Approving one publishes its co
 value, including supporting SQL, to namespace readers. See [definition
 drafts](../../architecture/definition-drafts.md) for source setup, review conflicts and
 interrupted promotion.
+
+See [Using retrieved guidance](history-and-provenance.md#using-retrieved-guidance) for the next step on a maintained result.
