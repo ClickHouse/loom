@@ -568,7 +568,7 @@ def test_an_unrefused_probe_is_named_by_the_column_not_the_sql(
 ) -> None:
     # /v1/health shows this text: no SQL, and no database name.
     async def run(sql: str, **_: Any) -> Any:
-        if ".agent_events_private" in sql:
+        if re.search(r"\.agent_events(?:_private)?(?:\s|$)", sql):
             raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
         if sql.startswith("SELECT count()") and "system." not in sql:
             return [], [], [(1,)] if boundary.CANARY_TABLE in sql else [(0,)]

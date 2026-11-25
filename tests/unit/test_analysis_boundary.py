@@ -57,12 +57,12 @@ def test_grants_are_the_allowlist_and_the_canary() -> None:
     assert _grants() == expected
 
 
-def test_a_version_names_one_set_of_grants_and_policies() -> None:
-    # Changing a grant, a policy, a live predicate or a retired table changes
-    # this digest: bump ENTITY_VERSION and record the new digest here.
-    assert {boundary.ENTITY_VERSION: boundary.structure_digest(MASKED_EVENT_COLUMNS)} == {
-        5: "888884fc88f3e8f461626942bedca1cd"
-    }
+def test_entity_version_pins_the_catalog() -> None:
+    # A change to a grant, policy, or view needs a new version and digest.
+    assert (
+        boundary.ENTITY_VERSION,
+        boundary.structure_digest(MASKED_EVENT_COLUMNS),
+    ) == (6, "72009e3c6980bc1ca0216da5c433abba")
 
 
 def test_the_pins_come_after_every_policy_and_before_every_grant() -> None:
@@ -124,6 +124,8 @@ def test_every_grant_and_role_outside_the_allowlist_is_revoked_before_the_grants
     revokes = [s for s in sql if s.startswith("REVOKE")]
     assert sorted(revokes) == sorted(
         [
+            "REVOKE SELECT ON `loom`.agent_events FROM `loom_analyst`",
+            "REVOKE SELECT ON `loom`.agent_events_private FROM `loom_analyst`",
             "REVOKE SELECT(`value`) ON `loom`.`memory` FROM `loom_analyst`",
             "REVOKE SELECT ON `loom`.`memory` FROM `loom_analyst`",
             "REVOKE SELECT ON `loom`.`signing_keys` FROM `loom_analyst`",
@@ -233,7 +235,7 @@ def test_tombstoning_tables_are_read_live() -> None:
 def test_every_allowlisted_table_is_reached_by_erasure() -> None:
     classified = census.classified_tables()
     for t in boundary.TABLES:
-        table = "agent_events" if t.name == boundary.EVENTS_VIEW else t.name
+        table = "agent_events" if t.name in boundary.EVENT_VIEWS else t.name
         assert f"loom.{table}" in classified, table
     assert classified["loom.analysis_secrets"] == "no_memory_content"
 
@@ -245,22 +247,19 @@ def test_no_entity_statement_changes_what_cloud_pins() -> None:
     assert not any(pinned.search(stmt) for stmt in SQL)
 
 
-def test_entity_statements_are_sent_with_their_text_cut_from_the_log(monkeypatch) -> None:
-    from unittest.mock import AsyncMock
-
-    from server.insights.store import event_cutover
-
-    fence = AsyncMock()
-    monkeypatch.setattr(event_cutover, "confirm_ordinary_events", fence)
+def test_entity_statements_are_sent_with_their_text_cut_from_the_log() -> None:
     sent: list[tuple[str, dict[str, object]]] = []
 
     class _Client:
+        async def query_all(self, sql: str, **_: object) -> list[dict[str, str]]:
+            assert sql == "SHOW CREATE ROW POLICIES ON loom.*"
+            return []
+
         async def execute(self, sql: str, settings: dict[str, object], **_: object) -> None:
             sent.append((sql, settings))
 
     names = boundary.SettingNames("SQL_")
     asyncio.run(store.write_entities(SQL, names=names, ch=_Client()))  # type: ignore[arg-type]
-    fence.assert_awaited_once()
     assert [sql for sql, _ in sent] == SQL
     cut = {"log_queries_cut_to_length": 1, "log_formatted_queries": 0}
     empty_scope = {names.org: "", names.ns: "", names.exp: "0", names.sig: ""}
@@ -269,6 +268,24 @@ def test_entity_statements_are_sent_with_their_text_cut_from_the_log(monkeypatch
     view = next(sql for sql in SQL if sql.startswith("CREATE OR REPLACE VIEW"))
     assert "getSetting('SQL_loom_org')" in view
     assert " SETTINGS " not in view
+
+
+def test_analyst_grant_refuses_a_foreign_policy_even_with_empty_system_metadata() -> None:
+    from unittest.mock import AsyncMock
+
+    ch = AsyncMock()
+    ch.query_all.return_value = [
+        {"statement": "CREATE ROW POLICY foreign ON loom.memory FOR SELECT USING 0 TO ALL"}
+    ]
+    grant = "GRANT SELECT(org) ON `loom`.memory TO `loom_analyst`"
+
+    with pytest.raises(RuntimeError, match="unverified row policies"):
+        asyncio.run(store.write_entities([grant], names=NAMES, ch=ch))
+
+    ch.query_all.assert_awaited_once_with(
+        "SHOW CREATE ROW POLICIES ON loom.*", settings=boundary.LOG_TEXT_CUT
+    )
+    ch.execute.assert_not_awaited()
 
 
 def test_profile_pins_what_a_statement_could_widen() -> None:
@@ -296,8 +313,9 @@ def test_profile_pins_what_a_statement_could_widen() -> None:
 
 
 def test_one_password_and_one_key() -> None:
-    user = next(s for s in SQL if s.startswith("ALTER USER"))
-    assert "IDENTIFIED WITH sha256_password BY 'pw-current' SETTINGS" in user
+    user = next(s for s in SQL if s.startswith("CREATE USER"))
+    assert user.endswith("IDENTIFIED WITH sha256_password BY 'pw-current'")
+    assert all(s.endswith("TO `loom_analyst`") for s in boundary.caps_sql(NAMES, CAPS))
     policy = _policies(boundary.POLICY_NAME)["memory"]
     assert policy.count("hex(SHA256(concat(decrypt(") == 1
 
@@ -457,3 +475,42 @@ def test_a_clickhouse_error_reads_as_its_code_name_and_known_cause(
     shown, fix = boundary.error_cause(code, name, text)
     assert cause in shown and text not in shown
     assert bool(fix) is own_fix
+
+
+def test_insights_event_grants_need_only_the_loom_policy_catalog() -> None:
+    from unittest.mock import AsyncMock
+
+    ch = AsyncMock()
+    ch.query_all.return_value = []
+    statements = boundary.entity_sql(
+        "`loom`",
+        NAMES,
+        "pw",
+        KEY,
+        CAPS,
+        frozenset({boundary.Grant("SELECT", "loom", "agent_events", "org", True)}),
+        event_columns=MASKED_EVENT_COLUMNS,
+    )
+
+    asyncio.run(store.write_entities(statements, names=NAMES, ch=ch))
+
+    ch.query_all.assert_awaited_once_with(
+        "SHOW CREATE ROW POLICIES ON loom.*", settings=boundary.LOG_TEXT_CUT
+    )
+    assert "REVOKE SELECT ON `loom`.agent_events FROM `loom_analyst`" in statements
+    assert set(_grants()).isdisjoint({"agent_events", "agent_events_private"})
+    assert set(boundary.EVENT_VIEWS) <= set(_grants())
+    assert not any(s.startswith("ALTER USER") for s in statements)
+
+
+@pytest.mark.parametrize("table", boundary.EVENT_STORAGE_TABLES)
+def test_writer_refuses_physical_event_grants(table: str) -> None:
+    from unittest.mock import AsyncMock
+
+    ch = AsyncMock()
+    grant = f"GRANT SELECT(org) ON `loom`.{table} TO `loom_analyst`"
+
+    with pytest.raises(ValueError, match="outside the allowlist"):
+        asyncio.run(store.write_entities([grant], names=NAMES, ch=ch))
+
+    ch.execute.assert_not_awaited()
