@@ -58,12 +58,12 @@ func main() {
 }
 ```
 
-| Method                          | Operation                                            | Result                                                                                        |
-| ------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `Set(ctx, key, value, options)` | [`memory.set`](operations/memory.md#memoryset)       | Memory ID, version, and write status. The value can be any JSON-encodable value.              |
-| `Get(ctx, key)`                 | [`memory.get`](operations/memory.md#memoryget)       | `Found` and the current value as `json.RawMessage`. A missing key returns `Found: false`.     |
-| `Search(ctx, query, options)`   | [`memory.search`](operations/memory.md#memorysearch) | Ranked memory excerpts. `SearchOptions` can limit the results by count, memory type, or tags. |
-| `Delete(ctx, key)`              | [`memory.delete`](operations/memory.md#memorydelete) | `Found` and `Tombstoned` describe whether the operation found and retired a live value.       |
+| Method                          | Operation                                            | Result                                                                                              |
+| ------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `Set(ctx, key, value, options)` | [`memory.set`](operations/memory.md#memoryset)       | Memory ID, version, and write status. Accepts JSON objects, arrays, strings, numbers, and booleans. |
+| `Get(ctx, key)`                 | [`memory.get`](operations/memory.md#memoryget)       | `Found` and the current value as `json.RawMessage`. A missing key returns `Found: false`.           |
+| `Search(ctx, query, options)`   | [`memory.search`](operations/memory.md#memorysearch) | Ranked memory excerpts. `SearchOptions` can limit the results by count, memory type, or tags.       |
+| `Delete(ctx, key)`              | [`memory.delete`](operations/memory.md#memorydelete) | `Found` and `Tombstoned` describe whether the operation found and retired a live value.             |
 
 ## Connect to a team server
 
@@ -80,6 +80,6 @@ The SDK returns a redirect as `*loom.Error` when the HTTP client has no custom `
 
 ## Handle errors and deadlines
 
-Pass a `context.Context` to each operation. The SDK sends one request per call. For an HTTP error, use `errors.As` to read `*loom.Error` and match on `Code`. Use `Retryable` and `RetryAfter` when deciding whether to retry. When present, `RequestID` identifies the request in server logs. Check the [HTTP idempotency contract](http-api.md#idempotency) before resending writes whose outcome is unknown.
+Pass a `context.Context` to each operation. The SDK leaves retries to the caller. For an HTTP error, use `errors.As` to read `*loom.Error` and match on `Code`. Use `Retryable` and `RetryAfter` when deciding whether to retry. When present, `RequestID` identifies the request in server logs. Check the [HTTP idempotency contract](http-api.md#idempotency) before resending writes whose outcome is unknown.
 
 Use the [HTTP API](http-api.md), [Python SDK](python-sdk.md), or [TypeScript SDK](typescript-sdk.md) for Loom operations beyond the Go client's memory methods. See the [Go source](https://github.com/ClickHouse/loom/tree/main/sdk/go) for the client and tests.
