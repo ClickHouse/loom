@@ -80,6 +80,7 @@ function productDatesAt(repository, revision, publicPages, dates) {
   const result = {};
   const sharedDates = [
     "docs/components/SiteFrame.astro",
+    "docs/components/site-frame-copy.ts",
     "docs/components/documentation-link.ts",
     "docs/components/site-locales.ts",
     "docs/scripts/home-locales.json",

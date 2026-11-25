@@ -33,6 +33,7 @@ test("dates a localized page from page-specific changes and skips ambiguous shar
   write("pages/adoption.astro", "<main>Live adoption data</main>");
   write("index.md", "# Documentation\n");
   write("components/HomePage.astro", "<main>Shared template</main>");
+  write("components/site-frame-copy.ts", 'export const frameCopy = { en: { product: "Product" } };\n');
   const homeCopy = `export const homeCopy = {
   en: {
     title: "Agent memory",
@@ -77,4 +78,7 @@ test("dates a localized page from page-specific changes and skips ambiguous shar
     "/pt-BR": "2026-01-04T00:00:00.000Z",
     "/platform": "2026-01-01T00:00:00.000Z",
   });
+  write("components/site-frame-copy.ts", 'export const frameCopy = { en: { product: "Developer tools" } };\n');
+  commit("2026-01-05T00:00:00Z");
+  assert.deepEqual(readSiteDates(repository, pages).productDates, {});
 });
