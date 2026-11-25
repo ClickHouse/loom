@@ -140,6 +140,38 @@ def blind_input(task, candidates, *, seed, validate_candidate, public_documents=
     return visible, mapping
 
 
+def _judge_content(visible, labels):
+    content = [
+        {
+            "text": RUBRIC + "\nEach data block starts with JSON identifying its section. "
+            "The rest is its literal text. A base file with present=false is absent."
+        }
+    ]
+
+    def add(section, text, **fields):
+        heading = json.dumps(
+            {"section": section, **fields}, ensure_ascii=False, separators=(",", ":")
+        )
+        content.append({"text": heading + "\n" + text})
+
+    add("review_context", visible["context"], candidate_labels=list(labels))
+    add("public_issue", visible["public_issue"])
+    for source, text in visible["public_documents"].items():
+        add("public_document", text, source=source)
+    for path, text in visible["base_files"].items():
+        add("base_file", text or "", path=path, present=text is not None)
+    for label in labels:
+        for path, contribution in visible[label].items():
+            add(
+                "candidate_patch",
+                contribution["patch"],
+                candidate=label,
+                path=path,
+                change=contribution["change"],
+            )
+    return content
+
+
 def pair_slots(schedule):
     groups = {}
     for slot in schedule:
@@ -239,7 +271,7 @@ def run_judging(protocol, entries, *, provider=None, on_update=None):
             write(folder / f"pair-{ordinal:02d}-input.json", visible)
             started = time.monotonic()
             response = provider.step(
-                [{"role": "user", "content": [{"text": RUBRIC + "\n" + json.dumps(visible)}]}],
+                [{"role": "user", "content": _judge_content(visible, mapping)}],
                 [verdict_tool(mapping)],
                 settings["output_tokens"],
             )

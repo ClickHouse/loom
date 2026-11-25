@@ -145,10 +145,17 @@ class BlindJudging(unittest.TestCase):
             return_value=(None, None, self.task, None),
         ):
             run_judging(self.protocol, self.entries, provider=provider)
-        text = provider.step.call_args.args[0][0]["content"][0]["text"]
+        blocks = provider.step.call_args.args[0][0]["content"]
+        text = "\n".join(block["text"] for block in blocks)
         self.assertIn("Preserve the documented zero-value behavior.", text)
         self.assertNotIn("HIDDEN_WORKING_SENTINEL", text)
         self.assertNotIn("must stay private", text)
+        base = next(
+            block["text"].split("\n", 1)[1]
+            for block in blocks[1:]
+            if json.loads(block["text"].split("\n", 1)[0])["section"] == "base_file"
+        )
+        self.assertEqual(base, self.task.files["src/flask/app.py"])
 
     def test_missing_or_mutated_history_refuses_before_judge_dispatch(self):
         provider = Mock(step=Mock(return_value=self.response()))
