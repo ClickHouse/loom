@@ -3,13 +3,17 @@
 import json
 import math
 import os
+import subprocess
 import uuid
+import warnings
+from contextlib import contextmanager
 from pathlib import Path
 
 from .provision import OWNER_LABEL, Provisioner
 from .runtime import read
 
 
+@contextmanager
 def judge(protocol, task_id, sections, schema):
     settings = protocol["judge"]
     model = settings["model_id"]
@@ -79,9 +83,15 @@ def judge(protocol, task_id, sections, schema):
         result = resources._cmd(
             ["docker", "start", "--attach", "--interactive", container], data=prompt
         )
-        response = json.loads(result.stdout)
+        yield _receipt(json.loads(result.stdout), model)
     finally:
-        resources.remove_container(name, container)
+        try:
+            resources.remove_container(name, container)
+        except (OSError, subprocess.CalledProcessError):
+            warnings.warn("Judge container remains in the run cleanup journal", stacklevel=2)
+
+
+def _receipt(response, model):
     cost = response.get("total_cost_usd")
     if (
         response.get("type") != "result"

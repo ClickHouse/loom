@@ -8,6 +8,7 @@ import json
 import os
 import random
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 from examples.software_factory.factory.model import digest
@@ -197,7 +198,7 @@ def apply_verdict(record, verdicts, path):
             }
 
 
-def run_judging(protocol, entries, *, judge=None, on_update=None):
+def run_judging(protocol, entries, *, meter=None, judge=None, on_update=None):
     settings = protocol.get("judge") or {}
     if settings.get("enabled") is not True:
         return {"status": "disabled", "attempts": {}}
@@ -207,7 +208,6 @@ def run_judging(protocol, entries, *, judge=None, on_update=None):
     folder = Path(protocol["output_root"]) / "judgements"
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     verdicts, costs = load_verdicts(protocol), []
-    invoke = judge or native_judge
     for ordinal, slots in enumerate(pair_slots(protocol["schedule"])):
         task_id = slots[0]["task_id"]
         frozen = protocol["memory_histories"][task_id]
@@ -224,6 +224,8 @@ def run_judging(protocol, entries, *, judge=None, on_update=None):
         intent = path.with_suffix(".intent.json")
         if intent.exists():
             raise PermissionError("Reconcile the interrupted judge request before retrying")
+        if judge is None and (meter is None or not meter.summary()["complete"]):
+            raise PermissionError("Unsettled provider billing blocks the native judge")
         verify(protocol)
         _, _, task, _ = task_inputs(protocol, task_id)
         candidates = [
@@ -248,24 +250,24 @@ def run_judging(protocol, entries, *, judge=None, on_update=None):
             os.fsync(stream.fileno())
         write(folder / f"pair-{ordinal:02d}-input.json", visible)
         started = time.monotonic()
-        response = invoke(
-            protocol, task_id, _judge_content(visible, mapping), verdict_schema(mapping)
-        )
-        record = {
-            "protocol_sha256": digest(protocol),
-            "mapping": mapping,
-            "duration_s": time.monotonic() - started,
-            "generation_cost_usd": response.get("generation_cost_usd"),
-            "response": response,
-            "status": "invalid_verdict",
-        }
-        try:
-            verdict = parse_verdict(response, mapping)
-            record.update(status="completed", verdict=verdict)
-            apply_verdict(record, verdicts, path)
-        except ValueError as error:
-            record["error"] = str(error)
-        write(path, record)
+        arguments = protocol, task_id, _judge_content(visible, mapping), verdict_schema(mapping)
+        assessment = native_judge(*arguments) if judge is None else nullcontext(judge(*arguments))
+        with assessment as response:
+            record = {
+                "protocol_sha256": digest(protocol),
+                "mapping": mapping,
+                "duration_s": time.monotonic() - started,
+                "generation_cost_usd": response.get("generation_cost_usd"),
+                "response": response,
+                "status": "invalid_verdict",
+            }
+            try:
+                verdict = parse_verdict(response, mapping)
+                record.update(status="completed", verdict=verdict)
+                apply_verdict(record, verdicts, path)
+            except ValueError as error:
+                record["error"] = str(error)
+            write(path, record)
         costs.append(record["generation_cost_usd"])
         write(
             folder / "verdicts.json",

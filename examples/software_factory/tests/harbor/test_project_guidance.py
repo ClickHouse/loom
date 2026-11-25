@@ -48,10 +48,8 @@ class ProjectInstructions(TestCase):
         )
         self.assertIn("Batch code and test-name prefixes in one grep `pattern` list", text)
         self.assertIn("Scope both roots with globs", text)
-        self.assertIn(
-            "Use `loom_code_edit_context` with a definition name or literal `clues`", text
-        )
-        self.assertIn("Add the file as `name` when known", text)
+        self.assertIn("Use `loom_code_edit_context` with a definition name", text)
+        self.assertIn("For literal `clues`, set `name` to the file path when known", text)
         self.assertIn("Keep enclosing bodies for edits", text)
         self.assertIn("Edit, run tests and inspect Git locally", text)
         self.assertIn("Read changed, untracked or unindexed source locally", text)

@@ -3,6 +3,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -16,6 +17,7 @@ from examples.software_factory.harbor.judging import (
     parse_verdict,
     run_judging,
 )
+from examples.software_factory.harbor.one_shot import spending_summary
 
 
 class BlindJudging(unittest.TestCase):
@@ -167,22 +169,58 @@ class BlindJudging(unittest.TestCase):
         judge.assert_not_called()
 
     def test_owned_judge_receives_the_frozen_protocol_and_verdict_schema(self):
+        @contextmanager
+        def assess(*_arguments):
+            yield self.response()
+            receipt = self.root / "judgements/pair-00.json"
+            self.assertEqual(json.loads(receipt.read_text())["generation_cost_usd"], 0.01)
+
+        meter = Mock()
+        meter.summary.return_value = {"complete": True}
         with (
             patch(
                 "examples.software_factory.harbor.judging.native_judge",
-                return_value=self.response(),
+                side_effect=assess,
             ) as judge,
             patch(
                 "examples.software_factory.harbor.judging.task_inputs",
                 return_value=(None, None, self.task, None),
             ),
         ):
-            run_judging(self.protocol, self.entries)
+            run_judging(self.protocol, self.entries, meter=meter)
         judge.assert_called_once()
         protocol, task_id, _sections, schema = judge.call_args.args
         self.assertIs(protocol, self.protocol)
         self.assertEqual(task_id, "issue")
         self.assertEqual(set(schema["properties"]["fixed"]["required"]), set("ABCDE"))
+
+    def test_unsettled_meter_blocks_native_dispatch_before_creating_intent(self):
+        meter = Mock()
+        meter.summary.return_value = {"complete": False}
+        with patch("examples.software_factory.harbor.judging.native_judge") as judge:
+            with self.assertRaisesRegex(PermissionError, "Unsettled provider billing"):
+                run_judging(self.protocol, self.entries, meter=meter)
+        judge.assert_not_called()
+        self.assertEqual(list((self.root / "judgements").glob("*.intent.json")), [])
+
+    def test_partial_judge_receipts_remain_known_when_another_pair_is_unsettled(self):
+        study = self.root / "study"
+        folder = study / "judgements"
+        folder.mkdir(parents=True)
+        (study / "protocol.json").write_text('{"schedule": [{}]}')
+        (study / "live-attempts.json").write_text('[{"result": {"generation_cost_usd": 0.03}}]')
+        (folder / "pair-00.intent.json").touch()
+        (folder / "pair-00.json").write_text('{"generation_cost_usd": 0.01}')
+        meter = Mock()
+        meter.summary.return_value = {"spent_usd": 0.02, "complete": True}
+        summary = spending_summary(meter, self.root)
+        self.assertEqual(summary["native_judge"]["status"], "partial")
+        self.assertAlmostEqual(summary["total_provider_cost_usd"], 0.06)
+        (folder / "pair-01.intent.json").touch()
+        summary = spending_summary(meter, self.root)
+        self.assertEqual(summary["native_judge"]["status"], "unsettled")
+        self.assertEqual(summary["native_judge"]["reported_cost_usd"], 0.01)
+        self.assertIsNone(summary["total_provider_cost_usd"])
 
     def test_judging_is_once_per_complete_pair_with_independent_cost_and_no_raw_edits(self):
         judge = Mock(return_value=self.response())

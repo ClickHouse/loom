@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from contextlib import closing
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -38,6 +39,7 @@ from .cache_start import (
 )
 from .fairness import audit_fairness
 from .judging import load_verdicts, run_judging
+from .launch import native_model
 from .mcp_qualification import STARTUP_COUNTS, verify_catalog
 from .metrics import known_total, paid_token_totals
 from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp_settings
@@ -47,6 +49,7 @@ from .project_guidance import SUBMISSION_NOTE, agent_image, guidance, task_instr
 from .project_guidance import stage as stage_guidance
 from .public_export import export_public
 from .scopes import selected_scopes
+from .spending import Spending
 from .workspace import API_KEY, CUSTOM_HEADERS, solver_environment
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -849,6 +852,7 @@ async def run(protocol_path: Path, kind: str, *, meter=None, cache_quiet_since=N
             run_judging,
             protocol,
             read(output / "live-attempts.json"),
+            meter=meter,
             on_update=lambda: export(protocol),
         )
         summary = export(protocol)
@@ -874,7 +878,20 @@ def main():
             costs = audit_provider_costs(protocol, entries)
             audit_fairness(protocol, entries, billing=costs)
         else:
-            run_judging(protocol, entries, on_update=lambda: export(protocol))
+            root = Path(protocol["output_root"]).resolve().parent
+            journal = root / "spending.jsonl"
+            if not journal.is_file():
+                raise PermissionError("The judge requires the run's spending journal")
+            launch = read(root / "launch.json")
+            with closing(
+                Spending(
+                    journal,
+                    dollars=launch["budget_usd"],
+                    model=protocol["model_id"],
+                    native_model=native_model(Path(launch["source_root"])),
+                )
+            ) as meter:
+                run_judging(protocol, entries, meter=meter, on_update=lambda: export(protocol))
         print(json.dumps(export(protocol), indent=2))
     else:
         print(json.dumps(asyncio.run(run(args.protocol.resolve(), args.command)), indent=2))

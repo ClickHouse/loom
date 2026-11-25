@@ -105,6 +105,25 @@ def checked_protocol_path(receipt: dict) -> Path:
     return path
 
 
+def _judge_spending(folder):
+    receipts = list(folder.glob("pair-??.json"))
+    costs = [read(path).get("generation_cost_usd") for path in receipts]
+    known = [value for value in costs if type(value) in (int, float)]
+    summary = folder / "summary.json"
+    unsettled = len(known) != len(costs) or any(
+        not intent.with_name(intent.name.removesuffix(".intent.json") + ".json").is_file()
+        for intent in folder.glob("pair-*.intent.json")
+    )
+    status = "partial" if receipts else None
+    if summary.exists():
+        status = read(summary)["status"]
+    return {
+        "status": "unsettled" if unsettled else status,
+        "known_cost_pairs": len(known),
+        "reported_cost_usd": sum(known) if known else None,
+    }
+
+
 def spending_summary(meter, output):
     """Keep native solver and judge costs separate from metered setup and Loom traffic."""
     gateway = meter.summary()
@@ -115,17 +134,11 @@ def spending_summary(meter, output):
     protocol = output / "study/protocol.json"
     expected = len(read(protocol)["schedule"]) if protocol.exists() else None
     complete = expected is not None and len(costs) == expected and len(known) == expected
-    judge_path = output / "study/judgements/summary.json"
-    judge = read(judge_path) if judge_path.exists() else {}
-    judge_status = judge.get("status")
-    if judge_status is None and any(judge_path.parent.glob("pair-*.intent.json")):
-        judge_status = "unsettled"
+    judge = _judge_spending(output / "study/judgements")
+    known_cost = gateway["spent_usd"] + sum(known) + (judge["reported_cost_usd"] or 0)
     return {
         "metered_setup_and_loom": gateway,
-        "native_judge": {
-            "status": judge_status,
-            "reported_cost_usd": judge.get("generation_cost_usd"),
-        },
+        "native_judge": judge,
         "native_solver": {
             "observed_attempts": len(costs),
             "expected_attempts": expected,
@@ -133,8 +146,8 @@ def spending_summary(meter, output):
             "observed_known_cost_usd": sum(known),
             "complete": complete,
         },
-        "total_provider_cost_usd": gateway["spent_usd"] + sum(known)
-        if complete and gateway["complete"]
+        "total_provider_cost_usd": known_cost
+        if complete and gateway["complete"] and judge["status"] != "unsettled"
         else None,
     }
 
