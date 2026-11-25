@@ -468,6 +468,40 @@ def _lean_symbol(out: dict[str, Any]) -> None:
             d.pop("description")
 
 
+def _share_edit_test_source(definitions: list[Any]) -> None:
+    """Keep each test's evidence. `text_ref` points to the first identical source text."""
+    written: dict[tuple[str, str, int, int, str], str] = {}
+    for i, definition in enumerate(definitions):
+        if not isinstance(definition, dict) or not isinstance(definition.get("examples"), list):
+            continue
+        examples = list(definition["examples"])
+        for j, example in enumerate(examples):
+            if not isinstance(example, dict) or not isinstance(example.get("context"), dict):
+                continue
+            context = example["context"]
+            path, commit, text = example.get("path"), context.get("commit"), context.get("text")
+            start, end = context.get("start_line"), context.get("end_line")
+            if not (
+                isinstance(path, str)
+                and path
+                and isinstance(commit, str)
+                and commit
+                and isinstance(text, str)
+                and text
+                and isinstance(start, int)
+                and isinstance(end, int)
+            ):
+                continue
+            pointer = f"#/definitions/{i}/examples/{j}/context/text"
+            ref = written.setdefault((path, commit, start, end, text), pointer)
+            if ref != pointer and len(json.dumps({"text_ref": ref})) < len(
+                json.dumps({"text": text})
+            ):
+                replacement = {key: value for key, value in context.items() if key != "text"}
+                examples[j] = {**example, "context": {**replacement, "text_ref": ref}}
+        definition["examples"] = examples
+
+
 _PER_OP = {
     "code.search": _lean_search,
     "code.symbol": _lean_symbol,
@@ -521,6 +555,8 @@ def lean_code(op_name: str, payload: Any, arguments: dict[str, Any] | None = Non
         fn(out)
     if op_name == "code.grep" and arguments is not None:
         _grep_read_continuation(out, arguments)
+    if op_name == "code.edit_context" and out.get("edit_targets"):
+        _share_edit_test_source(out.get("definitions") or [])
     _hoist_defaults(out)
     if out.get("candidates") == []:
         out.pop("candidates")
