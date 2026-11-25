@@ -21,7 +21,7 @@ by `lang_python` for return annotations, so it imports neither.
 from __future__ import annotations
 
 import re
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -54,6 +54,7 @@ _FIXTURE_PREFIX = "fixture:"  # a parameter typed by the fixture it requests
 # a bare receiver the file never binds (`conf` in
 # `conf.getboolean(...)`, imported) typed by its definition's annotation
 NAME_PREFIX = "name:"
+_NOMINAL_RECEIVER = "owner:"
 _FUNCTION_NODES: frozenset[str] = frozenset({"function_definition"})
 
 
@@ -329,13 +330,15 @@ def _local_writes(scope: Any, source: bytes) -> dict[str, list[_LocalWrite]]:
         return {}
     changes: dict[str, list[_LocalWrite]] = {}
     for name, change in _binding_changes(body, source):
-        changes.setdefault(name, []).append(change)
+        events = changes.setdefault(name, [])
+        if change is not None:
+            events.append(change)
     for events in changes.values():
         events.sort(key=lambda event: event[0])
     return changes
 
 
-def _binding_changes(node: Any, source: bytes) -> Iterator[tuple[str, _LocalWrite]]:
+def _binding_changes(node: Any, source: bytes) -> Iterator[tuple[str, _LocalWrite | None]]:
     for child in node.named_children:
         if child.type in {"function_definition", "decorated_definition", "class_definition"}:
             definition = child.child_by_field_name("definition") or child
@@ -352,14 +355,38 @@ def _binding_changes(node: Any, source: bytes) -> Iterator[tuple[str, _LocalWrit
         yield from _binding_changes(child, source)
 
 
+def _pattern_captures(pattern: Any, source: bytes) -> Iterator[str]:
+    children = pattern.named_children
+    if pattern.type in ("identifier", "dotted_name"):
+        name = node_text(pattern, source)
+        if name != "_" and _NAME_RE.fullmatch(name):
+            yield name
+        return
+    if pattern.type in ("class_pattern", "keyword_pattern"):
+        children = children[1:]
+    elif pattern.type == "dict_pattern":
+        children = [
+            *pattern.children_by_field_name("value"),
+            *(child for child in children if child.type == "splat_pattern"),
+        ]
+    for child in children:
+        yield from _pattern_captures(child, source)
+
+
 _POSITIONAL_WRITES = frozenset({
     "assignment", "augmented_assignment", "named_expression", "for_statement",
     "with_item", "except_clause", "delete_statement", "import_statement",
-    "import_from_statement", "global_statement", "nonlocal_statement",
+    "import_from_statement", "global_statement", "nonlocal_statement", "case_clause",
 })
 
 
-def _binding_change(node: Any, source: bytes) -> Iterator[tuple[str, _LocalWrite]]:
+def _binding_change(node: Any, source: bytes) -> Iterator[tuple[str, _LocalWrite | None]]:
+    if node.type == "case_clause":
+        pattern = next((part for part in node.named_children if part.type == "case_pattern"), None)
+        if pattern is not None:
+            for name in _pattern_captures(pattern, source):
+                yield name, (pattern.end_byte, "", pattern)
+        return
     if node.type.startswith("import"):
         for imported in node.children_by_field_name("name"):
             alias = imported.child_by_field_name("alias")
@@ -367,8 +394,19 @@ def _binding_change(node: Any, source: bytes) -> Iterator[tuple[str, _LocalWrite
             if _NAME_RE.fullmatch(name):
                 yield name, (node.end_byte, NAME_PREFIX + name, node.parent)
         return
+    if node.type in ("with_item", "except_clause"):
+        expr = node.child_by_field_name("value")
+        alias = expr.child_by_field_name("alias") if expr is not None else None
+        if alias is not None:
+            for name in _bound_identifiers(alias, source):
+                yield name, (alias.end_byte, "", alias)
+        return
     parent = node.parent
     value = node.child_by_field_name("right")
+    if node.type == "assignment" and value is None:
+        for name in _bound_identifiers(node, source):
+            yield name, None
+        return
     if (
         node.type == "assignment" and parent is not None and parent.type == "expression_statement"
         and value is not None and value.type != "boolean_operator"
@@ -380,17 +418,140 @@ def _binding_change(node: Any, source: bytes) -> Iterator[tuple[str, _LocalWrite
     position = node.end_byte if node.type in {
         "assignment", "named_expression", "augmented_assignment", "delete_statement",
     } else node.start_byte
+    if node.type == "for_statement":
+        body = node.child_by_field_name("body")
+        if body is not None:
+            position = body.start_byte
     for name in _bound_identifiers(node, source):
-        yield name, (position, "", None)
+        yield name, (position, "", node)
+
+
+_LOOP_NODES = frozenset({"for_statement", "while_statement"})
+
+
+def _if_branch(node: Any) -> tuple[Any, Any] | None:
+    parent = node.parent
+    if parent is None or node.type != "block":
+        return None
+    if parent.type == "if_statement" and node == parent.child_by_field_name("consequence"):
+        return parent, node
+    if parent.type in ("elif_clause", "else_clause"):
+        owner = parent.parent
+        if owner is not None and owner.type == "if_statement":
+            return owner, node
+    return None
+
+
+def _call_branches(call: Any, scope: Any) -> dict[int, int]:
+    branches: dict[int, int] = {}
+    node = call
+    while node is not None and node != scope:
+        # A preceding iteration can write through any branch inside the loop.
+        if node.type in _LOOP_NODES:
+            branches.clear()
+        if pair := _if_branch(node):
+            owner, body = pair
+            branches[owner.id] = body.id
+        node = node.parent
+    return branches
+
+
+def _sibling_branch_start(origin: Any, scope: Any, branches: dict[int, int]) -> int | None:
+    node = origin
+    while node is not None and node != scope:
+        if pair := _if_branch(node):
+            owner, body = pair
+            selected = branches.get(owner.id)
+            if selected is not None and selected != body.id:
+                return int(body.start_byte)
+        node = node.parent
+    return None
+
+
+def _reaching_write(
+    call: Any, scope: Any, updates: list[_LocalWrite], before: int,
+) -> _LocalWrite | None:
+    branches = _call_branches(call, scope)
+    while before:
+        change = updates[before - 1]
+        excluded = _sibling_branch_start(change[2], scope, branches) if branches else None
+        if excluded is None:
+            return change
+        before = bisect_left(updates, excluded, hi=before, key=lambda event: event[0])
+    return None
+
+
+_COMPREHENSIONS = frozenset({
+    "list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression",
+})
+
+
+def _comprehension_shadows(call: Any, scope: Any, receiver: str, source: bytes) -> bool:
+    position = call.start_byte
+    node = call.parent
+    while node is not None and node != scope:
+        if node.type in _COMPREHENSIONS:
+            body = node.child_by_field_name("body")
+            in_body = body is not None and body.start_byte <= position < body.end_byte
+            for clause in node.named_children:
+                if clause.type != "for_in_clause":
+                    continue
+                iterable = clause.child_by_field_name("right")
+                if not in_body and (iterable is None or position < iterable.end_byte):
+                    break
+                if receiver in _bound_identifiers(clause, source):
+                    return True
+        node = node.parent
+    return False
 
 
 def _writes_again_in_loop(call: Any, scope: Any, next_write: int) -> bool:
     node = call.parent
     while node is not None and node != scope:
-        if node.type in ("for_statement", "while_statement") and next_write <= node.end_byte:
+        repeating = node.type == "while_statement"
+        if node.type == "for_statement":
+            body = node.child_by_field_name("body")
+            repeating = body is not None and body.start_byte <= call.start_byte < body.end_byte
+        if repeating and next_write <= node.end_byte:
             return True
         node = node.parent
     return False
+
+
+def _nominal_receiver(scope: Any, receiver: str, source: bytes) -> bool:
+    if receiver not in ("self", "cls") or scope.type != "function_definition":
+        return False
+    member = scope
+    parent = member.parent
+    if parent is not None and parent.type == "decorated_definition":
+        member = parent
+        for node in member.named_children:
+            if node.type == "decorator":
+                written = node_text(node, source).removeprefix("@").strip()
+                if _last(written) == "staticmethod":
+                    return False
+        parent = member.parent
+    if parent is None or parent.parent is None or parent.parent.type != "class_definition":
+        return False
+    parameters = scope.child_by_field_name("parameters")
+    if parameters is None:
+        return False
+    first = next((node for node in parameters.named_children if node.type != "comment"), None)
+    if first is None:
+        return False
+    target = _parameter_target(first)
+    return (
+        target is not None and target.type == "identifier" and node_text(target, source) == receiver
+    )
+
+
+def _parameter_target(parameter: Any) -> Any:
+    target = parameter.child_by_field_name("name")
+    if target is not None:
+        return target
+    if parameter.type in ("typed_parameter", "typed_default_parameter"):
+        return next(iter(parameter.named_children), None)
+    return parameter
 
 
 def _enter_parameter_names(params: Any, source: bytes, into: dict[str, str]) -> None:
@@ -398,12 +559,7 @@ def _enter_parameter_names(params: Any, source: bytes, into: dict[str, str]) -> 
         return
     _param_bindings(params, source, into)
     for parameter in params.named_children:
-        target = parameter.child_by_field_name("name")
-        if target is None:
-            if parameter.type in ("typed_parameter", "typed_default_parameter"):
-                target = next(iter(parameter.named_children), None)
-            else:
-                target = parameter
+        target = _parameter_target(parameter)
         if target is not None:
             for name in _bound_identifiers(target, source):
                 into.setdefault(name, "")
@@ -423,7 +579,7 @@ class PyReceiverTyper:
         self._receiver_callees: set[str] = set()
         self._library_calls: dict[str, Any] = {}
         self._local_binders: dict[tuple[str, int], _LocalBinders] = {}
-        self._call_receiver_bindings: dict[str, tuple[str, bool]] = {}
+        self._call_receiver_bindings: dict[str, tuple[str | None, bool]] = {}
         self._source: bytes = pf.source
         self._receiver_names: set[str] = set()  # bare receivers the file names
         self._bound_names: set[str] = set()  # every name the file binds itself
@@ -488,8 +644,8 @@ class PyReceiverTyper:
 
     def _library_receiver_binding(
         self, receiver: str, method: str, position: int,
-    ) -> tuple[str, bool] | None:
-        if receiver in ("self", "cls") or not _NAME_RE.fullmatch(receiver):
+    ) -> tuple[str | None, bool] | None:
+        if not _NAME_RE.fullmatch(receiver):
             return None
         key = f"{receiver}.{method}@{position}"
         call = self._library_calls.get(key)
@@ -499,10 +655,12 @@ class PyReceiverTyper:
             self._call_receiver_bindings[key] = self._receiver_at(call, receiver)
         return self._call_receiver_bindings[key]
 
-    def _receiver_at(self, call: Any, receiver: str) -> tuple[str, bool]:
+    def _receiver_at(self, call: Any, receiver: str) -> tuple[str | None, bool]:
         scope = _evaluation_scope(call)
         boundary = call.start_byte
         while scope is not None:
+            if _comprehension_shadows(call, scope, receiver, self._source):
+                return "", True
             key = (scope.type, scope.start_byte)
             if key not in self._local_binders:
                 params: dict[str, str] = {}
@@ -511,10 +669,15 @@ class PyReceiverTyper:
                 self._local_binders[key] = params, _local_writes(scope, self._source)
             params, changes = self._local_binders[key]
             updates = changes.get(receiver, [])
-            if updates or receiver in params:
-                binding = self._binding_at_site(
-                    call, scope, params.get(receiver, ""), updates, boundary,
-                )
+            if receiver in changes or receiver in params:
+                initial = params.get(receiver, "")
+                if not initial and receiver in params and _nominal_receiver(
+                    scope, receiver, self._source,
+                ):
+                    initial = _NOMINAL_RECEIVER
+                binding = self._binding_at_site(call, scope, initial, updates, boundary)
+                if binding == _NOMINAL_RECEIVER:
+                    return None, False
                 if not binding.startswith(NAME_PREFIX):
                     return self._resolve(binding), True
                 if scope.type == "module" and len(updates) == 1:
@@ -536,12 +699,11 @@ class PyReceiverTyper:
             return ""
         if before < len(updates) and _writes_again_in_loop(call, scope, updates[before][0]):
             return ""
-        if not before:
+        write = _reaching_write(call, scope, updates, before)
+        if write is None:
             return initial
-        _, binding, block = updates[before - 1]
-        if block is not None and block.start_byte <= boundary < block.end_byte:
-            return binding
-        return ""
+        _, binding, block = write
+        return binding if block.start_byte <= boundary < block.end_byte else ""
 
     def type_of_expr(self, line: int, text: str, position: int = -1) -> str:
         """The named type of a receiver expression — a name
@@ -554,6 +716,9 @@ class PyReceiverTyper:
             return ""
         if text.endswith("()"):
             inner = text[:-2]
+            key = _call_key(inner, position)
+            if key != inner:
+                return self._resolve(_CALL_PREFIX + key)
             if "." in inner:
                 obj, method = inner.rsplit(".", 1)
                 recv = self.type_of_expr(line, obj, position)
@@ -561,7 +726,7 @@ class PyReceiverTyper:
                     typed = self._returns.get(f"{recv}::{method}", "")
                     if typed:
                         return typed
-            return self._resolve(_CALL_PREFIX + _call_key(inner, position))
+            return self._resolve(_CALL_PREFIX + inner)
         return self.type_of(line, text)
 
     def _collect(self, node: Any, source: bytes, class_bindings: dict[str, str] | None) -> None:

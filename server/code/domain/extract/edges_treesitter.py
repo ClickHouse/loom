@@ -3219,7 +3219,12 @@ class _CallResolver:
     ) -> Edge | None:
         if self.python and receiver == "super()":
             return self.py_super_target(caller, bare, line)
-        if (self.go or self.python) and receiver and receiver not in ("self", "cls"):
+        owner_receiver = receiver in ("self", "cls")
+        rebound = (
+            self.python and owner_receiver
+            and self.typer.library_receiver_at(receiver, bare, position) is not None
+        )
+        if (self.go or self.python) and receiver and (not owner_receiver or rebound):
             # A Go member call on a receiver the tree types
             # is that type's method or nothing of this file — the same-file
             # namesake (`col.offsets.Rows()` beside `Map.Rows`) is never it.
@@ -3232,6 +3237,8 @@ class _CallResolver:
                     "calls", caller.id, typed[0], caller.qualified_name,
                     typed[1], self.path, line, TYPED_RECEIVER_CONFIDENCE,
                 )
+            if rebound:
+                return None
             if self.go and self.typer is not None and self.typer.type_of(line, receiver):
                 return self._resolve_repo_wide(caller, name, bare, line, receiver, position)
         # 0) `super.m()` is the bound base's `m`, never a

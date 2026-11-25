@@ -174,6 +174,163 @@ def mount():
     assert (10, "app.mount::Context::describe", 0.9) in calls
 
 
+_RECEIVER_FLOW_CLASSES = b"""class Primary:
+    def copy(self) -> Primary:
+        return self
+    def describe(self):
+        return "primary"
+
+class Alternate:
+    def copy(self) -> Alternate:
+        return self
+    def describe(self):
+        return "alternate"
+
+"""
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_type"),
+    [
+        (
+            b"""def mount(value: Primary, flag: bool):
+    if flag:
+        value = {}
+    elif not flag:
+        return value.copy().describe()
+""",
+            "Primary",
+        ),
+        (
+            b"""def mount(value: Primary, flag: bool):
+    if flag:
+        value = {}
+    else:
+        return value.copy().describe()
+""",
+            "Primary",
+        ),
+        (
+            b"""def mount(value: Primary):
+    value: Primary
+    with value:
+        return value.copy().describe()
+""",
+            "Primary",
+        ),
+        (
+            b"""def mount(value: Primary):
+    try:
+        raise ValueError()
+    except ValueError:
+        keep = value
+        return value.copy().describe()
+""",
+            "Primary",
+        ),
+        (
+            b"""def mount(value: Primary):
+    for value in value.copy().describe():
+        pass
+""",
+            "Primary",
+        ),
+        (
+            b"""def mount(value: Primary, values):
+    for flag in values:
+        if flag:
+            value = Alternate()
+        else:
+            value.copy().describe()
+""",
+            "",
+        ),
+        (
+            b"""def mount(value: Primary):
+    return [value for value in [value.copy().describe()]]
+""",
+            "Primary",
+        ),
+        (
+            b"""def mount(value: Primary, options: list[Alternate]):
+    return [value.copy().describe() for value in options]
+""",
+            "",
+        ),
+        (
+            b"""def mount(value: Primary, option):
+    match option:
+        case {"v": value}:
+            return value.copy().describe()
+""",
+            "",
+        ),
+        (
+            b"""class Derived(Primary):
+    def mount(self, other: Alternate):
+        self = other
+        return self.copy().describe()
+""",
+            "",
+        ),
+        (
+            b"""class Derived(Primary):
+    def mount(self):
+        self = Alternate()
+        return self.copy().describe()
+""",
+            "Alternate",
+        ),
+        (
+            b"""class Derived(Primary):
+    @staticmethod
+    def mount(self):
+        return self.copy().describe()
+""",
+            "",
+        ),
+        (
+            b"""class Derived(Primary):
+    def mount(other: self, self):
+        return self.copy().describe()
+""",
+            "",
+        ),
+        (
+            b"""class Derived(Primary):
+    def mount(*self):
+        return self.copy().describe()
+""",
+            "",
+        ),
+        (
+            b"""class Derived(Primary):
+    def mount(
+        # This is the bound receiver.
+        self,
+    ):
+        return self.copy().describe()
+""",
+            "Primary",
+        ),
+    ],
+)
+def test_library_call_uses_bindings_on_its_evaluation_path(body, expected_type):
+    target = "app/mount.py"
+    calls, _ = _edges({target: _RECEIVER_FLOW_CLASSES + body}, target)
+    actual = {
+        qualified
+        for _, qualified, confidence in calls
+        if confidence >= 0.8 and qualified.endswith(("::copy", "::describe"))
+    }
+    expected = (
+        {f"app.mount::{expected_type}::{method}" for method in ("copy", "describe")}
+        if expected_type
+        else set()
+    )
+    assert actual == expected
+
+
 def test_a_package_member_does_not_import_its_sibling_by_bare_name():
     present = {
         "pydantic/__init__.py",
