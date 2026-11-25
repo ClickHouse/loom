@@ -217,7 +217,15 @@ class GrepMixin(CodeRepoBase):
         path_sql, path_params = _scope_path_sql(scope)
         return await self._ch.query_all(
             grep_sql.grep_chunks_sql(
-                cond, prefix_clause, path_sql, code_deadline.break_settings(max_execution_s)
+                cond,
+                prefix_clause,
+                path_sql,
+                code_deadline.break_settings(max_execution_s),
+                with_endings=not regex
+                and any(
+                    literal.endswith("\n")
+                    for literal in ([pattern] if isinstance(pattern, str) else pattern)
+                ),
             ),
             {
                 "org": org,

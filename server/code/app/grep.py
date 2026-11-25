@@ -281,6 +281,13 @@ class _GrepLineScan:
     batch_partial_reason: str = ""
 
 
+def _ends_in_source(row: dict[str, Any]) -> bool:
+    # A mid-line slice can carry a synthetic LF. The file row counts its
+    # LF bytes plus one, so a lower coordinate has a physical terminator.
+    start = int(row["start_line"])
+    return start < max(int(row["end_line"]), int(row.get("source_loc") or 0))
+
+
 def _missing_chunk_patterns(
     patterns: list[str],
     chunks: list[dict[str, Any]],
@@ -305,7 +312,7 @@ def _missing_chunk_patterns(
             break
         if lines := retained_source_lines(chunk):
             source = fold("\n".join(line.removesuffix("\n").removesuffix("\r") for line in lines))
-            raw = fold("".join(lines)) if needs_endings else ""
+            raw = fold("".join(lines)) if needs_endings and _ends_in_source(chunk) else ""
             remaining = [
                 literal
                 for literal in remaining
@@ -1108,12 +1115,16 @@ def _matching_source_lines(
     pattern: str | list[str],
     line_re: Any,
     fold_case: Callable[[str], str],
+    *,
+    endings_proved: bool,
 ) -> Iterator[tuple[int, str, str, str]]:
     literals = [pattern] if isinstance(pattern, str) else pattern
-    plain = [literal for literal in literals if "\n" not in literal]
-    endings = [
-        literal for literal in literals if literal.endswith("\n") and "\n" not in literal[:-1]
-    ]
+    endings = (
+        [literal for literal in literals if literal.endswith("\n") and "\n" not in literal[:-1]]
+        if endings_proved and line_re is None
+        else []
+    )
+    plain = [literal for literal in literals if "\n" not in literal] if endings else pattern
     for offset, raw in enumerate(lines):
         line = raw.removesuffix("\n").removesuffix("\r")
         hay = fold_case(line)
@@ -1121,8 +1132,8 @@ def _matching_source_lines(
         if line_re is not None:
             hit = line_re.search(line)
         else:
-            hit = any(text in hay for text in plain) or any(text in with_ending for text in endings)
-        if hit:
+            hit = plain in hay if isinstance(plain, str) else any(text in hay for text in plain)
+        if hit or (endings and any(text in with_ending for text in endings)):
             yield offset, line, hay, with_ending
 
 
@@ -1183,7 +1194,7 @@ def _matching_lines(
         if len(matches) > keep and not pending_here:
             continue
         for off, line, hay, with_ending in _matching_source_lines(
-            lines, pattern, line_re, fold_case
+            lines, pattern, line_re, fold_case, endings_proved=_ends_in_source(c)
         ):
             key = (str(c["path"]), int(c["start_line"] or 1) + off)
             if match_commits is not None:

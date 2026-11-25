@@ -299,9 +299,11 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
                 ("edges/b.py", "real_needle", "real needle source\n"),
                 ("edges/c.py", "trailing_cr", "target\r\n"),
                 ("edges/d.py", "interior_cr", "real target\r rest\n"),
+                ("endings/0.py", "synthetic_end", "check_ending()\n"),
                 ("endings/a.py", "unterminated", "check_ending()"),
                 ("endings/b.py", "line_feed", "check_ending()\n"),
                 ("endings/c.py", "carriage_return", "check_ending()\r\n"),
+                ("endings/d.py", "older_chunk", "check_ending()\n"),
             )
         ],
         column_names=[
@@ -319,6 +321,17 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             "version",
             "indexed_commit",
         ],
+    )
+    ch_client.insert(
+        "loom.code_files",
+        [
+            [org, ns, "endings/0.py", 1, "b" * 40],
+            [org, ns, "endings/a.py", 1, "b" * 40],
+            [org, ns, "endings/b.py", 2, "b" * 40],
+            [org, ns, "endings/c.py", 2, "b" * 40],
+            [org, ns, "endings/d.py", 2, "c" * 40],
+        ],
+        column_names=["org", "namespace", "path", "loc", "indexed_commit"],
     )
     args = {
         "org": org,
@@ -392,6 +405,10 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             ("endings/b.py", 1, "check_ending()"),
             ("endings/c.py", 1, "check_ending()"),
         ]
+        scalar_ending = await handle_code_grep(
+            CodeGrepInput(org=org, namespace=ns, pattern=endings[0], path_prefix="endings/")
+        )
+        assert [row["path"] for row in scalar_ending.matches] == ["endings/b.py"]
 
         async def missing_pool(*args: Any, **kwargs: Any) -> None:
             return None

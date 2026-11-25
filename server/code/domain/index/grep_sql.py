@@ -54,7 +54,29 @@ def _where(cond: str, prefix_clause: str, path_sql: str) -> str:
     )
 
 
-def grep_chunks_sql(cond: str, prefix_clause: str, path_sql: str, extra_settings: str = "") -> str:
+def _with_source_loc(inner: str, prefix_clause: str, path_sql: str) -> str:
+    """Attach the indexed LF count plus one, from the same file revision."""
+    return f"""(
+        SELECT chunks.*, files.loc AS source_loc
+        FROM (SELECT * FROM {inner}) AS chunks
+        LEFT ANY JOIN (
+            SELECT path, indexed_commit, loc
+            FROM loom.code_files FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND tombstoned_at IS NULL AND lang != 'reference'
+              {prefix_clause} {path_sql}
+        ) AS files ON chunks.path = files.path AND chunks.indexed_commit = files.indexed_commit
+    )"""
+
+
+def grep_chunks_sql(
+    cond: str,
+    prefix_clause: str,
+    path_sql: str,
+    extra_settings: str = "",
+    *,
+    with_endings: bool = False,
+) -> str:
     """mode=matches: whole chunk rows in (path, start_line) order, chunk_id
     breaking ties so the page edge is deterministic."""
     inner = newest_live(
@@ -62,9 +84,13 @@ def grep_chunks_sql(cond: str, prefix_clause: str, path_sql: str, extra_settings
         "indexed_commit",
         _where(cond, prefix_clause, path_sql),
     )
+    loc_col = ""
+    if with_endings:
+        inner = _with_source_loc(inner, prefix_clause, path_sql)
+        loc_col = ", source_loc"
     return f"""
             SELECT path, scope, symbol_ids, kind, start_line, end_line, content,
-                   embedding_model, toString(indexed_commit) AS indexed_commit
+                   embedding_model, toString(indexed_commit) AS indexed_commit{loc_col}
             FROM {inner}
             ORDER BY path, start_line, chunk_id
             LIMIT {{limit:UInt32}}
@@ -88,6 +114,10 @@ def grep_pattern_chunks_sql(
         "indexed_commit",
         _where(cond, prefix_clause, path_sql),
     )
+    loc = "0"
+    if with_endings:
+        inner = _with_source_loc(inner, prefix_clause, path_sql)
+        loc = "source_loc"
     raw_lines = (
         """
         , arrayMap(
@@ -99,23 +129,25 @@ def grep_pattern_chunks_sql(
         else ""
     )
     match_lines = (
-        "if(endsWith(literals[i], char(10)), physical_lines_with_endings, physical_lines)"
+        "if(endsWith(literals[i], char(10)), "
+        "if(span > 1 OR start_line < source_loc, physical_lines_with_endings, []), physical_lines)"
         if with_endings
         else "physical_lines"
     )
+    kind_guard = "WHERE" if with_endings else "AND"
     return f"""
             WITH {patterns} AS literals,
                  concat('[', char(9), '-', char(13), char(28), '-', char(32),
                         char(194, 133), char(92), 'p{{Z}}]') AS source_space
             SELECT hit.1 AS path, hit.2 AS scope, hit.3 AS symbol_ids, hit.4 AS kind,
                    hit.5 AS start_line, hit.6 AS end_line, hit.7 AS content,
-                   hit.8 AS embedding_model, hit.9 AS indexed_commit
+                   hit.8 AS embedding_model, hit.9 AS indexed_commit, hit.10 AS source_loc
             FROM (
                 SELECT hit, min(pattern_index) AS first_pattern
                 FROM (
                     SELECT pattern_index, argMin(
                         tuple(path, scope, symbol_ids, kind, start_line, end_line, content,
-                              embedding_model, toString(indexed_commit)),
+                              embedding_model, toString(indexed_commit), {loc}),
                         tuple(path, start_line, chunk_id, embedding_model)
                     ) AS hit
                     FROM (
@@ -130,7 +162,7 @@ def grep_pattern_chunks_sql(
                                    physical_parts
                                ) AS physical_lines {raw_lines}
                         FROM {inner}
-                        AND kind != 'class_skeleton'
+                        {kind_guard} kind != 'class_skeleton'
                         AND span > 0 AND length(source_parts) >= span + trailing_lf
                         AND NOT arrayExists(
                             suffix -> endsWith(content, suffix),
