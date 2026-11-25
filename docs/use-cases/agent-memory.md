@@ -111,6 +111,27 @@ outside the team cannot read it.
 
 ## Measured
 
+### Coding tasks with and without Loom
+
+Paired sessions on the ClickHouse codebase used the same coding agent and local tools. The Loom
+sessions also used the plugin's hooks and code search. The benchmark measures that combined setup.
+
+| Task                                                         | Paired sample                     | Result without → with Loom                     | Session model cost per question |
+| ------------------------------------------------------------ | --------------------------------- | ---------------------------------------------- | ------------------------------- |
+| Explain behavior, assess change impact, or trace its history | 24 questions, 3 paired runs each  | Judged answer score 0.78 → 0.84                | $0.212 → $0.170                 |
+| Locate the file that implements a feature                    | 36 questions, 10 paired runs each | Correct file among the top three 91.4% → 96.4% | $0.096 → $0.076                 |
+| Trace bugs to fixes, find tests, or follow call chains       | 24 questions, 3 paired runs each  | Judged answer score 0.72 → 0.76                | $0.423 → $0.396                 |
+
+The score measures how well answers cover reference points verified in the code and penalizes
+contradictions. The measured cost covers the coding agent's model bill. Include Loom's server-side
+model calls, hosting and indexing when comparing total cost. Mean elapsed time rose from 61 to 62
+seconds for the answer-graded coding tasks, from 20 to 25 seconds for file lookup, and from 142 to
+164 seconds for multi-hop tasks. See the [paired results and run artifacts](../benchmarks/results.md#with-and-without-loom)
+and [run the paired task scorecard](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
+on your own repository.
+
+### Conversation recall
+
 On 100 paired LongMemEval-S questions with the same `gpt-5` reader, answers from Loom's
 retrieved memories scored 94% against 90% from the whole history, with 91% fewer reader
 prompt tokens (excluding the one-time cost of building the memory); the accuracy
