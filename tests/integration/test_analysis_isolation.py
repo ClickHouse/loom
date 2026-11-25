@@ -961,10 +961,13 @@ def test_masked_view_metadata_discloses_no_signing_key(
 ) -> None:
     r = _query(control_plane_url, seed, sql)
     assert r.status_code in {200, *_REFUSED}, r.text
-    if r.status_code == 200 and "create_table_query" in sql:
-        assert "[HIDDEN]" in r.text, r.text
     for spelling in _key_spellings(ch_client):
-        assert spelling.lower() not in r.text.lower(), r.text[:300]
+        if spelling.lower() in r.text.lower():
+            pytest.fail("Analysis metadata contains signing key material", pytrace=False)
+    if r.status_code == 200 and "create_table_query" in sql:
+        # ClickHouse may suppress the entire definition when column metadata is restricted.
+        (row,) = r.json()["rows"]
+        assert row and ("[HIDDEN]" in row[0] or all(value == "" for value in row)), r.text
 
 
 @pytest.fixture
