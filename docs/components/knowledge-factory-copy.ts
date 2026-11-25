@@ -11,6 +11,7 @@ type KnowledgeFactoryCopy = {
   code: EvidenceCard;
   pilotHeading: string;
   pilot: string;
+  pilotChecks: { title: string; detail: string }[];
   evaluate: string;
   walkthrough: string;
   englishLabel: string;
@@ -42,9 +43,24 @@ export const knowledgeFactoryCopy = {
         "Link an implementation lesson to the definition it describes. When the definition changes, check whether the lesson still applies.",
       label: "Link memory to code",
     },
-    pilotHeading: "Test one runbook change",
+    pilotHeading: "Knowledge factory pilot scorecard",
     pilot:
-      "In a test namespace, publish a rollback rule for five failed health checks within 60 seconds. Save a lesson that cites the rule, then change the threshold to three. Ask a fresh agent to cite the current rule. Revise the lesson and check its history. Confirm that a reader outside the namespace cannot retrieve the source.",
+      "Pick one recurring runbook question. Save a lesson that cites the approved rule, have the owner change the rule, and run these checks in a test namespace.",
+    pilotChecks: [
+      {
+        title: "Current source",
+        detail: "An agent in a fresh session returns the approved rule and cites the current document revision.",
+      },
+      {
+        title: "Revision history",
+        detail:
+          "The revised lesson cites the document version the curator reviewed, and memory history shows the old wording.",
+      },
+      {
+        title: "Namespace access",
+        detail: "A reader without access to the namespace cannot retrieve the runbook or the saved lesson.",
+      },
+    ],
     evaluate: "Plan a workload evaluation",
     walkthrough: "Run the knowledge factory walkthrough",
     englishLabel: "",
@@ -74,9 +90,25 @@ export const knowledgeFactoryCopy = {
         "Vincula una lección de implementación a la definición que describe. Si cambia la definición, comprueba si la lección sigue siendo válida.",
       label: "Vincular la memoria al código",
     },
-    pilotHeading: "Prueba un cambio en un manual operativo",
+    pilotHeading: "Qué comprobar en la prueba piloto",
     pilot:
-      "En un espacio de nombres de prueba, publica una regla de reversión para cinco comprobaciones de estado fallidas en 60 segundos. Guarda una lección que la cite y cambia el umbral a tres fallos. Pide a un agente en una sesión nueva que cite la regla vigente. Corrige la lección y consulta el historial. Comprueba que una identidad ajena al espacio de nombres no pueda recuperar la fuente.",
+      "Elige una pregunta recurrente sobre un manual operativo. Guarda una lección que cite la regla aprobada, pide a la persona responsable que la modifique y realiza estas comprobaciones en un espacio de nombres de prueba.",
+    pilotChecks: [
+      {
+        title: "Fuente vigente",
+        detail: "En una sesión nueva, el agente devuelve la regla aprobada y cita la versión vigente del documento.",
+      },
+      {
+        title: "Historial de versiones",
+        detail:
+          "La lección corregida cita la versión del documento que revisó la persona responsable de la lección, y el historial de memoria conserva el texto anterior.",
+      },
+      {
+        title: "Acceso al espacio de nombres",
+        detail:
+          "Una identidad lectora sin acceso al espacio de nombres no puede recuperar el manual ni la lección guardada.",
+      },
+    ],
     evaluate: "Planificar una evaluación",
     walkthrough: "Seguir el ejemplo de principio a fin",
     englishLabel: "inglés",
@@ -102,9 +134,23 @@ export const knowledgeFactoryCopy = {
       detail: "将实现经验关联到它描述的代码定义。定义变更后，对照当前代码确认原经验是否仍然适用。",
       label: "将记忆关联到代码",
     },
-    pilotHeading: "用一条运维规则验证流程",
+    pilotHeading: "知识工厂试点评估清单",
     pilot:
-      "在测试命名空间中发布一条在 60 秒内五次健康检查失败后触发回滚的规则，保存引用该规则的经验。将阈值改为三次，请智能体在新会话中引用当前规则。修订已保存的经验并检查历史记录。确认命名空间之外的身份无法读取该来源。",
+      "选择一个经常遇到的运维手册问题。保存一条引用已批准规则的经验，请手册负责人修改规则，然后在测试命名空间中完成以下检查。",
+    pilotChecks: [
+      {
+        title: "当前来源",
+        detail: "智能体在新会话中返回已批准的规则，并引用当前的文档版本。",
+      },
+      {
+        title: "修订历史",
+        detail: "修订后的经验引用整理人员审核过的版本，记忆历史仍可查看原文。",
+      },
+      {
+        title: "命名空间权限",
+        detail: "无权访问该命名空间的读取者无法检索手册或已保存的经验。",
+      },
+    ],
     evaluate: "规划评估",
     walkthrough: "查看知识工厂完整示例",
     englishLabel: "英文",
