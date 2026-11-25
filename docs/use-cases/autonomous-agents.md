@@ -20,19 +20,20 @@ work. Save facts that should outlive the job with [`memory.set`](../concepts/mem
 Keep the job's current cursor in [working memory](../guides/trace-and-resume.md#which-plane-holds-a-checkpoint).
 
 Try the checkpoint on the [single-user quickstart](../getting-started/quickstart.md#fast-path-released-image-no-clone).
-Use a disposable run ID on the local deployment. Save the last completed batch:
+Use a disposable run ID in the quickstart's `dev/local` namespace. Save the last completed batch:
 
 ```bash
 curl --fail-with-body --silent --show-error http://localhost:7777/v1/working_memory.set \
-  --json '{"org":"local","namespace":"default","agent":"catalog-worker","run_id":"catalog-restart-demo","block_key":"checkpoint","content":"batch-04"}'
+  --json '{"org":"dev","namespace":"local","agent":"catalog-worker","run_id":"catalog-restart-demo","block_key":"checkpoint","content":"batch-04"}'
 ```
 
 From a fresh shell or agent process, read the checkpoint with the same identity
-and run ID:
+and run ID. To check server recovery on the disposable deployment, restart the Loom
+server first and keep the same ClickHouse data volume.
 
 ```bash
 curl --fail-with-body --silent --show-error http://localhost:7777/v1/working_memory.get \
-  --json '{"org":"local","namespace":"default","agent":"catalog-worker","run_id":"catalog-restart-demo","block_key":"checkpoint"}'
+  --json '{"org":"dev","namespace":"local","agent":"catalog-worker","run_id":"catalog-restart-demo","block_key":"checkpoint"}'
 ```
 
 The response should have `found: true` and `content: "batch-04"`. Read again with an
