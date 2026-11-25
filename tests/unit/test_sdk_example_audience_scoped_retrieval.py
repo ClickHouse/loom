@@ -1,0 +1,230 @@
+"""sdk/python/examples/audience_scoped_retrieval.py runs end to end against a scripted
+server that keeps collections, grants and documents per signed-in user: the private
+request reads the note and both collections, the shared one only the destination's
+collection, no tool argument widens it, and what the run made is removed."""
+
+from __future__ import annotations
+
+import functools
+import importlib.util
+import json
+import sys
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import httpx
+import pytest
+
+EXAMPLE = Path(__file__).resolve().parents[2] / "sdk/python/examples/audience_scoped_retrieval.py"
+
+
+def load_example(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    spec = importlib.util.spec_from_file_location("audience_scoped_retrieval_example", EXAMPLE)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    # Its dataclasses resolve their annotations through sys.modules.
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+class Server:
+    """Loom as the example sees it. The bearer token is the user's id (the example is
+    given `sign=str`); a read of a collection the user holds no grant on answers 403."""
+
+    def __init__(
+        self,
+        *,
+        searches_everything: bool = False,
+        keeps_grants: bool = False,
+        keeps_collections: bool = False,
+    ) -> None:
+        self.searches_everything = searches_everything
+        self.keeps_grants = keeps_grants
+        self.keeps_collections = keeps_collections
+        self.grants: dict[str, set[str]] = {}  # collection → users who read it
+        self.docs: dict[tuple[str, str], str] = {}  # (collection, source_uri) → content
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []  # (user, op, body)
+        self.deleted: list[str] = []
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            httpx,
+            "AsyncClient",
+            functools.partial(httpx.AsyncClient, transport=httpx.MockTransport(self)),
+        )
+
+    def searches(self) -> list[tuple[str, set[str]]]:
+        """(user, collections named) of every knowledge.search."""
+        return [
+            (user, {body["namespace"], *body.get("namespaces", [])})
+            for user, op, body in self.calls
+            if op == "knowledge.search"
+        ]
+
+    def __call__(self, req: httpx.Request) -> httpx.Response:
+        op = req.url.path.removeprefix("/v1/")
+        body = json.loads(req.content or b"{}")
+        user = req.headers["Authorization"].removeprefix("Bearer ")
+        own = f"col-me-{user}"
+        self.calls.append((user, op, body))
+
+        def name(namespace: str) -> str:
+            return own if namespace == "@me" else namespace
+
+        def reads(namespace: str) -> bool:
+            return namespace == own or user in self.grants.get(namespace, ())
+
+        ns = name(body.get("namespace", "@me"))
+        if op == "collection.list":
+            rows = [{"namespace": own, "personal": True, "role": "admin"}]
+            rows += [
+                {"namespace": c, "personal": False, "role": "viewer"}
+                for c, users in sorted(self.grants.items())
+                if user in users
+            ]
+            return httpx.Response(200, json={"collections": rows, "next_cursor": None})
+        if op == "collection.create":
+            self.grants[ns] = {user}
+            return httpx.Response(200, json={"namespace": ns, "created": True})
+        if not reads(ns):
+            return httpx.Response(403, json={"detail": {"code": "AUTH_INSUFFICIENT"}})
+        if op == "grants.create":
+            self.grants[ns].add(body["subject"].removeprefix("user:"))
+        elif op == "grants.revoke" and not self.keeps_grants:
+            self.grants[ns].discard(body["subject"].removeprefix("user:"))
+        elif op == "collection.delete":
+            self.deleted.append(ns)
+            if self.keeps_collections:
+                return httpx.Response(200, json={"deleted": False, "erasure_status": "failed"})
+            del self.grants[ns]
+            self.docs = {key: text for key, text in self.docs.items() if key[0] != ns}
+            return httpx.Response(200, json={"deleted": True, "erasure_status": "completed"})
+        elif op == "knowledge.add":
+            self.docs[(ns, body["source_uri"])] = body["content"]
+        elif op == "knowledge.delete":
+            self.docs.pop((ns, body["source_uri"]), None)
+            self.deleted.append(ns)
+        elif op == "knowledge.get":
+            content = self.docs.get((ns, body["source_uri"]))
+            return httpx.Response(200, json={"found": content is not None, "content": content})
+        elif op == "knowledge.search":
+            named = {ns, *map(name, body.get("namespaces", []))}
+            if not all(reads(n) for n in named):
+                return httpx.Response(403, json={"detail": {"code": "AUTH_INSUFFICIENT"}})
+            everything = self.searches_everything or body.get("namespace_scope") == "all_mine"
+            hits = [
+                {
+                    "source_uri": uri,
+                    "chunk_idx": 0,
+                    "content": content,
+                    "tags": [],
+                    "distance": 0.2,
+                    "similarity": 0.8,
+                    "namespace": collection,
+                }
+                for (collection, uri), content in self.docs.items()
+                if (reads(collection) if everything else collection in named)
+            ]
+            return httpx.Response(200, json={"results": hits})
+        return httpx.Response(200, json={})
+
+
+async def test_every_check_passes_and_the_run_removes_what_it_made(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server = Server()
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    assert await example.main(sign=str) == 0
+    out = capsys.readouterr().out
+    assert "all checks passed" in out
+    private, _, shared = out.partition("shared reply in channel:support may draw on:")
+    assert example.NOTE in private and example.FINANCE in private and example.SUPPORT in private
+    assert example.SUPPORT in shared
+    assert example.NOTE not in shared and example.FINANCE not in shared
+    assert not server.docs and not server.grants, "the note and both collections are gone"
+    assert len(server.deleted) == 3
+
+
+async def test_a_shared_request_names_only_the_destinations_collection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    assert await example.main(sign=str) == 0
+    person = next(user for user, _ in server.searches() if user.startswith("ana-"))
+    named = [collections for user, collections in server.searches() if user == person]
+    # The private request names the personal collection and both shared ones; every
+    # later search, in the shared conversation, names the support collection alone.
+    assert len(named[0]) == 3 and f"col-me-{person}" in named[0]
+    support = {next(c for c in named[0] if c.startswith("col-example-support-"))}
+    assert named[1:] and all(collections == support for collections in named[1:])
+    # No search carries a field that would widen it or name another user.
+    for _, op, body in server.calls:
+        if op == "knowledge.search":
+            assert not {"namespace_scope", "user_id"} & set(body), body
+
+
+async def test_a_refused_tool_call_and_an_unknown_destination_send_nothing_to_loom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    host = example.Host(
+        "acme", str, {"channel:leads": example.Destination(frozenset({"lead"}), ("col-a",))}
+    )
+    talk = host.conversation("ana", "channel:leads")
+    for name, arguments in (
+        ("search", {"query": "q", "namespaces": ["@me"]}),
+        ("search", {}),
+        ("open_citation", {"handle": "c-1", "source_uri": "docs://x"}),
+        ("knowledge.search", {"query": "q"}),
+    ):
+        with pytest.raises(example.ScopeRefused):
+            await host.call_tool(talk, name, arguments)
+    assert await host.call_tool(talk, "search", {"query": "q"}) == []  # not a member
+    unknown = host.conversation("ana", "channel:unknown")
+    assert await host.call_tool(unknown, "search", {"query": "q"}) == []
+    assert server.calls == []
+    with pytest.raises(example.ScopeRefused):
+        host.deliver(talk, "channel:unknown", "reply")
+    assert host.deliver(talk, "channel:leads", "reply") == "reply"
+
+
+async def test_a_hit_from_outside_the_named_collections_stops_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server(searches_everything=True)
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    with pytest.raises(example.ScopeRefused, match="outside the scope"):
+        await example.main(sign=str)
+    assert not server.docs and not server.grants, "cleanup still ran"
+
+
+async def test_a_grant_that_stays_after_the_revoke_fails_the_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server = Server(keeps_grants=True)
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    monkeypatch.setattr(example, "REVOKE_WAIT_S", 0)
+    assert await example.main(sign=str) == 1
+    out = capsys.readouterr().out
+    assert "still came back after the revoke" in out
+    assert "a citation opened after the revoke" in out and "2 check(s) failed" in out
+
+
+async def test_a_collection_that_is_not_deleted_fails_the_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server = Server(keeps_collections=True)
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    assert await example.main(sign=str) == 1
+    out = capsys.readouterr().out
+    assert out.count("was not deleted") == 2 and "2 check(s) failed" in out

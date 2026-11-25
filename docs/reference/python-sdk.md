@@ -501,6 +501,9 @@ its [GitHub Release](https://github.com/ClickHouse/loom/releases) notes.
   add two documents → search with citations → abstain on an off-topic question → delete.
 - [`sdk/python/examples/support_agent_memory.py`](../../sdk/python/examples/support_agent_memory.py):
   two customers kept apart → revise a fact → erase one customer and check it is gone.
+- [`sdk/python/examples/audience_scoped_retrieval.py`](../../sdk/python/examples/audience_scoped_retrieval.py):
+  one person asks in private and in a shared conversation → the shared reply reads only
+  what its readers may see → scope expansion refused → nothing after a revoke.
 - [`examples/`](../../examples/): `claude_agent_loop.py` (needs an Anthropic
   key), `ledger_run.py`, `log_conversation.py`, `onboarding_walkthrough.py`.
 
