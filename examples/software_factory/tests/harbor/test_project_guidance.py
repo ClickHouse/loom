@@ -39,18 +39,16 @@ class ProjectInstructions(TestCase):
         self.assertIn("services, crates", actual.decode())
         self.assertEqual(instructions["applies_to"], "loom-enabled")
         text = " ".join(actual.decode().split())
-        self.assertIn(
-            "Use Loom for every search or read of unchanged indexed source and tests", text
-        )
-        self.assertIn(
-            "Start with `loom_code_grep` for exact text or `loom_code_search` for behavior",
-            text,
-        )
-        self.assertIn("Batch code and test-name prefixes in one grep `pattern` list", text)
-        self.assertIn("Scope both roots with globs", text)
-        self.assertIn("Use `loom_code_edit_context` with a definition name", text)
-        self.assertIn("For literal `clues`, set `name` to the file path when known", text)
-        self.assertIn("Keep enclosing bodies for edits", text)
+        self.assertIn("Use Loom for unchanged indexed source and tests", text)
+        edit = "For an edit, start with `loom_code_edit_context`"
+        grep = "Use `loom_code_grep` for exact text and `loom_code_search` for behavior"
+        self.assertLess(text.index(edit), text.index(grep))
+        self.assertIn("Pass a definition name or literal `clues`", text)
+        self.assertIn("With clues, set `name` to the file path when known", text)
+        self.assertIn("Keep default grep bodies for edits", text)
+        self.assertIn("Batch known code and test clues in one `pattern` list", text)
+        self.assertIn("`path_globs` covering both roots", text)
+        self.assertIn("Use `loom_code_read` for exact ranges", text)
         self.assertIn("Edit, run tests and inspect Git locally", text)
         self.assertIn("Read changed, untracked or unindexed source locally", text)
         self.assertIn("If Loom cannot supply needed evidence, read it locally", text)
