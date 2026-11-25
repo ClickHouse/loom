@@ -25,6 +25,9 @@
   "/pt-BR/enterprise": "/docs/pt-BR/enterprise",
   "/zh-CN/enterprise": "/docs/zh-CN/enterprise",
   "/zh-Hant/enterprise": "/docs/zh-Hant/enterprise",
+  "/knowledge-factory": "/docs/knowledge-factory",
+  "/es/knowledge-factory": "/docs/es/knowledge-factory",
+  "/zh-CN/knowledge-factory": "/docs/zh-CN/knowledge-factory",
   "/telemetry": "/docs/telemetry",
   "/adoption": "/docs/adoption"
 }

@@ -72,7 +72,7 @@ export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = 
     return aliasLocations.has(location) ? "" : entry;
   });
   const alternatesByPath = new Map();
-  for (const field of ["href", "enterprise"]) {
+  for (const field of ["href", "enterprise", "knowledgeFactory"]) {
     const localized = Object.entries(homeLocales).flatMap(([language, routes]) =>
       routes[field] ? [[language, routes[field]]] : [],
     );

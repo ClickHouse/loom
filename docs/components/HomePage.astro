@@ -12,10 +12,15 @@ interface Props {
 
 const { locale } = Astro.props;
 const copy = homeCopy[locale];
+const homeLocale = siteLocales[locale];
 const languageNames = new Intl.DisplayNames(locale, { type: "language" });
 const docLink = (path: string) => documentationLink(locale, path);
 const start = docLink("/getting-started/quickstart");
 const enterprise = enterpriseLink(locale);
+const knowledgeFactory =
+  "knowledgeFactory" in homeLocale
+    ? { href: homeLocale.knowledgeFactory, hreflang: locale }
+    : docLink("/use-cases/knowledge-factory");
 const capabilities = [
   { ...copy.memory, ...docLink("/use-cases/agent-memory") },
   { ...copy.documents, ...docLink("/use-cases/document-search") },
@@ -27,13 +32,13 @@ const useCases = [
     href: "/docs/use-cases/multi-agent#choosing-memory-for-a-software-factory",
     hreflang: "en",
   },
-  { label: copy.knowledgeFactory, ...docLink("/use-cases/knowledge-factory") },
+  { label: copy.knowledgeFactory, ...knowledgeFactory },
   { label: copy.autonomous, ...docLink("/use-cases/autonomous-agents") },
   { label: copy.selfHosted, ...docLink("/use-cases/self-hosted-clickhouse") },
 ];
 ---
 
-<SiteFrame title={copy.title} description={copy.description} path={siteLocales[locale].href} home={{ locale, start }}>
+<SiteFrame title={copy.title} description={copy.description} path={homeLocale.href} home={{ locale, start }}>
   <section class="hero" aria-labelledby="home-title">
     <div class="hero-content">
       <p class="deployment">{copy.deployment}</p>

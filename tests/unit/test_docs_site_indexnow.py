@@ -58,6 +58,7 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/enterprise",
             "/es",
             "/es/enterprise",
+            "/es/knowledge-factory",
             "/fr",
             "/fr/enterprise",
             "/hi",
@@ -67,6 +68,7 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/ja/enterprise",
             "/ko",
             "/ko/enterprise",
+            "/knowledge-factory",
             "/platform",
             "/pt-BR",
             "/pt-BR/enterprise",
@@ -76,6 +78,7 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/vi",
             "/zh-CN",
             "/zh-CN/enterprise",
+            "/zh-CN/knowledge-factory",
             "/zh-Hant",
             "/zh-Hant/enterprise",
         )
