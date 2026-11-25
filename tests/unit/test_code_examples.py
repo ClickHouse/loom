@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from server.code.api.models_navigation import CodeExamplesInput
-from server.code.app.enrich import _example_context
+from server.code.app.enrich import _example_context, usage_examples
 from server.code.app.symbol import examples as h
 from server.code.store.index import CodeRepo
 from server.core.errors import NotFoundError, PreconditionFailedError
@@ -44,10 +44,12 @@ class _Repo:
         edges: list[dict[str, Any]],
         tested: list[str] = (),  # type: ignore[assignment]
         bodies: dict[tuple[str, int], str] | None = None,
+        tests_only: bool = False,
     ) -> None:
         self.seeds, self.edges, self.tested = seeds, edges, list(tested)
         self._store = CodeRepo(_CH(bodies or {}))  # type: ignore[arg-type]
         self.edge_reads: list[list[str]] = []
+        self.tests_only = tests_only
 
     async def innermost_chunk_at(self, org: str, ns: str, path: str, line: int) -> str | None:
         return await self._store.innermost_chunk_at(org, ns, path, line)
@@ -71,7 +73,7 @@ class _Repo:
     ) -> list[dict[str, Any]]:
         assert direction == "callers"
         assert not with_revision
-        assert not tests_only
+        assert tests_only == self.tests_only
         self.edge_reads.append(list(ids))
         return self.edges
 
@@ -138,6 +140,24 @@ def test_top_k_bounds_the_sites(
     repo = _Repo(seeds=[SEED], edges=[_edge(f"src/f{i}.cpp", i + 1) for i in range(6)])
     out = _run(monkeypatch, repo, name="DB::parseQuery", top_k=2)
     assert [e["path"] for e in out.examples] == ["src/f0.cpp", "src/f1.cpp"]
+
+
+def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None:
+    edges = [
+        _edge("tests/a_support.py", 4, "tests.a_support::setup"),
+        _edge("tests/test_async.py", 8, "tests.test_async::test_async_context"),
+        _edge("tests/test_routing.py", 10, "tests.test_routing::test_blueprint_single"),
+        _edge("tests/test_routing.py", 25, "tests.test_routing::test_blueprint_twice"),
+        _edge("tests/test_routing.py", 27, "tests.test_routing::test_blueprint_twice"),
+        _edge("tests/test_routing.py", 40, "tests.test_routing::test_blueprint_defaults"),
+    ]
+    for edge in edges:
+        edge["to_qualified_name"] = "web.app::App::register_blueprint"
+    repo = _Repo(seeds=[], edges=edges, tests_only=True)
+
+    examples = asyncio.run(usage_examples(repo, "org", "code", ["s"], tests_only=True))  # type: ignore[arg-type]
+
+    assert [site["line"] for site in examples] == [25, 10, 40]
 
 
 @pytest.mark.parametrize(

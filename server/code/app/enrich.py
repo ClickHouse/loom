@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections import defaultdict
 from collections.abc import Awaitable
 from typing import Any
 
 from server.code.app.spans import code_span
-from server.code.domain.index.test_conventions import is_test_unit_path
+from server.code.domain.index.test_conventions import is_test_unit_path, snake
 from server.code.domain.symbol_body import retained_source_window
 from server.code.store.index import CodeRepo
 from server.embedding.embedder import served_model_label
@@ -92,6 +93,8 @@ async def usage_examples(
     for edge in ranked:
         by_location.setdefault((str(edge["path"]), int(edge["line"])), edge)
     sites = list(by_location.values())
+    if tests_only:
+        sites = _rank_test_sites(sites)
     baseline = sites[: max(1, limit)]
     requested = baseline
     if tests_only and with_context:
@@ -126,6 +129,34 @@ async def usage_examples(
             if "context" in example or edge in baseline
         ][: len(baseline)]
     return out
+
+
+def _test_name_words(name: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", snake(name))) - {"test", "tests"}
+
+
+def _rank_test_sites(sites: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Put related test functions first, with one source window per test before repeats."""
+    counts: dict[tuple[str, str], int] = defaultdict(int)
+    for site in sites:
+        counts[site["path"], site["from_qualified_name"]] += 1
+
+    def key(site: dict[str, Any]) -> tuple[bool, int, int]:
+        caller = site["from_qualified_name"]
+        name = caller.rsplit("::", 1)[-1]
+        _, *target = str(site.get("to_qualified_name") or "").split("::")
+        related = _test_name_words(name) & _test_name_words("_".join(target[-2:]))
+        return not snake(name).startswith("test_"), -len(related), -counts[site["path"], caller]
+
+    picked: dict[tuple[str, str], dict[str, Any]] = {}
+    repeats = []
+    for site in sorted(sites, key=key):
+        caller = site["path"], site["from_qualified_name"]
+        if caller in picked:
+            repeats.append(site)
+        else:
+            picked[caller] = site
+    return list(picked.values()) + repeats
 
 
 async def indirect_test_examples(
