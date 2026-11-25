@@ -39,7 +39,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Concepts
 
 - [Identities and namespaces](docs/concepts/identities-and-namespaces.md): Loom answers two questions on every call: whose row is this (the identity tuple, plus two columns the server stamps), and may this caller touch it (the token, the namespace's grants and its classification).
-- [Memory](docs/concepts/memory.md): A memory is one claim an agent should find again: "deploys happen on Tuesdays", "the payments team owns the billing service".
+- [Agentic memory](docs/concepts/memory.md): Agentic memory lets an AI agent store, retrieve and revise information as it works.
 - [Retrieval and ranking](docs/concepts/retrieval-and-ranking.md): This page explains how `memory.search` finds rows.
 
 ## Features

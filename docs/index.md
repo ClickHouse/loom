@@ -108,7 +108,7 @@ client sees one the server no longer reads.
 
 - [Identities and namespaces](concepts/identities-and-namespaces.md): the tuple, roles,
   grants and read scope.
-- [Memory](concepts/memory.md): the row, how a write is judged, time, history,
+- [Agentic memory](concepts/memory.md): working memory, long-term recall, time, history,
   provenance.
 - [Retrieval and ranking](concepts/retrieval-and-ranking.md): legs, fusion, abstain,
   calibration.

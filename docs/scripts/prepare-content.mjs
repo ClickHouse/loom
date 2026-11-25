@@ -14,6 +14,18 @@ const locales = ["es", "ja", "ko", "pt-BR", "zh-CN"];
 const docsBlob = "https://github.com/ClickHouse/loom/blob/main/docs/";
 const docsSite = "https://loom.clickhouse.com/docs";
 const localizedSeo = {
+  "concepts/memory.md": {
+    "pt-BR": {
+      title: "Como funciona a memória agêntica",
+      description:
+        "Veja como o Loom guarda fatos, eventos e procedimentos para agentes de IA. Use a memória de trabalho para retomar tarefas e consulte o histórico das revisões.",
+    },
+    "zh-CN": {
+      title: "智能体记忆：工作记忆与长期记忆",
+      description:
+        "了解 Loom 如何为 AI 智能体保存事实、事件和流程，使用工作记忆恢复任务，并通过来源和版本记录追踪长期记忆的变化。",
+    },
+  },
   "index.md": {
     ja: {
       description: "AIエージェント向けの共有メモリ、文書検索、コードインデックスを備えたセルフホスト型MCPサーバー。",
