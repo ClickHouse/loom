@@ -23,6 +23,7 @@ from server.memory.api.models_common import _Identity
 from server.memory.domain.session_brief import (
     STORED_KEY_MAX,
     STORED_KEY_PATTERN,
+    BriefCheckout,
     BriefEvent,
     BriefSections,
 )
@@ -52,6 +53,8 @@ class SessionBriefSaveInput(_Identity):
     branch: str = Field(default="", max_length=200)
     # Commit the checkout was at when saving; empty keeps the stored value.
     head_sha: str = Field(default="", max_length=64)
+    # Local Git observations for this save. Omit when the checkout is unknown.
+    checkout: BriefCheckout | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
     # What prompted the save: `manual` and `model` always save; the automatic `precompact`,
     # `session_end` and `stop` store nothing while the namespace's recording is off.
     trigger: Trigger = "manual"
@@ -122,6 +125,10 @@ class SessionBriefGetInput(_Identity):
     project: str = Field(default="", max_length=120)
     # 0 = the current revision; N = that revision from the history.
     revision: int = Field(default=0, ge=0)
+    # A stored snapshot's version as a decimal string. A handoff uses it with revision.
+    snapshot_id: str = Field(
+        default="", pattern=r"^(?:[1-9][0-9]{0,19})?$", json_schema_extra=MCP_HIDDEN
+    )
     # Also return the structured `sections`; False returns only `rendered`.
     include_sections: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Append the client's own summary from its last
@@ -136,6 +143,8 @@ class SessionBriefGetOutput(BaseModel):
     brief_key: str = ""
     # The revision returned (the current one unless `revision` was asked for).
     revision: int = 0
+    # The database version as a decimal string so JavaScript can preserve every digit.
+    snapshot_id: str = ""
     # The brief as text, with the client's compaction summary appended when `full`.
     rendered: str = ""
     # The structured brief; None unless `include_sections` was set.

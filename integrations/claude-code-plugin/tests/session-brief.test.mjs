@@ -10,7 +10,8 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { writeRecording } from "../lib/recording.mjs";
@@ -18,6 +19,7 @@ import {
   MAX_EVENTS,
   autoBriefKey,
   briefBody,
+  briefCheckout,
   briefEnabled,
   briefPrimerEnabled,
   journalEvents,
@@ -367,7 +369,7 @@ function fakeToken() {
   return `${b64({ alg: "none" })}.${b64({ org: "o", namespaces: ["coding"], sub: "t" })}.sig`;
 }
 
-async function withServer(status, fn) {
+async function withServer(status, fn, response = { brief_key: "auto/x/main", revision: 1, changed: true }) {
   const posts = [];
   const server = http.createServer((req, res) => {
     let body = "";
@@ -377,9 +379,7 @@ async function withServer(status, fn) {
     req.on("end", () => {
       posts.push({ url: req.url, body: body ? JSON.parse(body) : null });
       res.writeHead(status, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify(status === 200 ? { brief_key: "auto/x/main", revision: 1, changed: true } : { error: "x" }),
-      );
+      res.end(JSON.stringify(status === 200 ? response : { error: "x" }));
     });
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -389,6 +389,88 @@ async function withServer(status, fn) {
     server.close();
   }
 }
+
+test("handoff restore uses the link's namespace and pinned snapshot on both plugins", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loom-handoff-"));
+  const exec = promisify(execFile);
+  const commit = "a".repeat(40);
+  const snapshot = "9007199254740997";
+  const key = "handoff/feat+x";
+  try {
+    await withServer(
+      200,
+      async (url, posts) => {
+        const params = new URLSearchParams({
+          org: "o",
+          namespace: "team",
+          brief: key,
+          revision: "1",
+          snapshot,
+          commit,
+        });
+        const link = `${url}/conversations?${params}`;
+        const opts = {
+          cwd: tmp,
+          env: hostEnv({ ...process.env, LOOM_BASE_URL: url, LOOM_API_KEY: fakeToken(), LOOM_NAMESPACE: "coding" }),
+        };
+        for (const plugin of ["claude-code-plugin", "codex-plugin"]) {
+          const bin = path.join(here, "../..", plugin, "bin/loom-brief.mjs");
+          const { stdout } = await exec(process.execPath, [bin, "get", "--handoff", link], opts);
+          assert.match(stdout, /<loom-recalled-data id=/);
+          assert.match(stdout, /Last recorded verification/);
+          assert.match(stdout, /which this checkout does not have/);
+          await assert.rejects(
+            exec(process.execPath, [bin, "get", "--handoff", link.replace("127.0.0.1", "localhost")], opts),
+          );
+        }
+        assert.equal(posts.length, 2);
+        for (const { url: route, body } of posts) {
+          assert.equal(route, "/v1/session.brief_get");
+          assert.deepEqual(
+            {
+              namespace: body.namespace,
+              key: body.brief_key,
+              revision: body.revision,
+              snapshot: body.snapshot_id,
+              full: body.full,
+            },
+            { namespace: "team", key, revision: 1, snapshot, full: false },
+          );
+        }
+      },
+      {
+        found: true,
+        brief_key: key,
+        revision: 1,
+        snapshot_id: snapshot,
+        head_sha: commit,
+        rendered: "Last recorded verification: pytest passed",
+      },
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("checkout observations distinguish local changes from commits known to a remote ref", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loom-handoff-git-"));
+  const git = (...args) =>
+    execFileSync("git", args, { cwd: tmp, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  try {
+    git("init");
+    fs.writeFileSync(path.join(tmp, "tracked"), "initial");
+    git("add", "tracked");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "initial");
+    const head = git("rev-parse", "HEAD");
+    assert.deepEqual(briefCheckout(tmp, head), { dirty: false, head_in_remote_refs: false });
+    git("update-ref", "refs/remotes/origin/test", head);
+    fs.writeFileSync(path.join(tmp, "untracked"), "local");
+    assert.deepEqual(briefCheckout(tmp, head), { dirty: true, head_in_remote_refs: true });
+    assert.deepEqual(briefCheckout(path.join(tmp, "missing"), head), { dirty: null, head_in_remote_refs: null });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 function runHook(env, payload) {
   return new Promise((resolve) => {

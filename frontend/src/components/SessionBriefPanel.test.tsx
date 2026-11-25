@@ -70,4 +70,34 @@ describe("SessionBriefPanel", () => {
       }),
     );
   });
+
+  it("copies the selected snapshot, including the revision and exact commit", async () => {
+    const commit = "b".repeat(40);
+    getBrief
+      .mockResolvedValueOnce(found({ snapshot_id: "9007199254740999", head_sha: "a".repeat(40) }))
+      .mockResolvedValueOnce(found({ revision: 1, snapshot_id: "9007199254740997", head_sha: commit }));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", Object.create(navigator, { clipboard: { value: { writeText } } }));
+    try {
+      render(<SessionBriefPanel org="o" namespace="ns" briefKey="auto/loom/feat-x" />);
+      fireEvent.click(await screen.findByRole("button", { name: /Session brief/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Revision/ }));
+      fireEvent.click(await screen.findByText("rev 1"));
+      fireEvent.click(await screen.findByRole("button", { name: "Copy handoff link" }));
+      expect(writeText).toHaveBeenCalledOnce();
+      const url = new URL(String(writeText.mock.calls[0][0]));
+      expect(url.pathname).toBe("/conversations");
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        org: "o",
+        namespace: "ns",
+        brief: "auto/loom/feat-x",
+        revision: "1",
+        snapshot: "9007199254740997",
+        commit,
+      });
+      expect(screen.getByText("Restore revision 1 of the session brief auto/loom/feat-x.")).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

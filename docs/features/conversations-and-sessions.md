@@ -306,6 +306,23 @@ names the saved briefs. Loading one happens when the person asks, through the
 `brief_get(full=true)` appends the client's own last compaction summary verbatim below
 the brief. Briefs never load on their own: only the person knows which line of work they are resuming.
 
+### Hand off a revision
+
+On the Conversations page, open a session brief, select the revision, and
+choose **Copy handoff link**. The link identifies one saved revision and its
+Git commit. Paste it into a pull request or issue. A teammate with viewer
+access to the namespace can open the brief, read what was tried and what to
+do next, and choose **Copy restore prompt** to continue in a coding agent.
+The plugins read the link through the configured Loom server and use the
+recipient's credentials.
+
+The handoff includes the latest verification result recorded in the brief.
+The plugin records whether the sender had uncommitted changes and whether
+the saved commit appeared in local remote-tracking refs. Those refs can
+lag the remote. Commit and push changes a teammate needs before sharing.
+The link still selects its original revision after later saves. Deleting
+the brief makes its handoff links unavailable.
+
 ## Example
 
 The Python SDK's `Session` binds these ops to one `(user, session)` scope: `append`

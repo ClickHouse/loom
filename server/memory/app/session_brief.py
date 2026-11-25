@@ -399,6 +399,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
         project=inp.project or (live or {}).get("project", ""),
         branch=inp.branch or (live or {}).get("branch", ""),
         head_sha=inp.head_sha or (live or {}).get("head_sha", ""),
+        checkout=inp.checkout if inp.head_sha else None,
         sessions=len(sessions),
         events_total=events_total,
         source_chars=source_chars,
@@ -491,6 +492,11 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
                 "shows the briefs this namespace holds)",
             },
         )
+    snapshot = int(inp.snapshot_id) if inp.snapshot_id else None
+    if snapshot is not None and (
+        not inp.brief_key or not 0 < inp.revision < 2**32 or snapshot >= 2**64
+    ):
+        return SessionBriefGetOutput(found=False)
     row = await _find(inp)
     if row is None:
         return SessionBriefGetOutput(found=False, brief_key=inp.brief_key)
@@ -520,12 +526,19 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
             key,
             inp.revision,
             scope=scope,
+            snapshot=snapshot,
         )
         # A revision from before a delete belongs to the forgotten brief: the
         # current life of the key started at its `created_at`.
         born = row.get("created_at")
-        if past is None or (
-            born is not None and past.get("updated_at") is not None and past["updated_at"] < born
+        if (
+            past is None
+            or past.get("tombstoned_at") is not None
+            or (
+                born is not None
+                and past.get("updated_at") is not None
+                and past["updated_at"] < born
+            )
         ):
             return SessionBriefGetOutput(found=False, **base)
         row = {**row, **past}
@@ -535,6 +548,7 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
     return SessionBriefGetOutput(
         found=True,
         revision=int(row.get("revision") or 0),
+        snapshot_id=str(row.get("version") or ""),
         rendered=sb_render.with_client_summary(rendered, sections) if inp.full else rendered,
         sections=sections if inp.include_sections else None,
         head_sha=str(row.get("head_sha") or ""),

@@ -141,11 +141,21 @@ async def current(
 
 
 async def by_revision(
-    ch: Any, org: str, namespace: str, brief_key: str, revision: int, *, scope: ReadFilters
+    ch: Any,
+    org: str,
+    namespace: str,
+    brief_key: str,
+    revision: int,
+    *,
+    scope: ReadFilters,
+    snapshot: int | None = None,
 ) -> dict[str, Any] | None:
-    """One past revision from the append-only history (the newest write of
-    that revision number when two saves raced to it), inside the read `scope`."""
+    """Read a revision inside the read scope, pinned to one write for a handoff."""
     params: dict[str, Any] = {"org": org, "ns": namespace, "key": brief_key, "rev": int(revision)}
+    snapshot_clause = ""
+    if snapshot is not None:
+        params["snapshot"] = snapshot
+        snapshot_clause = " AND version = {snapshot:UInt64}"
     row = await ch.query_one(
         f"""
         SELECT brief_key, revision, agent, user_id, session_id, head_sha, trigger,
@@ -153,7 +163,8 @@ async def by_revision(
                actor, updated_at, tombstoned_at, version
         FROM {REVISIONS}
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND brief_key = {{key:String}} AND revision = {{rev:UInt32}}{scope_and(scope, params)}
+          AND brief_key = {{key:String}} AND revision = {{rev:UInt32}}{snapshot_clause}
+          {scope_and(scope, params)}
         ORDER BY version DESC
         LIMIT 1
         """,

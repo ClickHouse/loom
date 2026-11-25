@@ -375,7 +375,9 @@ class _MemCH:
             hits = [
                 r
                 for r in self.revisions
-                if r["brief_key"] == p["key"] and r["revision"] == p["rev"]
+                if r["brief_key"] == p["key"]
+                and r["revision"] == p["rev"]
+                and ("snapshot" not in p or r["version"] == p["snapshot"])
             ]
             return max(hits, key=lambda r: r["version"]) if hits else None
         raise AssertionError(sql)
@@ -1182,6 +1184,38 @@ def test_under_a_policy_a_save_held_by_an_unread_switch_is_refused(mem, monkeypa
     with pytest.raises(BackendUnavailableError):
         _save(brief_key="k", events=[E(kind="user", text=_CARD)], event_cursor="c2")
     assert len(mem.rows) == rows
+
+
+def test_handoff_pins_a_write_even_if_two_saves_share_its_revision(mem) -> None:
+    first = _save(
+        brief_key="handoff/x",
+        head_sha="a" * 40,
+        checkout={"dirty": True, "head_in_remote_refs": False},
+        sections={"goal": "Track the revision", "verification": "pytest passed"},
+    )
+    assert first.revision == 1
+    snapshot = mem.rows[-1]
+    competing = repo.build_brief_row(snapshot, rendered="Competing save")
+    asyncio.run(mem.insert(repo.TABLE, [competing]))
+
+    def read(snapshot_id: str):
+        return asyncio.run(
+            h.handle_session_brief_get(
+                SessionBriefGetInput(
+                    **IDENT, brief_key="handoff/x", revision=1, snapshot_id=snapshot_id
+                )
+            )
+        )
+
+    assert read("").rendered == "Competing save"
+    pinned = read(str(snapshot["version"]))
+    assert pinned.found and pinned.snapshot_id == str(snapshot["version"])
+    assert pinned.rendered == first.rendered
+    assert "pytest passed" in pinned.rendered
+    assert "uncommitted changes" in pinned.rendered
+    assert "absent from the sender" in pinned.rendered
+    assert not read("1").found
+    assert not read(str(2**64)).found
 
 
 def test_under_a_policy_a_revised_brief_takes_no_summary_from_the_events(mem, monkeypatch) -> None:

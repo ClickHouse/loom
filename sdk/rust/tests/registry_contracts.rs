@@ -7592,6 +7592,11 @@ fn session_brief_get() {
         "session.brief_get:revision"
     );
     assert_eq!(
+        encoded["snapshot_id"],
+        serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
+        "session.brief_get:snapshot_id"
+    );
+    assert_eq!(
         encoded["rendered"],
         serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
         "session.brief_get:rendered"

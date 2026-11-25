@@ -48,7 +48,7 @@ from urllib.parse import quote, unquote
 
 from pydantic import BaseModel, Field
 
-PROMPT_VERSION = "sb-4"
+PROMPT_VERSION = "sb-5"
 
 # Address of a brief inside a namespace: "loom@feat/x", "auto/loom/main",
 # a name the user chose. Path-like, no spaces, bounded.
@@ -152,12 +152,21 @@ class BriefFile(BaseModel):
     role: str = Field(default="", max_length=200)
 
 
+class BriefCheckout(BaseModel):
+    """Git observations from the sender's checkout at save time."""
+
+    dirty: bool | None = None
+    head_in_remote_refs: bool | None = None
+
+
 class BriefSections(BaseModel):
     """The structured brief. State sections describe now and are replaced on
     each revision; history sections (decisions, dead_ends, done) accumulate."""
 
     goal: str = Field(default="", max_length=GOAL_CAP)
     status: str = Field(default="", max_length=STATUS_CAP)
+    # The command or CI check and the result observed in the session.
+    verification: str = Field(default="", max_length=TEXT_CAP)
     decisions: list[BriefDecision] = Field(default_factory=list, max_length=40)
     dead_ends: list[BriefDeadEnd] = Field(default_factory=list, max_length=40)
     done: list[BriefDone] = Field(default_factory=list, max_length=60)
@@ -423,6 +432,9 @@ SYSTEM_PROMPT = (
     '- "status": 2-4 sentences on where the work stands at the END of the new '
     "events: what is finished, what is in progress, what is failing — with the "
     "identifiers (PR numbers, branches, test names, error text).\n"
+    '- "verification": the latest test or check with an observed outcome in '
+    "the new events. Name the command or CI check and its result. A command "
+    "alone is insufficient. Use an empty string when there is no new result.\n"
     '- "new_decisions": design or product choices made IN THE NEW EVENTS, as '
     '[{"what": ..., "why": ...}]. A decision picks one option over another '
     "(an approach, a default, a schema, a threshold, a rule) and a later "
@@ -596,6 +608,7 @@ def parse_revision(text: str) -> WindowRevision | None:
     state = BriefSections(
         goal=_clip(str(data.get("goal") or ""), GOAL_CAP),
         status=_clip(str(data.get("status") or ""), STATUS_CAP),
+        verification=_clip(str(data.get("verification") or ""), TEXT_CAP),
         open_questions=_as_str_list(data.get("open_questions"), TEXT_CAP),
         next_steps=_as_str_list(data.get("next_steps"), TEXT_CAP),
         files=[
@@ -777,6 +790,7 @@ def merge_sections(prev: BriefSections | None, rev: WindowRevision) -> BriefSect
     return BriefSections(
         goal=goal,
         status=state.status or p.status,
+        verification=state.verification or p.verification,
         decisions=_append_history(p.decisions, rev.decisions, "what", LIST_CAPS["decisions"]),
         dead_ends=_append_history(p.dead_ends, rev.dead_ends, "tried", LIST_CAPS["dead_ends"]),
         done=_append_history(p.done, rev.done, "what", LIST_CAPS["done"]),
@@ -796,6 +810,7 @@ def overlay_sections(prev: BriefSections | None, given: BriefSections) -> BriefS
     return BriefSections(
         goal=given.goal or p.goal,
         status=given.status or p.status,
+        verification=given.verification or p.verification,
         decisions=_append_history(p.decisions, given.decisions, "what", LIST_CAPS["decisions"]),
         dead_ends=_append_history(p.dead_ends, given.dead_ends, "tried", LIST_CAPS["dead_ends"]),
         done=_append_history(p.done, given.done, "what", LIST_CAPS["done"]),

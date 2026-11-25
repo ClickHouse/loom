@@ -80,7 +80,8 @@ async def test_a_brief_carries_one_line_of_work_across_sessions(
                 "session_id": "s1",
                 "project": "loom",
                 "branch": "feat/briefs",
-                "head_sha": "19d01dc28",
+                "head_sha": "a" * 40,
+                "checkout": {"dirty": True, "head_in_remote_refs": False},
                 "trigger": "precompact",
                 "events": _EVENTS,
                 "event_cursor": "120",
@@ -172,6 +173,22 @@ async def test_a_brief_carries_one_line_of_work_across_sessions(
             },
         )
         assert first_rev["found"] and first_rev["revision"] == 1
+        snapshot = {
+            **base,
+            "brief_key": first_rev["brief_key"],
+            "revision": 1,
+            "snapshot_id": first_rev["snapshot_id"],
+        }
+        pinned = await _call(c, teammate, "session.brief_get", snapshot)
+        assert pinned["rendered"] == first["rendered"]
+        assert pinned["head_sha"] == "a" * 40
+        assert "uncommitted changes" in pinned["rendered"]
+        assert "cached remote refs" in pinned["rendered"]
+        assert "uncommitted changes" not in got["rendered"]
+        unavailable = await _call(
+            c, teammate, "session.brief_get", {**snapshot, "snapshot_id": got["snapshot_id"]}
+        )
+        assert not unavailable["found"]
         by_project = await _call(c, teammate, "session.brief_get", {**base, "project": "loom"})
         assert by_project["brief_key"] == "auto/loom/feat-briefs"
         listed = await _call(c, teammate, "session.brief_list", {**base, "project": "loom"})
@@ -192,10 +209,7 @@ async def test_a_brief_carries_one_line_of_work_across_sessions(
             c,
             outsider,
             "session.brief_get",
-            {
-                **{**base, "namespace": ns},
-                "brief_key": "auto/loom/feat-briefs",
-            },
+            snapshot,
             expect=403,
         )
 
@@ -213,11 +227,7 @@ async def test_a_brief_carries_one_line_of_work_across_sessions(
             c,
             teammate,
             "session.brief_get",
-            {
-                **base,
-                "brief_key": "auto/loom/feat-briefs",
-                "revision": 1,
-            },
+            snapshot,
         )
         assert not after["found"] and after["deleted"]
         empty = await _call(c, teammate, "session.brief_list", {**base})

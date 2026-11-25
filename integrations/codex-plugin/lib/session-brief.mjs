@@ -1,4 +1,4 @@
-// Pure helpers for the session brief hook (unit-tested, no I/O).
+// Helpers for capturing and restoring session briefs.
 //
 // The working-memory note says where the last session stopped:
 // its first prompt, the tree, the files it edited, its last reply. What the
@@ -20,6 +20,7 @@ import {
   contentText,
   envSwitch,
   extractFiles,
+  git,
   normalizeToolName,
   redactHead,
   resolveToken,
@@ -286,9 +287,24 @@ export function worthSaving(events, { firstSave = true } = {}) {
   return users + edits >= 1 || evs.length >= 5;
 }
 
+/** Record only Git facts. The remote-tracking refs are local and may lag. */
+export function briefCheckout(cwd, head) {
+  if (!head) return undefined;
+  const opts = { timeoutMs: 750, fallback: null };
+  const status = git(["--no-optional-locks", "status", "--porcelain"], cwd, opts);
+  const remote = git(["for-each-ref", "--count=1", `--contains=${head}`, "refs/remotes/"], cwd, opts);
+  return {
+    dirty: status === null ? null : Boolean(status),
+    head_in_remote_refs: remote === null ? null : Boolean(remote),
+  };
+}
+
 /** The session.brief_save body. brief_key is left to the server
  *  (auto/<project>/<branch>) unless LOOM_SESSION_BRIEF_KEY names one. */
-export function briefBody(scope, { sessionId, branch, head, trigger, events, cursor, repo, env = process.env }) {
+export function briefBody(
+  scope,
+  { sessionId, branch, head, checkout, trigger, events, cursor, repo, env = process.env },
+) {
   const key = String(env.LOOM_SESSION_BRIEF_KEY || "").trim();
   const body = {
     org: scope.org,
@@ -299,6 +315,7 @@ export function briefBody(scope, { sessionId, branch, head, trigger, events, cur
     repo: String(repo || (scope.repo && scope.repo.slug) || "").slice(0, 300),
     branch: String(branch || "").slice(0, 200),
     head_sha: String(head || "").slice(0, 64),
+    ...(checkout ? { checkout } : {}),
     trigger,
     events,
     event_cursor: String(cursor),
