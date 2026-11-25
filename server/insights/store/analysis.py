@@ -271,7 +271,7 @@ async def own_grants(
         _, _, rows = await ch.query_columns("SHOW GRANTS")
     out: set[tuple[str, str]] = set()
     for (line,) in rows:
-        m = _GRANT.fullmatch(str(line))
+        m = _GRANT.fullmatch(str(line).removesuffix(" WITH GRANT OPTION"))
         if m is None or m["database"].strip("`") != database():
             out.add(("*", str(line)))
             continue
