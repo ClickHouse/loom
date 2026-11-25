@@ -24,6 +24,7 @@ docs/node_modules/
 docs/.blume/
 docs/.blume-content/
 docs/.vercel/
+docs/public/docs-media/
 frontend/dist/
 frontend/.vite/
 frontend/*.log

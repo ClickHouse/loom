@@ -1,8 +1,11 @@
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
+import { escape } from "html-escaper";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import sharp from "sharp";
 import { readContentDates } from "./content-dates.mjs";
 import { withContentMetadata } from "./content-metadata.mjs";
 
@@ -10,6 +13,7 @@ const docs = dirname(fileURLToPath(import.meta.url));
 const root = dirname(docs);
 const repository = dirname(root);
 const content = join(root, ".blume-content");
+const docsMedia = join(root, "public", "docs-media");
 const locales = ["es", "ja", "ko", "pt-BR", "zh-CN"];
 const docsBlob = "https://github.com/ClickHouse/loom/blob/main/docs/";
 const docsSite = "https://loom.clickhouse.com/docs";
@@ -239,8 +243,9 @@ const excluded = new Set([
   "vercel.json",
 ]);
 
-function prepareContent() {
+async function prepareContent() {
   rmSync(content, { recursive: true, force: true });
+  rmSync(docsMedia, { recursive: true, force: true });
   for (const entry of readdirSync(root)) {
     if (!excluded.has(entry)) cpSync(join(root, entry), join(content, entry), { recursive: true });
   }
@@ -290,6 +295,38 @@ function prepareContent() {
     text = rewriteSourceLinks(text, relative(content, file));
     writeFileSync(file, text);
   }
+  await prepareDocsScreenshot();
+}
+
+async function prepareDocsScreenshot() {
+  const landing = join(content, "index.md");
+  const text = readFileSync(landing, "utf8");
+  const screenshot = /^!\[([^\n]*)\]\(assets\/screenshots\/document-search\.webp\)$/m;
+  const match = screenshot.exec(text);
+  if (!match) return;
+
+  const image = sharp(join(root, "assets", "screenshots", "document-search.webp"));
+  const { width, height } = await image.metadata();
+  const widths = [360, 480, 720, 960, 1080].filter((candidate) => candidate < width).concat(width);
+  mkdirSync(docsMedia, { recursive: true });
+  const candidates = await Promise.all(
+    widths.map(async (candidate) => {
+      const bytes = await image.clone().resize(candidate).webp().toBuffer();
+      const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 12);
+      const name = `document-search-${candidate}.${hash}.webp`;
+      writeFileSync(join(docsMedia, name), bytes);
+      return { url: `/docs/docs-media/${name}`, width: candidate };
+    }),
+  );
+  const fullSize = candidates.at(-1).url;
+  const srcset = candidates.map(({ url, width }) => `${url} ${width}w`).join(", ");
+  // Match the documentation column's maximum width and mobile gutters.
+  const sizes = "(max-width: 45rem) calc(100vw - 3rem), 42rem";
+  const markup = `<img src="${fullSize}" srcset="${srcset}" sizes="${sizes}" alt="${escape(match[1])}" width="${width}" height="${height}" loading="eager" fetchpriority="high" decoding="async" data-zoom-src="${fullSize}" />`;
+  writeFileSync(
+    landing,
+    text.replace(screenshot, () => markup),
+  );
 }
 
 export function prepareLocalizedLandingDemo(text) {
@@ -397,4 +434,4 @@ export function rewriteSourceLinks(text, from) {
     .join("\n");
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) prepareContent();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await prepareContent();
