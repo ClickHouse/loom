@@ -501,7 +501,10 @@ async def test_symbol_reads_test_examples_with_the_definition(code_env, monkeypa
     assert example["context"]["text"].strip() == call
 
 
-async def test_edit_context_prefers_distinct_test_source_windows(code_env, monkeypatch) -> None:
+@pytest.mark.parametrize("duplicate_revision", [False, True])
+async def test_edit_context_prefers_distinct_test_source_windows(
+    code_env, monkeypatch, duplicate_revision
+) -> None:
     from server.code.api.models_symbol import CodeEditContextInput
     from server.code.app.symbol import handle_code_edit_context
     from server.embedding.fake import fake_model_name
@@ -520,6 +523,22 @@ async def test_edit_context_prefers_distinct_test_source_windows(code_env, monke
         + b"void test_third() { DB::doWork(); }\n"
     )
     await _ingest(repo, org, ns, source=source, path=path)
+    if duplicate_revision:
+        repo_type = type(repo)
+        read_edges = repo_type.edges_for_symbols
+
+        async def with_older_site(self, *args, **kwargs):
+            edges = await read_edges(self, *args, **kwargs)
+            if kwargs.get("tests_only"):
+                index, adjacent = next(
+                    (i, row)
+                    for i, row in enumerate(edges)
+                    if row["path"] == path and row["line"] == 3
+                )
+                edges.insert(index + 1, {**adjacent, "indexed_commit": "b" * 40})
+            return edges
+
+        monkeypatch.setattr(repo_type, "edges_for_symbols", with_older_site)
     response = await handle_code_edit_context(
         CodeEditContextInput(org=org, namespace=ns, name="DB::doWork", include_lessons=False)
     )

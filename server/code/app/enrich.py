@@ -87,16 +87,15 @@ async def usage_examples(
         edges,
         key=lambda e: (str(e["path"]) not in tested_paths, str(e["path"])),
     )
+    by_location: dict[tuple[str, int], dict[str, Any]] = {}
+    for edge in ranked:
+        by_location.setdefault((str(edge["path"]), int(edge["line"])), edge)
+    sites = list(by_location.values())
     if tests_only and with_context:
-        ranked = _prefer_distinct_test_windows(ranked, context_lines)
+        sites = _prefer_distinct_test_windows(sites, context_lines)
     out = []
     revisions: list[str] = []
-    seen: set[tuple[str, int]] = set()
-    for e in ranked:
-        site = (str(e["path"]), int(e["line"]))
-        if site in seen:
-            continue
-        seen.add(site)
+    for e in sites:
         out.append(
             {
                 "caller": str(e["from_qualified_name"]),
