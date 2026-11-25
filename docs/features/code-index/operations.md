@@ -167,6 +167,12 @@ matching lines remain available with `definitions_partial=true` and a
 disclosures and next lookup when available. Check those fields before treating a
 missing body as missing code. The flag is rejected outside matches mode.
 
+For MCP replies, a nested definition can carry `body_in` when its exact source
+lines are already present in an enclosing body on the same page. Its value is
+the enclosing definition's `symbol_id`. Use the nested definition's own line
+range to read its source within that body. `explain=true` returns each body
+separately.
+
 A caller with a clock of its own passes `deadline_ms` to `code.grep` or `code.search`
 (clamped to 200–60000; 0 means none, and unset takes `LOOM_CODE_SEARCH_DEADLINE_MS`):
 the request stops starting new work when the budget runs out and returns what it has,

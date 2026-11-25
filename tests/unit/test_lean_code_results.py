@@ -390,6 +390,45 @@ def test_lean_grep_omits_redundant_metadata_only_with_complete_source() -> None:
     assert definition["body_elided"] is False
 
 
+def test_lean_grep_refs_exact_nested_source_without_losing_a_body() -> None:
+    method = {
+        "path": "a.py",
+        "symbol_id": "method",
+        "start_line": 3,
+        "end_line": 4,
+        "body": "        def read(self):\r\n            return 'source\u2028data'\r\n",
+    }
+    inner = {
+        "path": "a.py",
+        "symbol_id": "inner",
+        "start_line": 2,
+        "end_line": 4,
+        "body": "    class Inner:\r\n" + method["body"],
+    }
+    outer = {
+        "path": "a.py",
+        "symbol_id": "outer",
+        "start_line": 1,
+        "end_line": 4,
+        "body": "class Outer:\r\n" + inner["body"],
+    }
+    other_file = {**method, "symbol_id": "other", "path": "b.py"}
+    altered = {**method, "symbol_id": "changed", "body": method["body"].replace("data", "code")}
+    elided = {**method, "symbol_id": "elided", "body_elided": True}
+    payload = {"definitions": [method, inner, outer, other_file, altered, elided]}
+
+    result = lean_code("code.grep", payload)
+
+    rows = {row["symbol_id"]: row for row in result["definitions"]}
+    assert rows["method"]["body_in"] == rows["inner"]["body_in"] == "outer"
+    assert "body" not in rows["method"] and "body" not in rows["inner"]
+    assert [rows[r["symbol_id"]]["body"] for r in (outer, other_file, altered, elided)] == [
+        r["body"] for r in (outer, other_file, altered, elided)
+    ]
+    assert "body_in" in result["definitions_note"]
+    assert method["body"] and inner["body"]
+
+
 def test_symbol_keeps_ids_only_when_several_definitions_answer() -> None:
     one = lean_code(
         "code.symbol",

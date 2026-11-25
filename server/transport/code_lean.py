@@ -18,7 +18,9 @@ HTTP and SDK shapes are unchanged; `explain=true` skips all trimming.
 
 from __future__ import annotations
 
-from typing import Any
+from collections import Counter, defaultdict
+from io import StringIO
+from typing import Any, NamedTuple
 
 from server.code.domain.symbol_documentation import description_repeats_body
 
@@ -219,12 +221,80 @@ def _lean_grep(out: dict[str, Any]) -> None:
         mod = _module_of_path(path)
         if mod and scope.startswith(mod + "::"):
             m["scope"] = scope[len(mod) + 2 :]
-    for definition in out.get("definitions") or []:
-        if isinstance(definition, dict):
-            _lean_grep_definition(definition)
+    definitions = [row for row in out.get("definitions") or [] if isinstance(row, dict)]
+    for definition in definitions:
+        _lean_grep_definition(definition)
+    if _share_grep_bodies(definitions):
+        note = "A body_in value names the symbol_id containing these source lines on this page."
+        existing = out.get("definitions_note")
+        out["definitions_note"] = f"{existing} {note}" if existing else note
     related = out.get("related")
     if isinstance(related, dict):
         out["related"] = lean_code("code.grep", related)
+
+
+class _GrepBody(NamedTuple):
+    row: dict[str, Any]
+    start: int
+    end: int
+    lines: list[str]
+
+
+def _grep_body(definition: dict[str, Any]) -> _GrepBody | None:
+    body = definition.get("body")
+    start, end = definition.get("start_line"), definition.get("end_line")
+    if not (
+        isinstance(body, str)
+        and body
+        and isinstance(start, int)
+        and isinstance(end, int)
+        and 0 < start <= end
+        and not definition.get("body_elided")
+    ):
+        return None
+    lines = list(StringIO(body, newline="\n"))
+    return _GrepBody(definition, start, end, lines) if len(lines) == end - start + 1 else None
+
+
+def _share_grep_bodies(definitions: list[dict[str, Any]]) -> bool:
+    """Reference an already returned body only when its covered lines are identical."""
+    if len(definitions) < 2:
+        return False
+    ids = Counter(str(row.get("symbol_id") or "") for row in definitions)
+    by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in definitions:
+        if (path := row.get("path")) and row.get("body"):
+            by_path[str(path)].append(row)
+    changed = False
+    for rows in by_path.values():
+        if len(rows) < 2:
+            continue
+        bodies = [body for row in rows if (body := _grep_body(row))]
+        keep: list[_GrepBody] = []
+        for child in sorted(bodies, key=lambda b: b.start - b.end):
+            parent_id = _containing_grep_body(child, keep)
+            if parent_id:
+                child.row.pop("body")
+                child.row["body_in"] = parent_id
+                changed = True
+            elif (symbol_id := child.row.get("symbol_id")) and ids[str(symbol_id)] == 1:
+                keep.append(child)
+    return changed
+
+
+def _containing_grep_body(child: _GrepBody, candidates: list[_GrepBody]) -> str:
+    for parent in candidates:
+        if (parent.start, parent.end) == (child.start, child.end):
+            continue
+        first, last = child.start - parent.start, child.end - parent.start + 1
+        parent_id = str(parent.row["symbol_id"])
+        if (
+            0 <= first < last <= len(parent.lines)
+            and len(child.row["body"]) > len(parent_id) + len('"body_in":""')
+            and child.lines == parent.lines[first:last]
+        ):
+            return parent_id
+    return ""
 
 
 def _lean_grep_definition(definition: dict[str, Any]) -> None:
