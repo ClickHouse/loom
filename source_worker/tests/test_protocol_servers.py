@@ -7,7 +7,7 @@ import ipaddress
 import json
 import time
 from collections.abc import AsyncIterator, Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -25,7 +25,8 @@ from mcp import types
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from pydantic import AnyUrl, SecretStr
-from starlette.types import Receive, Scope, Send
+from starlette.requests import Request
+from starlette.types import Message, Receive, Scope, Send
 
 _ENDPOINT = "https://source.example.test/mcp"
 _DOC = "urn:fixture:doc"
@@ -254,6 +255,115 @@ async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.M
         revoke = bob.connection_id
         with pytest.raises(ReadFailure, match="^denied$"):
             await service.execute(grant(bob, "live"), "live")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["resource", "tool"])
+@pytest.mark.parametrize("phase", ["initialize", "read"])
+@pytest.mark.parametrize(("status", "code"), [(401, "reconnect"), (403, "denied")])
+async def test_upstream_http_refusal_at_sdk_boundary(
+    mode: str, phase: str, status: int, code: mcp_client.ErrorCode, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reads = 0
+
+    def on_read() -> None:
+        nonlocal reads
+        reads += 1
+
+    mapped = mode == "tool"
+    manager = _tool_server(on_read) if mapped else _resource_server(on_read)
+    config = MCPSourceConfig(
+        endpoint=_ENDPOINT,
+        bearer_audience=_ENDPOINT,
+        approved_tools=("read",) if mapped else (),
+        read=MCPToolMapping("read", _INPUT, _OUTPUT, "id") if mapped else None,
+        limits=MCPLimits(timeout_seconds=12, request_seconds=8),
+    )
+    read_method = "tools/call" if mapped else "resources/read"
+    refusal_method = "initialize" if phase == "initialize" else read_method
+    alice_header = b"Bearer synthetic-alice"
+    armed = phase == "initialize"
+    posts: list[tuple[bytes | None, str]] = []
+    refusals: list[int] = []
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["method"] != "POST":
+            await manager.handle_request(scope, receive, send)
+            return
+
+        body = await Request(scope, receive).body()
+        method = json.loads(body)["method"]
+        bearer = dict(scope["headers"]).get(b"authorization")
+        posts.append((bearer, method))
+        if armed and bearer == alice_header and method == refusal_method:
+            await send({"type": "http.response.start", "status": status, "headers": []})
+            await send({"type": "http.response.body", "body": b"synthetic private refusal"})
+            refusals.append(status)
+            return
+
+        replay_body: bytes | None = body
+
+        async def replay() -> Message:
+            nonlocal replay_body
+            if replay_body is None:
+                return await receive()
+            payload, replay_body = replay_body, None
+            return {"type": "http.request", "body": payload}
+
+        await manager.handle_request(scope, replay, send)
+
+    async def validate() -> None:
+        return None
+
+    def client_for(token: str, selected: str) -> mcp_client.MCPSourceClient:
+        return mcp_client.MCPSourceClient(
+            replace(config, approved_resource_ids=(selected,)),
+            mcp_client.MCPBearer(token, _ENDPOINT),
+            validate_access=validate,
+            _transport=_FragmentedASGI(app=app),
+        )
+
+    monkeypatch.setattr(mcp_client, "resolve_public_address", _synthetic_pin)
+    alice = client_for("synthetic-alice", _DOC)
+    async with manager.run():
+        if phase == "initialize":
+            with pytest.raises(mcp_client.MCPSourceError, match=f"^MCP source {code}$") as refusal:
+                async with alice:
+                    pytest.fail("upstream refusal opened a client session")
+            assert refusal.value.code == code
+            assert posts == [(alice_header, "initialize")]
+            assert reads == 0
+        else:
+            async with client_for("synthetic-bob", "urn:fixture:peer") as peer:
+                async with alice:
+                    evidence = await alice.read(_DOC)
+                    assert evidence.resource_id == _DOC
+                    assert evidence.text == f"{mode} fixture body"
+                    assert evidence.receipt is not None
+                    assert evidence.receipt.operation == read_method
+                    assert evidence.receipt.requested_id == _DOC
+                    assert evidence.receipt.identity_verified
+                    armed = True
+                    # A received refusal must finish before the SDK request deadline.
+                    async with asyncio.timeout(2):
+                        with pytest.raises(
+                            mcp_client.MCPSourceError, match=f"^MCP source {code}$"
+                        ) as refusal:
+                            await alice.read(_DOC)
+                    assert refusal.value.code == code
+
+                if mapped:
+                    assert (await peer.discover()).tools == ("read",)
+                else:
+                    [listed] = (await peer.list_resources()).items
+                    assert listed.resource_id == _DOC
+                with pytest.raises(mcp_client.MCPSourceError, match="^MCP source denied$"):
+                    await peer.read(_DOC)
+
+            read_bearers = [bearer for bearer, method in posts if method == read_method]
+            assert read_bearers == [alice_header, alice_header]
+            assert reads == 1
+    assert refusals == [status]
 
 
 @pytest.mark.asyncio

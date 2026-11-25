@@ -631,8 +631,7 @@ class _LimitedStream(httpx.AsyncByteStream):
                     self.owner._check_state()
                     yield chunk
         except Exception as error:  # noqa: BLE001 — only fixed diagnostics cross the transport boundary
-            self.owner.failure = self.owner.failure or _error_code(error)
-            raise MCPSourceError(self.owner.failure) from None
+            raise MCPSourceError(self.owner.record_failure(error)) from None
 
     async def aclose(self) -> None:
         # The SDK cancels its task group before joining HTTP stream finalizers.
@@ -661,8 +660,17 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         self.received, self.requests = 0, 0
         self.target: httpx.URL | None = None
         self.pin_lock = asyncio.Lock()
-        self.failure: ErrorCode | None = None
+        self.failed: asyncio.Future[ErrorCode] = asyncio.get_running_loop().create_future()
         self.terminate_only = False
+
+    @property
+    def failure(self) -> ErrorCode | None:
+        return self.failed.result() if self.failed.done() else None
+
+    def record_failure(self, error: BaseException) -> ErrorCode:
+        if not self.failed.done():
+            self.failed.set_result(_error_code(error))
+        return self.failed.result()
 
     def _check_state(self) -> None:
         _guard_state(self.deadline, self.failure)
@@ -676,8 +684,7 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         try:
             return await self._handle(request)
         except Exception as error:  # noqa: BLE001 — HTTP exceptions may contain upstream credentials
-            self.failure = self.failure or _error_code(error)
-            raise MCPSourceError(self.failure) from None
+            raise MCPSourceError(self.record_failure(error)) from None
 
     async def _handle(self, request: httpx.Request) -> httpx.Response:
         response: httpx.Response | None = None
@@ -757,8 +764,7 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                 handed_off = True
                 return response
         except Exception as error:  # noqa: BLE001 — poison the session before awaiting private failure cleanup
-            self.failure = self.failure or _error_code(error)
-            raise MCPSourceError(self.failure) from None
+            raise MCPSourceError(self.record_failure(error)) from None
         finally:
             if response is not None and not handed_off:
                 # Leave the deadline scope before joining an unclaimed response's finalizer.
@@ -1057,15 +1063,29 @@ class MCPSourceClient:
         with private_work():
             return await self._execute(action)
 
+    async def _request(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
+        # The SDK RPC can keep waiting after its HTTP task has refused the request.
+        assert self._session is not None and self._transport is not None
+        failed = self._transport.failed
+        request = asyncio.ensure_future(action(self._session))
+        try:
+            done, _ = await asyncio.wait((request, failed), return_when=asyncio.FIRST_COMPLETED)
+            if failed in done:
+                raise MCPSourceError(failed.result())
+            return request.result()
+        finally:
+            if not request.done():
+                request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
+
     async def _execute(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
         try:
             self._check_state(require_session=True)
             async with asyncio.timeout_at(self._deadline):
                 await self._authorize()
                 self._check_state(require_session=True)
-                assert self._session is not None
                 try:
-                    result = await action(self._session)
+                    result = await self._request(action)
                 except Exception:  # Check authority before reporting an upstream error.
                     await self._validate_access()
                     raise
