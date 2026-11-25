@@ -763,7 +763,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `pattern` | `str \| list[str]` | required | Literal text, a list of alternatives, or one RE2 expression with regex=true. |
 | `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
 | `related_on_miss` | `bool` | `False` | Find a missing literal call's qualified argument, including in a batch with one call. |
-| `related_on_prefix` | `bool` | `False` | For a literal call prefix with one qualified argument, include its uses in other scopes as excerpts. |
+| `related_on_prefix` | `bool` | `False` | Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. |
 | `include_dependencies` | `bool` | `False` | Include the resolved argument definition and direct helper in related source. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |

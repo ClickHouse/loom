@@ -953,7 +953,7 @@ export interface CodeGrepInput {
   regex?: boolean;
   /** Find a missing literal call's qualified argument, including in a batch with one call. Default true on coding connections. */
   related_on_miss?: boolean;
-  /** For a literal call prefix with one qualified argument, include its uses in other scopes as excerpts. Default true on coding connections. */
+  /** Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. Default true on coding connections. */
   related_on_prefix?: boolean;
   /** Include the resolved argument definition and direct helper in related source. */
   include_dependencies?: boolean;

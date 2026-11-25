@@ -61,8 +61,8 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     related_on_prefix: bool = Field(
         default=False,
         description=(
-            "For a literal call prefix with one qualified argument, include its uses in other "
-            "scopes as excerpts. Default true on coding connections."
+            "Show other uses of a literal call prefix's qualified argument, including in a batch "
+            "with one argument. Default true on coding connections."
         ),
     )
     include_dependencies: bool = Field(

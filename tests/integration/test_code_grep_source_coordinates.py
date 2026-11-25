@@ -106,6 +106,8 @@ async def test_stored_chunks_retain_kind_and_physical_source_lines(ch_client: An
 async def test_related_grep_returns_the_bound_argument_and_helper(ch_client, monkeypatch) -> None:
     org, ns = unique_org("grep-dependencies"), "source"
     monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_search_cursor_enabled", True)
+    monkeypatch.setattr(settings, "jwt_secret", "grep-test-cursor-signing-value")
     embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
     monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
     await get_client().connect()
@@ -198,3 +200,18 @@ def use(client: Client):
     assert full.related and full.related.matches == out.related.matches
     assert "consume(client.option, extra=True)" in full.definitions[0]["body"]
     assert not full.related.definitions
+    wide = args.model_copy(
+        update={"pattern": ["consume(client.option", "def "], "context_lines": 3, "limit": 1}
+    )
+    first = await handle_code_grep(wide)
+    assert len(first.matches) == 1 and first.next_cursor and first.truncated
+    assert first.related is None
+    focused = await handle_code_grep(wide.model_copy(update={"related_on_prefix": True}))
+    assert focused.matches == first.matches and focused.next_cursor and focused.truncated
+    assert focused.related and focused.related.matches == out.related.matches
+    assert focused.related.dependencies == out.related.dependencies
+    next_exact = await handle_code_grep(wide.model_copy(update={"cursor": first.next_cursor}))
+    next_focused = await handle_code_grep(
+        wide.model_copy(update={"cursor": focused.next_cursor, "related_on_prefix": True})
+    )
+    assert next_focused.matches == next_exact.matches and next_focused.related is None

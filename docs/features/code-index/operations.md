@@ -117,9 +117,11 @@ their respective result fields.
 A literal call prefix such as `convert(row.value` can also show where
 `row.value` appears in other scopes. Coding MCP connections enable this
 with `related_on_prefix`. The exact hit list and its pagination stay separate
-from those excerpts. Use `context_lines` to choose the radius. It defaults to
-six lines for related excerpts. HTTP and SDK callers can opt in. A failed or
-incomplete related scan sets `partial` and keeps the exact matches.
+from related source. A batch with one qualified argument can return its other
+uses even when other literals fill the exact page. Use `context_lines` to
+choose the excerpt radius. It defaults to six lines for related excerpts. HTTP
+and SDK callers can opt in. A failed or incomplete related scan sets `partial`
+and keeps the exact matches.
 
 Coding MCP connections can include a resolved Python argument definition and
 its direct helper under `related.dependencies`. The index must bind the same

@@ -407,15 +407,15 @@ async def _grep_lines(
     )
     coverage = await asyncio.to_thread(_line_coverage_fields, scan.chunks, budget)
     extra_related = None
-    if not (related_pattern or offset or scan.truncated or coverage.get("partial")):
+    if not (related_pattern or offset or coverage.get("partial")):
         extra_related, extra_coverage = await _extra_related_source(
             repo,
             org,
             ns,
             input,
             scope=scope,
-            matches=scan.matches if isinstance(input.pattern, list) else matches,
-            match_commits=scan.match_commits,
+            matches=matches,
+            scan=scan,
             exact_definitions=bodies.get("definitions", []),
             limit=served_limit,
             budget=budget,
@@ -565,7 +565,7 @@ def _label_related(
         )
     if extra and extra.matches:
         note = "Related source shows where the call's argument is used."
-        if not matches:
+        if not matches and not scan.truncated:
             note = "No exact match in the indexed scope. " + note
     return extra, note
 
@@ -617,6 +617,18 @@ def _missing_batch_argument(input: CodeGrepInput, matches: list[dict[str, Any]])
         text = match["text"]
         if len(text) >= GREP_MATCH_TEXT_CHARS or literal in fold(text):
             return ""
+    return argument
+
+
+def _batch_prefix_argument(input: CodeGrepInput, patterns: list[str], *, truncated: bool) -> str:
+    if not input.related_on_prefix or not any(
+        _QUALIFIED_ARGUMENT_PREFIX.fullmatch(pattern.strip()) for pattern in patterns
+    ):
+        return ""
+    argument = _batch_dependency_argument(input)
+    fold = str if input.case_sensitive else ascii_lower
+    if not truncated and fold(argument) in {fold(pattern) for pattern in patterns}:
+        return ""
     return argument
 
 
@@ -717,7 +729,7 @@ async def _extra_related_source(
     *,
     scope: Any,
     matches: list[dict[str, Any]],
-    match_commits: dict[tuple[str, int], str],
+    scan: _GrepLineScan,
     exact_definitions: list[dict[str, Any]],
     limit: int,
     budget: code_deadline.Budget | None,
@@ -725,18 +737,21 @@ async def _extra_related_source(
     if input.regex:
         return None, {}
     batch = isinstance(input.pattern, list)
-    if batch:
-        argument = _missing_batch_argument(input, matches)
+    if isinstance(input.pattern, list):
+        argument = _batch_prefix_argument(input, input.pattern, truncated=scan.truncated)
+        if not argument and not scan.truncated:
+            argument = _missing_batch_argument(input, scan.matches)
+        stage = "related argument scan"
     else:
-        call = _QUALIFIED_ARGUMENT_PREFIX.fullmatch(str(input.pattern).strip())
-        argument = call[1] if input.related_on_prefix and call is not None else ""
-    stage = "related argument scan" if batch else "related call prefix scan"
+        call = _QUALIFIED_ARGUMENT_PREFIX.fullmatch(input.pattern.strip())
+        argument = call[1] if input.related_on_prefix and not scan.truncated and call else ""
+        stage = "related call prefix scan"
     if not argument or not _second_scan_allowed(budget, stage):
         return None, _partial_fields(budget)
     try:
         async with asyncio.timeout(None if budget is None else budget.left_ms() / 1000):
             evidence, coverage = await _read_related_source(
-                repo, org, ns, input, argument, scope, matches, match_commits, limit, budget
+                repo, org, ns, input, argument, scope, matches, scan.match_commits, limit, budget
             )
     except TimeoutError:
         return None, {"partial": True, "partial_reason": f"{stage} timed out"}
@@ -748,7 +763,7 @@ async def _extra_related_source(
             input,
             evidence.matches,
             budget,
-            match_commits=match_commits,
+            match_commits=scan.match_commits,
             covered_by=exact_definitions,
         )
         evidence = evidence.model_copy(update=bodies)
