@@ -636,6 +636,55 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     evaluate: "Loom’u değerlendirin",
     deploymentOptions: "Kurulum seçenekleri",
   },
+  vi: {
+    title: "Bộ nhớ dùng chung cho tác nhân AI | ClickHouse Loom",
+    description:
+      "Bộ nhớ cho tác nhân lập trình AI. Dùng lại quyết định qua nhiều phiên, tìm tài liệu kèm trích dẫn và truy vết mã nguồn.",
+    deployment: "Mã nguồn mở · Tự triển khai trên ClickHouse",
+    heading: "Bộ nhớ dùng chung cho tác nhân AI",
+    lead: "Loom lưu quyết định và bài học của nhóm để tác nhân AI dùng lại ở phiên sau. Tác nhân có thể kiểm tra đoạn tài liệu được trích dẫn và mở mã nguồn liên quan.",
+    run: "Cài đặt Loom",
+    product: "Khám phá Loom",
+    connect: "Kết nối tác nhân lập trình",
+    sdk: "Phát triển với SDK",
+    screenshotAlt:
+      "Bảng điều khiển Loom hiển thị quyết định về thanh toán, hàm liên quan và cảnh báo khi mã nguồn thay đổi",
+    screenshotCaption: "Mỗi quyết định đã lưu có thể liên kết đến đoạn mã liên quan.",
+    contextHeading: "Ngữ cảnh cho phiên làm việc tiếp theo",
+    contextDetail:
+      "Tác nhân có thể truy xuất bộ nhớ, tài liệu và mã nguồn qua MCP, HTTP hoặc SDK Python và TypeScript.",
+    memory: {
+      title: "Bộ nhớ dùng chung",
+      detail:
+        "Tác nhân triển khai lưu quyết định của dự án. Tác nhân rà soát có thể đọc lại quyết định đó trong một phiên khác nếu được cấp quyền.",
+      link: "Bộ nhớ cho tác nhân lập trình",
+    },
+    documents: {
+      title: "Tìm kiếm tài liệu có trích dẫn",
+      detail:
+        "Tìm chính sách, hướng dẫn vận hành hoặc tài liệu tham khảo. Mở đoạn được trích dẫn và xem phiên bản của tài liệu nguồn.",
+      link: "Tìm kiếm tài liệu và RAG",
+    },
+    code: {
+      title: "Tra cứu mã nguồn",
+      detail:
+        "Tìm hàm, lớp và nơi gọi chúng. Liên kết bài học với mã nguồn để biết khi nào đoạn mã được tham chiếu đã thay đổi.",
+      link: "Bộ nhớ liên kết với mã nguồn",
+    },
+    useCasesHeading: "Chia sẻ kiến thức giữa các tác nhân",
+    useCasesDetail:
+      "Giữ lại quyết định triển khai, nhận xét khi rà soát mã và kinh nghiệm vận hành để tác nhân tiếp theo dùng lại.",
+    useCasesLabel: "Các trường hợp sử dụng Loom",
+    softwareFactory: "Bộ nhớ cho nhà máy phần mềm",
+    knowledgeFactory: "Nhà máy tri thức cho tác nhân AI",
+    autonomous: "Bộ nhớ dài hạn cho tác nhân tự trị",
+    selfHosted: "Bộ nhớ tác nhân tự triển khai",
+    evaluationHeading: "Thử Loom trên kho mã của nhóm",
+    evaluationDetail:
+      "Dùng công việc thực tế để kiểm tra khả năng truy xuất bộ nhớ giữa các phiên, liên kết đến nguồn và quyền truy cập.",
+    evaluate: "Đánh giá Loom",
+    deploymentOptions: "Các phương án triển khai",
+  },
   "zh-CN": {
     title: "面向 AI 智能体的共享记忆与代码检索 | ClickHouse Loom",
     description: "面向 AI 智能体的开源共享记忆。跨会话共享团队决策，检索带引用的文档，并将经验关联到源代码。",
