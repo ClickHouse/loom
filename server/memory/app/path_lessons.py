@@ -17,13 +17,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
 from server.code.domain.anchor import local_name
 from server.memory.api.models_for_file import MemoryForFileInput
-from server.memory.app.code_link_reads import current_links
+from server.memory.app.code_link_reads import inputs_now
 from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
 from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
@@ -116,25 +117,34 @@ async def paths_with_matched_links(
     paths: Sequence[str],
     symbols: dict[str, set[str]],
     grep_lines: GrepMatchLines,
+    *,
+    timeout_s: float,
 ) -> set[str]:
-    """Files with a current lesson for a named scope at the returned revision."""
-    links = await code_links.for_paths(
-        org,
-        [trunk_ns],
-        [path for path in paths if path in symbols],
-        namespaces=namespaces,
-        states=("fresh", "moved"),
-    )
+    """Files with a visible, current lesson for a named scope in the response."""
+    until = time.monotonic() + timeout_s
+    revisions = [
+        (path, next(iter(commits)))
+        for path in paths
+        if path in symbols
+        and len(commits := grep_lines.revisions.get(path, set())) == 1
+        and "" not in commits
+    ]
+    links = await code_links.path_hint_links(org, namespaces, trunk_ns, revisions, until=until)
     matches = [
         link
         for link in links
-        if (path := link["path"]) in symbols
-        and link["complete"]
-        and link["checked_commit"]
-        and grep_lines.revisions.get(path) == {link["checked_commit"]}
-        and local_name(link["qualified_name"], path) in symbols[path]
+        if local_name(link["qualified_name"], path := link["path"]) in symbols[path]
     ]
-    return {link["path"] for link in await current_links(org, matches)} if matches else set()
+    if not matches:
+        return set()
+    candidates = sorted({(link["namespace"], link["mid"]) for link in matches})
+    heads = await code_links.path_hint_heads(org, candidates, until=until)
+    hashes = {(head["namespace"], head["mid"]): inputs_now(org, head) for head in heads}
+    return {
+        link["path"]
+        for link in matches
+        if hashes.get((link["namespace"], link["mid"])) == link["inputs_hash"]
+    }
 
 
 def _ordered_candidates(

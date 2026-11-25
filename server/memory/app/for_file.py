@@ -30,6 +30,7 @@ from server.memory.domain.decision_schema import (
 )
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import row_verification
+from server.memory.store.sql import FILE_LISTING_VISIBLE
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -75,11 +76,7 @@ SELECT
     arrayFilter(f -> {_FILE_MATCH}, files) AS matched_files
 FROM loom.memory FINAL
 WHERE org = {{org:String}} AND namespace = {{ns:String}}
-  AND tombstoned_at IS NULL
-  AND (expires_at IS NULL OR expires_at > now())
-  AND (valid_to IS NULL OR valid_to > now())
-  -- a high row is reachable by its key only, never pushed into an edit prompt
-  AND sensitivity != 'high'
+  AND ({FILE_LISTING_VISIBLE})
   AND status IN {{statuses:Array(String)}}
   AND (length({{tags:Array(String)}}) = 0 OR hasAny(tags, {{tags:Array(String)}}))
   AND ({{whole_only:UInt8}} = 0 OR {_WHOLE_ROW})

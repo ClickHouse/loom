@@ -27,6 +27,7 @@ from server.code.app.search_legs import resolve_deadline_ms
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain import deadline as code_deadline
 from server.code.domain.anchor import local_name
+from server.core.ch import caller_shaped
 from server.identity.app import request_scope
 from server.memory.app import code_plane_reads, path_lessons
 from server.settings import settings
@@ -51,16 +52,17 @@ async def _grep_lesson_paths(
     remaining: float,
 ) -> list[str]:
     limit = settings.code_result_lessons_paths
-    if len(paths) <= limit or not trunk or not namespaces or not symbols:
+    if not trunk or not namespaces or not any(path in symbols for path in paths[limit:]):
         return paths[:limit]
     # Keep most of the shared deadline for reading the actual lessons.
-    with code_span("enrich.lesson_paths", seeds=len(paths)) as sp:
+    timeout_s = remaining / 3
+    with code_span("enrich.lesson_paths", seeds=len(paths)) as sp, caller_shaped():
         linked = await enrich.bounded(
             path_lessons.paths_with_matched_links(
-                org, namespaces, trunk, paths, symbols, grep_lines
+                org, namespaces, trunk, paths, symbols, grep_lines, timeout_s=timeout_s
             ),
             set(),
-            seconds=remaining / 3,
+            seconds=timeout_s,
         )
         span_attrs(sp, results=len(linked))
     return sorted(paths, key=lambda path: path not in linked)[:limit]
