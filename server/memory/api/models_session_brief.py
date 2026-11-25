@@ -126,9 +126,9 @@ class SessionBriefGetInput(_Identity):
     project: str = Field(default="", max_length=120)
     # 0 = the current revision; N = that revision from the history.
     revision: int = Field(default=0, ge=0)
-    # A stored snapshot's version as a decimal string. A handoff uses it with revision.
+    # The stored snapshot identifier. A handoff uses it with revision.
     snapshot_id: str = Field(
-        default="", pattern=r"^(?:[1-9][0-9]{0,19})?$", json_schema_extra=MCP_HIDDEN
+        default="", pattern=r"^(?:[1-9][0-9]{0,19}\.[0-9a-f]{64})?$", json_schema_extra=MCP_HIDDEN
     )
     # Also return the structured `sections`; False returns only `rendered`.
     include_sections: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
@@ -144,7 +144,7 @@ class SessionBriefGetOutput(BaseModel):
     brief_key: str = ""
     # The revision returned (the current one unless `revision` was asked for).
     revision: int = 0
-    # The database version as a decimal string so JavaScript can preserve every digit.
+    # The stored version and content digest of the returned snapshot.
     snapshot_id: str = ""
     # The stored key used to address this snapshot across caller scopes.
     snapshot_key: str = ""

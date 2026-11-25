@@ -358,7 +358,7 @@ class _MemCH:
         out: dict[str, dict[str, Any]] = {}
         for r in self.rows:
             k = r["brief_key"]
-            if k not in out or r["version"] > out[k]["version"]:
+            if k not in out or r["version"] >= out[k]["version"]:
                 out[k] = r
         return out
 
@@ -386,7 +386,13 @@ class _MemCH:
                 for r in history
                 if r["revision"] == p["rev"]
                 and r["version"] > last_delete
-                and ("snapshot" not in p or r["version"] == p["snapshot"])
+                and (
+                    "snapshot" not in p
+                    or (
+                        r["version"] == p["snapshot"]
+                        and repo.snapshot_id(r).split(".", 1)[1] == p["digest"]
+                    )
+                )
             ]
             return max(hits, key=lambda r: r["version"]) if hits else None
         raise AssertionError(sql)
@@ -1217,14 +1223,34 @@ def test_handoff_pins_a_write_even_if_two_saves_share_its_revision(mem) -> None:
         )
 
     assert read("").rendered == "Competing save"
-    pinned = read(str(snapshot["version"]))
-    assert pinned.found and pinned.snapshot_id == str(snapshot["version"])
+    pinned = read(repo.snapshot_id(snapshot))
+    assert pinned.found and pinned.snapshot_id == repo.snapshot_id(snapshot)
     assert pinned.rendered == first.rendered
     assert "pytest passed" in pinned.rendered
     assert "uncommitted changes" in pinned.rendered
     assert "absent from the sender" in pinned.rendered
-    assert not read("1").found
-    assert not read(str(2**64)).found
+    assert not read(f"1.{'0' * 64}").found
+    assert not read(f"{2**64}.{'0' * 64}").found
+
+
+def test_handoff_pins_content_when_saves_share_a_version(mem):
+    key = "handoff/same-version"
+
+    def get(**options):
+        return asyncio.run(
+            h.handle_session_brief_get(SessionBriefGetInput(**IDENT, brief_key=key, **options))
+        )
+
+    _save(brief_key=key, head_sha="a" * 40, sections={"goal": "Original content"})
+    original = get()
+    competing = {**mem.rows[-1], "rendered": "Another save with the same version"}
+    asyncio.run(mem.insert(repo.TABLE, [competing]))
+
+    latest = get()
+    assert latest.rendered == competing["rendered"]
+    assert latest.snapshot_id != original.snapshot_id
+    pinned = get(revision=original.revision, snapshot_id=original.snapshot_id)
+    assert pinned.rendered == original.rendered
 
 
 def test_deleted_handoff_stays_unavailable_after_same_millisecond_recreation(mem, monkeypatch):
@@ -1232,7 +1258,7 @@ def test_deleted_handoff_stays_unavailable_after_same_millisecond_recreation(mem
     monkeypatch.setattr(h, "naive_utc_now", lambda: stamp)
     key = "handoff/reuse"
     first = _save(brief_key=key, sections={"goal": "Deleted goal"})
-    snapshot = str(mem.rows[-1]["version"])
+    snapshot = repo.snapshot_id(mem.rows[-1])
 
     def read(revision: int, snapshot_id: str):
         return asyncio.run(
@@ -1251,7 +1277,7 @@ def test_deleted_handoff_stays_unavailable_after_same_millisecond_recreation(mem
     assert not read(first.revision, snapshot).found
     replacement = _save(brief_key=key, sections={"goal": "Replacement"})
     assert replacement.revision > first.revision
-    assert read(replacement.revision, str(mem.rows[-1]["version"])).found
+    assert read(replacement.revision, repo.snapshot_id(mem.rows[-1])).found
     assert not read(first.revision, snapshot).found
     assert not read(first.revision, "").found
 
@@ -1261,7 +1287,7 @@ def test_a_late_save_with_a_lower_revision_cannot_restore_deleted_content(mem):
     _save(brief_key=key, sections={"goal": "First"})
     _save(brief_key=key, sections={"goal": "Second"})
     before = _save(brief_key=key, sections={"goal": "Before deletion"})
-    old_snapshot = str(mem.rows[-1]["version"])
+    old_snapshot = repo.snapshot_id(mem.rows[-1])
 
     # A slower save read revision 1 and wrote its revision 2 after revision 3.
     late = repo.build_brief_row(mem.rows[1])

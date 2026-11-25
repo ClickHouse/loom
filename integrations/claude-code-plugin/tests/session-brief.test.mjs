@@ -440,7 +440,7 @@ test("handoff restore uses the link's namespace and pinned snapshot on both plug
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loom-handoff-"));
   const exec = promisify(execFile);
   const commit = "a".repeat(40);
-  const snapshot = "9007199254740997";
+  const snapshot = `9007199254740997.${"e".repeat(64)}`;
   const key = "~alice~handoff/feat+x";
   try {
     await withServer(

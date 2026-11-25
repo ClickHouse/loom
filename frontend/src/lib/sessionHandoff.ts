@@ -12,7 +12,7 @@ export interface SessionHandoffRef {
 }
 
 const BRIEF_KEY = /^(?:~[A-Za-z0-9_.%-]+~(?:[A-Za-z0-9_.%-]+~)?)?[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,159}$/;
-const SNAPSHOT = /^[1-9][0-9]{0,19}$/;
+const SNAPSHOT = /^[1-9][0-9]{0,19}\.[0-9a-f]{64}$/;
 const COMMIT = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 export function readSessionHandoff(

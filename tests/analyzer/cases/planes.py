@@ -1297,7 +1297,7 @@ def cases() -> list[Case]:
             "session_brief_revision",
             "server.memory.store.session_briefs",
             _brief_revision,
-            {"bound": (False, True), "snapshot": (None, 1)},
+            {"bound": (False, True), "snapshot": (None, (1, "a" * 64))},
         ),
         Case("source_push_repos", "server.knowledge.store.source_push", _source_push, {}),
         Case("ledger_repos", "server.insights.store.audit", _ledgers, {"filters": (False, True)}),

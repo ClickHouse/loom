@@ -74,10 +74,11 @@ describe("SessionBriefPanel", () => {
   it("copies the selected snapshot, including the revision and exact commit", async () => {
     const commit = "b".repeat(40);
     const snapshotKey = "~alice~auto/loom/feat-x";
+    const snapshot = `9007199254740997.${"e".repeat(64)}`;
     getBrief
       .mockResolvedValueOnce(
         found({
-          snapshot_id: "9007199254740999",
+          snapshot_id: `9007199254740999.${"f".repeat(64)}`,
           snapshot_key: snapshotKey,
           head_sha: "a".repeat(40),
         }),
@@ -85,7 +86,7 @@ describe("SessionBriefPanel", () => {
       .mockResolvedValueOnce(
         found({
           revision: 1,
-          snapshot_id: "9007199254740997",
+          snapshot_id: snapshot,
           snapshot_key: snapshotKey,
           head_sha: commit,
         }),
@@ -106,7 +107,7 @@ describe("SessionBriefPanel", () => {
         namespace: "ns",
         brief: snapshotKey,
         revision: "1",
-        snapshot: "9007199254740997",
+        snapshot,
         commit,
       });
       expect(screen.getByText("Restore revision 1 of the session brief auto/loom/feat-x.")).toBeInTheDocument();

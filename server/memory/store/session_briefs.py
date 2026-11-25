@@ -15,6 +15,7 @@ version of a brief, never an older one that still matches.
 
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import Any
 
 from server.core.ch import own_write_reads
@@ -139,6 +140,16 @@ async def current(
     return dict(row) if row else None
 
 
+def snapshot_id(row: dict[str, Any]) -> str:
+    """Pin the commit and brief content even if two writes share a version."""
+    digest = sha256()
+    for name in ("head_sha", "rendered", "sections"):
+        data = row[name].encode("utf-8")
+        digest.update(f"{len(data)}:".encode())
+        digest.update(data)
+    return f"{row['version']}.{digest.hexdigest()}"
+
+
 async def by_revision(
     ch: Any,
     org: str,
@@ -147,7 +158,7 @@ async def by_revision(
     revision: int,
     *,
     scope: ReadFilters,
-    snapshot: int | None = None,
+    snapshot: tuple[int, str] | None = None,
 ) -> dict[str, Any] | None:
     """Read a revision written after the last delete. Version orders writes
     even when concurrent saves reuse or move the revision number backwards.
@@ -155,8 +166,14 @@ async def by_revision(
     params: dict[str, Any] = {"org": org, "ns": namespace, "key": brief_key, "rev": int(revision)}
     snapshot_clause = ""
     if snapshot is not None:
-        params["snapshot"] = snapshot
-        snapshot_clause = " AND version = {snapshot:UInt64}"
+        params["snapshot"], params["digest"] = snapshot
+        # Match the UTF-8 byte framing in snapshot_id.
+        snapshot_clause = (
+            " AND version = {snapshot:UInt64}"
+            " AND SHA256(concat(toString(length(head_sha)), ':', head_sha, "
+            "toString(length(rendered)), ':', rendered, "
+            "toString(length(sections)), ':', sections)) = unhex({digest:String})"
+        )
     with own_write_reads():
         row = await ch.query_one(
             f"""

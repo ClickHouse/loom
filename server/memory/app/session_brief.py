@@ -497,11 +497,13 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
                 "shows the briefs this namespace holds)",
             },
         )
-    snapshot = int(inp.snapshot_id) if inp.snapshot_id else None
-    if snapshot is not None and (
-        not inp.brief_key or not 0 < inp.revision < 2**32 or snapshot >= 2**64
-    ):
-        return SessionBriefGetOutput(found=False)
+    snapshot: tuple[int, str] | None = None
+    if inp.snapshot_id:
+        version_text, digest = inp.snapshot_id.split(".", 1)
+        version = int(version_text)
+        if not inp.brief_key or not 0 < inp.revision < 2**32 or version >= 2**64:
+            return SessionBriefGetOutput(found=False)
+        snapshot = version, digest
     row = await _find(inp)
     if row is None:
         return SessionBriefGetOutput(found=False, brief_key=inp.brief_key)
@@ -542,7 +544,7 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
     return SessionBriefGetOutput(
         found=True,
         revision=int(row.get("revision") or 0),
-        snapshot_id=str(row.get("version") or ""),
+        snapshot_id=repo.snapshot_id(row),
         snapshot_key=key,
         rendered=sb_render.with_client_summary(rendered, sections) if inp.full else rendered,
         sections=sections if inp.include_sections else None,

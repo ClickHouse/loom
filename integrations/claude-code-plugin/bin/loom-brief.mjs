@@ -188,7 +188,7 @@ export function parseHandoffLink(link, serverUrl, org) {
     !validKey.test(key) ||
     !/^[1-9][0-9]*$/.test(p.get("revision") || "") ||
     revision >= 2 ** 32 ||
-    !/^[1-9][0-9]{0,19}$/.test(snapshot) ||
+    !/^[1-9][0-9]{0,19}\.[0-9a-f]{64}$/.test(snapshot) ||
     !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(commit)
   )
     return null;

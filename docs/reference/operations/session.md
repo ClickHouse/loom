@@ -48,7 +48,7 @@ Load a brief: by `brief_key`, else the newest brief a given session wrote (`from
 | `from_session` | `str` | `''` | Load the newest brief this session id contributed to. |
 | `project` | `str` | `''` | Load the newest brief of this project (used when `brief_key` and `from_session` are empty). |
 | `revision` | `int` | `0` | 0 = the current revision; N = that revision from the history. |
-| `snapshot_id` | `str` | `''` | A stored snapshot's version as a decimal string. |
+| `snapshot_id` | `str` | `''` | The stored snapshot identifier. |
 | `include_sections` | `bool` | `False` | Also return the structured `sections`; False returns only `rendered`. |
 | `full` | `bool` | `False` | Append the client's own summary from its last compaction, verbatim, below the brief (up to ~15k chars more). |
 
@@ -57,7 +57,7 @@ Load a brief: by `brief_key`, else the newest brief a given session wrote (`from
 | `found` | `bool` | False when no brief matched, the brief is deleted, or the revision is not in its history. |
 | `brief_key` | `str` | Key of the brief that matched. |
 | `revision` | `int` | The revision returned (the current one unless `revision` was asked for). |
-| `snapshot_id` | `str` | The database version as a decimal string so JavaScript can preserve every digit. |
+| `snapshot_id` | `str` | The stored version and content digest of the returned snapshot. |
 | `snapshot_key` | `str` | The stored key used to address this snapshot across caller scopes. |
 | `rendered` | `str` | The brief as text, with the client's compaction summary appended when `full`. |
 | `sections` | `BriefSections \| None` | The structured brief; None unless `include_sections` was set. |

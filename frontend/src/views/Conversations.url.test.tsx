@@ -84,7 +84,7 @@ describe("Conversations keeps the open thread in its URL", () => {
     const head = "c".repeat(40);
     const brief = "handoff/case";
     const key = "~alice~handoff/case";
-    const snapshot = "9007199254740997";
+    const snapshot = `9007199254740997.${"e".repeat(64)}`;
     vi.mocked(getBrief).mockResolvedValueOnce({
       found: true,
       brief_key: brief,
@@ -128,7 +128,7 @@ describe("Conversations keeps the open thread in its URL", () => {
     history.replaceState(
       null,
       "",
-      `/conversations?namespace=ns&org=elsewhere&brief=handoff%2Fcase&revision=1&snapshot=6&commit=${"c".repeat(40)}`,
+      `/conversations?namespace=ns&org=elsewhere&brief=handoff%2Fcase&revision=1&snapshot=6.${"e".repeat(64)}&commit=${"c".repeat(40)}`,
     );
     useStore.getState().bootView("sessions");
     render(<Conversations />);
