@@ -318,8 +318,8 @@ channel:unknown: 0 passage(s)
 channel:leads: 0 passage(s)
 
 after the revoke, channel:support: 0 passage(s)
-  refused: c-b434b06d is no longer in scope
-  refused: channel:support changed its readers or sources since the search
+  refused: c-b434b06d is not a citation of this conversation
+  refused: the context this reply was drafted from was discarded
 all checks passed
 ```
 

@@ -40,11 +40,14 @@ class Server:
         keeps_grants: bool = False,
         keeps_collections: bool = False,
         keeps_notes: bool = False,
+        lists_revoked: bool = False,
     ) -> None:
         self.searches_everything = searches_everything
         self.keeps_grants = keeps_grants
         self.keeps_collections = keeps_collections
         self.keeps_notes = keeps_notes
+        self.lists_revoked = lists_revoked  # collection.list lags behind a revoke
+        self.revoked: set[tuple[str, str]] = set()  # (collection, user)
         self.grants: dict[str, set[str]] = {}  # collection → users who read it
         self.docs: dict[tuple[str, str], str] = {}  # (collection, source_uri) → content
         self.calls: list[tuple[str, str, dict[str, Any]]] = []  # (user, op, body)
@@ -88,7 +91,7 @@ class Server:
             rows += [
                 {"namespace": c, "personal": False, "role": "viewer"}
                 for c, users in sorted(self.grants.items())
-                if user in users
+                if user in users or (self.lists_revoked and (c, user) in self.revoked)
             ]
             return httpx.Response(200, json={"collections": rows, "next_cursor": None})
         if op == "collection.create":
@@ -100,11 +103,13 @@ class Server:
             self.grants[ns].add(body["subject"].removeprefix("user:"))
         elif op == "grants.revoke" and not self.keeps_grants:
             self.grants[ns].discard(body["subject"].removeprefix("user:"))
+            self.revoked.add((ns, body["subject"].removeprefix("user:")))
         elif op == "collection.delete":
             self.deleted.append(ns)
             if self.keeps_collections:
                 return httpx.Response(200, json={"deleted": False, "erasure_status": "failed"})
             del self.grants[ns]
+            self.revoked = {key for key in self.revoked if key[0] != ns}
             self.docs = {key: text for key, text in self.docs.items() if key[0] != ns}
             return httpx.Response(200, json={"deleted": True, "erasure_status": "completed"})
         elif op == "knowledge.add":
@@ -201,10 +206,10 @@ async def test_a_refused_tool_call_and_an_unknown_destination_send_nothing_to_lo
     assert await host.call_tool(unknown, "search", {"query": "q"}) == []
     assert server.calls == []
     with pytest.raises(example.ScopeRefused):
-        await host.deliver(talk, "channel:unknown", "reply")
+        await host.deliver(talk, "channel:unknown", "reply", talk.generation)
     for nowhere in (unknown, talk):
         with pytest.raises(example.ScopeRefused, match="not a destination"):
-            await host.deliver(nowhere, nowhere.destination, "reply")
+            await host.deliver(nowhere, nowhere.destination, "reply", nowhere.generation)
     assert server.calls == []
 
 
@@ -259,19 +264,86 @@ async def test_a_reply_is_dropped_when_its_destination_gains_a_reader(
     )
     talk = host.conversation("ana", "channel:a")
     assert len(await host.call_tool(talk, "search", {"query": "q"})) == 1
-    assert await host.deliver(talk, "channel:a", "reply") == "reply"
+    drafted = talk.generation
+    assert await host.deliver(talk, "channel:a", "reply", drafted) == "reply"
 
     host.destinations["channel:a"] = example.Destination(
         frozenset({"ana", "lead", "guest"}), sources_after
     )
     with pytest.raises(example.ScopeRefused, match="changed its readers or sources"):
-        await host.deliver(talk, "channel:a", "reply")
+        await host.deliver(talk, "channel:a", "reply", drafted)
     assert not talk.passages, "the context the reply was drafted from is gone"
     assert talk.readers is None
+    # The same draft is refused again, though nothing is left to compare it with.
+    with pytest.raises(example.ScopeRefused, match="was discarded"):
+        await host.deliver(talk, "channel:a", "reply", drafted)
     # The next request starts over, for the readers the destination has now.
     again = await host.call_tool(talk, "search", {"query": "q"})
     assert len(again) == len(sources_after)
-    assert await host.deliver(talk, "channel:a", "a new reply") == "a new reply"
+    with pytest.raises(example.ScopeRefused, match="was discarded"):
+        await host.deliver(talk, "channel:a", "reply", drafted)
+    assert await host.deliver(talk, "channel:a", "a new reply", talk.generation) == "a new reply"
+
+
+async def test_a_draft_is_refused_on_every_retry_after_its_source_is_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server()
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    server.grants["col-a"] = {"ana", "lead"}
+    server.docs[("col-a", "docs://a")] = "shared text"
+    host = example.Host(
+        "acme", str, {"channel:a": example.Destination(frozenset({"ana", "lead"}), ("col-a",))}
+    )
+    talk = host.conversation("ana", "channel:a")
+    assert len(await host.call_tool(talk, "search", {"query": "q"})) == 1
+    drafted = talk.generation
+    host.destinations["channel:a"] = example.Destination(frozenset({"ana", "lead"}))
+    with pytest.raises(example.ScopeRefused, match="changed its readers or sources"):
+        await host.deliver(talk, "channel:a", "reply", drafted)
+    for _ in range(2):
+        with pytest.raises(example.ScopeRefused, match="was discarded"):
+            await host.deliver(talk, "channel:a", "reply", drafted)
+
+
+@pytest.mark.parametrize("tool", ["search", "open_citation"])
+async def test_a_read_loom_refuses_in_a_collection_still_listed_drops_the_draft(
+    monkeypatch: pytest.MonkeyPatch, tool: str
+) -> None:
+    server = Server(lists_revoked=True)
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    server.grants["col-a"] = {"ana", "lead"}
+    server.docs[("col-a", "docs://a")] = "shared text"
+    host = example.Host(
+        "acme", str, {"channel:a": example.Destination(frozenset({"ana", "lead"}), ("col-a",))}
+    )
+    talk = host.conversation("ana", "channel:a")
+    (passage,) = await host.call_tool(talk, "search", {"query": "q"})
+    drafted = talk.generation
+    server.grants["col-a"].discard("ana")
+    server.revoked.add(("col-a", "ana"))
+    assert await host.scope("ana", "channel:a") == ["col-a"], "the listing still names it"
+    # Loom refuses the read; the host turns that into its own answer.
+    if tool == "search":
+        assert await host.call_tool(talk, "search", {"query": "q"}) == []
+    else:
+        with pytest.raises(example.ScopeRefused, match="no longer in scope"):
+            await host.call_tool(talk, "open_citation", {"handle": passage["handle"]})
+    # The listing would still pass the draft, so the refused read is what drops it.
+    with pytest.raises(example.ScopeRefused, match="was discarded"):
+        await host.deliver(talk, "channel:a", "reply", drafted)
+
+
+async def test_every_check_passes_while_the_listing_lags_behind_the_revoke(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server = Server(lists_revoked=True)
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    assert await example.main(sign=str) == 0
+    assert "all checks passed" in capsys.readouterr().out
 
 
 async def test_a_scope_wider_than_one_search_takes_is_searched_in_batches(
@@ -319,7 +391,7 @@ async def test_a_record_changed_while_delivery_lists_collections_stops_the_reply
     changed = example.Destination(frozenset(members), sources)
     server.during_list = lambda: host.destinations.update({"channel:a": changed})
     with pytest.raises(example.ScopeRefused, match="changed its readers or sources"):
-        await host.deliver(talk, "channel:a", "reply")
+        await host.deliver(talk, "channel:a", "reply", talk.generation)
 
 
 async def test_a_note_that_is_not_deleted_still_lets_both_collections_go(

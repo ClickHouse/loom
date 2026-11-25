@@ -95,6 +95,16 @@ reach the conversation afterwards. When the second or third check fails, the hos
 drops the passages the reply was drafted from, and the next request starts over with
 the readers and the sources the destination has then.
 
+Dropping the passages removes what the checks compare a draft with, so the state also
+counts how many times its context was dropped. A draft carries the count it was
+written under, and delivery refuses one whose count is no longer current: the same
+draft sent again is refused again. The host drops the context the same way when a
+search finds a held passage's collection out of scope, and when Loom answers 403 to a
+search or to a citation read. `collection.list` can still name a collection for a moment
+after its grant is revoked, so the host treats that 403 as its own refusal. Until the
+listing catches up or a read is refused, delivery cannot see that revoke: see
+[Limits](#limits).
+
 ## What Loom enforces and what the host does
 
 | Check                                                                           | Enforced by                                                  |

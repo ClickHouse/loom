@@ -71,6 +71,16 @@ class Conversation:
     # The destination's members at every search so far: the readers the passages were
     # chosen for. None until a search retrieves for them.
     readers: frozenset[str] | None = None
+    # How many times the retrieved context was discarded. A draft is written under one
+    # generation and is delivered only while that generation is still the current one.
+    generation: int = 0
+
+    def discard(self) -> None:
+        """Drop what was retrieved. Every draft written from it goes too, because the
+        passages that would show it stale are gone with this call."""
+        self.passages.clear()
+        self.readers = None
+        self.generation += 1
 
 
 class Host:
@@ -130,6 +140,8 @@ class Host:
 
     async def _search(self, talk: Conversation, query: str) -> list[dict[str, str]]:
         scope = await self.scope(talk.person, talk.destination)
+        if any(p["namespace"] not in scope for p in talk.passages.values()):
+            talk.discard()  # a source left the scope: what was drafted from it goes too
         if not scope:
             return []
         members = self.destinations[talk.destination].members
@@ -143,7 +155,8 @@ class Host:
                 async with self.as_person(talk.person, first) as loom:
                     hits += await loom.knowledge.search(query, top_k=TOP_K, namespaces=rest)
         except AuthInsufficient:
-            return []  # a grant went away after the listing: no context for this request
+            talk.discard()  # a grant went away after the listing: no context is left
+            return []
         if len(scope) > SEARCH_COLLECTIONS:
             # Each batch came back in Loom's own ranking; across batches the nearest
             # win (one embedding model serves the org, so distances compare).
@@ -165,15 +178,25 @@ class Host:
         if passage is None:
             raise ScopeRefused(f"{handle} is not a citation of this conversation")
         if passage["namespace"] not in await self.scope(talk.person, talk.destination):
+            talk.discard()
             raise ScopeRefused(f"{handle} is no longer in scope")
-        async with self.as_person(talk.person, passage["namespace"]) as loom:
-            document = await loom.knowledge.get(passage["source_uri"])
+        try:
+            async with self.as_person(talk.person, passage["namespace"]) as loom:
+                document = await loom.knowledge.get(passage["source_uri"])
+        except AuthInsufficient:
+            # The listing can still name a collection whose grant was just revoked.
+            talk.discard()
+            raise ScopeRefused(f"{handle} is no longer in scope") from None
         return str(document["content"]) if document else ""
 
-    async def deliver(self, talk: Conversation, destination: str, reply: str) -> str:
+    async def deliver(
+        self, talk: Conversation, destination: str, reply: str, generation: int
+    ) -> str:
         """The last check before a reply leaves: it goes where its context was chosen
-        for, and that destination still has the readers and the sources it had then. If
-        those changed, the context goes with the reply and the next request starts over."""
+        for, that context (`generation`, read from the conversation when the reply was
+        drafted) was not discarded since, and the destination still has the readers and
+        the sources it had then. If those changed, the context goes with the reply and
+        the next request starts over."""
         if destination != talk.destination:
             raise ScopeRefused(f"a reply built for {talk.destination} cannot go to {destination}")
         scope = await self.scope(talk.person, destination)
@@ -181,10 +204,11 @@ class Host:
         where = self.destinations.get(destination)
         if where is None or talk.person not in where.members:
             raise ScopeRefused(f"{destination} is not a destination {talk.person} is in")
+        if generation != talk.generation:
+            raise ScopeRefused("the context this reply was drafted from was discarded")
         new_reader = talk.readers is not None and not where.members <= talk.readers
         if new_reader or any(p["namespace"] not in scope for p in talk.passages.values()):
-            talk.passages.clear()
-            talk.readers = None
+            talk.discard()
             raise ScopeRefused(f"{destination} changed its readers or sources since the search")
         return reply  # a real host posts it to the destination here
 
@@ -317,11 +341,13 @@ async def ask_in_private_then_in_shared(
     if _texts(await host.call_tool(shared, "search", {"query": asked})) != {SUPPORT}:
         failures.append("the wording of a query changed the scope")
     try:
-        await host.deliver(private, "channel:support", "a reply built from the private context")
+        reply = "a reply built from the private context"
+        await host.deliver(private, "channel:support", reply, private.generation)
         failures.append("a private reply was delivered to the shared conversation")
     except ScopeRefused as refusal:
         print(f"  refused: {refusal}")
-    if await host.deliver(shared, "channel:support", "a shared reply") != "a shared reply":
+    reply = "a shared reply"
+    if await host.deliver(shared, "channel:support", reply, shared.generation) != reply:
         failures.append("the shared reply was not delivered to its own conversation")
 
     # 4. A destination the host cannot resolve, or one it does not know the person to
@@ -333,6 +359,12 @@ async def ask_in_private_then_in_shared(
         print(f"\n{destination}: {len(got)} passage(s)")
         if got:
             failures.append(f"{destination} got {len(got)} passage(s)")
+    return failures + await ask_after_a_revoke(host, person, lead, support)
+
+
+async def ask_after_a_revoke(host: Host, person: str, lead: str, support: str) -> list[str]:
+    failures: list[str] = []
+    shared = host.conversation(person, "channel:support")
 
     # 5. The lead takes the person's grant away: the shared reply has nothing to draw
     # on, and the citation it held no longer opens. Another server process enforces a
@@ -341,6 +373,7 @@ async def ask_in_private_then_in_shared(
     document = await host.call_tool(shared, "open_citation", {"handle": cited})
     if SUPPORT not in document:
         failures.append("a citation of the shared conversation did not open")
+    drafted = shared.generation  # a reply is drafted here, from the passages held now
     async with host.as_person(lead, support) as loom:
         await loom.call("grants.revoke", {"subject": f"user:{person}"})
     left = await search_until_empty(host, shared)
@@ -351,7 +384,7 @@ async def ask_in_private_then_in_shared(
         failures.append("a citation opened after the revoke")
     # A reply drafted from the passages retrieved before the revoke is dropped too.
     try:
-        await host.deliver(shared, "channel:support", "a reply drafted before the revoke")
+        await host.deliver(shared, "channel:support", "a reply drafted before the revoke", drafted)
         failures.append("a reply drafted before the revoke was delivered")
     except ScopeRefused as refusal:
         print(f"  refused: {refusal}")
