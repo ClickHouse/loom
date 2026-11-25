@@ -116,6 +116,14 @@ class ReadService:
                 del self._by_org[org]
 
     async def execute(self, token: str, operation: Literal["live", "check_access"]) -> ReadResult:
+        async with self.admitted_read(token, operation) as result:
+            return result
+
+    @asynccontextmanager
+    async def admitted_read(
+        self, token: str, operation: Literal["live", "check_access"]
+    ) -> AsyncIterator[ReadResult]:
+        """Keep capacity and the deadline until the consumer finishes sending."""
         try:
             grant, expires_at = verify_read_grant(
                 token, issuer=self._issuer, worker_id=self._worker_id, key=self._verifier
@@ -153,7 +161,7 @@ class ReadService:
                         await require_current()
                     raise
                 await require_current()
-                return ReadResult(
+                yield ReadResult(
                     grant.request_id,
                     fetched_at,
                     content_sha256,

@@ -3,7 +3,9 @@ import hashlib
 import unittest
 from uuid import uuid4
 
+import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from loom_source_worker.http_service import create_app
 from loom_source_worker.protocol import (
     ConnectionBinding,
     ReadBinding,
@@ -159,6 +161,88 @@ class TestReadService(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await read
         self.backend.release.set()
+        self.assertIsNotNone((await service.execute(self._token(self._live()), "live")).document)
+
+    async def test_http_body_backpressure_holds_the_org_slot(self) -> None:
+        app = create_app(self._service(timeout=3))
+        sending = asyncio.Event()
+        drain = asyncio.Event()
+
+        async def blocked_app(scope, receive, send):
+            async def send_when_ready(message):
+                if message["type"] == "http.response.body":
+                    sending.set()
+                    await drain.wait()
+                await send(message)
+
+            await app(scope, receive, send_when_ready)
+
+        def headers():
+            return {"Authorization": "Bearer " + self._token(self._live())}
+
+        async with (
+            asyncio.timeout(2),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=blocked_app), base_url="http://worker.test"
+            ) as slow,
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://worker.test"
+            ) as peer,
+        ):
+            first = asyncio.create_task(slow.post("/v1/live", headers=headers()))
+            try:
+                await sending.wait()
+                refused = await peer.post("/v1/live", headers=headers())
+                self.assertEqual(
+                    (refused.status_code, refused.json()), (429, {"status": "overloaded"})
+                )
+                self.assertEqual(len(self.backend.calls), 1)
+            finally:
+                drain.set()
+                self.assertEqual((await first).status_code, 200)
+            self.assertEqual((await peer.post("/v1/live", headers=headers())).status_code, 200)
+
+    async def test_partial_response_deadline_and_disconnect_release_the_slot(self) -> None:
+        for reason in ("deadline", "disconnect"):
+            with self.subTest(reason=reason):
+                await self._assert_partial_response_releases_slot(reason)
+
+    async def _assert_partial_response_releases_slot(self, reason: str) -> None:
+        service = self._service(timeout=0.15 if reason == "deadline" else 3)
+        app = create_app(service)
+        sending = asyncio.Event()
+        disconnected = asyncio.Event()
+        cancelled = asyncio.Event()
+        frames = []
+
+        async def receive():
+            await disconnected.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body":
+                sending.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    cancelled.set()
+            frames.append(message["type"])
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/live",
+            "query_string": b"",
+            "headers": [(b"authorization", ("Bearer " + self._token(self._live())).encode())],
+        }
+        async with asyncio.timeout(2):
+            response = asyncio.create_task(app(scope, receive, send))
+            await sending.wait()
+            if reason == "disconnect":
+                disconnected.set()
+            await response
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(frames, ["http.response.start"])
         self.assertIsNotNone((await service.execute(self._token(self._live()), "live")).document)
 
     async def test_stalled_upstream_has_a_distinct_timeout(self) -> None:
