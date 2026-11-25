@@ -1744,6 +1744,13 @@
           "type": "integer",
           "description": "Seconds the C++ delta harness may run before it is killed."
         },
+        "code_scip_disk_check_interval_s": {
+          "default": 0.5,
+          "exclusiveMinimum": 0,
+          "maximum": 0.5,
+          "type": "number",
+          "description": "Seconds between full-index disk-space checks, positive and finite, at most 0.5. Lower values detect pressure sooner at the cost of more metadata reads."
+        },
         "code_scip_full_enabled": {
           "default": true,
           "type": "boolean",
@@ -1824,6 +1831,12 @@
           "default": 512,
           "type": "integer",
           "description": "Max `total_parts` of one code.scip_ingest upload; more is refused."
+        },
+        "code_scip_min_free_disk_gb": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Full indexes refuse to start or cancel delta production at this many GiB free on the checkout or scratch filesystem. Positive; not a disk reservation."
         },
         "code_scip_py_delta_enabled": {
           "default": true,
