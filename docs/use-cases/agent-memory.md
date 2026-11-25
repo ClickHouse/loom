@@ -97,14 +97,14 @@ server and project namespace. The new session can retrieve decisions already sav
    key. If it only exists in client-local notes or a transcript, check it against the
    source, then explicitly save the decision in the shared namespace. Keep rules that
    apply to every checkout in version control.
-2. Give the new client its own token scoped to the project namespace. Start a fresh
-   session and give it the exact key and scope shown in the saved memory. Compare the
-   returned value and writer with the original. Check the current source before
-   applying a code-linked decision.
+2. On an authenticated server, give the new client its own token scoped to the project
+   namespace. Start a fresh session and give it the exact key and scope shown in the
+   saved memory. Compare the returned value and writer with the original. Check the
+   current source before applying a code-linked decision.
 3. For work in progress, include the branch, commit, and remaining checks in the task
    handoff. Keep each client's local configuration and session history with that client.
 
-Use the [Claude Code-to-Codex check](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex)
+Use the [authenticated Claude Code-to-Codex check](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex)
 to verify the handoff on a disposable key before switching a project.
 
 ## What you get
