@@ -14,6 +14,8 @@ publication provenance, signatures or marketplace acceptance.
 Inspection refuses paths over 4096 UTF-8 bytes or 32 components before building
 parent paths. Archive limits are 32 MiB compressed, 128 MiB decompressed,
 8 MiB per file and 20,000 members.
+Only regular files and directories are accepted. Extension headers are refused
+before metadata processing.
 """
 
 from __future__ import annotations
@@ -134,8 +136,6 @@ def member_name(member: tarfile.TarInfo) -> str:
         and str(PurePosixPath(name)) == name,
         "noncanonical archive path",
     )
-    require(member.isdir() or member.isfile(), "archive links and special files refused")
-    require(not member.issparse(), "sparse archive member refused")
     return name
 
 
@@ -147,36 +147,42 @@ def archive_files(raw: bytes) -> tuple[dict[str, bytes], int]:
     names: set[str] = set()
     regular_names: set[str] = set()
     implied_directories: set[str] = set()
-    with tarfile.open(fileobj=io.BytesIO(unpacked), mode="r:") as package:
-        for member in package:
-            require(len(names) < MAX_MEMBERS, "too many archive members")
-            name = member_name(member)
-            require(name not in names, "duplicate archive path")
-            names.add(name)
-            parents = {str(parent) for parent in PurePosixPath(name).parents if str(parent) != "."}
-            require(not parents.intersection(regular_names), "regular file used as directory")
-            require(
-                not member.isfile() or name not in implied_directories,
-                "directory replaced by regular file",
-            )
-            implied_directories.update(parents)
-            if member.isdir():
-                require(member.size == 0, "directory member contains data")
-                continue
+    offset = 0
+    while offset + tarfile.BLOCKSIZE <= len(unpacked):
+        header = unpacked[offset : offset + tarfile.BLOCKSIZE]
+        if not any(header):
+            break
+        require(len(names) < MAX_MEMBERS, "too many archive members")
+        member = tarfile.TarInfo.frombuf(header, encoding="utf-8", errors="strict")
+        require(
+            member.type in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE),
+            "archive extension headers and special files refused",
+        )
+        name = member_name(member)
+        require(name not in names, "duplicate archive path")
+        names.add(name)
+        parents = {str(parent) for parent in PurePosixPath(name).parents if str(parent) != "."}
+        require(not parents.intersection(regular_names), "regular file used as directory")
+        require(
+            not member.isfile() or name not in implied_directories,
+            "directory replaced by regular file",
+        )
+        implied_directories.update(parents)
+        offset += tarfile.BLOCKSIZE
+        require(0 <= member.size <= MAX_MEMBER, "archive member exceeds inspection bound")
+        if member.isdir():
+            require(member.size == 0, "directory member contains data")
+        else:
             regular_names.add(name)
-            require(0 <= member.size <= MAX_MEMBER, "archive member exceeds inspection bound")
-            stream = package.extractfile(member)
-            if stream is None:
-                raise ArchiveError("missing archive member stream")
-            with stream:
-                data = stream.read(MAX_MEMBER + 1)
+            data = unpacked[offset : offset + member.size]
             require(len(data) == member.size, "archive member size mismatch")
             files[name.removeprefix("package/")] = data
-        tail = unpacked[package.offset :]
-        require(
-            len(tail) >= 1024 and len(unpacked) % 512 == 0 and not any(tail),
-            "invalid TAR termination or trailing data",
-        )
+        offset += ((member.size + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE) * tarfile.BLOCKSIZE
+    tail = unpacked[offset:]
+    require(
+        len(tail) >= 1024 and len(unpacked) % tarfile.BLOCKSIZE == 0 and not any(tail),
+        "invalid TAR termination or trailing data",
+    )
     return files, len(unpacked)
 
 

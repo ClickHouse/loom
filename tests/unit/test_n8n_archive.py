@@ -202,8 +202,14 @@ class ArchiveChecks(unittest.TestCase):
             with self.subTest(name_length=len(name)):
                 info = tarfile.TarInfo(name)
                 info.size = 1
-                with self.assertRaisesRegex(ValueError, "archive path exceeds inspection bound"):
+                with self.assertRaisesRegex(
+                    ValueError, "extension headers and special files refused"
+                ):
                     checker.inspect_archive(*self.build(extra=[(info, b"x")]))
+        info = tarfile.TarInfo("package/" + "x/" * 32 + "file")
+        info.size = 1
+        with self.assertRaisesRegex(ValueError, "archive path exceeds inspection bound"):
+            checker.inspect_archive(*self.build(extra=[(info, b"x")]))
 
     def test_compressed_input_bound_enforced_before_decompression(self):
         args = self.build()
@@ -421,7 +427,46 @@ class ArchiveChecks(unittest.TestCase):
         code, result = self.invoke_cli(args)
         self.assertEqual(code, 1)
         self.assertEqual(result["archive_inspection"], "FAIL")
-        self.assertEqual(result["error_class"], "OverflowError")
+        self.assertEqual(result["error_class"], "ArchiveError")
+        self.assertEqual(result["reason"], "archive extension headers and special files refused")
+        self.assertEqual(result["runtime"], "UNRUN")
+
+    def test_metadata_and_sparse_headers_refused_before_payload_processing(self):
+        for kind in (
+            tarfile.XGLTYPE,
+            tarfile.XHDTYPE,
+            tarfile.GNUTYPE_LONGNAME,
+            tarfile.GNUTYPE_LONGLINK,
+            tarfile.GNUTYPE_SPARSE,
+        ):
+            with self.subTest(kind=kind):
+                info = tarfile.TarInfo("metadata")
+                info.type = kind
+                header = bytearray(info.tobuf(format=tarfile.GNU_FORMAT))
+                if kind == tarfile.GNUTYPE_SPARSE:
+                    header[482] = 1
+                    header[148:156] = b"        "
+                    header[148:156] = f"{sum(header):06o}\x00 ".encode()
+                args = self.rewrite_tar(self.build(), bytes(header))
+                code, result = self.invoke_cli(args)
+                self.assertEqual(code, 1)
+                self.assertEqual(result["archive_inspection"], "FAIL")
+                self.assertEqual(result["error_class"], "ArchiveError")
+                self.assertEqual(
+                    result["reason"], "archive extension headers and special files refused"
+                )
+                self.assertEqual(result["runtime"], "UNRUN")
+
+    def test_regular_payload_with_explicit_directories_is_accepted(self):
+        directories = []
+        for name in ("package/", "package/dist/", "package/dist/integrations/"):
+            info = tarfile.TarInfo(name)
+            info.type = tarfile.DIRTYPE
+            directories.append((info, b""))
+        code, result = self.invoke_cli(self.build(extra=directories, extra_first=True))
+        self.assertEqual(code, 0)
+        self.assertEqual(result["archive_inspection"], "PASS")
+        self.assertEqual(result["file_count"], len(self.files) + 1)
         self.assertEqual(result["runtime"], "UNRUN")
 
 
