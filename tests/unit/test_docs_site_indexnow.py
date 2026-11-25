@@ -75,7 +75,9 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/tr",
             "/vi",
             "/zh-CN",
+            "/zh-CN/enterprise",
             "/zh-Hant",
+            "/zh-Hant/enterprise",
         )
     )
     assert indexnow.urls_for({"docs/components/SiteFrame.astro": "M"}) == public_pages

@@ -13,6 +13,6 @@
   "ru": { "name": "Русский", "href": "/ru", "docs": null },
   "tr": { "name": "Türkçe", "href": "/tr", "docs": null },
   "vi": { "name": "Tiếng Việt", "href": "/vi", "docs": null },
-  "zh-CN": { "name": "简体中文", "href": "/zh-CN", "docs": "/docs/zh-CN" },
-  "zh-Hant": { "name": "繁體中文", "href": "/zh-Hant", "docs": null }
+  "zh-CN": { "name": "简体中文", "href": "/zh-CN", "docs": "/docs/zh-CN", "enterprise": "/zh-CN/enterprise" },
+  "zh-Hant": { "name": "繁體中文", "href": "/zh-Hant", "docs": null, "enterprise": "/zh-Hant/enterprise" }
 }

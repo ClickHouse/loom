@@ -23,6 +23,8 @@
   "/ja/enterprise": "/docs/ja/enterprise",
   "/ko/enterprise": "/docs/ko/enterprise",
   "/pt-BR/enterprise": "/docs/pt-BR/enterprise",
+  "/zh-CN/enterprise": "/docs/zh-CN/enterprise",
+  "/zh-Hant/enterprise": "/docs/zh-Hant/enterprise",
   "/telemetry": "/docs/telemetry",
   "/adoption": "/docs/adoption"
 }
