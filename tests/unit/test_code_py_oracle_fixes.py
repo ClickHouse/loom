@@ -96,6 +96,72 @@ def mount(context: Context):
     assert (9, "app.mount::Context::describe", 0.9) in calls
 
 
+_CONTEXT_METHODS = b"""class Context:
+    def copy(self) -> Context:
+        return self
+    def update(self) -> Context:
+        return self
+    def close(self):
+        pass
+"""
+
+
+@pytest.mark.parametrize(
+    ("signature", "body", "typed"),
+    [
+        (b"context: Context", b"context = context.copy()\n    context.close()", True),
+        (b"", b"context = Context()\n    context = context.copy()\n    context.close()", True),
+        (
+            b"context: Context",
+            b"context = {}\n    context = context.copy()\n    context.close()",
+            False,
+        ),
+        (b"context: Context", b"context.copy().update().close()", True),
+    ],
+)
+def test_a_library_method_uses_the_type_available_before_its_call(signature, body, typed):
+    source = _CONTEXT_METHODS + b"def mount(" + signature + b"):\n    " + body + b"\n"
+    parsed = parse_file("app/mount.py", source)
+    edges, _ = extract_edges_and_misses(parsed, {})
+    targets = {edge.to_qualified_name for edge in edges if edge.confidence == 0.9}
+    assert ("app.mount::Context::close" in targets) is typed
+
+
+@pytest.mark.asyncio
+async def test_an_imported_library_method_chain_reads_each_new_return_type_once():
+    from server.code.app.index.ingest_edges import _ts_callee_returns
+
+    files = {
+        "lib/context.py": (
+            _CONTEXT_METHODS + b"def make_context() -> Context:\n    return Context()\n"
+        ),
+        "app/mount.py": (
+            b"from lib.context import make_context\n"
+            b"def mount():\n    make_context().copy().update().close()\n"
+        ),
+    }
+    present, parsed, table, returns = _corpus(files)
+    file = parsed["app/mount.py"]
+    file.includes = resolve_imports(file.path, file.includes, present)
+    gated = gate_name_table(table, "python")
+    ctx = {"present": present, "py_present": present}
+    queries = []
+
+    class Repo:
+        async def return_types_for_qualified(self, _org, _ns, names):
+            queries.append(names)
+            return {name: returns[name] for name in names if name in returns}
+
+    types = await _ts_callee_returns(Repo(), "org", "code", file, gated, ctx)
+    edges, _ = extract_edges_and_misses(file, gated, None, types, ctx)
+    assert any(edge.to_qualified_name == "lib.context::Context::close" for edge in edges)
+    assert queries == [
+        ["lib.context::make_context"],
+        ["lib.context::Context::copy"],
+        ["lib.context::Context::update"],
+    ]
+
+
 def test_a_library_named_method_keeps_a_fixture_typed_receiver():
     files = {
         "tests/conftest.py": (

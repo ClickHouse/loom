@@ -2278,17 +2278,15 @@ class _CallResolver:
         if not local:
             return
         annotated = {s.qualified_name: s.return_type for s in pf.symbols if s.return_type}
-        # Keep the local annotation only when the receiver names its definition.
-        proven = {}
+        # The inner call is visited first, so its type can resolve the next method.
         for callee in self.typer.library_calls():
             receiver, _, bare = callee.rpartition(".")
             annotation = local.get(bare)
             if annotation is None or callee in known:
                 continue
-            target = _library_target_at_calls(self, callee, receiver, bare)
-            if target and annotated.get(target) == annotation:
-                proven[callee] = annotation
-        self.typer.bind_returns(proven)
+            targets = _library_targets_at_calls(self, callee, receiver, bare)
+            if targets and all(annotated.get(target) == annotation for target in targets):
+                self.typer.bind_returns({callee: annotation})
 
     def _py_path_of(self, spec: str) -> str:
         """The present path a specifier names, '' when none does."""
@@ -3139,7 +3137,9 @@ class _CallResolver:
             return own[0][0], own[0][1], SAME_PACKAGE_CONFIDENCE
         return None
 
-    def typed_target(self, receiver: str, bare: str, line: int) -> tuple[str, str] | None:
+    def typed_target(
+        self, receiver: str, bare: str, line: int, *, receiver_type: str | None = None,
+    ) -> tuple[str, str] | None:
         """Rung 2b: `client.query()` where the tree types
         `client` as `ClickHouseClient` binds to the one `…::ClickHouseClient::query`
         the table holds — a parameter annotation, a typed declaration, a
@@ -3150,9 +3150,11 @@ class _CallResolver:
         (promotion), in this file's declaration order."""
         if self.typer is None or not receiver:
             return None
-        tname = self._py_receiver_type(line, receiver) if self.python else self.typer.type_of(
-            line, receiver,
-        )
+        tname = receiver_type
+        if tname is None:
+            tname = self._py_receiver_type(line, receiver) if self.python else self.typer.type_of(
+                line, receiver,
+            )
         if not tname:
             return None
         candidates = self._once(("typed", bare), lambda: _with_local_rows(
@@ -3503,19 +3505,18 @@ def callee_targets(
     return out
 
 
-def _library_target_at_calls(
+def _library_targets_at_calls(
     resolver: _CallResolver, callee: str, receiver: str, bare: str,
-) -> str | None:
+) -> set[str]:
     # The return map is keyed by the written callee. Every observed call must
     # agree before its return type can be used on that spelling.
-    targets = {
-        resolver.typed_target(receiver, bare, line)
-        for line in resolver.typer.library_call_lines(callee)
-    }
-    if len(targets) != 1:
-        return None
-    target = targets.pop()
-    return target[1] if target is not None else None
+    targets: set[str] = set()
+    for line, prior in resolver.typer.library_call_sites(callee):
+        target = resolver.typed_target(receiver, bare, line, receiver_type=prior)
+        if target is None:
+            return set()
+        targets.add(target[1])
+    return targets
 
 
 def _callee_return_target(
@@ -3538,7 +3539,7 @@ def _callee_return_target(
     typed = resolver.typed_target(receiver, bare, 0) if receiver else None
     target = typed[1] if typed is not None else resolver.sole_definition(candidates, receiver)
     if target is not None and library_member:
-        if target != _library_target_at_calls(resolver, callee, receiver, bare):
+        if {target} != _library_targets_at_calls(resolver, callee, receiver, bare):
             return None
     return target
 
