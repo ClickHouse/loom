@@ -23,6 +23,7 @@ from collections import Counter, defaultdict
 from io import StringIO
 from typing import Any, NamedTuple
 
+from server.code.api.models_symbol import EDIT_CONTEXT_MAX_NAMES
 from server.code.domain.symbol_documentation import description_repeats_body
 
 # Accounting counters and ranking internals no agent acts on.
@@ -229,6 +230,36 @@ def _lean_grep(out: dict[str, Any]) -> None:
     related = out.get("related")
     if isinstance(related, dict):
         out["related"] = lean_code("code.grep", related)
+
+
+def _grep_edit_continuation(
+    out: dict[str, Any],
+    arguments: dict[str, Any],
+) -> None:
+    """Give excerpt callers a batch of verified declaration locations to read next."""
+    contexts = out.get("contexts") or []
+    if arguments.get("include_body") is not False or not contexts or out.get("definitions"):
+        return
+    selections: dict[str, None] = {}
+    for hit in out.get("matches") or []:
+        if not isinstance(hit, dict):
+            continue
+        path, line, end = hit.get("path"), hit.get("line"), hit.get("scope_end_line")
+        if not (path and line and end and hit.get("scope") and line == hit.get("scope_start_line")):
+            continue
+        if any(
+            window["path"] == path and window["start_line"] <= line <= end <= window["end_line"]
+            for window in contexts
+        ):
+            continue
+        selections.setdefault(f"{path}:{line}", None)
+        if len(selections) == EDIT_CONTEXT_MAX_NAMES:
+            break
+    if selections:
+        params: dict[str, Any] = {"names": list(selections)}
+        if arguments.get("namespace"):
+            params["namespace"] = arguments["namespace"]
+        out["next"] = "For full definitions, call loom_code_edit_context with " + json.dumps(params)
 
 
 class _GrepBody(NamedTuple):
@@ -449,7 +480,7 @@ LEAN_CODE_OPS: frozenset[str] = frozenset(
 )
 
 
-def lean_code(op_name: str, payload: Any) -> Any:
+def lean_code(op_name: str, payload: Any, arguments: dict[str, Any] | None = None) -> Any:
     """The MCP shape of a code.* result (see module docstring)."""
     if not isinstance(payload, dict) or op_name not in LEAN_CODE_OPS:
         return payload
@@ -470,6 +501,8 @@ def lean_code(op_name: str, payload: Any) -> Any:
     fn = _PER_OP.get(op_name)
     if fn is not None:
         fn(out)
+    if op_name == "code.grep" and arguments is not None:
+        _grep_edit_continuation(out, arguments)
     _hoist_defaults(out)
     if out.get("candidates") == []:
         out.pop("candidates")

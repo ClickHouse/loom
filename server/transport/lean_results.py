@@ -246,7 +246,7 @@ def mcp_op_result(
     if op_name.startswith("code.") and not _explained(arguments):
         from server.transport.code_lean import lean_code
 
-        out = lean_code(op_name, out)
+        out = lean_code(op_name, out, arguments)
     out = _with_ignored_args(op_name, out, arguments)
     if hint is not None and isinstance(out, dict):
         if hint[1] not in str(out.get("rendered") or ""):
