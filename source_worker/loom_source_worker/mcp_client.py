@@ -1026,7 +1026,7 @@ class MCPSourceClient:
                 message_handler=self._message_handler,
             )
         )
-        result = await self._session.initialize()
+        result = await self._request(ClientSession.initialize)
         self._discovery = MCPDiscovery(result.capabilities.resources is not None, ())
         await self._authorize()
 
@@ -1068,7 +1068,10 @@ class MCPSourceClient:
             self._leave_private()
 
     async def _message_handler(self, message: Any) -> None:
-        if isinstance(message, types.ServerNotification) and isinstance(
+        if isinstance(message, Exception):
+            assert self._transport is not None
+            self._transport.record_failure(MCPSourceError("protocol"))
+        elif isinstance(message, types.ServerNotification) and isinstance(
             message.root, types.ToolListChangedNotification
         ):
             self._tool_epoch += 1
@@ -1139,11 +1142,17 @@ class MCPSourceClient:
         cursor: str | None = None
         seen: set[str] = set()
         if approved:
-            for _ in range(self._config.limits.max_pages):
-                result = await session.list_tools(
-                    params=types.PaginatedRequestParams(cursor=cursor)
+            limits, policy = self._config.limits, self._config.data_policy
+            for _ in range(limits.max_pages):
+                params = types.PaginatedRequestParams(cursor=cursor)
+                reply = await session.send_request(
+                    types.ClientRequest(types.ListToolsRequest(params=params)),
+                    types.Result,
                 )
-                if len(result.tools) > self._config.limits.max_results:
+                data = reply.model_dump(by_alias=True, exclude_unset=True)
+                _bounded_data(data, limits.max_wire_bytes, policy)
+                result = types.ListToolsResult.model_validate(data)
+                if len(result.tools) > limits.max_results:
                     raise MCPSourceError("limit")
                 for tool in result.tools:
                     if tool.name in seen:
@@ -1153,9 +1162,9 @@ class MCPSourceClient:
                         continue
                     for mapping in (self._config.search, self._config.read):
                         if mapping is not None and mapping.name == tool.name:
-                            _check_tool_schema(tool, mapping, self._config.data_policy)
+                            _check_tool_schema(tool, mapping, policy)
                     found.add(tool.name)
-                if len(seen) > self._config.limits.max_results:
+                if len(seen) > limits.max_results:
                     raise MCPSourceError("limit")
                 cursor = result.nextCursor
                 if cursor is None:
