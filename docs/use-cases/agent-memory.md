@@ -58,6 +58,7 @@ Check these requirements before choosing Loom:
 | Shared context across tools    | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript. |
 | Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false.    |
 | Access and operations          | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers.           |
+| Data portability               | [Export a decision as Markdown and check it in a fresh namespace](../features/integrations/okf.md#test-agent-memory-portability).              |
 
 Follow [coding-agent setup](../getting-started/connect-a-coding-agent.md) for the plugin
 or MCP connection your client supports. Read its capture settings before using private
