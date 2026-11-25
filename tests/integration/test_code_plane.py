@@ -596,13 +596,15 @@ async def test_edit_context_reads_verified_declarations_across_files(
     code_env, monkeypatch, clues_only_at_declarations
 ) -> None:
     from server.code.api.models_symbol import CodeEditContextInput
-    from server.code.app.symbol import handle_code_edit_context
+    from server.code.app.symbol import symbol
     from server.embedding.fake import fake_model_name
     from server.settings import settings
 
     repo, org, ns = code_env
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    traces = []
+    monkeypatch.setattr(symbol, "schedule_code_trace", lambda **row: traces.append(row))
     sources = {
         "src/alpha.py": b"def submit(value):\n    result = value + 1\n    return result\n",
         "src/beta.py": b"def submit(value):\n    result = value * 2\n    return result\n",
@@ -613,7 +615,7 @@ async def test_edit_context_reads_verified_declarations_across_files(
     clues = ["def submit(", "def handle("]
     if not clues_only_at_declarations:
         clues[0] = "return result"
-    result = await handle_code_edit_context(
+    result = await symbol.handle_code_edit_context(
         CodeEditContextInput(org=org, namespace=ns, clues=clues, include_lessons=False)
     )
     assert result.ambiguous
@@ -629,6 +631,8 @@ async def test_edit_context_reads_verified_declarations_across_files(
     assert result.trace_run_id and result.trace_run_id not in {
         target.trace_run_id for target in result.edit_targets
     }
+    root = next(trace for trace in traces if trace["route"] == "edit_context_declaration_batch")
+    assert "declarations" in root["stage_ms"]
 
 
 @pytest.mark.parametrize("older_site_line", [None, 3, 20])

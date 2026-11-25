@@ -556,9 +556,13 @@ async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOut
 async def _single_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
     from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
 
-    target = await locate_edit_target(input) if input.clues else EditTarget(name=input.name)
-    if target.declarations:
-        return await _batched_edit_context(input, located=target)
+    if input.clues:
+        started = time.monotonic()
+        target = await locate_edit_target(input)
+        if target.declarations:
+            return await _batched_edit_context(input, located=target, started=started)
+    else:
+        target = EditTarget(name=input.name)
     return await _edit_context_for_target(input, target)
 
 
@@ -604,12 +608,16 @@ async def _edit_context_for_target(
 
 
 async def _batched_edit_context(
-    input: CodeEditContextInput, *, located: EditTarget | None = None
+    input: CodeEditContextInput,
+    *,
+    located: EditTarget | None = None,
+    started: float | None = None,
 ) -> CodeSymbolOutput:
     from server.code.domain.units import CodeUnit, estimate_json_tokens, estimate_unit_tokens
 
-    started = time.monotonic()
-    start_stage_wall()
+    if started is None:
+        started = time.monotonic()
+        start_stage_wall()
     declarations = {target.name: target for target in located.declarations} if located else {}
     requested = list(declarations) if declarations else input.names
     names = list(dict.fromkeys(requested))
