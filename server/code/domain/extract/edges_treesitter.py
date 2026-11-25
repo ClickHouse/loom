@@ -2219,11 +2219,8 @@ class _CallResolver:
             from server.code.domain.extract.py_receivers import PyReceiverTyper
 
             self.typer = PyReceiverTyper(pf, callee_returns)
-            known = callee_returns or {}
-            self.typer.bind_returns(
-                {k: v for k, v in self.typer.same_file_returns().items() if k not in known}
-            )
             self._py_seat(pf, lane_context)
+            self._bind_py_local_returns(pf, callee_returns or {})
         elif pf.lang == "go":
             self._go_seat(pf, callee_returns, lane_context)
 
@@ -2273,6 +2270,23 @@ class _CallResolver:
         self.external = (
             external_names(pf, self.py_resolved, self.py_roots) if self.py_resolved else set()
         )
+
+    def _bind_py_local_returns(self, pf: ParsedFile, known: dict[str, str]) -> None:
+        local = {name: value for name, value in self.typer.same_file_returns().items()
+                 if name not in known}
+        self.typer.bind_returns(local)
+        if not local:
+            return
+        annotated = {s.qualified_name: s.return_type for s in pf.symbols if s.return_type}
+        # The inner call is visited first, so its type can resolve the next method.
+        for callee in self.typer.library_calls():
+            receiver, _, bare = callee.rpartition(".")
+            annotation = local.get(bare)
+            if annotation is None or callee in known:
+                continue
+            targets = _library_targets_at_calls(self, callee, receiver, bare)
+            if targets and all(annotated.get(target) == annotation for target in targets):
+                self.typer.bind_returns({callee: annotation})
 
     def _py_path_of(self, spec: str) -> str:
         """The present path a specifier names, '' when none does."""
@@ -3123,7 +3137,9 @@ class _CallResolver:
             return own[0][0], own[0][1], SAME_PACKAGE_CONFIDENCE
         return None
 
-    def typed_target(self, receiver: str, bare: str, line: int) -> tuple[str, str] | None:
+    def typed_target(
+        self, receiver: str, bare: str, line: int, *, receiver_type: str | None = None,
+    ) -> tuple[str, str] | None:
         """Rung 2b: `client.query()` where the tree types
         `client` as `ClickHouseClient` binds to the one `…::ClickHouseClient::query`
         the table holds — a parameter annotation, a typed declaration, a
@@ -3134,9 +3150,11 @@ class _CallResolver:
         (promotion), in this file's declaration order."""
         if self.typer is None or not receiver:
             return None
-        tname = self._py_receiver_type(line, receiver) if self.python else self.typer.type_of(
-            line, receiver,
-        )
+        tname = receiver_type
+        if tname is None:
+            tname = self._py_receiver_type(line, receiver) if self.python else self.typer.type_of(
+                line, receiver,
+            )
         if not tname:
             return None
         candidates = self._once(("typed", bare), lambda: _with_local_rows(
@@ -3446,6 +3464,7 @@ def callee_targets(
     typed_lang = pf.lang in _EXTRA_CALL_NODES_BY_LANG or pf.lang in ("python", "go")
     if not typed_lang or pf.tree is None:
         return {}
+    from server.code.domain.extract.py_library_methods import PY_LIBRARY_METHODS
     from server.code.domain.extract.ts_receivers import ReceiverTyper
 
     local_by_name: dict[str, list[Symbol]] = {}
@@ -3460,9 +3479,7 @@ def callee_targets(
     out: dict[str, str] = {}
     typer: Any
     if pf.lang == "python":
-        from server.code.domain.extract.py_receivers import PyReceiverTyper
-
-        typer = PyReceiverTyper(pf)
+        typer = resolver.typer
     elif pf.lang == "go":
         from server.code.domain.extract.go_receivers import GoReceiverTyper
 
@@ -3479,30 +3496,52 @@ def callee_targets(
             continue
         bare = callee.rsplit(".", 1)[-1]
         receiver = callee.rsplit(".", 1)[0] if "." in callee else ""
+        library_member = resolver.python and bool(receiver) and bare in PY_LIBRARY_METHODS
         if bare in typed_here:
             continue  # the same file answers without a read
-        candidates = resolver.candidates(bare, bare)
-        bound = resolver.go_package_bound(receiver, bare, candidates)
-        if bound is None and receiver == "" and resolver.go and pf.symbols:
-            # A bare `Conn(t)` is this package's helper first
-            bound = resolver.go_same_package(pf.symbols[0], bare, candidates)
-        if bound is None:
-            bound = resolver.go_clause_bound(receiver, bare, candidates)
-        if bound is None:
-            bound = resolver.import_bound(receiver, bare, candidates)
-        if bound is False:
-            continue
-        if isinstance(bound, tuple):
-            out[callee] = bound[1]
-            continue
-        typed = resolver.typed_target(receiver, bare, 0) if receiver else None
-        if typed is not None:
-            out[callee] = typed[1]
-            continue
-        sole = resolver.sole_definition(candidates, receiver)
-        if sole is not None:
-            out[callee] = sole
+        target = _callee_return_target(resolver, pf, callee, receiver, bare, library_member)
+        if target is not None:
+            out[callee] = target
     return out
+
+
+def _library_targets_at_calls(
+    resolver: _CallResolver, callee: str, receiver: str, bare: str,
+) -> set[str]:
+    # The return map is keyed by the written callee. Every observed call must
+    # agree before its return type can be used on that spelling.
+    targets: set[str] = set()
+    for line, prior in resolver.typer.library_call_sites(callee):
+        target = resolver.typed_target(receiver, bare, line, receiver_type=prior)
+        if target is None:
+            return set()
+        targets.add(target[1])
+    return targets
+
+
+def _callee_return_target(
+    resolver: _CallResolver, pf: ParsedFile, callee: str, receiver: str, bare: str,
+    library_member: bool,
+) -> str | None:
+    candidates = resolver.candidates(bare, bare)
+    bound = resolver.go_package_bound(receiver, bare, candidates)
+    if bound is None and receiver == "" and resolver.go and pf.symbols:
+        # A bare `Conn(t)` is this package's helper first.
+        bound = resolver.go_same_package(pf.symbols[0], bare, candidates)
+    if bound is None:
+        bound = resolver.go_clause_bound(receiver, bare, candidates)
+    if bound is None:
+        bound = resolver.import_bound(receiver, bare, candidates)
+    if isinstance(bound, tuple):
+        return bound[1]
+    if bound is False:
+        return None
+    typed = resolver.typed_target(receiver, bare, 0) if receiver else None
+    target = typed[1] if typed is not None else resolver.sole_definition(candidates, receiver)
+    if target is not None and library_member:
+        if {target} != _library_targets_at_calls(resolver, callee, receiver, bare):
+            return None
+    return target
 
 
 def _bind_name_receiver(resolver: _CallResolver, callee: str, out: dict[str, str]) -> None:

@@ -21,10 +21,11 @@ by `lang_python` for return annotations, so it imports neither.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.code.domain.extract.py_library_methods import PY_LIBRARY_METHODS
 from server.code.domain.extract.spans import first_span_at
 from server.code.domain.extract.treesitter import node_text
 
@@ -291,6 +292,30 @@ def _class_bindings(class_node: Any, source: bytes) -> dict[str, str]:
     return out
 
 
+def _preceding_receiver_binding(statement: Any, receiver: str, source: bytes) -> str | None:
+    text = source[statement.start_byte:statement.end_byte]
+    if statement.type == "comment" or receiver.encode() not in text:
+        return None
+    if statement.type != "expression_statement" or not statement.named_children:
+        return ""
+    if b":=" in text:
+        return ""
+    expression = statement.named_children[0]
+    if expression.type not in {"assignment", "augmented_assignment"}:
+        return None
+    value = expression.child_by_field_name("right")
+    if value is not None and value.type == "assignment":
+        return ""
+    target = expression.child_by_field_name("left")
+    if target is None or receiver not in _bound_identifiers(expression, source):
+        return None
+    if target.type != "identifier" or expression.type == "augmented_assignment":
+        return ""
+    if value is None:
+        return None
+    return _assignment_binding(expression, source)[1]
+
+
 class PyReceiverTyper:
     """Answers `type_of(line, receiver)` for one parsed Python file."""
 
@@ -302,6 +327,7 @@ class PyReceiverTyper:
         # `get_client().query_all()` — the receiver is a call;
         # its callee's return type types it (`type_of_call`)
         self._receiver_callees: set[str] = set()
+        self._library_call_sites: dict[str, list[tuple[int, str | None]]] = {}
         self._receiver_names: set[str] = set()  # bare receivers the file names
         self._bound_names: set[str] = set()  # every name the file binds itself
         self._fixture_params: dict[int, set[str]] = {}
@@ -323,6 +349,7 @@ class PyReceiverTyper:
 
     def _collect_receiver_callees(self, node: Any, source: bytes) -> None:
         for child in node.named_children:
+            library_call = ""
             if child.type in _BINDING_NODES:
                 # a parameter, an assignment target, a loop or
                 # `with … as` name, an except alias — bound here, not imported
@@ -332,6 +359,9 @@ class PyReceiverTyper:
                 obj = None
                 if fn is not None and fn.type == "attribute":
                     obj = fn.child_by_field_name("object")
+                    member = fn.child_by_field_name("attribute")
+                    if member is not None and node_text(member, source) in PY_LIBRARY_METHODS:
+                        library_call = callee_text(child, source)
                 if obj is not None and obj.type == "identifier":
                     name = node_text(obj, source)
                     if name and name[0].islower() and name not in ("self", "cls"):
@@ -346,6 +376,56 @@ class PyReceiverTyper:
                         if not _last(part)[0].isupper():
                             self._receiver_callees.add(part)
             self._collect_receiver_callees(child, source)
+            if library_call:
+                receiver = library_call.rpartition(".")[0]
+                prior = self._before_self_assignment(child, receiver, source)
+                self._library_call_sites.setdefault(library_call, []).append(
+                    (child.start_point[0] + 1, prior),
+                )
+
+    def _before_self_assignment(self, call: Any, receiver: str, source: bytes) -> str | None:
+        """A direct assignment such as `client = client.copy()` reads the old binding."""
+        value, assignment = call, call.parent
+        while assignment is not None and assignment.type in {"await", "parenthesized_expression"}:
+            value, assignment = assignment, assignment.parent
+        if (
+            not _NAME_RE.fullmatch(receiver)
+            or assignment is None or assignment.type != "assignment"
+        ):
+            return None
+        left = assignment.child_by_field_name("left")
+        if (left is None or left.type != "identifier" or node_text(left, source) != receiver
+                or assignment.child_by_field_name("right") != value):
+            return None
+        statement = assignment.parent
+        if statement is None or statement.type != "expression_statement":
+            return ""
+        block = statement.parent
+        scope = block.parent if block is not None else None
+        if block is None or (block.type != "module" and (
+            scope is None or scope.type != "function_definition"
+        )):
+            return ""
+        previous = statement.prev_named_sibling
+        while previous is not None:
+            binding = _preceding_receiver_binding(previous, receiver, source)
+            if binding is not None:
+                return binding
+            previous = previous.prev_named_sibling
+        if scope is None:
+            return ""
+        parameters: dict[str, str] = {}
+        _param_bindings(scope.child_by_field_name("parameters"), source, parameters)
+        if receiver in self._fixture_params.get(scope.start_point[0] + 1, ()):
+            parameters.setdefault(receiver, _FIXTURE_PREFIX + receiver)
+        return parameters.get(receiver, "")
+
+    def library_call_sites(self, callee: str) -> Iterator[tuple[int, str | None]]:
+        for line, prior in self._library_call_sites.get(callee, ()):
+            yield line, self._resolve(prior) if prior is not None else None
+
+    def library_calls(self) -> Iterator[str]:
+        return iter(self._library_call_sites)
 
     def type_of_expr(self, line: int, text: str) -> str:
         """The named type of a receiver expression — a name
@@ -431,7 +511,11 @@ class PyReceiverTyper:
         if not binding.startswith(_CALL_PREFIX):
             return binding
         callee = binding[len(_CALL_PREFIX):]
-        return self._returns.get(callee, "") or self._returns.get(_last(callee), "")
+        bare = _last(callee)
+        direct = self._returns.get(callee, "")
+        if direct or ("." in callee and bare in PY_LIBRARY_METHODS):
+            return direct
+        return self._returns.get(bare, "")
 
     def callees(self) -> set[str]:
         """Every callee some binding's type waits on."""

@@ -49,6 +49,138 @@ def _edges(files: dict[str, bytes], rel: str):
     }, misses
 
 
+def test_a_dictionary_copy_does_not_inherit_an_unrelated_method_type():
+    calls, _ = _edges(
+        {
+            "lib/context.py": b"class Context:\n    def copy(self) -> Context:\n        return self\n",
+            "app/mount.py": b"def mount(options):\n    options = options.copy()\n    return options\n",
+        },
+        "app/mount.py",
+    )
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    "namesake",
+    [
+        b"def copy() -> Context:\n    return Context()\n",
+        b"class Other:\n    def copy(self) -> Context:\n        return Context()\n",
+    ],
+)
+def test_a_library_call_does_not_use_a_bare_return_annotation(namesake):
+    source = b"class Context:\n    def describe(self):\n        return 'context'\n"
+    source += namesake
+    source += b"def mount(options: dict):\n    return options.copy().describe()\n"
+    calls, _ = _edges({"app/mount.py": source}, "app/mount.py")
+    assert not any(
+        qualified == "app.mount::Context::describe" and confidence >= 0.8
+        for _, qualified, confidence in calls
+    )
+
+
+def test_a_library_named_method_keeps_a_local_return_annotation_without_a_store_read():
+    source = b"""class Context:
+    def copy(self) -> Context:
+        return self
+    def describe(self):
+        return "context"
+
+def mount(context: Context):
+    cloned = context.copy()
+    return cloned.describe()
+"""
+    parsed = parse_file("app/mount.py", source)
+    edges, _ = extract_edges_and_misses(parsed, {})
+    calls = {(edge.line, edge.to_qualified_name, edge.confidence) for edge in edges}
+    assert (8, "app.mount::Context::copy", 0.9) in calls
+    assert (9, "app.mount::Context::describe", 0.9) in calls
+
+
+_CONTEXT_METHODS = b"""class Context:
+    def copy(self) -> Context:
+        return self
+    def update(self) -> Context:
+        return self
+    def close(self):
+        pass
+"""
+
+
+@pytest.mark.parametrize(
+    ("signature", "body", "typed"),
+    [
+        (b"context: Context", b"context = context.copy()\n    context.close()", True),
+        (b"", b"context = Context()\n    context = context.copy()\n    context.close()", True),
+        (
+            b"context: Context",
+            b"context = {}\n    context = context.copy()\n    context.close()",
+            False,
+        ),
+        (b"context: Context", b"context.copy().update().close()", True),
+    ],
+)
+def test_a_library_method_uses_the_type_available_before_its_call(signature, body, typed):
+    source = _CONTEXT_METHODS + b"def mount(" + signature + b"):\n    " + body + b"\n"
+    parsed = parse_file("app/mount.py", source)
+    edges, _ = extract_edges_and_misses(parsed, {})
+    targets = {edge.to_qualified_name for edge in edges if edge.confidence == 0.9}
+    assert ("app.mount::Context::close" in targets) is typed
+
+
+@pytest.mark.asyncio
+async def test_an_imported_library_method_chain_reads_each_new_return_type_once():
+    from server.code.app.index.ingest_edges import _ts_callee_returns
+
+    files = {
+        "lib/context.py": (
+            _CONTEXT_METHODS + b"def make_context() -> Context:\n    return Context()\n"
+        ),
+        "app/mount.py": (
+            b"from lib.context import make_context\n"
+            b"def mount():\n    make_context().copy().update().close()\n"
+        ),
+    }
+    present, parsed, table, returns = _corpus(files)
+    file = parsed["app/mount.py"]
+    file.includes = resolve_imports(file.path, file.includes, present)
+    gated = gate_name_table(table, "python")
+    ctx = {"present": present, "py_present": present}
+    queries = []
+
+    class Repo:
+        async def return_types_for_qualified(self, _org, _ns, names):
+            queries.append(names)
+            return {name: returns[name] for name in names if name in returns}
+
+    types = await _ts_callee_returns(Repo(), "org", "code", file, gated, ctx)
+    edges, _ = extract_edges_and_misses(file, gated, None, types, ctx)
+    assert any(edge.to_qualified_name == "lib.context::Context::close" for edge in edges)
+    assert queries == [
+        ["lib.context::make_context"],
+        ["lib.context::Context::copy"],
+        ["lib.context::Context::update"],
+    ]
+
+
+def test_a_library_named_method_keeps_a_fixture_typed_receiver():
+    files = {
+        "tests/conftest.py": (
+            b"import pytest\nfrom lib.holder import Holder\n"
+            b"@pytest.fixture\ndef holder() -> Holder:\n    return Holder()\n"
+        ),
+        "lib/holder.py": (
+            b"class Holder:\n    def copy(self) -> Holder:\n        return self\n"
+            b"    def describe(self):\n        return 'holder'\n"
+        ),
+        "tests/test_holder.py": (
+            b"def test_holder(holder):\n    cloned = holder.copy()\n    return cloned.describe()\n"
+        ),
+    }
+    calls, _ = _edges(files, "tests/test_holder.py")
+    assert (2, "lib.holder::Holder::copy", 0.9) in calls
+    assert (3, "lib.holder::Holder::describe", 0.9) in calls
+
+
 def test_a_package_member_does_not_import_its_sibling_by_bare_name():
     present = {
         "pydantic/__init__.py",

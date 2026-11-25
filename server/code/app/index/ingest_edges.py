@@ -685,18 +685,21 @@ async def _ts_callee_returns(
     targets = await asyncio.to_thread(callee_targets, pf, name_table, lane_context)
     if not targets:
         return {}
-    types = await repo.return_types_for_qualified(org, ns, sorted(set(targets.values())))
+    queried = set(targets.values())
+    types = await repo.return_types_for_qualified(org, ns, sorted(queried))
     out = {callee: types[qn] for callee, qn in targets.items() if qn in types}
-    if pf.lang in ("go", "python") and out:
-        # One more round for the callees a now-typed receiver resolves (`batch, _ :=
-        # conn.PrepareBatch()` → `batch.Append`), one extra keyed read only when the
-        # round finds new targets
+    while out and pf.lang in ("go", "python"):
+        # A newly typed receiver can expose the next callee in a chain.
         found = await asyncio.to_thread(callee_targets, pf, name_table, lane_context, out)
         more = {c: qn for c, qn in found.items() if c not in out}
-        wanted = sorted({qn for qn in more.values() if qn not in types})
+        wanted = set(more.values()) - queried
         if wanted:
-            types.update(await repo.return_types_for_qualified(org, ns, wanted))
-        out.update({c: types[qn] for c, qn in more.items() if qn in types})
+            types.update(await repo.return_types_for_qualified(org, ns, sorted(wanted)))
+            queried.update(wanted)
+        learned = {c: types[qn] for c, qn in more.items() if qn in types}
+        out.update(learned)
+        if not learned or pf.lang == "go":
+            break
     return out
 
 
