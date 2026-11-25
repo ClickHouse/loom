@@ -588,6 +588,7 @@ _CALL_PREFIX = (
 )
 _QUALIFIED_ARGUMENT = re.compile(_CALL_PREFIX + r"\)")
 _QUALIFIED_ARGUMENT_PREFIX = re.compile(_CALL_PREFIX)
+_QUALIFIED_MEMBER = re.compile(rf"{_IDENTIFIER}(?:\.{_IDENTIFIER})+")
 _PLAIN_CALL_ALTERNATIVE = re.compile(r"[\w.:(), \t]+")
 
 
@@ -695,10 +696,16 @@ def _malformed_alternative_member(pattern: str) -> str:
     terms = [term.strip() for term in pattern.split("|")]
     if len(terms) < 2 or any(not _PLAIN_CALL_ALTERNATIVE.fullmatch(term) for term in terms):
         return ""
-    members = {
-        call[1].rsplit(".", 1)[-1]
+    if not any(
+        _QUALIFIED_ARGUMENT.fullmatch(term) or _QUALIFIED_ARGUMENT_PREFIX.fullmatch(term)
         for term in terms
-        if (call := _QUALIFIED_ARGUMENT_PREFIX.match(term))
+    ):
+        return ""
+    # A later argument or a bare alternative can make the member ambiguous.
+    members = {
+        match[0].rsplit(".", 1)[-1]
+        for term in terms
+        for match in _QUALIFIED_MEMBER.finditer(term.split("(", 1)[-1])
     }
     if len(members) != 1:
         return ""
