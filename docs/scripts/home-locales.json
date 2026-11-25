@@ -16,7 +16,7 @@
     "knowledgeFactory": "/es/knowledge-factory"
   },
   "fr": { "name": "Français", "href": "/fr", "docs": null, "enterprise": "/fr/enterprise" },
-  "hi": { "name": "हिन्दी", "href": "/hi", "docs": null },
+  "hi": { "name": "हिन्दी", "href": "/hi", "docs": null, "enterprise": "/hi/enterprise" },
   "id": { "name": "Bahasa Indonesia", "href": "/id", "docs": null },
   "it": { "name": "Italiano", "href": "/it", "docs": null },
   "ja": { "name": "日本語", "href": "/ja", "docs": "/docs/ja", "enterprise": "/ja/enterprise" },
