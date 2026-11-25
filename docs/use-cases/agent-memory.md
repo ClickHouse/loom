@@ -1,6 +1,8 @@
 ---
 title: Memory for coding agents across sessions and tools
 description: Compare repository instructions, session history, and shared memory for coding agents. Test recall, scoped access, and lessons linked to code.
+seo:
+  title: Shared memory for coding agents
 ---
 
 # Memory for coding agents across sessions and tools
