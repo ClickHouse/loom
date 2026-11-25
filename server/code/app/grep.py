@@ -281,11 +281,10 @@ class _GrepLineScan:
     batch_partial_reason: str = ""
 
 
-def _ends_in_source(row: dict[str, Any]) -> bool:
-    # A mid-line slice can carry a synthetic LF. The file row counts its
-    # LF bytes plus one, so a lower coordinate has a physical terminator.
-    start = int(row["start_line"])
-    return start < max(int(row["end_line"]), int(row.get("source_loc") or 0))
+def _terminated_lines(row: dict[str, Any]) -> int:
+    # The file row counts its LF bytes plus one. Each lower coordinate has
+    # a physical terminator, including when the chunker split a long line.
+    return max(0, int(row.get("source_loc") or 0) - int(row["start_line"]))
 
 
 def _missing_chunk_patterns(
@@ -312,7 +311,7 @@ def _missing_chunk_patterns(
             break
         if lines := retained_source_lines(chunk):
             source = fold("\n".join(line.removesuffix("\n").removesuffix("\r") for line in lines))
-            raw = fold("".join(lines)) if needs_endings and _ends_in_source(chunk) else ""
+            raw = fold("".join(lines[: _terminated_lines(chunk)])) if needs_endings else ""
             remaining = [
                 literal
                 for literal in remaining
@@ -1116,19 +1115,19 @@ def _matching_source_lines(
     line_re: Any,
     fold_case: Callable[[str], str],
     *,
-    endings_proved: bool,
+    terminated_lines: int,
 ) -> Iterator[tuple[int, str, str, str]]:
     literals = [pattern] if isinstance(pattern, str) else pattern
     endings = (
         [literal for literal in literals if literal.endswith("\n") and "\n" not in literal[:-1]]
-        if endings_proved and line_re is None
+        if terminated_lines and line_re is None
         else []
     )
     plain = [literal for literal in literals if "\n" not in literal] if endings else pattern
     for offset, raw in enumerate(lines):
         line = raw.removesuffix("\n").removesuffix("\r")
         hay = fold_case(line)
-        with_ending = fold_case(raw) if endings else ""
+        with_ending = fold_case(raw) if endings and offset < terminated_lines else ""
         if line_re is not None:
             hit = line_re.search(line)
         else:
@@ -1194,7 +1193,7 @@ def _matching_lines(
         if len(matches) > keep and not pending_here:
             continue
         for off, line, hay, with_ending in _matching_source_lines(
-            lines, pattern, line_re, fold_case, endings_proved=_ends_in_source(c)
+            lines, pattern, line_re, fold_case, terminated_lines=_terminated_lines(c)
         ):
             key = (str(c["path"]), int(c["start_line"] or 1) + off)
             if match_commits is not None:

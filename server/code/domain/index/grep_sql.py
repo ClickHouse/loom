@@ -64,6 +64,7 @@ def _with_source_loc(inner: str, prefix_clause: str, path_sql: str) -> str:
             FROM loom.code_files FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND tombstoned_at IS NULL AND lang != 'reference'
+              AND NOT endsWith(lower(path), '.ipynb')
               {prefix_clause} {path_sql}
         ) AS files ON chunks.path = files.path AND chunks.indexed_commit = files.indexed_commit
     )"""
@@ -130,7 +131,8 @@ def grep_pattern_chunks_sql(
     )
     match_lines = (
         "if(endsWith(literals[i], char(10)), "
-        "if(span > 1 OR start_line < source_loc, physical_lines_with_endings, []), physical_lines)"
+        "arraySlice(physical_lines_with_endings, 1, "
+        "greatest(0, toInt64(ifNull(source_loc, 0)) - toInt64(start_line))), physical_lines)"
         if with_endings
         else "physical_lines"
     )

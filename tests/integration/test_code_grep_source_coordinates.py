@@ -287,7 +287,7 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
                 "function",
                 scope,
                 1,
-                1,
+                2 if path.startswith("projected/") else 1,
                 content,
                 [0.0] * settings.embedding_dim,
                 1,
@@ -304,6 +304,8 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
                 ("endings/b.py", "line_feed", "check_ending()\n"),
                 ("endings/c.py", "carriage_return", "check_ending()\r\n"),
                 ("endings/d.py", "older_chunk", "check_ending()\n"),
+                ("projected/a.reference", "", "check_ending()\n… clipped reference\n"),
+                ("projected/b.ipynb", "cell", "def cell():\n    check_ending()\n"),
             )
         ],
         column_names=[
@@ -325,13 +327,15 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
     ch_client.insert(
         "loom.code_files",
         [
-            [org, ns, "endings/0.py", 1, "b" * 40],
-            [org, ns, "endings/a.py", 1, "b" * 40],
-            [org, ns, "endings/b.py", 2, "b" * 40],
-            [org, ns, "endings/c.py", 2, "b" * 40],
-            [org, ns, "endings/d.py", 2, "c" * 40],
+            [org, ns, "endings/0.py", "python", 1, "b" * 40],
+            [org, ns, "endings/a.py", "python", 1, "b" * 40],
+            [org, ns, "endings/b.py", "python", 2, "b" * 40],
+            [org, ns, "endings/c.py", "python", 2, "b" * 40],
+            [org, ns, "endings/d.py", "python", 2, "c" * 40],
+            [org, ns, "projected/a.reference", "reference", 3, "b" * 40],
+            [org, ns, "projected/b.ipynb", "python", 5, "b" * 40],
         ],
-        column_names=["org", "namespace", "path", "loc", "indexed_commit"],
+        column_names=["org", "namespace", "path", "lang", "loc", "indexed_commit"],
     )
     args = {
         "org": org,
@@ -409,6 +413,23 @@ async def test_coding_grep_keeps_distinct_batch_patterns_on_first_page(
             CodeGrepInput(org=org, namespace=ns, pattern=endings[0], path_prefix="endings/")
         )
         assert [row["path"] for row in scalar_ending.matches] == ["endings/b.py"]
+        projected = CodeGrepInput(org=org, namespace=ns, pattern=endings, path_prefix="projected/")
+        assert not (await handle_code_grep(projected)).matches
+        plain = await handle_code_grep(projected.model_copy(update={"pattern": "check_ending()"}))
+        assert [row["path"] for row in plain.matches] == [
+            "projected/a.reference",
+            "projected/b.ipynb",
+        ]
+        assert not await repo.grep_pattern_chunks(
+            org,
+            ns,
+            endings,
+            case_sensitive=True,
+            path_prefix="projected/",
+            scope=build_scope(),
+            exclude_paths=[],
+            limit=3,
+        )
 
         async def missing_pool(*args: Any, **kwargs: Any) -> None:
             return None
