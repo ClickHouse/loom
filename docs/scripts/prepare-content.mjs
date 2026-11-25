@@ -18,6 +18,20 @@ const locales = ["es", "ja", "ko", "pt-BR", "zh-CN"];
 const docsBlob = "https://github.com/ClickHouse/loom/blob/main/docs/";
 const docsSite = "https://loom.clickhouse.com/docs";
 const localizedSeo = {
+  "architecture/storage-authority.md": {
+    es: { title: "Almacenamiento en Postgres y ClickHouse" },
+    "pt-BR": { title: "Armazenamento no Postgres e no ClickHouse" },
+  },
+  "benchmarks/adding-a-case.md": {
+    "pt-BR": { title: "Adicionar casos, dados e suítes de benchmark" },
+  },
+  "development/adding-language-support.md": {
+    es: { title: "Añadir lenguajes al índice de código" },
+  },
+  "features/tracker/overview.md": {
+    es: { title: "Incidencias duplicadas y posibles regresiones" },
+    "pt-BR": { title: "Issues duplicadas e candidatos a regressão" },
+  },
   "use-cases/code-intelligence-by-language.md": {
     es: { title: "Inteligencia de código por lenguaje" },
     ja: { title: "言語別のコードインテリジェンス" },
@@ -90,7 +104,7 @@ const localizedSeo = {
       description: "AI 에이전트를 위한 공유 메모리, 문서 검색, 코드 인덱스를 제공하는 자체 호스팅 MCP 서버.",
     },
     "pt-BR": {
-      title: "Documentação de memória para agentes e busca de código",
+      title: "Documentação de memória e busca de código",
       description:
         "Memória compartilhada, busca em documentos e índice de código para agentes de IA em um servidor MCP auto-hospedado.",
     },
@@ -101,7 +115,7 @@ const localizedSeo = {
   },
   "use-cases/index.md": {
     es: {
-      title: "Casos de uso de memoria y búsqueda para agentes de IA",
+      title: "Casos de uso de memoria y búsqueda",
       description:
         "Casos de uso de Loom para agentes de IA: memoria compartida, búsqueda de documentos e índice de código.",
     },
