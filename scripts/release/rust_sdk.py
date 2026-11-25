@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import posixpath
 import re
 import subprocess
 import tarfile
@@ -110,6 +111,7 @@ def _check_manifest(files: dict[str, bytes], source: bytes) -> None:
         "path": "src/lib.rs",
         **original.get("lib", {}),
     }
+    library["path"] = posixpath.normpath(library["path"])
     if packed.get("lib", {}) != library:
         raise ValueError("packaged library options differ from source")
     blocking = [item for item in packed.get("example", []) if item.get("name") == "blocking"]

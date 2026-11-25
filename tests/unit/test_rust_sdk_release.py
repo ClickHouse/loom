@@ -181,6 +181,17 @@ def test_explicit_source_library_options_are_preserved(source, tmp_path: Path) -
     assert rust_sdk.verify_package(archive(tmp_path, files), root)
 
 
+@pytest.mark.parametrize(
+    "path", ["./src/lib.rs", "src/./lib.rs", "src//lib.rs", "src/sub/../lib.rs"]
+)
+def test_normalized_source_library_path_is_accepted(source, tmp_path: Path, path: str) -> None:
+    root, files = source
+    original = SOURCE + f'\n[lib]\npath = "{path}"\n'.encode()
+    (root / rust_sdk.SDK / "Cargo.toml").write_bytes(original)
+    files["Cargo.toml.orig"] = original
+    assert rust_sdk.verify_package(archive(tmp_path, files), root)
+
+
 def test_nonignored_source_addition_must_ship(source, tmp_path: Path) -> None:
     root, files = source
     (root / rust_sdk.SDK / "src/added.rs").write_text("additional source")
