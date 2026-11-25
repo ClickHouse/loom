@@ -114,8 +114,9 @@ to verify the handoff on a disposable key before switching a project.
 
 Give each repository its own memory namespace. Put reviewed rules that both teams
 can read in a shared namespace. Use a separate writer to maintain those rules.
-Create three disposable memory namespaces in the same org and grant the roles below
-with repeatable `--namespace-role` options. [Tokens and grants](../guides/tokens-and-grants.md)
+Use an [authenticated deployment](../getting-started/quickstart.md#start-in-multi-user-mode) for this
+exercise. Create three disposable memory namespaces in the same org and grant the roles
+below with repeatable `--namespace-role` options. [Tokens and grants](../guides/tokens-and-grants.md)
 
 | Token holder            | `web-app`      | `worker-app`   | `team-rules` |
 | ----------------------- | -------------- | -------------- | ------------ |
@@ -128,7 +129,7 @@ its repository namespace. Set `LOOM_PROJECT_NAME` when the checkout directory ha
 different name. In the default `tag` mode, project tags label rows in the configured
 namespace. Namespace roles enforce access. [Plugin configuration](../features/integrations/claude-code.md#configuration)
 
-Pass the explicit `org`, `namespace` and `memory_key` in each tool call in this exercise.
+Pass `namespace` and `memory_key` explicitly in each tool call. The org comes from the token.
 
 1. In each repository, use its writer token and `loom_memory_set` to save a different
    local release check under `example/repo/release-review`. Use the maintainer's token to
