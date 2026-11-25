@@ -6747,7 +6747,7 @@ class CodeGrepOutput(TypedDict, total=False):
 
 
 class RelatedGrepEvidence(TypedDict, total=False):
-    "Verified lines for the qualified argument of a literal call."
+    "Verified lines for a qualified argument or member found by literal recovery."
 
     pattern: Required[str]
     matches: Required[list[dict[str, Any]]]

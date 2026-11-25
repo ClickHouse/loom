@@ -54,8 +54,8 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     related_on_miss: bool = Field(
         default=False,
         description=(
-            "Find a missing literal call's qualified argument, including in a batch with one call. "
-            "Default true on coding connections."
+            "Recover a missing call's qualified argument in a literal or batch, or one member "
+            "spelling in malformed call alternatives (default true on coding connections)."
         ),
     )
     related_on_prefix: bool = Field(
@@ -197,7 +197,7 @@ class GrepDependency(BaseModel):
 
 
 class RelatedGrepEvidence(BaseModel):
-    """Verified lines for the qualified argument of a literal call."""
+    """Verified lines for a qualified argument or member found by literal recovery."""
 
     pattern: str
     matches: list[dict[str, Any]]
@@ -252,7 +252,7 @@ class CodeGrepOutput(_LessonsOut):
     # by `scope` (0/0 when the line sits in no unit) — enough to decide whether
     # to fetch the body, or to skip it when that unit is already on screen.
     matches: list[dict[str, Any]]
-    # Related source for a qualified argument, separate from literal matches.
+    # Related source for a qualified argument or member, separate from literal matches.
     related: RelatedGrepEvidence | None = None
     # Exact retained source windows for this page, with inclusive line bounds.
     contexts: list[dict[str, Any]] = Field(default_factory=list)

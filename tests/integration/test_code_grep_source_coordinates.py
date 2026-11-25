@@ -153,6 +153,17 @@ def use(client: Client):
         "return helper()",
         "return 7",
     ]
+    malformed = args.model_copy(
+        update={"pattern": "consume(other.option)|register(handler|apply()"}
+    )
+    member = await handle_code_grep(malformed)
+    assert not member.matches and member.related
+    assert member.related.pattern == ".option"
+    assert member.related.matches == out.related.matches
+    assert not member.related.dependencies
+    assert "across receivers" in member.note
+    disabled = await handle_code_grep(malformed.model_copy(update={"related_on_miss": False}))
+    assert not disabled.matches and disabled.related is None
     locations = await handle_code_grep(args.model_copy(update={"context_lines": 0}))
     assert locations.related and locations.related.matches == out.related.matches
     assert not locations.related.dependencies

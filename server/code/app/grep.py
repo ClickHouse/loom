@@ -307,7 +307,7 @@ async def _scan_grep_lines(
         )
         route += suffix
         scan_input = input
-        related_pattern = _related_grep_pattern(input) if not chunks and first_page else ""
+        related_pattern = _related_grep_pattern(input, note) if not chunks and first_page else ""
         if related_pattern and _second_scan_allowed(budget, "related source scan"):
             scan_input = input.model_copy(update={"pattern": related_pattern})
             chunks, _, _, _ = await _fetch_grep_chunks(
@@ -321,7 +321,7 @@ async def _scan_grep_lines(
                 budget=budget,
             )
             line_re = _qualified_argument_line_re(related_pattern, input.case_sensitive)
-            route += "+related_argument"
+            route += "+related_member" if related_pattern.startswith(".") else "+related_argument"
         span_attrs(sp, chunks_matched=len(chunks))
 
     matched_chunks = len(chunks)
@@ -560,6 +560,8 @@ def _label_related(
         related = RelatedGrepEvidence(
             pattern=pattern, matches=matches, truncated=scan.truncated, **bodies, **context
         )
+        if pattern.startswith("."):
+            return related, _notes(note, "Related source matches the member name across receivers.")
         return (
             related,
             "No exact match in the indexed scope. Related source matches the call's argument.",
@@ -586,6 +588,7 @@ _CALL_PREFIX = (
 )
 _QUALIFIED_ARGUMENT = re.compile(_CALL_PREFIX + r"\)")
 _QUALIFIED_ARGUMENT_PREFIX = re.compile(_CALL_PREFIX)
+_PLAIN_CALL_ALTERNATIVE = re.compile(r"[\w.:(), \t]+")
 
 
 def _batch_dependency_argument(input: CodeGrepInput) -> str:
@@ -650,6 +653,8 @@ async def _related_dependencies(
     if incomplete or not input.include_dependencies:
         return related, ""
     if related is not None:
+        if related.pattern.startswith("."):
+            return related, ""  # a shared member name does not establish a binding
         evidence = (
             related.model_copy(update={"matches": [*matches, *related.matches]})
             if isinstance(input.pattern, list)
@@ -676,10 +681,24 @@ async def _related_dependencies(
     return evidence, reason
 
 
-def _related_grep_pattern(input: CodeGrepInput) -> str:
+def _related_grep_pattern(input: CodeGrepInput, note: str) -> str:
+    from server.code.app.message_grep import REGEX_INVALID_NOTE
+
     if not input.related_on_miss or input.regex or not isinstance(input.pattern, str):
         return ""
+    if note == REGEX_INVALID_NOTE:
+        return _malformed_alternative_member(input.pattern)
     return qualified_call_argument(input.pattern)
+
+
+def _malformed_alternative_member(pattern: str) -> str:
+    terms = [term.strip() for term in pattern.split("|")]
+    if len(terms) < 2 or any(not _PLAIN_CALL_ALTERNATIVE.fullmatch(term) for term in terms):
+        return ""
+    members = {arg.rsplit(".", 1)[-1] for term in terms if (arg := qualified_call_argument(term))}
+    if len(members) != 1:
+        return ""
+    return "." + members.pop()
 
 
 def qualified_call_argument(pattern: str) -> str:
@@ -688,11 +707,12 @@ def qualified_call_argument(pattern: str) -> str:
 
 
 def _qualified_argument_line_re(argument: str, case_sensitive: bool) -> re.Pattern[str]:
+    flags = 0 if case_sensitive else re.IGNORECASE
+    if argument.startswith("."):
+        receiver = rf"{_IDENTIFIER}(?:\.{_IDENTIFIER})*"
+        return re.compile(rf"(?<![\w.]){receiver}{re.escape(argument)}(?!\w)", flags)
     # A longer name or a different receiver is a different argument.
-    return re.compile(
-        rf"(?<![\w.]){re.escape(argument)}(?!\w|\.\w)",
-        0 if case_sensitive else re.IGNORECASE,
-    )
+    return re.compile(rf"(?<![\w.]){re.escape(argument)}(?!\w|\.\w)", flags)
 
 
 async def _read_line_matches(
