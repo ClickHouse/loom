@@ -256,9 +256,9 @@ def build_context(root, destination, output=None):
     if (
         base is None
         or base[1] != PYTHON_IMAGE
-        or "FROM " + base[1] + " AS factory-controller" not in fragment
+        or "FROM py-builder AS factory-controller" not in fragment.splitlines()
     ):
-        raise LaunchError("Controller and core Python base images must have the same pinned ABI")
+        raise LaunchError("The controller must inherit the pinned Python builder stage")
     if prefix.count("--extra local-embedder") != 1:
         raise LaunchError("The locked core dependency command differs")
     prefix = prefix.replace(
