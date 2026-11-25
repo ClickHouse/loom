@@ -18,6 +18,13 @@ const locales = ["es", "ja", "ko", "pt-BR", "zh-CN"];
 const docsBlob = "https://github.com/ClickHouse/loom/blob/main/docs/";
 const docsSite = "https://loom.clickhouse.com/docs";
 const localizedSeo = {
+  "use-cases/code-intelligence-by-language.md": {
+    es: { title: "Inteligencia de código por lenguaje" },
+    ja: { title: "言語別のコードインテリジェンス" },
+    ko: { title: "언어별 코드 인텔리전스" },
+    "pt-BR": { title: "Inteligência de código por linguagem" },
+    "zh-CN": { title: "按语言查看代码智能支持" },
+  },
   "features/integrations/cursor.md": {
     ja: {
       title: "Cursorの共有エージェントメモリをMCPで使う",
