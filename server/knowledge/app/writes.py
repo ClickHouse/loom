@@ -516,7 +516,7 @@ async def _prepare_document_add_rows(
     revision: int,
     base_version: int,
     original: tuple[str, int, str, str],
-) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+) -> tuple[DocumentInsertRow, list[ChunkInsertRow], int]:
     """Build one document revision and its chunks without writing either."""
     from server.knowledge.store import documents as documents_repo
     from server.observability.otel import traced
