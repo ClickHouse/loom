@@ -1359,7 +1359,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.grep": (
         "Find known text in indexed source. Use code.search for behavior. "
-        "Pass a list in `pattern` to search literal alternatives in one call. "
+        "Batch literal alternatives in `pattern`, including code text and test-name prefixes. "
+        "Path filters apply to every alternative. "
         "Matches include bodies by default. "
         "`include_body: false` omits enclosing bodies. Add `context_lines: 0` for locations. "
         "Use literal strings or one RE2 string with `regex: true`. "
@@ -2168,11 +2169,10 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`uses_brief: true` summarizes callers. Check freshness and source elision."
     ),
     "code.grep": (
-        "Find text and enclosing bodies. Keep bodies for edits. "
-        "Use code.edit_context for code and tests. "
-        "Batch code and test literals or use `regex: true` for RE2. Scope by path. "
-        "For locations only, set `include_body: false` and `context_lines: 0`. "
-        "Use code.search for behavior.\n\n"
+        "Find text. Keep bodies for edits. "
+        "Batch code and test-name prefixes. Scope both with `path_globs` or omit `path_prefix`. "
+        "`regex: true` uses RE2. Locations use `include_body: false`, `context_lines: 0`. "
+        "Use code.search for behavior and code.edit_context for edits.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
         "Call prefixes and absent call expressions can return related source and linked notes. "
         "Use code.symbol for a definition or code.read for exact lines. Filter with `langs`. "

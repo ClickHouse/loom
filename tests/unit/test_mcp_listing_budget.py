@@ -399,12 +399,12 @@ def test_the_compact_profile_keeps_the_tool_names():
 def test_compact_coding_grep_advertises_search_options_and_edit_routing():
     compact = {t["name"]: t for t in _listing("coding", True, "compact")}
     description = compact["loom_code_grep"]["description"]
-    assert "Find text and enclosing bodies" in description
-    assert "Keep bodies for edits" in description
-    assert "Batch code and test literals or use `regex: true` for RE2" in description
-    assert "For locations only, set `include_body: false` and `context_lines: 0`" in description
-    assert "Scope by path" in description
-    assert "Use loom_code_edit_context for code and tests" in description
+    assert "Find text. Keep bodies for edits" in description
+    assert "Batch code and test-name prefixes" in description
+    assert "Scope both with `path_globs` or omit `path_prefix`" in description
+    assert "`regex: true` uses RE2" in description
+    assert "Locations use `include_body: false`, `context_lines: 0`" in description
+    assert "loom_code_edit_context for edits" in description
     assert "loom_code_search" in description
 
     full = {t["name"]: t for t in _listing("coding", True, "full")}

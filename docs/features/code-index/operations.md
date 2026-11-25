@@ -91,6 +91,10 @@ the parentheses. All alternatives share a result limit, and each matching line
 or file appears once.
 `mode: "message"` and `regex: true` require a single string.
 
+To find implementation and existing tests together, batch code text and test
+name prefixes. Use `path_globs` that cover both roots or omit path filters.
+A `path_prefix` applies to the whole batch.
+
 Use `code.edit_context` for implementation, indexed tests and linked notes in
 one request. Give the definition name or location if known. Literal `clues`
 can locate the edit target in the named file or across the index when you omit
