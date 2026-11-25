@@ -149,8 +149,11 @@ found a lesson. A patch score measures whether it completed the work.
    an earlier decision, one with an outdated lesson, and one with no useful prior
    memory. Record the starting commit, issue text, and required tests for each.
 2. **Freeze what the agent can know.** Give the memory-enabled runs only lessons
-   available before the task started. Keep the fix, later discussions, and
-   evaluator tests out of both agents' inputs and out of the memory store and index.
+   available before the task started. Give both runs a source snapshot of the
+   starting commit or a repository containing only that commit and its
+   ancestors, including in its Git objects and refs. Keep the fix, later
+   discussions, and evaluator tests out of the inputs, memory, and index.
+   Restrict remote repository and issue access that could reveal the solution.
    Keep the same code index, ordinary tools, model, time, and token budgets in both
    runs when measuring memory alone. When a tool also changes search or capture,
    describe the result as a comparison of the complete setups.
