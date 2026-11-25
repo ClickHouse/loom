@@ -161,6 +161,49 @@ def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None
 
 
 @pytest.mark.asyncio
+async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(monkeypatch):
+    revision = "a" * 40
+    target = "lib::register"
+    names = ["one", "two", "three"]
+
+    class Repo:
+        async def edges_for_symbols(self, *args, **kw):
+            return [
+                {
+                    **_edge(path, line, prefix + name),
+                    "indexed_commit": commit,
+                    "to_qualified_name": target,
+                }
+                for path, prefix, commit in (
+                    ("tests/test_a.py", "test_other_", revision),
+                    ("tests/test_z.py", "test_register_", "b" * 40),
+                )
+                for line, name in zip((10, 20, 30), names, strict=True)
+            ]
+
+        async def test_map_for(self, *args):
+            return []
+
+        async def source_chunks_for_span(self, org, ns, path, start, end, model, **kw):
+            return [
+                {
+                    "start_line": start,
+                    "end_line": end,
+                    "indexed_commit": revision,
+                    "content": "    register()\n" * (end - start + 1),
+                }
+            ]
+
+    monkeypatch.setattr(settings, "embedding_model", "fake-ngram-3072")
+    repo: Any = Repo()
+    examples = await usage_examples(
+        repo, "org", "code", ["register"], tests_only=True, context_lines=2
+    )
+    assert [site["caller"] for site in examples] == [f"test_other_{name}" for name in names]
+    assert all(site["context"]["commit"] == revision for site in examples)
+
+
+@pytest.mark.asyncio
 async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch) -> None:
     revision = "a" * 40
     bridge_path = "web/app.py"

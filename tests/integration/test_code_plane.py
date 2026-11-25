@@ -546,11 +546,10 @@ async def test_edit_context_prefers_distinct_test_source_windows(
         CodeEditContextInput(org=org, namespace=ns, name="DB::doWork", include_lessons=False)
     )
     (definition,) = response.definitions
-    third_line = 3 if older_site_line == 20 else 66
     assert [(site["path"], site["line"]) for site in definition.examples] == [
         (path, 2),
         (path, 35),
-        (path, third_line),
+        (path, 66),
     ]
     assert all(site["context"]["commit"] == "a" * 40 for site in definition.examples)
     assert "DB::doWork();\n    DB::doWork();" in definition.examples[0]["context"]["text"]

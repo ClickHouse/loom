@@ -95,10 +95,10 @@ async def usage_examples(
     for edge in ranked:
         by_location.setdefault((str(edge["path"]), int(edge["line"])), edge)
     sites = list(by_location.values())
+    baseline = sites[: max(1, limit)]
     if tests_only:
         sites = _rank_test_sites(sites)
-    baseline = sites[: max(1, limit)]
-    requested = baseline
+    requested = sites[: len(baseline)]
     if tests_only and with_context:
         preferred = _prefer_distinct_test_windows(sites, context_lines)[: len(baseline)]
         requested = preferred + [edge for edge in baseline if edge not in preferred]
@@ -124,12 +124,17 @@ async def usage_examples(
                 for site, revision in zip(out, revisions, strict=True)
             )
         )
-        # A promoted site only earns a slot when its revision still has source.
-        return [
+        if not tests_only:
+            return examples
+        # Example ranking can promote callers whose source is no longer retained.
+        # Keep source-backed fallbacks ahead of location-only rows.
+        backed = [example for example in examples if "context" in example]
+        locations = [
             example
             for edge, example in zip(requested, examples, strict=True)
-            if "context" in example or edge in baseline
-        ][: len(baseline)]
+            if edge in baseline and "context" not in example
+        ]
+        return (backed + locations)[: len(baseline)]
     return out
 
 
