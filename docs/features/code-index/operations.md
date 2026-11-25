@@ -147,6 +147,11 @@ and satisfy the request's path filters. HTTP and SDK callers can set
 Set `include_dependencies: false` or `context_lines: 0` to omit these definitions.
 A literal batch can include the same definitions when its call expressions
 refer to one argument and the exact matches contain its use.
+When a literal names a Python function whose body forwards to a single call,
+`include_dependencies` can also return the bound target under
+`related.dependencies`. The related pattern names the forwarding function.
+This case requires enclosing bodies. The target must share the match's indexed
+revision and satisfy the path filters.
 
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
 lines by default. Pass `include_body=false` to omit bodies and `context_lines=0`
