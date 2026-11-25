@@ -302,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         AttributeError,
         OSError,
         EOFError,
+        OverflowError,
         RecursionError,
         tarfile.TarError,
         zlib.error,

@@ -412,6 +412,18 @@ class ArchiveChecks(unittest.TestCase):
                 self.assertEqual(result["runtime"], "UNRUN")
                 self.assertNotIn("synthetic secret", json.dumps(result))
 
+    def test_oversized_gnu_metadata_header_reports_failure(self):
+        info = tarfile.TarInfo("././@LongLink")
+        info.type = tarfile.GNUTYPE_LONGNAME
+        info.size = 1 << 80
+        header = info.tobuf(format=tarfile.GNU_FORMAT)
+        args = self.rewrite_tar(self.build(), header + b"\x00" * 1024)
+        code, result = self.invoke_cli(args)
+        self.assertEqual(code, 1)
+        self.assertEqual(result["archive_inspection"], "FAIL")
+        self.assertEqual(result["error_class"], "OverflowError")
+        self.assertEqual(result["runtime"], "UNRUN")
+
 
 if __name__ == "__main__":
     unittest.main()
