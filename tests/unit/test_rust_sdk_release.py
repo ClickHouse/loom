@@ -143,6 +143,7 @@ def test_source_drift_is_rejected(source, tmp_path: Path, name: str) -> None:
         (b'blocking = ["tokio/rt"]', b"blocking = []", "features"),
         (b'required-features = ["blocking"]', b"required-features = []", "blocking feature"),
         (b'path = "src/lib.rs"', b'path = "src/other.rs"', "library"),
+        (b'name = "clickhouse_loom"', b'name = "other_library"', "library"),
     ],
 )
 def test_normalized_manifest_drift_is_rejected(source, tmp_path, before, after, message) -> None:
@@ -150,6 +151,34 @@ def test_normalized_manifest_drift_is_rejected(source, tmp_path, before, after, 
     files["Cargo.toml"] = files["Cargo.toml"].replace(before, after)
     with pytest.raises(ValueError, match=message):
         rust_sdk.verify_package(archive(tmp_path, files), root)
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        b'crate-type = ["cdylib"]',
+        b"proc-macro = true",
+        b'required-features = ["blocking"]',
+        b'edition = "2018"',
+        b"test = false",
+        b"doctest = false",
+    ],
+)
+def test_packaged_library_option_drift_is_rejected(source, tmp_path: Path, option: bytes) -> None:
+    root, files = source
+    files["Cargo.toml"] += option + b"\n"
+    with pytest.raises(ValueError, match="library"):
+        rust_sdk.verify_package(archive(tmp_path, files), root)
+
+
+def test_explicit_source_library_options_are_preserved(source, tmp_path: Path) -> None:
+    root, files = source
+    options = b'crate-type = ["rlib"]\ndoctest = false\n'
+    original = SOURCE + b"\n[lib]\n" + options
+    (root / rust_sdk.SDK / "Cargo.toml").write_bytes(original)
+    files["Cargo.toml.orig"] = original
+    files["Cargo.toml"] += options
+    assert rust_sdk.verify_package(archive(tmp_path, files), root)
 
 
 def test_nonignored_source_addition_must_ship(source, tmp_path: Path) -> None:

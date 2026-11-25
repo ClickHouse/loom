@@ -105,6 +105,13 @@ def _check_manifest(files: dict[str, bytes], source: bytes) -> None:
             raise ValueError(f"packaged {key} differ from source")
     if packed.get("lib", {}).get("path") != "src/lib.rs":
         raise ValueError("packaged library must use src/lib.rs")
+    library = {
+        "name": original["package"]["name"].replace("-", "_"),
+        "path": "src/lib.rs",
+        **original.get("lib", {}),
+    }
+    if packed.get("lib", {}) != library:
+        raise ValueError("packaged library options differ from source")
     blocking = [item for item in packed.get("example", []) if item.get("name") == "blocking"]
     if len(blocking) != 1 or blocking[0].get("required-features") != ["blocking"]:
         raise ValueError("blocking example must require the blocking feature")
