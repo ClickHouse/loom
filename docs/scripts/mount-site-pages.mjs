@@ -26,8 +26,13 @@ const siteRoutes = [...publicPages].map(([path, destination]) => {
   return { src, dest: destination };
 });
 
+const aliasRedirects = [...publicPages].map(([path, destination]) => ({
+  src: `^${destination}/?$`,
+  status: 308,
+  headers: { Location: path },
+}));
 const publicPaths = new Set(siteRoutes.map(({ src }) => src));
-config.routes = [...siteRoutes, ...config.routes.filter(({ src }) => !publicPaths.has(src))];
+config.routes = [...aliasRedirects, ...siteRoutes, ...config.routes.filter(({ src }) => !publicPaths.has(src))];
 publishSiteDiscovery(new URL("static/", output), {
   root: [...publicPages.keys()],
   aliases: [...publicPages.values()],
