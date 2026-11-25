@@ -2,6 +2,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { escape } from "html-escaper";
 
 const origin = "https://loom.clickhouse.com";
+const daumOwnershipProof =
+  "#DaumWebMasterTool:a363b3401eee3c430ffb111a936fcad7fe4ff06819aca82edabb1196d703baab:O++XJBLIZbSwCRTbPGXamQ==";
 const maxRoutePatternLength = 4096;
 
 function escapePattern(path) {
@@ -86,6 +88,9 @@ export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = 
 
   writeFileSync(docsSitemap, docs);
   writeFileSync(new URL("sitemap.xml", staticRoot), docs.replace("</urlset>", `${siteEntries.join("\n")}\n</urlset>`));
-  writeFileSync(new URL("robots.txt", staticRoot), `User-agent: *\nAllow: /\n\nSitemap: ${origin}/sitemap.xml\n`);
+  writeFileSync(
+    new URL("robots.txt", staticRoot),
+    `User-agent: *\nAllow: /\n\nSitemap: ${origin}/sitemap.xml\n\n${daumOwnershipProof}\n`,
+  );
   return translationRedirects(docs, staticRoot);
 }
