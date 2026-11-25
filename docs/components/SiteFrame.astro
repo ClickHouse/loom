@@ -60,6 +60,7 @@ const navigation = [
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
     <link rel="canonical" href={canonical} />
+    <link rel="describedby" type="text/plain" href="/docs/llms.txt" />
     {home && homeAlternates.map(({ language, href }) => (
       <link rel="alternate" hreflang={language} href={new URL(href, Astro.site)} />
     ))}
