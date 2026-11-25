@@ -2,13 +2,13 @@
 
 Use Loom for every search or read of unchanged indexed source and tests.
 Start with `loom_code_grep` for exact text or `loom_code_search` for behavior.
-Batch known implementation and test literals in one grep request. Keep the
-default enclosing bodies when you need the code for an edit.
+Batch code and test-name prefixes in one grep `pattern` list. Scope both roots
+with globs if needed. Keep enclosing bodies for edits.
 
-Use `loom_code_edit_context` to get a known definition and related tests
-together. With literal `clues`, pass the known file path as `name`. Reuse
-returned source from the current revision and check linked notes for freshness.
+Use `loom_code_edit_context` with a definition name or literal `clues` for
+implementation and related tests. Add the file as `name` when known. Reuse
+current source and check linked note freshness.
 
-Use local tools to edit, run tests, inspect Git and read working-copy changes,
-untracked files or unindexed source. If Loom cannot supply needed evidence,
-read it locally. An editing script may read the file it patches.
+Edit, run tests and inspect Git locally. Read changed, untracked or unindexed
+source locally. If Loom cannot supply needed evidence, read it locally.
+Editing scripts can read files they patch.

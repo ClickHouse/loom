@@ -46,14 +46,15 @@ class ProjectInstructions(TestCase):
             "Start with `loom_code_grep` for exact text or `loom_code_search` for behavior",
             text,
         )
-        self.assertIn("Batch known implementation and test literals in one grep request", text)
+        self.assertIn("Batch code and test-name prefixes in one grep `pattern` list", text)
+        self.assertIn("Scope both roots with globs", text)
         self.assertIn(
-            "Use `loom_code_edit_context` to get a known definition and related tests", text
+            "Use `loom_code_edit_context` with a definition name or literal `clues`", text
         )
-        self.assertIn("pass the known file path as `name`", text)
-        self.assertIn("Keep the default enclosing bodies when you need the code for an edit", text)
-        self.assertIn("Use local tools to edit, run tests, inspect Git", text)
-        self.assertIn("read working-copy changes, untracked files or unindexed source", text)
+        self.assertIn("Add the file as `name` when known", text)
+        self.assertIn("Keep enclosing bodies for edits", text)
+        self.assertIn("Edit, run tests and inspect Git locally", text)
+        self.assertIn("Read changed, untracked or unindexed source locally", text)
         self.assertIn("If Loom cannot supply needed evidence, read it locally", text)
 
     def test_baseline_and_loom_use_their_frozen_images(self):
