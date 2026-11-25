@@ -114,7 +114,7 @@ async def usage_examples(
     model = served_model_label(settings.embedding_model)
 
     async def read(edge: dict[str, Any]) -> dict[str, Any]:
-        revision = str(edge.get("indexed_commit") or "").rstrip("\\0")
+        revision = str(edge.get("indexed_commit") or "").rstrip("\0")
         return await _example_context(repo, org, ns, location(edge), context_lines, model, revision)
 
     if not tests_only:
@@ -135,20 +135,12 @@ async def _retained_examples(
     limit: int,
     read: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    """Read the previous candidates when ranked sites cannot fill the source slots."""
-    examples = await asyncio.gather(*(read(edge) for edge in preferred))
-    backed = [example for example in examples if "context" in example]
-    if len(backed) < limit:
-        seen = {(edge["path"], edge["line"]) for edge in preferred}
-        pending = []
-        for edge in backups:
-            key = (edge["path"], edge["line"])
-            if key not in seen:
-                seen.add(key)
-                pending.append(edge)
-        fallback = await asyncio.gather(*(read(edge) for edge in pending))
-        backed.extend(example for example in fallback if "context" in example)
-    return backed[:limit]
+    """Read ranked and fallback windows within one shared deadline."""
+    candidates: dict[tuple[str, int], dict[str, Any]] = {}
+    for edge in (*preferred, *backups):
+        candidates.setdefault((edge["path"], edge["line"]), edge)
+    examples = await asyncio.gather(*(read(edge) for edge in candidates.values()))
+    return [example for example in examples if "context" in example][:limit]
 
 
 def _test_name_words(name: str) -> set[str]:

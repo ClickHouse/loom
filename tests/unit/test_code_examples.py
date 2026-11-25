@@ -165,7 +165,7 @@ def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None
 async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(
     monkeypatch, stale_setup
 ):
-    revision = "a" * 40
+    revision = "a" * 39 + "0"
     older = "b" * 40
     names = ["one", "two", "three"]
     prefix = (
@@ -181,7 +181,7 @@ async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(
             return [
                 {
                     **_edge(path, line, caller),
-                    "indexed_commit": commit,
+                    "indexed_commit": commit + chr(0),
                     "to_qualified_name": "lib::register",
                 }
                 for path, line, caller, commit in prefix + candidates
@@ -224,6 +224,7 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(
         "qualified_name": "web.blueprints::Blueprint::register",
     }
     test_path = "tests/test_routes.py"
+    fallback_started = asyncio.Event()
 
     def incoming(path, line, caller, from_id, to_id, callee, commit=revision):
         return {
@@ -292,7 +293,9 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(
         async def source_chunks_for_span(self, org, ns, path, start, end, model, **options):
             assert options["with_revision"]
             if path == "tests/test_z.py":
+                await fallback_started.wait()
                 return []
+            fallback_started.set()
             return [
                 {
                     "path": path,
@@ -305,7 +308,10 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(
 
     monkeypatch.setattr(settings, "embedding_model", "fake-ngram-3072")
     repo: Any = Repo()
-    examples = await indirect_test_examples(repo, "org", "code", ["register"], target, revision, 2)
+    async with asyncio.timeout(0.15):
+        examples = await indirect_test_examples(
+            repo, "org", "code", ["register"], target, revision, 2
+        )
 
     expected = [
         ("test_blueprint_defaults", 40),
