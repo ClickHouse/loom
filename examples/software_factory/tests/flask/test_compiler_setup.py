@@ -288,7 +288,11 @@ class CompilerSetup(unittest.TestCase):
                 patch.object(setup, "_run", side_effect=AssertionError("No Docker")),
             ):
                 result = setup.prepare_compiler_artifacts(
-                    assets, {}, root / "output", build_image=Mock(), loom_python=sys.executable
+                    assets,
+                    {},
+                    root / "output",
+                    resources=SimpleNamespace(owner="a" * 32),
+                    loom_python=sys.executable,
                 )
             self.assertEqual(result["status"], "complete")
             self.assertEqual(result["language"], "python")

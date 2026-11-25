@@ -199,7 +199,43 @@ class ProvisioningContracts(unittest.TestCase):
         commands = [call.args[0] for call in self.run.call_args_list]
         self.assertIn(["docker", "image", "inspect", tag], commands)
         self.assertEqual(result["removed"], [{"kind": "image", "id": identifier, "name": tag}])
-        self.assertIn(["docker", "image", "rm", identifier], commands)
+        self.assertIn(["docker", "image", "rm", "--no-prune", tag], commands)
+
+    def test_cleanup_removes_each_registered_image_tag_with_the_same_digest(self):
+        identifier = "sha256:" + "d" * 64
+        tags = ["factory-dependency:one", "factory-dependency:two"]
+        for tag in tags:
+            self.provision._record("created", kind="image", name=tag, id=identifier)
+        self.run.return_value.stdout = json.dumps(
+            [{"Id": identifier, "Config": {"Labels": {"loom.factory.owner": "a" * 32}}}]
+        )
+        result = self.provision.cleanup()
+        self.assertTrue(result["complete"])
+        removals = [call.args[0] for call in self.run.call_args_list if "rm" in call.args[0]]
+        self.assertEqual(removals, [["docker", "image", "rm", "--no-prune", t] for t in tags[::-1]])
+
+    def test_cleanup_records_a_busy_image_and_removes_independent_resources(self):
+        identifier = "sha256:" + "d" * 64
+        tag = "factory-harbor:busy"
+        self.provision._record("created", kind="container", name="owned-worker", id="c" * 64)
+        self.provision._record("created", kind="image", name=tag, id=identifier)
+
+        def run(command, **kwargs):
+            if command[:3] == ["docker", "image", "rm"]:
+                raise subprocess.CalledProcessError(1, command, stderr="Image is in use")
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    [{"Id": identifier, "Config": {"Labels": {"loom.factory.owner": "a" * 32}}}]
+                ),
+                stderr="",
+                returncode=0,
+            )
+
+        self.provision.run = run
+        result = self.provision.cleanup()
+        self.assertFalse(result["complete"])
+        self.assertEqual([r["name"] for r in result["retained"]], [tag])
+        self.assertEqual([r["name"] for r in result["removed"]], ["owned-worker"])
 
     def test_shared_twelve_code_bindings_and_thirty_six_memory_only_scopes(self):
         from examples.software_factory.harbor.live_support import schedule

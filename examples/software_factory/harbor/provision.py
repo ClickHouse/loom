@@ -183,6 +183,19 @@ class Provisioner:
         self._record("created", kind=kind, name=name, id=identifier)
         return identifier
 
+    def create_container(self, name, command):
+        return self._create("container", name, command)
+
+    def remove_container(self, name, identifier):
+        self._owned("container", identifier)
+        logs = self._cmd(["docker", "logs", identifier])
+        target = self.output / "logs" / (identifier + ".log")
+        target.parent.mkdir(exist_ok=True)
+        target.write_text(logs.stdout + logs.stderr)
+        os.chmod(target, 0o600)
+        self._cmd(["docker", "rm", "-f", "-v", identifier])
+        self._record("removed", kind="container", name=name, id=identifier)
+
     def build_image(self, tag, context, iidfile, *, flags=()):
         self._record("intent", kind="image", name=tag, iidfile=str(iidfile))
         self._cmd(
@@ -1527,6 +1540,7 @@ class Provisioner:
         for row in rows:
             if row["event"] != "intent" or (row["kind"], row["name"]) in known:
                 continue
+            require(row["owner"] == self.owner, "Resource journal owner differs")
             kind = row["kind"]
             if kind == "network_attachment":
                 self._owned("network", row["network"])
@@ -1561,6 +1575,32 @@ class Provisioner:
                 "created", kind=kind, name=row["name"], id=resolved, recovered_from_intent=True
             )
 
+    def _remove_image(self, tag, identifier):
+        try:
+            image = self._owned("image", tag)
+        except subprocess.CalledProcessError as error:
+            if f"No such image: {tag}" not in (error.stderr or ""):
+                raise
+            return
+        require(image["Id"] == identifier, "Cleanup image tag differs from its recorded image ID")
+        self._cmd(["docker", "image", "rm", "--no-prune", tag])
+
+    def _remove_resource(self, row):
+        kind, name, identifier = row["kind"], row["name"], row["id"]
+        if kind == "container":
+            self.remove_container(name, identifier)
+            return
+        if kind == "network_attachment":
+            self._owned("network", row["network"])
+            self._owned("container", identifier)
+            self._cmd(["docker", "network", "disconnect", "--force", row["network"], identifier])
+        elif kind == "image":
+            self._remove_image(name, identifier)
+        else:
+            self._owned(kind, identifier)
+            self._cmd(["docker", kind, "rm", identifier])
+        self._record("removed", kind=kind, id=identifier, name=name)
+
     def cleanup(self):
         rows = (
             [json.loads(line) for line in self.journal.read_text().splitlines()]
@@ -1573,40 +1613,33 @@ class Provisioner:
             if self.journal.exists()
             else []
         )
-        removed = set(row["id"] for row in rows if row["event"] == "removed")
-        receipts = []
+        removed = {
+            (row["kind"], row["name"], row["id"]) for row in rows if row["event"] == "removed"
+        }
+        receipts, retained = [], []
         for row in reversed(rows):
-            if row["event"] != "created" or row["id"] in removed:
+            if row["event"] != "created":
                 continue
             require(row["owner"] == self.owner, "Resource journal owner differs")
-            kind, identifier = row["kind"], row["id"]
-            if kind == "network_attachment":
-                self._owned("network", row["network"])
-                self._owned("container", identifier)
-                self._cmd(
-                    ["docker", "network", "disconnect", "--force", row["network"], identifier]
-                )
-            else:
-                self._owned(kind, identifier)
-                if kind == "container":
-                    logs = self._cmd(["docker", "logs", identifier])
-                    target = self.output / "logs" / (identifier + ".log")
-                    target.parent.mkdir(exist_ok=True)
-                    target.write_text(logs.stdout + logs.stderr)
-                    os.chmod(target, 0o600)
-                command = (
-                    ["docker", "rm", "-f", "-v", identifier]
-                    if kind == "container"
-                    else ["docker", "image", "rm", identifier]
-                    if kind == "image"
-                    else ["docker", kind, "rm", identifier]
-                )
-                self._cmd(command)
-            self._record("removed", kind=kind, id=identifier, name=row["name"])
-            removed.add(identifier)
-            receipts.append({"kind": kind, "id": identifier, "name": row["name"]})
+            kind, name, identifier = row["kind"], row["name"], row["id"]
+            key = kind, name, identifier
+            if key in removed:
+                continue
+            resource = {"kind": kind, "id": identifier, "name": name}
+            try:
+                self._remove_resource(row)
+            except subprocess.CalledProcessError as error:
+                retained.append({**resource, "exit_code": error.returncode})
+                continue
+            removed.add(key)
+            receipts.append(resource)
         if self._owns_http and self.http is not None and hasattr(self.http, "close"):
             self.http.close()
-        result = {"owner": self.owner, "complete": True, "removed": receipts}
+        result = {
+            "owner": self.owner,
+            "complete": not retained,
+            "removed": receipts,
+            "retained": retained,
+        }
         save(self.output / "cleanup.json", result)
         return result

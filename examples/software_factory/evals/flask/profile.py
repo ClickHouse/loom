@@ -79,7 +79,7 @@ def materialize_cases(assets, output):
 
 
 def prepare_compiler_artifacts(
-    assets, materialization, output, *, loom_python, owner, task_ids, build_image
+    assets, materialization, output, *, loom_python, task_ids, resources
 ):
     from .compiler_setup import prepare_compiler_artifacts as compile_sources
 
@@ -88,9 +88,8 @@ def prepare_compiler_artifacts(
         materialization,
         output,
         loom_python=loom_python,
-        owner=owner,
         task_ids=task_ids,
-        build_image=build_image,
+        resources=resources,
     )
 
 

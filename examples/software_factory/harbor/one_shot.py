@@ -290,9 +290,8 @@ def execute(args):
                 materialized,
                 output / "compilers",
                 loom_python=core_python,
-                owner=args.owner,
                 task_ids=frozenset(prepared["tasks"]),
-                build_image=runtime.build_image,
+                resources=runtime,
             ),
         )
         meter.set_phase("native-setup")

@@ -285,7 +285,7 @@ def compiler_container_command(image: str, project: Path, name: str, *, owner: s
         "create",
         "--name",
         name,
-        "--label=loom.factory.compiler.owner=" + owner,
+        f"--label={OWNER_LABEL}={owner}",
         "--network=none",
         "--read-only",
         "--cpus=2",
@@ -493,10 +493,9 @@ def prepare_compiler_artifacts(
     materialization: dict,
     output: Path,
     *,
-    build_image,
+    resources,
     loom_python=None,
     cache_file: Path | None = None,
-    owner: str | None = None,
     task_ids: frozenset[str] | None = None,
 ) -> dict:
     """Compile frozen source revisions; no model calls, server writes, or repository tests."""
@@ -504,9 +503,7 @@ def prepare_compiler_artifacts(
 
     assets, output = Path(assets).resolve(strict=True), Path(output).resolve()
     python = _normalizer_python(loom_python)
-    owner = owner or os.environ.get("FACTORY_OWNER") or uuid.uuid4().hex
-    if not re.fullmatch(r"[a-f0-9]{32}", owner):
-        raise ValueError("Compiler resource owner requires 32 lowercase hex characters")
+    owner = resources.owner
     revisions = compiler_revisions(assets, materialization, task_ids=task_ids)
     image_rows = _read(assets / "images.json")["images"]
     architectures = {image_rows[row["dependency_task_id"]]["architecture"] for row in revisions}
@@ -566,7 +563,7 @@ def prepare_compiler_artifacts(
                 for row in pending
             },
             receipt,
-            build_image,
+            resources.build_image,
         )
         for revision, project, staged in pending:
             packages = _expected_packages(revision["dependency_task_id"])
@@ -584,11 +581,11 @@ def prepare_compiler_artifacts(
                 command=command,
                 removed=False,
                 owner=owner,
-                label="loom.factory.compiler.owner",
+                label=OWNER_LABEL,
             )
             receipt["containers"].append(owned)
             _write(output / "compiler-artifacts.json", receipt)
-            container = _run(command).decode().strip()
+            container = resources.create_container(owned["name"], command)
             owned["id"] = container
             _write(output / "compiler-artifacts.json", receipt)
             try:
@@ -605,7 +602,7 @@ def prepare_compiler_artifacts(
                 if int(exit_code) != 0:
                     raise RuntimeError("Compiler container failed; inspect retained output")
             finally:
-                _run(["docker", "rm", "-f", container], timeout=30)
+                resources.remove_container(owned["name"], container)
                 owned["removed"] = True
                 _write(output / "compiler-artifacts.json", receipt)
             proof = _normalize(project, revision, pins, python)
