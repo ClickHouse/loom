@@ -93,6 +93,8 @@ the guidance file. Setup checks identical parent layers and image configuration,
 and the audit checks each attempt's expected image and the staged guidance hash.
 The public reproduction manifest retains the exact instructions for the
 configured workflow. Use a published result's serving revision to reproduce it.
+The [Claude Code setup recipe](../../SETUP.md) shows how to use those instructions
+and the native MCP connection in your own factory.
 
 The model, Claude Code version, checkout image, one CPU and 2 GiB agent memory
 are shared across arms for each issue. During coding, the sandbox allows the

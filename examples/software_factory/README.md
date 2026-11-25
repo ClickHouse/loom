@@ -1,5 +1,8 @@
 # Software factory evaluations
 
+Use the [Claude Code setup recipe](SETUP.md) to configure your own factory with
+the same direct Loom MCP connection and source instructions used in the benchmark.
+
 Run the Python E2E example with a local Docker daemon:
 
 ```bash
