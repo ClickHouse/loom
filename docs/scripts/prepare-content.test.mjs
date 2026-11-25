@@ -89,6 +89,17 @@ test("keeps a compact Chinese introduction ahead of shared reference text", () =
   assert.equal(load(yaml).description, "每个 org.* 操作接受和返回的确切字段。");
 });
 
+test("omits introductory fragments whose lists or tables would be left out", () => {
+  const prose = "The client reads memory over MCP and can retrieve lessons with their source.";
+  for (const source of [
+    `The client configuration has three parts:\n\n| Field | Meaning |\n| --- | --- |\n| URL | Server |\n\n${prose}`,
+    `${prose} The client configuration has three parts:\n\n- Server URL\n- Token\n- Toolset`,
+  ]) {
+    const yaml = withContentMetadata(source).split(/^---\n/m)[1];
+    assert.equal(load(yaml).description, prose);
+  }
+});
+
 test("moves a generated translation title into Blume front matter", () => {
   const prepared = normalizeTranslatedTitle(
     "<!-- i18n: source=docs/getting-started/quickstart.md blob=abc model=test -->\n" +

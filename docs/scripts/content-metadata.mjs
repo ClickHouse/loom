@@ -23,7 +23,11 @@ function descriptionFrom(body, locale) {
   const minimumLength = locale === "ja" || locale === "zh-CN" ? 16 : 30;
   for (const node of fromMarkdown(body).children) {
     if (node.type !== "paragraph") continue;
-    const prose = plainText(node).replace(/\s+/g, " ").trim();
+    let prose = plainText(node).replace(/\s+/g, " ").trim();
+    if (prose.endsWith(":") || prose.endsWith("：")) {
+      const tail = [...new Intl.Segmenter(locale, { granularity: "sentence" }).segment(prose)].at(-1);
+      prose = prose.slice(0, tail.index).trimEnd();
+    }
     if (prose.length < minimumLength || [":::", "!!!", "???", "[!", "|"].some((prefix) => prose.startsWith(prefix)))
       continue;
     if (prose.length <= descriptionLimit) return prose;
