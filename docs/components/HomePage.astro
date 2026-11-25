@@ -12,6 +12,7 @@ interface Props {
 
 const { locale } = Astro.props;
 const copy = homeCopy[locale];
+const languageNames = new Intl.DisplayNames(locale, { type: "language" });
 const docsPaths = new Set(data.routes.filter((route) => !route.fallback && !route.draft).map(({ path }) => path));
 function docLink(path: string) {
   const translated = `/${locale}${path}`;
@@ -26,7 +27,11 @@ const capabilities = [
   { ...copy.code, ...docLink("/use-cases/memory-linked-to-code") },
 ];
 const useCases = [
-  { label: copy.softwareFactory, ...docLink("/use-cases/multi-agent") },
+  {
+    label: copy.softwareFactory,
+    href: "/docs/use-cases/multi-agent#choosing-memory-for-a-software-factory",
+    hreflang: "en",
+  },
   { label: copy.knowledgeFactory, ...docLink("/use-cases/knowledge-factory") },
   { label: copy.autonomous, ...docLink("/use-cases/autonomous-agents") },
   { label: copy.selfHosted, ...docLink("/use-cases/self-hosted-clickhouse") },
@@ -86,7 +91,11 @@ const useCases = [
       <p>{copy.useCasesDetail}</p>
     </div>
     <nav class="site-actions" aria-label={copy.useCasesLabel}>
-      {useCases.map(({ label, href, hreflang }) => <a class="text-link" href={href} hreflang={hreflang}>{label}</a>)}
+      {useCases.map(({ label, href, hreflang }) => (
+        <a class="text-link" href={href} hreflang={hreflang}>
+          {label}{hreflang !== locale && ` (${languageNames.of(hreflang)})`}
+        </a>
+      ))}
     </nav>
   </section>
 
