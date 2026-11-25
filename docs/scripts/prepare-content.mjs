@@ -397,7 +397,7 @@ async function prepareDocsScreenshot() {
   const srcset = candidates.map(({ url, width }) => `${url} ${width}w`).join(", ");
   // Match the documentation column's maximum width and mobile gutters.
   const sizes = "(max-width: 45rem) calc(100vw - 3rem), 42rem";
-  const markup = `<img src="${fullSize}" srcset="${srcset}" sizes="${sizes}" alt="${escape(match[1])}" width="${width}" height="${height}" loading="eager" fetchpriority="high" decoding="async" data-zoom-src="${fullSize}" />`;
+  const markup = `<img src="${fullSize}" srcset="${srcset}" sizes="${sizes}" alt="${escape(match[1])}" width="${width}" height="${height}" loading="lazy" decoding="async" data-zoom-src="${fullSize}" />`;
   writeFileSync(
     landing,
     text.replace(screenshot, () => markup),
