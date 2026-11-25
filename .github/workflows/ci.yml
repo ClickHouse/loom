@@ -1449,7 +1449,7 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --no-deps $RUST_SDK_FEATURES
-      - name: Verify the distributable crate against its source
+      - name: Verify the distributable crate and its license
         run: |
           version=$(python ../../scripts/release/rust_sdk.py check-version)
           cargo package --locked $RUST_SDK_FEATURES

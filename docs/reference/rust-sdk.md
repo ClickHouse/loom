@@ -161,10 +161,25 @@ dispatch require declared idempotence. Declared idempotent writes reuse one
 idempotency key across attempts. A separate call generates a separate key;
 after a timeout, read the result before resubmitting a write.
 
-Retries default to at most three attempts for connection failures, HTTP 408
-and HTTP 500–599. Backoff starts at 100 ms, doubles to a five-second ceiling
-and uses jitter. 429 pacing is configured separately. To disable both, build
-with `.retry(RetryPolicy::disabled()).pacing(false)`.
+Customize `RetryPolicy` through the client builder's `.retry(...)` or
+`CallOptions::retry` for one call. Start with `RetryPolicy::default()` and set
+`max_attempts`, backoff, HTTP statuses or timeout policy. By default, each retry
+round allows at most three attempts, including the initial request, for connection
+failures, HTTP 408 and HTTP 500–599. Backoff starts at 100 ms, doubles to a
+five-second ceiling and uses jitter.
+
+`RetryPolicy::disabled()` disables retries. HTTP 429 pacing is configured
+separately and starts a fresh retry round after waiting. To disable both:
+
+```rust
+use clickhouse_loom::{Client, RetryPolicy};
+
+let client = Client::builder("my-org", "my-namespace", "rust-agent")
+    .retry(RetryPolicy::disabled())
+    .pacing(false)
+    .build()?;
+```
+
 See the [SDK retry contract](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md#retries-and-logging)
 for retry budgets and timeout policies.
 
@@ -199,9 +214,9 @@ from a thread entered into Tokio returns `Error::Configuration`.
 
 ## Capabilities and examples
 
-`Client::probe` fetches server capabilities and compares requested operations
-and fields. It reports missing requirements, deprecated or ignored arguments
-and operations unknown to the SDK. Probe does not run automatically at
+`Client::probe` checks which operations and request fields the server supports.
+It reports missing operations, missing request fields and server operations
+unknown to the SDK. Probe does not run automatically at
 construction; see the
 [probe contract](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md#capability-probe).
 
