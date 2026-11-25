@@ -721,6 +721,64 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
         assert context["text"] == "".join(lines[context["start_line"] - 1 : context["end_line"]])
 
 
+@pytest.mark.parametrize("same_revision", [True, False])
+async def test_edit_context_labels_unresolved_repeated_test_calls(
+    code_env, monkeypatch, same_revision
+):
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    revision = "a" * 40
+    source_path = "src/counter.py"
+    await _ingest(
+        repo,
+        org,
+        ns,
+        path=source_path,
+        source=(
+            b"def apply(item, scale):\n    return item * scale\n\n"
+            b"class Counter:\n    def submit(self, item, scale):\n"
+            b"        return apply(item, scale)\n\n"
+            b"class StubCounter:\n    def submit(self, item, scale):\n        return None\n"
+        ),
+    )
+    path = "tests/test_counter.py"
+    tests = (
+        b"def test_separate_items(client, first, second):\n"
+        b"    client.submit(first, scale=1)\n    client.submit(second, scale=2)\n\n"
+        b"def test_repeated_item(client, item):\n"
+        b"    client.submit(item, scale=1)\n    client.submit(item, scale=2)\n"
+    )
+    await _ingest(
+        repo, org, ns, path=path, source=tests, sha=revision if same_revision else "b" * 40
+    )
+    declines = await repo.live_call_misses_for_names(org, ns, ["submit"])
+    assert {row["line"] for row in declines if row["path"] == path} == {2, 3, 6, 7}
+    response = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=f"{source_path}:apply", include_lessons=False
+        )
+    )
+    (definition,) = response.definitions
+    if not same_revision:
+        assert definition.examples == []
+        return
+    (example,) = definition.examples
+    assert (example["path"], example["line"], example["evidence"]) == (path, 6, "name_reference")
+    assert example["via"] == {
+        "symbol": "src.counter::Counter::submit",
+        "path": source_path,
+        "line": 6,
+    }
+    assert example["context"]["commit"] == revision
+    assert "client.submit(item, scale=2)" in example["context"]["text"]
+
+
 async def test_edit_context_does_not_attach_indirect_example_to_an_overload(
     code_env, monkeypatch
 ) -> None:

@@ -15,10 +15,13 @@ import logging
 import re
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
+from itertools import pairwise
+from pathlib import PurePosixPath
 from typing import Any
 
 from server.code.app.spans import code_span
-from server.code.domain.index.test_conventions import is_test_unit_path, snake
+from server.code.domain.extract.treesitter import lang_for_path
+from server.code.domain.index.test_conventions import is_test_unit_path, sibling_test_paths, snake
 from server.code.domain.symbol_body import retained_source_window
 from server.code.store.index import CodeRepo
 from server.embedding.embedder import served_model_label
@@ -193,7 +196,7 @@ async def indirect_test_examples(
     *,
     ready: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Verified test source reached through one non-test caller at the same revision."""
+    """Same-revision test source for a verified non-test caller."""
     if not (revision and context_lines and settings.embedding_model):
         return []
     if definition["kind"] not in {"function", "method"}:
@@ -220,6 +223,41 @@ async def indirect_test_examples(
             bridges.setdefault(caller, edge)
     if not bridges:
         return []
+    verified = _verified_indirect_examples(
+        repo, org, ns, bridges, str(definition["path"]), revision, context_lines, ready
+    )
+    if len(bridges) != 1:
+        return await verified
+    bridge = next(iter(bridges.values()))
+    if lang_for_path(str(bridge["path"])) != "python":
+        return await verified
+    reference_lookup = bounded(
+        _repeated_test_reference(
+            repo, org, ns, bridge, str(definition["path"]), revision, context_lines
+        ),
+        None,
+    )
+    examples: list[dict[str, Any]]
+    reference: dict[str, Any] | None
+    examples, reference = await asyncio.gather(verified, reference_lookup)
+    if reference and all(
+        (example["path"], example["caller"]) != (reference["path"], reference["caller"])
+        for example in examples
+    ):
+        examples.append(reference)
+    return examples
+
+
+async def _verified_indirect_examples(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    bridges: dict[str, dict[str, Any]],
+    path: str,
+    revision: str,
+    context_lines: int,
+    ready: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
     tests = await repo.edges_for_symbols(
         org,
         ns,
@@ -234,7 +272,6 @@ async def indirect_test_examples(
     )
     if not tests:
         return []
-    path = str(definition["path"])
     files = await repo.file_rows_for_paths(
         org, ns, [path, *(str(e["path"]) for e in (*bridges.values(), *tests))]
     )
@@ -259,15 +296,125 @@ async def indirect_test_examples(
             "line": int(edge["line"]),
             "tier": str(edge["tier"]),
             "evidence": "indirect_call",
-            "via": {
-                "symbol": str(bridge["from_qualified_name"]),
-                "path": str(bridge["path"]),
-                "line": int(bridge["line"]),
-            },
+            "via": _via_caller(bridge),
         }
         return await _example_context(repo, org, ns, site, context_lines, model, revision)
 
     return await _retained_examples(candidates, backups, limit=3, read=read, ready=ready)
+
+
+def _via_caller(bridge: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "symbol": str(bridge["from_qualified_name"]),
+        "path": str(bridge["path"]),
+        "line": int(bridge["line"]),
+    }
+
+
+def _related_test_reference_sites(
+    rows: list[dict[str, Any]], bare: str, path: str, revision: str, radius: int
+) -> list[tuple[str, str, set[int], int]]:
+    siblings = set(sibling_test_paths(path))
+    siblings.add(f"tests/test_{PurePosixPath(path).stem}.py")
+    lines: dict[tuple[str, str], set[int]] = defaultdict(set)
+    for row in rows:
+        candidate_path, caller = str(row["path"]), str(row["from_qualified_name"])
+        if (
+            row["call_text"] == bare
+            and row["indexed_commit"] in (revision, revision.encode())
+            and candidate_path in siblings
+            and is_test_unit_path(candidate_path)
+            and caller.rsplit("::", 1)[-1].startswith("test_")
+            and int(row["line"]) > 0
+        ):
+            lines[candidate_path, caller].add(int(row["line"]))
+    sites = []
+    for (candidate_path, caller), locations in lines.items():
+        ordered = sorted(locations)
+        anchor = next(
+            (first for first, second in pairwise(ordered) if second - first <= radius), None
+        )
+        if anchor is not None:
+            sites.append((candidate_path, caller, locations, anchor))
+    return sorted(sites, key=lambda site: (site[0], site[3]))[:6]
+
+
+def _repeated_argument_at(
+    context: dict[str, Any], positions: set[int], pattern: re.Pattern[str]
+) -> int:
+    first_seen: dict[tuple[str, str], int] = {}
+    for line, text in enumerate(context["text"].splitlines(), context["start_line"]):
+        match = pattern.match(text) if line in positions else None
+        if match:
+            receiver, argument = match.group(1), match.group(2)
+            previous = first_seen.setdefault((receiver, argument), line)
+            if previous != line:
+                return previous
+    return 0
+
+
+async def _repeated_test_reference(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    bridge: dict[str, Any],
+    path: str,
+    revision: str,
+    radius: int,
+) -> dict[str, Any] | None:
+    """Show repeated source calls through a wrapper name the resolver could not bind."""
+    _, _, bare = str(bridge["from_qualified_name"]).rpartition("::")
+    if not bare.isidentifier():
+        return None
+    with code_span("enrich.indirect_test_reference"):
+        rows = await repo.live_call_misses_for_names(org, ns, [bare])
+        sites = _related_test_reference_sites(rows, bare, path, revision, radius)
+        if not sites:
+            return None
+        files = await repo.file_rows_for_paths(
+            org, ns, [path, str(bridge["path"]), *(site[0] for site in sites)]
+        )
+        if any(files.get(p, {}).get("indexed_commit") != revision for p in (path, bridge["path"])):
+            return None
+        return await _read_repeated_test_reference(
+            repo, org, ns, bridge, files, sites, bare, revision, radius
+        )
+
+
+async def _read_repeated_test_reference(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    bridge: dict[str, Any],
+    files: dict[str, dict[str, Any]],
+    sites: list[tuple[str, str, set[int], int]],
+    bare: str,
+    revision: str,
+    radius: int,
+) -> dict[str, Any] | None:
+    pattern = re.compile(rf"\s*(\w+(?:\.\w+)*)\.{re.escape(bare)}\(\s*(\w+)\s*[,)]")
+    model = served_model_label(settings.embedding_model)
+
+    async def read(path: str, caller: str, lines: set[int], anchor: int) -> dict[str, Any] | None:
+        file = files.get(path, {})
+        if file.get("indexed_commit") != revision or max(lines) > file.get("loc", 0):
+            return None
+        site = {"path": path, "caller": caller, "line": anchor}
+        example = await _example_context(repo, org, ns, site, radius, model, revision)
+        context = example.get("context")
+        line = _repeated_argument_at(context, lines, pattern) if context else 0
+        if line:
+            return {
+                **example,
+                "line": line,
+                "tier": "treesitter",
+                "evidence": "name_reference",
+                "via": _via_caller(bridge),
+            }
+        return None
+
+    examples = await asyncio.gather(*(read(*site) for site in sites))
+    return next((example for example in examples if example), None)
 
 
 def _verified_indirect_sites(
