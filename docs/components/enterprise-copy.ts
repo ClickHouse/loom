@@ -303,4 +303,108 @@ export const enterpriseCopy = {
     monitoring: "Revisar o monitoramento",
     boundary: "Conferir o armazenamento e as chamadas aos modelos",
   },
+  ja: {
+    title: "AIエージェントの共有メモリをセルフホスト | ClickHouse Loom",
+    description:
+      "AIコーディングエージェントの共有メモリを自社環境で運用。DockerやKubernetesでの導入、アクセス権限、保存先、モデルへの送信先を確認できます。",
+    heading: "AIエージェントの共有メモリをセルフホスト",
+    lead: "Loomで、チームの判断や作業で得た知見をコーディングエージェント間で共有できます。自社のインフラでClickHouseとLoomを運用し、保存した情報へのアクセス権限と処理に使うモデルを設定できます。",
+    englishLabel: "英語",
+    plan: "導入を計画する",
+    security: "セキュリティモデルを確認する",
+    deploymentHeading: "導入方法を選ぶ",
+    deploymentIntro: "Dockerで作業の流れを試せます。チームでKubernetesを使う場合はHelmチャートで構成します。",
+    docker: {
+      title: "Docker",
+      detail: "インスタンスを起動してエージェントを接続し、別のセッションで保存済みの判断を取得できるか確認します。",
+      label: "クイックスタートを開く",
+    },
+    kubernetes: {
+      title: "Kubernetes",
+      detail: "Helmチャートでサービス、ストレージ、認証、Ingressを構成します。",
+      label: "Helmでデプロイする",
+    },
+    controlsHeading: "アクセス権限と運用を確認する",
+    controlsIntro: "誰が情報を読み書きできるか、データをどれだけ保持するか、障害時にどう復旧するかを決めます。",
+    identity: {
+      title: "認証とアクセス制御",
+      detail: "OpenID Connectプロバイダーを接続し、ロール、権限、トークンでチームの名前空間へのアクセスを制御します。",
+      label: "ログインを設定する",
+    },
+    audit: {
+      title: "監査と利用状況",
+      detail: "保存した情報の変更履歴、操作、モデルの利用量、コストを確認します。",
+      label: "監査ログを確認する",
+    },
+    erasure: {
+      title: "保持と消去",
+      detail: "必要に応じて保持期間を設定します。消去処理の進行状況と残っているデータを確認できます。",
+      label: "保持と消去の手順を確認する",
+    },
+    backup: {
+      title: "バックアップと復旧",
+      detail: "利用するデータベースやサービスのバックアップ、復元、監視を計画します。",
+      label: "復旧を計画する",
+    },
+    evaluateHeading: "チームの実際のタスクで評価する",
+    evaluateIntro:
+      "利用予定のエージェントとリポジトリで検索品質、応答時間、運用コストを測定します。モデルへのリクエストの送信先も確認します。",
+    evaluate: "Loomを評価する",
+    benchmarks: "公開ベンチマークを見る",
+    monitoring: "監視方法を確認する",
+    boundary: "データの保存先とモデルへの送信先を確認する",
+  },
+  ko: {
+    title: "AI 에이전트 공유 메모리 자체 호스팅 | ClickHouse Loom",
+    description:
+      "코딩 에이전트의 공유 메모리를 자체 인프라에서 운영하세요. Docker와 Kubernetes 배포, 접근 권한, 저장 위치와 모델 요청의 전송 대상을 확인할 수 있습니다.",
+    heading: "AI 에이전트 공유 메모리 자체 호스팅",
+    lead: "Loom을 사용하면 팀의 결정과 작업에서 얻은 지식을 여러 코딩 에이전트와 세션에서 공유할 수 있습니다. 자체 인프라에서 ClickHouse와 Loom을 운영하고 저장된 정보에 접근할 수 있는 주체와 이를 처리할 모델을 설정하세요.",
+    englishLabel: "영어",
+    plan: "배포 계획 세우기",
+    security: "보안 모델 확인하기",
+    deploymentHeading: "배포 방식 선택하기",
+    deploymentIntro:
+      "Docker에서 작업 흐름을 시험해 보세요. 팀에서 Kubernetes를 사용한다면 Helm 차트로 배포를 구성할 수 있습니다.",
+    docker: {
+      title: "Docker",
+      detail: "인스턴스를 시작하고 에이전트를 연결한 뒤, 새 세션에서 저장한 결정을 다시 찾을 수 있는지 확인합니다.",
+      label: "빠른 시작 가이드 열기",
+    },
+    kubernetes: {
+      title: "Kubernetes",
+      detail: "Helm 차트로 서비스, 스토리지, 인증, 인그레스를 설정합니다.",
+      label: "Helm으로 배포하기",
+    },
+    controlsHeading: "접근 권한과 운영 방식 확인하기",
+    controlsIntro:
+      "누가 정보를 읽고 수정할 수 있는지, 데이터를 얼마나 보관하는지, 장애가 났을 때 어떻게 복구할지 정합니다.",
+    identity: {
+      title: "인증과 접근 제어",
+      detail: "OpenID Connect 공급자를 연결하고 역할, 권한, 토큰으로 팀 네임스페이스에 대한 접근을 제한합니다.",
+      label: "로그인 설정하기",
+    },
+    audit: {
+      title: "감사와 사용량",
+      detail: "저장된 정보의 변경 이력, 작업 내역, 모델 사용량과 비용을 확인합니다.",
+      label: "감사 로그 확인하기",
+    },
+    erasure: {
+      title: "보존과 삭제",
+      detail: "필요한 경우 보존 기간을 설정합니다. 삭제 진행 상황을 추적하고 남은 데이터가 있는지 확인할 수 있습니다.",
+      label: "보존과 삭제 절차 확인하기",
+    },
+    backup: {
+      title: "백업과 복구",
+      detail: "사용하는 데이터베이스와 서비스의 백업, 복원, 모니터링을 계획합니다.",
+      label: "복구 계획 세우기",
+    },
+    evaluateHeading: "팀의 실제 작업으로 평가하기",
+    evaluateIntro:
+      "사용할 에이전트와 저장소로 검색 품질, 응답 시간, 운영 비용을 측정합니다. 모델 요청이 어디로 전송되는지도 확인합니다.",
+    evaluate: "Loom 평가하기",
+    benchmarks: "공개 벤치마크 보기",
+    monitoring: "모니터링 방법 확인하기",
+    boundary: "데이터 저장 위치와 모델 요청의 전송 대상 확인하기",
+  },
 } satisfies Record<string, EnterpriseCopy>;
