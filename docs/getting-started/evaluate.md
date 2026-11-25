@@ -1,6 +1,6 @@
 ---
 title: Evaluate Loom
-description: Test memory across coding agents, check recall and namespace isolation, and compare code search, latency, and cost against your team's workload.
+description: Test shared agent memory and namespace isolation. Compare coding tasks with and without memory using the same acceptance tests, budgets, and starting revisions.
 seo:
   title: How to evaluate memory for coding agents
 ---
@@ -138,6 +138,52 @@ boundaries.
 Record the server-enforced namespace access for each identity. Report cross-client
 recall and denied-access results separately, with the client, operation and expected
 response.
+
+### Compare coding agents with and without memory
+
+Replay the same coding tasks with and without access to saved lessons. Grade the
+patches against tests fixed before the run. A recall score measures whether an agent
+found a lesson. A patch score measures whether it completed the work.
+
+1. **Choose tasks from the repository's history.** Include a task that depends on
+   an earlier decision, one with an outdated lesson, and one with no useful prior
+   memory. Record the starting commit, issue text, and required tests for each.
+2. **Freeze what the agent can know.** Give the memory-enabled runs only lessons
+   available before the task started. Keep the fix, later discussions, and
+   evaluator tests out of both agents' inputs and out of the memory store and index.
+   Keep the same code index, ordinary tools, model, time, and token budgets in both
+   runs when measuring memory alone. When a tool also changes search or capture,
+   describe the result as a comparison of the complete setups.
+3. **Use fresh sessions and separate workspaces.** Start both runs at the recorded
+   commit and apply the same acceptance tests in an evaluator workspace. Restore
+   the starting memory snapshot before each replay so one run cannot teach the
+   next. Give each timeout, missing patch, and failed required check a failing
+   outcome and keep the reason in the report.
+4. **Record the result per task.** Keep both test outcomes, elapsed times, and
+   costs including retries. For the memory-enabled run, also record the retrieved
+   memory keys or the absence of a result. When a patch regresses, inspect the
+   agent's trace for stale or irrelevant evidence and check the source at the
+   starting revision.
+
+For an illustrative six-task pilot, count the paired outcomes like this.
+
+| Outcome                    | Tasks |
+| -------------------------- | ----: |
+| Both runs pass             |     2 |
+| Only the memory run passes |     2 |
+| Only the baseline passes   |     1 |
+| Neither run passes         |     1 |
+
+The memory run passes 4 of 6 tasks and the baseline passes 3 of 6. Inspect the
+tasks where the two runs disagree. If the baseline-only pass came from the
+task with an outdated lesson, check whether the agent relied on that lesson
+before editing the code. Repeat representative tasks to see whether the same
+pattern holds across fresh sessions.
+
+For a purchase or rollout decision, set your acceptance threshold before running
+and apply the [full cost accounting procedure](../use-cases/coding-agent-cost.md#compare-completed-tasks-including-overhead)
+across the same tasks. Run the [shared-memory access checks](#shared-memory-across-clients)
+separately for each setup that stores team data.
 
 ### Code intelligence
 

@@ -74,8 +74,8 @@ Use a disposable example rather than a secret or an unverified project rule:
 
 An exact-key read checks storage and wiring. Evaluate semantic retrieval separately
 with questions that do not name the key, including questions the store cannot answer.
-Neither check establishes better code, fewer defects or lower total model cost. The
-[evaluation guide](../getting-started/evaluate.md) separates these outcomes.
+To measure the effect on completed work, [compare coding tasks with and without memory](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
+using the same acceptance tests.
 
 ## What you get
 
