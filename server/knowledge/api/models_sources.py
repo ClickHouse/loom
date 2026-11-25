@@ -137,9 +137,19 @@ class KnowledgeSourceListInput(BaseModel):
     namespace: str = Field(..., description="The namespace the sources live in.")
 
 
+class KnowledgeSourceListEntry(KnowledgeSourceEntry):
+    owned_by_caller: bool = Field(
+        default=False,
+        description=(
+            "Whether the caller may read their own connected source's details; "
+            "false when ownership or access cannot be verified."
+        ),
+    )
+
+
 class KnowledgeSourceListOutput(BaseModel):
     # The namespace's active sources, by name.
-    sources: list[KnowledgeSourceEntry] = Field(default_factory=list)
+    sources: list[KnowledgeSourceListEntry] = Field(default_factory=list)
     # Whether this deployment runs the sync worker (LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED);
     # false: sources are stored and probed, but nothing pulls from them.
     enabled: bool = False

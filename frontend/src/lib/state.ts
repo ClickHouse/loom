@@ -96,7 +96,7 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   tasks: ["inbox", "task"],
   // Settings carries its open tab (`?tab=memory|system`).
   setup: ["tab"],
-  "connected-accounts": ["kind"],
+  "connected-accounts": ["kind", "from"],
   // The object open on a page rides its URL, so a deep link, a reload and Back reopen it:
   // the memory in the drawer, the document in the preview, the thread in the replay.
   memories: ["memory"],

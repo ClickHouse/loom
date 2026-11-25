@@ -15,6 +15,7 @@ import { Loading, PageHeader } from "../components/ui";
 import { BusyButton } from "../components/ui/BusyButton";
 import { ListState } from "../components/ui/ListState";
 import { SectionHeading } from "../components/ui/SectionHeading";
+import { Unavailable } from "../components/ui/Unavailable";
 import { PageContainer } from "../layout/PageContainer";
 import { canCallOwnConnections } from "../lib/canCall";
 import { useAbortableEffect, useMounted } from "../lib/hooks";
@@ -44,6 +45,11 @@ export function ConnectedAccounts() {
       <p className="max-w-2xl text-sm text-text-muted mb-5">
         Connect your own account to use it with document sources. These connections belong to you in this organization.
       </p>
+      {urlParam("from") === "source" && (
+        <p className="max-w-2xl text-sm text-text-muted mb-5">
+          After connecting, return to the tab where you are adding a source.
+        </p>
+      )}
       {available && whoami?.subject ? (
         <OwnConnections key={JSON.stringify([org, whoami.subject])} org={org} subject={whoami.subject} />
       ) : (
@@ -110,7 +116,7 @@ function OwnConnections({ org, subject }: { org: string; subject: string }) {
   );
 
   const act = async (entry: ConnectionEntry, disconnect: boolean) => {
-    if (busyRef.current || reading || !current()) return;
+    if (busyRef.current || reading || !current() || (!disconnect && entry.connect_available === false)) return;
     busyRef.current = true;
     setBusy({ kind: entry.kind, disconnect });
     try {
@@ -168,6 +174,10 @@ function OwnConnections({ org, subject }: { org: string; subject: string }) {
         <ul ref={providerList} className="divide-y divide-border">
           {CONNECTION_KINDS.map((kind) => {
             const entry = connections.find((row) => row.kind === kind);
+            const unavailable =
+              entry?.connect_available === false
+                ? `An operator must configure ${LABELS[kind]} connections before you can connect your account.`
+                : null;
             return (
               <li key={kind} className="flex flex-wrap items-center gap-3 py-4">
                 <div className="min-w-0 flex-1 basis-40">
@@ -180,19 +190,22 @@ function OwnConnections({ org, subject }: { org: string; subject: string }) {
                     state={entry?.connected ? "success" : "neutral"}
                     size="sm"
                   />
+                  {unavailable && <p className="m-0 mt-1 text-sm text-text-muted">{unavailable}</p>}
                 </div>
                 {entry && (
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="secondary"
-                      htmlType="button"
-                      disabled={reading || busy !== null}
-                      loading={busy?.kind === kind && !busy.disconnect}
-                      aria-label={`${entry.connected ? "Reconnect" : "Connect"} ${LABELS[kind]}`}
-                      onClick={() => void act(entry, false)}
-                    >
-                      {entry.connected ? "Reconnect" : "Connect"}
-                    </Button>
+                    <Unavailable reason={unavailable}>
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        disabled={reading || busy !== null}
+                        loading={busy?.kind === kind && !busy.disconnect}
+                        aria-label={`${entry.connected ? "Reconnect" : "Connect"} ${LABELS[kind]}`}
+                        onClick={() => void act(entry, false)}
+                      >
+                        {entry.connected ? "Reconnect" : "Connect"}
+                      </Button>
+                    </Unavailable>
                     {entry.connected && (
                       <Button
                         type="danger"

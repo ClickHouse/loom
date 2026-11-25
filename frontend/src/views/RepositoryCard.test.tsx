@@ -32,7 +32,7 @@ vi.mock("../api/knowledgeSources", async (importOriginal) => {
   return { ...actual, listKnowledgeSources: vi.fn(async () => ({ sources: SOURCES, enabled: false })) };
 });
 
-// One synced document source, for the Sources facet (hoisted: the module mock reads it).
+// One synced shared-credential source (hoisted: the module mock reads it).
 const SOURCES = vi.hoisted(() => [
   {
     name: "design-docs",
@@ -952,12 +952,12 @@ describe("RepositoryCard — sources", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((m) => m.textContent),
-    ).toEqual(["Check", "Sync now", "Push notifications", "Rotate credential", "Retire"]);
+    ).toEqual(["Check", "Edit items", "Push notifications", "Sync now", "Rotate credential", "Retire"]);
   });
 });
 
 // Both facets offer their verbs on the rule the server gates the ops on (`canCallOn`):
-// Add a document and Remove need writer, every source verb needs admin.
+// Writers add documents and their own connected sources; shared-source actions need admin.
 describe("RepositoryCard — who gets the Docs and Sources verbs", () => {
   afterEach(() => {
     useStore.setState({ whoami: null });
@@ -991,7 +991,7 @@ describe("RepositoryCard — who gets the Docs and Sources verbs", () => {
     return out;
   }
   const none = { addDocument: false, addSource: false, sourceMenu: false };
-  const writer = { addDocument: true, addSource: false, sourceMenu: false };
+  const writer = { addDocument: true, addSource: true, sourceMenu: false };
   const all = { addDocument: true, addSource: true, sourceMenu: true };
 
   it("auth off and an admin claim get every verb without a grant", async () => {
@@ -1024,6 +1024,18 @@ describe("RepositoryCard — who gets the Docs and Sources verbs", () => {
     expect(await verbs({ my_role: "" }, token(["VIEWER"]))).toEqual(none);
     expect(await verbs({ my_role: "" }, null)).toEqual(none);
   });
+
+  it.each([{ is_service_account: true }, { org: "another-org" }])(
+    "does not offer connected-source Add to an ineligible principal (%j)",
+    async (over) => {
+      const principal = { ...token(["WRITER"]), ...over };
+      expect(await verbs({ my_role: "writer" }, principal)).toEqual({
+        addDocument: true,
+        addSource: false,
+        sourceMenu: false,
+      });
+    },
+  );
 
   it("a restricted namespace needs the grant and a token naming it, never a claim alone", async () => {
     const restricted = { classification: "restricted" as const };

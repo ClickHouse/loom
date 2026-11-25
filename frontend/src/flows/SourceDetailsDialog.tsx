@@ -1,7 +1,13 @@
 import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { inspectKnowledgeSource } from "../api/knowledgeSources";
-import { kindLabel, syncBadge, type KnowledgeSourceDetail } from "../lib/knowledgeSources";
+import {
+  kindLabel,
+  sourceConfigText,
+  sourceItemText,
+  syncBadge,
+  type KnowledgeSourceDetail,
+} from "../lib/knowledgeSources";
 import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -39,18 +45,25 @@ export function SourceDetailsDialog({
         <div className="space-y-4">
           <MetaList>
             <MetaRow label="Kind">{kindLabel(detail.kind)}</MetaRow>
+            <MetaRow label="Access">
+              {detail.access === "mirrored"
+                ? "Provider access must be verified for each reader. Unverified access stays hidden."
+                : detail.access === "namespace"
+                  ? "Everyone who can read this destination can read the imported content."
+                  : "Access mode is not available from this server."}
+            </MetaRow>
             {/* What it reads: its items; a recording source's config, or an older
                 server's, which answers no items. */}
             {detail.items?.length ? (
               <MetaRow label="Reads" mono>
                 {detail.items.map((item) => (
-                  <div key={itemText(item)}>{itemText(item)}</div>
+                  <div key={sourceItemText(item)}>{sourceItemText(item)}</div>
                 ))}
               </MetaRow>
             ) : (
               Object.entries(detail.config).map(([k, v]) => (
                 <MetaRow key={k} label={k} mono>
-                  {configText(v)}
+                  {sourceConfigText(v)}
                 </MetaRow>
               ))
             )}
@@ -96,31 +109,4 @@ export function SourceDetailsDialog({
       </ModalFooter>
     </Modal>
   );
-}
-
-const ITEM_LABELS: Record<string, string> = {
-  folder: "Folder",
-  file: "File",
-  shared_drive: "Shared drive",
-  filter: "Files matching",
-  page: "Page",
-  database: "Database",
-  project: "Project",
-  name_contains: "name contains",
-  modified_after: "changed after",
-  in: "in folder",
-};
-
-/** One item as a line: its type, its id or filter fields, and `recursive`. */
-function itemText(item: Record<string, unknown>): string {
-  const { type, recursive, ...rest } = item;
-  const label = (k: string) => ITEM_LABELS[k] ?? k;
-  const fields = Object.entries(rest).map(([k, v]) => (k === "id" ? configText(v) : `${label(k)}: ${configText(v)}`));
-  return [label(String(type)), ...fields, ...(recursive ? ["(with subfolders)"] : [])].join(" ");
-}
-
-/** A config value as text: a list of ids reads as one comma-separated line. */
-function configText(v: unknown): string {
-  if (Array.isArray(v)) return v.join(", ");
-  return typeof v === "string" ? v : JSON.stringify(v);
 }

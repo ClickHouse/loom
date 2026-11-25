@@ -61,7 +61,7 @@ import {
 import { RecordSourceDetails } from "./TrackerSources";
 import { RepoDocsList } from "./RepoDocs";
 import { oneOf } from "../lib/oneOf";
-import { canCallOn } from "../lib/canCall";
+import { canCallOn, canCallOwnConnections } from "../lib/canCall";
 import { useStore } from "../lib/state";
 
 // Loaded with an opened card: the Library loads it too, so it is a chunk of its own.
@@ -926,6 +926,11 @@ export const RepositoryCard = memo(function RepositoryCard({
                     namespace={docs.namespace}
                     place={{ label: card.repo, noun: "repository" }}
                     manageable={canCallOn("knowledge.source.rotate", docs, whoami)}
+                    connectedManageable={
+                      canCallOwnConnections(whoami) &&
+                      whoami?.org === docs.org &&
+                      canCallOn("knowledge.source.add", docs, whoami)
+                    }
                     busy={anyBusy}
                   />
                 </Suspense>

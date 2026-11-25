@@ -280,7 +280,7 @@ test.describe("document sources", () => {
       docs_namespace: "code-clickhouse",
     }));
 
-  test("a reader sees each source's last sync and no verb, read once when the card opens", async ({ page }) => {
+  test("a reader sees each source's last sync and no mutation, read once when the card opens", async ({ page }) => {
     const calls = await installApi(page, {
       codeRepos: reposWith("viewer"),
       knowledgeSources: knowledgeSourcesFixture(),
@@ -300,8 +300,9 @@ test.describe("document sources", () => {
     await expect(sources).toContainText("design-docs");
     await expect(sources).toContainText("Synced");
     await expect(sources).toContainText("12 documents listed · 3 written · 1 not converted");
-    // The only button is the source's name, which opens its details.
-    await expect(sources.getByRole("button")).toHaveText(["design-docs"]);
+    await expect(sources.getByRole("button")).toHaveText(["design-docs", "Refresh sources"]);
+    await expect(sources.getByRole("button", { name: "Add a source" })).toHaveCount(0);
+    await expect(sources.getByRole("button", { name: "Actions for design-docs" })).toHaveCount(0);
     await page.waitForTimeout(300);
     expect(requested).toEqual(["/v1/knowledge.source.list"]);
     expect(calls.knowledgeSources).toBe(1);
@@ -326,6 +327,9 @@ test.describe("document sources", () => {
     await sources.getByRole("button", { name: "Add a source" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("button", { name: "Add source" })).toBeDisabled();
+    await expect(dialog.getByRole("radio", { name: "My connected account", exact: true })).toBeChecked();
+    await expect(dialog.locator('input[type="password"]')).toHaveCount(0);
+    await dialog.getByRole("radio", { name: "Shared credential", exact: true }).click();
     await expect(dialog.getByLabel(/^Service account key/)).toHaveAttribute("type", "password");
     await dialog.getByRole("button", { name: "Cancel" }).click();
     for (const verb of ["Check", "Sync now", "Rotate credential", "Retire"]) {

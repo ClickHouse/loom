@@ -81,6 +81,24 @@ describe("Connected accounts", () => {
     expect(useStore.getState().view).toBe("setup");
   });
 
+  it("keeps source return guidance through boot while dropping unrelated query keys", async () => {
+    useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" } });
+    history.replaceState(
+      null,
+      "",
+      "/settings/connected-accounts?kind=notion&from=source&state=drop&code=drop&return_url=https%3A%2F%2Felsewhere.example",
+    );
+    act(() => useStore.getState().bootView("connected-accounts"));
+    expect(window.location.pathname + window.location.search).toBe(
+      "/settings/connected-accounts?namespace=team&kind=notion&from=source",
+    );
+    render(<ConnectedAccounts />);
+    await screen.findByText("reader@example.com");
+    expect(screen.getByText("After connecting, return to the tab where you are adding a source.")).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Notion" })).toHaveFocus());
+    expect(api.startConnection).not.toHaveBeenCalled();
+  });
+
   it("shows three statuses and only supplied emails, without scopes or credential controls", async () => {
     const { container } = render(<ConnectedAccounts />);
     await screen.findByText("reader@example.com");
@@ -90,6 +108,58 @@ describe("Connected accounts", () => {
     expect(container.querySelector("input")).toBeNull();
     expect(api.listConnections).toHaveBeenCalledWith("acme", { signal: expect.any(AbortSignal) });
     expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("keeps an unconfigured provider's reason keyboard reachable without starting consent", async () => {
+    vi.mocked(api.listConnections).mockResolvedValue({
+      connections: entries().map((entry) => (entry.kind === "notion" ? { ...entry, connect_available: false } : entry)),
+    });
+    const { container } = render(<ConnectedAccounts />);
+    const connect = await screen.findByRole("button", { name: "Connect Notion" });
+    expect(connect).toHaveAttribute("aria-disabled", "true");
+    expect(connect).not.toBeDisabled();
+    expect(connect).toHaveAccessibleDescription(
+      "An operator must configure Notion connections before you can connect your account.",
+    );
+    connect.focus();
+    expect(connect).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.click(connect);
+    expect(api.startConnection).not.toHaveBeenCalled();
+    expect(goToConnectionConsent).not.toHaveBeenCalled();
+    expect(container.querySelector("input")).toBeNull();
+    expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("allows disconnect while reconnect needs operator configuration", async () => {
+    vi.mocked(api.listConnections).mockResolvedValue({
+      connections: entries().map((entry) => (entry.kind === "gdrive" ? { ...entry, connect_available: false } : entry)),
+    });
+    render(<ConnectedAccounts />);
+    const reconnect = await screen.findByRole("button", { name: "Reconnect Google Drive" });
+    expect(reconnect).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Disconnect Google Drive" }));
+    expect(api.disconnectConnection).toHaveBeenCalledWith("acme", "gdrive", { signal: expect.any(AbortSignal) });
+    expect(api.startConnection).not.toHaveBeenCalled();
+  });
+
+  it("explains returning to the source tab without starting consent or storing a draft", async () => {
+    history.replaceState(null, "", "/settings/connected-accounts?kind=notion&from=source");
+    const localBefore = JSON.stringify(localStorage);
+    const sessionBefore = JSON.stringify(sessionStorage);
+    render(<ConnectedAccounts />);
+    expect(screen.getByText("After connecting, return to the tab where you are adding a source.")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "Connect Notion" });
+    expect(api.startConnection).not.toHaveBeenCalled();
+    expect(goToConnectionConsent).not.toHaveBeenCalled();
+    expect(JSON.stringify(localStorage)).toBe(localBefore);
+    expect(JSON.stringify(sessionStorage)).toBe(sessionBefore);
+  });
+
+  it("omits source-tab instructions for an ordinary settings visit", async () => {
+    render(<ConnectedAccounts />);
+    await screen.findByRole("button", { name: "Connect Notion" });
+    expect(screen.queryByText("After connecting, return to the tab where you are adding a source.")).toBeNull();
   });
 
   it("reads a personal viewer's connections without a namespace and refuses other known identities", () => {

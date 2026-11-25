@@ -14,6 +14,9 @@ class ConnectionListInput(BaseModel):
 class ConnectionEntry(BaseModel):
     kind: Literal["gdrive", "notion", "linear"]
     connected: bool
+    connect_available: bool = Field(
+        description="Whether this deployment is configured to start consent for the provider."
+    )
     account_email: str | None = None
     scopes: list[str] = Field(default_factory=list)
     connect_url: str
