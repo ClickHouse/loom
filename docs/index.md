@@ -103,7 +103,7 @@ One page per need, each saying what Loom does for it and where to start:
 
 [Reference index](reference/index.md) · [HTTP API](reference/http-api.md) ·
 [MCP](reference/mcp.md) · [Python SDK](reference/python-sdk.md) ·
-[TypeScript SDK](reference/typescript-sdk.md) · [Environment](reference/environment.md) ·
+[TypeScript SDK](reference/typescript-sdk.md) · [Go SDK](reference/go-sdk.md) · [Environment](reference/environment.md) ·
 [Operations](reference/operations.md) · [Configuration](reference/configuration.md) ·
 [Workers](reference/workers.md) · [CLI](reference/cli.md) · [Errors](reference/errors.md) ·
 [Status](reference/status.md) · [Schema](reference/schema.md) ·

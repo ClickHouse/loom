@@ -136,6 +136,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Environment variables reference](docs/reference/environment.md): Almost everything Loom is configured with is a settings field: the environment variable `LOOM_<FIELD>` of a field on `server.settings.Settings`, listed with its default and meaning in the generated configuration reference.
 - [Errors reference](docs/reference/errors.md): Every refusal Loom makes carries a stable, upper-case `code`.
 - [Extractor contract](docs/reference/extractor-contract.md): An extractor is an HTTP service the Loom server sends an original file to and gets its extraction artifact back from.
+- [Go SDK for AI agent memory](docs/reference/go-sdk.md): The Go SDK stores and retrieves agent memory from a running Loom server over HTTP.
 - [HTTP API reference](docs/reference/http-api.md): Every Loom operation is one HTTP endpoint, `POST /v1/<operation>`, generated from the operation registry in `server/operations/` (`server/transport/http.py`, `build_router`).
 - [MCP reference](docs/reference/mcp.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
 - [Operations reference](docs/reference/operations.md): An operation (op) is one named unit of work on the Loom wire, such as `memory.set` or `code.search`.
