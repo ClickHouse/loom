@@ -342,18 +342,16 @@ def _distinct_call_windows(locations: set[int], radius: int) -> list[int]:
     return anchors
 
 
-def _repeated_argument_at(
+def _repeated_argument_sites(
     context: dict[str, Any], positions: set[int], pattern: re.Pattern[str]
-) -> tuple[int, int] | None:
-    first_seen: dict[tuple[str, str], int] = {}
+) -> list[list[int]]:
+    calls: dict[tuple[str, str], list[int]] = defaultdict(list)
     for line, text in enumerate(context["text"].splitlines(), context["start_line"]):
         match = pattern.match(text) if line in positions else None
         if match:
             receiver, argument = match.group(1), match.group(2)
-            previous = first_seen.setdefault((receiver, argument), line)
-            if previous != line:
-                return previous, line
-    return None
+            calls[receiver, argument].append(line)
+    return [lines for lines in calls.values() if len(lines) > 1]
 
 
 async def _repeated_test_reference(
@@ -402,20 +400,27 @@ async def _read_repeated_test_reference(
 
     async def read(
         path: str, caller: str, lines: set[int], anchor: int
-    ) -> tuple[dict[str, Any], tuple[int, int]] | None:
+    ) -> tuple[dict[str, Any], list[list[int]]] | None:
         file = files.get(path, {})
         if file.get("indexed_commit") != revision or max(lines) > file.get("loc", 0):
             return None
         site = {"path": path, "caller": caller, "line": anchor}
         example = await _example_context(repo, org, ns, site, radius, model, revision)
         context = example.get("context")
-        pair = _repeated_argument_at(context, lines, pattern) if context else None
-        return (example, pair) if pair else None
+        groups = _repeated_argument_sites(context, lines, pattern) if context else []
+        return (example, groups) if groups else None
 
     candidates = [
         result for result in await asyncio.gather(*(read(*site) for site in sites)) if result
     ]
-    locations = sorted({(example["path"], line) for example, pair in candidates for line in pair})
+    locations = sorted(
+        {
+            (example["path"], line)
+            for example, groups in candidates
+            for lines in groups
+            for line in lines
+        }
+    )
     contradicted = {
         (edge["path"], edge["line"])
         for edge in await repo.member_edges_at_locations(org, ns, locations, bare)
@@ -423,15 +428,17 @@ async def _read_repeated_test_reference(
         and edge["indexed_commit"] in (revision, revision.encode())
         and edge["to_qualified_name"] != bridge["from_qualified_name"]
     }
-    for example, pair in candidates:
-        if not any((example["path"], line) in contradicted for line in pair):
-            return {
-                **example,
-                "line": pair[0],
-                "tier": "treesitter",
-                "evidence": "name_reference",
-                "via": _via_caller(bridge),
-            }
+    for example, groups in candidates:
+        for lines in groups:
+            available = [line for line in lines if (example["path"], line) not in contradicted]
+            if len(available) >= 2:
+                return {
+                    **example,
+                    "line": available[0],
+                    "tier": "treesitter",
+                    "evidence": "name_reference",
+                    "via": _via_caller(bridge),
+                }
     return None
 
 

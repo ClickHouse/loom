@@ -721,7 +721,9 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
         assert context["text"] == "".join(lines[context["start_line"] - 1 : context["end_line"]])
 
 
-@pytest.mark.parametrize("case", ["current", "stale", "compiled_other_receiver"])
+@pytest.mark.parametrize(
+    "case", ["current", "stale", "compiled_other_receiver", "compiled_other_pair"]
+)
 async def test_edit_context_labels_unresolved_repeated_test_calls(code_env, monkeypatch, case):
     from server.code.api.models_symbol import CodeEditContextInput
     from server.code.app.symbol import handle_code_edit_context
@@ -752,11 +754,16 @@ async def test_edit_context_labels_unresolved_repeated_test_calls(code_env, monk
     )
     path = "tests/test_counter.py"
     tests = (
-        b"def test_repeated_item(client, first, second, item):\n"
+        b"def test_repeated_item(client, other, first, second, item):\n"
         b"    client.submit(first, scale=1)\n    client.submit(second, scale=2)\n"
         + b"\n" * 10
         + b"    client.submit(item, scale=1)\n    client.submit(item, scale=2)\n"
     )
+    repeated = len(tests.splitlines()) - 1
+    expected_lines = {2, 3, repeated, repeated + 1}
+    if case == "compiled_other_pair":
+        tests += b"    other.submit(item, scale=3)\n    other.submit(item, scale=4)\n"
+        expected_lines.update({repeated + 2, repeated + 3})
     await _ingest(
         repo, org, ns, path=path, source=tests, sha="b" * 40 if case == "stale" else revision
     )
@@ -767,9 +774,8 @@ async def test_edit_context_labels_unresolved_repeated_test_calls(code_env, monk
         "path"
     ] == path
     declines = await repo.live_call_misses_for_names(org, ns, ["submit"], paths=[path])
-    repeated = len(tests.splitlines()) - 1
-    assert {row["line"] for row in declines} == {2, 3, repeated, repeated + 1}
-    if case == "compiled_other_receiver":
+    assert {row["line"] for row in declines} == expected_lines
+    if case.startswith("compiled_"):
         target = (await repo.symbols_by_name(org, ns, "src.counter::StubCounter::submit"))[0]
         await repo.insert_rows(
             "code_edges",
@@ -790,7 +796,7 @@ async def test_edit_context_labels_unresolved_repeated_test_calls(code_env, monk
                     indexed_commit=revision,
                 )
                 for site in declines
-                if site["line"] >= repeated
+                if site["line"] in (repeated, repeated + 1)
             ],
         )
     response = await handle_code_edit_context(
@@ -799,13 +805,13 @@ async def test_edit_context_labels_unresolved_repeated_test_calls(code_env, monk
         )
     )
     (definition,) = response.definitions
-    if case != "current":
+    if case in {"stale", "compiled_other_receiver"}:
         assert definition.examples == []
         return
     (example,) = definition.examples
     assert (example["path"], example["line"], example["evidence"]) == (
         path,
-        repeated,
+        repeated + 2 if case == "compiled_other_pair" else repeated,
         "name_reference",
     )
     assert example["via"] == {
@@ -814,7 +820,12 @@ async def test_edit_context_labels_unresolved_repeated_test_calls(code_env, monk
         "line": 6,
     }
     assert example["context"]["commit"] == revision
-    assert "client.submit(item, scale=2)" in example["context"]["text"]
+    expected_text = (
+        "other.submit(item, scale=4)"
+        if case == "compiled_other_pair"
+        else "client.submit(item, scale=2)"
+    )
+    assert expected_text in example["context"]["text"]
 
 
 async def test_edit_context_does_not_attach_indirect_example_to_an_overload(
