@@ -311,6 +311,52 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     evaluate: "Loom आज़माएँ",
     deploymentOptions: "डिप्लॉयमेंट के विकल्प",
   },
+  id: {
+    title: "Memori agen AI dan pencarian kode | ClickHouse Loom",
+    description:
+      "Memori bersama untuk agen pemrograman. Gunakan kembali keputusan dari sesi lain, cari dokumen dengan kutipan, dan telusuri kode terkait.",
+    deployment: "Sumber terbuka · Dihosting sendiri dengan ClickHouse",
+    heading: "Memori bersama untuk agen AI",
+    lead: "Loom menyimpan keputusan dan pelajaran agar dapat digunakan kembali di sesi lain. Agen dapat menemukan keputusan tim, membaca sumber yang dikutip, dan melihat kode yang terkait.",
+    run: "Jalankan Loom",
+    product: "Lihat fitur Loom",
+    connect: "Hubungkan agen pemrograman",
+    sdk: "Gunakan SDK",
+    screenshotAlt:
+      "Dasbor Loom menampilkan keputusan tentang pembayaran yang ditautkan ke sebuah fungsi dan peringatan bahwa kode terkait telah berubah",
+    screenshotCaption: "Keputusan yang tersimpan tertaut ke kode yang dirujuknya.",
+    contextHeading: "Konteks untuk sesi berikutnya",
+    contextDetail: "Akses ketiga jenis konteks ini lewat MCP, HTTP, atau SDK Python dan TypeScript.",
+    memory: {
+      title: "Memori bersama",
+      detail:
+        "Simpan keputusan, aturan, dan pelajaran dari satu sesi untuk digunakan pada sesi berikutnya. Tim dan agen dapat meninjau serta memperbaruinya di tempat yang sama.",
+      link: "Memori untuk agen pemrograman",
+    },
+    documents: {
+      title: "Pencarian dokumen",
+      detail: "Cari kebijakan, panduan operasional, atau referensi. Buka kutipan beserta revisi dokumen sumbernya.",
+      link: "Pencarian dokumen dan RAG",
+    },
+    code: {
+      title: "Penelusuran kode",
+      detail:
+        "Temukan simbol dan kode yang memanggilnya. Tautkan memori ke kode, lalu periksa apakah sumber yang dirujuk sudah berubah.",
+      link: "Memori yang tertaut ke kode",
+    },
+    useCasesHeading: "Kapan menggunakan Loom",
+    useCasesDetail: "Simpan pengetahuan proyek saat beberapa agen mengerjakan repositori atau dokumen yang sama.",
+    useCasesLabel: "Kasus penggunaan Loom",
+    softwareFactory: "Memori untuk software factory",
+    knowledgeFactory: "Pabrik pengetahuan untuk agen AI",
+    autonomous: "Memori jangka panjang untuk agen otonom",
+    selfHosted: "Memori agen yang dihosting sendiri",
+    evaluationHeading: "Uji Loom pada repositori Anda",
+    evaluationDetail:
+      "Gunakan pekerjaan sehari-hari untuk menguji pencarian kode, pengambilan kembali memori lintas sesi, dan izin akses sebelum memperluas penggunaan.",
+    evaluate: "Evaluasi Loom",
+    deploymentOptions: "Opsi penerapan",
+  },
   it: {
     title: "Memoria condivisa per agenti AI | ClickHouse Loom",
     description:
@@ -542,6 +588,53 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     evaluationDetail: "Проверьте поиск, ссылки на источники и права доступа на примере из работы команды.",
     evaluate: "Проверить Loom",
     deploymentOptions: "Варианты развёртывания",
+  },
+  tr: {
+    title: "Yapay zekâ ajan belleği ve kod arama | ClickHouse Loom",
+    description:
+      "Kodlama ajanları için ortak bellek. Oturumlar arasında kararları hatırlayın, alıntı yapılan belgeleri bulun ve ilgili kodun izini sürün.",
+    deployment: "Açık kaynak · ClickHouse ile kendi altyapınızda",
+    heading: "Yapay zekâ ajanları için ortak bellek",
+    lead: "Loom, ekip kararlarını ve edinilen bilgileri oturumlar arasında saklar. Ajanlar önceki kararları bulabilir, alıntıların kaynağını açabilir ve ilgili kodu inceleyebilir.",
+    run: "Loom’u çalıştırın",
+    product: "Ürünü inceleyin",
+    connect: "Kodlama ajanlarını bağlayın",
+    sdk: "SDK’ları kullanın",
+    screenshotAlt: "Loom panosunda bir işleve bağlanan ödeme kararı ve ilgili kodun değiştiğini bildiren uyarı",
+    screenshotCaption: "Kaydedilen karar, ilgili koda bağlanır.",
+    contextHeading: "Bir sonraki oturum için bağlam",
+    contextDetail: "Ajanlar bu üç bağlam türüne MCP, HTTP veya Python ve TypeScript SDK’ları üzerinden ulaşabilir.",
+    memory: {
+      title: "Ortak bellek",
+      detail:
+        "Kararları, kuralları ve öğrenilenleri sonraki oturumlara taşıyın. Ekipler ve ajanlar bunları ortak bir yerde inceleyip güncelleyebilir.",
+      link: "Kodlama ajanları için bellek",
+    },
+    documents: {
+      title: "Belge arama",
+      detail:
+        "Sorunuzu yanıtlayan politikayı, işletim kılavuzunu veya başvuru belgesini bulun. Alıntıyı ve alındığı belge sürümünü açın.",
+      link: "Belge arama ve RAG",
+    },
+    code: {
+      title: "Kod analizi",
+      detail:
+        "Kod sembollerini ve onları çağıran yerleri bulun. Bellek kayıtlarını kodla ilişkilendirin ve kaynak kod değiştiğinde bunu görün.",
+      link: "Kodla ilişkilendirilmiş bellek",
+    },
+    useCasesHeading: "Loom nerede kullanılır?",
+    useCasesDetail:
+      "Aynı kod deposunda veya belgeler üzerinde çalışan ajanların proje bilgisini ortak bir yerde tutun.",
+    useCasesLabel: "Loom kullanım alanları",
+    softwareFactory: "Yazılım fabrikaları için bellek",
+    knowledgeFactory: "Yapay zekâ ajanları için bilgi fabrikası",
+    autonomous: "Otonom ajanlar için kalıcı bellek",
+    selfHosted: "Kendi altyapınızda ajan belleği",
+    evaluationHeading: "Loom’u kod deponuzda deneyin",
+    evaluationDetail:
+      "Kullanımı genişletmeden önce günlük işlerde kod aramayı, oturumlar arası bellek erişimini ve erişim izinlerini sınayın.",
+    evaluate: "Loom’u değerlendirin",
+    deploymentOptions: "Kurulum seçenekleri",
   },
   "zh-CN": {
     title: "面向 AI 智能体的共享记忆与代码检索 | ClickHouse Loom",

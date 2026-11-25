@@ -5,10 +5,12 @@
   "es": { "name": "Español", "href": "/es", "docs": "/docs/es/use-cases" },
   "fr": { "name": "Français", "href": "/fr", "docs": null },
   "hi": { "name": "हिन्दी", "href": "/hi", "docs": null },
+  "id": { "name": "Bahasa Indonesia", "href": "/id", "docs": null },
   "it": { "name": "Italiano", "href": "/it", "docs": null },
   "ja": { "name": "日本語", "href": "/ja", "docs": "/docs/ja" },
   "ko": { "name": "한국어", "href": "/ko", "docs": "/docs/ko" },
   "pt-BR": { "name": "Português (Brasil)", "href": "/pt-BR", "docs": "/docs/pt-BR" },
   "ru": { "name": "Русский", "href": "/ru", "docs": null },
+  "tr": { "name": "Türkçe", "href": "/tr", "docs": null },
   "zh-CN": { "name": "简体中文", "href": "/zh-CN", "docs": "/docs/zh-CN" }
 }
