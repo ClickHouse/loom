@@ -2170,9 +2170,9 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.grep": (
         "Exact text. Default bodies for edits. "
         'Batch `pattern: ["def parse(", "def test_parse"]`. '
-        "Scope both with `path_globs`. "
+        "Use `path_globs`. Omit `path_prefix`. "
         "Use `include_body: false`, `context_lines: 0` for locations. "
-        "Use RE2 with `regex: true`. code.search for behavior, code.edit_context for edits.\n\n"
+        "RE2 uses `regex: true`. code.search for behavior, code.edit_context for edits.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
         "Call prefixes and absent call expressions can return related source and linked notes. "
         "Use code.symbol for a definition or code.read for exact lines. Filter with `langs`. "

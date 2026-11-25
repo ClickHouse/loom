@@ -401,8 +401,8 @@ def test_compact_coding_grep_advertises_search_options_and_edit_routing():
     description = compact["loom_code_grep"]["description"]
     assert "Exact text. Default bodies for edits" in description
     assert '`pattern: ["def parse(", "def test_parse"]`' in description
-    assert "Scope both with `path_globs`" in description
-    assert "Use RE2 with `regex: true`" in description
+    assert "Use `path_globs`. Omit `path_prefix`" in description
+    assert "RE2 uses `regex: true`" in description
     assert "`include_body: false`, `context_lines: 0` for locations" in description
     assert "loom_code_edit_context for edits" in description
     assert "loom_code_search" in description
