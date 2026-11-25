@@ -489,7 +489,11 @@ class ArchiveChecks(unittest.TestCase):
         for magic in (b"\x00" * 8, b"ustar  \x00", b"ustar\x0000"):
             with self.subTest(magic=magic):
                 args = self.patch_license_header(
-                    [(0, 100, b"LICENSE".ljust(100, b"\x00")), (345, 500, prefix), (257, 265, magic)]
+                    [
+                        (0, 100, b"LICENSE".ljust(100, b"\x00")),
+                        (345, 500, prefix),
+                        (257, 265, magic),
+                    ]
                 )
                 code, result = self.invoke_cli(args)
                 self.assertEqual(code, 0 if magic == b"ustar\x0000" else 1)
