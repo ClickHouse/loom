@@ -39,17 +39,16 @@ class ProjectInstructions(TestCase):
         self.assertIn("services, crates", actual.decode())
         self.assertEqual(instructions["applies_to"], "loom-enabled")
         text = " ".join(actual.decode().split())
-        self.assertIn("Use Loom for each search or read of unchanged indexed source", text)
-        self.assertIn("including test files and module imports", text)
+        self.assertIn("Use Loom to search and read unchanged indexed code and tests", text)
         self.assertIn(
-            "start with `loom_code_edit_context` for its implementation, "
-            "related tests, and linked notes",
+            "For implementation and related tests, use `loom_code_edit_context`",
             text,
         )
-        self.assertIn("or literal code fragments as `clues`", text)
-        self.assertIn("With clues, pass the file's path as `name` if known", text)
-        self.assertIn("Keep discovery separate from edits, test execution and Git", text)
-        self.assertIn("read working-copy changes, untracked or unindexed files", text)
+        self.assertIn("definition or literal `clues`", text)
+        self.assertIn("pass the known file path as `name`", text)
+        self.assertIn("keep the default enclosing bodies in `loom_code_grep`", text)
+        self.assertIn("Use local tools to edit, run tests, inspect Git", text)
+        self.assertIn("read working-copy changes, untracked files or unindexed source", text)
 
     def test_baseline_and_loom_use_their_frozen_images(self):
         images = {"task": {"agent": {"baseline": "base-image", "loom": "loom-image"}}}

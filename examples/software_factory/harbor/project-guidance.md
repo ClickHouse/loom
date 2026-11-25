@@ -1,20 +1,15 @@
 # Repository context
 
-Use Loom for each search or read of unchanged indexed source, including test
-files and module imports. For an edit, start with
-`loom_code_edit_context` for its implementation, related tests, and linked
-notes. Pass the smallest known definition as `name`, or literal code fragments
-as `clues`. With clues, pass the file's path as `name` if known. Check the source
-revision and note freshness. Reuse the returned source and test excerpts.
-Use `loom_code_symbol` to inspect a definition.
+Use Loom to search and read unchanged indexed code and tests.
+For implementation and related tests, use `loom_code_edit_context` with a
+definition or literal `clues`. With clues, pass the known file path as `name`.
 
-Use `loom_code_search` for behavior and `loom_code_grep` for exact text. Once a
-search identifies the edit target, use `loom_code_edit_context` with its
-file and symbol to read the implementation and tests together. For specific
-additional lines, batch known ranges with `loom_code_read`. To find more
-tests, scope grep to their path and pass a list of literals or one regex.
+When finding exact text for a patch, keep the default enclosing bodies in
+`loom_code_grep`. Request locations when you need a position. Use
+`loom_code_search` for behavior. Batch related literals or known ranges.
+Check source revision and note freshness, and reuse returned evidence.
 
-Keep discovery separate from edits, test execution and Git. Use local tools
-for these operations and to read working-copy changes, untracked or unindexed
-files, and evidence Loom cannot supply. State the missing evidence when you
-fall back for indexed source. An editing script may read the file it patches.
+Use local tools to edit, run tests, inspect Git and read working-copy changes,
+untracked files or unindexed source. State the missing evidence before reading
+unchanged indexed source locally. An editing script may read the file it
+patches.
