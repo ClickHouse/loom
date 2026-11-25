@@ -1,8 +1,8 @@
 ---
 import { Image } from "astro:assets";
-import data from "blume:data";
 import dashboard from "../assets/screenshots/memory-linked-code.webp";
 import SiteFrame from "./SiteFrame.astro";
+import { documentationLink } from "./documentation-link";
 import { homeCopy } from "./home-copy";
 import { enterpriseLink, siteLocales, type SiteLocale } from "./site-locales";
 
@@ -13,13 +13,7 @@ interface Props {
 const { locale } = Astro.props;
 const copy = homeCopy[locale];
 const languageNames = new Intl.DisplayNames(locale, { type: "language" });
-const docsPaths = new Set(data.routes.filter((route) => !route.fallback && !route.draft).map(({ path }) => path));
-function docLink(path: string) {
-  const translated = `/${locale}${path}`;
-  return locale !== "en" && docsPaths.has(translated)
-    ? { href: `/docs${translated}`, hreflang: locale }
-    : { href: `/docs${path}`, hreflang: "en" };
-}
+const docLink = (path: string) => documentationLink(locale, path);
 const start = docLink("/getting-started/quickstart");
 const enterprise = enterpriseLink(locale);
 const capabilities = [

@@ -1,5 +1,6 @@
 ---
 import SiteFrame from "./SiteFrame.astro";
+import { documentationLink } from "./documentation-link";
 import { enterpriseCopy } from "./enterprise-copy";
 import { enterpriseAlternates, enterpriseLink } from "./site-locales";
 
@@ -10,16 +11,31 @@ interface Props {
 const { locale } = Astro.props;
 const copy = enterpriseCopy[locale];
 const { href: path } = enterpriseLink(locale);
-const english = copy.englishLabel ? ` (${copy.englishLabel})` : "";
+function guide(path: string, label: string) {
+  const link = documentationLink(locale, path);
+  return { ...link, label: link.hreflang === locale ? label : `${label} (${copy.englishLabel})` };
+}
+
+const plan = guide("/operations/deployment", copy.plan);
+const security = guide("/architecture/security", copy.security);
 const deployment = [
-  { ...copy.docker, href: "/docs/getting-started/quickstart" },
-  { ...copy.kubernetes, href: "/docs/operations/kubernetes" },
+  { ...copy.docker, ...guide("/getting-started/quickstart", copy.docker.label) },
+  { ...copy.kubernetes, ...guide("/operations/kubernetes", copy.kubernetes.label) },
 ];
 const controls = [
-  { ...copy.identity, href: "/docs/operations/sso" },
-  { ...copy.audit, href: "/docs/features/observability/audit" },
-  { ...copy.erasure, href: "/docs/features/memory/retention-and-erasure" },
-  { ...copy.backup, href: "/docs/operations/backup-and-recovery" },
+  { ...copy.identity, ...guide("/operations/sso", copy.identity.label) },
+  { ...copy.audit, ...guide("/features/observability/audit", copy.audit.label) },
+  { ...copy.erasure, ...guide("/features/memory/retention-and-erasure", copy.erasure.label) },
+  { ...copy.backup, ...guide("/operations/backup-and-recovery", copy.backup.label) },
+];
+const evaluation = [
+  { ...guide("/getting-started/evaluate", copy.evaluate), className: "primary" },
+  { ...guide("/benchmarks/results", copy.benchmarks), className: "text-link" },
+  {
+    ...guide("/use-cases/self-hosted-clickhouse#choose-self-hosted-memory-for-coding-agents", copy.boundary),
+    className: "text-link",
+  },
+  { ...guide("/operations/monitoring", copy.monitoring), className: "text-link" },
 ];
 ---
 
@@ -27,8 +43,8 @@ const controls = [
   <h1>{copy.heading}</h1>
   <p class="lead">{copy.lead}</p>
   <div class="site-actions">
-    <a class="primary" href="/docs/operations/deployment" hreflang="en">{copy.plan}{english}</a>
-    <a class="secondary" href="/docs/architecture/security" hreflang="en">{copy.security}{english}</a>
+    <a class="primary" href={plan.href} hreflang={plan.hreflang}>{plan.label}</a>
+    <a class="secondary" href={security.href} hreflang={security.hreflang}>{security.label}</a>
   </div>
 
   <section class="site-section" aria-labelledby="deploy-title">
@@ -37,11 +53,11 @@ const controls = [
       <p>{copy.deploymentIntro}</p>
     </div>
     <div class="site-grid">
-      {deployment.map(({ title, detail, href, label }) => (
+      {deployment.map(({ title, detail, href, hreflang, label }) => (
         <article class="site-panel">
           <h3>{title}</h3>
           <p>{detail}</p>
-          <a href={href} hreflang="en">{label}{english} <span aria-hidden="true">↗</span></a>
+          <a href={href} hreflang={hreflang}>{label} <span aria-hidden="true">↗</span></a>
         </article>
       ))}
     </div>
@@ -53,11 +69,11 @@ const controls = [
       <p>{copy.controlsIntro}</p>
     </div>
     <div class="site-grid">
-      {controls.map(({ title, detail, href, label }) => (
+      {controls.map(({ title, detail, href, hreflang, label }) => (
         <article class="site-panel">
           <h3>{title}</h3>
           <p>{detail}</p>
-          <a href={href} hreflang="en">{label}{english} <span aria-hidden="true">↗</span></a>
+          <a href={href} hreflang={hreflang}>{label} <span aria-hidden="true">↗</span></a>
         </article>
       ))}
     </div>
@@ -69,10 +85,9 @@ const controls = [
       <p>{copy.evaluateIntro}</p>
     </div>
     <div class="site-actions">
-      <a class="primary" href="/docs/getting-started/evaluate" hreflang="en">{copy.evaluate}{english}</a>
-      <a class="text-link" href="/docs/benchmarks/results" hreflang="en">{copy.benchmarks}{english}</a>
-      <a class="text-link" href="/docs/use-cases/self-hosted-clickhouse#choose-self-hosted-memory-for-coding-agents" hreflang="en">{copy.boundary}{english}</a>
-      <a class="text-link" href="/docs/operations/monitoring" hreflang="en">{copy.monitoring}{english}</a>
+      {evaluation.map(({ href, hreflang, label, className }) => (
+        <a class={className} href={href} hreflang={hreflang}>{label}</a>
+      ))}
     </div>
   </section>
 </SiteFrame>

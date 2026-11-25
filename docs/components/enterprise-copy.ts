@@ -195,4 +195,112 @@ export const enterpriseCopy = {
     monitoring: "Examiner la supervision",
     boundary: "Vérifier le stockage et les appels aux modèles",
   },
+  es: {
+    title: "Memoria autoalojada para agentes de IA | ClickHouse Loom",
+    description:
+      "Evalúa memoria compartida autoalojada para agentes de programación. Revisa los accesos, el almacenamiento y los modelos en tu infraestructura.",
+    heading: "Memoria autoalojada para agentes de IA",
+    lead: "Loom comparte las decisiones y los aprendizajes del equipo entre agentes de programación y sesiones. Aloja Loom con ClickHouse en tu infraestructura y decide quién puede consultar el conocimiento y qué modelos lo procesan.",
+    englishLabel: "en inglés",
+    plan: "Planificar el despliegue",
+    security: "Revisar el modelo de seguridad",
+    deploymentHeading: "Elegir cómo desplegar Loom",
+    deploymentIntro:
+      "Prueba un flujo de trabajo con Docker o prepara un despliegue de equipo en Kubernetes con el chart de Helm.",
+    docker: {
+      title: "Docker",
+      detail:
+        "Inicia una instancia, conecta un agente y comprueba que recupera una decisión guardada desde una sesión nueva.",
+      label: "Abrir la guía de inicio rápido",
+    },
+    kubernetes: {
+      title: "Kubernetes",
+      detail: "Configura los servicios, el almacenamiento, la autenticación y el ingress con el chart de Helm.",
+      label: "Desplegar con Helm",
+    },
+    controlsHeading: "Revisar el acceso y la operación",
+    controlsIntro: "Define quién puede consultar y modificar los datos, cuánto tiempo se guardan y cómo se recuperan.",
+    identity: {
+      title: "Identidad y acceso",
+      detail:
+        "Conecta un proveedor OpenID Connect y limita el acceso a los espacios de nombres del equipo con roles, permisos y tokens.",
+      label: "Configurar el inicio de sesión",
+    },
+    audit: {
+      title: "Auditoría y uso",
+      detail: "Consulta el historial de cambios, las operaciones, el uso de los modelos y los costes de tu despliegue.",
+      label: "Consultar el registro de auditoría",
+    },
+    erasure: {
+      title: "Conservación y borrado",
+      detail: "Configura los plazos de conservación. Sigue el proceso de borrado y comprueba qué datos quedan.",
+      label: "Revisar la conservación y el borrado",
+    },
+    backup: {
+      title: "Copias de seguridad y recuperación",
+      detail: "Planifica las copias, la restauración y la supervisión de las bases de datos y los servicios.",
+      label: "Preparar la recuperación",
+    },
+    evaluateHeading: "Evaluar Loom con tareas de tu equipo",
+    evaluateIntro:
+      "Mide la calidad de la recuperación, la latencia y el coste con tus agentes y repositorios. Comprueba también dónde se procesan las solicitudes a los modelos.",
+    evaluate: "Evaluar Loom",
+    benchmarks: "Ver las pruebas de rendimiento publicadas",
+    monitoring: "Revisar la supervisión",
+    boundary: "Comprobar el almacenamiento y las llamadas a los modelos",
+  },
+  "pt-BR": {
+    title: "Memória auto-hospedada para agentes de IA | ClickHouse Loom",
+    description:
+      "Avalie memória compartilhada auto-hospedada para agentes de programação. Confira acessos, armazenamento e modelos na sua infraestrutura.",
+    heading: "Memória auto-hospedada para agentes de IA",
+    lead: "O Loom mantém as decisões e os aprendizados da equipe disponíveis entre agentes de programação e sessões. Hospede o Loom com ClickHouse na sua infraestrutura e controle quem pode acessar o conhecimento e quais modelos o processam.",
+    englishLabel: "em inglês",
+    plan: "Planejar a implantação",
+    security: "Revisar o modelo de segurança",
+    deploymentHeading: "Escolher como implantar o Loom",
+    deploymentIntro:
+      "Teste um fluxo de trabalho com Docker ou configure uma implantação para a equipe no Kubernetes com o chart do Helm.",
+    docker: {
+      title: "Docker",
+      detail: "Inicie uma instância, conecte um agente e confira se ele recupera uma decisão salva em uma nova sessão.",
+      label: "Abrir o guia de início rápido",
+    },
+    kubernetes: {
+      title: "Kubernetes",
+      detail: "Configure serviços, armazenamento, autenticação e ingress com o chart do Helm.",
+      label: "Implantar com Helm",
+    },
+    controlsHeading: "Revisar o acesso e a operação",
+    controlsIntro:
+      "Defina quem pode ler e alterar os dados, por quanto tempo eles ficam armazenados e como restaurá-los.",
+    identity: {
+      title: "Identidade e acesso",
+      detail:
+        "Conecte um provedor OpenID Connect e limite o acesso aos namespaces da equipe com papéis, permissões e tokens.",
+      label: "Configurar o login",
+    },
+    audit: {
+      title: "Auditoria e uso",
+      detail: "Consulte o histórico de alterações, as operações, o uso dos modelos e os custos da sua implantação.",
+      label: "Consultar o registro de auditoria",
+    },
+    erasure: {
+      title: "Retenção e exclusão",
+      detail: "Defina os prazos de retenção. Acompanhe a exclusão e confira quais dados ainda permanecem.",
+      label: "Revisar a retenção e a exclusão",
+    },
+    backup: {
+      title: "Backup e recuperação",
+      detail: "Planeje o backup, a restauração e o monitoramento dos bancos de dados e serviços.",
+      label: "Planejar a recuperação",
+    },
+    evaluateHeading: "Avaliar o Loom com tarefas da equipe",
+    evaluateIntro:
+      "Meça a qualidade da recuperação, a latência e o custo com seus agentes e repositórios. Confira também para onde vão as solicitações aos modelos.",
+    evaluate: "Avaliar o Loom",
+    benchmarks: "Ver os benchmarks publicados",
+    monitoring: "Revisar o monitoramento",
+    boundary: "Conferir o armazenamento e as chamadas aos modelos",
+  },
 } satisfies Record<string, EnterpriseCopy>;

@@ -1,6 +1,7 @@
 ---
 import { publisher, repositoryUrl, software, website } from "../lib/site-identity.mjs";
 import loomLogo from "../public/loom.svg?raw";
+import { documentationLink } from "./documentation-link";
 import { frameCopy } from "./site-frame-copy";
 import { enterpriseLink, homeAlternates, siteLocales, type LocaleAlternate, type SiteLocale } from "./site-locales";
 
@@ -24,7 +25,7 @@ const languageMenu = pageAlternates.flatMap(({ language, href }) =>
 );
 const brandHome = siteLocales[locale].href;
 const docs = siteLocales[locale].docs;
-const start = home?.start ?? { href: "/docs/getting-started/quickstart", hreflang: "en" };
+const start = home?.start ?? documentationLink(locale, "/getting-started/quickstart");
 const canonical = new URL(path, Astro.site);
 const page = {
   "@type": "WebPage",
