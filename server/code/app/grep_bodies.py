@@ -29,7 +29,10 @@ async def definitions_for(
             hit
             for hit in matches
             if not any(
-                row["path"] == hit["path"] and row.get("body") and _agrees_with_hit(row, hit)
+                row["path"] == hit["path"]
+                and row["start_line"] <= hit["line"] <= row["end_line"]
+                and row.get("body")
+                and _agrees_with_hit(row, hit)
                 for row in covered_by
             )
         ]
