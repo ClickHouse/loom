@@ -87,7 +87,7 @@ test("points published Markdown and MDX mirrors to their HTML canonicals", (t) =
 test("publishes reciprocal homepage alternates only on canonical product homepages", (t) => {
   const origin = "https://loom.clickhouse.com";
   const sitemap = `<urlset xmlns:xhtml="http://www.w3.org/1999/xhtml">
-  <url><loc>${origin}/docs</loc></url>
+  <url><loc>${origin}/docs</loc><lastmod>2026-01-01T00:00:00.000Z</lastmod></url>
   <url><loc>${origin}/docs/home</loc></url>
   <url><loc>${origin}/docs/pt-BR/home</loc></url>
 </urlset>`;
@@ -97,6 +97,7 @@ test("publishes reciprocal homepage alternates only on canonical product homepag
     root: ["/", "/pt-BR", "/platform"],
     aliases: ["/docs/home", "/docs/pt-BR/home", "/docs/platform"],
     homeLocales,
+    productDates: { "/": "2026-01-03T00:00:00.000Z", "/pt-BR": "2026-01-02T00:00:00.000Z" },
   });
   const publicSitemap = readFileSync(new URL("sitemap.xml", output), "utf8");
   const locations = new Map(
@@ -115,7 +116,9 @@ test("publishes reciprocal homepage alternates only on canonical product homepag
     );
   }
   assert.equal(locations.get(origin + "/platform"), "");
-  assert.equal(locations.get(origin + "/docs"), "");
+  assert.match(locations.get(origin + "/"), /^<lastmod>2026-01-03T00:00:00.000Z<\/lastmod>/);
+  assert.match(locations.get(origin + "/pt-BR"), /^<lastmod>2026-01-02T00:00:00.000Z<\/lastmod>/);
+  assert.equal(locations.get(origin + "/docs"), "<lastmod>2026-01-01T00:00:00.000Z</lastmod>");
   assert.ok(!publicSitemap.includes("/docs/pt-BR/home"));
   const docsSitemap = readFileSync(new URL("docs/sitemap.xml", output), "utf8");
   assert.ok(!docsSitemap.includes("/pt-BR"));

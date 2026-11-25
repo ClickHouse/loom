@@ -80,7 +80,7 @@ function translationRedirects(sitemap, paths, staticRoot) {
   });
 }
 
-export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = {} }) {
+export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = {}, productDates = {} }) {
   const docsSitemap = new URL("docs/sitemap.xml", staticRoot);
   const sitemap = readFileSync(docsSitemap, "utf8");
   if (!sitemap.includes("</urlset>")) {
@@ -112,7 +112,8 @@ export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = 
   }
   const siteEntries = root.map((path) => {
     const loc = escape(new URL(path, origin).href);
-    return `  <url><loc>${loc}</loc>${alternatesByPath.get(path) ?? ""}</url>`;
+    const lastmod = productDates[path] ? `<lastmod>${escape(productDates[path])}</lastmod>` : "";
+    return `  <url><loc>${loc}</loc>${lastmod}${alternatesByPath.get(path) ?? ""}</url>`;
   });
 
   writeFileSync(docsSitemap, docs);
