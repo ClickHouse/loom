@@ -2,6 +2,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$PWD/.venv/bin:$PATH" GITHUB_WORKSPACE="$PWD"
+# A caller may be in a Git hook or have an operator deployment configured.
+while IFS= read -r variable; do
+  case "$variable" in
+    GIT_* | LOOM_* | UVICORN_*) unset "$variable" ;;
+  esac
+done < <(compgen -e)
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 24 ? 1 : 0)' || {
+  echo 'Use Node.js 24 or later for the reference MCP server.' >&2
+  exit 1
+}
 test -x .venv/bin/loom || {
   echo 'Run uv sync --locked --python 3.12 --extra dev --extra code first.' >&2
   exit 1
@@ -33,7 +44,7 @@ done
 export LOOM_ENV_FILE= LOOM_CH_CONTAINER="$container" LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:26.11.2.4
 export LOOM_CH_HOST=127.0.0.1 LOOM_CH_PORT="$LOOM_CH_HOST_PORT" LOOM_CH_DATABASE=loom LOOM_CH_SECURE=false
 export LOOM_CH_USER=loom LOOM_CH_READER_USER=loom_reader LOOM_CH_PASSWORD=loomdev LOOM_STORAGE_AUTHORITY=clickhouse
-export LOOM_BASE_URL="http://127.0.0.1:$api_port" LOOM_INSTANCE_LABEL="iso:coding-agent-comparison:$api_port"
+export LOOM_BASE_URL="http://127.0.0.1:$api_port" LOOM_INSTANCE_LABEL="iso:coding-agent-comparison:${scratch##*.}"
 export LOOM_CODE_INGEST_ENABLED=true LOOM_GIT_HISTORY=local LOOM_CODE_REPOS_ROOT="$scratch/mirrors"
 export LOOM_AUTH_REQUIRED=true LOOM_EMBEDDING_MODEL=fake-ngram-1024 LOOM_LLM_PROVIDER=fake
 export LOOM_BACKGROUND_WORKERS=off LOOM_ADOPTION_TELEMETRY_ENABLED=false LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS=10

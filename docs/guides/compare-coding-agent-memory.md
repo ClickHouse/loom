@@ -50,7 +50,7 @@ maintenance, and human review time before assigning a budget. See the
 ## Reproduce the comparison
 
 Clone the [Loom repository](https://github.com/ClickHouse/loom) and run these commands
-from its root. Use Docker, Node.js 22 or later with npm, Git, `jq`, `curl`, and `uv`.
+from its root. Use Docker, Node.js 24 or later with npm, Git, `jq`, `curl`, and `uv`.
 
 ```bash
 uv sync --locked --python 3.12 --extra dev --extra code

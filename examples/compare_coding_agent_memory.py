@@ -21,6 +21,7 @@ import httpx
 from server.auth import keyring
 from server.auth.jwt import mint_token
 from server.cli.sql_access import _login_check
+from server.code.app.index.gitrepo import auth_env
 from server.code.app.index.repo_registry import refresh_db_repos
 from server.code.app.repo_admin import _register
 from server.code.store.index import CodeRepo
@@ -44,6 +45,7 @@ def git(repo: Path, *args: str) -> str:
     return subprocess.check_output(
         ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args],
         cwd=repo,
+        env=auth_env(remote=str(repo)),
         text=True,
         stderr=subprocess.PIPE,
         timeout=20,
@@ -328,9 +330,9 @@ async def main() -> None:
     assert settings.ch_host in {"127.0.0.1", "localhost"}, "Use a local disposable database"
     async with httpx.AsyncClient(base_url=origin, timeout=5) as client:
         health = (await client.get("/v1/health")).json()
-    assert (
-        health["instance_label"].startswith("iso:coding-agent-comparison:") and health["fake_llm"]
-    ), health
+    label = os.environ["LOOM_INSTANCE_LABEL"]
+    assert label.startswith("iso:coding-agent-comparison:")
+    assert health["instance_label"] == label and health["fake_llm"], health
     keyring.sign_with_root_only()
     ch = get_client()
     await ch.connect()
