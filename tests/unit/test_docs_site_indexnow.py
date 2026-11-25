@@ -56,10 +56,12 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/enterprise",
             "/es",
             "/fr",
+            "/it",
             "/ja",
             "/ko",
             "/platform",
             "/pt-BR",
+            "/ru",
             "/telemetry",
             "/zh-CN",
         )
