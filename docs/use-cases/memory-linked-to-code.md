@@ -97,9 +97,9 @@ one definition. After the link pass, read that definition with `code.symbol` and
 the saved memory under `lessons`. When included, it carries `code_state: "fresh"`.
 Include the memory's namespace in `lesson_namespaces` when the call needs it.
 
-Change an expression in the function's body, such as `return url` to `return url.strip()`,
-and commit it on trunk. After the index and link worker process that commit, read the
-definition again in the same trunk namespace. Under the default policy, a returned
+Change an expression in the function's body, such as `return url` to `return url.strip()`.
+Commit the edit and push it to the indexed trunk. After the index and link worker process
+the commit, read the definition again in the same trunk namespace. Under the default policy, a returned
 lesson carries `code_state: "changed"`; `changed_since` names the indexed
 commit. This marks changed code, not a judgment that the lesson is false. Read the
 current body before applying it. Uncommitted editor changes do not trigger this check.
@@ -136,8 +136,9 @@ Use credentials that can read both code namespaces and the lesson.
    use `code.symbol` in each code namespace. Pass the same `lesson_namespaces` list when
    reading a separate memory namespace. Check that both responses include the same
    lesson and that its `code_state` is `fresh`.
-2. Commit a change on trunk only. After the index and link worker process the commit,
-   read each branch again. Run either example from the original definition.
+2. Push a commit to the indexed trunk and leave the release branch unchanged. After the
+   index and link worker process that commit, read each branch again. Run either example
+   from the original definition.
 
    | Change on trunk                                         | What to check on trunk                      | What to check on the unchanged release branch    |
    | ------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------ |
