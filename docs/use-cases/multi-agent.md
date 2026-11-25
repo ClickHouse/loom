@@ -2,7 +2,7 @@
 title: Shared memory for AI software factories
 description: Choose shared agent memory for a software factory. Test one coding-agent handoff for source freshness, scoped access and evidence a reviewer can reuse.
 seo:
-  title: Choose agent memory for a software factory
+  title: Agent memory for a software factory
 ---
 
 # Shared memory for a software factory and multi-agent workflows
