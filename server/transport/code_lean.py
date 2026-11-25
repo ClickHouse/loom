@@ -23,7 +23,10 @@ from collections import Counter, defaultdict
 from io import StringIO
 from typing import Any, NamedTuple
 
-from server.code.api.models_symbol import EDIT_CONTEXT_MAX_NAMES
+from pydantic import ValidationError
+
+from server.code.api.models_common import _safe_path
+from server.code.api.models_read import CODE_READ_MAX_RANGES, CodeReadRangeInput
 from server.code.domain.symbol_documentation import description_repeats_body
 
 # Accounting counters and ranking internals no agent acts on.
@@ -232,34 +235,48 @@ def _lean_grep(out: dict[str, Any]) -> None:
         out["related"] = lean_code("code.grep", related)
 
 
-def _grep_edit_continuation(
+def _grep_read_continuation(
     out: dict[str, Any],
     arguments: dict[str, Any],
 ) -> None:
-    """Give excerpt callers a batch of verified declaration locations to read next."""
+    """Give excerpt callers a batch of source ranges they can read next."""
     contexts = out.get("contexts") or []
     if arguments.get("include_body") is not False or not contexts or out.get("definitions"):
         return
-    selections: dict[str, None] = {}
+    selections: dict[tuple[str, int, int], CodeReadRangeInput] = {}
     for hit in out.get("matches") or []:
         if not isinstance(hit, dict):
             continue
         path, line, end = hit.get("path"), hit.get("line"), hit.get("scope_end_line")
-        if not (path and line and end and hit.get("scope") and line == hit.get("scope_start_line")):
+        if not (
+            path
+            and line
+            and end
+            and hit.get("scope")
+            and line == hit.get("scope_start_line")
+            and end >= line
+        ):
             continue
         if any(
             window["path"] == path and window["start_line"] <= line <= end <= window["end_line"]
             for window in contexts
         ):
             continue
-        selections.setdefault(f"{path}:{line}", None)
-        if len(selections) == EDIT_CONTEXT_MAX_NAMES:
+        try:
+            span = CodeReadRangeInput(path=path, start_line=line, end_line=end)
+        except ValidationError:
+            continue
+        if not _safe_path(span.path) or "\0" in span.path:
+            continue
+        selections.setdefault((span.path, span.start_line, end), span)
+        if len(selections) == CODE_READ_MAX_RANGES:
             break
     if selections:
-        params: dict[str, Any] = {"names": list(selections)}
-        if arguments.get("namespace"):
-            params["namespace"] = arguments["namespace"]
-        out["next"] = "For full definitions, call loom_code_edit_context with " + json.dumps(params)
+        params = {
+            "ranges": [span.model_dump() for span in selections.values()],
+            **{key: arguments[key] for key in ("org", "namespace") if arguments.get(key)},
+        }
+        out["next"] = "For the full source, call loom_code_read with " + json.dumps(params)
 
 
 class _GrepBody(NamedTuple):
@@ -502,7 +519,7 @@ def lean_code(op_name: str, payload: Any, arguments: dict[str, Any] | None = Non
     if fn is not None:
         fn(out)
     if op_name == "code.grep" and arguments is not None:
-        _grep_edit_continuation(out, arguments)
+        _grep_read_continuation(out, arguments)
     _hoist_defaults(out)
     if out.get("candidates") == []:
         out.pop("candidates")

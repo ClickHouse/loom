@@ -332,21 +332,32 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations() -> None:
         "scope_start_line": 2,
         "scope_end_line": 3,
     }
+    unusual = ["src/plugins v2/routes.py", "scripts/bootstrap", "docs/overview.md"]
+    more = [{**long, "path": path} for path in (*unusual, "a" * 1025)]
     payload = {
-        "matches": [long, {**long, "line": 7}, long, short],
+        "matches": [long, {**long, "line": 7}, long, short, *more],
         "contexts": [
             {"path": "src/a.py", "start_line": 4, "end_line": 8, "text": "partial"},
             {"path": "src/b.py", "start_line": 1, "end_line": 4, "text": "complete"},
         ],
     }
-    arguments = {"include_body": False, "namespace": "repo"}
-    result = lr.mcp_op_result("code.grep", payload, arguments, None)
+    arguments = {"include_body": False, "org": "secondary", "namespace": "repo"}
+    result = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
     suggestion = result.pop("next")
     label, _, params = suggestion.partition(" with ")
-    assert label == "For full definitions, call loom_code_edit_context"
-    assert json.loads(params) == {"names": ["src/a.py:5"], "namespace": "repo"}
+    assert label == "For the full source, call loom_code_read"
+    assert json.loads(params) == {
+        "ranges": [
+            {"path": path, "start_line": 5, "end_line": 16} for path in ("src/a.py", *unusual)
+        ],
+        "org": "secondary",
+        "namespace": "repo",
+    }
     assert result == lr.mcp_op_result("code.grep", payload, {"include_body": True}, None)
-    assert "next" not in lr.mcp_op_result("code.grep", {**payload, "contexts": []}, arguments, None)
+    assert "next" not in lr.mcp_op_result(
+        "code.grep", {**payload, "contexts": []}, arguments, None, toolset="coding"
+    )
+    assert "next" not in lr.mcp_op_result("code.grep", payload, arguments, None, toolset="core")
 
 
 def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:

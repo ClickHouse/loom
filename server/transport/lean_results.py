@@ -230,7 +230,12 @@ def _with_ignored_args(op_name: str, out: Any, arguments: dict[str, Any] | None)
 
 
 def mcp_op_result(
-    op_name: str, result: Any, arguments: dict[str, Any] | None, hint: tuple[str, str] | None
+    op_name: str,
+    result: Any,
+    arguments: dict[str, Any] | None,
+    hint: tuple[str, str] | None,
+    *,
+    toolset: str | None = None,
 ) -> Any:
     """The structured result an MCP `tools/call` returns for a registry op:
     the lean shape, a context.pack cut to its bundle, and
@@ -245,8 +250,14 @@ def mcp_op_result(
         out = lean_dupcheck(out)
     if op_name.startswith("code.") and not _explained(arguments):
         from server.transport.code_lean import lean_code
+        from server.transport.mcp_tools import listed_tool_names
 
-        out = lean_code(op_name, out, arguments)
+        offer_read = (
+            op_name == "code.grep"
+            and (arguments or {}).get("include_body") is False
+            and "loom_code_read" in listed_tool_names(toolset)
+        )
+        out = lean_code(op_name, out, arguments if offer_read else None)
     out = _with_ignored_args(op_name, out, arguments)
     if hint is not None and isinstance(out, dict):
         if hint[1] not in str(out.get("rendered") or ""):

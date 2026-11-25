@@ -393,7 +393,7 @@ async def _call_tool(
         _record_success_telemetry(call, result, elapsed_ms)
 
         return await _success_response(
-            call, result, elapsed_ms, (idem_scope, idem_body_hash), mentor_hint
+            call, result, elapsed_ms, (idem_scope, idem_body_hash), mentor_hint, toolset=toolset
         )
 
 
