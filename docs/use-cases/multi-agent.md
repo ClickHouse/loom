@@ -100,10 +100,10 @@ no captured live output.
 
 Pick an issue that an implementer and reviewer already handle in your repository. Record the
 starting commit. Save one source-linked lesson during implementation, then start a fresh review
-session with its own token. Push a small edit to the cited code on the indexed branch. Keep
-the lesson as written and wait for the link state to reflect the edit before reading the
-same lesson again. Keep the issue, revision and check results with each handoff so the
-reviewer can reproduce what the implementer saw.
+session with its own token. Push a change to an expression in the cited definition on the
+indexed trunk. Keep the lesson as written. After the index and link worker process the commit,
+have the reviewer read the same lesson again and check its link state. Keep the issue, revision
+and check results with each handoff so the reviewer can reproduce what the implementer saw.
 
 | Question                           | Evidence to collect                                                                                                                                               |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
