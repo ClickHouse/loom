@@ -13,7 +13,8 @@ interface Props {
 
 const { title, description, path, home } = Astro.props;
 const locale = home?.locale ?? "en";
-const shortLocale = locale.split("-")[0].toUpperCase();
+const shortLocale =
+  locale === "zh-CN" ? "简体" : locale === "zh-Hant" ? "繁體" : locale.split("-")[0].toUpperCase();
 const labels = frameCopy[locale];
 const locales = Object.entries(siteLocales).map(([language, value]) => ({ language, ...value }));
 const brandHome = siteLocales[locale].href;
