@@ -145,6 +145,7 @@ class Loom:
         self.client = httpx.Client(
             base_url=origin,
             timeout=15,
+            trust_env=False,
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/json, text/event-stream",
@@ -328,7 +329,7 @@ async def main() -> None:
         "Use a local disposable deployment"
     )
     assert settings.ch_host in {"127.0.0.1", "localhost"}, "Use a local disposable database"
-    async with httpx.AsyncClient(base_url=origin, timeout=5) as client:
+    async with httpx.AsyncClient(base_url=origin, timeout=5, trust_env=False) as client:
         health = (await client.get("/v1/health")).json()
     label = os.environ["LOOM_INSTANCE_LABEL"]
     assert label.startswith("iso:coding-agent-comparison:")

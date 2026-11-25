@@ -48,10 +48,12 @@ export LOOM_BASE_URL="http://127.0.0.1:$api_port" LOOM_INSTANCE_LABEL="iso:codin
 export LOOM_CODE_INGEST_ENABLED=true LOOM_GIT_HISTORY=local LOOM_CODE_REPOS_ROOT="$scratch/mirrors"
 export LOOM_AUTH_REQUIRED=true LOOM_EMBEDDING_MODEL=fake-ngram-1024 LOOM_LLM_PROVIDER=fake
 export LOOM_BACKGROUND_WORKERS=off LOOM_ADOPTION_TELEMETRY_ENABLED=false LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS=10
-LOOM_JWT_SECRET=$(openssl rand -hex 32)
+LOOM_JWT_SECRET=$(python -c 'import secrets; print(secrets.token_hex(32))')
 export LOOM_JWT_SECRET
 
 npm install --prefix "$scratch/deps" --ignore-scripts --no-audit --no-fund @modelcontextprotocol/server-memory@2.2.1 >&2
+export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost"
+export no_proxy="${no_proxy:+$no_proxy,}127.0.0.1,localhost"
 started_db=1
 bash dev/ci_start_clickhouse.sh >&2
 python -m server.core.schema.migrate >"$scratch/migrate.log" 2>&1 || {
