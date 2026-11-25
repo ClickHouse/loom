@@ -557,7 +557,15 @@ async def test_edit_context_prefers_distinct_test_source_windows(
 
 
 @pytest.mark.parametrize(
-    "case", ["indirect", "different_test_revision", "different_caller_revision", "direct"]
+    "case",
+    [
+        "indirect",
+        "crowded",
+        "fixture",
+        "different_test_revision",
+        "different_caller_revision",
+        "direct",
+    ],
 )
 async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monkeypatch, case):
     from server.code.api.models_symbol import CodeEditContextInput
@@ -571,16 +579,23 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
     source_path = "src/sample.py"
     await _ingest(repo, org, ns, source=b"def value():\n    return 7\n", path=source_path)
     caller_path = "src/action.py"
+    caller_source = b"from src.sample import value\n\n"
+    if case == "crowded":
+        caller_source += b"def unrelated():\n" + b"    value()\n" * 12 + b"\n"
+    caller_source += b"def run():\n    return value()\n"
     await _ingest(
         repo,
         org,
         ns,
-        source=b"from src.sample import value\n\ndef run():\n    return value()\n",
+        source=caller_source,
         path=caller_path,
         sha="b" * 40 if case == "different_caller_revision" else "a" * 40,
     )
     path = "tests/test_action.py"
     tests = b"from src.action import run\nfrom src.sample import value\n\ndef test_action():\n    assert run() == 7\n"
+    if case == "fixture":
+        path = "tests/fixtures/fake_app.py"
+        tests = tests.replace(b"def test_action():", b"def sample_setup():")
     if case == "direct":
         tests += b"\ndef test_value():\n    assert value() == 7\n"
     await _ingest(
@@ -598,7 +613,7 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
         )
     )
     (definition,) = response.definitions
-    if case in {"different_test_revision", "different_caller_revision"}:
+    if case in {"fixture", "different_test_revision", "different_caller_revision"}:
         assert definition.examples == []
         return
     (example,) = definition.examples
@@ -610,10 +625,75 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
     else:
         assert example["line"] == 5
         assert example["evidence"] == "indirect_call"
-        assert example["via"] == {"symbol": "src.action::run", "path": caller_path, "line": 4}
+        line = caller_source.splitlines().index(b"    return value()") + 1
+        assert example["via"] == {"symbol": "src.action::run", "path": caller_path, "line": line}
         context = example["context"]
         lines = tests.decode().splitlines(keepends=True)
         assert context["text"] == "".join(lines[context["start_line"] - 1 : context["end_line"]])
+
+
+async def test_edit_context_does_not_attach_indirect_example_to_an_overload(
+    code_env, monkeypatch
+) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.index.scip_delta import ScipDelta, apply_delta
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    files = {
+        "src/a.cpp": b"#define DECLARE_VALUE(T) T value(T n) { return n; }\nnamespace DB {\nDECLARE_VALUE(int)\n}\n",
+        "src/b.cpp": b"namespace DB {\ndouble value(double n) { return n; }\ndouble run() { return value(2.0); }\n}\n",
+        "tests/test_b.cpp": b"void test_run() { DB::run(); }\n",
+    }
+    for path, source in files.items():
+        await _ingest(repo, org, ns, source=source, path=path)
+    delta = ScipDelta.model_validate(
+        {
+            "delta_version": 1,
+            "commit": "a" * 40,
+            "files": [
+                {
+                    "path": "src/a.cpp",
+                    "symbols": [
+                        {
+                            "qualified_name": "DB::value",
+                            "signature": "(int)",
+                            "kind": "function",
+                            "line_start": 3,
+                            "line_end": 3,
+                        }
+                    ],
+                    "edges": [],
+                },
+                {
+                    "path": "tests/test_b.cpp",
+                    "symbols": [],
+                    "edges": [
+                        {
+                            "from_qualified_name": "test_run",
+                            "from_signature": "()",
+                            "to_qualified_name": "DB::run",
+                            "to_signature": "()",
+                            "edge_kind": "calls",
+                            "line": 1,
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    await apply_delta(repo, org, ns, delta)
+
+    result = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, name="DB::value", include_lessons=False)
+    )
+    assert result.ambiguous
+    assert {d.path for d in result.definitions} == {"src/a.cpp", "src/b.cpp"}
+    assert all(not definition.examples for definition in result.definitions)
 
 
 async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(

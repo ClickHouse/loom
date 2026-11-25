@@ -150,6 +150,7 @@ async def indirect_test_examples(
         limit=12,
         min_confidence=0.8,
         with_revision=True,
+        distinct_callers_at=revision,
     )
     bridges: dict[str, dict[str, Any]] = {}
     for edge in callers:
@@ -172,6 +173,7 @@ async def indirect_test_examples(
         min_confidence=0.8,
         with_revision=True,
         tests_only=True,
+        distinct_callers_at=revision,
     )
     if not tests:
         return []
@@ -214,6 +216,7 @@ def _verified_indirect_sites(
         bridge = bridges.get(str(edge["to_symbol_id"]))
         if (
             bridge is None
+            or not is_test_unit_path(str(edge["path"]))
             or edge["to_qualified_name"] != bridge["from_qualified_name"]
             or not (current(edge) and current(bridge))
         ):

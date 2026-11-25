@@ -409,7 +409,7 @@ async def _enrichment(
             ),
             callers,
         )
-        if for_edit and not (named or sites):
+        if for_edit and len(head) == 1 and not (named or sites):
             definition = head[0]
             revision = _indexed_commit(
                 definition.get("extent_commit") or definition.get("indexed_commit")
