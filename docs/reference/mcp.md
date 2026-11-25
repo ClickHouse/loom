@@ -321,6 +321,10 @@ diagnostic shape costs several thousand tokens for a short answer.
 `assistant` toolset always get the full result (on `assistant`, a `memory.search` without
 its per-hit score breakdown).
 
+Lean grep definitions keep source, matching lines and qualified names. When
+the full body is present, Loom can omit a short name already in the qualified
+name and a signature already on the first source line.
+
 ### The assistant toolset
 
 `?toolset=assistant` is the connection a chat client uses to investigate Loom on behalf
