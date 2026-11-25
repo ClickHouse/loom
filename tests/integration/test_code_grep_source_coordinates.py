@@ -273,6 +273,13 @@ def conditional(value):
     if value:
         return implement(value)
     return 0
+
+class Service:
+    def implementation(self, value):
+        return value * 2
+
+    def forward(self, value):
+        return self.implementation(value)
 ''',
         commit_sha="a" * 40,
         embedding_model=embedder.model_name,
@@ -302,6 +309,11 @@ def conditional(value):
         {"pattern": ["def dispatch", "def implement"]},
     ):
         assert (await handle_code_grep(args.model_copy(update=changes))).related is None
+    enclosed = await handle_code_grep(
+        args.model_copy(update={"pattern": ["class Service", "def forward"]})
+    )
+    assert any("return value * 2" in d.get("body", "") for d in enclosed.definitions)
+    assert enclosed.related is None
 
 
 @pytest.mark.asyncio

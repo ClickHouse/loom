@@ -141,9 +141,29 @@ async def _forwarded_definition(
         return None
     (_, revision), (wrapper, row) = next(iter(available.items()))
     source = await _dependency_source(repo, org, ns, row, revision)
-    if source is None:
+    if source is None or await asyncio.to_thread(_covers_dependency, definitions, source):
         return None
     return RelatedGrepEvidence(pattern=wrapper.qualified_name, matches=[], dependencies=[source])
+
+
+def _covers_dependency(definitions: list[dict[str, Any]], source: GrepDependency) -> bool:
+    for row in definitions:
+        start, end = row["start_line"], row["end_line"]
+        body = row.get("body")
+        if (
+            row["path"] == source.path
+            and body
+            and not row.get("body_elided")
+            and 0 < start <= source.start_line <= source.end_line <= end
+        ):
+            lines = list(io.StringIO(body, newline="\n"))
+            if (
+                len(lines) == end - start + 1
+                and "".join(lines[source.start_line - start : source.end_line - start + 1])
+                == source.body
+            ):
+                return True
+    return False
 
 
 def _forwarding_edges(
