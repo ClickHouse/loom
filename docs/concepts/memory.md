@@ -1,5 +1,5 @@
 ---
-description: Learn how agentic memory works, when to use working and long-term memory, and how Loom keeps facts, sources and revisions available across runs.
+description: Learn how agentic memory works, when to use working or long-term memory, and how agent memory and document RAG work together.
 seo:
   title: What is agentic memory?
 ---
@@ -36,6 +36,25 @@ working memory. Save a reviewed refund rule as a short claim and link it to the
 A later session can retrieve the rule within its authorized namespace. When the
 policy changes, [review the source and correct the saved claim](../use-cases/knowledge-factory.md#check-the-lesson-after-a-runbook-change)
 so readers can see which version they used.
+
+## How agent memory and RAG work together
+
+Retrieval-augmented generation (RAG) brings retrieved evidence into the model's
+input before it generates an answer. Agent memory keeps selected facts, decisions
+and procedures available across runs. An agent can retrieve memories, documents,
+or both before it answers.
+
+For a return, retrieve the current approved policy to find the refund window and
+cite the document revision. Retrieve a saved lesson to find how the team handled
+an earlier exception. Use the policy for the rule and the lesson as evidence about
+that case. If the lesson and the current policy disagree, check the cited passage
+and send the lesson for review before reusing it.
+
+In Loom, [document search](../use-cases/document-search.md) returns passages and
+their source citations. [Memory search](../features/memory/search-and-ask.md)
+retrieves saved claims. When a claim comes from a policy, [link it to the source
+document](../features/knowledge.md#how-do-agents-connect-a-memory-to-a-source-document)
+so a later reader can verify the evidence.
 
 ## Rows in ClickHouse
 

@@ -11,6 +11,9 @@ extractor service converts) and lets agents search them with citations over MCP,
 the SDKs. It is the retrieval half of retrieval-augmented generation (RAG): your agent or
 model writes the answer from the passages Loom returns.
 
+Use [agent memory alongside document RAG](../concepts/memory.md#how-agent-memory-and-rag-work-together)
+when the agent needs a saved decision or lesson and the source that supports it.
+
 ## What you get
 
 - **Chunks that follow the document's structure.** `knowledge.add` stores the text and,

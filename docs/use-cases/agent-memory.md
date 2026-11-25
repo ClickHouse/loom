@@ -1,6 +1,6 @@
 ---
 title: Memory for coding agents across sessions and tools
-description: Choose and evaluate shared memory for coding agents with cross-session recall, scoped access, corrected facts and lessons linked to current code.
+description: Compare repository instructions, session history, and shared memory for coding agents. Test recall, scoped access, and lessons linked to code.
 ---
 
 # Memory for coding agents across sessions and tools
@@ -35,10 +35,20 @@ to see who saved the lesson and how it changed.
 
 ## Choosing a memory tool for coding agents
 
-The best memory tool for a coding agent depends on what it needs to remember. Keep
-repository instructions in version control when every checkout needs the same rules.
-Use a shared memory service when a correction, project decision or past fix must be
-available across sessions, tools or teammates, with control over who can read it.
+Choose a source based on what the next agent needs to retrieve and who maintains it.
+
+| Source                                      | Use it for                                                              | What to verify                                                                      |
+| ------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Repository instructions such as `AGENTS.md` | Build commands and reviewed rules every checkout needs.                 | The client loads the expected instructions at the target revision.                  |
+| Session history                             | The exact command, tool output or discussion from a past session.       | The client can find the original event and respects its access and retention rules. |
+| [Document search](document-search.md)       | A passage from an approved runbook, policy or design document.          | The passage cites the source and revision that support the answer.                  |
+| Shared agent memory                         | A decision, correction or lesson another authorized client should find. | A fresh session retrieves the current claim and can check its writer and evidence.  |
+
+For a retry-policy change, keep the required test command in repository instructions.
+Keep a failed test's exact output in its session history or CI record. Save why
+the team changed the retry behavior as a shared lesson, and link it to the
+definition that implements the change. When the policy comes from a document, use
+[memory and document retrieval together](../concepts/memory.md#how-agent-memory-and-rag-work-together).
 
 Check these requirements before choosing Loom:
 
