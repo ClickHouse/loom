@@ -27,6 +27,7 @@ from pydantic import ValidationError
 
 from server.code.api.models_common import _safe_path
 from server.code.api.models_read import CODE_READ_MAX_RANGES, CodeReadRangeInput
+from server.code.domain.extract.py_notebooks import is_notebook_path
 from server.code.domain.symbol_documentation import description_repeats_body
 
 # Accounting counters and ranking internals no agent acts on.
@@ -266,7 +267,7 @@ def _grep_read_continuation(
             span = CodeReadRangeInput(path=path, start_line=line, end_line=end)
         except ValidationError:
             continue
-        if not _safe_path(span.path) or "\0" in span.path:
+        if not _safe_path(span.path) or "\0" in span.path or is_notebook_path(span.path):
             continue
         selections.setdefault((span.path, span.start_line, end), span)
         if len(selections) == CODE_READ_MAX_RANGES:

@@ -333,7 +333,7 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations() -> None:
         "scope_end_line": 3,
     }
     unusual = ["src/plugins v2/routes.py", "scripts/bootstrap", "docs/overview.md"]
-    more = [{**long, "path": path} for path in (*unusual, "a" * 1025)]
+    more = [{**long, "path": path} for path in (*unusual, "examples/demo.IPYNB", "a" * 1025)]
     payload = {
         "matches": [long, {**long, "line": 7}, long, short, *more],
         "contexts": [
