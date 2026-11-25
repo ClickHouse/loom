@@ -55,8 +55,9 @@ Repeat the question with the same namespace and access as the agent. Note the
 source you expected to answer it and the supporting passage if you know it.
 
 - **Access.** Have a namespace admin check the reader's
-  [grants](../features/namespaces-and-sharing.md#membership-and-grants). A reader can
-  only retrieve passages from namespaces it may read.
+  [grants](../features/namespaces-and-sharing.md#membership-and-grants). For a source
+  that [mirrors document permissions](../architecture/document-sources.md#who-may-read),
+  also check that the identity the agent uses may read the original document.
 - **Source sync.** For a synced runbook, inspect the
   [source's last sync](../reference/operations/knowledge.md#knowledgesourceinspect)
   and compare the document revision in Loom with the approved runbook.
