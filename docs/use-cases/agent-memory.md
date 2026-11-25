@@ -51,7 +51,8 @@ Check these requirements before choosing Loom:
 
 Follow [coding-agent setup](../getting-started/connect-a-coding-agent.md) for the plugin
 or MCP connection your client supports. Read its capture settings before using private
-code or conversations. For a pipeline with separate implementation and review agents,
+code or conversations. Use the [self-hosted memory checklist](self-hosted-clickhouse.md#choose-self-hosted-memory-for-coding-agents)
+to review storage and model destinations. For a pipeline with separate implementation and review agents,
 continue with [memory for a software factory](multi-agent.md#memory-for-a-software-factory).
 
 ### Check one coding lesson across sessions
