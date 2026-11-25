@@ -154,8 +154,13 @@ def test_tuple_loop_leaves_unknown_rebinds_and_shapes_untyped() -> None:
     cases = [
         original.replace('t.Tuple["Worker", dict]', 't.Tuple["Worker", ...]'),
         original.replace('t.Tuple["Worker", dict]', 't.Tuple["Worker", dict, int]'),
+        original.replace('t.Tuple["Worker", dict]', 't.Tuple["Worker", *t.Tuple[dict, ...]]'),
+        original.replace('t.Tuple["Worker", dict]', 't.Tuple["Worker", t.Unpack[t.Tuple[dict]]]'),
         original.replace("import typing as t", "import another as t"),
         original.replace("class Worker:", "t = another\nclass Worker:"),
+        original.replace(
+            "import typing as t", "import builtins\ntype tuple[T, U] = builtins.tuple[U, T]"
+        ).replace('t.List[t.Tuple["Worker", dict]]', 'list[tuple["Worker", dict]]'),
         original.replace(
             "            worker.execute()",
             "            worker = get_unknown()\n            worker.execute()",
@@ -167,6 +172,16 @@ def test_tuple_loop_leaves_unknown_rebinds_and_shapes_untyped() -> None:
             "        for worker,", "        import another as self\n        for worker,"
         ),
         original + "\n    @decorator\n    def reset(self):\n        self.rows = get_unknown()\n",
+        original.replace("    def run", "    __init__ = get_unknown()\n    def run"),
+        original.replace(
+            "    def run", "    if use_override:\n        def __init__(self): pass\n    def run"
+        ),
+        original.replace(
+            "        for worker,",
+            "        with get_unknown() as self.rows: pass\n        for worker,",
+        ),
+        original.replace("        for worker,", "        del self.rows\n        for worker,"),
+        original + "\n    if use_override:\n        def reset(self): self.rows = get_unknown()\n",
     ]
     for source in cases:
         line = next(
