@@ -209,8 +209,18 @@ class SpendingContracts(unittest.TestCase):
         gateway = self.gateway(
             lambda _: httpx.Response(
                 429,
-                headers={"request-id": "provider-failure"},
-                json={"error": {"message": "private upstream detail"}},
+                headers={
+                    "request-id": "provider-failure",
+                    "retry-after": "12",
+                    "anthropic-ratelimit-input-tokens-limit": "100000",
+                    "anthropic-ratelimit-input-tokens-remaining": "0",
+                },
+                json={
+                    "error": {
+                        "message": "private upstream detail",
+                        "details": {"error_code": "ramp_limit_exceeded"},
+                    }
+                },
             )
         )
         port = gateway.start(host="127.0.0.1")
@@ -221,7 +231,17 @@ class SpendingContracts(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.headers["request-id"], "provider-failure")
         self.assertEqual(
-            response.json(), {"error": {"type": "HTTPStatusError", "upstream_status": 429}}
+            response.json(),
+            {
+                "error": {
+                    "type": "HTTPStatusError",
+                    "upstream_status": 429,
+                    "upstream_retry_after_s": 12,
+                    "upstream_input_tokens_limit": 100000,
+                    "upstream_input_tokens_remaining": 0,
+                    "upstream_limit_code": "ramp_limit_exceeded",
+                }
+            },
         )
         self.assertTrue(self.journal.blocked)
         self.assertEqual(self.journal.rows[-1]["event"], "unknown")

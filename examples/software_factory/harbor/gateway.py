@@ -20,6 +20,30 @@ ATTRIBUTION_HEADERS = {
     "x-factory-feature": "feature",
     "x-factory-order": "order",
 }
+RATE_LIMIT_HEADERS = {
+    "retry-after": "upstream_retry_after_s",
+    "anthropic-ratelimit-input-tokens-limit": "upstream_input_tokens_limit",
+    "anthropic-ratelimit-input-tokens-remaining": "upstream_input_tokens_remaining",
+}
+RATE_LIMIT_CODES = frozenset({"enforced_spend_limit_reached", "ramp_limit_exceeded"})
+
+
+def _rate_limit_details(response: httpx.Response) -> dict[str, str | int]:
+    details: dict[str, str | int] = {}
+    for header, key in RATE_LIMIT_HEADERS.items():
+        value = response.headers.get(header, "")
+        if re.fullmatch(r"[0-9]{1,12}", value):
+            details[key] = int(value)
+    try:
+        payload = response.json()
+    except ValueError:
+        return details
+    error = payload.get("error") if isinstance(payload, dict) else None
+    attributes = error.get("details") if isinstance(error, dict) else None
+    code = attributes.get("error_code") if isinstance(attributes, dict) else None
+    if isinstance(code, str) and code in RATE_LIMIT_CODES:
+        details["upstream_limit_code"] = code
+    return details
 
 
 def decode(raw):
@@ -214,6 +238,8 @@ class Gateway:
                     details: dict[str, str | int] = {"type": type(error).__name__}
                     if isinstance(error, httpx.HTTPStatusError):
                         details["upstream_status"] = error.response.status_code
+                        if error.response.status_code == 429:
+                            details.update(_rate_limit_details(error.response))
                         identifier = error.response.headers.get("request-id", "")
                         if re.fullmatch(
                             r"[A-Za-z0-9_.-]{1,128}", identifier
