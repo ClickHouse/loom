@@ -591,9 +591,9 @@ async def test_edit_context_batches_definitions_and_their_tests(code_env, monkey
         await handle_code_edit_context(query.model_copy(update={"name": names[0]}))
 
 
-@pytest.mark.parametrize("clues_only_at_declarations", [True, False])
+@pytest.mark.parametrize("clue_shape", ["declarations", "mixed", "one_declaration"])
 async def test_edit_context_reads_verified_declarations_across_files(
-    code_env, monkeypatch, clues_only_at_declarations
+    code_env, monkeypatch, clue_shape
 ) -> None:
     from server.code.api.models_symbol import CodeEditContextInput
     from server.code.app.symbol import symbol
@@ -613,14 +613,20 @@ async def test_edit_context_reads_verified_declarations_across_files(
     for path, body in sources.items():
         await _ingest(repo, org, ns, source=body, path=path)
     clues = ["def submit(", "def handle("]
-    if not clues_only_at_declarations:
+    candidate_paths = set(sources)
+    if clue_shape == "mixed":
+        path = "src/delta.py"
+        await _ingest(repo, org, ns, source=b"def other(result):\n    return result\n", path=path)
+        clues.append("return result")
+        candidate_paths.add(path)
+    elif clue_shape == "one_declaration":
         clues[0] = "return result"
     result = await symbol.handle_code_edit_context(
         CodeEditContextInput(org=org, namespace=ns, clues=clues, include_lessons=False)
     )
     assert result.ambiguous
-    assert {candidate["path"] for candidate in result.candidates} == set(sources)
-    if not clues_only_at_declarations:
+    assert {candidate["path"] for candidate in result.candidates} == candidate_paths
+    if clue_shape == "one_declaration":
         assert result.definitions == []
         return
     assert {unit.path: unit.body.encode().rstrip(b"\n") for unit in result.definitions} == {

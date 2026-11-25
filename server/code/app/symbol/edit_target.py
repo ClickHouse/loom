@@ -140,14 +140,19 @@ async def _declaration_targets(
     revisions: dict[str, str],
     clues: list[str],
 ) -> list[EditTarget]:
-    """Find each exact declaration only when the whole clue match set is verifiable."""
+    """Read exact declaration clues and leave ordinary mentions as candidates."""
     required = set(clues)
-    if not 1 < len(matches) <= EDIT_CONTEXT_MAX_NAMES or len(required) < 2:
+    if len(required) < 2 or any(len(match["text"]) >= GREP_MATCH_TEXT_CHARS for match in matches):
         return []
-    if any(
-        match["line"] != match["scope_start_line"] or len(match["text"]) >= GREP_MATCH_TEXT_CHARS
-        for match in matches
-    ) or not all(any(clue in match["text"] for match in matches) for clue in required):
+    declarations: set[tuple[str, int]] = set()
+    for clue in required:
+        hits = [match for match in matches if clue in match["text"]]
+        if not hits:
+            return []
+        if all(hit["line"] == hit["scope_start_line"] for hit in hits):
+            declarations.update((hit["path"], hit["line"]) for hit in hits)
+    matches = [match for match in matches if (match["path"], match["line"]) in declarations]
+    if not 1 < len(matches) <= EDIT_CONTEXT_MAX_NAMES:
         return []
     paths = sorted({match["path"] for match in matches})
     if any(not revisions.get(path) for path in paths):
