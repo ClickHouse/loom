@@ -27,6 +27,63 @@ function publish(t, sitemap, unlistedPages) {
   });
 }
 
+test("points published Markdown and MDX mirrors to their HTML canonicals", (t) => {
+  const origin = "https://loom.clickhouse.com";
+  const sitemap = `<urlset>
+  <url><loc>${origin}/docs</loc></url>
+  <url><loc>${origin}/docs/es/concepts/memory</loc></url>
+  <url><loc>${origin}/docs/api/v1.2</loc></url>
+  <url><loc>${origin}/docs/no-mirror</loc></url>
+  <url><loc>${origin}/docs/platform</loc></url>
+</urlset>`;
+  const output = staticFixture(t, sitemap);
+  for (const file of [
+    "docs/index.md",
+    "docs/index.mdx",
+    "docs/es/concepts/memory.md",
+    "docs/es/concepts/memory.mdx",
+    "docs/api/v1.2.md",
+    "docs/platform.md",
+    "docs/404.md",
+    "docs/llms-install.md",
+  ]) {
+    mkdirSync(new URL("./", new URL(file, output)), { recursive: true });
+    writeFileSync(new URL(file, output), "# Page text");
+  }
+  const routes = publishSiteDiscovery(output, { root: ["/platform"], aliases: ["/docs/platform"] });
+  const findCanonical = (path) => {
+    const matching = routes.filter(({ src, headers }) => headers.Link && new RegExp(src).test(path));
+    assert.ok(matching.length <= 1, path);
+    const route = matching[0];
+    if (!route) return undefined;
+    assert.equal(route.continue, true);
+    assert.equal(route.status, undefined);
+    return path.replace(new RegExp(route.src), route.headers.Link);
+  };
+
+  for (const [path, canonical] of [
+    ["/docs/index.md", "/docs"],
+    ["/docs/index.mdx", "/docs"],
+    ["/docs/es/concepts/memory.md", "/docs/es/concepts/memory"],
+    ["/docs/es/concepts/memory.mdx", "/docs/es/concepts/memory"],
+    ["/docs/api/v1.2.md", "/docs/api/v1.2"],
+  ]) {
+    assert.equal(findCanonical(path), `<${origin}${canonical}>; rel="canonical"`, path);
+  }
+  for (const path of [
+    "/docs",
+    "/docs/es/concepts/memory",
+    "/docs/api/v1.2.mdx",
+    "/docs/api/v102.md",
+    "/docs/no-mirror.md",
+    "/docs/platform.md",
+    "/docs/404.md",
+    "/docs/llms-install.md",
+  ]) {
+    assert.equal(findCanonical(path), undefined, path);
+  }
+});
+
 test("publishes reciprocal homepage alternates only on canonical product homepages", (t) => {
   const origin = "https://loom.clickhouse.com";
   const sitemap = `<urlset xmlns:xhtml="http://www.w3.org/1999/xhtml">
