@@ -52,6 +52,7 @@ into one place.
 - **Long-term memory shared across your coding agents**, with plugins that load context
   at session start and capture the session as it runs.
   [Memory for coding agents](https://loom.clickhouse.com/docs/use-cases/agent-memory) ·
+  [Compare memory options](https://loom.clickhouse.com/docs/guides/compare-coding-agent-memory) ·
   [Connect a coding agent](./docs/getting-started/connect-a-coding-agent.md)
 - **Memory for an agent application**, per user, from the Python or TypeScript
   SDK. [Your first agent](./docs/getting-started/first-agent.md)
