@@ -27,6 +27,11 @@ const siteRoutes = [...publicPages].map(([path, destination]) => {
   return { src, dest: destination };
 });
 
+const agentIndexRedirects = ["", "-full"].map((suffix) => ({
+  src: `^/llms${suffix}\\.txt$`,
+  status: 308,
+  headers: { Location: `/docs/llms${suffix}.txt` },
+}));
 const aliasRedirects = [...publicPages].map(([path, destination]) => ({
   src: `^${destination}/?$`,
   status: 308,
@@ -39,6 +44,7 @@ const translationRedirects = publishSiteDiscovery(new URL("static/", output), {
 });
 const publicPaths = new Set(siteRoutes.map(({ src }) => src));
 config.routes = [
+  ...agentIndexRedirects,
   ...aliasRedirects,
   ...translationRedirects,
   ...siteRoutes,

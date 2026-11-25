@@ -54,9 +54,12 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/adoption",
             "/ar",
             "/de",
+            "/de/enterprise",
             "/enterprise",
             "/es",
+            "/es/enterprise",
             "/fr",
+            "/fr/enterprise",
             "/hi",
             "/id",
             "/it",
@@ -64,10 +67,13 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/ko",
             "/platform",
             "/pt-BR",
+            "/pt-BR/enterprise",
             "/ru",
             "/telemetry",
             "/tr",
+            "/vi",
             "/zh-CN",
+            "/zh-Hant",
         )
     )
     assert indexnow.urls_for({"docs/components/SiteFrame.astro": "M"}) == public_pages

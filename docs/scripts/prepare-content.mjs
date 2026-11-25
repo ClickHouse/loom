@@ -18,6 +18,70 @@ const locales = ["es", "ja", "ko", "pt-BR", "zh-CN"];
 const docsBlob = "https://github.com/ClickHouse/loom/blob/main/docs/";
 const docsSite = "https://loom.clickhouse.com/docs";
 const localizedSeo = {
+  "architecture/storage-authority.md": {
+    es: { title: "Almacenamiento en Postgres y ClickHouse" },
+    "pt-BR": { title: "Armazenamento no Postgres e no ClickHouse" },
+  },
+  "benchmarks/adding-a-case.md": {
+    "pt-BR": { title: "Adicionar casos, dados e suítes de benchmark" },
+  },
+  "development/adding-language-support.md": {
+    es: { title: "Añadir lenguajes al índice de código" },
+  },
+  "features/tracker/overview.md": {
+    es: { title: "Incidencias duplicadas y posibles regresiones" },
+    "pt-BR": { title: "Issues duplicadas e candidatos a regressão" },
+  },
+  "use-cases/code-intelligence-by-language.md": {
+    es: { title: "Inteligencia de código por lenguaje" },
+    ja: { title: "言語別のコードインテリジェンス" },
+    ko: { title: "언어별 코드 인텔리전스" },
+    "pt-BR": { title: "Inteligência de código por linguagem" },
+    "zh-CN": { title: "按语言查看代码智能支持" },
+  },
+  "features/integrations/cursor.md": {
+    ja: {
+      title: "Cursorの共有エージェントメモリをMCPで使う",
+      description:
+        "CursorをLoomにMCPで接続し、プロジェクトの判断や教訓をセッション間で共有します。ローカルとチーム向けの接続方法を紹介します。",
+    },
+    ko: {
+      title: "Cursor에서 MCP로 공유 에이전트 메모리 사용",
+      description:
+        "Cursor를 MCP로 Loom에 연결해 프로젝트 결정과 교훈을 여러 세션에서 공유합니다. 로컬 연결과 팀 서버 설정을 확인할 수 있습니다.",
+    },
+    "zh-CN": {
+      title: "在 Cursor 中通过 MCP 使用共享智能体记忆",
+      description: "通过 MCP 将 Cursor 连接到 Loom，在不同会话中共享项目决策与经验，并为个人或团队配置连接。",
+    },
+  },
+  "features/integrations/vscode.md": {
+    es: {
+      title: "Memoria compartida para GitHub Copilot en VS Code",
+      description:
+        "Conecta GitHub Copilot a Loom por MCP. Guarda decisiones y recupéralas desde sesiones y editores con acceso al mismo espacio de nombres.",
+    },
+    ja: {
+      title: "VS CodeのGitHub Copilotで共有メモリを使う",
+      description:
+        "VS CodeのGitHub CopilotをMCPでLoomに接続します。同じ名前空間へのアクセス権を持つセッションやエディター間でプロジェクトの判断を共有できます。",
+    },
+    ko: {
+      title: "VS Code의 GitHub Copilot에 공유 메모리 연결",
+      description:
+        "VS Code의 GitHub Copilot을 MCP로 Loom에 연결합니다. 같은 네임스페이스에 접근하는 세션과 편집기에서 프로젝트 결정을 공유할 수 있습니다.",
+    },
+    "pt-BR": {
+      title: "Memória compartilhada para GitHub Copilot no VS Code",
+      description:
+        "Conecte o GitHub Copilot no VS Code ao Loom via MCP. Guarde decisões do projeto e recupere-as em sessões e editores com acesso ao mesmo namespace.",
+    },
+    "zh-CN": {
+      title: "为 VS Code 中的 GitHub Copilot 添加共享记忆",
+      description:
+        "通过 MCP 将 VS Code 中的 GitHub Copilot 连接到 Loom，在有权访问同一命名空间的会话和编辑器间共享项目决策。",
+    },
+  },
   "concepts/memory.md": {
     "pt-BR": {
       title: "Como funciona a memória agêntica",
@@ -40,7 +104,7 @@ const localizedSeo = {
       description: "AI 에이전트를 위한 공유 메모리, 문서 검색, 코드 인덱스를 제공하는 자체 호스팅 MCP 서버.",
     },
     "pt-BR": {
-      title: "Documentação de memória para agentes e busca de código",
+      title: "Documentação de memória e busca de código",
       description:
         "Memória compartilhada, busca em documentos e índice de código para agentes de IA em um servidor MCP auto-hospedado.",
     },
@@ -51,7 +115,7 @@ const localizedSeo = {
   },
   "use-cases/index.md": {
     es: {
-      title: "Casos de uso de memoria y búsqueda para agentes de IA",
+      title: "Casos de uso de memoria y búsqueda",
       description:
         "Casos de uso de Loom para agentes de IA: memoria compartida, búsqueda de documentos e índice de código.",
     },

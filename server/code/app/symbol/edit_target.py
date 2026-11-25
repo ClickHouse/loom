@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,7 +10,7 @@ from server.code.api.models_grep import CodeGrepInput
 from server.code.api.models_symbol import CodeEditContextInput
 from server.code.app.common import repo_relative, resolve_code_identity
 from server.code.app.grep import handle_code_grep, qualified_call_argument
-from server.code.app.grep_source import match_revisions
+from server.code.app.grep_source import GREP_MATCH_TEXT_CHARS, match_revisions
 from server.code.app.symbol.outline import _is_large_container
 from server.code.app.symbol.resolve import _indexed_commit
 from server.code.store.index import CodeRepo
@@ -70,6 +71,12 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
         org, ns, [path], limit=2000, kinds=ENCLOSING_KINDS, with_revision=True
     )
     targets = _matched_rows(rows, matches)
+    if len(targets) != 1 and related is None:
+        supported = _definition_clue_matches(rows, matches, input.clues)
+        bound = _matched_rows(rows, supported)
+        if len(bound) == 1:
+            targets, matches = bound, supported
+            candidates = _scope_candidates(matches)
     if len(targets) == 1:
         return EditTarget(
             f"{path}:{matches[0]['line']}",
@@ -116,22 +123,54 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
     )
 
 
+def _definition_clue_matches(
+    rows: list[dict[str, Any]], matches: list[dict[str, Any]], clues: list[str]
+) -> list[dict[str, Any]]:
+    """A complete set of literal witnesses in one indexed source span."""
+    required = set(clues)
+    # Grep strips and clips line previews. An incomplete preview cannot rule out a tie.
+    if len(required) < 2 or any(clue != clue.strip() for clue in required):
+        return []
+    if any(len(match["text"]) >= GREP_MATCH_TEXT_CHARS for match in matches):
+        return []
+    spans: dict[tuple[str] | tuple[str, int, int], list[dict[str, Any]]] = defaultdict(list)
+    for match in matches:
+        row = _row_at_match(rows, match)
+        # Overloads share a grep scope. Keep their witnesses separate by declaration.
+        key: tuple[str] | tuple[str, int, int] = (
+            (str(row["symbol_id"]),)
+            if row is not None
+            else (match["scope"], match["scope_start_line"], match["scope_end_line"])
+        )
+        spans[key].append(match)
+    covers = [
+        hits
+        for hits in spans.values()
+        if all(any(clue in hit["text"] for hit in hits) for clue in required)
+    ]
+    return covers[0] if len(covers) == 1 else []
+
+
 def _matched_rows(
     rows: list[dict[str, Any]], matches: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Bind every hit by its own line. Overloads can share a grep scope name."""
     targets: dict[str, dict[str, Any]] = {}
     for match in matches:
-        choices = [
-            row
-            for row in rows
-            if row["qualified_name"] == match["scope"] and _contains(row, match["line"])
-        ]
-        if len(choices) != 1:
+        row = _row_at_match(rows, match)
+        if row is None:
             return []
-        row = choices[0]
         targets[row["symbol_id"]] = row
     return list(targets.values())
+
+
+def _row_at_match(rows: list[dict[str, Any]], match: dict[str, Any]) -> dict[str, Any] | None:
+    choices = [
+        row
+        for row in rows
+        if row["qualified_name"] == match["scope"] and _contains(row, match["line"])
+    ]
+    return choices[0] if len(choices) == 1 else None
 
 
 def _contains(row: dict[str, Any], line: int) -> bool:

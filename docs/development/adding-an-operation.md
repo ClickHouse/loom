@@ -164,6 +164,8 @@ python scripts/codegen/sdk_py_gen.py                       # sdk/python/loom/ops
 python scripts/codegen/sdk_py_client_gen.py                # sdk/python/loom/client.py
 python scripts/codegen/sdk_ts_gen.py                       # sdk/typescript/src/generated/ops.ts
 python scripts/codegen/sdk_rb_gen.py                       # sdk/ruby/lib/clickhouse/loom/generated/*.rb
+python scripts/codegen/sdk_rust_gen.py                     # Rust wire models, methods and registry contracts
+python scripts/codegen/sdk_rust_gen.py --fixtures          # Rust schema mapping contracts
 python scripts/codegen/op_reach_census.py --write-manifest # server/operations/reach_manifest.py
 python scripts/codegen/docs_reference.py                   # generated regions of docs/reference/*.md
 make format

@@ -38,7 +38,9 @@ for prior decisions or procedures beyond the lessons returned with indexed sourc
 With the automatic loading policy, compact coding connections load
 `code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
 definition name or location to read implementation, indexed tests, and linked
-lessons together. A method with no direct tests or lessons can receive
+lessons together. Supply multiple literal clues from the same definition to
+resolve it when individual clues also appear in other definitions. A method
+with no direct tests or lessons can receive
 examples or notes labeled with its verified owning type. Clients can discover
 `code.symbol` and `code.search` as needed.
 An explicit `LOOM_MCP_ALWAYS_LOAD_TOOLS` list controls loading on every profile.
@@ -320,6 +322,10 @@ diagnostic shape costs several thousand tokens for a short answer.
 `explain: true` on the call returns the full shape. HTTP, the SDKs and the
 `assistant` toolset always get the full result (on `assistant`, a `memory.search` without
 its per-hit score breakdown).
+
+Lean grep definitions keep source, matching lines and qualified names. When
+the full body is present, Loom can omit a short name already in the qualified
+name and a signature already on the first source line.
 
 ### The assistant toolset
 

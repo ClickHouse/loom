@@ -155,12 +155,12 @@ def test_locale_render_changes_submit_all_existing_translations(tmp_path, monkey
         "scripts/docs_site/locales.py",
         "scripts/docs_site/overrides/partials/locales-head.html",
         "scripts/docs_site/overrides/partials/locales-switch.html",
-        "scripts/docs_site/overrides/sitemap.xml",
     ):
         assert indexnow.urls_for({changed: "M"}) == [
             indexnow.SITE + "ja/use-cases/",
             indexnow.SITE + "use-cases/",
         ]
+    assert indexnow.urls_for({"scripts/docs_site/overrides/sitemap.xml": "M"}) == []
 
 
 def test_translated_heading_sets_page_and_metadata_title_after_the_source_banner(tmp_path):

@@ -636,6 +636,55 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     evaluate: "Loom’u değerlendirin",
     deploymentOptions: "Kurulum seçenekleri",
   },
+  vi: {
+    title: "Bộ nhớ dùng chung cho tác nhân AI | ClickHouse Loom",
+    description:
+      "Bộ nhớ cho tác nhân lập trình AI. Dùng lại quyết định qua nhiều phiên, tìm tài liệu kèm trích dẫn và truy vết mã nguồn.",
+    deployment: "Mã nguồn mở · Tự triển khai trên ClickHouse",
+    heading: "Bộ nhớ dùng chung cho tác nhân AI",
+    lead: "Loom lưu quyết định và bài học của nhóm để tác nhân AI dùng lại ở phiên sau. Tác nhân có thể kiểm tra đoạn tài liệu được trích dẫn và mở mã nguồn liên quan.",
+    run: "Cài đặt Loom",
+    product: "Khám phá Loom",
+    connect: "Kết nối tác nhân lập trình",
+    sdk: "Phát triển với SDK",
+    screenshotAlt:
+      "Bảng điều khiển Loom hiển thị quyết định về thanh toán, hàm liên quan và cảnh báo khi mã nguồn thay đổi",
+    screenshotCaption: "Mỗi quyết định đã lưu có thể liên kết đến đoạn mã liên quan.",
+    contextHeading: "Ngữ cảnh cho phiên làm việc tiếp theo",
+    contextDetail:
+      "Tác nhân có thể truy xuất bộ nhớ, tài liệu và mã nguồn qua MCP, HTTP hoặc SDK Python và TypeScript.",
+    memory: {
+      title: "Bộ nhớ dùng chung",
+      detail:
+        "Tác nhân viết mã lưu quyết định của dự án. Tác nhân rà soát có thể đọc lại quyết định đó trong một phiên khác nếu được cấp quyền.",
+      link: "Bộ nhớ cho tác nhân lập trình",
+    },
+    documents: {
+      title: "Tìm kiếm tài liệu có trích dẫn",
+      detail:
+        "Tìm chính sách, hướng dẫn vận hành hoặc tài liệu tham khảo. Mở đoạn được trích dẫn và xem phiên bản của tài liệu nguồn.",
+      link: "Tìm kiếm tài liệu và RAG",
+    },
+    code: {
+      title: "Tra cứu mã nguồn",
+      detail:
+        "Tìm hàm, lớp và nơi gọi chúng. Liên kết bài học với mã nguồn để biết khi nào đoạn mã được tham chiếu đã thay đổi.",
+      link: "Bộ nhớ liên kết với mã nguồn",
+    },
+    useCasesHeading: "Chia sẻ kiến thức giữa các tác nhân",
+    useCasesDetail:
+      "Giữ lại quyết định triển khai, nhận xét khi rà soát mã và kinh nghiệm vận hành để tác nhân tiếp theo dùng lại.",
+    useCasesLabel: "Các trường hợp sử dụng Loom",
+    softwareFactory: "Bộ nhớ cho nhà máy phần mềm",
+    knowledgeFactory: "Nhà máy tri thức cho tác nhân AI",
+    autonomous: "Bộ nhớ dài hạn cho tác nhân tự trị",
+    selfHosted: "Tự triển khai bộ nhớ cho tác nhân AI",
+    evaluationHeading: "Thử Loom trên kho mã của nhóm",
+    evaluationDetail:
+      "Dùng công việc thực tế để kiểm tra khả năng truy xuất bộ nhớ giữa các phiên, liên kết đến nguồn và quyền truy cập.",
+    evaluate: "Đánh giá Loom",
+    deploymentOptions: "Các phương án triển khai",
+  },
   "zh-CN": {
     title: "面向 AI 智能体的共享记忆与代码检索 | ClickHouse Loom",
     description: "面向 AI 智能体的开源共享记忆。跨会话共享团队决策，检索带引用的文档，并将经验关联到源代码。",
@@ -676,5 +725,47 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     evaluationDetail: "用团队的实际工作负载验证记忆召回、来源链接和访问控制。",
     evaluate: "开始评估",
     deploymentOptions: "查看部署选项",
+  },
+  "zh-Hant": {
+    title: "AI 代理的共用記憶與程式碼搜尋 | ClickHouse Loom",
+    description:
+      "讓程式開發代理跨工作階段共用長期記憶。用 MCP 取回團隊決策、搜尋文件、核對引用段落，並追蹤相關原始碼的變更。",
+    deployment: "開放原始碼 · 可在 ClickHouse 上自架",
+    heading: "AI 代理的共用記憶",
+    lead: "Loom 保留團隊的決策與經驗，讓代理在下一個工作階段接著做。代理可以找回先前的決策、查閱引用的文件段落，並開啟相關原始碼。",
+    run: "安裝 Loom（英文）",
+    product: "認識 Loom（英文）",
+    connect: "連接程式開發代理（英文）",
+    sdk: "使用 SDK 開發（英文）",
+    screenshotAlt: "Loom 控制台顯示一項連結至函式的付款決策，並提醒相關程式碼已變更",
+    screenshotCaption: "儲存的決策可以連到適用的原始碼。",
+    contextHeading: "為下一個工作階段保留脈絡",
+    contextDetail: "代理可以透過 MCP、HTTP 或 Python 與 TypeScript SDK 查詢記憶、文件和程式碼。",
+    memory: {
+      title: "共用長期記憶",
+      detail: "程式開發代理儲存專案決策。審查代理取得同一命名空間的讀取權限後，可以在另一個工作階段取回同一筆決策。",
+      link: "程式開發代理的記憶（英文）",
+    },
+    documents: {
+      title: "附有引文的文件搜尋",
+      detail: "查找政策、操作手冊與參考資料。開啟引用的段落並核對原始文件的版本。",
+      link: "文件搜尋與 RAG（英文）",
+    },
+    code: {
+      title: "程式碼搜尋",
+      detail: "查找函式、類別和呼叫位置。將經驗連結到相關原始碼，查看程式碼是否在記錄後變更。",
+      link: "連結原始碼的記憶（英文）",
+    },
+    useCasesHeading: "讓接手的代理用得到團隊經驗",
+    useCasesDetail: "保留實作決策、程式碼審查結果和維運經驗，讓其他代理接續使用。",
+    useCasesLabel: "Loom 使用案例",
+    softwareFactory: "軟體工廠的共用記憶",
+    knowledgeFactory: "為 AI 代理建立知識工廠",
+    autonomous: "自主代理的長期記憶",
+    selfHosted: "自架 AI 代理記憶服務",
+    evaluationHeading: "用團隊的程式碼儲存庫評估 Loom",
+    evaluationDetail: "用實際工作驗證跨工作階段的記憶查詢、來源連結和存取權限。",
+    evaluate: "開始評估（英文）",
+    deploymentOptions: "查看部署方式（英文）",
   },
 };

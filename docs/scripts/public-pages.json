@@ -12,9 +12,15 @@
   "/pt-BR": "/docs/pt-BR/home",
   "/ru": "/docs/ru/home",
   "/tr": "/docs/tr/home",
+  "/vi": "/docs/vi/home",
   "/zh-CN": "/docs/zh-CN/home",
+  "/zh-Hant": "/docs/zh-Hant/home",
   "/platform": "/docs/platform",
   "/enterprise": "/docs/enterprise",
+  "/de/enterprise": "/docs/de/enterprise",
+  "/es/enterprise": "/docs/es/enterprise",
+  "/fr/enterprise": "/docs/fr/enterprise",
+  "/pt-BR/enterprise": "/docs/pt-BR/enterprise",
   "/telemetry": "/docs/telemetry",
   "/adoption": "/docs/adoption"
 }

@@ -2175,9 +2175,9 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Scope with `path_prefix` or `path_globs`. "
         "Set `include_body: false` and `context_lines: 0` for match locations. "
         "Use code.search for behavior or code.edit_context for a known definition. "
-        "Call prefixes and absent call expressions can return related source and linked notes. "
-        "Use code.symbol for a definition or code.read for exact lines. Filter with `langs`. "
-        "`definitions_partial` flags missing source. Check coverage before inferring absence."
+        "Call prefixes and misses can return related source and notes. "
+        "Use code.read for exact lines. "
+        "`definitions_partial` flags missing source. Check coverage."
     ),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.

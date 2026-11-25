@@ -1,6 +1,8 @@
 ---
 title: Agent run history, duplicate checks and regression candidates
 description: Record scoped agent runs and conversations, check tracker-backed bug drafts for duplicates and inspect candidate pull requests without claiming a proven cause.
+seo:
+  title: Agent run history and PR investigation
 ---
 
 # Agent runs, traces and PR history

@@ -1,6 +1,6 @@
 ---
 title: How to choose AI software factory tools
-description: Compare tools for planning, coding, review, CI, deployment and shared agent memory. Use a one-repository pilot to measure handoff quality and cost.
+description: Compare AI software factory tools for planning, coding, review, CI, deployment and shared memory. Score a pilot on release gates and cost per accepted change.
 ---
 
 # How to choose AI software factory tools
@@ -47,10 +47,8 @@ for the implementation and review roles and their scoped credentials.
 4. **Test a failed gate.** Give the review stage a revision with a failing required
    check. Check that the release workflow keeps it blocked and that another agent
    can resume from the issue, revision and check result.
-5. **Compare outcomes.** Record how many changes passed the acceptance tests and
-   review, how much human rework they required, and the time and model cost for all
-   runs, including failed attempts. For memory, record recall and denied-access
-   checks separately from task success.
+5. **Compare outcomes.** Use the [pilot scorecard](#software-factory-pilot-scorecard)
+   to turn test, review, time and cost records into a rollout decision.
 
 For example, start a retry-policy change with a prior lesson linked to the code
 that defines which errors can be retried. After implementation, the reviewer
@@ -64,3 +62,23 @@ Use the [paired task scorecard](../getting-started/evaluate.md#compare-coding-ag
 to see which tasks passed with memory, without it, or in both setups.
 Use the [cost comparison procedure](../use-cases/coding-agent-cost.md#compare-completed-tasks-including-overhead)
 to include index construction, retrieval and unsuccessful runs in the cost.
+
+## Software factory pilot scorecard
+
+Set the rollout criteria before the pilot. Keep one record per issue and tool setup
+with the starting revision, the proposed revision, the acceptance test and approval
+records, elapsed time, reviewer and rework minutes, and total cost including retries.
+Count a change as accepted when the proposed revision passes the required tests and
+receives the required review approval.
+
+| Measure                        | How to score it                                                                                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Acceptance rate                | Accepted changes divided by issues attempted. Keep timeouts and abandoned issues in the denominator.                                            |
+| Elapsed time                   | Measure from issue assignment to acceptance or stop. Keep each outcome with its duration so quick failures stay visible.                        |
+| Human time per accepted change | Divide all review and rework minutes by accepted changes. Include time spent on failed attempts.                                                |
+| Cost per accepted change       | Divide total pilot cost by accepted changes. Include model calls, hosting, indexing and retries. Document how each setup shares one-time costs. |
+
+Report the human-time and cost ratios as unavailable if a setup accepts zero changes.
+Record permission and failed-release checks separately. Pause rollout if an unrelated
+identity can read the handoff or a revision can advance past a failed required check.
+Compare the outcomes and costs of the setups that meet those release and access gates.

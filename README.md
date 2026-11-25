@@ -26,7 +26,7 @@
   <a href="#get-started">Get started</a> ·
   <a href="#why-loom">Capabilities</a> ·
   <a href="#integrations">Integrations</a> ·
-  <a href="https://loom.clickhouse.com/docs/">Documentation</a>
+  <a href="https://loom.clickhouse.com/docs">Documentation</a>
 </p>
 
 <p>
@@ -42,7 +42,7 @@ read or write roles. [Check shared memory and denied access](./docs/getting-star
 
 Agents connect through MCP, HTTP, Python or TypeScript. Self-host with Docker or
 [on Kubernetes with the Helm chart](./docs/operations/kubernetes.md); agent context and
-index data live in [ClickHouse](./docs/use-cases/self-hosted-clickhouse.md), and a
+index data live in [ClickHouse](https://loom.clickhouse.com/docs/use-cases/self-hosted-clickhouse), and a
 deployment can choose [Postgres at first boot](./docs/operations/postgres.md) for live
 memory and knowledge state. The dashboard brings memories, repositories, tasks and runs
 into one place.
@@ -51,19 +51,20 @@ into one place.
 
 - **Long-term memory shared across your coding agents**, with plugins that load context
   at session start and capture the session as it runs.
-  [Agent memory](./docs/use-cases/agent-memory.md) ·
+  [Memory for coding agents](https://loom.clickhouse.com/docs/use-cases/agent-memory) ·
   [Connect a coding agent](./docs/getting-started/connect-a-coding-agent.md)
 - **Memory for an agent application**, per user, from the Python or TypeScript
   SDK. [Your first agent](./docs/getting-started/first-agent.md)
 - **A multi-user MCP memory server** with namespaces, roles and tokens.
   [Multi-user mode](./docs/getting-started/quickstart.md#start-in-multi-user-mode) ·
-  [Namespaces and sharing](./docs/features/namespaces-and-sharing.md)
+  [Namespaces and sharing](./docs/features/namespaces-and-sharing.md) ·
+  [MCP client setup](https://loom.clickhouse.com/docs/features/integrations/mcp-clients)
 - **A code index of your repositories** that coding agents query for definitions,
   callers and change impact. [Code index](./docs/use-cases/code-intelligence.md) ·
   [Language support and limits](./docs/features/code-index/overview.md#language-support)
 - **Memories linked to the code they are about**, which follow it through refactors, are
   flagged when it changes and appear when an agent reads or edits it.
-  [Memory linked to code](./docs/use-cases/memory-linked-to-code.md)
+  [Memory linked to code](https://loom.clickhouse.com/docs/use-cases/memory-linked-to-code)
 - **Lower model cost for coding agents**, as [measured](#measured-results) below.
   [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
 - **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
@@ -73,7 +74,7 @@ into one place.
 - **Shared context for multi-agent workflows**: shared memory, task inboxes and
   decisions. [Multi-agent](./docs/use-cases/multi-agent.md)
 - **Memory, recall, audit and erasure for autonomous agents.**
-  [Autonomous agents](./docs/use-cases/autonomous-agents.md)
+  [Memory for autonomous agents](https://loom.clickhouse.com/docs/use-cases/autonomous-agents)
 - **A record of agent work**, with searchable conversations (when recording is on),
   session briefs to resume from, runs with their goals, outcomes and model costs when
   supplied, and PR and tracker history.
@@ -86,7 +87,7 @@ recheck code-linked lessons against the current source before review. The same s
 supports multi-agent workflows and autonomous bots; your orchestration runs the agents,
 tests and approvals. Offering a tool does not guarantee the model uses it.
 [Software factory memory workflow](https://loom.clickhouse.com/docs/use-cases/multi-agent#memory-for-a-software-factory) ·
-[Autonomous-agent memory](./docs/use-cases/autonomous-agents.md)
+[Autonomous-agent memory](https://loom.clickhouse.com/docs/use-cases/autonomous-agents)
 
 Every use case, and when another tool fits better: [use cases](./docs/use-cases/index.md).
 
@@ -310,7 +311,7 @@ and the full protocols, models and artifacts.
 ## Documentation and contributing
 
 For shared agent context, code intelligence and permissioned retrieval, start with the
-[documentation](https://loom.clickhouse.com/docs/). For deployment requirements, see the
+[documentation](https://loom.clickhouse.com/docs). For deployment requirements, see the
 [prerequisites](./docs/getting-started/overview.md#prerequisites).
 
 [Deployment](./docs/operations/deployment.md) · [FAQ](./docs/faq.md) ·

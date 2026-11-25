@@ -1,7 +1,16 @@
+---
+description: Connect GitHub Copilot in VS Code to Loom over MCP. Save project decisions and recall them across chats and editors with access to the same namespace.
+seo:
+  title: Shared agent memory for VS Code and Copilot
+---
+
 # VS Code
 
-VS Code's agent mode (GitHub Copilot) connects to Loom as a remote MCP server over
-streamable HTTP. There is no VS Code extension: the `loom_*` tools are the integration,
+GitHub Copilot in VS Code can save and retrieve project decisions through Loom's
+MCP server over streamable HTTP. Connect clients to the same Loom server and
+give them access to the same namespace to share those decisions.
+
+There is no VS Code extension: the `loom_*` tools are the integration,
 with no session capture or code shunt; the [Claude Code](claude-code.md) and
 [Codex](codex.md) plugins have those.
 
@@ -52,6 +61,8 @@ of the file, write the entry by hand with an input VS Code prompts for once and 
 
 Open the agent mode chat and check that the `loom_*` tools are listed;
 [checking the connection](mcp-clients.md#checking-the-connection) covers a `401`.
+Then [verify shared memory through two MCP sessions](mcp-clients.md#verify-shared-memory-through-mcp)
+to check that a second authorized client can retrieve a saved decision.
 
 ## Agent instructions
 

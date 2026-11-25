@@ -47,6 +47,13 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     pattern: GrepText | Annotated[list[GrepText], Field(min_length=1, max_length=255)] = Field(
         description="Literal text, a list of alternatives, or one RE2 expression with regex=true.",
     )
+    prioritize_patterns: bool = Field(
+        default=False,
+        description=(
+            "For a literal list, give distinct patterns a first-page slot before repeat hits "
+            "(default true on coding connections)."
+        ),
+    )
     regex: bool = Field(
         default=False,
         description="Use RE2 syntax without lookaround or backreferences when true.",
@@ -98,7 +105,7 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         max_length=1024,
         description=(
             "In matches mode, pass `next_cursor` with the original search arguments "
-            "and omit it to start a new search."
+            "and omit it to start a new search when a prioritized batch cursor is unavailable."
         ),
     )
     # The caller's seen-set. Grep serves no unit ids, so these are PATHS
@@ -248,7 +255,8 @@ class CodeGrepOutput(_LessonsOut):
         return _drop_empty_lessons(data)
 
     # {path, line, text, scope, scope_start_line, scope_end_line} per matching
-    # LINE, path/line ordered. scope_* is the span of the enclosing unit named
+    # LINE, path/line ordered except when prioritize_patterns gives different literals
+    # first-page slots. scope_* is the span of the enclosing unit named
     # by `scope` (0/0 when the line sits in no unit) — enough to decide whether
     # to fetch the body, or to skip it when that unit is already on screen.
     matches: list[dict[str, Any]]

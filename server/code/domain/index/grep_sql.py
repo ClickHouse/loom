@@ -72,6 +72,68 @@ def grep_chunks_sql(cond: str, prefix_clause: str, path_sql: str, extra_settings
             """
 
 
+def grep_pattern_chunks_sql(
+    cond: str, prefix_clause: str, path_sql: str, patterns: str, position: str, extra_settings: str
+) -> str:
+    """First live chunk with a physical match per uncovered literal."""
+    inner = newest_live(
+        "path, scope, symbol_ids, kind, start_line, end_line, content, chunk_id, embedding_model, "
+        "indexed_commit",
+        _where(cond, prefix_clause, path_sql),
+    )
+    return f"""
+            WITH {patterns} AS literals,
+                 concat('[', char(9), '-', char(13), char(28), '-', char(32),
+                        char(194, 133), char(92), 'p{{Z}}]') AS source_space
+            SELECT hit.1 AS path, hit.2 AS scope, hit.3 AS symbol_ids, hit.4 AS kind,
+                   hit.5 AS start_line, hit.6 AS end_line, hit.7 AS content,
+                   hit.8 AS embedding_model, hit.9 AS indexed_commit
+            FROM (
+                SELECT hit, min(pattern_index) AS first_pattern
+                FROM (
+                    SELECT pattern_index, argMin(
+                        tuple(path, scope, symbol_ids, kind, start_line, end_line, content,
+                              embedding_model, toString(indexed_commit)),
+                        tuple(path, start_line, chunk_id, embedding_model)
+                    ) AS hit
+                    FROM (
+                        SELECT *,
+                               splitByChar(char(10), content) AS source_parts,
+                               toInt64(end_line) - toInt64(start_line) + 1 AS span,
+                               toInt64(endsWith(content, char(10))) AS trailing_lf,
+                               arrayMap(
+                                   line -> left(line, length(line) - endsWith(line, char(13))),
+                                   arraySlice(source_parts, -span - trailing_lf, greatest(0, span))
+                               ) AS physical_lines
+                        FROM {inner}
+                        AND kind != 'class_skeleton'
+                        AND span > 0 AND length(source_parts) >= span + trailing_lf
+                        AND NOT arrayExists(
+                            suffix -> endsWith(content, suffix),
+                            {{unmappable_endings:Array(String)}}
+                        )
+                        AND NOT arrayExists(line ->
+                            startsWith(replaceRegexpOne(line, concat('^', source_space, '+'), ''),
+                                       {{continued_line_prefix:String}})
+                            OR endsWith(replaceRegexpOne(line, concat(source_space, '+$'), ''),
+                                        {{continued_line_suffix:String}}),
+                            source_parts
+                        )
+                    )
+                    ARRAY JOIN arrayFilter(
+                        i -> arrayExists(line -> {position}(line, literals[i]) > 0, physical_lines),
+                        arrayEnumerate(literals)
+                    ) AS pattern_index
+                    GROUP BY pattern_index
+                )
+                GROUP BY hit
+            )
+            ORDER BY first_pattern
+            LIMIT {{limit:UInt32}}
+            {GREP_SCAN_SETTINGS}{extra_settings}
+            """
+
+
 def grep_files_sql(cond: str, prefix_clause: str, path_sql: str, extra_settings: str = "") -> str:
     """mode=files: one row per matching path with its chunk count and first
     line, plus `total` — the distinct matching paths before LIMIT (a window

@@ -211,7 +211,7 @@ def _lean_outline(out: dict[str, Any]) -> None:
 
 
 def _lean_grep(out: dict[str, Any]) -> None:
-    """A match's scope without the module form of its own path."""
+    """Keep grep locations and source, omitting metadata the body already supplies."""
     for m in out.get("matches") or []:
         if not isinstance(m, dict):
             continue
@@ -219,9 +219,32 @@ def _lean_grep(out: dict[str, Any]) -> None:
         mod = _module_of_path(path)
         if mod and scope.startswith(mod + "::"):
             m["scope"] = scope[len(mod) + 2 :]
+    for definition in out.get("definitions") or []:
+        if isinstance(definition, dict):
+            _lean_grep_definition(definition)
     related = out.get("related")
     if isinstance(related, dict):
         out["related"] = lean_code("code.grep", related)
+
+
+def _lean_grep_definition(definition: dict[str, Any]) -> None:
+    body = definition.get("body")
+    if not isinstance(body, str) or not body or definition.get("body_elided"):
+        return
+    symbol = definition.get("symbol")
+    qualified_name = definition.get("qualified_name")
+    if (
+        isinstance(symbol, str)
+        and symbol
+        and isinstance(qualified_name, str)
+        and qualified_name.endswith(f"::{symbol}")
+    ):
+        definition.pop("symbol")
+    signature = definition.get("signature")
+    if isinstance(signature, str) and signature and signature in body.lstrip().partition("\n")[0]:
+        definition.pop("signature")
+    if definition.get("body_elided") is False:
+        definition.pop("body_elided")
 
 
 def _lean_enclosing(out: dict[str, Any]) -> None:

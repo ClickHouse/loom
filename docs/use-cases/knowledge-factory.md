@@ -1,6 +1,6 @@
 ---
 title: Build a knowledge factory for AI agents
-description: Build a knowledge factory with Loom. Publish a runbook, retrieve a cited revision, and check whether a saved lesson still points to the current source.
+description: Build a knowledge factory with Loom. Publish a runbook, retrieve a cited revision, and update a saved lesson while keeping its history.
 ---
 
 # Build a knowledge factory for AI agents
@@ -12,12 +12,13 @@ evidence behind it.
 
 ## Decide what to keep
 
-| What you learned                                      | Where to keep it                                  | What the next agent can inspect                                     |
-| ----------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
-| A policy, runbook, or architectural reference         | [Knowledge documents](../features/knowledge.md)   | A cited passage, document revision, and source identifier           |
-| A decision or correction that applies across sessions | [Shared agent memory](agent-memory.md)            | The claim, who wrote it, and how it changed                         |
-| A lesson about a specific implementation              | [Memory linked to code](memory-linked-to-code.md) | The definition it refers to and whether that definition has changed |
-| What an agent tried and how the task ended            | [Agent runs](../features/runs.md)                 | The goal, outcome, and recorded activity                            |
+| What you learned                                      | Where to keep it                                                                                               | What the next agent can inspect                                           |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| A policy, runbook, or architectural reference         | [Knowledge documents](../features/knowledge.md)                                                                | A cited passage, document revision, and source identifier                 |
+| A decision or correction that applies across sessions | [Shared agent memory](agent-memory.md)                                                                         | The claim, who wrote it, and how it changed                               |
+| A lesson about a specific implementation              | [Memory linked to code](memory-linked-to-code.md)                                                              | The definition it refers to and whether that definition has changed       |
+| What an agent tried and how the task ended            | [Agent runs](../features/runs.md)                                                                              | The goal, outcome, and recorded activity                                  |
+| Steps agents can reuse for a recurring task           | [Procedural memory](../features/memory/procedures-and-learnings.md#use-procedural-memory-for-a-recurring-task) | The matching procedure, its trust status, and outcomes from reported runs |
 
 Group sources by readership. Grant agents access to the namespaces their work needs
 and give write access to the people and agents who maintain those sources.
@@ -105,23 +106,60 @@ stores a short lesson with the ID of the document version the curator reviewed.
 ### Check the lesson after a runbook change
 
 ```sh
-publish_rule 'Roll back the deployment if at least 3 health checks fail within 60 seconds.' |
-  jq -e .doc_id
-find_rule | jq -e '.results[0] | select(.revision == 2) | {source_uri, section, revision, content}'
-
-current_doc_id=$(call "$LOOM_READER_TOKEN" knowledge.get \
-  "$(jq -cn --arg uri "$source_uri" '{source_uri: $uri}')" | jq -er .doc_id)
-lesson_doc_id=$(call "$LOOM_READER_TOKEN" memory.provenance "$lesson" | jq -er .source_resource_id)
-test -n "$current_doc_id" && test "$lesson_doc_id" = "$reviewed_doc_id" &&
-  test "$lesson_doc_id" != "$current_doc_id"
+revised_rule='Roll back the deployment if at least 3 health checks fail within 60 seconds.'
+current_doc_id=
+if published_doc_id=$(publish_rule "$revised_rule" | jq -er .doc_id) &&
+  test -n "$published_doc_id" &&
+  find_rule | jq -e --arg revised "$revised_rule" '
+    .results[0] | select(.revision == 2 and (.content | contains($revised))) |
+    {source_uri, section, revision, content}' &&
+  lesson_doc_id=$(call "$LOOM_READER_TOKEN" memory.provenance "$lesson" | jq -er .source_resource_id) &&
+  test -n "$lesson_doc_id" &&
+  test "$lesson_doc_id" = "$reviewed_doc_id" &&
+  test "$lesson_doc_id" != "$published_doc_id"; then
+  current_doc_id=$published_doc_id
+else
+  printf '%s\n' 'Check the published revision and the lesson citation before continuing.' >&2
+fi
 ```
 
 Search now returns revision `2` under the same URI. The final check confirms
-that the lesson still points to the version the curator reviewed. The curator
-reviews the current passage and revises the lesson separately.
+that the lesson still points to the version the curator reviewed.
 
-Repeat `find_rule` with a token whose viewer access is scoped to a different
-namespace. Expect HTTP 403 and no passage from the runbook.
+### Revise the lesson and verify its history
+
+After the source owner approves the revised rule, the curator updates the same
+memory key and cites the reviewed document ID. Read the hash of the old value
+to guard the write. If another writer changes the lesson's value before the
+update, Loom returns HTTP 409. Review the current lesson and source before retrying.
+
+```sh
+revise_lesson() {
+  test -n "${current_doc_id:-}" || return 1
+  lesson_hash=$(call "$LOOM_READER_TOKEN" memory.get "$lesson" |
+    jq -er --arg old "$rule" 'select(.found and .value == $old) | .content_sha256') || return 1
+  test -n "$lesson_hash" || return 1
+
+  call "$LOOM_WRITER_TOKEN" memory.set "$(jq -cn --argjson lesson "$lesson" \
+    --arg value "$revised_rule" --arg doc_id "$current_doc_id" --arg hash "$lesson_hash" \
+    '$lesson + {value: $value, source_resource_id: $doc_id, if_match_sha256: $hash}')" |
+    jq -e .memory_id
+}
+
+revise_lesson &&
+  call "$LOOM_READER_TOKEN" memory.get "$lesson" |
+    jq -e --arg revised "$revised_rule" '.found and .value == $revised' &&
+  call "$LOOM_READER_TOKEN" memory.provenance "$lesson" |
+    jq -e --arg doc_id "$current_doc_id" '.source_resource_id == $doc_id' &&
+  call "$LOOM_READER_TOKEN" memory.history "$lesson" |
+    jq -e --arg old "$rule" 'any(.rows[]; .value == $old)'
+```
+
+The checks print `true` for the updated wording, the citation to the reviewed
+document revision, and the old wording retained in memory history.
+
+Repeat `find_rule` and the lesson's `memory.get` with a token whose viewer access
+is scoped to a different namespace. Expect HTTP 403 for each request.
 
 ## Keep the knowledge current
 

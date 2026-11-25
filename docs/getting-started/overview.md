@@ -3,7 +3,8 @@
 Loom is a server that stores memory, documents, conversations, an entity graph and a
 code index for AI agents, as rows in ClickHouse, with
 [Postgres](../operations/postgres.md) as an option for live memory and knowledge state.
-Agents and people reach it over MCP, HTTP, the Python and TypeScript SDKs, and the
+Agents and people reach it over MCP, HTTP, the Python and TypeScript SDKs, the
+[Rust SDK](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md), and the
 dashboard. It is Apache-2.0. This page helps you decide whether it fits.
 
 ## What it does

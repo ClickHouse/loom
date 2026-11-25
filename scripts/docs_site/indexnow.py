@@ -34,6 +34,7 @@ from scripts.docs_site.paths import page_path  # noqa: E402
 DOCS = ROOT / "docs"
 PUBLIC_PAGES_PATH = "docs/scripts/public-pages.json"
 HOME_LOCALES_PATH = "docs/scripts/home-locales.json"
+LEGACY_SITEMAP_TEMPLATE = "scripts/docs_site/overrides/sitemap.xml"
 PUBLIC_PAGE_URLS = {
     f"docs/pages/{destination.removeprefix('/docs/')}.astro": ORIGIN + route
     for route, destination in json.loads((ROOT / PUBLIC_PAGES_PATH).read_text()).items()
@@ -123,7 +124,10 @@ def urls_for(changes: Mapping[str, str], previous_public_routes: Iterable[str] =
         any(p.startswith("docs/") and p.endswith(".md") for p in topology)
         and any(any((DOCS.parent / "i18n" / lang / "docs").rglob("*.md")) for lang in LANGUAGES)
     )
-    if locale_change or _changed_build_input(changes, BUILD_INPUTS):
+    # The legacy sitemap template changes a different host.
+    if locale_change or _changed_build_input(
+        changes.keys() - {LEGACY_SITEMAP_TEMPLATE}, BUILD_INPUTS
+    ):
         # A deleted page is no longer in the tree, so keep the changed paths' URLs too.
         changed.update(every_page())
     if locale_change:

@@ -352,6 +352,44 @@ def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:
     ]
 
 
+def test_lean_grep_omits_redundant_metadata_only_with_complete_source() -> None:
+    body = "    def inspect(self, value: str):\n        return value"
+    definition = {
+        "path": "worker.py",
+        "symbol": "inspect",
+        "symbol_id": "i1",
+        "qualified_name": "worker::Task::inspect",
+        "signature": "(self, value: str)",
+        "body": body,
+        "body_elided": False,
+        "lines": [7],
+    }
+    elided = {**definition, "body": "", "body_elided": True}
+    different_signature = {**definition, "signature": "(self, value: str) -> str"}
+    unrelated_short_name = {**definition, "symbol": "Task.inspect"}
+    payload = {
+        "definitions": [definition, elided, different_signature, unrelated_short_name],
+        "related": {"definitions": [definition]},
+    }
+    lean = lean_code("code.grep", payload)
+    expected = {
+        "path": "worker.py",
+        "symbol_id": "i1",
+        "qualified_name": "worker::Task::inspect",
+        "body": body,
+        "lines": [7],
+    }
+    assert lean["definitions"] == [
+        expected,
+        elided,
+        {**expected, "signature": "(self, value: str) -> str"},
+        {**expected, "symbol": "Task.inspect"},
+    ]
+    assert lean["related"]["definitions"] == [expected]
+    assert definition["signature"] == "(self, value: str)"
+    assert definition["body_elided"] is False
+
+
 def test_symbol_keeps_ids_only_when_several_definitions_answer() -> None:
     one = lean_code(
         "code.symbol",

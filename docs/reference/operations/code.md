@@ -761,6 +761,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `pattern` | `str \| list[str]` | required | Literal text, a list of alternatives, or one RE2 expression with regex=true. |
+| `prioritize_patterns` | `bool` | `False` | For a literal list, give distinct patterns a first-page slot before repeat hits (default true on coding connections). |
 | `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
 | `related_on_miss` | `bool` | `False` | Recover a missing call's qualified argument in a literal or batch, or one member spelling in malformed call alternatives (default true on coding connections). |
 | `related_on_prefix` | `bool` | `False` | Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. |
@@ -768,7 +769,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
-| `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. |
+| `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |
 | `mode` | `Literal['matches', 'files', 'presence', 'message']` | `'matches'` | matches: up to `limit` matching LINES with text + enclosing scope. files: up to `limit` matching FILES (path, matching chunk count, first line) and no line text — the coverage question ("which files mention X?") that a 20-line cap cannot… |
 | `include_body` | `bool` | *(computed)* | Return full enclosing bodies by default in matches mode. |
@@ -785,7 +786,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | --- | --- | --- |
 | `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
 | `lessons_left_out` | `int` | File lessons omitted by symbol focus, a token budget, truncation or supersession. |
-| `matches` | `list[dict[str, Any]]` | {path, line, text, scope, scope_start_line, scope_end_line} per matching LINE, path/line ordered. scope_* is the span of the enclosing unit named by `scope` (0/0 when the line sits in no unit) — enough to decide whether to fetch the body… |
+| `matches` | `list[dict[str, Any]]` | {path, line, text, scope, scope_start_line, scope_end_line} per matching LINE, path/line ordered except when prioritize_patterns gives different literals first-page slots. scope_* is the span of the enclosing unit named by `scope` (0/0… |
 | `related` | `RelatedGrepEvidence \| None` | Related source for a qualified argument or member, separate from literal matches. |
 | `contexts` | `list[dict[str, Any]]` | Exact retained source windows for this page, with inclusive line bounds. |
 | `contexts_partial` | `bool` |  |

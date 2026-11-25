@@ -8,26 +8,35 @@ This crate connects to a separately deployed Loom server backed by ClickHouse.
 The server image is `ghcr.io/clickhouse/loom`. Use a local single-user installation
 or connect to a team deployment managed by your operator.
 
-`Client` provides `set`, `get`, `search` and `delete` memory operations with typed
-responses. Calls are async and use the application's Tokio runtime.
+The source checkout's `Client` provides typed calls for every operation in the server registry.
+Calls are async and use the application's Tokio runtime. The optional `blocking`
+feature provides the same operations through a synchronous client.
 
 ## Install
 
-From your Rust application's directory, add the SDK from
-[crates.io](https://crates.io/crates/clickhouse-loom):
+From your application's directory, install from crates.io:
 
 ```bash
 cargo add clickhouse-loom
+```
+
+Cargo records the selected version in your application's `Cargo.toml` and
+resolves its dependencies automatically.
+
+To install from source, clone this repository and add the SDK by path:
+
+```bash
+cargo add clickhouse-loom --path ../loom/sdk/rust
 ```
 
 The equivalent `Cargo.toml` dependency is:
 
 ```toml
 [dependencies]
-clickhouse-loom = "0.1"
+clickhouse-loom = { path = "../loom/sdk/rust" }
 ```
 
-Cargo resolves the SDK's dependencies automatically.
+Adjust the path to your checkout.
 
 Use the current stable Rust and Cargo toolchain for installation from crates.io.
 The SDK source supports Rust 1.84+, but resolved dependencies may require a newer
@@ -63,9 +72,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .base_url("http://localhost:7777")
         .api_key("")
         .build()?;
-    bot.set(SetRequest::new("deploy_window", "Deploy Tue/Thu, never Friday")).await?;
+    let mut write = SetRequest::new("deploy_window", "Deploy Tue/Thu, never Friday");
+    write.memory_type = Some("semantic".into());
+    write.tags = Some(vec!["deployment".into()]);
+    bot.set(write).await?;
     let memory = bot.get("deploy_window").await?;
-    let hits = bot.search(SearchRequest::new("when do we deploy")).await?;
+    let mut search = SearchRequest::new("when do we deploy");
+    search.top_k = Some(5);
+    let hits = bot.search(search).await?;
     if memory.found {
         println!("{}", memory.value);
     } else {
@@ -76,6 +90,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+This starter supports the published 0.1.0 crate. The generated operation methods,
+request builders and runnable examples below require the source checkout.
 
 For a team deployment, use your account's org and namespace with a writer token.
 Set the server address through `.base_url(...)` or `LOOM_BASE_URL`, and the token
@@ -89,7 +106,7 @@ Server setup is covered in the
 ## Configuration
 
 `Client::builder(org, namespace, agent)` accepts `base_url`, `api_key`, `timeout`,
-`user_id`, `session_id`, `retry`, `pacing` and `ratelimit_max_wait`.
+`user_id`, `session_id`, `run_id`, `retry`, `pacing` and `ratelimit_max_wait`.
 The default timeout is 60 seconds per attempt. It covers the whole HTTP request
 and response body. The server address comes from `LOOM_BASE_URL`, defaulting to
 `http://localhost:7777`. The token comes from `LOOM_API_KEY`; without a token,
@@ -97,10 +114,16 @@ requests carry no Authorization header.
 Explicit settings override the environment. `.api_key("")` disables authorization.
 Empty environment values are treated as unset.
 
-Builder user and session values apply to `set`, `get` and `delete`.
+Builder identity values apply to declared caller and authorship fields.
+`knowledge_add` and `knowledge_upsert` receive agent and session identity;
+`observe_record` receives user, session and run identity. `conversation_create`
+and `conversation_append` receive the bound run identity. Procedure run recording
+keeps explicit procedure author and session selectors. Recall filters keep
+their explicit values. A bound run labels reads through `X-Loom-Run-Id`;
+`run_get` and `run_complete` keep the request's target run ID.
 Search defaults to `agent="*"` and omits user, session and namespace-scope filters.
 The server chooses its default namespace scope.
-Set `SearchRequest.agent_id`, `namespace_scope`, `user_id` or `session_id` to
+Use `.agent_id(...)`, `.namespace_scope(...)`, `.user_id(...)` or `.session_id(...)` to
 filter a search explicitly. Org and the addressed namespace remain bound to the client.
 
 Set requests support JSON values, memory type, tags, TTL, confidence and
@@ -112,13 +135,20 @@ Search requests support top-k, tags, memory type and search mode.
 ## Request and response types
 
 Public request, response and API error structs are `#[non_exhaustive]`.
-Create requests with `new`, then set the options you need:
+Create requests with `new`, then chain the options you need:
 
 ```rust
-let mut request = SearchRequest::new("when do we deploy");
-request.top_k = Some(10);
+let request = SearchRequest::new("when do we deploy")
+    .top_k(10)
+    .tags(["deployment"])
+    .search_mode("hybrid");
 let hits = bot.search(request).await?;
 ```
+
+Each option method returns the request, ready to pass to `Client`. Repeating a
+method replaces its value. String methods accept borrowed or owned strings;
+`tags` accepts an iterator of either. Public fields remain writable, including
+setting an option to `None` to omit it.
 
 Read response fields directly, or include `..` when destructuring. `Error` is
 also non-exhaustive: include a fallback arm when matching it. Match
@@ -127,6 +157,92 @@ also non-exhaustive: include a fallback arm when matching it. Match
 Response decoding ignores unknown JSON fields. Optional fields use `Option<T>`
 or documented defaults. Missing required response fields produce
 `Error::Protocol`.
+Rows that support field projection use optional fields throughout: omitted
+fields remain `None`, and nullable fields retain omission, null and value.
+Fields marked `repr=False` by the server are excluded from Rust `Debug` output.
+
+## Generated contracts
+
+Every registered operation has generated request and response types,
+async methods and blocking methods. Method names replace dots with
+underscores: `memory.pin` becomes `memory_pin`, and `task.create` becomes
+`task_create`. Every method accepts its typed request and also provides a
+`*_with_options` variant.
+
+The memory facade preserves its public request and response types, and offers
+key-only reads and deletes. It shares the transport with the generated methods:
+
+| Method             | Operation          | Request                |
+| ------------------ | ------------------ | ---------------------- |
+| `set`              | `memory.set`       | `SetRequest`           |
+| `get`              | `memory.get`       | key string             |
+| `search`           | `memory.search`    | `SearchRequest`        |
+| `delete`           | `memory.delete`    | key string             |
+| `context_pack`     | `context.pack`     | `ContextPackInput`     |
+| `knowledge_add`    | `knowledge.add`    | `KnowledgeAddInput`    |
+| `knowledge_get`    | `knowledge.get`    | `KnowledgeGetInput`    |
+| `knowledge_search` | `knowledge.search` | `KnowledgeSearchInput` |
+| `health`           | `ops.health`       | `OpsHealthInput`       |
+| `capabilities`     | `ops.capabilities` | `OpsCapabilitiesInput` |
+
+`memory_set(MemorySetInput)`, `memory_get(MemoryGetInput)`,
+`memory_search(MemorySearchInput)` and `memory_delete(MemoryDeleteInput)` expose
+the full wire contracts. They return the matching `Memory*Output` types.
+The facade's `set`, `get`, `search` and `delete` retain `SetResponse`,
+`GetResponse`, `SearchResponse` and `DeleteResponse`.
+Every generated request has `send(&client, CallOptions)` and uses the same transport.
+Every method also has a `*_with_options` variant. Context and knowledge constructors
+omit bound identity arguments; for example, `ContextPackInput::new().query("task")`
+and `KnowledgeAddInput::new("urn:guide", "Guide text")`.
+
+```rust
+use clickhouse_loom::{CallOptions, MemoryGetInput};
+
+# async fn example(client: clickhouse_loom::Client) -> Result<(), clickhouse_loom::CallFailure> {
+let memory = MemoryGetInput::new("preference")
+    .fields(["value", "tags"])
+    .follow(true)
+    .send(&client, CallOptions::default())
+    .await?;
+println!("{:?}", memory.data.found);
+# Ok(())
+# }
+```
+
+Nullable generated request fields use `Option<Option<T>>`. `None` omits the field,
+`Some(None)` sends null and `Some(Some(value))` sends a value. Value setters keep
+their plain argument types; `<field>_null()` sends null explicitly.
+For example, `.ttl_seconds(60)` sends a number and `.ttl_seconds_null()` sends null.
+Nonnullable options reject null during decoding.
+
+`CollectionDeleteInput::new("target-collection")` requires the namespace to
+purge. The client preserves this target regardless of its bound namespace.
+`memory.list` uses bound agent, user and session values only for omitted
+filters; explicit values and wildcards survive.
+
+Projected responses preserve field presence: `MemoryGetOutput.pinned` is
+`Option<bool>`. Unprojected responses follow server defaults:
+`MemorySearchHit.version` and `namespace` default to zero and an empty string.
+`MemorySearchOutput.embedding_model` is required; `retrieval_risk` defaults to
+`"abstain"` and `term_leg` to `"off"`. Unbounded integer fields use `Integer`.
+
+The memory facade keeps its own decoding contract: `GetResponse.pinned`,
+`SearchHit.version` and `SearchHit.namespace` are optional. `SearchResponse`
+does not require `embedding_model`, and missing `retrieval_risk` and `term_leg`
+decode as empty strings. `SetRequest.ttl_seconds` remains `Option<i64>`;
+use `MemorySetInput` to send an explicit null or other full wire fields.
+
+Maintainers regenerate from the repository root with Python dependencies and
+`rustfmt` installed:
+
+```bash
+python scripts/codegen/sdk_rust_gen.py
+python scripts/codegen/sdk_rust_gen.py --check
+python scripts/codegen/sdk_rust_gen.py --fixtures
+python scripts/codegen/sdk_rust_gen.py --fixtures --check
+```
+
+The source SDK contains the generated Rust files and needs no Python runtime.
 
 ## Results and errors
 
@@ -141,8 +257,8 @@ and usage fields. Use a chunk's `parent_memory_key` to fetch or credit its paren
 Check `SearchResponse.abstain`, `abstain_code`, `retrieval_risk`, `degraded` and
 `pending_extraction` before treating the hits as an answer. Pending extraction
 means an empty response may precede a completed save. `reinforcement` is `None`
-when recall credit was not disclosed. An omitted risk label is an empty string;
-it does not imply low risk.
+when recall credit was not disclosed. An omitted risk label is empty in
+`SearchResponse` and defaults to `"abstain"` in the generated `MemorySearchOutput`.
 
 `SearchHit.agent` names the row's writer. For governed definitions, inspect
 `SearchHit.governed` and `SearchResponse.term_leg`; `retrieval_risk` describes the
@@ -166,7 +282,63 @@ remain strings. An error response without a JSON body still carries the HTTP
 status. `Error::Transport` reports HTTP transport failures; `Error::Protocol`
 reports an invalid successful response.
 
+## Per-call options and metadata
+
+The `*_with_options` methods take `CallOptions` and return
+`Result<CallResult<T>, CallFailure>`. Methods without options return the typed
+response and `Error`.
+
+```rust
+use clickhouse_loom::{CallOptions, RetryPolicy};
+use std::time::Duration;
+
+let options = CallOptions::default()
+    .timeout(Duration::from_secs(5))
+    .retry(RetryPolicy::disabled())
+    .request_id("recall-1");
+match bot.get_with_options("deploy_window", options).await {
+    Ok(result) => println!("found={} rid={} attempts={}",
+        result.data.found, result.metadata.request_id, result.metadata.attempts),
+    Err(failure) => {
+        if let Some(meta) = &failure.metadata {
+            eprintln!("rid={} status={:?} attempts={}",
+                meta.request_id, meta.status, meta.attempts);
+        }
+        eprintln!("{}", failure.error);
+    }
+}
+```
+
+Options override one call and leave the client's defaults intact. Timeout covers
+each HTTP attempt, including its response body; it can exceed the client timeout.
+Retries and 429 pacing reuse the call's request ID and write key. Disabling retries
+leaves pacing enabled; configure pacing on the client.
+
+Use `.idempotency_key("logical-write")` on a declared idempotent write to resubmit
+the same operation and payload with the same key. Set, delete, knowledge add and
+health generate a fresh key per logical call when none is supplied. Read-only,
+nonidempotent and unknown operations reject explicit write keys.
+Request IDs must contain 1–64 letters, digits, dots,
+underscores or hyphens; write keys must contain visible ASCII characters.
+Invalid options fail before dispatch.
+
+`CallMetadata` contains the sent and echoed request IDs, optional HTTP status,
+schema version, app duration from Server-Timing, rate-limit headers, hint headers
+and the total number of HTTP attempts, including pacing rounds. It describes the
+final attempt. Missing or invalid headers stay absent. Without an echoed ID,
+`request_id` is the sent ID.
+
+`CallFailure.error` preserves the original `Error` classification and source.
+Its metadata is absent for validation and encoding failures. A network failure
+before response headers has `status=None`; an interrupted response body retains
+the received headers. The final attempt never inherits an earlier response's
+metadata.
+
 ## Retries and logging
+
+Operation policies come from the full server registry. Retries after dispatch
+require declared idempotence, including HTTP status retries, incomplete responses
+and 429 pacing. `RetryTimeouts::Always` does not enable nonidempotent operations.
 
 Calls do not follow redirects. Retry and pacing defaults are:
 
@@ -177,7 +349,7 @@ Calls do not follow redirects. Retry and pacing defaults are:
   jitter in the range 0.75–1.25 times the delay. A valid `Retry-After` of up to
   60 seconds replaces backoff. Headers take precedence over `detail.retry_after_s`;
   numeric seconds and HTTP dates are accepted.
-- `set` and `delete` generate one UUID idempotency key per call and reuse it
+- Declared idempotent writes generate one UUID idempotency key per call and reuse it
   across retries and pacing. Timeouts and incomplete responses retry these
   writes by default. `get` and `search` do not retry those failures by default.
 - Pacing is enabled separately from retries. A 429 waits at most 5 seconds per
@@ -230,18 +402,136 @@ an external timeout stops requests, retry sleeps and pacing sleeps in that futur
 There are no detached retry tasks. Cancellation does not roll back a write or
 guarantee the server stops processing it.
 
-## Examples
+## Generic calls
 
-[`examples/memory.rs`](examples/memory.rs) — save → read → search → delete →
-confirm absence. Configuration, the call sequence and output are in the
-[examples guide](examples/README.md). Run from the repository root:
+`Client::call<T>` accepts a dotted operation name, a serializable object and
+`CallOptions`. Every registered operation has a generated response type;
+generic calls also accept `serde_json::Value`:
 
-```bash
-LOOM_BASE_URL=http://localhost:7777 LOOM_API_KEY= LOOM_ORG=dev LOOM_NAMESPACE=local cargo run --manifest-path sdk/rust/Cargo.toml --example memory
+```rust
+use clickhouse_loom::CallOptions;
+use serde_json::{json, Value};
+
+let result = bot.call::<Value>(
+    "memory.pin",
+    &json!({"memory_key": "deploy_window", "value": "Deploy on weekdays"}),
+    CallOptions::default(),
+).await?;
+println!("{} attempts={}", result.data, result.metadata.attempts);
 ```
 
-The example uses an existing namespace and lexical search scoped to its agent.
-Memory writes use the server's configured embedding provider.
+Known operations use generated identity and retry policies.
+Bound org, write scope and authorship override their declared request fields.
+Namespace operations preserve explicit targets and default omitted required
+namespaces to the client's namespace. Collection creation can leave its name
+to the server; collection deletion requires an explicit target.
+Nullable namespace filters, including cost and audit rollups, preserve explicit
+values, null and omission. Memory row selectors preserve explicit agent, user,
+session and run values, with client defaults for omitted personal-view fields.
+Promotion and verification select the requested source identity. Conversation
+update, delete, compact and unsave calls preserve explicit targets and default
+omitted target fields to the client identity.
+`memory.recall` and `memory.brief` default only their required agent; optional
+filters use server defaults. `code.grep` omits `include_body` unless supplied,
+so the server chooses its default from `mode`. Unknown operations receive
+bound org and namespace only and retry connection failures before dispatch.
+They do not retry HTTP errors, timeouts, incomplete responses or 429 responses.
+The server validates fields and authorizes every operation.
+
+## Capability probe
+
+`probe` fetches `ops.capabilities` on each call and compares the operations and
+request fields your application needs:
+
+```rust
+use clickhouse_loom::{Client, ProbeRequest};
+
+# async fn example(bot: Client) -> Result<(), clickhouse_loom::Error> {
+let report = bot
+    .probe(
+        ProbeRequest::new()
+            .ops(["memory.set", "memory.search"])
+            .fields("memory.set", ["tags"]),
+    )
+    .await?;
+println!("build={} schema={} ok={}", report.build_commit, report.schema_version, report.ok);
+println!("missing operations: {:?}", report.missing_ops);
+println!("missing request fields: {:?}", report.missing_fields);
+println!("unknown to SDK: {:?}", report.unknown_to_sdk);
+# Ok(())
+# }
+```
+
+Missing capabilities return a report with `ok = false`. HTTP, transport and
+response decoding failures return an error. `unknown_to_sdk` lists server
+operations absent from the SDK's generated registry, sorted by name; these do
+not make `ok` false. Missing operation and field lists preserve the requested
+order and duplicates; the field map sorts operation names. An absent operation
+makes all its requested fields missing.
+An empty request returns `ok = true`.
+
+`probe_with_options` accepts `CallOptions` and returns `CallResult<ProbeReport>`
+with the capability response's metadata. The blocking client provides the same
+methods without `.await`.
+
+## Blocking calls
+
+Enable the feature in the consuming application's `Cargo.toml`:
+
+```toml
+[dependencies]
+clickhouse-loom = { path = "/path/to/loom/sdk/rust", features = ["blocking"] }
+```
+
+```rust
+use clickhouse_loom::{blocking::Client, ProbeRequest};
+
+let bot = Client::builder("dev", "local", "my-agent").build()?;
+let report = bot.probe(ProbeRequest::new().ops(["memory.set", "memory.search"]))?;
+println!("schema={} ok={}", report.schema_version, report.ok);
+```
+
+The blocking client owns a dedicated runtime thread and reuses the async
+transport's wire contracts, retry rules and metadata. Clones share that thread
+and connection pool and can call concurrently from separate OS threads.
+The last clone joins the worker when dropped. `with_retry` changes only the
+clone's policy; call-level retry options take precedence.
+
+Construction and destruction are allowed inside Tokio, but blocking calls return
+`Error::Configuration` on threads entered into a Tokio runtime, including
+`spawn_blocking` closures. Use the async client there or call from a separate
+OS thread. The default async feature set does not include the blocking client.
+
+## Examples
+
+The [examples guide](examples/README.md) covers configuration, prerequisites,
+the call sequence, output and cleanup for each program:
+
+| Example                                                           | Demonstrates                                                                             |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [memory.rs](examples/memory.rs)                                   | Save → read → lexical search → delete → confirm absence                                  |
+| [operations.rs](examples/operations.rs)                           | Async memory, knowledge and context calls, per-call options, metadata and request `send` |
+| [blocking.rs](examples/blocking.rs)                               | The memory, knowledge and context flow with the blocking client                          |
+| [agent_memory.rs](examples/agent_memory.rs)                       | Travel recall and grounded answers                                                       |
+| [document_search.rs](examples/document_search.rs)                 | Document citations and off-topic abstention                                              |
+| [code_lookup.rs](examples/code_lookup.rs)                         | Selected code lookup with bounded evidence                                               |
+| [fact_document_evidence.rs](examples/fact_document_evidence.rs)   | Identity-checked fact and document section reads                                         |
+| [multi_agent_handoff.rs](examples/multi_agent_handoff.rs)         | Task leases, result receipts and writer provenance                                       |
+| [support_agent_memory.rs](examples/support_agent_memory.rs)       | Customer isolation, revision and erasure                                                 |
+| [software_factory_memory.rs](examples/software_factory_memory.rs) | Derived source note and review-agent source recheck                                      |
+
+These seven scenarios correspond to the portable Python examples. The
+[parity table](examples/README.md#python-scenario-parity) also documents the
+Python-only Pipecat adapter and each scenario's credentials and provider needs.
+
+Run from a Loom checkout's repository root after setting the server address,
+token, org and namespace as described in the guide:
+
+```bash
+cargo run --manifest-path sdk/rust/Cargo.toml --example memory
+cargo run --manifest-path sdk/rust/Cargo.toml --example operations
+cargo run --manifest-path sdk/rust/Cargo.toml --features blocking --example blocking
+```
 
 ## Tests
 
@@ -254,11 +544,30 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
 cargo package --locked
+cargo test --locked --features blocking
+cargo clippy --locked --all-targets --features blocking -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features blocking
+cargo package --locked --features blocking
 ```
 
-CI runs these checks on Rust 1.84.1 and stable and compares the packaged license
-with the repository license. Tests cover response compatibility
-and use a local fake HTTP server; they require neither Loom nor a database.
+CI runs both feature configurations on Rust 1.84.1 and stable and compares the packaged license
+with the repository license. Unit and HTTP fixture tests cover response compatibility
+without requiring Loom or a database.
+Generated contract tests decode every operation's request and response and compare
+response defaults with the server schema. HTTP tests check run targets, recall
+filters and write authorship in both client configurations.
+
+The authenticated integration job runs `tests/live.rs` against a disposable
+Loom tenant. It checks memory persistence through the legacy and full wire APIs,
+namespace configuration, idempotency replay, and scope authorization. The test is
+ignored in ordinary Cargo runs. With an isolated authenticated server and its
+ClickHouse configured, run from the repository root:
+
+```bash
+.venv/bin/python -m pytest -q tests/integration/_rust_sdk_ci.py
+```
+
+The Python fixture mints the test's scoped tokens and runs the live Cargo test.
 
 The resolver setting selects dependencies compatible with your Rust version.
 A consuming application controls its own dependency lockfile.

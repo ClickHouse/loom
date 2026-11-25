@@ -949,6 +949,8 @@ export interface CodeGrepInput {
   consumer?: string;
   /** Literal text, a list of alternatives, or one RE2 expression with regex=true. */
   pattern: string | string[];
+  /** For a literal list, give distinct patterns a first-page slot before repeat hits (default true on coding connections). */
+  prioritize_patterns?: boolean;
   /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
   /** Recover a missing call's qualified argument in a literal or batch, or one member spelling in malformed call alternatives (default true on coding connections). */
@@ -961,7 +963,7 @@ export interface CodeGrepInput {
   /** Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. */
   context_lines?: number;
   path_prefix?: string;
-  /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
+  /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. */
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from collections.abc import Awaitable
 from typing import Any
 
@@ -86,14 +87,18 @@ async def usage_examples(
         edges,
         key=lambda e: (str(e["path"]) not in tested_paths, str(e["path"])),
     )
+    by_location: dict[tuple[str, int], dict[str, Any]] = {}
+    for edge in ranked:
+        by_location.setdefault((str(edge["path"]), int(edge["line"])), edge)
+    sites = list(by_location.values())
+    baseline = sites[: max(1, limit)]
+    requested = baseline
+    if tests_only and with_context:
+        preferred = _prefer_distinct_test_windows(sites, context_lines)[: len(baseline)]
+        requested = preferred + [edge for edge in baseline if edge not in preferred]
     out = []
     revisions: list[str] = []
-    seen: set[tuple[str, int]] = set()
-    for e in ranked:
-        site = (str(e["path"]), int(e["line"]))
-        if site in seen:
-            continue
-        seen.add(site)
+    for e in requested:
         out.append(
             {
                 "caller": str(e["from_qualified_name"]),
@@ -105,19 +110,39 @@ async def usage_examples(
         )
         if with_context:
             revisions.append(str(e.get("indexed_commit") or "").rstrip("\0"))
-        if len(out) >= limit:
-            break
     if with_context:
         model = served_model_label(settings.embedding_model)
-        return list(
-            await asyncio.gather(
-                *(
-                    _example_context(repo, org, ns, site, context_lines, model, revision)
-                    for site, revision in zip(out, revisions, strict=True)
-                )
+        examples = await asyncio.gather(
+            *(
+                _example_context(repo, org, ns, site, context_lines, model, revision)
+                for site, revision in zip(out, revisions, strict=True)
             )
         )
+        # A promoted site only earns a slot when its revision still has source.
+        return [
+            example
+            for edge, example in zip(requested, examples, strict=True)
+            if "context" in example or edge in baseline
+        ][: len(baseline)]
     return out
+
+
+def _prefer_distinct_test_windows(edges: list[dict[str, Any]], radius: int) -> list[dict[str, Any]]:
+    """Prefer call sites outside the source windows already selected."""
+    anchors: dict[tuple[str, str], list[int]] = defaultdict(list)
+    distinct = []
+    nearby = []
+    for edge in edges:
+        revision = str(edge.get("indexed_commit") or "").rstrip("\0")
+        line = int(edge["line"])
+        key = (str(edge["path"]), revision)
+        if revision and any(abs(line - anchor) <= radius for anchor in anchors[key]):
+            nearby.append(edge)
+        else:
+            if revision:
+                anchors[key].append(line)
+            distinct.append(edge)
+    return distinct + nearby
 
 
 async def _example_context(

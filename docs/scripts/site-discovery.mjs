@@ -2,6 +2,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { escape } from "html-escaper";
 
 const origin = "https://loom.clickhouse.com";
+const daumOwnershipProof =
+  "#DaumWebMasterTool:a363b3401eee3c430ffb111a936fcad7fe4ff06819aca82edabb1196d703baab:O++XJBLIZbSwCRTbPGXamQ==";
 const maxRoutePatternLength = 4096;
 
 function escapePattern(path) {
@@ -69,23 +71,34 @@ export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = 
     const location = entry.match(/<loc>([^<]+)<\/loc>/)?.[1];
     return aliasLocations.has(location) ? "" : entry;
   });
-  const homes = Object.entries(homeLocales);
-  const homePaths = new Set(homes.map(([, { href }]) => href));
-  if (homes.length && (!homeLocales.en || [...homePaths].some((href) => !root.includes(href)))) {
-    throw new Error("Homepage languages must point to mounted public routes.");
+  const alternatesByPath = new Map();
+  for (const field of ["href", "enterprise"]) {
+    const localized = Object.entries(homeLocales).flatMap(([language, routes]) =>
+      routes[field] ? [[language, routes[field]]] : [],
+    );
+    if (localized.length === 0) continue;
+    const defaultPath = homeLocales.en?.[field];
+    if (!defaultPath || localized.some(([, href]) => !root.includes(href))) {
+      throw new Error(`Localized routes for ${field} must include English and point to mounted public pages.`);
+    }
+    const links = [...localized, ["x-default", defaultPath]]
+      .map(
+        ([language, href]) =>
+          `<xhtml:link rel="alternate" hreflang="${escape(language)}" href="${escape(new URL(href, origin).href)}" />`,
+      )
+      .join("");
+    for (const [, href] of localized) alternatesByPath.set(href, links);
   }
-  const alternates = homes.length ? [...homes, ["x-default", homeLocales.en]] : [];
-  const alternateLinks = alternates.map(
-    ([language, { href }]) =>
-      `<xhtml:link rel="alternate" hreflang="${escape(language)}" href="${escape(new URL(href, origin).href)}" />`,
-  );
   const siteEntries = root.map((path) => {
     const loc = escape(new URL(path, origin).href);
-    return `  <url><loc>${loc}</loc>${homePaths.has(path) ? alternateLinks.join("") : ""}</url>`;
+    return `  <url><loc>${loc}</loc>${alternatesByPath.get(path) ?? ""}</url>`;
   });
 
   writeFileSync(docsSitemap, docs);
   writeFileSync(new URL("sitemap.xml", staticRoot), docs.replace("</urlset>", `${siteEntries.join("\n")}\n</urlset>`));
-  writeFileSync(new URL("robots.txt", staticRoot), `User-agent: *\nAllow: /\n\nSitemap: ${origin}/sitemap.xml\n`);
+  writeFileSync(
+    new URL("robots.txt", staticRoot),
+    `User-agent: *\nAllow: /\n\nSitemap: ${origin}/sitemap.xml\n\n${daumOwnershipProof}\n`,
+  );
   return translationRedirects(docs, staticRoot);
 }

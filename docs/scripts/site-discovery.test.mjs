@@ -64,6 +64,47 @@ test("publishes reciprocal homepage alternates only on canonical product homepag
   assert.ok(!docsSitemap.includes("/pt-BR"));
 });
 
+test("keeps localized enterprise alternates on their own canonical routes", (t) => {
+  const origin = "https://loom.clickhouse.com";
+  const sitemap = `<urlset xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url><loc>${origin}/docs</loc></url>
+  <url><loc>${origin}/docs/de/enterprise</loc></url>
+  <url><loc>${origin}/docs/fr/enterprise</loc></url>
+</urlset>`;
+  const output = staticFixture(t, sitemap);
+  const enterprisePages = ["/enterprise", "/de/enterprise", "/fr/enterprise"];
+  publishSiteDiscovery(output, {
+    root: ["/", "/de", "/fr", ...enterprisePages],
+    aliases: enterprisePages.map((path) => `/docs${path}`),
+    homeLocales: {
+      en: { href: "/", enterprise: "/enterprise" },
+      de: { href: "/de", enterprise: "/de/enterprise" },
+      fr: { href: "/fr", enterprise: "/fr/enterprise" },
+    },
+  });
+  const publicSitemap = readFileSync(new URL("sitemap.xml", output), "utf8");
+  const locations = new Map(
+    [...publicSitemap.matchAll(/<url><loc>([^<]+)<\/loc>(.*?)<\/url>/g)].map(([, href, content]) => [href, content]),
+  );
+  for (const path of enterprisePages) {
+    assert.deepEqual(
+      [...locations.get(origin + path).matchAll(/hreflang="([^"]+)" href="([^"]+)"/g)].map(([, language, href]) => [
+        language,
+        href,
+      ]),
+      [
+        ["en", "/enterprise"],
+        ["de", "/de/enterprise"],
+        ["fr", "/fr/enterprise"],
+        ["x-default", "/enterprise"],
+      ].map(([language, href]) => [language, origin + href]),
+    );
+    assert.ok(!publicSitemap.includes(`/docs${path}`));
+  }
+  assert.ok(!locations.get(origin + "/fr").includes("/enterprise"));
+  assert.ok(!readFileSync(new URL("docs/sitemap.xml", output), "utf8").includes("/enterprise"));
+});
+
 test("redirects missing translations and leaves translated and unknown paths alone", (t) => {
   const routes = publish(
     t,
