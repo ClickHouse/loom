@@ -656,7 +656,7 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     memory: {
       title: "Bộ nhớ dùng chung",
       detail:
-        "Tác nhân triển khai lưu quyết định của dự án. Tác nhân rà soát có thể đọc lại quyết định đó trong một phiên khác nếu được cấp quyền.",
+        "Tác nhân viết mã lưu quyết định của dự án. Tác nhân rà soát có thể đọc lại quyết định đó trong một phiên khác nếu được cấp quyền.",
       link: "Bộ nhớ cho tác nhân lập trình",
     },
     documents: {
@@ -678,7 +678,7 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     softwareFactory: "Bộ nhớ cho nhà máy phần mềm",
     knowledgeFactory: "Nhà máy tri thức cho tác nhân AI",
     autonomous: "Bộ nhớ dài hạn cho tác nhân tự trị",
-    selfHosted: "Bộ nhớ tác nhân tự triển khai",
+    selfHosted: "Tự triển khai bộ nhớ cho tác nhân AI",
     evaluationHeading: "Thử Loom trên kho mã của nhóm",
     evaluationDetail:
       "Dùng công việc thực tế để kiểm tra khả năng truy xuất bộ nhớ giữa các phiên, liên kết đến nguồn và quyền truy cập.",
