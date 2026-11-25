@@ -54,6 +54,45 @@ class ProvisioningContracts(unittest.TestCase):
         self.assertEqual(len(declarations), 1)
         self.assertIs(declarations[("views.py", first.qualified_name, first.id)], first)
 
+    def test_compiler_is_reconciled_before_index_audit(self):
+        token = self.root / "setup.token"
+        token.write_text("setup token")
+        head = "b" * 40
+        files = {"src/a.py": "source"}
+        snapshot = {"commit": head}
+        provision = Mock()
+        provision._mint_setup.return_value = provision._mint.return_value = token
+        provision._source.return_value = (head, files)
+        provision._compile.return_value = snapshot
+        provision._rpc.side_effect = [None, RuntimeError("Reached index audit")]
+        group = {
+            "task_id": "task",
+            "org": "org",
+            "namespace": "code",
+            "index_tier": "scip",
+            "producer": "scip-python",
+            "producer_count_fields": {},
+            "memory_slots": [],
+        }
+        with self.assertRaisesRegex(RuntimeError, "Reached index audit"):
+            Provisioner._prepare_group(
+                provision,
+                "task:scip",
+                group,
+                {"task": {"source_roots": ["src"]}},
+                {"task": {"data": {"kind": "cold", "history_events": []}}},
+                [],
+                {},
+                {},
+                {},
+                {"task": "source.git"},
+                {},
+                {},
+            )
+        writes = [c[0] for c in provision.mock_calls if c[0] in {"_backfill", "_compile"}]
+        self.assertEqual(writes, ["_backfill", "_compile", "_backfill", "_compile"])
+        self.assertEqual(provision._rpc.call_args.args[1]["compiler_snapshots"], {head: snapshot})
+
     def test_namespace_installer_and_attempt_tokens_use_distinct_claim_shapes(self):
         from examples.software_factory.harbor.native_setup import external
 

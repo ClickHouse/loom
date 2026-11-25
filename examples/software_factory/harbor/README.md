@@ -4,6 +4,9 @@ Every live study exports reports before its first attempt, after each finalized
 attempt, and at completion. Export reads recorded results and copies artifacts;
 it makes no model requests. Qualification jobs remain separate.
 
+Setup reapplies the pinned SCIP snapshot after parser reconciliation. The final
+audit checks compiler calls against the completed parser declaration spans.
+
 The output directory contains:
 
 - `reports/COMPARISON.md` and `reports/comparison.json`: the primary comparison,

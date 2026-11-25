@@ -61,10 +61,15 @@ def expected_units(snapshot, declarations):
 
 def check_units(expected, actual, key_fields, kind):
     indexed = {tuple(row[key] for key in key_fields): row for row in actual}
-    require(
-        len(indexed) == len(actual) and set(indexed) == set(expected),
-        "Native compiler " + kind + " set differs from the pinned snapshot",
-    )
+    missing = expected.keys() - indexed.keys()
+    extra = indexed.keys() - expected.keys()
+    duplicates = len(actual) - len(indexed)
+    if missing or extra or duplicates:
+        raise PermissionError(
+            f"Native compiler {kind} set differs from the pinned snapshot "
+            f"(expected {len(expected)}, observed {len(actual)}, duplicates {duplicates}, "
+            f"missing {len(missing)} {sorted(missing)[:3]}, extra {len(extra)} {sorted(extra)[:3]})"
+        )
     for key, row in expected.items():
         for field, value in row.items():
             current = indexed[key].get(field)

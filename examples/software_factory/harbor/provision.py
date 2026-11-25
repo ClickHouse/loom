@@ -1277,12 +1277,15 @@ class Provisioner:
                 self._observed("index", "source_revision_transition", transition)
             self._backfill(group, task, head)
             if group["index_tier"] == "scip":
+                self._compile(group, head, revision, compiler_receipt, admin, files)
+                # Compiler symbols change the resolver's name table; reconcile native
+                # parser edges against that completed table.
+                self._backfill(group, task, head)
+                # Parser coverage can change during reconciliation. Check compiler calls
+                # against the final declaration spans before certifying the index.
                 compiler_snapshots[head] = self._compile(
                     group, head, revision, compiler_receipt, admin, files
                 )
-                # Compiler symbols change the resolver's name table; reconcile native
-                # parser edges against that completed table before certifying it.
-                self._backfill(group, task, head)
             if authored and revision == "B":
                 old_keys = [
                     event["key"]
