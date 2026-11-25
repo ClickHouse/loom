@@ -501,6 +501,37 @@ async def test_symbol_reads_test_examples_with_the_definition(code_env, monkeypa
     assert example["context"]["text"].strip() == call
 
 
+async def test_edit_context_prefers_distinct_test_source_windows(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    await _ingest(repo, org, ns)
+    path = "tests/test_examples.cpp"
+    source = (
+        b"void test_first() {\n    DB::doWork();\n    DB::doWork();\n}\n"
+        + b"\n" * 30
+        + b"void test_second() { DB::doWork(); }\n"
+        + b"\n" * 30
+        + b"void test_third() { DB::doWork(); }\n"
+    )
+    await _ingest(repo, org, ns, source=source, path=path)
+    response = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, name="DB::doWork", include_lessons=False)
+    )
+    (definition,) = response.definitions
+    assert [(site["path"], site["line"]) for site in definition.examples] == [
+        (path, 2),
+        (path, 35),
+        (path, 66),
+    ]
+    assert "DB::doWork();\n    DB::doWork();" in definition.examples[0]["context"]["text"]
+
+
 async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(
     code_env, monkeypatch
 ) -> None:
