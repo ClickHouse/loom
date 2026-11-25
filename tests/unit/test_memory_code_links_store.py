@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 
 from server.memory.store import code_links as store
+from server.settings import settings
+from tests.unit.clock_fake import ManualClock
 
 
 class _CH:
@@ -18,7 +20,7 @@ class _CH:
         self.sql: list[tuple[str, dict[str, Any]]] = []
         self.inserted: list[dict[str, Any]] = []
 
-    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+    async def query_all(self, sql: str, params: Any = None, **_: Any) -> list[dict[str, Any]]:
         self.sql.append((sql, dict(params or {})))
         for key, queue in self.answers.items():
             if key in sql and queue:
@@ -135,6 +137,22 @@ async def test_reads_are_scoped_as_their_callers_rely_on() -> None:
     assert len(ch.sql[-1][1]["ids"]) == 1
     assert await store.memory_heads("o", [], ch=ch) == []
     assert await store.code_change_policies("o", [], ch=ch) == {}
+
+
+@pytest.mark.asyncio
+async def test_a_path_hint_read_returns_no_metadata_above_the_configured_row_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [{"mid": str(i)} for i in range(3)]
+    ch = _CH({"FROM loom.memory_code_links": [rows[:2], rows]})
+    monkeypatch.setattr(store, "_default_client", lambda: ch)
+    monkeypatch.setattr(store, "time", ManualClock(t=10))
+    monkeypatch.setattr(settings, "code_result_path_hint_rows", 2)
+
+    revisions = [("a.py", "c1")]
+    assert await store.path_hint_links("o", ["n"], "c", revisions, until=11) == rows[:2]
+    assert await store.path_hint_links("o", ["n"], "c", revisions, until=11) == []
+    assert [params["lim"] for _, params in ch.sql] == [3, 3]
 
 
 @pytest.mark.asyncio
