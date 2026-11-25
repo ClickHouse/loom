@@ -8718,6 +8718,11 @@ fn code_symbol() {
         serde_json::from_str::<serde_json::Value>("{}").unwrap(),
         "code.symbol:summary"
     );
+    assert_eq!(
+        encoded["edit_targets"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.symbol:edit_targets"
+    );
 }
 #[test]
 fn code_edit_context() {
@@ -8812,6 +8817,11 @@ fn code_edit_context() {
         encoded["summary"],
         serde_json::from_str::<serde_json::Value>("{}").unwrap(),
         "code.edit_context:summary"
+    );
+    assert_eq!(
+        encoded["edit_targets"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.edit_context:edit_targets"
     );
 }
 #[test]

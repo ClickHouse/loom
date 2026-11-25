@@ -6411,6 +6411,7 @@ class CodeEditContextInput(TypedDict, total=False):
     consumer: NotRequired[str]
     name: NotRequired[str]
     clues: NotRequired[list[str]]
+    names: NotRequired[list[str]]
 
 
 class CodeEditContextBody(TypedDict, total=False):
@@ -6423,6 +6424,7 @@ class CodeEditContextBody(TypedDict, total=False):
     consumer: NotRequired[str]
     name: NotRequired[str]
     clues: NotRequired[list[str]]
+    names: NotRequired[list[str]]
 
 
 class CodeSymbolOutput(TypedDict, total=False):
@@ -6444,6 +6446,7 @@ class CodeSymbolOutput(TypedDict, total=False):
     neighbour_tokens: NotRequired[int]
     presence: NotRequired[list[dict[str, Any]]]
     summary: NotRequired[dict[str, list[str]]]
+    edit_targets: NotRequired[list["CodeEditContextTarget"]]
 
 
 class CodeUnit(TypedDict, total=False):
@@ -6478,6 +6481,14 @@ class CodeUnit(TypedDict, total=False):
     lexical_rank: NotRequired[int]
     vector_rank: NotRequired[int]
     namespace: NotRequired[str]
+
+
+class CodeEditContextTarget(TypedDict, total=False):
+    name: Required[str]
+    status: Required[Literal["resolved", "ambiguous", "not_found"]]
+    definition_indices: NotRequired[list[int]]
+    candidates: NotRequired[list[dict[str, Any]]]
+    trace_run_id: NotRequired[str]
 
 
 class CodeEnclosingInput(TypedDict, total=False):

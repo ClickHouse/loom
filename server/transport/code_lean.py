@@ -388,12 +388,18 @@ def _lean_symbol(out: dict[str, Any]) -> None:
     """Keep requested source and leave out an outline the body already supplies.
     Asked for a class, the class answers: definitions of
     its own members that matched the bare name (its constructor) keep their
-    path and span, not their bodies; `next` fetches one."""
+    path and span, and `next` fetches their bodies. An edit batch names each
+    target separately and keeps requested member bodies."""
     defs = [d for d in out.get("definitions") or [] if isinstance(d, dict)]
     for d in defs:
         if d.get("body") and d.get("outline"):
             d.pop("outline")
-    if defs and defs[0].get("granularity") == "skeleton" and defs[0].get("body"):
+    if (
+        not out.get("edit_targets")
+        and defs
+        and defs[0].get("granularity") == "skeleton"
+        and defs[0].get("body")
+    ):
         owner = str(defs[0].get("symbol") or "")
         for d in defs[1:]:
             sym = str(d.get("symbol") or "")

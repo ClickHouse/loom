@@ -501,6 +501,63 @@ async def test_symbol_reads_test_examples_with_the_definition(code_env, monkeypa
     assert example["context"]["text"].strip() == call
 
 
+async def test_edit_context_batches_definitions_and_their_tests(code_env, monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.core.errors import ValidationError
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    await _ingest(repo, org, ns)
+    call = "void test_work() { DB::doWork(); }"
+    await _ingest(repo, org, ns, source=(call + "\n").encode(), path="tests/test_work.cpp")
+    await _ingest(repo, org, ns, source=b"def helper():\n    return 42\n", path="src/second.py")
+    names = [
+        "DB::doWork",
+        "src/S.cpp:DB::doWork",
+        "src/second.py:helper",
+        "missing_symbol",
+        "DB::Squasher::insert",
+        "DB::doWork",
+    ]
+    query = CodeEditContextInput(org=org, namespace=ns, names=names, include_lessons=False)
+    result = await handle_code_edit_context(query)
+    assert [target.name for target in result.edit_targets] == names
+    assert [target.status for target in result.edit_targets] == [
+        "resolved",
+        "resolved",
+        "resolved",
+        "not_found",
+        "ambiguous",
+        "resolved",
+    ]
+    assert [target.definition_indices for target in result.edit_targets] == [
+        [0],
+        [0],
+        [1],
+        [],
+        [2, 3],
+        [0],
+    ]
+    assert len(result.definitions) == 4
+    first, second = result.definitions[:2]
+    assert first.body.strip() == "void doWork() { }"
+    assert first.examples[0]["context"]["text"].strip() == call
+    assert second.body.strip() == "def helper():\n    return 42"
+    assert len({item.signature for item in result.definitions[2:]}) == 2
+    assert result.edit_targets[0].trace_run_id
+    assert result.edit_targets[-1].trace_run_id == result.edit_targets[0].trace_run_id
+    single = await handle_code_edit_context(
+        query.model_copy(update={"name": names[0], "names": []})
+    )
+    assert "edit_targets" not in single.model_dump()
+    with pytest.raises(ValidationError, match="cannot be combined"):
+        await handle_code_edit_context(query.model_copy(update={"name": names[0]}))
+
+
 @pytest.mark.parametrize("older_site_line", [None, 3, 20])
 async def test_edit_context_prefers_distinct_test_source_windows(
     code_env, monkeypatch, older_site_line

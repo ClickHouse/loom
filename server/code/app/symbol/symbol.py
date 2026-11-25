@@ -13,6 +13,7 @@ from typing import Any
 from server.code.api.models_symbol import (
     EDIT_TEST_CONTEXT_LINES,
     CodeEditContextInput,
+    CodeEditContextTarget,
     CodeSymbolInput,
     CodeSymbolOutput,
 )
@@ -539,11 +540,19 @@ def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any],
 
 
 async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
-    from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
-
     require_code_intel()
+    if input.names:
+        if input.name or input.clues:
+            raise ValidationError("code.edit_context names cannot be combined with name or clues")
+        return await _batched_edit_context(input)
     if not input.name and not input.clues:
         raise ValidationError("code.edit_context requires a name or literal clues")
+    return await _single_edit_context(input)
+
+
+async def _single_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
+    from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
+
     target = await locate_edit_target(input) if input.clues else EditTarget(name=input.name)
     if not target.name:
         return CodeSymbolOutput(
@@ -551,7 +560,7 @@ async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOut
         )
     out = await handle_code_symbol(
         CodeSymbolInput(
-            **input.model_dump(exclude={"name", "clues"}),
+            **input.model_dump(exclude={"name", "clues", "names"}),
             name=target.name,
             include_history=False,
             test_examples_only=True,
@@ -581,6 +590,47 @@ async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOut
                 )
             ]
     return out
+
+
+async def _batched_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
+    from server.code.domain.units import CodeUnit, estimate_json_tokens, estimate_unit_tokens
+
+    names = list(dict.fromkeys(input.names))
+    results = await asyncio.gather(
+        *(_single_edit_context(input.model_copy(update={"name": name})) for name in names),
+        return_exceptions=True,
+    )
+    by_name = dict(zip(names, results, strict=True))
+    definitions: list[CodeUnit] = []
+    positions: dict[str, int] = {}
+    targets: list[CodeEditContextTarget] = []
+    for name in input.names:
+        result = by_name[name]
+        if isinstance(result, BaseException):
+            raise result
+        indices: list[int] = []
+        for unit in result.definitions:
+            key = unit.model_dump_json()
+            index = positions.setdefault(key, len(definitions))
+            if index == len(definitions):
+                definitions.append(unit)
+            indices.append(index)
+        targets.append(
+            CodeEditContextTarget(
+                name=name,
+                status="ambiguous"
+                if result.ambiguous
+                else ("resolved" if indices else "not_found"),
+                definition_indices=indices,
+                candidates=result.candidates,
+                trace_run_id=result.trace_run_id,
+            )
+        )
+    note_budget_shape("named_batch")
+    tokens = sum(estimate_unit_tokens(unit) for unit in definitions) + estimate_json_tokens(
+        [target.model_dump() for target in targets]
+    )
+    return CodeSymbolOutput(definitions=definitions, edit_targets=targets, tokens_returned=tokens)
 
 
 def _matches_source(unit: Any, matches: list[dict[str, Any]]) -> bool:

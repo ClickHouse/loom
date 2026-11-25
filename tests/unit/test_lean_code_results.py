@@ -596,6 +596,26 @@ def test_a_class_answer_carries_its_skeleton_once_and_points_at_its_members() ->
     assert other["body"] == "struct Changelog {};"  # another class's definition keeps its body
 
 
+def test_edit_context_batch_keeps_an_explicit_member_body() -> None:
+    from server.transport.code_lean import lean_code
+
+    member = {"symbol": "DB::Log::flush", "body": "void Log::flush() {}"}
+    result = lean_code(
+        "code.edit_context",
+        {
+            "definitions": [
+                {"symbol": "DB::Log", "granularity": "skeleton", "body": "class Log {};"},
+                member,
+            ],
+            "edit_targets": [
+                {"name": "DB::Log", "definition_indices": [0]},
+                {"name": "DB::Log::flush", "definition_indices": [1]},
+            ],
+        },
+    )
+    assert result["definitions"][1] == member
+
+
 def test_overloads_of_a_function_keep_every_body() -> None:
     from server.transport.code_lean import lean_code
 

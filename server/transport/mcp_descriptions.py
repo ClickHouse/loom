@@ -1443,9 +1443,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "omitted qualification or SQL registration. `documented_in` lists citing sections."
     ),
     "code.edit_context": (
-        "Read implementation, indexed tests, and linked notes before editing. "
-        "Give a definition name, path:symbol, or path:line. "
-        "Use literal clues to find the edit target, with the file path if known."
+        "Read source, tests, and notes. Batch exact definitions with `names`. "
+        "Use `name` or literal `clues` for one target."
     ),
     "code.backport_gap": (
         "Which release branches still carry the bug a merged fix removed, "
