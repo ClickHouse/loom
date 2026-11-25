@@ -132,7 +132,7 @@ WHERE (org, namespace, agent, user_id, session_id, run_id) IN (
     WHERE org = 'dev'
       AND namespace = 'local'
       AND memory_id = {memory_id:UUID}
-      AND run_id != '-'
+      AND run_id NOT IN ('', '-')
 )
 ORDER BY ts, request_id;
 ```
