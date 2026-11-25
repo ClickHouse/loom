@@ -1350,6 +1350,8 @@ export interface CodeReadRangeInput {
 }
 
 export interface CodeReadInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -1377,6 +1379,8 @@ export interface CodeReadWindow {
 }
 
 export interface CodeReadOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   results: CodeReadRange[];
   as_of: Record<string, unknown>;
 }

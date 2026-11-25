@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from server.code.api.models_common import _CodeIdentity
+from server.code.api.models_common import _CodeIdentity, _LessonsOut, _ResultLessons
 
 _FilePath = Annotated[str, Field(min_length=1, max_length=1024)]
 _SourceLine = Annotated[int, Field(ge=1, lt=2**32)]
@@ -19,7 +19,7 @@ class CodeReadRangeInput(BaseModel):
     end_line: _SourceLine | None = None
 
 
-class CodeReadInput(_CodeIdentity):
+class CodeReadInput(_CodeIdentity, _ResultLessons):
     # Batch of inclusive one-based ranges as path:start-end strings or objects
     # with path, start_line, and optional end_line.
     ranges: (
@@ -49,6 +49,6 @@ class CodeReadRange(BaseModel):
     windows: list[CodeReadWindow] = Field(default_factory=list)
 
 
-class CodeReadOutput(BaseModel):
+class CodeReadOutput(_LessonsOut):
     results: list[CodeReadRange]
     as_of: dict[str, Any]

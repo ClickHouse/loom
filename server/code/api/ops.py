@@ -382,7 +382,7 @@ OPERATIONS: list[Operation] = [
         session_content=True,
         input_model=CodeReadInput,
         output_model=CodeReadOutput,
-        handler=handle_code_read,
+        handler=result_lessons.WithLessons(handle_code_read, result_lessons.read_paths),
         idempotent=True,
         required_role=Role.VIEWER,
     ),

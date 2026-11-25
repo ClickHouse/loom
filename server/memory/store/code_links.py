@@ -354,12 +354,13 @@ async def path_hint_links(
     *,
     until: float,
 ) -> list[dict[str, Any]]:
-    """Current-revision link metadata for the files of one grep response."""
+    """Current-revision link metadata for the files in one source response."""
     if not revisions or fitting(revisions) != revisions:
         return []
     return await _path_hint_rows(
         f"""
-        SELECT path, qualified_name, namespace, toString(memory_id) AS mid, inputs_hash
+        SELECT path, qualified_name, namespace, toString(memory_id) AS mid, inputs_hash,
+               checked_commit, start_line, end_line
         {_LIVE} AND org = {{org:String}} AND code_namespace = {{trunk:String}}
           AND path IN {{paths:Array(String)}}
           AND (path, checked_commit) IN {{revisions:Array(Tuple(String, String))}}

@@ -7230,6 +7230,8 @@ class CodePrCheckOutput(TypedDict, total=False):
 
 
 class CodeReadInput(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -7248,6 +7250,8 @@ class CodeReadRangeInput(TypedDict, total=False):
 
 
 class CodeReadBody(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -7260,6 +7264,8 @@ class CodeReadBody(TypedDict, total=False):
 
 
 class CodeReadOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     results: Required[list["CodeReadRange"]]
     as_of: Required[dict[str, Any]]
 

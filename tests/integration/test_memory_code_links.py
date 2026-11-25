@@ -309,6 +309,58 @@ async def test_grep_reads_a_later_path_with_a_matched_lesson(env, monkeypatch, e
     ]
 
 
+async def test_code_read_focuses_lessons_on_returned_source_windows(env, monkeypatch) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.code.api.models_read import CodeReadInput
+    from server.operations.base import Role
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_result_lessons_paths", 1)
+    helper, reader = "src/widgets/helper.py", "src/widgets/reader.py"
+    sha = env.commit({helper: _UTIL, reader: _READER})
+    await _index(TRUNK, env, sha, [helper, reader])
+    await _remember(MEM, "notes/read-rows", "Use `Reader.read_rows` for paging.", files=[reader])
+    await _remember(MEM, "notes/fetch", "Use `fetch_page` to keep URLs intact.", files=[reader])
+    await _pass()
+
+    read = OPERATIONS_BY_NAME["code.read"].handler
+    request = CodeReadInput(
+        org=ORG,
+        namespace=TRUNK,
+        ranges=[f"{helper}:1", f"{reader}:2-3", f"{reader}:99"],
+        lesson_namespaces=[MEM],
+    )
+    result = await read(request)
+    assert [row.status for row in result.results] == ["complete", "complete", "out_of_range"]
+    assert [(row["memory_key"], row["code_state"]) for row in result.lessons] == [
+        ("notes/read-rows", "fresh"),
+    ]
+    assert result.lessons_left_out == 1
+    disabled = await read(request.model_copy(update={"include_lessons": False}))
+    assert disabled.results == result.results
+    assert "lessons" not in disabled.model_dump()
+    unavailable = await read(request.model_copy(update={"ranges": [f"{reader}:99"]}))
+    assert "lessons" not in unavailable.model_dump()
+    set_current_auth(
+        AuthInfo(
+            subject="code-reader@example.com",
+            org=ORG,
+            namespaces=(TRUNK,),
+            roles=(Role.VIEWER,),
+            is_service_account=False,
+        )
+    )
+    try:
+        scoped = await read(request)
+    finally:
+        set_current_auth(None)
+    assert scoped.results == result.results
+    assert "lessons" not in scoped.model_dump()
+
+
 @pytest.mark.parametrize("hidden", ["deleted", "high"])
 async def test_grep_keeps_visible_lessons_ahead_of_ineligible_links(
     env, monkeypatch, hidden

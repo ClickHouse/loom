@@ -51,7 +51,7 @@ module ClickHouse
         "code.outline" => OpSpec.new("code.outline", "code", "outline", true, true, "viewer", "experimental", %w[include_lessons lesson_namespaces org namespace agent user_id consumer path kinds token_budget].freeze, %w[path].freeze),
         "code.path_guards" => OpSpec.new("code.path_guards", "code", "path_guards", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer from_symbol to_symbol mentions depth].freeze, %w[from_symbol to_symbol].freeze),
         "code.pr_check" => OpSpec.new("code.pr_check", "code", "pr_check", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer title body paths symbols issues pr_number top_k].freeze, [].freeze),
-        "code.read" => OpSpec.new("code.read", "code", "read", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer ranges path start_line end_line].freeze, [].freeze),
+        "code.read" => OpSpec.new("code.read", "code", "read", true, true, "viewer", "experimental", %w[include_lessons lesson_namespaces org namespace agent user_id consumer ranges path start_line end_line].freeze, [].freeze),
         "code.recent_commits" => OpSpec.new("code.recent_commits", "code", "recent_commits", true, true, "viewer", "stable", %w[org namespace agent user_id consumer limit].freeze, [].freeze),
         "code.refresh" => OpSpec.new("code.refresh", "code", "refresh", false, false, "writer", "stable", %w[org namespace agent user_id consumer expected_head wait wait_timeout_seconds].freeze, [].freeze),
         "code.reindex" => OpSpec.new("code.reindex", "code", "reindex", false, false, "admin", "experimental", %w[org namespace agent user_id consumer git_head].freeze, %w[git_head].freeze),
