@@ -44,7 +44,7 @@ def test_equivalent_effective_deadlines_share_one_approved_profile_digest() -> N
         "issuer": "synthetic-grants",
         "vault": {"origin": "https://vault.example", "mount": "connections"},
         "read_limits": {
-            "concurrent": 8,
+            "concurrent": 4,
             "concurrent_per_org": 2,
             "timeout_seconds": 5,
             "content_bytes": 4096,
