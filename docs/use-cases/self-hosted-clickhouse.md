@@ -78,18 +78,21 @@ ENGINE = MergeTree ORDER BY id;
 INSERT INTO ingest_events VALUES (1, 1), (2, 0), (3, 1);
 ```
 
+Set `CLICKHOUSE_DATABASE` on the read-only MCP connection to the test database.
+Limit that database user's `SELECT` grant to `ingest_events`.
+
 1. With the read-only client, use `run_query` to check `system.columns` for `ingest_events`
    in the test database. Run `SELECT count() FROM ingest_events WHERE accepted = 1`
    and expect `2`. Save the predicate and a reminder to recheck the schema under
    `example/sql/accepted-events` using `loom_memory_set` in a test namespace.
 2. As the operator, run `ALTER TABLE ingest_events RENAME COLUMN accepted TO is_accepted`.
    Start a fresh session with a separate Loom token that can read the same namespace.
-   Call `loom_memory_get` and check that it returns the saved predicate and its writer.
-   The saved predicate still contains `accepted`.
+   Call `loom_memory_get` with that test `namespace` and `memory_key="example/sql/accepted-events"`.
+   Check that it returns the writer and the saved predicate containing `accepted`.
 3. Repeat the metadata lookup and verify `is_accepted` before applying the lesson.
    Run `SELECT count() FROM ingest_events WHERE is_accepted = 1` and expect `2`.
-4. With a token outside the test namespace, repeat the memory lookup. Require an
-   access refusal with no saved value. Remove the disposable table and lesson when done.
+4. Repeat the same lookup arguments with a token that lacks access to the test namespace.
+   Require an access refusal with no saved value. Remove the disposable table and lesson when done.
 
 ## Query agent memory with SQL
 
