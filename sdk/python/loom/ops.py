@@ -6485,9 +6485,13 @@ class CodeUnit(TypedDict, total=False):
 
 class CodeEditContextTarget(TypedDict, total=False):
     name: Required[str]
-    status: Required[Literal["resolved", "ambiguous", "not_found"]]
+    status: Required[Literal["resolved", "ambiguous", "dependency", "not_found"]]
     definition_indices: NotRequired[list[int]]
     candidates: NotRequired[list[dict[str, Any]]]
+    resolved_by: NotRequired[str]
+    presence: NotRequired[list[dict[str, Any]]]
+    hierarchy: NotRequired[dict[str, list[dict[str, Any]]]]
+    documented_in: NotRequired[list[dict[str, Any]]]
     trace_run_id: NotRequired[str]
 
 

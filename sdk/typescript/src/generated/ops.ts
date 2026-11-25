@@ -810,9 +810,13 @@ export interface CodeUnit {
 
 export interface CodeEditContextTarget {
   name: string;
-  status: "resolved" | "ambiguous" | "not_found";
+  status: "resolved" | "ambiguous" | "dependency" | "not_found";
   definition_indices?: number[];
   candidates?: Array<Record<string, unknown>>;
+  resolved_by?: string;
+  presence?: Array<Record<string, unknown>>;
+  hierarchy?: Record<string, Array<Record<string, unknown>>>;
+  documented_in?: Array<Record<string, unknown>>;
   trace_run_id?: string;
 }
 

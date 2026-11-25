@@ -181,10 +181,14 @@ class CodeSymbolInput(_CodeIdentity):
 
 class CodeEditContextTarget(BaseModel):
     name: str
-    status: Literal["resolved", "ambiguous", "not_found"]
+    status: Literal["resolved", "ambiguous", "dependency", "not_found"]
     # Zero-based offsets into the shared response definitions, in resolver order.
     definition_indices: list[int] = Field(default_factory=list)
     candidates: list[dict[str, Any]] = Field(default_factory=list)
+    resolved_by: str = ""
+    presence: list[dict[str, Any]] = Field(default_factory=list)
+    hierarchy: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    documented_in: list[dict[str, Any]] = Field(default_factory=list)
     trace_run_id: str = ""
 
 
