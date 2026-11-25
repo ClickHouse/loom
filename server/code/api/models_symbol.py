@@ -36,6 +36,7 @@ from server.code.domain.units import CodeUnit
 from server.operations.base import MCP_HIDDEN
 
 EDIT_TEST_CONTEXT_LINES = 10
+EDIT_CONTEXT_MAX_NAMES = 8
 _EditName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1024)]
 
 
@@ -47,11 +48,11 @@ class CodeEditContextInput(_CodeIdentity, _ResultLessons):
     clues: list[GrepText] = Field(
         default_factory=list,
         max_length=255,
-        description="Literal fragments to find the edit target in a file or across the index.",
+        description="Fragments for one target, or exact declaration fragments across files.",
     )
     names: list[_EditName] = Field(
         default_factory=list,
-        max_length=8,
+        max_length=EDIT_CONTEXT_MAX_NAMES,
         description="Batch name, path:symbol or path:line. Replaces name and clues.",
     )
 

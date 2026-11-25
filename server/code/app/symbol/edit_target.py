@@ -7,10 +7,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.api.models_grep import CodeGrepInput
-from server.code.api.models_symbol import CodeEditContextInput
+from server.code.api.models_symbol import EDIT_CONTEXT_MAX_NAMES, CodeEditContextInput
 from server.code.app.common import repo_relative, resolve_code_identity
 from server.code.app.grep import handle_code_grep, qualified_call_argument
 from server.code.app.grep_source import GREP_MATCH_TEXT_CHARS, match_revisions
+from server.code.app.spans import code_span
 from server.code.app.symbol.outline import _is_large_container
 from server.code.app.symbol.resolve import _indexed_commit
 from server.code.store.index import CodeRepo
@@ -25,6 +26,7 @@ class EditTarget:
     matches: list[dict[str, Any]] = field(default_factory=list)
     grouped: bool = False
     recovered_argument: bool = False
+    declarations: list[EditTarget] = field(default_factory=list)
 
 
 async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
@@ -55,14 +57,22 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
     related = found.related
     matches = related.matches if related is not None else found.matches
     candidates = _scope_candidates(matches)
+    revisions = match_revisions(matches, found._match_commits)
+    partial = (
+        found.has_more
+        or (related.truncated if related is not None else found.truncated)
+        or found.partial
+    )
     if not path:
         paths = {match["path"] for match in matches}
         if len(paths) != 1:
-            return EditTarget(candidates=candidates)
+            declarations = []
+            if len(paths) > 1 and related is None and not partial:
+                declarations = await _declaration_targets(org, ns, matches, revisions, input.clues)
+            return EditTarget(candidates=candidates, declarations=declarations)
         (path,) = paths
-    revision = match_revisions(matches, found._match_commits).get(path)
-    truncated = related.truncated if related is not None else found.truncated
-    if not revision or found.has_more or truncated or found.partial:
+    revision = revisions.get(path)
+    if not revision or partial:
         return EditTarget(candidates=candidates)
     from server.code.app.symbol.enclosing import ENCLOSING_KINDS
 
@@ -121,6 +131,49 @@ async def locate_edit_target(input: CodeEditContextInput) -> EditTarget:
         grouped=True,
         recovered_argument=related is not None,
     )
+
+
+async def _declaration_targets(
+    org: str,
+    ns: str,
+    matches: list[dict[str, Any]],
+    revisions: dict[str, str],
+    clues: list[str],
+) -> list[EditTarget]:
+    """Find each exact declaration only when the whole clue match set is verifiable."""
+    required = set(clues)
+    if not 1 < len(matches) <= EDIT_CONTEXT_MAX_NAMES or len(required) < 2:
+        return []
+    if any(
+        match["line"] != match["scope_start_line"] or len(match["text"]) >= GREP_MATCH_TEXT_CHARS
+        for match in matches
+    ) or not all(any(clue in match["text"] for match in matches) for clue in required):
+        return []
+    paths = sorted({match["path"] for match in matches})
+    if any(not revisions.get(path) for path in paths):
+        return []
+    from server.code.app.symbol.enclosing import ENCLOSING_KINDS
+
+    with code_span("edit_context.declarations", seeds=len(matches)):
+        rows = await CodeRepo().functions_for_paths(
+            org, ns, paths, limit=2000, kinds=ENCLOSING_KINDS, with_revision=True
+        )
+    by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_path[row["path"]].append(row)
+    targets = []
+    for match in matches:
+        path, line = match["path"], match["line"]
+        definition = _row_at_match(by_path[path], match)
+        revision = revisions[path]
+        if (
+            definition is None
+            or definition["start_line"] != line
+            or _indexed_commit(definition.get("extent_commit")) != revision
+        ):
+            return []
+        targets.append(EditTarget(f"{path}:{line}", revision, rows=[definition], matches=[match]))
+    return targets
 
 
 def _definition_clue_matches(

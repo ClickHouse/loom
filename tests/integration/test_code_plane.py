@@ -591,6 +591,46 @@ async def test_edit_context_batches_definitions_and_their_tests(code_env, monkey
         await handle_code_edit_context(query.model_copy(update={"name": names[0]}))
 
 
+@pytest.mark.parametrize("clues_only_at_declarations", [True, False])
+async def test_edit_context_reads_verified_declarations_across_files(
+    code_env, monkeypatch, clues_only_at_declarations
+) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    sources = {
+        "src/alpha.py": b"def submit(value):\n    result = value + 1\n    return result\n",
+        "src/beta.py": b"def submit(value):\n    result = value * 2\n    return result\n",
+        "src/gamma.py": b"def handle(value):\n    return value - 1\n",
+    }
+    for path, body in sources.items():
+        await _ingest(repo, org, ns, source=body, path=path)
+    clues = ["def submit(", "def handle("]
+    if not clues_only_at_declarations:
+        clues[0] = "return result"
+    result = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, clues=clues, include_lessons=False)
+    )
+    assert result.ambiguous
+    assert {candidate["path"] for candidate in result.candidates} == set(sources)
+    if not clues_only_at_declarations:
+        assert result.definitions == []
+        return
+    assert {unit.path: unit.body.encode().rstrip(b"\n") for unit in result.definitions} == {
+        path: body.rstrip(b"\n") for path, body in sources.items()
+    }
+    assert [target.name for target in result.edit_targets] == [f"{path}:1" for path in sources]
+    assert all(target.status == "resolved" for target in result.edit_targets)
+    assert result.trace_run_id and result.trace_run_id not in {
+        target.trace_run_id for target in result.edit_targets
+    }
+
+
 @pytest.mark.parametrize("older_site_line", [None, 3, 20])
 async def test_edit_context_prefers_distinct_test_source_windows(
     code_env, monkeypatch, older_site_line

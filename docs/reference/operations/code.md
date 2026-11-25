@@ -591,7 +591,7 @@ Read source, tests, and notes.
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `name` | `str` | `''` | Definition name, path:symbol, or path:line. |
-| `clues` | `list[str]` | *(computed)* | Literal fragments to find the edit target in a file or across the index. |
+| `clues` | `list[str]` | *(computed)* | Fragments for one target, or exact declaration fragments across files. |
 | `names` | `list[str]` | *(computed)* | Batch name, path:symbol or path:line. |
 
 | Output field | Type | Meaning |

@@ -8,7 +8,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from server.code.api.models_symbol import (
     EDIT_TEST_CONTEXT_LINES,
@@ -56,6 +56,9 @@ from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
 from server.identity.app.request_scope import request_narrowed
 from server.observability.budget_shape import note_budget_shape
+
+if TYPE_CHECKING:
+    from server.code.app.symbol.edit_target import EditTarget
 
 logger = logging.getLogger(__name__)
 
@@ -554,6 +557,14 @@ async def _single_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
     from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
 
     target = await locate_edit_target(input) if input.clues else EditTarget(name=input.name)
+    if target.declarations:
+        return await _batched_edit_context(input, located=target)
+    return await _edit_context_for_target(input, target)
+
+
+async def _edit_context_for_target(
+    input: CodeEditContextInput, target: EditTarget
+) -> CodeSymbolOutput:
     if not target.name:
         return CodeSymbolOutput(
             definitions=[], ambiguous=len(target.candidates) > 1, candidates=target.candidates
@@ -592,15 +603,21 @@ async def _single_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
     return out
 
 
-async def _batched_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
+async def _batched_edit_context(
+    input: CodeEditContextInput, *, located: EditTarget | None = None
+) -> CodeSymbolOutput:
     from server.code.domain.units import CodeUnit, estimate_json_tokens, estimate_unit_tokens
 
     started = time.monotonic()
     start_stage_wall()
-    names = list(dict.fromkeys(input.names))
+    declarations = {target.name: target for target in located.declarations} if located else {}
+    requested = list(declarations) if declarations else input.names
+    names = list(dict.fromkeys(requested))
 
     async def read_target(name: str) -> CodeSymbolOutput:
         with code_span("edit_context.target"):
+            if name in declarations:
+                return await _edit_context_for_target(input, declarations[name])
             return await _single_edit_context(input.model_copy(update={"name": name}))
 
     with code_span("edit_context.batch", seeds=len(names)):
@@ -612,7 +629,7 @@ async def _batched_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput
     definitions: list[CodeUnit] = []
     positions: dict[str, int] = {}
     targets: list[CodeEditContextTarget] = []
-    for name in input.names:
+    for name in requested:
         result = by_name[name]
         if isinstance(result, BaseException):
             raise result
@@ -643,12 +660,16 @@ async def _batched_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput
                 trace_run_id=result.trace_run_id,
             )
         )
-    note_budget_shape("named_batch")
+    shape = "declaration_batch" if located else "named_batch"
+    note_budget_shape(shape)
+    candidates = located.candidates if located else []
     tokens = sum(estimate_unit_tokens(unit) for unit in definitions) + estimate_json_tokens(
         [target.model_dump() for target in targets]
     )
+    if candidates:
+        tokens += estimate_json_tokens(candidates)
     org, ns = resolve_code_identity(input.org, input.namespace)
-    route = "edit_context_named_batch"
+    route = f"edit_context_{shape}"
     trace_id = _symbol_trace(
         input,
         org,
@@ -658,8 +679,8 @@ async def _batched_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput
         tokens,
         started,
         op_name="code.edit_context",
-        query="\n".join(names),
-        args={"names_n": len(names), "shape": "named_batch"},
+        query="\n".join(input.clues if located else names),
+        args={"names_n": len(names), "shape": shape},
     )
     set_code_span_attributes(
         route=route,
@@ -669,7 +690,12 @@ async def _batched_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput
         consumer=input.consumer,
     )
     return CodeSymbolOutput(
-        definitions=definitions, edit_targets=targets, tokens_returned=tokens, trace_run_id=trace_id
+        definitions=definitions,
+        edit_targets=targets,
+        ambiguous=located is not None,
+        candidates=candidates,
+        tokens_returned=tokens,
+        trace_run_id=trace_id,
     )
 
 

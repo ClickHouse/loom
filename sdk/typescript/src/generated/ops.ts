@@ -770,7 +770,7 @@ export interface CodeEditContextInput {
   consumer?: string;
   /** Definition name, path:symbol, or path:line. File path with clues if known. */
   name?: string;
-  /** Literal fragments to find the edit target in a file or across the index. */
+  /** Fragments for one target, or exact declaration fragments across files. */
   clues?: string[];
   /** Batch name, path:symbol or path:line. Replaces name and clues. */
   names?: string[];
