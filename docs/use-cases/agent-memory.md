@@ -15,7 +15,8 @@ surface with that code and carry a changed-source warning.
 Use Loom when those agents need a shared service that your team operates. Keep rules
 that belong in every checkout in version control. Connecting an MCP client supplies
 operations; automatic session capture depends on the client's integration and settings.
-[Connect a coding agent](../getting-started/connect-a-coding-agent.md) describes both paths.
+[Connect a coding agent](../getting-started/connect-a-coding-agent.md) describes both paths
+and shows how to [verify a memory handoff from Claude Code to Codex](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex).
 The [MCP memory check](../features/integrations/mcp-clients.md#verify-shared-memory-through-mcp)
 tests save and recall through separate client sessions.
 

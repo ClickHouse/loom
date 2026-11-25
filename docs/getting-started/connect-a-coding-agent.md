@@ -1,3 +1,8 @@
+---
+title: Shared memory for Claude Code and Codex
+description: Share persistent project memory across Claude Code, Codex and Cursor. Verify that a fresh coding session retrieves a fact saved by another tool.
+---
+
 # Shared memory for Claude Code, Codex and Cursor
 
 Loom gives Claude Code, Codex and Cursor shared long-term memory through plugins or MCP
@@ -219,6 +224,39 @@ revoked credentials and by-ID reads, before relying on a team deployment.
    conversation too while conversation recording is on; you can correct or delete either.
 
 `loom doctor --client` adds the local wiring checks when you have the CLI.
+
+### Verify shared memory between Claude Code and Codex
+
+Connect both plugins to the same authenticated Loom server. Give each client its own
+writer token for the same disposable namespace. The example uses org `acme` and namespace
+`team-check`. Substitute the scope in your tokens.
+
+In Claude Code, ask the agent to call `loom_memory_set` with these arguments:
+
+```json
+{
+  "org": "acme",
+  "namespace": "team-check",
+  "agent": "handoff-example",
+  "user_id": "-",
+  "session_id": "-",
+  "memory_key": "example/cross-client/release-review",
+  "value": "Review the rollout checklist before deploying the sample service.",
+  "if_match_sha256": "absent"
+}
+```
+
+Record the returned `memory_id`. If the key already exists, use a fresh test key and
+keep the precondition.
+
+Open a fresh Codex session. Ask it to call `loom_memory_get` with the same `org`,
+`namespace`, `agent`, `user_id`, `session_id` and `memory_key`. Give Codex only these
+fields so it has to retrieve the value. Require `found: true`, the same `memory_id`,
+the exact value and the Claude Code credential's principal in `actor`.
+
+Delete the sample memory in the dashboard when finished. This check verifies a handoff
+by exact key. For semantic recall and denied-access cases, follow the
+[evaluation guide](evaluate.md#shared-memory-across-clients).
 
 ## When the code index is used
 
