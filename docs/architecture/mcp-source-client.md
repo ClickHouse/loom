@@ -87,9 +87,11 @@ Unexpected HTTP status or response media types are terminal before protocol hand
 Optional GET and DELETE responses with status 405 remain supported.
 Cancellation publishes no partial read evidence.
 The transport retains cleanup ownership while checking authority after response headers
-arrive and before handing the response to the protocol client.
-Closing a request does not prove that remote processing has stopped. Errors expose bounded error
-codes rather than upstream content, endpoints or credentials.
+arrive and before handing the response to the protocol client. The owner drains SDK
+requests before it sends a session DELETE through the same checked transport. A caller
+that arrives after teardown has started waits for the pool to close. Closing a request
+does not prove that remote processing has stopped. Errors expose bounded codes rather
+than upstream content, endpoints or credentials.
 
 Only an omitted optional mapped cursor ends that listing. Every present mapped cursor
 must be a nonempty bounded string; an explicit null is refused. Issued cursors are bound to their

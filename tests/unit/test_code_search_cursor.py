@@ -565,6 +565,55 @@ def test_grep_cursor_for_another_pattern_is_a_400(monkeypatch: pytest.MonkeyPatc
         asyncio.run(grep.handle_code_grep(CodeGrepInput(pattern="needle", cursor=c)))
 
 
+@pytest.mark.parametrize("related_fails", [False, True])
+def test_grep_cursor_retains_exact_evidence_after_optional_scan(
+    monkeypatch: pytest.MonkeyPatch, related_fails: bool
+) -> None:
+    old_commit = "a" * 40
+    old_text = "label = consume(obj.attr, 1)"
+    exact = [
+        {**_chunk("a.py", 1), "content": "label = 1", "indexed_commit": old_commit},
+        {**_chunk("b.py", 1), "content": old_text, "indexed_commit": old_commit},
+    ]
+
+    class _RelatedRepo(_GrepRepo):
+        async def grep_chunks(self, org, ns, pattern, **kw):
+            if isinstance(pattern, list):
+                return exact
+            if related_fails:
+                raise RuntimeError("related scan unavailable")
+            return [
+                {**exact[1], "content": "label = consume(obj.attr, 2)", "indexed_commit": "b" * 40}
+            ]
+
+    async def _as_of(*args):
+        return {}
+
+    monkeypatch.setattr(grep, "CodeRepo", lambda: _RelatedRepo(exact))
+    monkeypatch.setattr(grep, "index_as_of", _as_of)
+    puts: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        paging, "put_pool", lambda org, ns, key, payload, **kw: puts.append(payload)
+    )
+
+    async def _get_pool(*args):
+        return {"payload": puts[0], "indexed_commit": "", "created_at": None}
+
+    monkeypatch.setattr(paging, "get_pool", _get_pool)
+    request = CodeGrepInput(
+        pattern=["consume(obj.attr", "label"], related_on_prefix=True, include_body=False, limit=1
+    )
+    first = asyncio.run(grep.handle_code_grep(request))
+    assert first.next_cursor and first.partial
+    assert first.related is None or not first.related.matches
+    assert puts[0]["match_commits"] == [old_commit, old_commit]
+    second = asyncio.run(
+        grep.handle_code_grep(request.model_copy(update={"cursor": first.next_cursor}))
+    )
+    assert not second.partial and second.related is None
+    assert [hit["text"] for hit in second.matches] == [old_text]
+
+
 @pytest.mark.parametrize(
     "line_mapping",
     [None, 0, grep._GREP_LINE_MAPPING_VERSION - 1, grep._GREP_LINE_MAPPING_VERSION + 1],

@@ -167,7 +167,7 @@ async def _handle_request(
         return unsupported_version_error(req_id, meta_version)
 
     if method == "server/discover":
-        return _ok(req_id, await _discover_result(auth, toolset))
+        return _ok(req_id, await _discover_result(auth, toolset, schema_profile=schema_profile))
 
     if method == "initialize":
         result: dict[str, Any] = {
@@ -182,7 +182,9 @@ async def _handle_request(
             "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
         }
         try:
-            instructions = await _initialize_instructions(auth, toolset)
+            instructions = await _initialize_instructions(
+                auth, toolset, schema_profile=schema_profile
+            )
         except Exception as e:  # noqa: BLE001 — the handshake must not fail on a primer render
             # Enhancement only — the handshake must not fail on a render hiccup.
             log.warning("initialize instructions render failed (non-fatal): %s", e)
@@ -260,7 +262,9 @@ async def _handle_request(
     return _err(req_id, METHOD_NOT_FOUND, f"Method not found: {method!r}")
 
 
-async def _discover_result(auth: Any, toolset: str | None = None) -> dict[str, Any]:
+async def _discover_result(
+    auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+) -> dict[str, Any]:
     """`server/discover` (2026-07-28): the versions this
     transport serves, its capabilities and identity, and the same primer the
     `initialize` result carries — so a client that probes before choosing a
@@ -275,7 +279,7 @@ async def _discover_result(auth: Any, toolset: str | None = None) -> dict[str, A
         **cache_hints(LIST_TTL_MS, "private"),
     }
     try:
-        instructions = await _initialize_instructions(auth, toolset)
+        instructions = await _initialize_instructions(auth, toolset, schema_profile=schema_profile)
     except Exception as e:  # noqa: BLE001 — discover must not fail on a primer render
         log.warning("discover instructions render failed (non-fatal): %s", e)
         instructions = ""

@@ -1,3 +1,8 @@
+---
+seo:
+  title: Postgres and ClickHouse storage authority
+---
+
 # Storage authority: Postgres for live memory, ClickHouse for search
 
 Loom runs with one of two memory authorities, chosen per deployment by

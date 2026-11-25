@@ -133,6 +133,26 @@ def test_the_wider_of_two_rows_for_one_declaration_wins_and_either_scip_row_mark
     assert (got["end_line"], got["tier"], got["signature"]) == (40, "scip", "void f()")
 
 
+def test_compiler_confirmation_preserves_parsers_real_zero_argument_signature() -> None:
+    from server.code.app.symbol.outline import outline_entry
+    from server.code.store.index import collapse_outline_rows
+
+    parser = {
+        "path": "src/cli.py",
+        "qualified_name": "src.cli::validate",
+        "kind": "function",
+        "start_line": 10,
+        "end_line": 12,
+        "tier": "treesitter",
+        "signature": "()",
+    }
+    compiler = {**parser, "tier": "scip", "end_line": 10}
+    for rows in ([parser, compiler], [compiler, parser]):
+        (row,) = collapse_outline_rows(rows)
+        assert row["tier"] == "scip"
+        assert outline_entry(row)["signature"] == "()"
+
+
 class _FakeRepo:
     def __init__(self) -> None:
         self.outline_calls: list[tuple[str, tuple[str, ...] | None]] = []

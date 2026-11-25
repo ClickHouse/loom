@@ -32,6 +32,14 @@ backfill commit, including their edge reconciliation pass. Search chunks can car
 doc comments and overlapping context, so their concatenation is not authoritative
 source text for parsing a sibling module.
 
+Sibling text, Python layouts, workspace registries, module indexes, compiler configs
+and barrel targets cache by tenant and namespace plus the pinned Git directory and
+commit. Concurrent passes share a pending read only within that source. Indexed-text
+reads use a separate cache scope. Each cache expires entries and bounds their count;
+the text cache also bounds the bytes it holds. Python ingestion resolves its layout
+before chunking and passes the layout snapshot to facet extraction; chunking threads
+do not access the mutable cache.
+
 A history read (`blame_range`, bisect, `first_build`, a lesson's code check) on a host
 without the mirror clones it once in the background
 (`server/code/app/index/mirrors.py`, `history_dir`). A read that names its op waits up
@@ -239,6 +247,8 @@ Tree-sitter modules import lazily, so a server with the code workers off boots w
 | `file_header`    | Leading comments and includes.                                                                              |
 | `other`          | The rest, grouped.                                                                                          |
 
+Python search responses omit a prefixed class docstring when the skeleton already contains its text.
+
 Files without a tree fall back to whole-line windows; lanes without a grammar cut on
 their symbol spans (`lane_units.span_chunks`). A chunk id is
 `uuid5("loom://code/{namespace}/{path}#{scope}@{sha16}")`. It is content-addressed, so
@@ -370,12 +380,33 @@ locations to `code.enclosing` with `include_body=true`. It returns complete
 enclosing definitions together. `code.symbol` resolves a named definition or
 one location; the batch avoids a separate lookup for every located definition.
 
+`code.read` reads several known line ranges in one request. It uses a local
+Git mirror and checks the blob's hash against each indexed file record.
+Only files indexed for text search qualify. Projected notebook cells and
+reference fixtures with omitted text are unavailable. The response gives
+inclusive line numbers for each window and marks unavailable ranges, including
+ranges that exceed the request’s source byte limit.
+
+Python SCIP identities use the same placeholder for callables of every
+arity. Definition and enclosing-body responses recover the parameter list
+from a retained declaration with the matching name. Metadata-only responses
+leave the signature empty when the index provides only the placeholder.
+The stored identity and call edges keep their existing keys.
+
 Search and grep rank candidate lessons across all selected files by query-term
 overlap after constraints and pinned rows. English inflections share stems; equal
 matches keep path order, then the listing's confidence and recency order.
 The remaining file-lesson reads retain path and listing order.
-This reorders the same readable candidates within the same response token budget;
-it adds no model call or storage read. Superseded rows and unrelated paths remain excluded.
+The ranking uses the existing namespace-scoped candidates. On trunk, uncapped
+grep responses focus lessons on the definitions their matches name. Search
+focuses a file's lessons when a returned definition has an exact linked lesson.
+Whole-file search hits use file-level selection. Grep omits a candidate by scope
+only if its link was checked at the same revision as the matched chunks. Matches
+outside a named definition also keep candidates with overlapping or unverified
+link ranges. Read the broader file history with `memory.for_file`. Before
+omitting a lesson by scope, the enrichment checks its live link set for pending
+and uncertain links within the request's enrichment deadline. Ranking and
+focusing add no model calls.
 
 File and symbol lessons carry complete memory text, including source references.
 The internal file listing reads complete values; the pre-edit block keeps its own

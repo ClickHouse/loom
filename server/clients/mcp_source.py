@@ -358,7 +358,11 @@ class _LimitedStream(httpx.AsyncByteStream):
     async def aclose(self) -> None:
         # The SDK cancels its task group before joining HTTP stream finalizers.
         with anyio.CancelScope(shield=True):
-            await self.stream.aclose()
+            try:
+                await self.stream.aclose()
+            except Exception as error:  # noqa: BLE001 — the SDK must not log private finalizer errors
+                self.owner.failure = self.owner.failure or _error_code(error)
+                raise MCPSourceError(self.owner.failure) from None
 
 
 class _PinnedTransport(httpx.AsyncBaseTransport):
@@ -708,10 +712,25 @@ class MCPSourceClient:
                 timeout=httpx.Timeout(self._config.limits.request_seconds),
             )
         )
-        read, write, _ = await stack.enter_async_context(
-            streamable_http_client(self._config.endpoint, http_client=client)
+        get_session_id: Callable[[], str | None] | None = None
+        protocol_version: str | None = None
+
+        async def terminate() -> None:
+            if get_session_id is None or (session_id := get_session_id()) is None:
+                return
+            headers = {"mcp-session-id": session_id}
+            if protocol_version is not None:
+                headers["mcp-protocol-version"] = protocol_version
+            await client.delete(self._config.endpoint, headers=headers)
+
+        stack.push_async_callback(terminate)
+        dispatch_stack = await stack.enter_async_context(AsyncExitStack())
+        read, write, get_session_id = await dispatch_stack.enter_async_context(
+            streamable_http_client(
+                self._config.endpoint, http_client=client, terminate_on_close=False
+            )
         )
-        self._session = await stack.enter_async_context(
+        self._session = await dispatch_stack.enter_async_context(
             ClientSession(
                 read,
                 write,
@@ -720,6 +739,7 @@ class MCPSourceClient:
             )
         )
         result = await self._session.initialize()
+        protocol_version = result.protocolVersion
         self._discovery = MCPDiscovery(result.capabilities.resources is not None, ())
         await self._authorize()
 

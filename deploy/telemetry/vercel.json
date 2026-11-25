@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "functions": {
+    "api/v1/adoption.mjs": {
+      "maxDuration": 10
+    },
+    "api/oss-snapshot.mjs": {
+      "maxDuration": 10
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/oss-snapshot",
+      "schedule": "30 2 * * *"
+    }
+  ]
+}

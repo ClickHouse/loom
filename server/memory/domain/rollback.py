@@ -26,7 +26,8 @@ def version_at(as_of: datetime) -> int:
     """Epoch-ns version threshold for `as_of` (naive values are UTC)."""
     if as_of.tzinfo is None:
         as_of = as_of.replace(tzinfo=UTC)
-    return int(as_of.timestamp() * 1_000_000_000)
+    elapsed = as_of - datetime(1970, 1, 1, tzinfo=UTC)
+    return ((elapsed.days * 86_400 + elapsed.seconds) * 1_000_000 + elapsed.microseconds) * 1_000
 
 
 @dataclass(frozen=True)

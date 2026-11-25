@@ -240,9 +240,10 @@ class _Recorder:
         return httpx.Response(200, json=self.body, request=httpx.Request("POST", url))
 
 
-_CHAT = {
-    "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
-    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+_RESPONSE = {
+    "status": "completed",
+    "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
+    "usage": {"input_tokens": 1, "output_tokens": 1},
 }
 _MESSAGES = {
     "content": [{"type": "text", "text": "hi"}],
@@ -260,7 +261,7 @@ def test_openai_chat_carries_the_identity(directory, monkeypatch) -> None:
     from server.llm import openai as chat_mod
 
     _as(AGENT)
-    chat = _Recorder(_CHAT)
+    chat = _Recorder(_RESPONSE)
     monkeypatch.setattr(chat_mod, "_http_client", lambda: chat)
     asyncio.run(chat_mod.OpenAILLMClient(model="gpt-4o-mini", api_key="k").complete("s", "u"))
     assert _carries(chat.calls[0]["headers"])

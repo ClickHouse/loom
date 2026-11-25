@@ -21,6 +21,7 @@ from typing import Any
 from server.auth.fanout import knowledge_search_reads_collections
 from server.code.domain.scope import current_code_scope
 from server.operations.registry import OPERATIONS_BY_NAME
+from server.operations.toolsets import resolve_toolset, toolset_parts
 from server.transport._common import begin_call, bind_request
 from server.transport.mcp_config import (
     _LOOM_PRIMER_RESOURCE_URI,
@@ -39,6 +40,7 @@ from server.transport.mcp_identity import (
 )
 from server.transport.mcp_op import keep_first_marks
 from server.transport.mcp_op import reachable as loom_op_reachable
+from server.transport.mcp_schemas import resolve_schema_profile
 from server.transport.mcp_tools import (
     _emit_mcp_event,
     assistant_connection,
@@ -229,8 +231,10 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
         "mentor.guide",
         "collection.list",
         "code.symbol",
+        "code.edit_context",
         "code.search",
         "code.grep",
+        "code.read",
         "code.callers",
         "code.impact",
         "code.context_pack",
@@ -349,17 +353,42 @@ def _tool_routing(toolset: str | None) -> str:
     )
 
 
+def _bound_coding_connection(toolset: str | None) -> bool:
+    from server.settings import settings
+
+    return (
+        resolve_toolset(toolset, settings.mcp_toolset) == "coding"
+        and current_code_scope() is not None
+    )
+
+
+def _linked_history_guidance(task_pack: str | None) -> str:
+    return (
+        "For prior decisions or procedures beyond linked code lessons, use "
+        f"{task_pack} with the task as `query`. "
+    )
+
+
 def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     """The Loom-first rules with the caller's default workspace baked in, naming
     the tools the connection's ``toolset`` listing carries."""
     tool = _tool_refs(toolset)
     collections = knowledge_search_reads_collections()
+    if not _bound_coding_connection(toolset):
+        task_context = (
+            f"With a default memory namespace, call {tool['context.pack']} first with the task "
+            "as `query`, for the memories, decisions and procedures that bear on it in one "
+            f"bounded bundle. Skip it when {FIRST_STEP_HOOK}. "
+        )
+    elif defaults and defaults.get("namespace"):
+        task_context = _linked_history_guidance(tool["context.pack"])
+        task_context += f"Skip it when {FIRST_STEP_HOOK}. "
+    else:
+        task_context = "Read indexed source and its linked lessons for repository work. "
     head = (
         "**Loom-first mode active for this conversation.**\n\n"
         + _tool_routing(toolset)
-        + "**1. Task context.** With a default memory namespace, call "
-        f"{tool['context.pack']} first with the task as `query`, for the memories, decisions and "
-        f"procedures that bear on it in one bounded bundle. Skip it when {FIRST_STEP_HOOK}. "
+        + f"**1. Task context.** {task_context}"
         "For one fact, rule 2's search alone is enough.\n\n"
         "**2. Recall lookup order.** When I ask about preferences, "
         "decisions, family/relationships, work, bills, contracts, "
@@ -489,35 +518,49 @@ async def _emit_initialize_event(auth: Any, client_name: str | None) -> None:
         log.warning("initialize ledger row failed (non-fatal): %s", e)
 
 
-async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str:
+async def _initialize_instructions(
+    auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+) -> str:
     """Session-start instructions for the `initialize` result: the rules, the
-    code scope, the default workspace, the mentor hint, then the profile. The
-    server returns the complete text; clients control their own display and
+    code scope, the workspace, then the profile. Coding connections use fixed
+    wording for implicit scopes and read usage hints during the session. Other
+    connections also get their current mentor hint. Clients control display and
     context limits. The profile comes only with a verified
     bearer: an anonymous probe (discovery_only / open modes) must not read
     profile content.
     """
+    from server.settings import settings
+
+    toolset = resolve_toolset(toolset, settings.mcp_toolset)
     if assistant_connection(toolset):
         return _assistant_primer(await _caller_defaults(auth, assistant=True))
     defaults = await _caller_defaults(auth)
-    coding = _is_coding_toolset(toolset)
-    rules = _coding_instructions(toolset, defaults) if coding else _loom_rules(toolset, defaults)
-    scope = current_code_scope()
-    scope_line = (
-        f"\n\n**Code index scope for this connection:** `{scope[0]}/{scope[1]}` — "
-        "applied to every loom_code_* call that names no namespace."
-        if scope
-        else ""
+    coding = "coding" in toolset_parts(toolset)
+    compact = toolset == "coding" and (
+        resolve_schema_profile(schema_profile, settings.mcp_schema_profile) == "compact"
     )
-    # The compact coding form names the default namespace in one clause; the full primer
-    # carries the default-workspace paragraph.
+    rules = (
+        _coding_instructions(toolset, defaults, compact=compact)
+        if coding
+        else _loom_rules(toolset, defaults)
+    )
+    scope = current_code_scope()
+    scope_line = ""
+    if scope:
+        scope_line = (
+            "\n\nCode tools use the repository bound to this connection when namespace is omitted."
+            if coding
+            else f"\n\n**Code index scope for this connection:** `{scope[0]}/{scope[1]}` — "
+            "applied to every loom_code_* call that names no namespace."
+        )
+    # A coding client needs the workspace name only when it must pass one.
     workspace = (
         _coding_workspace_line(defaults)
         if coding
         else await _caller_default_context(auth, defaults)
     )
     profile = await _profile_section(auth, defaults) if auth is not None else ""
-    mentor = await _mentor_line(auth, defaults, toolset)
+    mentor = "" if coding else await _mentor_line(auth, defaults, toolset)
     # the rules and the mentor line are rendered apart: mark each op once across both
     return keep_first_marks(rules + scope_line + workspace + mentor) + profile
 
@@ -528,17 +571,12 @@ def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
         return ""
     if not defaults["namespace"]:
         return f" {no_default_namespace_line(defaults)} loom_code_* calls use the code scope."
-    return f" Default namespace `{defaults['namespace']}`, filled in when a call names none."
+    return " The default memory namespace is filled in when a call names none."
 
 
-def _is_coding_toolset(toolset: str | None) -> bool:
-    """A connection listing the `coding` roster, alone or in a union."""
-    from server.operations.toolsets import toolset_parts
-
-    return "coding" in toolset_parts(toolset)
-
-
-def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = None) -> str:
+def _coding_instructions(
+    toolset: str | None, defaults: dict[str, Any] | None = None, *, compact: bool = False
+) -> str:
     """Code and memory routing for coding clients, including clients without hooks."""
     tool = _tool_refs(toolset)
     save = tool["memory.set"]
@@ -558,56 +596,60 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
     routes = [
         f"{tool[name]} {purpose}"
         for name, purpose in (
-            ("code.search", "for an issue, task or conceptual question"),
-            ("code.symbol", "for a named definition"),
+            ("code.search", "for behavior or an issue"),
             ("code.grep", "for exact text or an error"),
+            ("code.read", "to read known line ranges together"),
             ("code.callers", "for callers"),
             ("code.impact", "for change effects"),
             ("code.context_pack", "for a task briefing"),
         )
-        if tool[name]
+        if tool[name] and (not compact or name in {"code.search", "code.grep"})
     ]
-    caller_hint = (
-        "For a definition and its callers together, pass `uses_brief: true` to "
-        f"{tool['code.symbol']}. "
-        if tool["code.symbol"]
+    definition_hint = (
+        f"Before editing, use {tool['code.edit_context']} with a definition or literal clues. "
+        if tool["code.edit_context"]
         else ""
     )
-    code = (
-        "\n\nInvestigating or fixing code (`loom_code_*`): retrieve missing repository "
-        "context in Loom before exploring file by file. Code answers combine indexed "
-        "implementation with linked lessons and project decisions when available; "
-        "that knowledge can explain constraints beyond the source text. Use "
-        + "; ".join(routes)
-        + ". Discover a deferred tool by its name (ToolSearch in Claude Code). "
-        + caller_hint
-        + "Read a Loom result before scheduling equivalent local searches or reads; "
-        "do not duplicate that lookup in parallel. Use returned code and linked lessons; "
-        "retrieve only missing evidence. Use local tools for uncommitted or unindexed "
-        "code, explicit local-tool requests, or an unavailable or abstaining index. "
-        "Check source freshness and memory `code_state` before relying on a saved lesson. "
-        "Edit and test in the checkout. "
-        "Skip retrieval when current context already answers the question."
-        if routes
-        else ""
-    )
+    if not compact and tool["code.symbol"]:
+        definition_hint += f"Inspect a definition with {tool['code.symbol']}. "
+    route_hint = "Use " + "; ".join(routes) + ". " if routes else ""
+    if compact:
+        lead = "\n\nUse Loom first for unchanged indexed code and tests. "
+        follow = (
+            "Batch lookups, check revision and `code_state`, and reuse source and notes. "
+            "Use local tools for edits, tests, Git, working-copy changes, explicit requests, "
+            "and evidence missing from Loom. Find deferred tools with ToolSearch."
+        )
+    else:
+        lead = "\n\nUse Loom first to search and read unchanged indexed source, including tests. "
+        follow = (
+            "Batch related matches or ranges. In Claude Code, find deferred tools with ToolSearch. "
+            "Reuse source and linked lessons already in context. Check revision and `code_state`. "
+            "Use local tools to edit, run tests, and inspect Git. Read locally for working-copy "
+            "changes, unindexed paths, explicit requests, or evidence Loom cannot supply."
+        )
+    code = lead + definition_hint + route_hint + follow if routes or definition_hint else ""
     # A code-only token can have no default memory workspace.
-    context = (
-        f"\n\nFirst step of each task: call {tool['context.pack']} with "
-        + "the task as `query`. "
-        + f"Skip it when {FIRST_STEP_HOOK}."
-        if defaults and defaults.get("namespace") and tool["context.pack"]
-        else ""
+    context = ""
+    if defaults and defaults.get("namespace") and tool["context.pack"]:
+        if _bound_coding_connection(toolset):
+            context = "\n\n" + _linked_history_guidance(tool["context.pack"])
+        else:
+            context = (
+                f"\n\nFirst step of each task: call {tool['context.pack']} "
+                "with the task as `query`. "
+            )
+        context += f"Skip it when {FIRST_STEP_HOOK}."
+    discovery = (
+        'Find Loom operations and arguments with `loom_op(op="help", query="<goal>")`. '
+        "Writes need user intent and permission."
+        if compact
+        else "Find saved knowledge, documents, code, issues, tasks and records with `loom_op` "
+        '(`op="help"`, `query="<goal>"`). Writes need user intent and permission. '
+        "Use `loom_op` for unlisted operations; never invent an unlisted tool name, "
+        "and make only calls needed for the task."
     )
-    return name_ops_for_toolset(
-        "**Loom: memory and code for this session.**\n\n"
-        + _tool_routing(toolset)
-        + code
-        + context
-        + "\n\n"
-        + memory,
-        toolset,
-    )
+    return name_ops_for_toolset(discovery + code + context + "\n\n" + memory, toolset)
 
 
 async def _mentor_line(

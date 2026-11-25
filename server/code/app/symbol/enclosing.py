@@ -5,6 +5,7 @@ body, the document sections for a prose file and the neighbour block.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -18,8 +19,10 @@ from server.code.app.common import (
     resolve_code_identity,
 )
 from server.code.app.spans import code_span, set_code_span_attributes, span_attrs
+from server.code.app.symbol.enclosing_decorators import extend_decorated_spans
 from server.code.app.symbol.neighbours import _attach_enclosing_neighbours
 from server.code.app.symbol.resolve import _innermost, symbol_body
+from server.code.domain.units import symbol_signature
 from server.code.store.index import CodeRepo
 
 logger = logging.getLogger(__name__)
@@ -43,7 +46,49 @@ ENCLOSING_KINDS: tuple[str, ...] = (
 )
 
 
-async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutput:
+def _by_path(
+    rows: list[dict[str, Any]], revisions: dict[str, str] | None = None
+) -> dict[str, list[dict[str, Any]]]:
+    paths: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        paths.setdefault(str(row["path"]), []).append(dict(row))
+    for path, commit in (revisions or {}).items():
+        if path not in paths:
+            continue
+        paths[path] = _prefer_revision_extents(paths[path], commit)
+    return paths
+
+
+def _extent_commit(row: dict[str, Any]) -> str:
+    return str(row.get("extent_commit") or "").rstrip("\0")
+
+
+def _prefer_revision_extents(rows: list[dict[str, Any]], commit: str) -> list[dict[str, Any]]:
+    """Prefer a complete current span. A one-line stub cannot establish extent."""
+    current = {
+        r["symbol_id"]
+        for r in rows
+        if _extent_commit(r) == commit and r["end_line"] > r["start_line"]
+    }
+    older = {
+        (r["symbol_id"], r["start_line"])
+        for r in rows
+        if _extent_commit(r) != commit and r["end_line"] > r["start_line"]
+    }
+    preferred = []
+    for r in rows:
+        symbol_id, start = r["symbol_id"], r["start_line"]
+        if _extent_commit(r) != commit and symbol_id in current:
+            continue
+        if r["end_line"] <= start and (symbol_id in current or (symbol_id, start) in older):
+            continue
+        preferred.append(r)
+    return preferred
+
+
+async def handle_code_enclosing(
+    input: CodeEnclosingInput, *, body_revisions: dict[str, str] | None = None
+) -> CodeEnclosingOutput:
     """Batched `path:line` -> enclosing function, one symbol-table read per 20
     distinct paths; a line inside no function falls back to the class or
     struct whose body holds it (`kind` says which). Fail-soft per location:
@@ -55,19 +100,33 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
     org, ns = resolve_code_identity(input.org, input.namespace)
     repo = CodeRepo()
 
-    parsed: list[tuple[str, int] | None] = []
-    for loc in input.locations:
-        m = _ENCLOSING_LOC.match(loc.strip())
-        parsed.append((repo_relative(m.group("path")), int(m.group("line"))) if m else None)
+    parsed = [
+        (repo_relative(m.group("path")), int(m.group("line")))
+        if (m := _ENCLOSING_LOC.match(loc.strip()))
+        else None
+        for loc in input.locations
+    ]
     paths = list(dict.fromkeys(p for p, _ in (x for x in parsed if x)))
-
+    revision_args = {"with_revision": True} if body_revisions is not None else {}
     with code_span("enclosing.symbols", paths=len(paths)) as sp:
         # a SQL test's line encloses a statement record
-        rows = await repo.functions_for_paths(org, ns, paths, limit=2000, kinds=ENCLOSING_KINDS)
+        rows = await repo.functions_for_paths(
+            org,
+            ns,
+            paths,
+            limit=2000,
+            kinds=ENCLOSING_KINDS,
+            **revision_args,
+        )
         span_attrs(sp, rows=len(rows))
-    by_path: dict[str, list[dict[str, Any]]] = {}
-    for r in rows:
-        by_path.setdefault(str(r["path"]), []).append(r)
+    by_path = _by_path(rows, body_revisions)
+    widened = (
+        await extend_decorated_spans(
+            repo, org, ns, [p for p in parsed if p], by_path, revisions=body_revisions
+        )
+        if input.include_body
+        else set()
+    )
 
     # Second pass, only for lines no function contains: the class / struct
     # whose body holds the line (a member declaration in a header). One
@@ -82,10 +141,11 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
     types_by_path: dict[str, list[dict[str, Any]]] = {}
     if unresolved_paths:
         with code_span("enclosing.types", paths=len(unresolved_paths)) as sp:
-            trows = await repo.types_for_paths(org, ns, unresolved_paths, limit=2000)
+            trows = await repo.types_for_paths(
+                org, ns, unresolved_paths, limit=2000, **revision_args
+            )
             span_attrs(sp, rows=len(trows))
-        for r in trows:
-            types_by_path.setdefault(str(r["path"]), []).append(r)
+        types_by_path = _by_path(trows, body_revisions)
     # A line of a document or config file is enclosed by its heading's section (the chunk
     # the index cut there), not by nothing.
     sections_by_path = await _doc_sections(
@@ -140,25 +200,32 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
                 "symbol": str(hit.get("name") or str(hit["qualified_name"]).rsplit("::", 1)[-1]),
                 "symbol_id": str(hit.get("symbol_id") or ""),
                 "qualified_name": str(hit["qualified_name"]),
-                "signature": str(hit.get("signature") or "")[:300],
+                "signature": hit.get("signature"),
                 "tier": str(hit.get("tier") or ""),
                 "kind": str(hit.get("kind") or "function"),
                 "start_line": int(hit.get("start_line") or 0),
                 "end_line": int(hit.get("end_line") or 0),
+                **(
+                    {"_extent_commit": hit.get("extent_commit"), "_tier_ids": hit.get("tier_ids")}
+                    if body_revisions is not None
+                    else {}
+                ),
             }
         )
 
     bodies_returned = bodies_elided = tokens = 0
     if input.include_body and resolved:
         bodies_returned, bodies_elided, tokens = await _attach_enclosing_bodies(
-            repo, org, ns, results, input.token_budget
+            repo, org, ns, results, input.token_budget, widened, body_revisions
         )
+    else:
+        for row in results:
+            row["signature"] = symbol_signature(row)
 
-    want_neighbours = bool(input.neighbours)  # unset = off
     neighbours: list[dict[str, Any]] = []
     anchors_capped = False
     neighbour_tokens = 0
-    if want_neighbours and resolved:
+    if input.neighbours and resolved:
         neighbours, anchors_capped, neighbour_tokens = await _attach_enclosing_neighbours(
             repo, org, ns, results, rows, input.neighbour_k
         )
@@ -261,7 +328,7 @@ async def _doc_sections(
         with code_span("enclosing.sections", paths=len(paths)) as sp:
             chunks = await repo.chunk_spans_for_paths(org, ns, paths)
             span_attrs(sp, rows=sum(len(v) for v in chunks.values()))
-    except Exception:
+    except Exception:  # A section lookup failure leaves other locations usable.
         logger.warning("code.enclosing section read failed", exc_info=True)
         return {}
     return section_rows(chunks)
@@ -273,24 +340,38 @@ _ENCLOSING_BODY_MAX_SYMBOLS = 50
 _ENCLOSING_BODY_CONCURRENCY = 8
 
 
+def _body_key(row: dict[str, Any]) -> tuple[str, str]:
+    return str(row["path"]), str(row.get("symbol_id") or "")
+
+
 async def _attach_enclosing_bodies(
-    repo: CodeRepo, org: str, ns: str, results: list[dict[str, Any]], token_budget: int
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    results: list[dict[str, Any]],
+    token_budget: int,
+    widened: set[tuple[str, str]],
+    body_revisions: dict[str, str] | None,
 ) -> tuple[int, int, int]:
-    """Fetch each distinct enclosing function's body once and attach it to
+    """Fetch each distinct path and symbol once and attach its body to
     every hit inside it, filling by first appearance until the budget is
     spent. Whole units only (a body is never cut): a function that does not
-    fit ships `body == ""`, `body_elided`, and the code.symbol call that
+    fit ships `body == ""`, `body_elided`, and the lookup that
     fetches it. Returns (bodies_returned, bodies_elided, tokens)."""
     from server.code.domain.units import estimate_tokens
 
     # distinct symbols in first-appearance order — ten hits in one function
     # cost one body read; hits beyond the cap are elided, never dropped
     order: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for r in results:
-        sid = str(r.get("symbol_id") or "")
-        if sid and sid not in seen:
-            seen.add(sid)
+        key = _body_key(r)
+        if body_revisions is not None and (
+            str(r.get("_extent_commit") or "").rstrip("\0") != body_revisions.get(key[0])
+        ):
+            r["signature"] = ""
+        if key[1] and key not in seen:
+            seen.add(key)
             order.append(r)
     fetch = order[:_ENCLOSING_BODY_MAX_SYMBOLS]
 
@@ -299,7 +380,11 @@ async def _attach_enclosing_bodies(
     async def one(r: dict[str, Any]) -> str:
         async with sem:
             try:
-                return await symbol_body(repo, org, ns, r)
+                if body_revisions is None:
+                    return await symbol_body(repo, org, ns, r)
+                if expected := body_revisions.get(r["path"]):
+                    return await symbol_body(repo, org, ns, r, expected_commit=expected)
+                return ""
             except Exception:  # noqa: BLE001 — fail-soft: the name still ships
                 logger.warning("code.enclosing body fetch failed for %s", r.get("symbol_id"))
                 return ""
@@ -307,26 +392,35 @@ async def _attach_enclosing_bodies(
     with code_span("enclosing.bodies", results=len(fetch)):
         bodies = await asyncio.gather(*(one(r) for r in fetch))
 
-    served: dict[str, str] = {}
+    served: dict[tuple[str, str], tuple[str, str]] = {}
     used = 0
     for r, body in zip(fetch, bodies, strict=True):
-        cost = estimate_tokens(body)
-        if body and (not token_budget or used + cost <= token_budget):
+        if not body:
+            continue
+        signature = symbol_signature(r, body=body)
+        extra = estimate_tokens(signature) - estimate_tokens(symbol_signature(r))
+        cost = estimate_tokens(body) + max(0, extra)
+        if not token_budget or used + cost <= token_budget:
             used += cost
-            served[str(r["symbol_id"])] = body
+            served[_body_key(r)] = (body, signature)
 
-    returned = elided = 0
     for r in results:
-        sid = str(r.get("symbol_id") or "")
+        key = _body_key(r)
+        _, sid = key
+        r.pop("_extent_commit", None)
+        r.pop("_tier_ids", None)
+        body, signature = served.get(key, ("", symbol_signature(r)))
+        r["signature"] = signature
         if not sid:
             continue
-        body = served.get(sid, "")
         r["body"] = body
         r["body_elided"] = not body
-        r["next"] = "" if body else f'code.symbol(symbol_id="{sid}")'
-    for r in order:
-        if str(r["symbol_id"]) in served:
-            returned += 1
+        if body:
+            r["next"] = ""
+        elif key in widened or body_revisions is not None:
+            line = r["start_line"] if key in widened else r["line"]
+            loc = json.dumps(f"{r['path']}:{line}")
+            r["next"] = f"code.enclosing(locations=[{loc}], include_body=true)"
         else:
-            elided += 1
-    return returned, elided, used
+            r["next"] = f'code.symbol(symbol_id="{sid}")'
+    return len(served), len(order) - len(served), used

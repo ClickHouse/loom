@@ -5,7 +5,7 @@ type: application
 version: 0.3.0
 appVersion: "1.3.0"
 kubeVersion: ">=1.27.0-0"
-home: https://clickhouse.github.io/loom/
+home: https://loom.clickhouse.com/docs/
 sources:
   - https://github.com/ClickHouse/loom
 keywords:

@@ -66,7 +66,13 @@ STAGES: tuple[str, ...] = ("chunk", "symbol", "edge", "guard")
 # named in `tests/unit/test_code_extractor_stamp.py`'s non-extractor list
 # with the reason, or that test fails.
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
-    "chunk": ("chunker.py", "context_text.py", "tokenize.py", "callee_outline.py"),
+    "chunk": (
+        "chunker.py",
+        "context_text.py",
+        "tokenize.py",
+        "callee_outline.py",
+        "py_decorated_chunks.py",
+    ),
     "symbol": (
         "treesitter.py",
         "lang_python.py",
@@ -80,6 +86,7 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
         "registration.py",
         "ts_receivers.py",
         "py_receivers.py",
+        "py_member_reads.py",
         "py_library_methods.py",
         "ts_config.py",
         "ts_reexports.py",
@@ -284,10 +291,12 @@ EVERY_LANGUAGE = "*"
 MODULE_LANGUAGES: dict[str, str] = {
     "lang_python.py": "python",
     "py_receivers.py": "python",
+    "py_member_reads.py": "python",
     "cpp_receivers.py": "cpp",
     "py_library_methods.py": "python",
     "py_members.py": "python",
     "py_layouts.py": "python",
+    "py_decorated_chunks.py": "python",
     "lang_bash.py": "shell",
     "ts_receivers.py": "typescript",
     "ts_config.py": "typescript",

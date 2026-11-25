@@ -1452,3 +1452,92 @@ async def test_status_cursor_valid_background_sse_keeps_normal_receipt(
         assert evidence.text == TEXT and evidence.receipt is not None
         assert remote._transport is not None and remote._transport.failure is None
     assert closed.is_set() and fixture.pool_closed.is_set()
+
+
+class FailingCloseStream(httpx.AsyncByteStream):
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b": keepalive\n\n"
+
+    async def aclose(self) -> None:
+        raise ValueError("synthetic-private-finalizer-detail")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [200, 403])
+async def test_response_finalizer_preserves_fixed_transport_failure(status: int) -> None:
+    fixture = HTTPFixture("resources")
+
+    async def reply(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status, stream=FailingCloseStream(), headers={"content-type": "text/event-stream"}
+        )
+
+    transport = source._PinnedTransport(
+        fixture.config(),
+        None,
+        asyncio.get_running_loop().time() + 5,
+        access,
+        transport=httpx.MockTransport(reply),
+    )
+    transport.target = (await pin())[1:]
+    async with httpx.AsyncClient(transport=transport) as client:
+        code = "denied" if status == 403 else "protocol"
+        with pytest.raises(source.MCPSourceError, match=f"^MCP source {code}$"):
+            async with client.stream("GET", ENDPOINT):
+                pass
+        assert transport.failure == code
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["headers", "sse", "notification"])
+async def test_close_drains_outstanding_dispatch_before_session_delete(
+    monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = StateRaceFixture("resources", phase=phase)
+    started, stopped = asyncio.Event(), asyncio.Event()
+    drained_at_delete: list[bool] = []
+
+    async def stalled_dispatch() -> None:
+        started.set()
+        try:
+            await asyncio.Future[None]()
+        finally:
+            stopped.set()
+
+    class Background(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            started.set()
+            yield b": keepalive\n\n"
+            await asyncio.Future[None]()
+
+        async def aclose(self) -> None:
+            stopped.set()
+
+    async def reply(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            if phase == "notification":
+                return httpx.Response(405)
+            if phase == "headers":
+                await stalled_dispatch()
+            return httpx.Response(
+                200, stream=Background(), headers={"content-type": "text/event-stream"}
+            )
+        if phase == "notification" and request.method == "POST":
+            if json.loads(request.content)["method"] == "notifications/initialized":
+                await stalled_dispatch()
+        if request.method == "DELETE":
+            drained_at_delete.append(stopped.is_set())
+            assert not fixture.pool_closed.is_set()
+            assert request.headers["mcp-session-id"] == "synthetic-session"
+            assert request.headers["mcp-protocol-version"] == "2025-11-25"
+        return await fixture.reply(request)
+
+    transport = FixtureTransport(fixture)
+    transport.handler = reply
+    async with source.MCPSourceClient(
+        fixture.config(), None, validate_access=access, _transport=transport
+    ):
+        await asyncio.wait_for(started.wait(), 1)
+    assert stopped.is_set() and fixture.pool_closed.is_set()
+    assert drained_at_delete == [True]

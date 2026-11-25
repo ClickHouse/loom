@@ -1,0 +1,48 @@
+---
+import SiteFrame from "../components/SiteFrame.astro";
+---
+
+<SiteFrame
+  title="Telemetry · ClickHouse Loom"
+  description="What self-hosted Loom reports and how to control sharing."
+  path="/telemetry"
+>
+  <h1>Telemetry</h1>
+  <p class="lead">
+    Self-hosted Loom reports aggregate usage so we can see which features people use
+    and how installations adopt them.
+  </p>
+  <div class="details">
+    <section>
+      <h2>What Loom sends</h2>
+      <p>
+        Every completed 12-hour window can produce one report with an installation identifier,
+        software versions, and counts of requests, feature usage, namespaces, agents, and sessions.
+        The report contains no customer content, full email addresses, or credentials.
+      </p>
+    </section>
+    <section>
+      <h2>Where it goes</h2>
+      <p>
+        The server sends reports over HTTPS to <code>telemetry.loom.clickhouse.com</code>.
+        Reports are retained for 400 days.
+      </p>
+    </section>
+    <section>
+      <h2>Control sharing</h2>
+      <p>Set this on every server and worker replica to disable adoption reports.</p>
+      <pre><code>LOOM_ADOPTION_TELEMETRY_ENABLED=false</code></pre>
+      <p>Verified email domains, account counts, and the number of successful requests in their verified namespaces are shared only when an operator enables domain sharing.</p>
+    </section>
+  </div>
+  <a href="/docs/features/observability/telemetry#self-hosted-adoption">Read the telemetry field reference</a>
+</SiteFrame>
+
+<style>
+  .details { max-width: 43rem; margin-block: 2.5rem; }
+  section { padding-block: 1.35rem; border-top: 1px solid var(--line); }
+  section p { margin-top: 0.6rem; }
+  code { overflow-wrap: anywhere; }
+  pre { background: #20201b; padding: 1rem; overflow: auto; border-radius: 0.35rem; }
+  main > a { color: var(--accent); }
+</style>

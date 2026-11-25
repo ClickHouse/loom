@@ -409,8 +409,9 @@ settings:
   # Longest backoff, in seconds, between two attempts of an embedding call. [live]
   # embedding_retry_max_wait_s: 10.0
 
-  # OpenAI's API root, for chat and embeddings: point it at an OpenAI-compatible
-  # inference gateway in front of OpenAI (its /v1 root). [restart]
+  # OpenAI's API root, for the Responses API (<root>/responses) and embeddings: point it
+  # at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
+  # [restart]
   # openai_base_url: "https://api.openai.com/v1"
 
   # Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway
@@ -581,8 +582,8 @@ settings:
   # require_real_providers: false
 
   # Reasoning effort sent to OpenAI models. "" = the lowest the model accepts (learned
-  # from its refusals, see server/llm/traits.py); set to pin one value for every call.
-  # [restart]
+  # from its refusals, see server/llm/traits.py); set to pin one value for every call,
+  # raised to that lowest; a refused pin above it sends no effort. [restart]
   # llm_openai_reasoning_effort: ""
 
   # Thinking effort sent to Claude models as `output_config.effort`: "low" | "medium" |
@@ -3141,9 +3142,9 @@ settings:
   # `?schema_profile=`. [restart]
   # mcp_schema_profile: "standard"
 
-  # Comma-separated operations or synthetic tools requesting upfront schema loading.
-  # Defaults cover search and discovery; empty leaves loading to the host. [restart]
-  # mcp_always_load_tools: "search.query,code.search,code.symbol,code.grep,loom_op"
+  # "auto" loads source lookups upfront for the coding toolset. A comma-separated list
+  # overrides the toolset defaults. Empty leaves loading to the host. [restart]
+  # mcp_always_load_tools: "auto"
 
   # Seconds without a tool call after which the mcp_session_run_sweep worker closes an
   # MCP session's implicit run (one per token and `Mcp-Session-Id`, begun on the first
@@ -4968,6 +4969,15 @@ settings:
   # One agent_events row per worker pass that spent something or failed (operation
   # worker.<name>.pass, kind='worker'); loom.worker_status records every pass. [restart]
   # worker_ledger_rows: true
+
+  # Self-hosted adoption reports. Set false to stop all adoption reporting. [restart]
+  # adoption_telemetry_enabled: true
+
+  # Share verified email domain counts in adoption reports. Off by default. [restart]
+  # adoption_telemetry_share_domains: false
+
+  # Seconds between adoption checks and retries. A report covers 12 hours. [restart]
+  # adoption_telemetry_interval_seconds: 3600
 
   # Master switch for OTel emission. `init_otel()` also refuses under pytest regardless:
   # server/main.py calls it at import, and a test run must never ship rows into

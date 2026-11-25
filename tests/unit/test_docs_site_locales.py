@@ -155,12 +155,12 @@ def test_locale_render_changes_submit_all_existing_translations(tmp_path, monkey
         "scripts/docs_site/locales.py",
         "scripts/docs_site/overrides/partials/locales-head.html",
         "scripts/docs_site/overrides/partials/locales-switch.html",
-        "scripts/docs_site/overrides/sitemap.xml",
     ):
-        assert indexnow.urls_for([changed]) == [
+        assert indexnow.urls_for({changed: "M"}) == [
             indexnow.SITE + "ja/use-cases/",
             indexnow.SITE + "use-cases/",
         ]
+    assert indexnow.urls_for({"scripts/docs_site/overrides/sitemap.xml": "M"}) == []
 
 
 def test_translated_heading_sets_page_and_metadata_title_after_the_source_banner(tmp_path):
@@ -192,7 +192,9 @@ def test_full_indexnow_submission_retains_owned_orphans_and_excludes_unowned_out
     assert "ja/missing.md" in locales.translations(tmp_path, languages=locales.LANGUAGES)
     monkeypatch.setattr(indexnow, "DOCS", tmp_path / "docs")
     assert indexnow.every_page() == [indexnow.SITE + "ja/missing/"]
-    assert indexnow.urls_for(["scripts/docs_site/locales.py"]) == [indexnow.SITE + "ja/missing/"]
+    assert indexnow.urls_for({"scripts/docs_site/locales.py": "M"}) == [
+        indexnow.SITE + "ja/missing/"
+    ]
     (tmp_path / "i18n/ja/docs/missing.md").write_text("# Unstamped orphan\n")
     _translation(tmp_path, "unknown", "hidden.md", "0" * 40)
     _translation(tmp_path, ".pending/ja", "hidden.md", "0" * 40)
@@ -202,8 +204,8 @@ def test_full_indexnow_submission_retains_owned_orphans_and_excludes_unowned_out
     )
     assert locales.translations(tmp_path, languages=locales.LANGUAGES) == {}
     assert indexnow.every_page() == []
-    assert indexnow.urls_for(["scripts/docs_site/locales.py"]) == []
-    assert indexnow.urls_for(["i18n/ja/docs/missing.md"]) == [indexnow.SITE + "ja/missing/"]
+    assert indexnow.urls_for({"scripts/docs_site/locales.py": "M"}) == []
+    assert indexnow.urls_for({"i18n/ja/docs/missing.md": "M"}) == [indexnow.SITE + "ja/missing/"]
 
 
 def test_open_graph_locales_require_a_language_and_territory(tmp_path):
@@ -237,7 +239,7 @@ def test_the_hook_loads_without_an_editable_repository_install():
     assert result.returncode == 0, result.stderr
 
 
-def test_translation_changes_resubmit_pages_with_alternates_and_rewritten_links(
+def test_only_route_changes_resubmit_pages_with_alternates_and_rewritten_links(
     tmp_path, monkeypatch
 ):
     from scripts.docs_site import indexnow
@@ -247,11 +249,17 @@ def test_translation_changes_resubmit_pages_with_alternates_and_rewritten_links(
     _translation(tmp_path, "ja", "use-cases/index.md", blob)
     monkeypatch.setattr(indexnow, "DOCS", tmp_path / "docs")
     every = indexnow.every_page()
-    assert indexnow.urls_for(["docs/use-cases/index.md"]) == every
-    assert indexnow.urls_for(["i18n/ja/docs/use-cases/index.md"]) == every
+    assert indexnow.urls_for({"docs/use-cases/index.md": "M"}) == [indexnow.SITE + "use-cases/"]
+    assert indexnow.urls_for({"i18n/ja/docs/use-cases/index.md": "M"}) == [
+        indexnow.SITE + "ja/use-cases/"
+    ]
+    every = sorted([*every, *indexnow.HOME_URLS])
+    assert indexnow.urls_for({"i18n/ja/docs/use-cases/index.md": "A"}) == every
     deleted = "i18n/ja/docs/use-cases/deleted.md"
-    assert indexnow.urls_for([deleted]) == sorted([*every, indexnow.SITE + "ja/use-cases/deleted/"])
-    assert indexnow.urls_for(["docs/other.md"]) == every
+    assert indexnow.urls_for({deleted: "D"}) == sorted(
+        [*every, indexnow.SITE + "ja/use-cases/deleted/"]
+    )
+    assert indexnow.urls_for({"docs/other.md": "A"}) == every
 
 
 def test_deleted_english_source_announces_removed_translated_routes(tmp_path, monkeypatch):
@@ -260,11 +268,14 @@ def test_deleted_english_source_announces_removed_translated_routes(tmp_path, mo
     _source(tmp_path, "other.md")
     _translation(tmp_path, "ja", "use-cases/index.md", "0" * 40)
     monkeypatch.setattr(indexnow, "DOCS", tmp_path / "docs")
-    assert indexnow.urls_for(["docs/use-cases/index.md"]) == [
-        indexnow.SITE + "ja/use-cases/",
-        indexnow.SITE + "other/",
-        indexnow.SITE + "use-cases/",
-    ]
+    assert indexnow.urls_for({"docs/use-cases/index.md": "D"}) == sorted(
+        [
+            indexnow.SITE + "ja/use-cases/",
+            indexnow.SITE + "other/",
+            indexnow.SITE + "use-cases/",
+            *indexnow.HOME_URLS,
+        ]
+    )
 
 
 def test_removed_untranslated_target_resubmits_translations_with_rewritten_links(
@@ -283,8 +294,8 @@ def test_removed_untranslated_target_resubmits_translations_with_rewritten_links
     assert locales.translated_markdown(body, entry, pages, URL) == body
     (tmp_path / "docs/features/setup.md").unlink()
     assert locales.translated_markdown(body, entry, pages, URL) == body
-    assert indexnow.urls_for(["docs/features/setup.md"]) == sorted(
-        [*indexnow.every_page(), indexnow.SITE + "features/setup/"]
+    assert indexnow.urls_for({"docs/features/setup.md": "D"}) == sorted(
+        [*indexnow.every_page(), indexnow.SITE + "features/setup/", *indexnow.HOME_URLS]
     )
 
 
@@ -546,7 +557,7 @@ def test_default_site_publishes_all_five_locales_and_keeps_artifacts(tmp_path, m
         path = f"i18n/{language}/docs/use-cases/index.md"
         assert (tmp_path / path).is_file()
         assert indexnow.page_url(path) == indexnow.SITE + language + "/use-cases/"
-        assert indexnow.urls_for([path]) == every
+        assert indexnow.urls_for({path: "A"}) == sorted([*every, *indexnow.HOME_URLS])
 
 
 @pytest.mark.parametrize("source", ["use-cases/agent-memory.md", "use-cases/index.md"])

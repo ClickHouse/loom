@@ -58,15 +58,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.failed_model = str(payload.get("failed_model", ""))
             self.reply(200, {"ok": True})
             return
-        if self.path == "/v1/chat/completions":
+        if self.path == "/v1/responses":
             if self.headers.get("Authorization") != "Bearer docker-smoke-llm-key":
                 self.reply(401, {"error": "invalid fixture LLM key"})
                 return
             self.reply(
                 200,
                 {
-                    "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "OK"}],
+                        }
+                    ],
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
                 },
             )
             return

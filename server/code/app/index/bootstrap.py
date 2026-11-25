@@ -637,6 +637,9 @@ async def index_slice(
         stop_after=stop_after,
     )
     done = start + attempted
+    await _repair_slice_bindings(
+        cfg, repo, head, slice_paths[:attempted], model_name, denylist, stop_after
+    )
     await repo.set_state(org, ns, CURSOR_KEY, str(done))
     rate = counters["files"] / max(time.monotonic() - started, 1e-9)
     _note_embed_outcome(cfg, embedder, counters)
@@ -656,10 +659,57 @@ async def index_slice(
         embedded=counters["embedded"],
         embed_stubs=counters["embed_stubs"],
     )
-    progress: dict[str, Any] = {"done": done, "total": total, "stage": "indexing"}
-    if partial:
-        progress["partial"] = True
-    return progress
+    return {
+        "done": done,
+        "total": total,
+        "stage": "indexing",
+        **({"partial": True} if partial else {}),
+    }
+
+
+async def _repair_slice_bindings(
+    cfg: Any,
+    repo: Any,
+    head: str,
+    paths: list[str],
+    embedding_model: str,
+    denylist: Any,
+    stop_after: float | None,
+) -> None:
+    """A provider indexed in this slice can resolve readers from earlier slices."""
+    if not settings.code_ingest_dependents_enabled:
+        return
+    from server.code.app.index import gitrepo
+    from server.code.app.index.dependents import CommitDelta, run_for_commit
+    from server.code.app.index.ingest import ingest_file
+    from server.code.app.index.round_reads import rounds
+
+    python_paths = [path for path in paths if path.endswith((".py", ".pyi"))]
+    remaining = settings.code_ingest_dependents_max_files
+    for batch in rounds(python_paths, 1000):
+        if stop_after is not None and time.monotonic() >= stop_after:
+            remaining = 0
+        _, repaired = await run_for_commit(
+            repo,
+            cfg.org,
+            cfg.namespace,
+            delta=CommitDelta(touched_paths=set(batch)),
+            commit_sha=head,
+            git_dir=cfg.git_dir,
+            show_file=gitrepo.show_file,
+            ingest_file=ingest_file,
+            embedding_model=embedding_model,
+            dependents_enabled=True,
+            closure_enabled=False,
+            max_files=remaining,
+            pending_max=settings.code_ingest_dependents_pending_max,
+            closure_max_names=settings.code_closure_repair_max_names,
+            closure_max_sites=settings.code_closure_repair_max_sites,
+            denylist=denylist,
+            stop_after=stop_after,
+        )
+        if repaired is not None:
+            remaining = max(0, remaining - repaired.candidates)
 
 
 async def _slice_rounds(

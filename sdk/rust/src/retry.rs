@@ -9,6 +9,7 @@ pub enum RetryTimeouts {
     Never,
     /// Only writes carrying a server-deduplicated idempotency key.
     Idempotent,
+    /// All declared idempotent operations, including reads.
     Always,
 }
 

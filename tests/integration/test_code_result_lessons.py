@@ -44,6 +44,8 @@ async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
     org = unique_org("grep-lessons")
     writer = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
     _set(org, control_plane_url, writer, "notes/allowed", "Keep callback order.", [PATH])
+    related_path = "server/code/app/search/worker.py"
+    _set(org, control_plane_url, writer, "notes/worker", "Preserve the payload.", [related_path])
     ch_client.insert(
         "loom.code_chunks",
         [
@@ -57,10 +59,26 @@ async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
                 "run",
                 1,
                 2,
-                "def run():\n    return callback()\n",
+                "def run():\n    return callback(payload.value)\n",
                 [0.0] * settings.embedding_dim,
+                "a" * 40,
                 1,
-            ]
+            ],
+            [
+                org,
+                "code",
+                "m",
+                related_path,
+                uuid.uuid4(),
+                "function",
+                "enqueue",
+                1,
+                2,
+                "def enqueue():\n    return payload.value\n",
+                [0.0] * settings.embedding_dim,
+                "a" * 40,
+                1,
+            ],
         ],
         column_names=[
             "org",
@@ -74,6 +92,7 @@ async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
             "end_line",
             "content",
             "embedding",
+            "indexed_commit",
             "version",
         ],
     )
@@ -92,6 +111,45 @@ async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
         assert response.status_code == 200, response.text
         payload = response.json()
         assert "lessons" not in payload.get("data", payload)
+        body.update(pattern="other_call(payload.value)", include_body=False, path_prefix=PATH)
+        response = await client.post("/v1/code.grep", json=body)
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert not data["matches"] and "related" not in data
+        response = await client.post("/v1/code.grep", json={**body, "related_on_miss": True})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert not data["matches"] and not data.get("next_cursor")
+        assert data["related"]["pattern"] == "payload.value"
+        assert data["related"]["matches"][0]["text"] == "return callback(payload.value)"
+        assert "def run():" in data["related"]["contexts"][0]["text"]
+        assert not data["related"]["definitions"]
+        assert {row["memory_key"] for row in data["lessons"]} == {"notes/allowed"}
+        response = await client.post(
+            "/v1/code.grep", json={**body, "related_on_miss": True, "context_lines": 0}
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert data["related"]["matches"] and not data["related"].get("contexts")
+        response = await client.post(
+            "/v1/code.grep",
+            json={
+                **body,
+                "pattern": "callback(payload.value",
+                "path_prefix": "",
+                "related_on_prefix": True,
+            },
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert [row["path"] for row in data["matches"]] == [PATH]
+        assert [row["path"] for row in data["related"]["matches"]] == [related_path]
+        assert "def enqueue():" in data["related"]["contexts"][0]["text"]
+        assert {row["memory_key"] for row in data["lessons"]} == {"notes/allowed", "notes/worker"}
 
 
 async def test_enclosing_attaches_only_authorized_resolved_file_lessons(

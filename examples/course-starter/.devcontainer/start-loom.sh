@@ -46,7 +46,7 @@ LOOM_CONNECT=none sh "$installer"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 npm ci --prefix "$script_dir/agent-cli" --ignore-scripts --no-fund --no-audit
 node "$script_dir/agent-cli/bind-native.cjs" "$script_dir/agent-cli" claude
-npm install --global --offline --ignore-scripts --silent "$script_dir/agent-cli/node_modules/@anthropic-ai/claude-code"
+sudo ln -sf "$script_dir/agent-cli/node_modules/.bin/claude" /usr/local/bin/claude
 claude plugin marketplace list 2>/dev/null | grep -Eq '[[:space:]]loom$' \
   || claude plugin marketplace add ClickHouse/loom
 claude plugin install loom@loom

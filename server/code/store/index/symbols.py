@@ -9,6 +9,7 @@ from typing import Any
 
 from clickhouse_connect.driver.binding import format_bind_value
 
+from server.code.domain.index.test_gate import TEST_PATH_PATTERN
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched, _hex, like_contains
 from server.code.store.index.symbol_rank import (
@@ -86,6 +87,34 @@ class SymbolsMixin(CodeRepoBase):
             rt = str(r["rt"] or "") or return_type_from_signature(str(r["sig"] or ""))
             if rt:
                 out[str(r["qualified_name"])] = rt
+        return out
+
+    async def declared_types_for_symbols(
+        self, org: str, ns: str, keys: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], tuple[str, str]]:
+        """Declared types of the exact live parser-tier definitions selected by a binding."""
+        out: dict[tuple[str, str], tuple[str, str]] = {}
+        for batch in _batched(keys, 500):
+            key_match, key_params = _reconcile_key_match(batch)
+            rows = await self._ch.query_all(
+                f"""
+                SELECT qualified_name, symbol_id, path, return_type
+                FROM loom.code_symbols FINAL
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND tier = 'treesitter' AND {key_match}
+                  AND tombstoned_at IS NULL AND return_type != ''
+                """,
+                {"org": org, "ns": ns, **key_params},
+            )
+            out.update(
+                {
+                    (str(r["qualified_name"]), str(r["symbol_id"])): (
+                        str(r["path"]),
+                        str(r["return_type"]),
+                    )
+                    for r in rows
+                }
+            )
         return out
 
     async def live_symbols_for_path(
@@ -371,6 +400,7 @@ class SymbolsMixin(CodeRepoBase):
         kinds: tuple[str, ...] = ("function", "method", "fixture"),
         with_extent_only: bool = False,
         per_statement: int = 20,
+        with_revision: bool = False,
     ) -> list[dict[str, Any]]:
         """Live function/method symbols defined in the given paths, both
         tiers (scip preferred). Powers code.ask mechanism expansion: match
@@ -391,17 +421,18 @@ class SymbolsMixin(CodeRepoBase):
         # alone has hundreds of methods).
         rows: list[dict[str, Any]] = []
         step = max(1, int(per_statement))
+        revision_col = ", toString(indexed_commit) AS extent_commit" if with_revision else ""
         for i in range(0, len(paths[:200]), step):
             batch = paths[i : i + step]
             rows.extend(
                 await self._ch.query_all(
-                    """
+                    f"""
                 SELECT symbol_id, qualified_name, name, signature, path,
-                       start_line, end_line, tier, kind
+                       start_line, end_line, tier, kind{revision_col}
                 FROM loom.code_symbols FINAL
-                WHERE org = {org:String} AND namespace = {ns:String}
-                  AND path IN {paths:Array(String)}
-                  AND kind IN {kinds:Array(String)}
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND path IN {{paths:Array(String)}}
+                  AND kind IN {{kinds:Array(String)}}
                   AND tombstoned_at IS NULL
                 """
                     + ("  AND end_line > start_line\n" if with_extent_only else "")
@@ -532,7 +563,13 @@ class SymbolsMixin(CodeRepoBase):
         return {str(r["path"]) for r in rows}
 
     async def types_for_paths(
-        self, org: str, ns: str, paths: list[str], *, limit: int = 400
+        self,
+        org: str,
+        ns: str,
+        paths: list[str],
+        *,
+        limit: int = 400,
+        with_revision: bool = False,
     ) -> list[dict[str, Any]]:
         """Class / struct / enum rows WITH a body extent in the given paths —
         the fallback scope for a line that sits in no function (a member
@@ -560,6 +597,7 @@ class SymbolsMixin(CodeRepoBase):
                 "macro",
             ),
             with_extent_only=True,
+            with_revision=with_revision,
         )
 
     async def chunk_hashes_for_symbols(
@@ -677,7 +715,14 @@ class SymbolsMixin(CodeRepoBase):
         return out
 
     async def symbols_fuzzy(
-        self, org: str, ns: str, needle: str, *, limit: int = 25, path: str = ""
+        self,
+        org: str,
+        ns: str,
+        needle: str,
+        *,
+        limit: int = 25,
+        path: str = "",
+        tests_only: bool = False,
     ) -> list[dict[str, Any]]:
         """Symbols whose name contains `needle`, case-insensitively.
 
@@ -697,6 +742,7 @@ class SymbolsMixin(CodeRepoBase):
               AND tombstoned_at IS NULL
             """
             + ("AND path = {path:String}\n" if path else "")
+            + ("AND match(path, {test_path_pattern:String})\n" if tests_only else "")
             + """
             ORDER BY tier DESC, length(name), qualified_name
             LIMIT {limit:UInt32}
@@ -708,6 +754,7 @@ class SymbolsMixin(CodeRepoBase):
                 "like": like_contains(needle.lower()),
                 "limit": limit,
                 "path": path,
+                **({"test_path_pattern": TEST_PATH_PATTERN} if tests_only else {}),
             },
         )
         return _prefer_scip(rows)

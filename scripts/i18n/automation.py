@@ -462,16 +462,10 @@ def finalize() -> None:
     sha = pr["head"]["sha"]
     if pr["draft"] or pr["head"]["repo"]["full_name"].casefold() != repository.casefold():
         return
-    if os.environ.get("GITHUB_EVENT_NAME") == "workflow_run":
-        event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-        run = api(f"repos/{repository}/actions/runs/{event['workflow_run']['id']}")
-        valid_ci = trusted_ci(run, repository, sha)
-    else:
-        runs = api(
-            f"repos/{repository}/actions/workflows/ci.yml/runs?branch=i18n/update&event=workflow_dispatch&status=success&head_sha={sha}&per_page=10"
-        )
-        valid_ci = any(trusted_ci(run, repository, sha) for run in runs["workflow_runs"])
-    if not valid_ci:
+    runs = api(
+        f"repos/{repository}/actions/workflows/ci.yml/runs?branch=i18n/update&event=workflow_dispatch&status=success&head_sha={sha}&per_page=10"
+    )
+    if not any(trusted_ci(run, repository, sha) for run in runs["workflow_runs"]):
         return
     view = json.loads(
         command(

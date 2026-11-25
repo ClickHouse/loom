@@ -4,10 +4,87 @@ and drops the bookkeeping of how it was found."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import server.transport.lean_results as lr
 from server.transport.code_lean import lean_code
+
+
+def test_symbol_drops_only_descriptions_repeated_in_the_returned_body() -> None:
+    body = 'def f():\n    """Compute the total."""\n    return 1\n'
+    out = lean_code(
+        "code.symbol",
+        {
+            "definitions": [
+                {"symbol": "f", "body": body, "description": "Compute the total."},
+                {"symbol": "g", "body": body, "description": "Additional context."},
+                {"symbol": "h", "description": "Compute the total."},
+            ]
+        },
+    )
+    f, g, h = out["definitions"]
+    assert f["body"] == body and "description" not in f
+    assert g["description"] == "Additional context."
+    assert h["description"] == "Compute the total."
+
+
+def test_scip_symbol_drops_rendered_description_already_in_source() -> None:
+    body = '''class Group(Base):
+    """Extend :class:`Base`.
+
+    :param load_defaults: Load the high priority
+        options on startup.
+    """
+'''
+    rendered = (
+        "```python\nclass Group(Base):\n```\nExtend `Base`.\n\n"
+        r":param load\_defaults: Load the high priority"
+        "  \n&nbsp;&nbsp;&nbsp;&nbsp;options on startup."
+    )
+    source = {"symbol": "Group", "tier": "scip", "body": body, "description": rendered}
+    out = lean_code(
+        "code.symbol",
+        {
+            "definitions": [
+                source,
+                {**source, "description": rendered + " Bypass startup on empty input."},
+                {**source, "description": rendered.replace("class Group", "class Other")},
+                {**source, "elided": True},
+            ]
+        },
+    )
+    repeated, extra, other, elided = out["definitions"]
+    assert repeated["body"] == body and "description" not in repeated
+    assert extra["description"] == rendered + " Bypass startup on empty input."
+    assert other["description"] == rendered.replace("class Group", "class Other")
+    assert elided["description"] == rendered
+
+
+def test_scip_symbol_keeps_distinct_code_literals_in_docs() -> None:
+    descriptions = (
+        ('Send marker `"a  b"`.', 'Send marker `"a b"`.'),
+        ('Send marker `"a\\tb"`.', 'Send marker `"a b"`.'),
+        ('Send marker ``"a  b`x"``.', 'Send marker ``"a b`x"``.'),
+        ('Example:\n\n        print("a  b")', 'Example:\n\n    print("a b")'),
+    )
+    for doc, different_doc in descriptions:
+        body = f'def send():\n    """{doc}"""\n    pass\n'
+        rendered = f"```python\ndef send():\n```\n{different_doc}"
+        row = {"symbol": "send", "tier": "scip", "body": body, "description": rendered}
+        out = lean_code("code.symbol", {"definitions": [row]})
+        assert out["definitions"][0]["description"] == rendered
+
+
+def test_scip_symbol_keeps_short_or_nested_descriptions() -> None:
+    body = 'def send():\n    """Returns success=False after persisting."""\n    def resolve():\n        pass\n'
+    excerpt = "```python\ndef send():\n```\nReturns success"
+    nested = "```python\ndef resolve():\n```\nReturns success=False after persisting."
+    row = {"symbol": "send", "tier": "scip", "body": body}
+    for description in (excerpt, nested):
+        out = lean_code("code.symbol", {"definitions": [{**row, "description": description}]})
+        assert out["definitions"][0]["description"] == description
+
 
 FRESH = {
     "branch": "main",
@@ -238,6 +315,159 @@ def test_grep_scope_drops_its_own_path_and_enclosing_drops_the_repeated_name() -
     }
     assert e["results"][1] == {"path": "doc.md", "line": 11}
     assert e["resolved"] == 1 and "took_ms" not in e
+
+
+def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:
+    match = {
+        "path": "server/a.py",
+        "line": 3,
+        "text": "item.value",
+        "scope": "server.a::inspect",
+        "scope_start_line": 2,
+        "scope_end_line": 4,
+    }
+    related = {
+        "pattern": "item.value",
+        "matches": [match],
+        "contexts": [{"path": "server/a.py", "start_line": 3, "text": "item.value"}],
+        "definitions": [
+            {"path": "server/a.py", "symbol_id": name, "kind": "function", "body": name}
+            for name in ("inspect", "count", "update")
+        ],
+        "definitions_partial": True,
+        "truncated": True,
+    }
+    out = lean_code("code.grep", {"matches": [], "related": related, "trace_run_id": "trace"})
+    assert out["matches"] == [] and out["trace_run_id"] == "trace"
+    assert out["related"] == lean_code("code.grep", related)
+    assert out["related"]["matches"][0]["scope"] == "inspect"
+    assert match["scope"] == "server.a::inspect"
+    assert out["related"]["contexts"] == related["contexts"]
+    assert out["related"]["definitions_partial"] is True and out["related"]["truncated"] is True
+    assert out["related"]["defaults"] == {"kind": "function"}
+    assert [row["body"] for row in out["related"]["definitions"]] == ["inspect", "count", "update"]
+    assert [row["symbol_id"] for row in out["related"]["definitions"]] == [
+        "inspect",
+        "count",
+        "update",
+    ]
+
+
+def test_lean_grep_omits_redundant_metadata_only_with_complete_source() -> None:
+    body = "    def inspect(self, value: str):\n        return value"
+    definition = {
+        "path": "worker.py",
+        "symbol": "inspect",
+        "symbol_id": "i1",
+        "qualified_name": "worker::Task::inspect",
+        "signature": "(self, value: str)",
+        "body": body,
+        "body_elided": False,
+        "lines": [7],
+    }
+    elided = {**definition, "body": "", "body_elided": True}
+    different_signature = {**definition, "signature": "(self, value: str) -> str"}
+    unrelated_short_name = {**definition, "symbol": "Task.inspect"}
+    payload = {
+        "definitions": [definition, elided, different_signature, unrelated_short_name],
+        "related": {"definitions": [definition]},
+    }
+    lean = lean_code("code.grep", payload)
+    expected = {
+        "path": "worker.py",
+        "symbol_id": "i1",
+        "qualified_name": "worker::Task::inspect",
+        "body": body,
+        "lines": [7],
+    }
+    assert lean["definitions"] == [
+        expected,
+        elided,
+        {**expected, "signature": "(self, value: str) -> str"},
+        {**expected, "symbol": "Task.inspect"},
+    ]
+    assert lean["related"]["definitions"] == [expected]
+    assert definition["signature"] == "(self, value: str)"
+    assert definition["body_elided"] is False
+
+
+def test_lean_grep_refs_exact_nested_source_without_losing_a_body() -> None:
+    method = {
+        "path": "a.py",
+        "symbol_id": "method",
+        "start_line": 3,
+        "end_line": 4,
+        "body": "        def read(self):\r\n            return 'source\u2028data'\r\n",
+    }
+    inner = {
+        "path": "a.py",
+        "symbol_id": "inner",
+        "start_line": 2,
+        "end_line": 4,
+        "body": "    class Inner:\r\n" + method["body"],
+    }
+    outer = {
+        "path": "a.py",
+        "symbol_id": "outer",
+        "start_line": 1,
+        "end_line": 4,
+        "body": "class Outer:\r\n" + inner["body"],
+    }
+    other_file = {**method, "symbol_id": "other", "path": "b.py"}
+    altered = {**method, "symbol_id": "changed", "body": method["body"].replace("data", "code")}
+    elided = {**method, "symbol_id": "elided", "body_elided": True}
+    payload = {
+        "definitions": [method, inner, outer, other_file, altered, elided],
+        "definitions_note": "One definition was elided.",
+    }
+
+    result = lean_code("code.grep", payload)
+
+    rows = {row["symbol_id"]: row for row in result["definitions"]}
+    assert rows["method"]["body_in_symbol_id"] == rows["inner"]["body_in_symbol_id"] == "outer"
+    assert "body" not in rows["method"] and "body" not in rows["inner"]
+    assert [rows[r["symbol_id"]]["body"] for r in (outer, other_file, altered, elided)] == [
+        r["body"] for r in (outer, other_file, altered, elided)
+    ]
+    assert result["definitions_note"] == payload["definitions_note"]
+    assert method["body"] and inner["body"]
+
+
+def test_lean_grep_near_output_boundary_only_shrinks_the_page() -> None:
+    cases = (
+        ("    def nested(self):\n        return ''\n", 3, False),
+        ("    def nested(self):\n        return 'é'\n", 3, False),
+        ('    def f(): return "界界界界界界界界"\n', 2, False),
+        (f"    def nested(self):\n        return '{'x' * 21}'\n", 3, True),
+    )
+    for body, end_line, smaller in cases:
+        child = {
+            "path": "sample.py",
+            "symbol_id": "a" * 32,
+            "start_line": 2,
+            "end_line": end_line,
+            "body": body,
+        }
+        parent = {
+            **child,
+            "symbol_id": "b" * 32,
+            "start_line": 1,
+            "body": "class Outer:\n" + body,
+        }
+        payload = {"definitions": [parent, child], "definitions_note": ""}
+        payload["definitions_note"] = "x" * (49_970 - len(json.dumps(payload)))
+
+        result = lean_code("code.grep", payload)
+
+        for ascii_only, encoding in ((True, "utf-8"), (False, "utf-8"), (False, "utf-16-le")):
+            before = json.dumps(payload, ensure_ascii=ascii_only).encode(encoding)
+            after = json.dumps(result, ensure_ascii=ascii_only).encode(encoding)
+            assert len(after) <= len(before)
+        assert result["definitions_note"] == payload["definitions_note"]
+        if smaller:
+            assert result["definitions"][1]["body_in_symbol_id"] == parent["symbol_id"]
+        else:
+            assert result["definitions"][1] == child
 
 
 def test_symbol_keeps_ids_only_when_several_definitions_answer() -> None:

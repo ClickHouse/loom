@@ -23,6 +23,7 @@ from __future__ import annotations
 import difflib
 from functools import lru_cache
 from typing import Any
+from urllib.parse import quote
 
 from pydantic import AliasChoices, AliasPath, BaseModel
 
@@ -250,4 +251,6 @@ def header_value(op: Any, args: Any, result: Any) -> str:
         if isinstance(result, dict)
         else getattr(result, "ignored_args", None)
     )
-    return ",".join(_merged(own or [], unknown_args(op.input_model, args)))
+    return ",".join(
+        quote(name, safe="") for name in _merged(own or [], unknown_args(op.input_model, args))
+    )

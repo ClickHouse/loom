@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from collections.abc import Awaitable
 from typing import Any
 
+from server.code.app.spans import code_span
+from server.code.domain.symbol_body import retained_source_window
 from server.code.store.index import CodeRepo
+from server.embedding.embedder import served_model_label
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -51,11 +55,27 @@ async def recent_prs(
 
 
 async def usage_examples(
-    repo: CodeRepo, org: str, ns: str, symbol_ids: list[str], *, limit: int = 3
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    symbol_ids: list[str],
+    *,
+    limit: int = 3,
+    context_lines: int = 0,
+    tests_only: bool = False,
 ) -> list[dict[str, Any]]:
-    """Call sites of the symbol, test-covered callers first, newest first."""
+    """Call sites of the symbol, optionally restricted to indexed tests."""
+    with_context = bool(context_lines and settings.embedding_model)
     edges = await bounded(
-        repo.edges_for_symbols(org, ns, symbol_ids, direction="callers", limit=50),
+        repo.edges_for_symbols(
+            org,
+            ns,
+            symbol_ids,
+            direction="callers",
+            limit=50,
+            with_revision=with_context,
+            tests_only=tests_only,
+        ),
         [],
     )
     if not edges:
@@ -67,13 +87,18 @@ async def usage_examples(
         edges,
         key=lambda e: (str(e["path"]) not in tested_paths, str(e["path"])),
     )
+    by_location: dict[tuple[str, int], dict[str, Any]] = {}
+    for edge in ranked:
+        by_location.setdefault((str(edge["path"]), int(edge["line"])), edge)
+    sites = list(by_location.values())
+    baseline = sites[: max(1, limit)]
+    requested = baseline
+    if tests_only and with_context:
+        preferred = _prefer_distinct_test_windows(sites, context_lines)[: len(baseline)]
+        requested = preferred + [edge for edge in baseline if edge not in preferred]
     out = []
-    seen: set[tuple[str, int]] = set()
-    for e in ranked:
-        site = (str(e["path"]), int(e["line"]))
-        if site in seen:
-            continue
-        seen.add(site)
+    revisions: list[str] = []
+    for e in requested:
         out.append(
             {
                 "caller": str(e["from_qualified_name"]),
@@ -83,9 +108,73 @@ async def usage_examples(
                 "test_covered": str(e["path"]) in tested_paths,
             }
         )
-        if len(out) >= limit:
-            break
+        if with_context:
+            revisions.append(str(e.get("indexed_commit") or "").rstrip("\0"))
+    if with_context:
+        model = served_model_label(settings.embedding_model)
+        examples = await asyncio.gather(
+            *(
+                _example_context(repo, org, ns, site, context_lines, model, revision)
+                for site, revision in zip(out, revisions, strict=True)
+            )
+        )
+        # A promoted site only earns a slot when its revision still has source.
+        return [
+            example
+            for edge, example in zip(requested, examples, strict=True)
+            if "context" in example or edge in baseline
+        ][: len(baseline)]
     return out
+
+
+def _prefer_distinct_test_windows(edges: list[dict[str, Any]], radius: int) -> list[dict[str, Any]]:
+    """Prefer call sites outside the source windows already selected."""
+    anchors: dict[tuple[str, str], list[int]] = defaultdict(list)
+    distinct = []
+    nearby = []
+    for edge in edges:
+        revision = str(edge.get("indexed_commit") or "").rstrip("\0")
+        line = int(edge["line"])
+        key = (str(edge["path"]), revision)
+        if revision and any(abs(line - anchor) <= radius for anchor in anchors[key]):
+            nearby.append(edge)
+        else:
+            if revision:
+                anchors[key].append(line)
+            distinct.append(edge)
+    return distinct + nearby
+
+
+async def _example_context(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    site: dict[str, Any],
+    radius: int,
+    model: str,
+    revision: str,
+) -> dict[str, Any]:
+    line = site["line"]
+    if line <= 0 or not revision:
+        return site
+    start, end = max(1, line - radius), line + radius
+    with code_span("enrich.example_context"):
+        rows = await bounded(
+            repo.source_chunks_for_span(
+                org, ns, site["path"], start, end, model, with_revision=True
+            ),
+            [],
+        )
+    if len(rows) > 400:
+        return site
+    window = retained_source_window(rows, start, end, anchor=line, revision=revision)
+    if window is None:
+        return site
+    start, end, text = window
+    return {
+        **site,
+        "context": {"commit": revision, "start_line": start, "end_line": end, "text": text},
+    }
 
 
 async def lessons_for_symbol(

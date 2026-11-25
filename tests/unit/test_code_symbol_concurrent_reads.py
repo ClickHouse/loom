@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -28,6 +28,29 @@ DEFS = [
     },
 ]
 DELAY = 0.05
+
+
+async def test_named_examples_require_type_references() -> None:
+    from server.code.app.symbol.named_examples import named_test_examples
+
+    repo = AsyncMock()
+    examples = await named_test_examples(repo, "o", "n", DEFS[0], 10)
+    assert not examples
+    repo.symbols_fuzzy.assert_not_awaited()
+
+
+async def test_named_examples_skip_ambiguous_bare_types(monkeypatch) -> None:
+    from server.code.app.symbol.named_examples import named_test_examples
+    from server.embedding.fake import fake_model_name
+
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    target = {**DEFS[0], "qualified_name": "modern::Cache", "name": "Cache", "kind": "class"}
+    legacy = {**target, "qualified_name": "legacy::Cache", "path": "src/legacy.cpp"}
+    repo = AsyncMock()
+    repo.symbols_by_name.return_value = [target, legacy]
+    repo.symbols_fuzzy.return_value = [{"name": "test_legacy_cache"}]
+    assert not await named_test_examples(repo, "o", "n", target, 10)
+    repo.source_chunks_for_span.assert_not_awaited()
 
 
 class _Clock:

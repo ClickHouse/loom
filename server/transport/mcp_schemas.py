@@ -405,6 +405,14 @@ SCHEMA_PROFILES = ("standard", "full", "compact")
 DEFAULT_SCHEMA_PROFILE = "standard"
 
 
+def resolve_schema_profile(requested: str | None, configured: str | None) -> str:
+    default = str(configured or DEFAULT_SCHEMA_PROFILE).lower()
+    if default not in SCHEMA_PROFILES:
+        default = DEFAULT_SCHEMA_PROFILE
+    profile = str(requested or default).lower()
+    return profile if profile in SCHEMA_PROFILES else default
+
+
 def standard_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
     """The default projection: everything but outputSchema."""
     return {k: v for k, v in descriptor.items() if k != "outputSchema"}
