@@ -345,6 +345,69 @@ async def test_idle_session_deadline_closes_pool_before_context_exit(
     assert fixture.pool_closes == 1
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_after_deadline", [False, True], ids=["exit", "read"])
+async def test_caller_joins_pool_close_started_by_deadline(
+    monkeypatch: pytest.MonkeyPatch, read_after_deadline: bool
+) -> None:
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HTTPFixture("resources", block=False)
+    pool_closing = asyncio.Event()
+    release_pool = asyncio.Event()
+    proceed = asyncio.Event()
+    joining = asyncio.Event()
+    ready = asyncio.Event()
+
+    class HeldPool(FixtureTransport):
+        async def aclose(self) -> None:
+            pool_closing.set()
+            await release_pool.wait()
+            await super().aclose()
+
+    async def use_client() -> None:
+        async with source.MCPSourceClient(
+            fixture.config(), None, validate_access=access, _transport=HeldPool(fixture)
+        ) as client:
+            ready.set()
+            await proceed.wait()
+            joining.set()
+            if read_after_deadline:
+                with pytest.raises(source.MCPSourceError) as refusal:
+                    await client.read(IDENTITY)
+                assert refusal.value.code == "timeout"
+
+    task = asyncio.create_task(use_client())
+    try:
+        await ready.wait()
+        clock.advance(6)
+        for _ in range(100):
+            if pool_closing.is_set():
+                break
+            await asyncio.sleep(0)
+        assert pool_closing.is_set(), "the deadline did not start closing the pool"
+        proceed.set()
+        await joining.wait()
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert not task.done(), "the caller returned before the pool closed"
+        release_pool.set()
+        if read_after_deadline:
+            await task
+        else:
+            with pytest.raises(source.MCPSourceError) as refusal:
+                await task
+            assert refusal.value.code == "timeout"
+        assert fixture.pool_closes == 1
+        assert fixture.reads == 0
+    finally:
+        proceed.set()
+        release_pool.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 class HeartbeatStream(ReadStream):
     async def __aiter__(self) -> AsyncIterator[bytes]:
         fixture = self.fixture

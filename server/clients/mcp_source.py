@@ -562,6 +562,7 @@ class MCPSourceClient:
         self._owner_task: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[None] | None = None
         self._closing = False
+        self._draining = False
         self._owner_failure: ErrorCode | None = None
         self._session: ClientSession | None = None
         self._transport: _PinnedTransport | None = None
@@ -667,12 +668,15 @@ class MCPSourceClient:
         with private_work():
             try:
                 async with AsyncExitStack() as stack:
-                    async with asyncio.timeout_at(self._deadline):
-                        await self._initialize(stack)
-                        assert self._ready is not None
-                        if not self._ready.done():
-                            self._ready.set_result(None)
-                        await asyncio.Future[None]()
+                    try:
+                        async with asyncio.timeout_at(self._deadline):
+                            await self._initialize(stack)
+                            assert self._ready is not None
+                            if not self._ready.done():
+                                self._ready.set_result(None)
+                            await asyncio.Future[None]()
+                    finally:
+                        self._draining = True
             except (
                 Exception,  # noqa: BLE001 — SDK lifecycle failures must remain fixed codes
                 asyncio.CancelledError,
@@ -726,7 +730,9 @@ class MCPSourceClient:
             return
         if not self._closing:
             self._closing = True
-            owner.cancel()
+            # A deadline can start unwinding the SDK and HTTP pool before the caller joins.
+            if not self._draining:
+                owner.cancel()
         interrupted: asyncio.CancelledError | None = None
         while not owner.done():
             try:
