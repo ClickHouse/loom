@@ -258,8 +258,16 @@ async def test_read_and_proof_with_two_accounts(mode: str, monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["resource", "tool"])
-@pytest.mark.parametrize("phase", ["initialize", "read"])
+@pytest.mark.parametrize(
+    ("mode", "phase"),
+    [
+        ("resource", "initialize"),
+        ("resource", "read"),
+        ("tool", "initialize"),
+        ("tool", "read"),
+        ("tool", "discover"),
+    ],
+)
 @pytest.mark.parametrize(("status", "code"), [(401, "reconnect"), (403, "denied")])
 async def test_upstream_http_refusal_at_sdk_boundary(
     mode: str, phase: str, status: int, code: mcp_client.ErrorCode, monkeypatch: pytest.MonkeyPatch
@@ -280,7 +288,9 @@ async def test_upstream_http_refusal_at_sdk_boundary(
         limits=MCPLimits(timeout_seconds=12, request_seconds=8),
     )
     read_method = "tools/call" if mapped else "resources/read"
-    refusal_method = "initialize" if phase == "initialize" else read_method
+    refusal_method = {"initialize": "initialize", "read": read_method, "discover": "tools/list"}[
+        phase
+    ]
     alice_header = b"Bearer synthetic-alice"
     armed = phase == "initialize"
     posts: list[tuple[bytes | None, str]] = []
@@ -361,7 +371,11 @@ async def test_upstream_http_refusal_at_sdk_boundary(
                     await peer.read(_DOC)
 
             read_bearers = [bearer for bearer, method in posts if method == read_method]
-            assert read_bearers == [alice_header, alice_header]
+            assert read_bearers == [alice_header] * (1 if phase == "discover" else 2)
+            if phase == "discover":
+                assert [method for bearer, method in posts if bearer == alice_header][-1] == (
+                    "tools/list"
+                )
             assert reads == 1
     assert refusals == [status]
 

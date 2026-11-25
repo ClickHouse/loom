@@ -1116,47 +1116,47 @@ class MCPSourceClient:
             raise MCPSourceError(code) from None
 
     async def discover(self) -> MCPDiscovery:
-        async def action(session: ClientSession) -> MCPDiscovery:
-            approved = set(self._config.approved_tools)
-            epoch = self._tool_epoch
-            found: set[str] = set()
-            cursor: str | None = None
-            seen: set[str] = set()
-            if approved:
-                for _ in range(self._config.limits.max_pages):
-                    result = await session.list_tools(
-                        params=types.PaginatedRequestParams(cursor=cursor)
-                    )
-                    if len(result.tools) > self._config.limits.max_results:
-                        raise MCPSourceError("limit")
-                    for tool in result.tools:
-                        if tool.name in seen:
-                            raise MCPSourceError("schema")
-                        seen.add(tool.name)
-                        if tool.name not in approved:
-                            continue
-                        for mapping in (self._config.search, self._config.read):
-                            if mapping is not None and mapping.name == tool.name:
-                                _check_tool_schema(tool, mapping, self._config.data_policy)
-                        found.add(tool.name)
-                    if len(seen) > self._config.limits.max_results:
-                        raise MCPSourceError("limit")
-                    cursor = result.nextCursor
-                    if cursor is None:
-                        break
-                    _string(cursor)
-                else:
-                    raise MCPSourceError("limit")
-                if found != approved:
-                    raise MCPSourceError("unsupported")
-                if epoch != self._tool_epoch:
-                    raise MCPSourceError("schema")
-            assert self._discovery is not None
-            self._discovery = MCPDiscovery(self._discovery.resources, tuple(sorted(found)))
-            self._discovered_epoch = epoch
-            return self._discovery
+        return await self._run(self._discover)
 
-        return await self._run(action)
+    async def _discover(self, session: ClientSession) -> MCPDiscovery:
+        approved = set(self._config.approved_tools)
+        epoch = self._tool_epoch
+        found: set[str] = set()
+        cursor: str | None = None
+        seen: set[str] = set()
+        if approved:
+            for _ in range(self._config.limits.max_pages):
+                result = await session.list_tools(
+                    params=types.PaginatedRequestParams(cursor=cursor)
+                )
+                if len(result.tools) > self._config.limits.max_results:
+                    raise MCPSourceError("limit")
+                for tool in result.tools:
+                    if tool.name in seen:
+                        raise MCPSourceError("schema")
+                    seen.add(tool.name)
+                    if tool.name not in approved:
+                        continue
+                    for mapping in (self._config.search, self._config.read):
+                        if mapping is not None and mapping.name == tool.name:
+                            _check_tool_schema(tool, mapping, self._config.data_policy)
+                    found.add(tool.name)
+                if len(seen) > self._config.limits.max_results:
+                    raise MCPSourceError("limit")
+                cursor = result.nextCursor
+                if cursor is None:
+                    break
+                _string(cursor)
+            else:
+                raise MCPSourceError("limit")
+            if found != approved:
+                raise MCPSourceError("unsupported")
+            if epoch != self._tool_epoch:
+                raise MCPSourceError("schema")
+        assert self._discovery is not None
+        self._discovery = MCPDiscovery(self._discovery.resources, tuple(sorted(found)))
+        self._discovered_epoch = epoch
+        return self._discovery
 
     def _page_start(self, cursor: str | None, scope: tuple[str, str]) -> None:
         if cursor is not None:
@@ -1225,7 +1225,8 @@ class MCPSourceClient:
     async def _tool(
         self, session: ClientSession, mapping: MCPToolMapping, value: str, cursor: str | None = None
     ) -> Any:
-        await self.discover()
+        # Discovery and the mapped call share one terminal transport result.
+        await self._discover(session)
         if (
             self._tool_epoch != self._discovered_epoch
             or self._discovery is None
