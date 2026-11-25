@@ -3,7 +3,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { readContentDates, withContentDate } from "./content-dates.mjs";
+import { readContentDates } from "./content-dates.mjs";
+import { withContentMetadata } from "./content-metadata.mjs";
 
 const docs = dirname(fileURLToPath(import.meta.url));
 const root = dirname(docs);
@@ -226,10 +227,10 @@ function prepareContent() {
     const linked = localized ? rewritePublishedDocLinks(text, englishSources) : text;
     const rendered = localized && sourcePath === "index.md" ? prepareLocalizedLandingDemo(linked) : linked;
     const original = localized ? `i18n/${locale}/docs/${sourcePath}` : `docs/${preparedPath}`;
-    const prepared = withContentDate(
-      normalizeTranslatedTitle(rendered, localizedSeo[sourcePath]?.[locale]),
-      contentDates.get(original),
-    );
+    const prepared = withContentMetadata(normalizeTranslatedTitle(rendered, localizedSeo[sourcePath]?.[locale]), {
+      date: contentDates.get(original),
+      locale: localized ? locale : "en",
+    });
     if (prepared !== text) writeFileSync(file, prepared);
   }
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { load } from "js-yaml";
 
-import { withContentDate } from "./content-dates.mjs";
+import { withContentMetadata } from "./content-metadata.mjs";
 import {
   normalizeTranslatedTitle,
   prepareLocalizedLandingDemo,
@@ -32,17 +32,61 @@ test("adds the source date without changing page content or overriding an explic
   const date = "2025-01-02T03:04:05.000Z";
   const body = "# Page\n\nContent.\n";
   for (const header of ["title: Page", "{title: Page}"]) {
-    const prepared = withContentDate(`---\n${header}\n---\n${body}`, date);
+    const prepared = withContentMetadata(`---\n${header}\n---\n${body}`, { date });
     const [, yaml, content] = prepared.split(/^---\n/m);
     assert.deepEqual(load(yaml), { title: "Page", lastModified: date });
     assert.equal(content, body);
   }
-  assert.deepEqual(load(withContentDate(body, date).split(/^---\n/m)[1]), { lastModified: date });
+  assert.deepEqual(load(withContentMetadata(body, { date }).split(/^---\n/m)[1]), { lastModified: date });
   for (const key of ["lastModified", '"lastModified"', "'lastModified'"]) {
     const pinned = `---\n${key}: "2025-01-03"\n---\n${body}`;
-    assert.equal(withContentDate(pinned, date), pinned);
+    assert.equal(withContentMetadata(pinned, { date }), pinned);
   }
-  assert.equal(withContentDate(body, undefined), body);
+  assert.equal(withContentMetadata(body), body);
+});
+
+test("uses translated prose without a translation notice, markup, or link URL", () => {
+  const source = [
+    "# Memória para agentes",
+    "> Esta página foi traduzida automaticamente. Consulte a documentação original.",
+    "~~~bash\n./install.sh\n~~~",
+    "Consulte [as permissões](permissions.md) antes de compartilhar uma memória com outros agentes.",
+  ].join("\n\n");
+  const prepared = withContentMetadata(source, { locale: "pt-BR" });
+  const [, yaml, body] = prepared.split(/^---\n/m);
+  assert.equal(load(yaml).description, "Consulte as permissões antes de compartilhar uma memória com outros agentes.");
+  assert.equal(body, `\n${source}`);
+});
+
+test("keeps editorial descriptions and adds a fallback beside an editorial search title", () => {
+  const body = "A user can inspect the source and history of a memory through its dashboard.";
+  for (const description of ["description: Editorial summary", "seo: {description: Editorial summary}"]) {
+    const source = `---\n${description}\n---\n\n${body}`;
+    assert.equal(withContentMetadata(source), source);
+  }
+  const source = `---\nseo:\n  title: A specific title\n---\n\n${body}`;
+  const yaml = withContentMetadata(source).split(/^---\n/m)[1];
+  assert.deepEqual(load(yaml), { seo: { title: "A specific title" }, description: body });
+});
+
+test("keeps a complete lead sentence when the rest of a paragraph does not fit", () => {
+  const lead = "自律型エージェントは保存したチェックポイントを読み取り、中断した処理を再開できます。";
+  const source = lead + "次の項目を処理する前に前回の状態を確認します".repeat(10) + "。";
+  assert.equal(load(withContentMetadata(source, { locale: "ja" }).split(/^---\n/m)[1]).description, lead);
+});
+
+test("trims a long sentence at a word boundary", () => {
+  const source = "Start the job with the same identity and use the saved ".repeat(6).trimEnd() + ".";
+  const description = load(withContentMetadata(source).split(/^---\n/m)[1]).description;
+  assert(description.length <= 160 && description.endsWith("…"));
+  assert(source.startsWith(description.slice(0, -1) + " "));
+});
+
+test("keeps a compact Chinese introduction ahead of shared reference text", () => {
+  const source =
+    "每个 `org.*` 操作接受和返回的确切字段。\n\n每个操作都是通过 HTTP 调用，身份字段在传输层能够提供时会按令牌自动填充。";
+  const yaml = withContentMetadata(source, { locale: "zh-CN" }).split(/^---\n/m)[1];
+  assert.equal(load(yaml).description, "每个 org.* 操作接受和返回的确切字段。");
 });
 
 test("moves a generated translation title into Blume front matter", () => {
