@@ -540,6 +540,53 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     evaluate: "평가 실행하기",
     deploymentOptions: "배포 옵션 살펴보기",
   },
+  pl: {
+    title: "Współdzielona pamięć dla agentów AI | ClickHouse Loom",
+    description:
+      "Długoterminowa pamięć dla agentów programistycznych. Uruchom Loom we własnym środowisku ClickHouse, przeszukuj dokumenty i wiąż ustalenia z kodem.",
+    deployment: "Otwarty kod źródłowy · Wdrożenie na własnej infrastrukturze",
+    heading: "Wspólna pamięć dla agentów AI",
+    lead: "Loom zachowuje decyzje i ustalenia zespołu między sesjami. Agenci mogą wrócić do wcześniejszych ustaleń, sprawdzić cytowane dokumenty i otworzyć powiązany kod źródłowy.",
+    run: "Zainstaluj Loom (po angielsku)",
+    product: "Poznaj funkcje (po angielsku)",
+    connect: "Połącz agentów programistycznych (po angielsku)",
+    sdk: "Twórz z użyciem SDK (po angielsku)",
+    screenshotAlt: "Panel Loom z decyzją dotyczącą płatności, odnośnikiem do funkcji i ostrzeżeniem o zmianie kodu",
+    screenshotCaption: "Zapisana decyzja wskazuje funkcję, której dotyczy.",
+    contextHeading: "Źródła dla kolejnej odpowiedzi",
+    contextDetail: "Agenci korzystają z pamięci, dokumentów i kodu przez MCP, HTTP lub SDK dla Pythona i TypeScriptu.",
+    memory: {
+      title: "Długoterminowa pamięć zespołu",
+      detail:
+        "Zachowuj decyzje, ograniczenia i ustalenia na kolejne sesje. Zespół i jego agenci mogą je przeglądać i aktualizować w jednym miejscu.",
+      link: "Pamięć dla agentów programistycznych (po angielsku)",
+    },
+    documents: {
+      title: "Wyszukiwanie w dokumentach z cytatami",
+      detail:
+        "Znajdź wewnętrzną zasadę, instrukcję operacyjną lub opis techniczny. Otwórz cytowany fragment we właściwej wersji dokumentu.",
+      link: "Wyszukiwanie w dokumentach i RAG (po angielsku)",
+    },
+    code: {
+      title: "Wyszukiwanie i analiza kodu",
+      detail:
+        "Znajdź definicje i miejsca wywołań, a ustalenia powiąż z konkretnym kodem. Loom pokaże, czy kod zmienił się od zapisania wpisu.",
+      link: "Pamięć powiązana z kodem (po angielsku)",
+    },
+    useCasesHeading: "Przekazuj ustalenia między agentami",
+    useCasesDetail:
+      "Udostępnij kolejnemu agentowi decyzje z prac nad kodem, wyniki przeglądu i wskazówki z eksploatacji.",
+    useCasesLabel: "Zastosowania pamięci dla agentów AI",
+    softwareFactory: "Pamięć dla fabryki oprogramowania",
+    knowledgeFactory: "Fabryka wiedzy dla agentów AI",
+    autonomous: "Pamięć dla autonomicznych agentów",
+    selfHosted: "Pamięć agentów na własnej infrastrukturze",
+    evaluationHeading: "Sprawdź Loom w pracy swojego zespołu",
+    evaluationDetail:
+      "Wybierz rzeczywiste zadanie. Sprawdź, co agent odnajdzie, na jakie źródła się powoła i kto ma dostęp do zapisanych danych.",
+    evaluate: "Sprawdź na własnym zadaniu (po angielsku)",
+    deploymentOptions: "Opcje wdrożenia (po angielsku)",
+  },
   "pt-BR": {
     title: "Memória compartilhada para agentes de IA | ClickHouse Loom",
     description:
