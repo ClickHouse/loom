@@ -739,7 +739,7 @@ class MCPSourceClient:
             )
         )
         result = await self._session.initialize()
-        protocol_version = result.protocolVersion
+        protocol_version = str(result.protocolVersion)
         self._discovery = MCPDiscovery(result.capabilities.resources is not None, ())
         await self._authorize()
 
