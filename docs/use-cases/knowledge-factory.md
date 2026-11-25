@@ -192,6 +192,14 @@ old rule, revise that claim separately so its earlier version remains visible in
 report incompatible facts. When the source of a code-linked lesson changes, inspect
 the current definition before using the lesson to make a decision.
 
+### Share a Markdown snapshot of lessons
+
+To review lessons outside Loom, [export the namespace as an Open Knowledge Format bundle](../features/integrations/okf.md#test-agent-memory-portability).
+Use `--no-evidence` to leave raw chunks and session digests out of the copy. Keep
+the approved runbooks, their revisions, and their access controls in the source
+document system. On the receiving deployment, check that the citation resolves
+to the approved revision and that the reader has access before using the lesson.
+
 Start with [document search and citations](document-search.md) to connect your first
 source. For a workflow in which implementation and review agents hand work to each
 other, see [memory for a software factory](multi-agent.md#memory-for-a-software-factory).
