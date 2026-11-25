@@ -110,6 +110,10 @@ related hits and their resolved dependency definitions. Coding MCP
 connections enable recovery by default. HTTP and SDK
 callers can opt in.
 
+A literal batch can recover one missing call alongside other exact literals,
+such as an existing test name. The exact matches and related source stay in
+their respective result fields.
+
 A literal call prefix such as `convert(row.value` can also show where
 `row.value` appears in other scopes. Coding MCP connections enable this
 with `related_on_prefix`. The exact hit list and its pagination stay separate

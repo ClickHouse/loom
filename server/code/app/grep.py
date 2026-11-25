@@ -406,24 +406,28 @@ async def _grep_lines(
         repo, org, ns, input, matches, route, budget=budget
     )
     coverage = await asyncio.to_thread(_line_coverage_fields, scan.chunks, budget)
-    prefix_related = None
+    extra_related = None
     if not (related_pattern or offset or scan.truncated or coverage.get("partial")):
-        prefix_related, prefix_coverage = await _related_prefix_excerpts(
+        extra_related, extra_coverage = await _extra_related_source(
             repo,
             org,
             ns,
             input,
             scope=scope,
-            matches=matches,
+            matches=scan.matches if isinstance(input.pattern, list) else matches,
             match_commits=scan.match_commits,
             limit=served_limit,
             budget=budget,
         )
-        coverage.update(prefix_coverage)
-        if prefix_related is not None:
-            route += "+related_call_prefix"
+        coverage.update(extra_coverage)
+        if extra_related is not None:
+            route += (
+                "+related_batch_argument"
+                if isinstance(input.pattern, list)
+                else "+related_call_prefix"
+            )
     related, note = _label_related(
-        related_pattern, matches, bodies, context, scan, prefix_related, note
+        related_pattern, matches, bodies, context, scan, extra_related, note
     )
     related, missing = await _related_dependencies(
         repo,
@@ -460,15 +464,14 @@ async def _grep_lines(
         )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
     # so the outcome fold skips this op; the paths still feed opened_file)
-    returned = matches + (prefix_related.matches if prefix_related is not None else [])
+    returned = matches + (extra_related.matches if extra_related is not None else [])
     dependencies = related.dependencies if related else []
     files = list(dict.fromkeys([*(m["path"] for m in returned), *(d.path for d in dependencies)]))
     risk = "low" if returned else "abstain"
-    if (matches and related_pattern) or (prefix_related and prefix_related.matches):
+    if (matches and related_pattern) or (extra_related and extra_related.matches):
         risk = "medium"
     related_tokens = (
-        (sum(len(row["text"]) for row in prefix_related.contexts) if prefix_related else 0)
-        + sum(len(d.body) for d in dependencies)
+        _extra_related_chars(extra_related) + sum(len(d.body) for d in dependencies)
     ) // 4
     schedule_code_trace(
         org=org,
@@ -548,7 +551,7 @@ def _label_related(
     bodies: dict[str, Any],
     context: dict[str, Any],
     scan: _GrepLineScan,
-    prefix: RelatedGrepEvidence | None,
+    extra: RelatedGrepEvidence | None,
     note: str,
 ) -> tuple[RelatedGrepEvidence | None, str]:
     if pattern and matches:
@@ -559,11 +562,19 @@ def _label_related(
             related,
             "No exact match in the indexed scope. Related source matches the call's argument.",
         )
-    if prefix and prefix.matches:
-        note = "Related source shows the call prefix's argument in other scopes."
+    if extra and extra.matches:
+        note = "Related source shows the call's argument in other scopes."
         if not matches:
             note = "No exact match in the indexed scope. " + note
-    return prefix, note
+    return extra, note
+
+
+def _extra_related_chars(extra: RelatedGrepEvidence | None) -> int:
+    if extra is None:
+        return 0
+    return sum(len(row["text"]) for row in extra.contexts) + sum(
+        len(row.get("body") or "") for row in extra.definitions
+    )
 
 
 _IDENTIFIER = r"[^\W\d]\w*"
@@ -586,6 +597,26 @@ def _batch_dependency_argument(input: CodeGrepInput) -> str:
         if input.related_on_prefix and (call := _QUALIFIED_ARGUMENT_PREFIX.fullmatch(pattern)):
             arguments.add(call[1])
     return next(iter(arguments)) if len(arguments) == 1 else ""
+
+
+def _missing_batch_argument(input: CodeGrepInput, matches: list[dict[str, Any]]) -> str:
+    if not input.related_on_miss or not isinstance(input.pattern, list):
+        return ""
+    calls = {raw: argument for raw in input.pattern if (argument := qualified_call_argument(raw))}
+    if len(calls) != 1:
+        return ""
+    ((literal, argument),) = calls.items()
+    if literal != literal.strip():
+        return ""
+    fold = str if input.case_sensitive else ascii_lower
+    if fold(argument) in {fold(text) for text in input.pattern}:
+        return ""  # the exact scan already searched for every occurrence of the argument
+    literal = fold(literal)
+    for match in matches:
+        text = match["text"]
+        if len(text) >= GREP_MATCH_TEXT_CHARS or literal in fold(text):
+            return ""
+    return argument
 
 
 async def _related_dependencies(
@@ -677,7 +708,7 @@ def _shares_grep_scope(left: dict[str, Any], right: dict[str, Any]) -> bool:
     )
 
 
-async def _related_prefix_excerpts(
+async def _extra_related_source(
     repo: CodeRepo,
     org: str,
     ns: str,
@@ -689,25 +720,34 @@ async def _related_prefix_excerpts(
     limit: int,
     budget: code_deadline.Budget | None,
 ) -> tuple[RelatedGrepEvidence | None, dict[str, Any]]:
-    if not input.related_on_prefix or input.regex or not isinstance(input.pattern, str):
+    if input.regex:
         return None, {}
-    call = _QUALIFIED_ARGUMENT_PREFIX.fullmatch(input.pattern.strip())
-    if call is None or not _second_scan_allowed(budget, "related call prefix scan"):
+    batch = isinstance(input.pattern, list)
+    if batch:
+        argument = _missing_batch_argument(input, matches)
+    else:
+        call = _QUALIFIED_ARGUMENT_PREFIX.fullmatch(str(input.pattern).strip())
+        argument = call[1] if input.related_on_prefix and call is not None else ""
+    stage = "related argument scan" if batch else "related call prefix scan"
+    if not argument or not _second_scan_allowed(budget, stage):
         return None, _partial_fields(budget)
     try:
         async with asyncio.timeout(None if budget is None else budget.left_ms() / 1000):
-            return await _read_prefix_excerpts(
-                repo, org, ns, input, call[1], scope, matches, match_commits, limit, budget
+            evidence, coverage = await _read_related_source(
+                repo, org, ns, input, argument, scope, matches, match_commits, limit, budget
             )
     except TimeoutError:
-        reason = "related call prefix scan timed out"
+        return None, {"partial": True, "partial_reason": f"{stage} timed out"}
     except Exception as error:  # noqa: BLE001 — preserve exact evidence on optional read failure
-        logger.debug("related call prefix scan failed: %s", type(error).__name__)
-        reason = "related call prefix scan failed"
-    return None, {"partial": True, "partial_reason": reason}
+        logger.debug("%s failed: %s", stage, type(error).__name__)
+        return None, {"partial": True, "partial_reason": f"{stage} failed"}
+    if batch and evidence is not None:
+        bodies = await definitions_for(input, evidence.matches, budget, match_commits=match_commits)
+        evidence = evidence.model_copy(update=bodies)
+    return evidence, coverage
 
 
-async def _read_prefix_excerpts(
+async def _read_related_source(
     repo: CodeRepo,
     org: str,
     ns: str,
@@ -774,11 +814,11 @@ async def _read_prefix_excerpts(
     if not related and not truncated:
         return None, coverage
     page = related[:limit]
-    radius = (
-        input.context_lines
-        if "context_lines" in input.model_fields_set
-        else RELATED_GREP_CONTEXT_LINES
-    )
+    radius = input.context_lines
+    if "context_lines" not in input.model_fields_set and (
+        not isinstance(input.pattern, list) or not input.include_body
+    ):
+        radius = RELATED_GREP_CONTEXT_LINES
     context = {}
     if radius and page:
         source = await asyncio.to_thread(

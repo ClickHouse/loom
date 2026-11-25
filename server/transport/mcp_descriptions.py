@@ -2169,8 +2169,8 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.grep": (
         "Find text and enclosing bodies. Keep bodies for edits. "
-        "For code and tests, use code.edit_context with clues. "
-        "Batch literals or use `regex: true` for RE2. Scope by path. "
+        "Use code.edit_context for code and tests. "
+        "Batch code and test literals or use `regex: true` for RE2. Scope by path. "
         "For locations only, set `include_body: false` and `context_lines: 0`. "
         "Use code.search for behavior.\n\n"
         "Scope with `path_prefix` or `path_globs`. "

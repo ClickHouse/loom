@@ -54,7 +54,7 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     related_on_miss: bool = Field(
         default=False,
         description=(
-            "If a literal call expression is absent, also find its qualified argument. "
+            "Find a missing literal call's qualified argument, including in a batch with one call. "
             "Default true on coding connections."
         ),
     )

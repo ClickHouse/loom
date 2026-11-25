@@ -161,3 +161,26 @@ def use(client: Client):
         batch.model_copy(update={"pattern": [*batch.pattern, "consume(other.option)"]})
     )
     assert ambiguous.matches == exact_batch.matches and ambiguous.related is None
+    await ingest_file(
+        repo,
+        org,
+        ns,
+        path="tests/test_client.py",
+        source=b"def test_option():\n    assert True\n",
+        commit_sha="a" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    mixed = args.model_copy(
+        update={"pattern": ["consume(client.option)", "def test_option"], "include_body": True}
+    )
+    exact = await handle_code_grep(mixed.model_copy(update={"related_on_miss": False}))
+    enriched = await handle_code_grep(mixed)
+    assert enriched.matches == exact.matches
+    assert [hit["path"] for hit in enriched.matches] == ["tests/test_client.py"]
+    assert enriched.definitions == exact.definitions
+    assert enriched.related and enriched.related.matches == out.related.matches
+    assert "consume(client.option, extra=True)" in enriched.related.definitions[0]["body"]
+    assert enriched.related.dependencies == out.related.dependencies
+    scoped = await handle_code_grep(mixed.model_copy(update={"path_prefix": "tests/"}))
+    assert scoped.matches == exact.matches and scoped.related is None

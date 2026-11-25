@@ -401,10 +401,10 @@ def test_compact_coding_grep_advertises_search_options_and_edit_routing():
     description = compact["loom_code_grep"]["description"]
     assert "Find text and enclosing bodies" in description
     assert "Keep bodies for edits" in description
-    assert "Batch literals or use `regex: true` for RE2" in description
+    assert "Batch code and test literals or use `regex: true` for RE2" in description
     assert "For locations only, set `include_body: false` and `context_lines: 0`" in description
     assert "Scope by path" in description
-    assert "For code and tests, use loom_code_edit_context with clues" in description
+    assert "Use loom_code_edit_context for code and tests" in description
     assert "loom_code_search" in description
 
     full = {t["name"]: t for t in _listing("coding", True, "full")}

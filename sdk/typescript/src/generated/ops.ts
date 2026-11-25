@@ -951,7 +951,7 @@ export interface CodeGrepInput {
   pattern: string | string[];
   /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
-  /** If a literal call expression is absent, also find its qualified argument. Default true on coding connections. */
+  /** Find a missing literal call's qualified argument, including in a batch with one call. Default true on coding connections. */
   related_on_miss?: boolean;
   /** For a literal call prefix with one qualified argument, include its uses in other scopes as excerpts. Default true on coding connections. */
   related_on_prefix?: boolean;
