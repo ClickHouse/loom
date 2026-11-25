@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import time
+import uuid
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -141,31 +142,18 @@ def _inspect_image(reference: str) -> dict:
     )[0]
 
 
-def _build_runtime(folder: Path, *, network: str, target: str = "") -> str:
+def _build_runtime(folder: Path, build_image, *, network: str, target: str = "") -> str:
     suffix = f"-{target}" if target else ""
     receipt = folder / f"image{suffix}.id"
-    with (folder / f"build{suffix}.log").open("wb") as log:
-        subprocess.run(
-            [
-                "docker",
-                "build",
-                f"--network={network}",
-                "--iidfile",
-                str(receipt),
-                "--label",
-                "loom.factory.harbor=task-runtime",
-                *(["--target", target] if target else []),
-                str(folder),
-            ],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            check=True,
-        )
-    return receipt.read_text().strip()
+    tag = "loom-factory-harbor:" + uuid.uuid4().hex
+    flags = [f"--network={network}", "--label", "loom.factory.harbor=task-runtime"]
+    if target:
+        flags.extend(("--target", target))
+    return build_image(tag, folder, receipt, flags=flags)["Id"]
 
 
 def build_image(
-    folder: Path, dependency: str, *, project_instructions: dict
+    folder: Path, dependency: str, *, project_instructions: dict, build_owned_image
 ) -> str | dict[str, str]:
     inspected = _inspect_image(dependency)
     if inspected["Id"] != dependency or not inspected.get("RepoTags"):
@@ -201,7 +189,7 @@ def build_image(
     image: str | dict[str, str]
     if native:
         image = {
-            target: _build_runtime(folder, network="default", target=target)
+            target: _build_runtime(folder, build_owned_image, network="default", target=target)
             for target in ("baseline", "loom")
         }
         baseline, loom = (_inspect_image(image[target]) for target in ("baseline", "loom"))
@@ -211,7 +199,7 @@ def build_image(
         ):
             raise PermissionError("Loom agent image must add only the project instructions layer")
     else:
-        image = _build_runtime(folder, network="none")
+        image = _build_runtime(folder, build_owned_image, network="none")
     if _inspect_image(reference)["Id"] != dependency:
         raise PermissionError("Dependency image changed during the build")
     return image
@@ -221,6 +209,7 @@ def prepare(
     previous: Path,
     output: Path,
     *,
+    build_owned_image,
     isolate_prompt_cache: bool = False,
     workspace_ids=(),
     disable_prompt_caching: bool = False,
@@ -299,7 +288,11 @@ def prepare(
         plan["anthropic_workspace_ids"] = list(workspace_ids)
     elif isolate_prompt_cache:
         plan["prompt_cache_isolation"] = "provider-expiry-between-attempts"
-    builder = partial(build_image, project_instructions=plan["project_guidance"])
+    builder = partial(
+        build_image,
+        project_instructions=plan["project_guidance"],
+        build_owned_image=build_owned_image,
+    )
     for task_id in sorted(plan["tasks"]):
         plan["harbor_specs"][task_id], images[task_id] = load_profile(plan).stage_task(
             plan, task_id, output, builder
@@ -869,16 +862,11 @@ async def run(protocol_path: Path, kind: str, *, meter=None, cache_quiet_since=N
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("prepare", "base", "reference", "live", "report", "audit", "judge")
+        "command", choices=("base", "reference", "live", "report", "audit", "judge")
     )
     parser.add_argument("--protocol", type=Path, required=True)
-    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    if args.command == "prepare":
-        if args.output is None:
-            parser.error("prepare requires --output")
-        print(prepare(args.protocol.resolve(), args.output.resolve()))
-    elif args.command == "report":
+    if args.command == "report":
         print(json.dumps(export(read(args.protocol)), indent=2))
     elif args.command in {"audit", "judge"}:
         protocol = read(args.protocol)

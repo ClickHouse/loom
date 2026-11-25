@@ -183,6 +183,30 @@ class Provisioner:
         self._record("created", kind=kind, name=name, id=identifier)
         return identifier
 
+    def build_image(self, tag, context, iidfile, *, flags=()):
+        self._record("intent", kind="image", name=tag, iidfile=str(iidfile))
+        self._cmd(
+            [
+                "docker",
+                "build",
+                "--label",
+                OWNER_LABEL + "=" + self.owner,
+                "--tag",
+                tag,
+                "--iidfile",
+                str(iidfile),
+                *flags,
+                str(context),
+            ],
+        )
+        image = self._owned("image", tag)
+        require(
+            image["Id"] == iidfile.read_text().strip(),
+            "Built image tag differs from its recorded image ID",
+        )
+        self._record("created", kind="image", name=tag, id=image["Id"])
+        return image
+
     def _rpc(self, operation, body=None):
         payload = json.dumps({"operation": operation, "body": body or {}})
         raw = self._cmd(
@@ -390,24 +414,7 @@ class Provisioner:
                     "--build-arg",
                     "LOCAL_MODELS_IMAGE=" + self.prefix + "-local-models",
                 ]
-            self._record("intent", kind="image", name=self.prefix + "-" + target, iidfile=str(path))
-            self._cmd(
-                [
-                    "docker",
-                    "build",
-                    "--label",
-                    OWNER_LABEL + "=" + self.owner,
-                    "--tag",
-                    self.prefix + "-" + target,
-                    "--iidfile",
-                    str(path),
-                    *extra,
-                    str(context),
-                ],
-            )
-            identifier = path.read_text().strip()
-            self._owned("image", identifier)
-            self._record("created", kind="image", id=identifier, name=self.prefix + "-" + target)
+            self.build_image(self.prefix + "-" + target, context, path, flags=extra)
         return image
 
     def start(self):
@@ -1537,20 +1544,19 @@ class Provisioner:
                         recovered_from_intent=True,
                     )
                 continue
-            if kind == "image":
-                path = Path(row["iidfile"])
-                if not path.exists():
-                    continue
-                identifier = path.read_text().strip()
-            else:
-                identifier = row["name"]
             try:
-                obj = self._owned(kind, identifier)
+                obj = self._owned(kind, row["name"])
             except subprocess.CalledProcessError as error:
                 if "No such" in (error.stderr or ""):
                     continue
                 raise
-            resolved = obj.get("Id", obj.get("Name", identifier))
+            resolved = obj.get("Id", obj.get("Name", row["name"]))
+            if kind == "image":
+                iidfile = Path(row["iidfile"])
+                require(
+                    not iidfile.exists() or iidfile.read_text().strip() == resolved,
+                    "Recovered image tag differs from its recorded image ID",
+                )
             self._record(
                 "created", kind=kind, name=row["name"], id=resolved, recovered_from_intent=True
             )

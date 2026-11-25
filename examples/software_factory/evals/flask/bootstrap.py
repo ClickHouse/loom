@@ -275,7 +275,7 @@ def stage_compiler_source(source: FrozenSource, target: Path) -> dict:
     return receipt
 
 
-def build_dependencies(assets: Path) -> Path:
+def build_dependencies(assets: Path, *, build_image) -> Path:
     receipt = read(assets / "assets.json")
     check_files(receipt["files"])
     target = assets / "images.json"
@@ -294,24 +294,9 @@ def build_dependencies(assets: Path) -> Path:
         artifacts.update(
             cache_packages(lock, pin, folder, base["Architecture"], assets / "packages")
         )
-        command(
-            [
-                "docker",
-                "build",
-                "--network=none",
-                "--tag",
-                tag,
-                "--iidfile",
-                str(folder / "image.id"),
-                str(folder),
-            ]
-        )
-        image = (folder / "image.id").read_text().strip()
-        actual = json.loads(command(["docker", "image", "inspect", tag]))[0]
-        if actual["Id"] != image:
-            raise PermissionError("Built dependency image differs from its receipt")
+        actual = build_image(tag, folder, folder / "image.id", flags=("--network=none",))
         images[pin["task_id"]] = {
-            "image": image,
+            "image": actual["Id"],
             "tag": tag,
             "architecture": actual["Architecture"],
         }
@@ -464,17 +449,10 @@ asyncio.run(main())
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("assets", "build"))
-    parser.add_argument("--output", type=Path)
-    parser.add_argument("--assets", type=Path)
+    parser.add_argument("command", choices=("assets",))
+    parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if args.command == "assets" and args.output:
-        result = create_assets(args.output.resolve())
-    elif args.command == "build" and args.assets:
-        result = build_dependencies(args.assets.resolve())
-    else:
-        parser.error("assets requires --output; build requires --assets")
-    print(result)
+    print(create_assets(args.output.resolve()))
 
 
 if __name__ == "__main__":

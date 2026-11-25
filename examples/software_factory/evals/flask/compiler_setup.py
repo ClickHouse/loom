@@ -14,6 +14,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from examples.software_factory.harbor.provision import OWNER_LABEL
+
 from .historical import FrozenSource
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -306,7 +308,7 @@ def compiler_container_command(image: str, project: Path, name: str, *, owner: s
     ]
 
 
-def _build_images(output, archives, images, receipt):
+def _build_images(output, archives, images, receipt, build_image):
     built, first = {}, None
     for dependency, dependency_ref in sorted(images.items()):
         actual = _run(["docker", "image", "inspect", "--format", "{{.Id}}", dependency_ref])
@@ -328,26 +330,13 @@ def _build_images(output, archives, images, receipt):
             dependency_ref=dependency_ref,
             status="building",
             owner=receipt["owner"],
-            label="loom.factory.compiler.owner",
+            label=OWNER_LABEL,
         )
         receipt["owned_images"].append(owned)
         _write(output / "compiler-artifacts.json", receipt)
-        _run(
-            [
-                "docker",
-                "build",
-                "--network=none",
-                "--pull=false",
-                "--label",
-                "loom.factory.compiler.owner=" + receipt["owner"],
-                "--tag",
-                tag,
-                "--iidfile",
-                str(folder / "image.id"),
-                str(folder),
-            ],
-        )
-        image = (folder / "image.id").read_text().strip()
+        image = build_image(
+            tag, folder, folder / "image.id", flags=("--network=none", "--pull=false")
+        )["Id"]
         built[dependency] = image
         owned.update(id=image, status="complete")
         _write(output / "compiler-artifacts.json", receipt)
@@ -504,6 +493,7 @@ def prepare_compiler_artifacts(
     materialization: dict,
     output: Path,
     *,
+    build_image,
     loom_python=None,
     cache_file: Path | None = None,
     owner: str | None = None,
@@ -576,6 +566,7 @@ def prepare_compiler_artifacts(
                 for row in pending
             },
             receipt,
+            build_image,
         )
         for revision, project, staged in pending:
             packages = _expected_packages(revision["dependency_task_id"])

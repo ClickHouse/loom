@@ -142,9 +142,11 @@ class BootstrapTests(unittest.TestCase):
                 json.dumps({"files": {str(assets / "missing"): "a" * 64}})
             )
             with patch.object(bootstrap, "command") as command:
+                build_image = Mock()
                 with self.assertRaises((FileNotFoundError, PermissionError)):
-                    bootstrap.build_dependencies(assets)
+                    bootstrap.build_dependencies(assets, build_image=build_image)
                 command.assert_not_called()
+                build_image.assert_not_called()
 
     def test_failed_dependency_build_retains_exact_owned_tag(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -165,12 +167,13 @@ class BootstrapTests(unittest.TestCase):
                     side_effect=[
                         b"pulled",
                         b'[{"Architecture":"arm64"}]',
-                        RuntimeError("build failed"),
                     ],
                 ),
             ):
                 with self.assertRaises(RuntimeError):
-                    bootstrap.build_dependencies(assets)
+                    bootstrap.build_dependencies(
+                        assets, build_image=Mock(side_effect=RuntimeError("build failed"))
+                    )
             receipt = json.loads((assets / "dependency-builds.json").read_text())
             self.assertEqual(len(receipt), 1)
             self.assertTrue(receipt[0]["tag"].startswith("loom-factory-deps:"))

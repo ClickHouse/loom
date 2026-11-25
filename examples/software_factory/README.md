@@ -106,9 +106,10 @@ ANTHROPIC_API_KEY=... python3 -m examples.software_factory resume --output ./fac
 python3 -m examples.software_factory cleanup --output ./factory-run
 ```
 
-Cleanup removes recorded owned resources and retains results. It does not prune
-unrelated Docker data. Reports and charts are generated before coding, after each
-finished attempt and at completion. See [Harbor reports](harbor/README.md).
+Cleanup removes the run's recorded dependency, compiler and Harbor images along
+with its Loom services. Build receipts and results stay in the output directory.
+Reports and charts are generated before coding, after each finished attempt and
+at completion. See [Harbor reports](harbor/README.md).
 
 [Flask](evals/flask/README.md) is the implemented Python profile; its
 [reproduction instructions](evals/flask/REPRODUCE.md) describe the public issues,

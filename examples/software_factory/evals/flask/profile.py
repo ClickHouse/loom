@@ -35,19 +35,19 @@ HERE = Path(__file__).resolve().parent
 PACKAGE_ROOT = HERE.parents[1]
 
 
-def _bootstrap(command, target, loom_python):
+def create_assets(output, *, loom_python):
+    target = Path(output)
     root = HERE.parents[3]
     logs = target.parent / "logs"
     logs.mkdir(parents=True, exist_ok=True)
-    flag = "--output" if command == "assets" else "--assets"
-    with (logs / (command + ".log")).open("wb") as stream:
+    with (logs / "assets.log").open("wb") as stream:
         subprocess.run(
             [
                 loom_python,
                 "-m",
                 "examples.software_factory.evals.flask.bootstrap",
-                command,
-                flag,
+                "assets",
+                "--output",
                 str(target),
             ],
             cwd=root,
@@ -63,15 +63,13 @@ def _bootstrap(command, target, loom_python):
                 "PYTHONDONTWRITEBYTECODE": "1",
             },
         )
-    return read(target / ("assets.json" if command == "assets" else "images.json"))
+    return read(target / "assets.json")
 
 
-def create_assets(output, *, loom_python):
-    return _bootstrap("assets", Path(output), loom_python)
+def build_dependencies(assets, *, build_image):
+    from .bootstrap import build_dependencies as build
 
-
-def build_dependencies(assets, *, loom_python):
-    return _bootstrap("build", Path(assets), loom_python)
+    return read(build(assets, build_image=build_image))
 
 
 def materialize_cases(assets, output):
@@ -80,11 +78,19 @@ def materialize_cases(assets, output):
     return materialize(assets, output)
 
 
-def prepare_compiler_artifacts(assets, materialization, output, *, loom_python, owner, task_ids):
+def prepare_compiler_artifacts(
+    assets, materialization, output, *, loom_python, owner, task_ids, build_image
+):
     from .compiler_setup import prepare_compiler_artifacts as compile_sources
 
     return compile_sources(
-        assets, materialization, output, loom_python=loom_python, owner=owner, task_ids=task_ids
+        assets,
+        materialization,
+        output,
+        loom_python=loom_python,
+        owner=owner,
+        task_ids=task_ids,
+        build_image=build_image,
     )
 
 

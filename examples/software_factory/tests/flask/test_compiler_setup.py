@@ -12,7 +12,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from examples.software_factory.evals.flask import compiler_setup as setup
 
@@ -213,11 +213,15 @@ class CompilerSetup(unittest.TestCase):
             with patch.object(
                 setup,
                 "_run",
-                side_effect=[("sha256:" + "a" * 64).encode(), RuntimeError("build failed")],
+                return_value=("sha256:" + "a" * 64).encode(),
             ):
                 with self.assertRaisesRegex(RuntimeError, "build failed"):
                     setup._build_images(
-                        root, archives, {"sha256:" + "a" * 64: "qualified:base"}, receipt
+                        root,
+                        archives,
+                        {"sha256:" + "a" * 64: "qualified:base"},
+                        receipt,
+                        Mock(side_effect=RuntimeError("build failed")),
                     )
             saved = setup._read(root / "compiler-artifacts.json")
             self.assertEqual(saved["owned_images"][0]["status"], "building")
@@ -284,7 +288,7 @@ class CompilerSetup(unittest.TestCase):
                 patch.object(setup, "_run", side_effect=AssertionError("No Docker")),
             ):
                 result = setup.prepare_compiler_artifacts(
-                    assets, {}, root / "output", loom_python=sys.executable
+                    assets, {}, root / "output", build_image=Mock(), loom_python=sys.executable
                 )
             self.assertEqual(result["status"], "complete")
             self.assertEqual(result["language"], "python")

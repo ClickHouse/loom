@@ -258,7 +258,7 @@ def execute(args):
         )
         phases.run(
             "dependencies",
-            lambda: profile.build_dependencies(output / "assets", loom_python=core_python),
+            lambda: profile.build_dependencies(output / "assets", build_image=runtime.build_image),
         )
         materialized = phases.run(
             "scenarios", lambda: profile.materialize_cases(output / "assets", output / "scenarios")
@@ -292,6 +292,7 @@ def execute(args):
                 loom_python=core_python,
                 owner=args.owner,
                 task_ids=frozenset(prepared["tasks"]),
+                build_image=runtime.build_image,
             ),
         )
         meter.set_phase("native-setup")
@@ -325,6 +326,7 @@ def execute(args):
                 study.prepare(
                     bootstrap_path,
                     output / "study",
+                    build_owned_image=runtime.build_image,
                     workspace_ids=[binding.id for binding in workspaces],
                     disable_prompt_caching=disable_prompt_caching,
                 )

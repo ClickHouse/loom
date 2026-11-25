@@ -186,6 +186,21 @@ class ProvisioningContracts(unittest.TestCase):
         self.assertEqual(removes, [["docker", "rm", "-f", "-v", "d" * 64]])
         self.assertTrue(result["complete"])
 
+    def test_cleanup_recovers_a_labelled_image_when_the_build_interrupted_before_iidfile(self):
+        tag = "factory-dependency:test"
+        identifier = "sha256:" + "d" * 64
+        self.provision._record(
+            "intent", kind="image", name=tag, iidfile=str(self.root / "unwritten-iid")
+        )
+        self.run.return_value.stdout = json.dumps(
+            [{"Id": identifier, "Config": {"Labels": {"loom.factory.owner": "a" * 32}}}]
+        )
+        result = self.provision.cleanup()
+        commands = [call.args[0] for call in self.run.call_args_list]
+        self.assertIn(["docker", "image", "inspect", tag], commands)
+        self.assertEqual(result["removed"], [{"kind": "image", "id": identifier, "name": tag}])
+        self.assertIn(["docker", "image", "rm", identifier], commands)
+
     def test_shared_twelve_code_bindings_and_thirty_six_memory_only_scopes(self):
         from examples.software_factory.harbor.live_support import schedule
 
