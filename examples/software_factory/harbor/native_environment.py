@@ -15,6 +15,14 @@ PROXY_ENV = dict.fromkeys(
 MCP_SCHEMA_PROFILES = ("standard", "compact")
 
 
+def claude_code_options(solver: dict) -> dict[str, str]:
+    """Use the same native options for every solver attempt."""
+    options = {"version": solver["version"]}
+    if "append_system_prompt" in solver:
+        options["append_system_prompt"] = solver["append_system_prompt"]
+    return options
+
+
 def mcp_endpoint(url: str, schema_profile: str | None) -> str:
     endpoint = url.rstrip("/") + "/mcp?toolset=coding"
     if schema_profile is None:

@@ -1,5 +1,6 @@
 {
   "name": "claude-code",
   "version": "2.1.326",
-  "integration": "mcp-only"
+  "integration": "mcp-only",
+  "append_system_prompt": "When Loom code tools are connected, use Loom for the first lookup of unchanged repository source. Batch related implementation and test patterns in one loom_code_grep call. Use loom_code_search when you know the behavior but have no source terms. Use local tools for Git, edits, test execution, and working-copy changes."
 }

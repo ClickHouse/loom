@@ -10,7 +10,7 @@ from examples.software_factory.factory.model import digest
 
 from .index import select_snapshot
 from .memory import validate_history_certificate
-from .native_environment import mcp_settings
+from .native_environment import claude_code_options, mcp_settings
 from .project_guidance import agent_image, task_instruction
 from .runtime import read, verify, write
 from .scopes import selected_scopes
@@ -79,7 +79,7 @@ def audit_fairness(protocol, entries, *, billing=None):
             == task_instruction(public["problem"]).encode("utf-8"),
             "native_solver": agent.get("name") == "claude-code" and not agent.get("import_path"),
             "same_model": agent.get("model_name") == protocol["model_id"],
-            "same_version": agent.get("kwargs") == {"version": protocol["solver"]["version"]},
+            "same_solver_options": agent.get("kwargs") == claude_code_options(protocol["solver"]),
             "expected_agent_image": config["environment"]["docker_image"]
             == agent_image(protocol["harbor_images"], slot),
             "project_guidance_scope": (

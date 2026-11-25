@@ -42,7 +42,13 @@ from .judging import load_verdicts, run_judging
 from .launch import native_model
 from .mcp_qualification import STARTUP_COUNTS, verify_catalog
 from .metrics import known_total, paid_token_totals
-from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp_settings
+from .native_environment import (
+    PROXY_ENV,
+    agent_settings,
+    claude_code_options,
+    load_credentials,
+    mcp_settings,
+)
 from .native_metrics import measurements
 from .profiles import load_profile
 from .project_guidance import SUBMISSION_NOTE, agent_image, guidance, task_instruction
@@ -332,7 +338,7 @@ def prepare(
     agent = {
         "name": solver["name"],
         "model_name": plan["model_id"],
-        "kwargs": {"version": solver["version"]},
+        "kwargs": claude_code_options(solver),
         "override_setup_timeout_sec": float("inf"),
         "env": {
             **PROXY_ENV,
