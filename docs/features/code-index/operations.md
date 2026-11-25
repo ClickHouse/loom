@@ -103,7 +103,7 @@ one file. Competing files return candidate locations. A missing call
 expression can recover source from its qualified argument. It reports
 `resolved_by: file_argument` for a named file or `repository_argument` for a
 repository lookup. When several test calls are close together, Loom prefers
-examples from different source windows.
+examples from different source windows when it can verify their excerpts.
 
 When an exact call expression such as `convert(row.value)` is absent,
 `related_on_miss: true` looks for its qualified argument in the same scope.
