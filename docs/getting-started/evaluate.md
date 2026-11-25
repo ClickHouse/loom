@@ -144,6 +144,8 @@ response.
 Replay the same coding tasks with and without access to saved lessons. Grade the
 patches against tests fixed before the run. A recall score measures whether an agent
 found a lesson. A patch score measures whether it completed the work.
+[Check which lessons the agent used](../concepts/memory.md#how-to-tell-whether-an-agent-used-a-memory)
+when you investigate why outcomes differ.
 
 1. **Choose tasks from the repository's history.** Include a task that depends on
    an earlier decision, one with an outdated lesson, and one with no useful prior
