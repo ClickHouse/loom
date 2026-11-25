@@ -438,13 +438,13 @@ async def test_ca_and_hostname_verification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with _service(tmp_path, monkeypatch) as fixture:
-        with pytest.raises(MCPSourceError, match="^MCP source protocol$"):
+        with pytest.raises(MCPSourceError, match="^MCP source unavailable$"):
             async with _client(fixture.endpoint(), "alice"):
                 pytest.fail("untrusted fixture CA was accepted")
         assert fixture.sni == [_HOST]
         assert not fixture.requests
         with _trust_fixture_ca(tmp_path, fixture.root, monkeypatch):
-            with pytest.raises(MCPSourceError, match="^MCP source protocol$"):
+            with pytest.raises(MCPSourceError, match="^MCP source unavailable$"):
                 async with _client(fixture.endpoint(_WRONG_HOST), "alice"):
                     pytest.fail("certificate for a different hostname was accepted")
             assert fixture.sni == [_HOST, _WRONG_HOST]
