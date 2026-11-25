@@ -5,6 +5,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { Popover } from "@clickhouse/click-ui/Popover";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
+import { GuidanceLabel } from "./GuidanceLabel";
 import {
   listMemories,
   browseNamespaces,
@@ -782,6 +783,7 @@ export function HeaderSearch({
                         {e.agent ? `${displayAgent(e.agent)} · ` : ""}
                         {e.content_excerpt || "(empty)"}
                       </div>
+                      <GuidanceLabel hit={e} />
                     </button>
                   );
                 })}

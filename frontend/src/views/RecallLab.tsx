@@ -6,6 +6,7 @@ import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
+import { GuidanceLabel } from "../components/GuidanceLabel";
 import { listMemories, searchMemory, listSearchTraceLog, type SearchHit, type SearchTraceLogRow } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { PageContainer } from "../layout/PageContainer";
@@ -332,9 +333,12 @@ function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) =>
       {
         className: CARD_WIDE,
         label: (
-          <span className="line-clamp-1 break-words text-sm" title={row.text}>
-            {row.text}
-          </span>
+          <>
+            <span className="line-clamp-1 break-words text-sm" title={row.text}>
+              {row.text}
+            </span>
+            {hit && <GuidanceLabel hit={hit} reasons />}
+          </>
         ),
       },
       { className: CARD, label: <span className={NUMERIC}>{hit ? hit.similarity.toFixed(3) : "—"}</span> },

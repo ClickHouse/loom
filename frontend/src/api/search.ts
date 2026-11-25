@@ -7,6 +7,7 @@ import type { Identity, RequestOpts, SearchScope } from "../api";
 // ===== memory.search =====
 
 export interface SearchHit {
+  use_guidance?: { next_step: string; reasons: string[] } | null;
   memory_key: string;
   memory_type: string;
   content_excerpt: string;
