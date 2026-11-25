@@ -122,6 +122,9 @@ class PublicLauncher(unittest.TestCase):
         (self.root / ".env").write_text("CREDENTIAL_SENTINEL")
         (self.root / "server/.env").write_text("CREDENTIAL_SENTINEL")
         self.output = self.root / "factory-run"
+        agent = self.root / launch.HERE / "agent.json"
+        agent.parent.mkdir(parents=True)
+        shutil.copyfile(launch.ROOT / launch.HERE / "agent.json", agent)
         for relative in ("embedding/local_models.py", "core/llm_provider.py"):
             destination = self.root / "server" / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -177,6 +180,11 @@ class PublicLauncher(unittest.TestCase):
         self.assertEqual(plan["model"], "claude-opus-5-5")
         self.assertEqual(plan["native_provider"], "anthropic")
         self.assertEqual(plan["native_model"], "claude-sonnet-5-5")
+        native = plan["native_solver"]
+        agent = launch.read(launch.ROOT / launch.HERE / "agent.json")
+        self.assertEqual(native["name"], agent["name"])
+        self.assertEqual(native["options"]["version"], agent["version"])
+        self.assertEqual(native["options"]["append_system_prompt"], agent["append_system_prompt"])
         self.assertEqual(plan["arms"], list(PRIMARY))
         self.assertEqual(
             (

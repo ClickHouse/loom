@@ -27,6 +27,10 @@ Observed successes are reported immediately; a final success rate is available
 only when all expected attempts in that arm have completed. Unknown cost and
 tool counts remain unknown.
 
+Every solver receives the same native Claude Code options. The source guidance
+covers the first unchanged-code lookup when Loom is connected. The offline plan
+shows these options and the study compares them with each native attempt receipt.
+
 `diagnostics/attempt-NN.json` records a passive main-session trace summary after
 each attempt. It counts model responses, tool errors, source characters, lesson
 characters and repetitions, and reports native CLI/API duration. Source counts
@@ -52,7 +56,9 @@ and the compact JSON size of its listing from the frozen MCP qualification.
 They also show the count and total JSON size of descriptors with an upfront
 loading hint. These sizes describe what Loom advertised before the run.
 Provider receipts supply first prompt token counts after the client selects
-and formats its tools.
+and formats its tools. For a batched grep followed by a local source read, replay
+the recorded pattern list on the same index revision. Check whether the indexed
+definition was absent or appeared on a later page.
 
 `diagnostics/attempt-NN-code-traces.json` preserves the existing code-search trace
 rows named by that attempt's returned trace ids, scoped to its source namespace.

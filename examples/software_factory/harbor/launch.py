@@ -23,7 +23,7 @@ from .arms import PRIMARY
 from .build_recipe import PYTHON_IMAGE, native_recipe
 from .catalog import load_evaluation
 from .host_tunnel import HostTunnel
-from .native_environment import MCP_SCHEMA_PROFILES
+from .native_environment import MCP_SCHEMA_PROFILES, claude_code_options
 from .project_guidance import guidance
 from .workspace import BINDINGS_ENV, MANIFEST_ENV
 from .workspace import manifest as workspace_manifest
@@ -136,6 +136,7 @@ def plan(
     if loom_schema_profile not in MCP_SCHEMA_PROFILES:
         raise LaunchError("Choose the standard or compact Loom MCP schema profile")
     descriptor = load_evaluation(root, evaluation)
+    solver = read(root / HERE / "agent.json")
     locked, histories, memories = (
         read(descriptor["paths"][name])
         for name in ("suite_lock", "scenario_manifest", "memory_catalog")
@@ -174,6 +175,7 @@ def plan(
         "project_guidance": guidance(locked["source_roots"]),
         "native_provider": "anthropic",
         "native_model": native_model(root),
+        "native_solver": {"name": solver["name"], "options": claude_code_options(solver)},
         "arms": list(ARMS),
         "cases": cases,
         "repeats": repeats,
