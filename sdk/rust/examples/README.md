@@ -369,7 +369,7 @@ cargo run --manifest-path sdk/rust/Cargo.toml --example software_factory_memory 
 
 Checks repository, full index commit, fetch freshness and compiler-tier commits;
 reads one complete symbol body and verifies its bytes against a complete
-`code.read` range whose index snapshot matches the initial status. An unchanged
+`code.read` range whose reported index watermark matches the initial status. An unchanged
 file can retain an older `indexed_commit`. Source evidence records that file
 commit separately from `index_commit`, and the source link names the verified
 file commit.

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 import signal
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -15,27 +15,30 @@ import pytest
 from tests.integration import _rust_sdk_ci as runner
 
 
-@pytest.mark.parametrize("outcome", ["complete", "failure", "timeout", "cancel"])
+@pytest.mark.parametrize("outcome", ["complete", "failure", "timeout", "cancel", "exited-parent"])
 @pytest.mark.asyncio
 async def test_rust_runner_finishes_and_reaps_test_processes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
-    cargo = shutil.which("cargo")
-    assert cargo is not None, "This runner test requires the Rust SDK's Cargo toolchain"
-    (tmp_path / "src").mkdir()
-    (tmp_path / "Cargo.toml").write_text(
-        '[package]\nname = "runner-lifecycle"\nversion = "0.0.0"\nedition = "2021"\n'
-    )
+    monkeypatch.setenv("PATH", "")
     pid_file = tmp_path / "test.pid"
-    (tmp_path / "src/lib.rs").write_text(
-        "#[test]\nfn test_process() {\n"
-        '    std::fs::write(std::env::var("PID_FILE").unwrap(), '
-        "std::process::id().to_string()).unwrap();\n"
-        '    match std::env::var("OUTCOME").unwrap().as_str() {\n'
-        '        "timeout" => loop { std::thread::park(); },\n'
-        '        "failure" => panic!("reported test failure"),\n'
-        "        _ => (),\n"
-        "    }\n}\n"
+    child_script = tmp_path / "child.py"
+    child_script.write_text(
+        "import os, pathlib, signal, sys\n"
+        'pathlib.Path(os.environ["PID_FILE"]).write_text(str(os.getpid()))\n'
+        'if os.environ["OUTCOME"] in ("timeout", "cancel", "exited-parent"):\n'
+        "    while True: signal.pause()\n"
+        'if os.environ["OUTCOME"] == "failure":\n'
+        '    print("reported test failure", file=sys.stderr, flush=True)\n'
+        "    sys.exit(1)\n"
+    )
+    parent_script = tmp_path / "parent.py"
+    parent_script.write_text(
+        "import os, subprocess, sys\n"
+        "child = subprocess.Popen([sys.executable, sys.argv[1]])\n"
+        'if os.environ["OUTCOME"] == "exited-parent":\n'
+        "    sys.exit(0)\n"
+        "sys.exit(child.wait())\n"
     )
     # Only authentication and process launch are replaced. The runner's actual
     # communicate/timeout/kill/wait control flow remains under test.
@@ -54,15 +57,12 @@ async def test_rust_runner_finishes_and_reaps_test_processes(
         env = {
             **kwargs["env"],
             "PID_FILE": str(pid_file),
-            "OUTCOME": "timeout" if outcome == "cancel" else outcome,
+            "OUTCOME": outcome,
         }
         process = await asyncio.create_subprocess_exec(
-            cargo,
-            "test",
-            "--manifest-path",
-            str(tmp_path / "Cargo.toml"),
-            "--",
-            "--nocapture",
+            sys.executable,
+            str(parent_script),
+            str(child_script),
             env=env,
             stdout=kwargs["stdout"],
             stderr=kwargs["stderr"],
@@ -71,17 +71,22 @@ async def test_rust_runner_finishes_and_reaps_test_processes(
         processes.append(process)
         deadline = asyncio.get_running_loop().time() + 20
         while not pid_file.exists():
-            if process.returncode is not None:
+            if process.returncode is not None and outcome != "exited-parent":
                 output, _ = await process.communicate()
                 pytest.fail(output.decode(errors="replace"))
-            assert asyncio.get_running_loop().time() < deadline, "Rust fixture did not start"
+            assert asyncio.get_running_loop().time() < deadline, "Process fixture did not start"
             await asyncio.sleep(0.01)
+        if outcome == "exited-parent":
+            while process.returncode is None:
+                assert asyncio.get_running_loop().time() < deadline, "Parent did not exit"
+                await asyncio.sleep(0.01)
         return process
 
     async def bounded_wait(awaitable, **options):
         assert options == {"timeout": 300}
         communicating.set()
-        return await asyncio.wait_for(awaitable, timeout=0.1 if outcome == "timeout" else 5)
+        timeout = 0.1 if outcome in {"timeout", "exited-parent"} else 5
+        return await asyncio.wait_for(awaitable, timeout=timeout)
 
     # Patch the runner's module reference rather than global asyncio functions.
     monkeypatch.setattr(
@@ -98,11 +103,11 @@ async def test_rust_runner_finishes_and_reaps_test_processes(
     )
     finished = False
     child_alive = False
-    cargo_returncode = None
+    parent_returncode = None
     try:
         deadline = asyncio.get_running_loop().time() + 20
         while not pid_file.exists() and not task.done():
-            assert asyncio.get_running_loop().time() < deadline, "Cargo did not start"
+            assert asyncio.get_running_loop().time() < deadline, "Parent did not start"
             await asyncio.sleep(0.01)
         if outcome == "cancel":
             # The spawn fixture waits for readiness before returning the handle;
@@ -113,7 +118,7 @@ async def test_rust_runner_finishes_and_reaps_test_processes(
         done, _ = await asyncio.wait({task}, timeout=1)
         finished = task in done
         if processes:
-            cargo_returncode = processes[0].returncode
+            parent_returncode = processes[0].returncode
         if pid_file.exists():
             child_pid = int(pid_file.read_text())
             while True:
@@ -127,8 +132,7 @@ async def test_rust_runner_finishes_and_reaps_test_processes(
                     break
                 await asyncio.sleep(0.01)
     finally:
-        # Reap only the process group this fixture created, including any Rust
-        # executable that Cargo's parent-only kill left holding the output pipe.
+        # Reap only this fixture's group if the runner leaves descendants alive.
         for process in processes:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -139,10 +143,12 @@ async def test_rust_runner_finishes_and_reaps_test_processes(
             await asyncio.wait_for(process.wait(), 5)
     assert finished and not child_alive, (
         f"runner finished within its timeout: {finished}; "
-        f"Rust test child survived: {child_alive}; Cargo returncode: {cargo_returncode}"
+        f"Test child survived: {child_alive}; parent returncode: {parent_returncode}"
     )
-    if outcome == "timeout":
+    if outcome in {"timeout", "exited-parent"}:
         assert isinstance(result, TimeoutError)
+        if outcome == "exited-parent":
+            assert parent_returncode == 0
     elif outcome == "cancel":
         assert isinstance(result, asyncio.CancelledError)
     elif outcome == "failure":
