@@ -53,6 +53,14 @@ indexed file and 79% for BM25 over `.py` files only; the `.py`-only gap is withi
 [With and without Loom](../benchmarks/results.md#with-and-without-loom) ·
 [SWE-bench Verified file localization](../benchmarks/results.md#swe-bench-verified-file-localization)
 
+In a separate replay of 10 definition lookups, Loom returned a median of 1,678 estimated
+output tokens and ranked the right file first in all 10. Searching for bare names with
+`git grep` returned a median of 29,061; searching for qualified names returned 1,623. The
+index can cut the context returned for common names, while a qualified search can be just
+as compact. The [lookup benchmark](../benchmarks/results.md#with-and-without-loom)
+estimates tokens from output length (characters divided by four), not billed tokens for a
+coding session.
+
 ## A coding agent that reads the definition it needs
 
 For an edit to a known definition, [`code.edit_context`](../reference/operations/code.md#codeedit_context)
