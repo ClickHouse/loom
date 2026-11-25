@@ -16,12 +16,9 @@ from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, QueuePosition
 from server.memory.domain.temporal_sql import served_status_sql
 from server.memory.store.sql import FILE_LISTING_VISIBLE
+from server.settings import settings
 
 TABLE = "loom.memory_code_links"
-
-# The path hint uses metadata only. Keep the original path order when a
-# broad response cannot be checked within this many links.
-_PATH_HINT_ROWS = 512
 
 
 class Former(TypedDict):
@@ -334,16 +331,17 @@ async def _path_hint_rows(sql: str, params: dict[str, Any], until: float) -> lis
     remaining = until - time.monotonic()
     if remaining <= 0:
         return []
+    limit = settings.code_result_path_hint_rows
     rows = await _default_client().query_all(
         sql,
-        params | {"lim": _PATH_HINT_ROWS + 1},
+        params | {"lim": limit + 1},
         settings={
             "max_execution_time": remaining,
             "timeout_before_checking_execution_speed": 0,
             "timeout_overflow_mode": "throw",
         },
     )
-    return rows if len(rows) <= _PATH_HINT_ROWS else []
+    return rows if len(rows) <= limit else []
 
 
 async def path_hint_links(

@@ -286,6 +286,7 @@
  "code_result_lessons": true,
  "code_result_lessons_paths": 3,
  "code_result_lessons_tokens": 250,
+ "code_result_path_hint_rows": 512,
  "code_review_brief_mirror_miss_ttl_s": 600.0,
  "code_review_brief_rationale_paths": 10,
  "code_review_brief_rationale_rows": 8,
