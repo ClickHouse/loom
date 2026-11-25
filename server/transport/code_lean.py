@@ -318,8 +318,12 @@ def _lean_grep_definition(definition: dict[str, Any]) -> None:
     ):
         definition.pop("symbol")
     signature = definition.get("signature")
-    if isinstance(signature, str) and signature and signature in body.lstrip().partition("\n")[0]:
-        definition.pop("signature")
+    if isinstance(signature, str) and signature:
+        source = body.lstrip()
+        start = source.find(signature)
+        first_break = source.find("\n")
+        if start >= 0 and (first_break < 0 or start < first_break):
+            definition.pop("signature")
     if definition.get("body_elided") is False:
         definition.pop("body_elided")
 

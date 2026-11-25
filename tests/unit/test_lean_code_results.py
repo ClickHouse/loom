@@ -391,6 +391,19 @@ def test_lean_grep_omits_redundant_metadata_only_with_complete_source() -> None:
     assert definition["body_elided"] is False
 
 
+def test_lean_grep_omits_verbatim_multiline_signatures_at_the_declaration() -> None:
+    signature = "(\n        self,\n        value: str,\n    )"
+    body = f"    def inspect{signature}:\n        return value"
+    declaration = {"signature": signature, "body": body}
+    inside_body = {
+        "signature": signature,
+        "body": f"    def inspect(self):\n        call{signature}",
+    }
+    elided = {**declaration, "body_elided": True}
+    result = lean_code("code.grep", {"definitions": [declaration, inside_body, elided]})
+    assert result["definitions"] == [{"body": body}, inside_body, elided]
+
+
 def test_lean_grep_refs_exact_nested_source_without_losing_a_body() -> None:
     method = {
         "path": "a.py",
