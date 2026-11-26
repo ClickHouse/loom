@@ -142,6 +142,35 @@ def test_an_untyped_member_receiver_takes_no_same_file_guess():
     )
 
 
+@pytest.mark.parametrize(
+    ("statement", "owner"),
+    [
+        ("target = 0", ""),
+        ("del target", ""),
+        ("target, other = 0, 1", ""),
+        ("target += 1", ""),
+        ("other = 0", "Client"),
+        ("target: object", "Client"),
+        ("target = Alternative()", "Alternative"),
+    ],
+)
+def test_module_receiver_types_follow_assignment_and_deletion(statement, owner):
+    files = {
+        "svc/__init__.py": b"",
+        "svc/clients.py": (
+            b"class Client:\n    def send(self):\n        return 1\n\n"
+            b"class Alternative:\n    def send(self):\n        return 2\n"
+        ),
+        "svc/service.py": (
+            f"from .clients import Client, Alternative\ntarget = Client()\n{statement}\n\n"
+            "def submit():\n    return target.send()\n"
+        ).encode(),
+    }
+    calls, _ = _edges(files, "svc/service.py")
+    expected = [(f"svc.clients::{owner}::send", 0.9)] if owner else []
+    assert [(target, confidence) for line, target, confidence in calls if line == 6] == expected
+
+
 CROSS = {
     "sa/compiler.py": b"class Compiled:\n    def process(self, x):\n        return x\n\n\nclass SQLCompiler(Compiled):\n    pass\n",
     "sa/other.py": b"class Other:\n    def process(self, x):\n        return x\n",

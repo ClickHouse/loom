@@ -239,6 +239,7 @@ def _value_binding(right: Any, source: bytes, params: dict[str, str] | None) -> 
 def _body_bindings(
     node: Any, source: bytes, into: dict[str, str], *, fields: bool,
     params: dict[str, str] | None = None,
+    module: bool = False,
 ) -> None:
     """Assignments inside a body, without entering nested functions or
     classes (their scopes are their own). `fields` also records `self.x`
@@ -246,6 +247,11 @@ def _body_bindings(
     for child in node.named_children:
         if child.type in _FUNCTION_NODES or child.type == "class_definition":
             continue
+        if module and child.type in _MODULE_REBIND_NODES:
+            if child.type != "assignment" or child.child_by_field_name("right") is not None:
+                for name in _bound_identifiers(child, source):
+                    # A rebind can replace the receiver with an unknown value.
+                    into[name] = ""
         if child.type == "assignment":
             target, tname = _assignment_binding(child, source, params)
             if target and (fields or "." not in target):
@@ -253,7 +259,7 @@ def _body_bindings(
                     into.setdefault(target, tname)
                 else:
                     into[target] = tname
-        _body_bindings(child, source, into, fields=fields, params=params)
+        _body_bindings(child, source, into, fields=fields, params=params, module=module)
 
 
 def _class_bindings(class_node: Any, source: bytes) -> dict[str, str]:
@@ -309,7 +315,9 @@ class PyReceiverTyper:
             self._fixture_params.setdefault(int(line), set()).add(param)
         if pf.tree is not None:
             self._collect(pf.tree.root_node, pf.source, class_bindings=None)
-            _body_bindings(pf.tree.root_node, pf.source, self._module.bindings, fields=False)
+            _body_bindings(
+                pf.tree.root_node, pf.source, self._module.bindings, fields=False, module=True,
+            )
             self._collect_receiver_callees(pf.tree.root_node, pf.source)
             self._receiver_names -= self._bound_names
         self._scopes.sort(key=lambda s: s.end - s.start)
@@ -418,9 +426,8 @@ class PyReceiverTyper:
         scope = self._binder_at[key](line)
         if scope is not None:
             return self._resolve(scope.bindings[key])
-        bound = self._resolve(self._module.bindings.get(key, ""))
-        if bound or "." in key:
-            return bound
+        if key in self._module.bindings or "." in key:
+            return self._resolve(self._module.bindings.get(key, ""))
         # a name no scope binds is an import's — its
         # definition's annotation (`conf: AirflowConfigParser = …`) is its type
         return self._returns.get(NAME_PREFIX + key, "")
@@ -452,6 +459,7 @@ class PyReceiverTyper:
         self._returns.update({k: v for k, v in returns.items() if v})
 
 
+_MODULE_REBIND_NODES = frozenset({"assignment", "augmented_assignment", "delete_statement"})
 _BINDING_NODES = frozenset({
     "parameters", "lambda_parameters", "assignment", "augmented_assignment",
     "for_statement", "for_in_clause", "with_item", "except_clause", "named_expression",
