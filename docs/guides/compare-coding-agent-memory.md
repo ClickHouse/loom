@@ -12,6 +12,9 @@ Choose memory by what the next coding session needs. Put reviewed rules in a Git
 shared store of observations. Use Loom when readers need separately issued credentials,
 warnings tied to indexed source changes, or a SQL audit of who changed a decision.
 
+Use the [coding-agent memory selector](https://loom.clickhouse.com/agent-memory-selector)
+to choose a setup and copy a checklist for your repository.
+
 ## Three setups on the same repository
 
 The fixture contains a Python retry function. A writer saves that `should_retry`
