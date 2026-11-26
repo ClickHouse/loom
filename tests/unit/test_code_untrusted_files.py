@@ -33,9 +33,10 @@ _DELTA = {"delta_version": 1, "commit": "b" * 40, "files": []}
 
 
 def _watermark_unmoved(repo: Any) -> None:
-    """No state write but the failed pass's tier-health record: the watermark stays."""
+    """No state write but the failed pass's tier-health record and a refused delta's
+    hold (`compiler_tier.refusal_held`): the watermark stays."""
     keys = [c.args[2] for c in repo.set_state.await_args_list]
-    assert keys and all(k.startswith(STATE_PREFIX) for k in keys), keys
+    assert keys and all(k.startswith(STATE_PREFIX) or k.endswith("_refused") for k in keys), keys
 
 
 def _secret(tmp_path: Path) -> Path:
@@ -332,7 +333,7 @@ def _refused(res: Any, apply: AsyncMock, repo: AsyncMock) -> None:
     assert res.deltas_applied == 0 and res.errors, res.errors
     assert "FileRefused" in res.errors[0]
     apply.assert_not_awaited()
-    _watermark_unmoved(repo)  # the next pass retries
+    _watermark_unmoved(repo)
 
 
 @pytest.mark.asyncio

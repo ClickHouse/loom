@@ -38,7 +38,7 @@ import pydantic_core
 from pydantic import TypeAdapter, ValidationError
 
 from server.code.app.index.scip_delta import ScipDelta, ScipFile
-from server.code.app.index.untrusted_files import FileRefused, open_regular
+from server.code.app.index.untrusted_files import FileRefused, changed_while_read, open_regular
 from server.settings import settings
 
 _CHUNK = 1024 * 1024
@@ -295,7 +295,7 @@ class DeltaFile:
         fd, stamp = _open(self._path, self._max_bytes)
         try:
             if stamp != self._stamp:
-                raise FileRefused(f"{self._path} changed while it was read")
+                raise changed_while_read(self._path)
             values = _Values(self._path, fd, self._round_nodes, self._stamp.size)
             rounds = iter(plan)
             current, at = next(rounds), 0
@@ -310,7 +310,7 @@ class DeltaFile:
                         continue
                     entry = _entry(values.text(index)[0], index)
                     if entry.path != self.paths[index]:  # the entry the plan admitted
-                        raise FileRefused(f"{self._path} changed while it was read")
+                        raise changed_while_read(self._path)
                     batch.append(entry)
                     del entry  # held by the round alone, released with it
                     at += 1
@@ -323,7 +323,7 @@ class DeltaFile:
                     yield batch
                     batch, current, at = [], following, 0
             # the file held fewer entries than the first read planned
-            raise FileRefused(f"{self._path} changed while it was read")
+            raise changed_while_read(self._path)
         finally:
             os.close(fd)
 
@@ -379,10 +379,10 @@ def _count(path: Path, fd: int, stamp: _Stamp, max_nodes: int) -> None:
     while data := os.read(fd, _CHUNK):
         read += len(data)
         if read > stamp.size:  # still being written: never read past what was opened
-            raise FileRefused(f"{path} changed while it was read")
+            raise changed_while_read(path)
         nodes += sum(data.count(b) for b in _COUNTED)
     if read != stamp.size:
-        raise FileRefused(f"{path} changed while it was read")
+        raise changed_while_read(path)
     if nodes > max_nodes:
         raise FileRefused(
             f"{path} holds {nodes} `{{`/`[`/`,` bytes; max {max_nodes} (code_scip_delta_max_nodes)"
@@ -443,7 +443,7 @@ def open_delta(path: Path) -> DeltaFile:
         os.lseek(fd, 0, os.SEEK_SET)
         parsed = _parse(_Values(path, fd, round_nodes, stamp.size))
         if _stamp(os.fstat(fd)) != stamp:  # the parse read what the count counted
-            raise FileRefused(f"{path} changed while it was read")
+            raise changed_while_read(path)
     finally:
         os.close(fd)
     # the header without the entries and deleted paths, which were checked as read

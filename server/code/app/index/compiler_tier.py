@@ -12,6 +12,7 @@ conversion run in subprocesses; the tiers consume the JSON delta.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -26,6 +27,7 @@ from server.code.app.index.gitrepo import is_local_remote, upload_pack_args
 from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.repo_modes import PRIVATE_DIR_MODE, set_repo_dir_mode
 from server.code.app.index.sandbox import JobOptions, run_job, sandbox_available
+from server.code.app.index.untrusted_files import FileRefused
 from server.code.domain.index.repos import checkout_for
 from server.core.errors import caller_text
 from server.settings import settings
@@ -339,6 +341,53 @@ async def restart_full(
         cfg.namespace,
         watermark_key,
     )
+
+
+def _refusal_hold(target: str) -> str:
+    """What a refused delta holds: its target and every cap `open_delta` reads."""
+    caps = (
+        settings.code_scip_delta_file_max_mb,
+        settings.code_scip_delta_max_nodes,
+        settings.code_scip_delta_round_max_nodes,
+    )
+    return json.dumps({"target": target, "caps": caps})
+
+
+async def refusal_held(
+    repo: CodeRepo, cfg: RepoConfig, watermark: str, target: str, result: TierResult
+) -> bool:
+    """Whether the tier's delta at `target` was refused under the caps in effect
+    (`open_tier_delta`): the same run would write the same delta, so the harness is
+    not run and the entry is a skip, which leaves its failing record and its fix.
+    A new target, or a raised cap (a live setting), releases the hold."""
+    held = await repo.get_state(cfg.org, cfg.namespace, f"{watermark}_refused")
+    if held != _refusal_hold(target):
+        return False
+    result.skipped.append(
+        f"{cfg.namespace}: delta refused at {target[:12]}; held until a cap or the target changes"
+    )
+    return True
+
+
+async def open_tier_delta(
+    repo: CodeRepo, cfg: RepoConfig, watermark: str, target: str, path: Path
+) -> DeltaFile:
+    """`open_delta` for the tier's run at `target`. A refusal the same run would meet
+    again (over a cap, a link, not a regular file) holds the tier (`refusal_held`);
+    a delta that changed while it was read does not."""
+    import asyncio
+
+    from server.code.app.index.delta_file import open_delta
+
+    try:
+        return await asyncio.to_thread(open_delta, path)
+    except FileRefused as e:
+        if not e.changed:
+            check_held()
+            await repo.set_state(
+                cfg.org, cfg.namespace, f"{watermark}_refused", _refusal_hold(target)
+            )
+        raise
 
 
 async def compiler_target(repo: CodeRepo, cfg: RepoConfig) -> str:
