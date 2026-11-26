@@ -254,6 +254,34 @@ def test_replacement_preserves_old_cleanup_and_new_documents(work: Any) -> None:
     assert work.identities == [((cleanup.WORKER,), {"org": old.org, "namespace": old.mirror})]
 
 
+@pytest.mark.parametrize("marked_at", ["never", "start", "finish"])
+def test_pending_mirror_retirement_rechecks_worker_history(
+    work: Any, monkeypatch: pytest.MonkeyPatch, marked_at: str
+) -> None:
+    item = _item()
+    _put(work, item, "private-address")
+    native = dataclasses.replace(item.source(), active=False, pending_delete=True)
+    worker = dataclasses.replace(
+        native, worker_history=WorkerSourceHistory("mcp", "gdrive", "{}", "[]")
+    )
+    rereads = iter(
+        [worker if marked_at == "start" else native, worker if marked_at == "finish" else native]
+    )
+    key = (item.org, item.namespace, item.name)
+
+    async def latest(*_args: Any) -> Any:
+        current = next(rereads)
+        work.current[key] = current
+        return current
+
+    monkeypatch.setattr(cleanup.store, "latest_source", latest)
+    asyncio.run(cleanup.run_once())
+
+    assert len(work.retired) == (0 if marked_at == "start" else 1)
+    assert work.pending == ({item.source_id} if marked_at != "never" else set())
+    assert work.current[key].pending_delete is (marked_at != "never")
+
+
 def test_crash_before_inactivation_never_deletes_active_source(work: Any) -> None:
     item = _item()
     _put(work, item, "private-address")

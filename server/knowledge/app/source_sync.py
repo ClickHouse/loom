@@ -1517,6 +1517,10 @@ async def _retire_removed_sources(
 
 
 async def _retire_all(src: KnowledgeSource, run: Pass, result: PassResult) -> None:
+    with sequential_reads():
+        latest = await store.latest_source(src.org, src.namespace, src.name)
+    if latest is not None and latest.source_id == src.source_id and is_worker_source(latest):
+        return
     docs = await store.source_documents(src.org, *home(src))
     for doc in docs:
         if run.spent():
@@ -1534,7 +1538,12 @@ async def _retire_all(src: KnowledgeSource, run: Pass, result: PassResult) -> No
                 latest = await store.latest_source(src.org, src.namespace, src.name)
             # Only the request this pass acted on: a source added again under the
             # name since is another registration.
-            if latest is not None and latest.source_id == src.source_id and latest.pending_delete:
+            if (
+                latest is not None
+                and latest.source_id == src.source_id
+                and latest.pending_delete
+                and not is_worker_source(latest)
+            ):
                 await store.insert_source(dataclasses.replace(latest, pending_delete=False))
     except OverloadedError:
         return  # the next pass clears it

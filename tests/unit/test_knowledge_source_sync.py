@@ -35,6 +35,7 @@ from server.knowledge.domain.sources import (
     MIRRORED_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
+    WorkerSourceHistory,
     items_from_config,
 )
 from server.knowledge.store import documents
@@ -941,6 +942,34 @@ def test_a_removed_source_s_documents_are_retired_then_the_request_cleared(
     assert world.docs == {}
     assert world.audits[-1]["subject"]["source_name"] == "decks"
     assert not world.sources[-1].pending_delete
+
+
+@pytest.mark.parametrize("marked_at", ["never", "start", "finish"])
+def test_pending_native_retirement_rechecks_worker_history(
+    world: _World, monkeypatch: pytest.MonkeyPatch, marked_at: str
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    native = _source(active=False, pending_delete=True, credential_enc="")
+    worker = dataclasses.replace(
+        native, worker_history=WorkerSourceHistory("mcp", "gdrive", "{}", "[]")
+    )
+    rereads = iter(
+        [worker if marked_at == "start" else native, worker if marked_at == "finish" else native]
+    )
+    world.sources = [native]
+
+    async def latest(*_args: Any) -> KnowledgeSource:
+        current = next(rereads)
+        world.sources = [current]
+        return current
+
+    monkeypatch.setattr(source_sync.store, "latest_source", latest)
+    result = asyncio.run(source_sync.run_sync())
+
+    assert result.retired == (0 if marked_at == "start" else 1)
+    assert bool(world.docs) is (marked_at == "start")
+    assert world.sources[-1].pending_delete is (marked_at != "never")
 
 
 def test_a_pass_leaves_a_mirrored_source_of_a_store_without_a_mirror_turn(world: _World) -> None:
