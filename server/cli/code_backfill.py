@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import itertools
 import logging
 import os
 import pathlib
 import sys
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from server.cli._ch import connect_code_plane
@@ -26,7 +28,7 @@ log = logging.getLogger("loom.cli.code")
 
 
 def _count_record(counters: dict[str, int], recorded: FileIngestStats | Literal[False]) -> None:
-    """Count an oversize file's record as `_one` counts an ingested file."""
+    """Count an oversize file's record as `_Run.one` counts an ingested file."""
     key = "errors" if recorded is False else "excluded" if recorded.excluded else "files"
     counters[key] = counters.get(key, 0) + 1
 
@@ -51,11 +53,188 @@ def _edge_source(
     return _source
 
 
+def _cursor_batches(paths: list[str], start: int = 0) -> list[tuple[int, list[str]]]:
+    """The paths from `start` in cursor batches of 200, each with its first index. The
+    headers `headers_first` put first end their own batch, so no batch holds both a
+    header and a source: every header can be written before any source batch starts."""
+    from server.code.app.index.ingest_headers import HEADER_EXTS
+
+    batch = 200
+    split = next((i for i, p in enumerate(paths) if not p.endswith(HEADER_EXTS)), len(paths))
+    cuts = {*range(0, split, batch), *range(split, len(paths), batch), start, len(paths)}
+    return [(a, paths[a:b]) for a, b in itertools.pairwise(sorted(c for c in cuts if c >= start))]
+
+
+def index_counters() -> dict[str, int]:
+    return {"files": 0, "chunks": 0, "symbols": 0, "edges": 0, "errors": 0}
+
+
+def edge_counters() -> dict[str, int]:
+    return {"files": 0, "edges": 0, "errors": 0}
+
+
+@dataclass
+class _Run:
+    """What the index phase's cursor batches and its edge pass run with."""
+
+    repo: Any
+    cfg: Any
+    args: argparse.Namespace
+    org: str
+    ns: str
+    head: str
+    model_name: str
+    embedder: Any
+    denylist: Any
+    sem: asyncio.Semaphore
+    counters: dict[str, int] = field(default_factory=index_counters)
+    edges: dict[str, int] = field(default_factory=edge_counters)
+
+    @classmethod
+    async def open(
+        cls,
+        repo: Any,
+        cfg: Any,
+        args: argparse.Namespace,
+        head: str,
+        *,
+        org: str,
+        ns: str,
+        embedder: Any,
+    ) -> _Run:
+        from server.code.app.index import gitrepo
+        from server.code.app.index.denylist import load_denylist
+        from server.embedding.embedder import get_embedder
+
+        return cls(
+            repo=repo,
+            cfg=cfg,
+            args=args,
+            org=org,
+            ns=ns,
+            head=head,
+            model_name=get_embedder().model_name
+            + str(getattr(args, "embedding_model_suffix", "") or ""),
+            embedder=embedder,
+            denylist=await load_denylist(cfg, head, gitrepo.show_file),
+            sem=asyncio.Semaphore(max(1, args.concurrency)),
+        )
+
+    async def source(self, path: str) -> tuple[str, bytes | None]:
+        from server.code.app.index import gitrepo
+        from server.code.app.index.ingest import read_capped
+
+        async with self.sem:
+            source, recorded = await read_capped(
+                gitrepo.show_file,
+                self.repo,
+                self.org,
+                self.ns,
+                git_dir=self.cfg.git_dir,
+                path=path,
+                commit_sha=self.head,
+                embedding_model=self.model_name,
+                denylist=self.denylist,
+            )
+        if recorded is not None:
+            _count_record(self.counters, recorded)
+        return path, source
+
+    async def one(self, reads: Any, path: str, source: bytes) -> None:
+        from server.code.app.index.ingest import ingest_file
+        from server.settings import settings
+
+        counters, args = self.counters, self.args
+        async with self.sem:
+            try:
+                stats = await ingest_file(
+                    reads,
+                    self.org,
+                    self.ns,
+                    path=path,
+                    source=source,
+                    commit_sha=self.head,
+                    embedding_model=self.model_name,
+                    embedder=self.embedder,
+                    max_chunk_chars=settings.code_chunk_max_chars,
+                    embed_reuse_from=self.cfg.embed_reuse_from,
+                    denylist=self.denylist,
+                    context_callees=str(getattr(args, "context_callees", "") or "off"),
+                    callers_namespace=str(getattr(args, "callers_from", "") or ""),
+                    parsed=reads.parsed.get(path),
+                )
+            except customer.HOLDS:
+                raise  # the org's model calls are held: the run stops, its cursor kept
+            except Exception as e:  # noqa: BLE001 — per-file, keep going
+                counters["errors"] += 1
+                print(f"  ! {path}: {type(e).__name__}: {e}", file=sys.stderr)
+                return
+            if stats.excluded:
+                counters["excluded"] = counters.get("excluded", 0) + 1
+                return
+            counters["files"] += 1
+            counters["chunks"] += stats.chunks_new
+            counters["symbols"] += stats.symbols_new
+            counters["moved"] = counters.get("moved", 0) + stats.chunks_moved + stats.symbols_moved
+            counters["edges"] += stats.edges_new
+            counters["embed_reused"] = counters.get("embed_reused", 0) + stats.embed_reused
+
+    async def batch(self, paths: list[str]) -> str:
+        """One cursor batch of the index phase: "" once written, else why it was held."""
+        return await _held_batch(
+            self.repo,
+            self.org,
+            self.ns,
+            paths,
+            source=self.source,
+            one=self.one,
+            denylist=self.denylist,
+            git_dir=self.cfg.git_dir,
+            head=self.head,
+        )
+
+    async def edge_one(self, reads: Any, path: str, src: bytes) -> None:
+        from server.code.app.index.ingest import ingest_file
+
+        async with self.sem:
+            try:
+                stats = await ingest_file(
+                    reads,
+                    self.org,
+                    self.ns,
+                    path=path,
+                    source=src,
+                    commit_sha=self.head,
+                    embedding_model=self.model_name,
+                    edges_only=True,
+                    denylist=self.denylist,
+                    parsed=reads.parsed.get(path),
+                )
+            except Exception as e:  # noqa: BLE001 — per-file, keep going
+                self.edges["errors"] += 1
+                print(f"  ! second pass {path}: {type(e).__name__}: {e}", file=sys.stderr)
+                return
+            self.edges["files"] += 1
+            self.edges["edges"] += stats.edges_new
+
+    async def edge_batch(self, paths: list[str]) -> None:
+        """One batch of the edge pass."""
+        await _backfill_batch_rounds(
+            self.repo,
+            self.org,
+            self.ns,
+            paths,
+            source=_edge_source(self.cfg.git_dir, self.head, self.sem),
+            one=self.edge_one,
+            denylist=self.denylist,
+            git_dir=self.cfg.git_dir,
+            head=self.head,
+        )
+
+
 async def _backfill(args: argparse.Namespace) -> int:
-    from server.code.app.index import gitrepo
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
-    from server.settings import settings
 
     if args.phase == "embed":
         return await _backfill_embed(CodeRepo(), *_identity(args), args)
@@ -99,14 +278,11 @@ async def _backfill(args: argparse.Namespace) -> int:
         model = get_embedder().model_name
         print(f"chunks stored as dim=0 stubs for model {model}; run --phase embed after")
 
-    from server.code.app.index.denylist import load_denylist
-    from server.code.app.index.ingest import ingest_file, read_capped
-
     suffix = str(getattr(args, "embedding_model_suffix", "") or "")
-    model_name = get_embedder().model_name + suffix
+    run = await _Run.open(repo, cfg, args, head, org=org, ns=ns, embedder=embedder)
+    model_name = run.model_name
     if suffix:
         print(f"twin label: rows written under embedding_model={model_name!r}")
-    denylist = await load_denylist(cfg, head, gitrepo.show_file)
     cursor_key = f"backfill_cursor:index{suffix}"
     owed_key = f"backfill_edges_owed:index{suffix}"
     mode = "repair" if paths_file else "twin" if suffix else "backfill"
@@ -114,75 +290,9 @@ async def _backfill(args: argparse.Namespace) -> int:
     owed, recorded = await _record_edge_pass(repo, org, ns, args, owed_key, str(done_upto or ""))
     start_idx = int(done_upto) if done_upto.isdigit() else 0
     started = time.monotonic()
-    sem = asyncio.Semaphore(max(1, args.concurrency))
-    counters = {"files": 0, "chunks": 0, "symbols": 0, "edges": 0, "errors": 0}
-
-    async def _source(path: str) -> tuple[str, bytes | None]:
-        async with sem:
-            source, recorded = await read_capped(
-                gitrepo.show_file,
-                repo,
-                org,
-                ns,
-                git_dir=cfg.git_dir,
-                path=path,
-                commit_sha=head,
-                embedding_model=model_name,
-                denylist=denylist,
-            )
-        if recorded is not None:
-            _count_record(counters, recorded)
-        return path, source
-
-    async def _one(reads: Any, path: str, source: bytes) -> None:
-        async with sem:
-            try:
-                stats = await ingest_file(
-                    reads,
-                    org,
-                    ns,
-                    path=path,
-                    source=source,
-                    commit_sha=head,
-                    embedding_model=model_name,
-                    embedder=embedder,
-                    max_chunk_chars=settings.code_chunk_max_chars,
-                    embed_reuse_from=cfg.embed_reuse_from,
-                    denylist=denylist,
-                    context_callees=str(getattr(args, "context_callees", "") or "off"),
-                    callers_namespace=str(getattr(args, "callers_from", "") or ""),
-                    parsed=reads.parsed.get(path),
-                )
-            except customer.HOLDS:
-                raise  # the org's model calls are held: the run stops, its cursor kept
-            except Exception as e:  # noqa: BLE001 — per-file, keep going
-                counters["errors"] += 1
-                print(f"  ! {path}: {type(e).__name__}: {e}", file=sys.stderr)
-                return
-            if stats.excluded:
-                counters["excluded"] = counters.get("excluded", 0) + 1
-                return
-            counters["files"] += 1
-            counters["chunks"] += stats.chunks_new
-            counters["symbols"] += stats.symbols_new
-            counters["moved"] = counters.get("moved", 0) + stats.chunks_moved + stats.symbols_moved
-            counters["edges"] += stats.edges_new
-            counters["embed_reused"] = counters.get("embed_reused", 0) + stats.embed_reused
-
-    batch = 200
-    for b_start in range(start_idx, len(paths), batch):
-        chunk_paths = paths[b_start : b_start + batch]
-        held = await _held_batch(
-            repo,
-            org,
-            ns,
-            chunk_paths,
-            source=_source,
-            one=_one,
-            denylist=denylist,
-            git_dir=cfg.git_dir,
-            head=head,
-        )
+    counters = run.counters
+    for b_start, chunk_paths in _cursor_batches(paths, start_idx):
+        held = await run.batch(chunk_paths)
         if held:
             print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
             # The batches written before the hold are compacted and recorded.
@@ -203,18 +313,7 @@ async def _backfill(args: argparse.Namespace) -> int:
             print(f"edge second pass owed by an earlier run of this backfill ({recorded})")
         elif owed == "first-backfill":
             print("first full backfill of this namespace: edge second pass implied")
-        second = await _second_edge_pass(
-            repo,
-            org,
-            ns,
-            paths,
-            source=_edge_source(cfg.git_dir, head, sem),
-            denylist=denylist,
-            head=head,
-            model_name=model_name,
-            sem=sem,
-            git_dir=cfg.git_dir,
-        )
+        second = await _second_edge_pass(run, paths)
         counters["edges_second_pass"] = second["edges"]
         counters["errors"] += second["errors"]
         if not paths_file:
@@ -350,65 +449,18 @@ def edge_pass_owed(
     return "" if done_upto else "first-backfill"
 
 
-async def _second_edge_pass(
-    repo: Any,
-    org: str,
-    ns: str,
-    paths: list[str],
-    *,
-    source: Any,
-    denylist: Any,
-    head: str,
-    model_name: str,
-    sem: asyncio.Semaphore,
-    git_dir: str,
-) -> dict[str, int]:
+async def _second_edge_pass(run: _Run, paths: list[str]) -> dict[str, int]:
     """The edges-only pass over the same paths once the whole
     tree is indexed. The first pass resolved each file against the name table
     as it stood — a fresh namespace's dbt model indexed before the model it
     `ref()`s bound nothing (bench callers F1 0.286 → 1.0 on the second
     pass). Same rounds as the index phase; chunks, symbols and facets are
     left alone, edges are key-diffed against the live rows."""
-    from server.code.app.index.ingest import ingest_file
-
     started = time.monotonic()
-    counters = {"files": 0, "edges": 0, "errors": 0}
-
-    async def _one(reads: Any, path: str, src: bytes) -> None:
-        async with sem:
-            try:
-                stats = await ingest_file(
-                    reads,
-                    org,
-                    ns,
-                    path=path,
-                    source=src,
-                    commit_sha=head,
-                    embedding_model=model_name,
-                    edges_only=True,
-                    denylist=denylist,
-                    parsed=reads.parsed.get(path),
-                )
-            except Exception as e:  # noqa: BLE001 — per-file, keep going
-                counters["errors"] += 1
-                print(f"  ! second pass {path}: {type(e).__name__}: {e}", file=sys.stderr)
-                return
-            counters["files"] += 1
-            counters["edges"] += stats.edges_new
-
+    counters = run.edges
     print(f"second edge pass: {len(paths)} files against the finished name table")
-    for b_start in range(0, len(paths), 200):
-        await _backfill_batch_rounds(
-            repo,
-            org,
-            ns,
-            paths[b_start : b_start + 200],
-            source=source,
-            one=_one,
-            denylist=denylist,
-            git_dir=git_dir,
-            head=head,
-        )
+    for _b, chunk in _cursor_batches(paths):
+        await run.edge_batch(chunk)
     print(
         f"second edge pass complete: files={counters['files']} edges=+{counters['edges']} "
         f"errors={counters['errors']} in {time.monotonic() - started:.0f}s"
