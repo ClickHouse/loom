@@ -463,26 +463,19 @@ async def test_a_job_writes_with_the_process_umask(tmp_path: Path, monkeypatch) 
 def _shared_pack_checkout(base: Path) -> tuple[Path, Path, str]:
     """A tier checkout under `base` whose packs are its mirror's files, at the head."""
     from tests.unit.code_fixtures import repo_config
+    from tests.unit.git_repo import git
 
     source = base / "source"
     source.mkdir()
-    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    git(source, "init", "-q")
     (source / "main.py").write_text("print('ok')\n")
-    subprocess.run(["git", "-C", str(source), "add", "main.py"], check=True)
-    subprocess.run(
-        ["git", "-C", str(source), "-c", "user.name=t", "-c", "user.email=t@example.com"]
-        + ["commit", "-qm", "initial"],
-        check=True,
-    )
-    bare = base / "repo.git"
-    subprocess.run(["git", "clone", "-q", "--bare", "--no-local", str(source), str(bare)])
-    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(base / "co"))
+    git(source, "add", "main.py")
+    git(source, "commit", "-qm", "initial")
+    git(base, "clone", "-q", "--bare", "--no-local", "source", "repo.git")
+    cfg = repo_config(git_dir=str(base / "repo.git"), scip_checkout_dir=str(base / "co"))
     checkout, bare, missing = compiler_tier.resolve_checkout(cfg, "python")
     assert missing is None and compiler_tier.shared_packs(checkout)
-    head = subprocess.run(
-        ["git", "--git-dir", str(bare), "rev-parse", "HEAD"], capture_output=True, text=True
-    )
-    return checkout, bare, head.stdout.strip()
+    return checkout, bare, git(bare, "rev-parse", "HEAD").strip()
 
 
 @pytest.mark.parametrize("root", ["plain", "symlinked"])
@@ -491,7 +484,8 @@ async def test_tier_jobs_run_in_a_checkout_sharing_the_mirrors_packs(
 ) -> None:
     """The fetch, `checkout --force` and a harness's `git diff` in a checkout whose packs
     are hard links of the mirror's, with the repos root reached through a symlink too;
-    the mirror is mounted only for the fetch, and no git job can write a shared pack."""
+    the mirror is mounted only for the fetch, and no git job can write a shared pack,
+    not even after an earlier job removed the `.keep` files."""
     base = tmp_path / "data"
     base.mkdir()
     if root == "symlinked":
@@ -516,6 +510,9 @@ async def test_tier_jobs_run_in_a_checkout_sharing_the_mirrors_packs(
     mirror_pack = bare / "objects" / "pack" / pack.name
     before = (mirror_pack.stat().st_mode, mirror_pack.read_bytes())
     write = f"alias.w=!chmod u+w {pack} && echo x >> {pack}"
+    with pytest.raises(tier_health.ToolOutputError, match="git -c failed"):
+        await compiler_tier.git(checkout, "-c", write, "w")
+    await compiler_tier.git(checkout, "-c", f"alias.r=!rm {pack.parent}/*.keep", "r")
     with pytest.raises(tier_health.ToolOutputError, match="git -c failed"):
         await compiler_tier.git(checkout, "-c", write, "w")
     assert (mirror_pack.stat().st_mode, mirror_pack.read_bytes()) == before

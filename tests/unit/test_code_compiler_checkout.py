@@ -10,6 +10,7 @@ import pytest
 
 from server.code.app.index.compiler_tier import resolve_checkout
 from tests.unit.code_fixtures import repo_config
+from tests.unit.git_repo import git
 
 
 def _bare_repo(tmp_path: Path) -> Path:
@@ -360,11 +361,30 @@ async def test_no_git_command_in_a_checkout_starts_a_repack(tmp_path: Path, monk
     assert seen[0][3:7] == ["-c", "gc.auto=0", "-c", "maintenance.auto=false"]
 
 
-def _packed_bare(tmp_path: Path) -> Path:
-    """A mirror as Loom clones one: its objects in a pack."""
-    bare = _bare_repo(tmp_path)
-    subprocess.run(["git", "--git-dir", str(bare), "repack", "-a", "-d", "-q"], check=True)
+def _commit(source: Path, name: str) -> None:
+    (source / name).write_text(f"print({name!r})\n")
+    git(source, "add", name)
+    git(source, "commit", "-qm", name)
+
+
+def _packed_bare(tmp_path: Path, *, packed: bool = True) -> Path:
+    """A mirror as Loom clones one, its objects in a pack (or, not `packed`, loose)."""
+    source = tmp_path / "source"
+    source.mkdir(parents=True)
+    git(source, "init", "-q")
+    _commit(source, "main.py")
+    bare = tmp_path / "repo.git"
+    local = "--no-local" if packed else "--local"
+    git(tmp_path, "clone", "-q", "--bare", local, "source", "repo.git")
     return bare
+
+
+def _mirror_gets_a_commit_and_gc(tmp_path: Path, name: str) -> None:
+    """The mirror fetches a new commit and its gc replaces every pack with a new one."""
+    _commit(tmp_path / "source", name)
+    bare = tmp_path / "repo.git"
+    git(bare, "fetch", "-q", str(tmp_path / "source"), f"+HEAD:refs/heads/{name}")
+    git(bare, "-c", "gc.auto=0", "gc", "-q", "--no-prune")
 
 
 def _packs(git_dir: Path) -> set[tuple[str, int]]:
@@ -379,67 +399,75 @@ def _own_objects(checkout: Path) -> list[Path]:
     return [p for p in files if p.suffix != ".keep" and p.stat().st_nlink == 1]
 
 
-def _git(checkout: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(checkout), *args], capture_output=True, text=True, check=True
-    ).stdout.strip()
+def _left_behind(checkout: Path) -> list[str]:
+    """Pack files git cannot use (no `.idx`) and link temporaries."""
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    return sorted(
+        p.name
+        for p in pack_dir.iterdir()
+        if p.name.startswith(".loom-link-")
+        or (p.suffix in (".pack", ".rev", ".keep") and not p.with_suffix(".idx").exists())
+    )
+
+
+def _head(repo: Path) -> str:
+    return git(repo, "rev-parse", "HEAD").strip()
 
 
 def _fetch_and_check_out(checkout: Path, bare: Path) -> str:
     from server.code.app.index.compiler_tier import checkout_fetch_args
     from server.code.app.index.gitrepo import auth_env
 
-    target = subprocess.run(
-        ["git", "--git-dir", str(bare), "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
+    target = _head(bare)
     env = auth_env(remote=str(bare))
     for args in (checkout_fetch_args(bare, target), ["checkout", "-q", "--force", target]):
         subprocess.run(["git", "-C", str(checkout), *args], env=env, check=True)
     return target
 
 
+def _gc_when_due(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The checkout gc on its weekly interval, with no free-space margin on the test host."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_mirror_gc_interval_h", 168.0)
+    monkeypatch.setattr(settings, "code_mirror_gc_margin_gb", 0.0)
+
+
 def _previous_build_pass(cfg: object, producer: str, bare: Path) -> str:
     """A tier pass of the version before shared packs: it initializes only a missing or
     empty `checkout_for` path, with a plain `git init`; its fetch mounts the mirror, its
-    `checkout --force` only the checkout (the mirror is out of its sight)."""
+    `checkout --force` only the checkout (the mirror is out of its sight); then its
+    checkout gc, the same `gc_if_due` command."""
+    from server.code.app.index import mirrors
     from server.code.app.index.compiler_tier import checkout_fetch_args
     from server.code.app.index.gitrepo import auth_env
     from server.code.domain.index.repos import checkout_for
 
     checkout = Path(checkout_for(cfg, producer))  # type: ignore[arg-type]
     if not checkout.exists() or not any(checkout.iterdir()):
-        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
-    target = subprocess.run(
-        ["git", "--git-dir", str(bare), "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
+        git(checkout.parent, "init", "-q", checkout.name)
+    target = _head(bare)
     env = auth_env(remote=str(bare))
     subprocess.run(
         ["git", "-C", str(checkout), *checkout_fetch_args(bare, target)], env=env, check=True
     )
     hidden = bare.rename(bare.with_name(f"{bare.name}.unmounted"))
     try:
-        subprocess.run(
-            ["git", "-C", str(checkout), "checkout", "-q", "--force", target], check=True
-        )
+        git(checkout, "checkout", "-q", "--force", target)
     finally:
         hidden.rename(bare)
+    (checkout / ".git" / mirrors._GC_MARK).unlink(missing_ok=True)
+    asyncio.run(mirrors.gc_if_due(str(checkout / ".git")))
     return target
 
 
-def _tier_pass(cfg: object, monkeypatch: pytest.MonkeyPatch) -> str | None:
-    """What a tier pass does to its checkout: resolve it, then the checkout gc (its
-    interval off, so only a due repack runs)."""
+def _tier_pass(cfg: object) -> str | None:
+    """What a tier pass with a new commit does to its checkout: resolve it, fetch and
+    check out the mirror's head, then the checkout gc."""
     from server.code.app.index import compiler_tier
-    from server.settings import settings
 
-    monkeypatch.setattr(settings, "code_mirror_gc_interval_h", 0.0)
-    _checkout, _bare, missing = resolve_checkout(cfg, "python")  # type: ignore[arg-type]
+    checkout, bare, missing = resolve_checkout(cfg, "python")  # type: ignore[arg-type]
+    _fetch_and_check_out(checkout, bare)
     asyncio.run(compiler_tier._gc_checkout(cfg, "python"))  # type: ignore[arg-type]
     return missing
 
@@ -456,14 +484,16 @@ def test_a_new_checkout_shares_the_mirrors_packs(tmp_path: Path) -> None:
     assert missing is None and checkout == tmp_path / "co.python"
     assert _packs(checkout / ".git") == _packs(bare) != set()
     assert _own_objects(checkout) == []
-    assert (checkout / "main.py").read_text() == "print('ok')\n"
+    assert (checkout / "main.py").read_text() == "print('main.py')\n"
 
 
 def test_a_full_copy_from_an_older_version_is_reclaimed_in_place(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A checkout an older version filled with its own copy, at the same path: the next
-    pass shares the mirror's packs and drops the copy; HEAD and the files stay."""
+    """A checkout an older version filled with its own copy and gc'd a moment ago, at
+    the same path: the next pass shares the mirror's packs and its gc, due again, drops
+    the copy; HEAD and the files stay."""
+    _gc_when_due(monkeypatch)
     bare = _packed_bare(tmp_path)
     cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
     target = _previous_build_pass(cfg, "python", bare)
@@ -471,29 +501,31 @@ def test_a_full_copy_from_an_older_version_is_reclaimed_in_place(
     (checkout / "build-cache").write_text("kept\n")
     assert _own_objects(checkout) != []
 
-    missing = _tier_pass(cfg, monkeypatch)
+    missing = _tier_pass(cfg)
 
-    assert missing is None and not (checkout / ".git" / "loom-repack-due").exists()
+    assert missing is None
     assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
-    assert _git(checkout, "rev-parse", "HEAD") == target
+    assert _head(checkout) == target
     assert (checkout / "build-cache").read_text() == "kept\n"
-    assert _git(checkout, "status", "--porcelain", "--untracked-files=no") == ""
+    assert git(checkout, "status", "--porcelain", "--untracked-files=no") == ""
 
 
-def test_the_tier_hands_off_between_versions_on_one_repos_volume(tmp_path: Path) -> None:
+def test_the_tier_hands_off_between_versions_on_one_repos_volume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A mixed-version rollout moves the tier lease new → previous → new over one
-    checkout: the previous version's jobs, which mount only the checkout, read it."""
+    checkout: the previous version's jobs, which mount only the checkout, read it, and
+    its gc keeps the shared packs."""
+    _gc_when_due(monkeypatch)
     bare = _packed_bare(tmp_path)
     cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
-    checkout, _bare, missing = resolve_checkout(cfg, "python")
-    target = _fetch_and_check_out(checkout, bare)
-    assert missing is None
+    assert _tier_pass(cfg) is None
+    checkout = tmp_path / "co.python"
 
-    assert _previous_build_pass(cfg, "python", bare) == target
+    assert _previous_build_pass(cfg, "python", bare) == _head(bare)
+    assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
 
-    again, _bare, missing = resolve_checkout(cfg, "python")
-    assert missing is None and again == checkout
-    assert _fetch_and_check_out(again, bare) == target
+    assert _tier_pass(cfg) is None and _head(checkout) == _head(bare)
     assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
 
 
@@ -502,95 +534,186 @@ def test_a_changed_mirror_is_shared_again_and_the_checkout_keeps_its_objects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mirror: str
 ) -> None:
     """The mirror's gc writes a new pack, or the mirror is cloned again without the
-    commit the checkout is at: the next pass shares the mirror's current packs, and any
-    object only the old pack held moves into the checkout's own pack."""
+    commit the checkout is at: the next pass shares the mirror's current packs, and its
+    gc moves any object only the old pack held into the checkout's own pack."""
     import shutil
 
+    _gc_when_due(monkeypatch)
     bare = _packed_bare(tmp_path)
     cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
-    checkout, _bare, _missing = resolve_checkout(cfg, "python")
-    old = _fetch_and_check_out(checkout, bare)
+    _tier_pass(cfg)
+    checkout = tmp_path / "co.python"
+    old = _head(checkout)
     if mirror == "repacked":
-        source = tmp_path / "source"
-        (source / "next.py").write_text("print('next')\n")
-        _git(source, "add", "next.py")
-        _git(source, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "n")
-        subprocess.run(
-            ["git", "--git-dir", str(bare), "fetch", "-q", str(source), "+HEAD:refs/heads/next"],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "--git-dir", str(bare), "-c", "gc.auto=0", "gc", "-q", "--no-prune"],
-            check=True,
-        )
+        _mirror_gets_a_commit_and_gc(tmp_path, "next.py")
     else:
         shutil.rmtree(bare)
-        (tmp_path / "other").mkdir()
-        other = _bare_repo(tmp_path / "other").parent / "source"
-        _git(
-            other,
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@example.com",
-            "commit",
-            "--amend",
-            "-qm",
-            "o",
-        )
-        subprocess.run(["git", "clone", "-q", "--bare", "--no-local", str(other), str(bare)])
+        other = _packed_bare(tmp_path / "other").parent / "source"
+        git(other, "commit", "--amend", "-qm", "o")
+        git(tmp_path, "clone", "-q", "--bare", "--no-local", str(other), str(bare))
         assert subprocess.run(["git", "--git-dir", str(bare), "cat-file", "-e", old]).returncode
     assert _packs(checkout / ".git") != _packs(bare)
 
-    missing = _tier_pass(cfg, monkeypatch)
+    missing = _tier_pass(cfg)
 
     assert missing is None and _packs(bare) <= _packs(checkout / ".git")
-    assert _git(checkout, "cat-file", "-t", f"{old}^{{tree}}") == "tree"
+    assert git(checkout, "cat-file", "-t", f"{old}^{{tree}}").strip() == "tree"
     shared = {p.name for p in (checkout / ".git" / "objects" / "pack").glob("*.keep")}
     assert shared == {name.replace(".pack", ".keep") for name, _ino in _packs(bare)}
     if mirror == "repacked":
-        assert _own_objects(checkout) == []
-    _fetch_and_check_out(checkout, bare)
+        assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
 
 
-def test_a_checkout_on_another_filesystem_keeps_its_own_copy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize("layout", ["cross-device", "no-mirror-pack"])
+def test_a_checkout_that_cannot_share_keeps_one_copy_and_no_pass_rewrites_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    layout: str,
 ) -> None:
-    """A hard link across filesystems fails: the tier works as before, with a copy."""
+    """A hard link across filesystems fails, or the mirror has no pack to share: the tier
+    works as before with its own copy, and a second pass leaves that copy's files as
+    they are, the checkout gc waiting for its interval."""
     import errno
     import os
 
-    bare = _packed_bare(tmp_path)
+    _gc_when_due(monkeypatch)
+    bare = _packed_bare(tmp_path, packed=layout != "no-mirror-pack")
     cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
 
     def cross_device(_src: object, _dst: object) -> None:
         raise OSError(errno.EXDEV, "Invalid cross-device link")
 
-    monkeypatch.setattr(os, "link", cross_device)
-    checkout, _bare, missing = resolve_checkout(cfg, "python")
-    _fetch_and_check_out(checkout, bare)
+    if layout == "cross-device":
+        monkeypatch.setattr(os, "link", cross_device)
+    assert _tier_pass(cfg) is None
+    checkout = tmp_path / "co.python"
+    first = _packs(checkout / ".git")
 
+    assert _tier_pass(cfg) is None
+
+    assert _packs(checkout / ".git") == first != set() and (checkout / "main.py").exists()
     pack_dir = checkout / ".git" / "objects" / "pack"
-    assert missing is None and (checkout / "main.py").exists()
     assert not [p for p in pack_dir.iterdir() if p.suffix == ".keep" or p.name.startswith(".")]
-    assert "cross-device" in caplog.text
+    assert ("cross-device" in caplog.text) is (layout == "cross-device")
 
 
-def test_a_repack_past_its_timeout_is_killed_and_retried(
+def test_a_mirror_gc_while_links_fail_keeps_the_old_pack_shared(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.settings import settings
+    """The mirror's gc replaced its pack and the new one cannot be linked this pass: the
+    old pack stays kept, so no gc copies it out; the next pass shares the new pack and
+    its gc drops the old one."""
+    import errno
+    import os
+
+    _gc_when_due(monkeypatch)
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    _tier_pass(cfg)
+    checkout = tmp_path / "co.python"
+    before = _packs(checkout / ".git")
+    _mirror_gets_a_commit_and_gc(tmp_path, "next.py")
+
+    def refused(_src: object, _dst: object) -> None:
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "link", refused)
+        assert _tier_pass(cfg) is None
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    assert _packs(checkout / ".git") == before
+    assert {p.name for p in pack_dir.glob("*.keep")} == {
+        name.replace(".pack", ".keep") for name, _ino in before
+    }
+
+    assert _tier_pass(cfg) is None
+    assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
+
+
+@pytest.mark.parametrize("interrupted", ["killed", "raced"])
+def test_an_interrupted_link_leaves_no_pack_without_its_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupted: str
+) -> None:
+    """A pass killed after linking a `.pack` whose mirror pack then went, or a link that
+    loses the `.idx` to the mirror's gc mid-way: no pack file git cannot use stays to
+    hold a dead mirror pack's blocks."""
+    import os
+
+    _gc_when_due(monkeypatch)
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    _tier_pass(cfg)
+    checkout = tmp_path / "co.python"
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    _mirror_gets_a_commit_and_gc(tmp_path, "next.py")
+    if interrupted == "killed":
+        from server.code.app.index.compiler_tier import SHARED_PACK_KEEP
+
+        (stem,) = {p.stem for p in (bare / "objects" / "pack").glob("*.pack")}
+        (pack_dir / f"{stem}.keep").write_text(SHARED_PACK_KEEP)
+        os.link(bare / "objects" / "pack" / f"{stem}.pack", pack_dir / f"{stem}.pack")
+        _mirror_gets_a_commit_and_gc(tmp_path, "last.py")
+        assert _left_behind(checkout) != []
+        _tier_pass(cfg)
+    else:
+        link = os.link
+
+        def idx_gone(src: str | Path, dst: str | Path) -> None:
+            if str(src).endswith(".idx"):
+                raise FileNotFoundError(src)
+            link(src, dst)
+
+        with monkeypatch.context() as m:
+            m.setattr(os, "link", idx_gone)
+            resolve_checkout(cfg, "python")
+
+    assert _left_behind(checkout) == []
+    _tier_pass(cfg)
+    assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
+
+
+@pytest.mark.asyncio
+async def test_a_job_that_removes_a_keep_still_gets_the_shared_pack_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A git job can rewrite or remove the `.keep` files: the next job still mounts every
+    file the checkout shares with the mirror read-only, chosen by its link count."""
+    from server.code.app.index import compiler_tier
+    from server.code.app.index.sandbox import JobResult
 
     bare = _packed_bare(tmp_path)
     cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
-    target = _previous_build_pass(cfg, "python", bare)
-    checkout = tmp_path / "co.python"
+    checkout, _bare, _missing = resolve_checkout(cfg, "python")
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    linked = {p.name for p in pack_dir.iterdir() if p.suffix in (".pack", ".rev", ".idx")}
+    for keep in pack_dir.glob("*.keep"):
+        keep.unlink()
+    seen: list[list[Path]] = []
 
-    with monkeypatch.context() as m:
-        m.setattr(settings, "code_mirror_gc_timeout_s", 1e-6)
-        missing = _tier_pass(cfg, monkeypatch)
-    assert missing is None and _git(checkout, "rev-parse", "HEAD") == target
-    assert (checkout / ".git" / "loom-repack-due").exists() and _own_objects(checkout) != []
+    async def _job(argv, **kw):
+        seen.append(kw["readonly"])
+        return JobResult(0, b"", b"")
 
-    assert _tier_pass(cfg, monkeypatch) is None and _own_objects(checkout) == []
-    assert _git(checkout, "rev-parse", "HEAD") == target
+    monkeypatch.setattr(compiler_tier, "run_job", _job)
+    await compiler_tier.git(checkout, "checkout", "--force", "HEAD")
+
+    assert {p.name for p in seen[0]} == linked != set()
+
+
+def test_the_checkout_gc_needs_no_room_for_the_packs_it_keeps(tmp_path: Path) -> None:
+    """No gc rewrites a kept pack, so the gc's free-space test leaves the shared packs
+    out of the size it needs room for."""
+    from server.code.app.index import mirrors
+
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    checkout, _bare, _missing = resolve_checkout(cfg, "python")
+    git_dir = checkout / ".git"
+    pack = next((git_dir / "objects" / "pack").glob("*.pack"))
+    kept = mirrors._tree_bytes(str(git_dir))
+
+    for keep in pack.parent.glob("*.keep"):
+        keep.unlink()
+
+    assert mirrors._tree_bytes(str(git_dir)) - kept > pack.stat().st_size
