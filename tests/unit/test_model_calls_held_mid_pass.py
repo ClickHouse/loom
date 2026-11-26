@@ -110,8 +110,9 @@ def test_the_titler_counts_a_held_thread_as_no_error(monkeypatch, error) -> None
 @held
 def test_code_summaries_record_no_error_for_a_held_repository_or_file(monkeypatch, error) -> None:
     from server.code.workers import summary as w
+    from tests.unit.code_fixtures import repo_config
 
-    repos = [SimpleNamespace(org="acme", namespace="code-a")]
+    repos = [repo_config(org="acme", namespace="code-a")]
     monkeypatch.setattr("server.code.domain.index.repos.configured_repos", lambda: repos)
     monkeypatch.setattr(w, "_summarize_repo", _raise(error))
     result = w.CodeSummaryResult()
@@ -174,7 +175,7 @@ def test_a_summary_pass_held_at_one_file_leaves_the_rest_of_the_repository(
     monkeypatch.setattr(settings, "code_summary_concurrency", concurrency)
     result = w.CodeSummaryResult()
     with pytest.raises(type(error)):  # `_run` skips the repository on it
-        asyncio.run(w._summarize_repo("acme", "code-a", result, cap=100))
+        asyncio.run(w._summarize_repo("acme", "code-a", result, excluded=lambda _p: False, cap=100))
     assert result.errors == [] and result.cards_written == 0
     assert len(read) <= 2 * concurrency  # not every remaining file of the repository
 

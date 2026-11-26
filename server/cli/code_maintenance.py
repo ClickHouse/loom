@@ -442,7 +442,7 @@ async def _describe(args: argparse.Namespace) -> int:
     from server.code.app.index.describe import _card_for, _describe_chunk
     from server.code.domain.extract.chunker import Chunk
     from server.code.domain.extract.context_text import build_context_text, with_description
-    from server.code.domain.extract.lang_reference import UNEMBEDDED_PREFIX
+    from server.code.domain.extract.lang_reference import unembedded_by_design
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
     from server.embedding.embedder import get_embedder
@@ -537,7 +537,7 @@ async def _describe(args: argparse.Namespace) -> int:
                 if str(r.get("context_source")) != "llm"
                 and str(r.get("kind")) in ("function", "class_skeleton")
                 # an embed-excluded path's chunk stays without a vector
-                and not str(r.get("embed_last_error") or "").startswith(UNEMBEDDED_PREFIX)
+                and not unembedded_by_design(r.get("embed_last_error"))
             ]
             if not pending:
                 return

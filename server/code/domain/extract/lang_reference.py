@@ -51,11 +51,17 @@ REFERENCE_MAX_BYTES = 1 << 20
 UNEMBEDDED_PREFIX = "unembedded by design"
 # A reference fixture's marker.
 UNEMBEDDED_BY_DESIGN = f"{UNEMBEDDED_PREFIX}: reference"
-# A chunk of a path the entry's `embed_exclude` globs name.
+# A chunk, or a cleared card, of a path the entry's `embed_exclude` globs name.
 UNEMBEDDED_EMBED_EXCLUDE = f"{UNEMBEDDED_PREFIX}: embed_exclude"
 
 # Runnable stateless test files whose expectation is `<stem>.reference`.
 _RUNNABLE_EXTS: tuple[str, ...] = (".sql", ".sh", ".py", ".expect", ".sql.j2", ".sh.j2")
+
+
+def unembedded_by_design(embed_last_error: object) -> bool:
+    """Whether a row's `embed_last_error` marks it as left without a vector on purpose:
+    no writer describes or embeds it, and a copy keeps the marker."""
+    return str(embed_last_error or "").startswith(UNEMBEDDED_PREFIX)
 
 
 def is_reference_path(path: str) -> bool:

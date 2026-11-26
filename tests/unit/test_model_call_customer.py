@@ -15,6 +15,7 @@ import pytest
 from server.llm import customer
 from server.observability import genai
 from server.settings import settings
+from tests.unit.code_fixtures import repo_config
 from tests.unit.model_client import through_the_model_client
 from tests.unit.test_conflict_resolver import row_env  # noqa: F401
 
@@ -820,17 +821,16 @@ def test_code_ingest_names_each_entrys_org_for_its_commits(metered, monkeypatch,
 
 
 def test_code_summary_names_each_repos_org(metered, monkeypatch, caplog) -> None:
-    from types import SimpleNamespace
 
     from server.code.domain.index import repos
     from server.code.workers import summary
 
     seen: list[str] = []
 
-    async def summarize(org: str, ns: str, result: Any, cap: int) -> None:
+    async def summarize(org: str, ns: str, result: Any, cap: int, **_: Any) -> None:
         await _model_call(seen)
 
-    cfg = SimpleNamespace(org="acme", namespace="code-a")
+    cfg = repo_config(org="acme", namespace="code-a")
     monkeypatch.setattr(repos, "configured_repos", lambda: [cfg])
     monkeypatch.setattr(summary, "_summarize_repo", summarize)
     monkeypatch.setattr(settings, "code_summary_max_scopes_per_pass", 10)

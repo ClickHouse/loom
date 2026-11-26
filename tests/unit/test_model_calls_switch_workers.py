@@ -13,6 +13,7 @@ import pytest
 
 from server.llm import customer
 from server.settings import settings
+from tests.unit.code_fixtures import repo_config
 from tests.unit.switch_state import switch_off, switch_stale
 
 
@@ -223,12 +224,12 @@ def test_code_summaries_and_ingest_skip_a_switched_off_orgs_repositories(monkeyp
 
     summarized: list[str] = []
 
-    async def summarize(org: str, ns: str, result: Any, *, cap: int) -> None:
+    async def summarize(org: str, ns: str, result: Any, *, cap: int, **_: Any) -> None:
         summarized.append(org)
 
     repos = [
-        SimpleNamespace(org="acme", namespace="code-a"),
-        SimpleNamespace(org="beta", namespace="code-b"),
+        repo_config(org="acme", namespace="code-a"),
+        repo_config(org="beta", namespace="code-b"),
     ]
     monkeypatch.setattr("server.code.domain.index.repos.configured_repos", lambda: repos)
     monkeypatch.setattr(w, "_summarize_repo", summarize)

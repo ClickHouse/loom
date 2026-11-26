@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from server.code.domain.extract.lang_reference import unembedded_by_design
 from server.core.repo_base import _CHClient
 from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
@@ -168,8 +169,10 @@ def _inputs(
     for index, row in enumerate(rows):
         if "embedding_model" not in row or any(column not in row for column in columns):
             raise RebuildBatchError("incomplete_source_row")
-        if row.get("tombstoned_at") is not None:
-            continue
+        if row.get("tombstoned_at") is not None or unembedded_by_design(
+            row.get("embed_last_error")
+        ):
+            continue  # a code row left without a vector on purpose stays without one
         text = _source_text(table, row, index, source_texts)
         if table in PASSAGE_TABLES and (index in held or reads_high(text)):
             continue
@@ -237,6 +240,8 @@ def _empty_target_row(table: str, row: Mapping[str, Any], model: str) -> dict[st
     }.items():
         if name in result:
             result[name] = value
+    if unembedded_by_design(row.get("embed_last_error")):
+        result["embed_last_error"] = row["embed_last_error"]
     return result
 
 
@@ -258,8 +263,10 @@ async def rebuild_batch(
     and accepts it. A memory chunk stored without a vector is staged without one
     too when a key touches it in the text it makes with the run of its session's
     chunks without a vector around it: the write path held it as part of a key
-    cut across chunks. Any other row stored without a vector (a failed embed, or a row a
-    rebuild staged while its org's model calls were off) is embedded.
+    cut across chunks. A code row marked unembedded by design (a reference fixture, an
+    `embed_exclude` path) is staged without a vector and keeps its marker. Any other row
+    stored without a vector (a failed embed, or a row a rebuild staged while its org's
+    model calls were off) is embedded.
 
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.

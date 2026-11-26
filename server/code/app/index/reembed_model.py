@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.code.app.index.embed_text import clip_for_embedding
-from server.code.domain.extract.lang_reference import UNEMBEDDED_PREFIX
+from server.code.domain.extract.lang_reference import unembedded_by_design
 from server.code.store.index import CodeRepo, build_row
 from server.embedding.documents import document_vectors
 
@@ -55,7 +55,6 @@ class ReembedStats:
     paths_seen: int = 0
     rows_written: int = 0
     rows_skipped: int = 0
-    rows_unembedded: int = 0
     embed_seconds: float = 0.0
     insert_seconds: float = 0.0
 
@@ -86,15 +85,12 @@ async def _source_rows(
     )
 
 
-def _unembedded(r: dict[str, Any]) -> bool:
-    return str(r.get("embed_last_error") or "").startswith(UNEMBEDDED_PREFIX)
-
-
 def _target_row(r: dict[str, Any], vec: Any, *, org: str, ns: str, target: str) -> dict[str, Any]:
     """One source row copied under the `target` label with its new vector (none,
     and the source's marker, for a row unembedded by design); FixedString columns
     come back as bytes and go in as text."""
     cols = {k: r[k] for k in _COPY_COLS}
+    marker = str(r.get("embed_last_error") or "")
     cols["chunk_id"] = str(cols["chunk_id"])
     for key in ("content_hash", "indexed_commit"):
         v = cols.get(key)
@@ -107,7 +103,7 @@ def _target_row(r: dict[str, Any], vec: Any, *, org: str, ns: str, target: str) 
         embedding_model=target,
         embedding=list(vec),
         embedding_dim=len(vec),
-        embed_last_error=str(r["embed_last_error"]) if _unembedded(r) else "",
+        embed_last_error=marker if unembedded_by_design(marker) else "",
         **cols,
     )
 
@@ -171,8 +167,8 @@ async def reembed_namespace(
         todo = [r for r in rows if (str(r["path"]), str(r["chunk_id"])) not in have]
         stats.rows_skipped += len(rows) - len(todo)
         if todo:
-            keep = [r for r in todo if _unembedded(r)]
-            embed = [r for r in todo if not _unembedded(r)]
+            keep = [r for r in todo if unembedded_by_design(r.get("embed_last_error"))]
+            embed = [r for r in todo if not unembedded_by_design(r.get("embed_last_error"))]
             t0 = time.perf_counter()
             texts = [clip_for_embedding(str(r["context_text"]) or str(r["content"])) for r in embed]
             vecs = await document_vectors(embedder, texts) if texts else []
@@ -181,7 +177,6 @@ async def reembed_namespace(
                 _target_row(r, vec, org=org, ns=ns, target=target)
                 for r, vec in zip(embed, vecs, strict=True)
             ] + [_target_row(r, [], org=org, ns=ns, target=target) for r in keep]
-            stats.rows_unembedded += len(keep)
             t1 = time.perf_counter()
             await repo.insert_rows("code_chunks", out)
             stats.insert_seconds += time.perf_counter() - t1
