@@ -867,6 +867,11 @@
           "type": "number",
           "description": "Seconds a code-table compaction waits for its OPTIMIZE to finish."
         },
+        "code_compiler_share_mirror_packs": {
+          "default": false,
+          "type": "boolean",
+          "description": "Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its working tree, not a second copy. An older build's git jobs could write the shared packs: turn it on only once no older replica serves, and off before a rollback."
+        },
         "code_context_description_enabled": {
           "default": true,
           "type": "boolean",

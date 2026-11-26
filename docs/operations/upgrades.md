@@ -154,7 +154,9 @@ upgrade does not make older writers participate in those fences
    `LOOM_DOCUMENT_OBJECT_STORE=s3`, since the previous build reads a bucket row's empty
    `data` and answers its download `410 BLOB_GONE` (rule 9); and
    `LOOM_PG_PAYLOAD_CLEAR_ENABLED`, no sooner than one clearing horizon after the new
-   build serves alone, since the previous build does not stamp a late delivery (rule 43).
+   build serves alone, since the previous build does not stamp a late delivery (rule 43);
+   and `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS`, since the previous build's git jobs
+   could write the mirror's packs through a tier checkout (rule 63).
 9. A deployment with `LOOM_CODE_ASK_MEMORY_NAMESPACE` set, now or at any time before,
    that moves from a build whose cached `code.ask` answers do not name the memory they
    quoted (one before `086_code_answer_memory_scope.sql`) to one that does, a roll
@@ -403,6 +405,9 @@ After a rollback to a build before `086_code_answer_memory_scope.sql` with a mem
 namespace bound to `code.ask`, clear the answer cache as in step 9 twice: once the older
 build serves alone, and again once the newer build serves again. The migration is already
 in the ledger, so the roll forward applies nothing that would prompt the second.
+Before rolling back to a build without `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS`, turn it
+off and remove the compiler tiers' checkouts; the previous build recreates them with
+their own objects (rule 63).
 Turn `LOOM_PG_PAYLOAD_CLEAR_ENABLED` off before rolling back, and on again no sooner
 than one clearing horizon after the newer build serves alone again; once a clearing pass
 has run, run `loom reconcile` only with a build that carries

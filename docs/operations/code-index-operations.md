@@ -367,7 +367,9 @@ the rest of the C/C++ toolchain but no scip-clang: point `LOOM_CODE_SCIP_CLANG_P
 your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each worker
 initializes a missing or empty working tree directory as a Git repository and fetches
 each commit into it from the entry's mirror, so a new leader starts from nothing.
-The checkout's packs are hard links of the mirror's (each marked by a `.keep` file),
+With `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS` on (off by default; turn it on once no
+older build serves, [upgrades](upgrades.md) step 8), the checkout's packs are hard links
+of the mirror's (each marked by a `.keep` file; an operator's own `.keep` stays),
 so a tier costs its working tree rather than a second copy of the repository; a
 checkout that already holds its own copy, from an earlier version or an operator,
 drops it in the checkout gc of the tier's next pass with a new commit (for C/C++, the

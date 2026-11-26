@@ -13,6 +13,14 @@ from tests.unit.code_fixtures import repo_config
 from tests.unit.git_repo import git
 
 
+@pytest.fixture(autouse=True)
+def _sharing_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test here but the rollout's runs as a deployment that turned sharing on."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_compiler_share_mirror_packs", True)
+
+
 def _bare_repo(tmp_path: Path) -> Path:
     source = tmp_path / "source"
     source.mkdir()
@@ -514,19 +522,61 @@ def test_the_tier_hands_off_between_versions_on_one_repos_volume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A mixed-version rollout moves the tier lease new → previous → new over one
-    checkout: the previous version's jobs, which mount only the checkout, read it, and
-    its gc keeps the shared packs."""
+    checkout with sharing at its default, off: no checkout file is a mirror pack, so
+    the previous version's git jobs, which mount the checkout writable, cannot write
+    the mirror. Once the previous version is gone and sharing is on, the next pass
+    shares the mirror's packs."""
+    from server.code.app.index.compiler_tier import shared_packs
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_compiler_share_mirror_packs", False)
     _gc_when_due(monkeypatch)
     bare = _packed_bare(tmp_path)
     cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
     assert _tier_pass(cfg) is None
     checkout = tmp_path / "co.python"
+    assert shared_packs(checkout) == []
 
     assert _previous_build_pass(cfg, "python", bare) == _head(bare)
-    assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
+    assert shared_packs(checkout) == []
 
     assert _tier_pass(cfg) is None and _head(checkout) == _head(bare)
+    assert shared_packs(checkout) == []
+
+    monkeypatch.setattr(settings, "code_compiler_share_mirror_packs", True)
+    assert _tier_pass(cfg) is None and _head(checkout) == _head(bare)
     assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
+
+
+def test_an_operators_keep_stays_through_a_mirror_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An operator kept a pack the checkout holds under the mirror pack's name: linking
+    it leaves that `.keep` as it is, and once the mirror's gc rotates the pack out the
+    pass still leaves it, so no checkout gc repacks it."""
+    import shutil
+
+    _gc_when_due(monkeypatch)
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    checkout = tmp_path / "co.python"
+    git(tmp_path, "init", "-q", checkout.name)
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    for src in (bare / "objects" / "pack").glob("pack-*"):
+        shutil.copy(src, pack_dir / src.name)
+    (stem,) = {p.stem for p in pack_dir.glob("pack-*.pack")}
+    keep = pack_dir / f"{stem}.keep"
+    keep.write_text("pinned by the operator\n")
+
+    assert _tier_pass(cfg) is None
+    assert keep.read_text() == "pinned by the operator\n"
+    assert (pack_dir / f"{stem}.pack").stat().st_nlink > 1
+
+    _mirror_gets_a_commit_and_gc(tmp_path, "next.py")
+    assert _tier_pass(cfg) is None
+
+    assert keep.read_text() == "pinned by the operator\n"
+    assert (pack_dir / f"{stem}.pack").exists()
 
 
 @pytest.mark.parametrize("mirror", ["repacked", "cloned-again"])

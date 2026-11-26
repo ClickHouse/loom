@@ -333,7 +333,9 @@ def _link_pack(mirror_dir: Path, pack_dir: Path, stem: str) -> bool:
     try:
         for (src, _dst), tmp in zip(files, tmps, strict=True):
             os.link(src, tmp)
-        (pack_dir / f"{stem}.keep").write_text(SHARED_PACK_KEEP)
+        keep = pack_dir / f"{stem}.keep"
+        if not keep.exists():  # an operator's own `.keep` stays theirs
+            keep.write_text(SHARED_PACK_KEEP)
     except OSError:
         for tmp in tmps:
             tmp.unlink(missing_ok=True)
@@ -383,8 +385,9 @@ def _share_mirror_packs(checkout: Path, bare: Path) -> None:
 
 
 def _prepare_checkout(checkout: Path, bare: Path) -> str | None:
-    """Initialize only empty directories; an existing tree must own its Git root. A
-    valid checkout shares the mirror `bare`'s packs (`_share_mirror_packs`)."""
+    """Initialize only empty directories; an existing tree must own its Git root. With
+    `code_compiler_share_mirror_packs`, a valid checkout shares the mirror `bare`'s
+    packs (`_share_mirror_packs`)."""
     from server.code.app.index.gitrepo import auth_env
 
     if not checkout.exists():
@@ -415,7 +418,8 @@ def _prepare_checkout(checkout: Path, bare: Path) -> str | None:
         return f"checkout unavailable: {caller_text(e)}"
     except subprocess.TimeoutExpired:
         return "checkout Git command timed out"
-    _share_mirror_packs(checkout, bare)
+    if settings.code_compiler_share_mirror_packs:
+        _share_mirror_packs(checkout, bare)
     return None
 
 

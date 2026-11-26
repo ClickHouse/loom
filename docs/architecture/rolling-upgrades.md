@@ -942,14 +942,15 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     target model. A chunk N-1 embedded keeps its vector until its content changes.
 
 64. **A compiler tier's checkout shares its mirror's packs** by hard link, each kept by
-    a `.keep` file. It stays a standalone repository with every object in its own
-    `.git`, so N-1's jobs, which mount only the checkout, read it, and N-1's
-    `git gc --no-prune` keeps the shared packs. N-1's git jobs mount no shared pack
-    read-only, so while N-1 holds the lease they could write the mirror's packs through
-    the checkout. Objects N-1 fetched stay the checkout's own until a gc drops them. In
+    a `.keep` file, only with `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS`, off by default.
+    N-1's git jobs mount the checkout writable and no shared pack read-only, so they
+    could write the mirror's packs: turn it on only once no N-1 replica serves, and
+    before a rollback turn it off and remove the tier checkouts, which N-1 recreates
+    with its own objects. Off, N's checkout holds its own objects as N-1's does. In
     `tests/unit/test_code_compiler_checkout.py`, a pass of N, then N-1's fetch,
     `checkout --force` with the mirror out of sight and gc command, then N again, run
-    on one repository volume.
+    on one repository volume with no checkout file shared, and a pass of N with the
+    setting on then shares the packs.
 
 ## What checks them
 

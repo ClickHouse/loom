@@ -480,12 +480,15 @@ def _shared_pack_checkout(base: Path) -> tuple[Path, Path, str]:
 
 @pytest.mark.parametrize("root", ["plain", "symlinked"])
 async def test_tier_jobs_run_in_a_checkout_sharing_the_mirrors_packs(
-    tmp_path: Path, root: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root: str
 ) -> None:
     """The fetch, `checkout --force` and a harness's `git diff` in a checkout whose packs
     are hard links of the mirror's, with the repos root reached through a symlink too;
     the mirror is mounted only for the fetch, and no git job can write a shared pack,
     not even after an earlier job removed the `.keep` files."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_compiler_share_mirror_packs", True)
     base = tmp_path / "data"
     base.mkdir()
     if root == "symlinked":
