@@ -602,6 +602,7 @@ async def test_edit_context_batches_definitions_and_their_tests(code_env, monkey
         "same_hits",
         "stripped",
         "mixed_preview",
+        "multiline",
     ],
 )
 async def test_edit_context_reads_verified_declarations_across_files(
@@ -657,6 +658,15 @@ async def test_edit_context_reads_verified_declarations_across_files(
         if clue_shape == "same_hits":
             clues.append("def submit")
         candidate_paths.remove("src/gamma.py")
+    elif clue_shape == "multiline":
+        await _ingest(
+            repo,
+            org,
+            ns,
+            source=b"def other(\n    value,\n):\n    return value\n",
+            path="src/delta.py",
+        )
+        clues.append("def other(\n    value")
     result = await symbol.handle_code_edit_context(
         CodeEditContextInput(org=org, namespace=ns, clues=clues, include_lessons=False)
     )
@@ -668,6 +678,7 @@ async def test_edit_context_reads_verified_declarations_across_files(
         "same_hits",
         "stripped",
         "mixed_preview",
+        "multiline",
     }:
         assert result.definitions == []
         return

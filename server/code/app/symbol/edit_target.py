@@ -156,10 +156,10 @@ async def _declaration_targets(
             locations = frozenset((hit["path"], hit["line"]) for hit in hits)
             declaration_hits.add(locations)
             declarations.update(locations)
-    # With an unmatched clue, require distinct declaration evidence. Preview
-    # trimming can hide a whitespace-sensitive occurrence even if others remain.
+    # An unmatched clue can use the fallback only when every literal can be
+    # checked in the trimmed, single-line grep previews.
     if missing_clue and (
-        len(declaration_hits) < 2 or any(clue != clue.strip() for clue in required)
+        len(declaration_hits) < 2 or any(clue != clue.strip() or "\n" in clue for clue in required)
     ):
         return []
     matches = [match for match in matches if (match["path"], match["line"]) in declarations]
