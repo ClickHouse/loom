@@ -18,4 +18,7 @@ def source_account_match(kind: str, *, include_damaged: bool = False) -> tuple[s
             else "source_kind = 'mcp' AND credential_mode = 'worker'"
         )
         return f"{marker} AND connection_id = {{kind:String}}", connection
-    return "credential_mode = 'connected' AND source_kind = {kind:String}", kind
+    return (
+        f"credential_mode = 'connected' AND source_kind = {{kind:String}} AND NOT {WORKER_HISTORY}",
+        kind,
+    )

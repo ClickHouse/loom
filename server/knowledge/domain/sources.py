@@ -105,6 +105,16 @@ MIRRORED_ACCESS = "mirrored"  # a reader the store admits, from the namespace's 
 
 
 @dataclass(frozen=True)
+class WorkerSourceHistory:
+    """Raw columns needed to rewrite worker history without reclassifying it."""
+
+    legacy_kind: str
+    source_kind: str
+    config_json: str
+    items_json: str
+
+
+@dataclass(frozen=True)
 class KnowledgeSource:
     """One registry row of `loom.knowledge_sources`; the credential stays sealed."""
 
@@ -138,7 +148,7 @@ class KnowledgeSource:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     # Lifecycle can rewrite an inactive worker row without interpreting its original payload.
-    worker_payload: tuple[str, str] | None = field(default=None, repr=False)
+    worker_history: WorkerSourceHistory | None = field(default=None, repr=False)
     # The namespace's mirror, which the sync sets before a mirrored source's turn; never
     # stored.
     mirror: str = ""
@@ -581,21 +591,24 @@ def worker_source_marker(kind: str, mode: str) -> bool:
     return kind == "mcp" or mode == "worker"
 
 
+def is_worker_source(src: KnowledgeSource) -> bool:
+    return src.worker_history is not None or worker_source_marker(src.kind, src.credential_mode)
+
+
 def served(src: KnowledgeSource) -> bool:
     """Whether this build serves `src`: one shown to every reader of its namespace. A
     mirrored one, or any `access` a later build writes, is that build's."""
     return (
         src.credential_mode == "shared"
         and src.access == NAMESPACE_ACCESS
-        and src.worker_payload is None
-        and not worker_source_marker(src.kind, src.credential_mode)
+        and not is_worker_source(src)
     )
 
 
 def mirror_synced(src: KnowledgeSource) -> bool:
     """Whether the sync worker writes `src` into its namespace's mirror: a mirrored
     folder-store source or a person's connected page/project source."""
-    if src.worker_payload is not None or worker_source_marker(src.kind, src.credential_mode):
+    if is_worker_source(src):
         return False
     return src.access == MIRRORED_ACCESS and (
         src.kind == "gdrive"

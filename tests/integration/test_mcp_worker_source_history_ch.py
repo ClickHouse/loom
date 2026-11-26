@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -31,27 +31,35 @@ RAW_ITEMS = '[{"selected": 1}, '
 class Registry:
     ch: CHClient
     org: str
-    owned: list[tuple[str, str, str]] = field(default_factory=list)
+    owned: list[tuple[str, str, str, str]] = field(default_factory=list)
 
     @asynccontextmanager
-    async def locked(self, kind: str) -> AsyncIterator[None]:
+    async def locked(self, kind: str, namespace: str = NAMESPACE) -> AsyncIterator[None]:
         async with account_lease(self.org, OWNER, kind, ch=self.ch):
-            async with sources_lease(self.org, NAMESPACE, ch=self.ch):
+            async with sources_lease(self.org, namespace, ch=self.ch):
                 yield
 
-    async def seed(self, name: str, *, worker: bool) -> tuple[str, str, str]:
+    async def seed(
+        self,
+        name: str,
+        *,
+        worker: bool,
+        namespace: str = NAMESPACE,
+        connection_id: str | None = None,
+        legacy_only: bool = False,
+    ) -> tuple[str, str, str]:
         source_id = str(uuid4())
-        connection = uuid4()
+        connection = UUID(connection_id) if connection_id else uuid4()
         kind = f"mcp:{connection.hex}" if worker else "notion"
-        self.owned.append((name, source_id, kind))
+        self.owned.append((namespace, name, source_id, kind))
         row = {
             "org": self.org,
-            "namespace": NAMESPACE,
+            "namespace": namespace,
             "name": name,
             "source_id": source_id,
-            "kind": "",
-            "source_kind": "mcp" if worker else kind,
-            "credential_mode": "worker" if worker else "connected",
+            "kind": "mcp" if legacy_only else "",
+            "source_kind": "mcp" if worker and not legacy_only else "notion",
+            "credential_mode": "worker" if worker and not legacy_only else "connected",
             "owner_subject": OWNER,
             "connection_id": str(connection) if worker else f"{connection.hex}/0{uuid4().hex[1:]}",
             "access": "mirrored",
@@ -61,29 +69,29 @@ class Registry:
             "active": False,
             "pending_delete": False,
         }
-        async with self.locked(kind):
+        async with self.locked(kind, namespace):
             await self.ch.insert("loom.knowledge_sources", [row])
         return source_id, kind, row["connection_id"]
 
-    async def raw(self, name: str) -> dict[str, Any] | None:
+    async def raw(self, name: str, namespace: str = NAMESPACE) -> dict[str, Any] | None:
         return await self.ch.query_one(
             "SELECT * FROM loom.knowledge_sources FINAL WHERE org = {org:String} "
             "AND namespace = {namespace:String} AND name = {name:String} LIMIT 1",
-            params={"org": self.org, "namespace": NAMESPACE, "name": name},
+            params={"org": self.org, "namespace": namespace, "name": name},
         )
 
     async def cleanup(self) -> None:
         failures: list[Exception] = []
-        for name, source_id, kind in self.owned:
+        for namespace, name, source_id, kind in self.owned:
             try:
-                async with self.locked(kind):
+                async with self.locked(kind, namespace):
                     await self.ch.execute(
                         "DELETE FROM loom.knowledge_sources WHERE org = {org:String} "
                         "AND namespace = {namespace:String} AND name = {name:String} "
                         "AND source_id = {source_id:UUID}",
                         params={
                             "org": self.org,
-                            "namespace": NAMESPACE,
+                            "namespace": namespace,
                             "name": name,
                             "source_id": source_id,
                         },
@@ -141,3 +149,37 @@ async def test_worker_source_payload_and_slot_erasure(registry: Registry) -> Non
 
     assert await registry.raw("target") is None
     assert [await registry.raw(name) for name in neighbors] == snapshots
+
+
+async def test_damaged_only_namespace_keeps_worker_cleanup_incomplete(registry: Registry) -> None:
+    set_query_tag("test.mcp-worker-source-history.damaged")
+    source_id, slot, connection = await registry.seed("clean", worker=True)
+    damaged = "damaged-only"
+    damaged_id, _, _ = await registry.seed(
+        "legacy-marker",
+        worker=True,
+        namespace=damaged,
+        connection_id=connection,
+        legacy_only=True,
+    )
+    await registry.seed("other-connection", worker=True, namespace="unrelated")
+    owner = (registry.org, OWNER, slot)
+    assert await sources.connected_owner_namespaces(*owner, ch=registry.ch) == [damaged, NAMESPACE]
+    _, history = await _metadata(registry.ch, owner=owner)
+    assert {item.source_id for item in history} == {source_id, damaged_id}
+
+    before = await registry.raw("legacy-marker", damaged)
+    assert before is not None
+    async with registry.locked("notion", damaged):
+        native = (registry.org, damaged, OWNER, "notion")
+        assert (
+            await sources.connected_owner_namespaces(registry.org, OWNER, "notion", ch=registry.ch)
+            == []
+        )
+        await sources.erase_connected_owner(*native, ch=registry.ch)
+    async with registry.locked(slot, damaged):
+        args = (registry.org, damaged, OWNER, slot)
+        await sources.erase_connected_owner(*args, ch=registry.ch)
+        with pytest.raises(OverloadedError, match="cleanup is incomplete"):
+            await require_sources_erased(*args, ch=registry.ch)
+    assert await registry.raw("legacy-marker", damaged) == before

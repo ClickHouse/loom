@@ -1021,7 +1021,8 @@ async def handle_knowledge_source_remove(
                     f"no document source {domain.shown(name)} in {input.namespace!r}",
                     code="SOURCE_NOT_FOUND",
                 )
-            if src.credential_mode == "connected":
+            worker_source = domain.is_worker_source(src)
+            if src.credential_mode == "connected" and not worker_source:
                 from server.knowledge.app.connected_sources import require_operator
 
                 await require_operator(src)
@@ -1029,6 +1030,8 @@ async def handle_knowledge_source_remove(
                 raise AuthInsufficientError(
                     "a namespace administrator is required for a shared source"
                 )
+            if worker_source:
+                raise OverloadedError("worker source cleanup is unavailable")
             pending = 0
             if input.delete_documents and src.access != domain.MIRRORED_ACCESS:
                 pending = await store.count_documents(
@@ -1140,6 +1143,8 @@ async def deactivate_namespace_sources(org: str, namespace: str) -> list[str]:
     The names retired."""
     with sequential_reads():
         found = await store.list_sources(org, namespace)
+    if any(domain.is_worker_source(src) for src in found):
+        raise OverloadedError("worker source cleanup is unavailable")
     from server.knowledge.app.source_push import retire
 
     for src in found:

@@ -68,8 +68,38 @@ async def test_active_worker_row_keeps_selection_for_protected_readers_only():
     source = await sources.get_source("tenant", "docs", "selected", ch=ch)
     assert source is not None
     assert source.config == registration and source.items == items
-    assert source.worker_payload == (row["config_json"], row["items_json"])
+    assert source.worker_history is not None
+    assert source.worker_history.config_json == row["config_json"]
+    assert source.worker_history.items_json == row["items_json"]
     assert not served(source) and not mirror_synced(source)
+
+
+@pytest.mark.parametrize("raw_items", ['[{"id":"urn:doc:selected"}, null]', "{}", "["])
+async def test_active_worker_does_not_repair_a_damaged_selection(raw_items):
+    row = dict(_row(), active=True, access="mirrored", config_json="{}", items_json=raw_items)
+    ch = RecordingCH().on("loom.knowledge_sources FINAL", [row])
+    source = await sources.get_source("tenant", "docs", "selected", ch=ch)
+    assert source is not None
+    assert source.items == []
+    assert source.worker_history is not None and source.worker_history.items_json == raw_items
+
+
+async def test_inactive_worker_rewrite_keeps_the_legacy_only_marker():
+    row = dict(
+        _row(),
+        kind="mcp",
+        source_kind="notion",
+        credential_mode="connected",
+        config_json=RAW_CONFIG,
+        items_json=RAW_ITEMS,
+    )
+    ch = RecordingCH().on("loom.knowledge_sources FINAL", [row])
+    source = await sources.latest_source("tenant", "docs", "selected", ch=ch)
+    assert source is not None and not served(source) and not mirror_synced(source)
+    await sources.insert_source(source, ch=ch)
+    written = ch.calls[-1].rows[0]
+    for field in ("kind", "source_kind", "credential_mode", "config_json", "items_json"):
+        assert written[field] == row[field]
 
 
 @pytest.mark.parametrize(("kind", "mode"), [("mcp", "shared"), ("gdrive", "worker")])
@@ -116,9 +146,8 @@ async def test_slot_history_and_erasure_bind_same_owner_and_canonical_connection
         assert call.params["org"] == "tenant" and call.params["owner"] == "reader"
         assert call.params["kind"] == str(CONNECTION)
         assert "connection_id = {kind:String}" in call.sql and "FINAL" not in call.sql
-    for call in (orgs, delete):
-        assert "source_kind = 'mcp' AND credential_mode = 'worker'" in call.sql
-    for call in (before, after):
+    assert "source_kind = 'mcp' AND credential_mode = 'worker'" in delete.sql
+    for call in (orgs, history, before, after):
         assert "(source_kind = 'mcp' OR kind = 'mcp' OR credential_mode = 'worker')" in call.sql
     assert before.params["ns"] == delete.params["ns"] == after.params["ns"] == "docs"
 

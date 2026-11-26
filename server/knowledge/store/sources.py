@@ -35,7 +35,9 @@ from server.knowledge.domain.sources import (
     NAMESPACE_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
+    WorkerSourceHistory,
     id_list_config,
+    is_worker_source,
     items_from_config,
     json_object,
     options_in,
@@ -62,20 +64,24 @@ _COLUMNS = (
 )
 
 
-def _items(raw: str) -> list[dict[str, Any]]:
+def _items(raw: str, *, strict: bool = False) -> list[dict[str, Any]]:
     """The stored items, or [] (the source's config names them)."""
     try:
         data = json.loads(raw or "[]")
-    except ValueError:
+    except (ValueError, RecursionError):
         return []
-    return [i for i in data if isinstance(i, dict)] if isinstance(data, list) else []
+    if not isinstance(data, list):
+        return []
+    items = [item for item in data if isinstance(item, dict)]
+    return [] if strict and len(items) != len(data) else items
 
 
 def _source(row: dict[str, Any]) -> KnowledgeSource:
     created = row.get("created_at")
     updated = row.get("updated_at")
     legacy_kind = str(row.get("kind") or "")
-    kind = str(row.get("source_kind") or legacy_kind)
+    source_kind = str(row.get("source_kind") or "")
+    kind = source_kind or legacy_kind
     mode = str(row.get("credential_mode") or "shared")
     raw_config = str(row.get("config_json") or "")
     raw_items = str(row.get("items_json") or "")
@@ -83,7 +89,6 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
     active = bool(row.get("active"))
     pending_delete = bool(row.get("pending_delete"))
     worker_row = worker_source_marker(kind, mode) or legacy_kind == "mcp"
-    worker_payload = (raw_config, raw_items) if worker_row else None
     current_worker = (
         kind == "mcp"
         and not legacy_kind
@@ -92,19 +97,26 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
         and active
         and not pending_delete
     )
-    config = json_object(raw_config) if current_worker or not worker_row else {}
+    if current_worker:
+        config, items = json_object(raw_config), _items(raw_items, strict=True)
+    elif worker_row:
+        config, items = {}, []
+    else:
+        legacy_config = json_object(raw_config)
+        config = options_in(kind, legacy_config)
+        # A row an older build wrote holds its items in its config alone.
+        items = _items(raw_items) or items_from_config(kind, legacy_config)
     return KnowledgeSource(
         org=str(row.get("org") or ""),
         namespace=str(row.get("namespace") or ""),
         name=str(row.get("name") or ""),
         kind=kind,
         source_id=str(row.get("source_id") or ""),
-        config=config if worker_row else options_in(kind, config),
-        # A row an older build wrote holds its items in `config` alone.
-        items=(_items(raw_items) or items_from_config(kind, config))
-        if current_worker or not worker_row
-        else [],
-        worker_payload=worker_payload,
+        config=config,
+        items=items,
+        worker_history=WorkerSourceHistory(legacy_kind, source_kind, raw_config, raw_items)
+        if worker_row
+        else None,
         credential_enc=str(row.get("credential_enc") or ""),
         secret_enc=str(row.get("secret_enc") or ""),
         access=access,
@@ -268,7 +280,7 @@ async def connected_owner_namespaces(
 ) -> list[str]:
     """Include historical bindings hidden by a newer source of a different owner."""
     maximum = settings.knowledge_connected_registry_scan_limit
-    predicate, binding = source_account_match(kind)
+    predicate, binding = source_account_match(kind, include_damaged=True)
     rows = await (ch or _default_client()).query_all(
         f"SELECT DISTINCT namespace FROM {TABLE} "
         "WHERE org = {org:String} AND owner_subject = {owner:String} "
@@ -294,12 +306,11 @@ async def erase_connected_owner(
 
 
 def _payload_for_insert(src: KnowledgeSource) -> tuple[str, str]:
-    if worker_source_marker(src.kind, src.credential_mode):
-        if src.active or src.worker_payload is None:
+    if is_worker_source(src):
+        history = src.worker_history
+        if src.active or history is None:
             raise ValueError("Only inactive worker source history may be written")
-        return src.worker_payload
-    if src.worker_payload is not None:
-        raise ValueError("Worker source history has conflicting kind markers")
+        return history.config_json, history.items_json
     return json.dumps(stored_config(src), sort_keys=True), json.dumps(src.items, sort_keys=True)
 
 
@@ -309,14 +320,16 @@ async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) ->
     writing replica's: the lease-serialized writes stay ordered while those clocks
     differ by less than the lease's handoff between writes."""
     config_json, items_json = _payload_for_insert(src)
+    history = src.worker_history
+    legacy_kind = src.kind if history is None and id_list_config(src) is not None else ""
     now = naive_utc_now_seconds()
     row = {
         "org": src.org,
         "namespace": src.namespace,
         "name": src.name,
         "source_id": src.source_id,
-        "kind": src.kind if id_list_config(src) is not None else "",
-        "source_kind": src.kind,
+        "kind": history.legacy_kind if history else legacy_kind,
+        "source_kind": history.source_kind if history else src.kind,
         "config_json": config_json,
         "items_json": items_json,
         "credential_enc": src.credential_enc,
@@ -567,13 +580,13 @@ async def connected_history(
     *, owner: tuple[str, str, str] | None = None, ch: _CHClient | None = None
 ) -> list[KnowledgeSource]:
     """Metadata of every historical connected source id, including replaced names."""
-    where = "credential_mode = 'connected'"
+    where = f"credential_mode = 'connected' AND NOT {WORKER_HISTORY}"
     mode = "connected"
     binding = owner or ("", "", "")
     if owner is not None:
         owner_columns = "(org, owner_subject, source_kind)"
         if connection := worker_connection_id(owner[2]):
-            where = "source_kind = 'mcp' AND credential_mode = 'worker'"
+            where = WORKER_HISTORY
             owner_columns = "(org, owner_subject, connection_id)"
             binding = (owner[0], owner[1], connection)
             mode = "worker"
