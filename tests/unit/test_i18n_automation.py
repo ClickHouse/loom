@@ -232,7 +232,9 @@ def test_paid_runner_remains_main_only_with_finite_cumulative_default() -> None:
     workflow = yaml.load((root / ".github/workflows/i18n.yml").read_text(), Loader=yaml.BaseLoader)
     assert set(workflow["on"]) == {"push", "schedule", "workflow_dispatch"}
     assert workflow["on"]["schedule"] == [{"cron": "37 */6 * * *"}, {"cron": "22,52 * * * *"}]
-    assert workflow["concurrency"]["group"] == "${{ github.workflow }}"
+    assert workflow["concurrency"]["group"] == (
+        "${{ github.workflow }}-${{ github.event.schedule == '22,52 * * * *' && 'poll' || 'update' }}"
+    )
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
     update = workflow["jobs"]["update"]
     assert update["env"]["LOOM_I18N_BATCH_LANGUAGES"] == "${{ inputs.languages }}"
@@ -245,6 +247,11 @@ def test_paid_runner_remains_main_only_with_finite_cumulative_default() -> None:
     )
     finalize = workflow["jobs"]["finalize"]
     assert finalize["if"] == "github.ref == 'refs/heads/main' && github.event_name == 'schedule'"
+    assert update["concurrency"] == finalize["concurrency"]
+    assert finalize["concurrency"] == {
+        "group": "${{ github.workflow }}-write",
+        "cancel-in-progress": "false",
+    }
     assert finalize["runs-on"] == "ubuntu-latest"
     assert "environment" not in finalize
     assert finalize["steps"][0]["with"]["ref"] == "main"
