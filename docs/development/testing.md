@@ -51,6 +51,19 @@ Keep CI's system tools beside the locked Python environment. Release-script test
 example, call `jq`. Record missing tools or an unsupported platform separately from a
 failure introduced by the diff.
 
+### CI failure locations
+
+Python CI jobs that load the worker-status plugin annotate failed test modules. The
+[failure-location helper](../../tests/_failure_annotations.py) includes the module path
+and an optional source line, without test names or captured values. Repeated failures
+from the same module share one annotation.
+
+Use the location to choose a module, then follow the
+[failure reproduction instructions](../../tests/README.md#rules-every-test-keeps).
+Annotations are bounded and require pytest to report a failed test. Collection errors
+or a worker that exits before reporting a failure may have no module annotation;
+inspect the job's startup and exit status in that case.
+
 ### Generated memory-domain checks
 
 `tests/unit/test_memory_domain_generated.py` uses the dev-only Hypothesis dependency
