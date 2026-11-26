@@ -764,7 +764,11 @@ def lean_code(
                 d["symbol_id"] = src["unit_id"]
     _lean_prs(out.get("definitions"))
     if op_name == "code.grep" and arguments is not None and followups:
-        _grep_continuation(out, arguments, followups)
+        evidence = out
+        if not out.get("matches") and isinstance(related := out.get("related"), dict):
+            evidence = dict(related)
+            out["related"] = evidence
+        _grep_continuation(evidence, arguments, followups)
     fn = _PER_OP.get(op_name)
     if fn is not None:
         fn(out)

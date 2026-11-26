@@ -513,6 +513,46 @@ def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lo
         assert json.loads(params) == {"ranges": [f"{hit['path']}:1-12" for hit in matches]}
 
 
+def test_grep_offers_scoped_reads_for_related_only_evidence() -> None:
+    related = {
+        "pattern": "request.context",
+        "matches": [
+            {
+                "path": "src/app.py",
+                "line": 7,
+                "scope": "src.app::handle",
+                "scope_start_line": 5,
+                "scope_end_line": 12,
+            }
+        ],
+        "contexts": [{"path": "src/app.py", "start_line": 6, "end_line": 8, "text": "excerpt"}],
+    }
+    payload = {"matches": [], "related": related, "note": "No exact match in the indexed scope."}
+    arguments = {"include_body": False, "org": "secondary", "namespace": "repo"}
+
+    result = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
+
+    assert not result["matches"] and "next" not in result
+    assert result["related"]["pattern"] == related["pattern"]
+    assert result["note"] == payload["note"]
+    assert "next" not in related
+    hint = result["related"]["next"]
+    assert _request_ranges(CodeReadInput.model_validate_json(hint.partition(" with ")[2])) == [
+        ("src/app.py", 5, 12)
+    ]
+    assert json.loads(hint.partition(" with ")[2]) == {
+        "ranges": ["src/app.py:5-12"],
+        "org": "secondary",
+        "namespace": "repo",
+    }
+
+    exact = {**payload, "matches": [{"path": "src/other.py", "line": 2}]}
+    assert (
+        "next"
+        not in lr.mcp_op_result("code.grep", exact, arguments, None, toolset="coding")["related"]
+    )
+
+
 def test_grep_offers_edit_context_for_declarations_without_context_windows(monkeypatch) -> None:
     declaration = {
         "path": "src/a.py",
