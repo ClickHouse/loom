@@ -28,6 +28,7 @@ import { useAbortableEffect } from "../lib/hooks";
 import { useRowNav } from "../lib/useRowNav";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { IconButton } from "../components/IconButton";
+import { SessionHandoff } from "../components/SessionHandoff";
 import { SessionBriefsSection } from "../components/SessionBriefsSection";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -516,6 +517,7 @@ export function Conversations() {
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </span>
       </PageHeader>
+      <SessionHandoff identity={identity} />
       {/* Left to the title on a phone, where the threads need the room. */}
       <div className="mb-4 hidden items-center gap-1 text-sm text-text-muted sm:flex">
         The raw chats your agents recorded.

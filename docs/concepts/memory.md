@@ -1,4 +1,17 @@
-# Memory
+---
+description: Learn how agentic memory works, when to use working or long-term memory, and how agent memory and document RAG work together.
+seo:
+  title: What is agentic memory?
+---
+
+# Agentic memory
+
+<a id="memory"></a>
+
+Agentic memory lets an AI agent store, retrieve and revise information as it works.
+It keeps selected facts, past actions and procedures available across sessions and
+runs. The agent or application decides what to save and which parts to bring into
+the model's context for the current request.
 
 A memory is one claim an agent should find again: "deploys happen on Tuesdays", "the
 payments team owns the billing service". Loom stores each claim as a row in
@@ -6,6 +19,56 @@ payments team owns the billing service". Loom stores each claim as a row in
 from and whether anyone vouched for it. This page covers the row, how a write is judged
 against what is stored, and how rows change over time.
 [Retrieval and ranking](retrieval-and-ranking.md) covers how rows are found.
+
+## Working memory and long-term memory
+
+The context window holds the input supplied to the model for one request.
+[Working memory](../features/memory/working-memory-and-profiles.md#working-memory)
+holds small pieces of task state, such as a cursor or the checks already completed.
+A replacement process can read the block again with the same identity and run ID.
+Long-term memory carries reusable information across runs. It can include facts,
+past events and procedures for recurring tasks. See [memory types](#memory-types)
+for how Loom stores each one.
+
+For a support agent processing a return, put the order and completed checks in
+working memory. Save a reviewed refund rule as a short claim and link it to the
+[source policy](../features/knowledge.md#how-do-agents-connect-a-memory-to-a-source-document).
+A later session can retrieve the rule within its authorized namespace. When the
+policy changes, [review the source and correct the saved claim](../use-cases/knowledge-factory.md#check-the-lesson-after-a-runbook-change)
+so readers can see which version they used.
+
+## How agent memory and RAG work together
+
+Retrieval-augmented generation (RAG) brings retrieved evidence into the model's
+input before it generates an answer. Agent memory keeps selected facts, decisions
+and procedures available across runs. An agent can retrieve memories, documents,
+or both before it answers.
+
+For a return, retrieve the current approved policy to find the refund window and
+cite the document revision. Retrieve a saved lesson to find how the team handled
+an earlier exception. Use the policy for the rule and the lesson as evidence about
+that case. If the lesson and the current policy disagree, check the cited passage
+and send the lesson for review before reusing it.
+
+In Loom, [document search](../use-cases/document-search.md) returns passages and
+their source citations. [Memory search](../features/memory/search-and-ask.md)
+retrieves saved claims. When a claim comes from a policy, [link it to the source
+document](../features/knowledge.md#how-do-agents-connect-a-memory-to-a-source-document)
+so a later reader can verify the evidence.
+
+## How to tell whether an agent used a memory
+
+Suppose the agent retrieves an earlier refund exception while processing a return.
+Check which evidence the agent applied to the current order.
+
+1. **Check what the model received.** Record the memory keys returned by search and
+   compare them with the evidence your application passes to the model.
+2. **Check what the agent relied on.** Inspect the answer or action for the rule the
+   agent applied to the order. [Run history](../features/runs.md#recalled-is-not-relied-on)
+   separates recalled keys from `memories_used`, which records what the agent reports using.
+3. **Check the outcome.** Grade the decision against the approved policy. To measure
+   the effect of memory, [compare runs with and without saved lessons](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
+   using the same model, tools, policy revision, and acceptance criteria.
 
 ## Rows in ClickHouse
 
@@ -454,7 +517,10 @@ The links are read where the code is:
 - `code.symbol` attaches the linked memories as `lessons`, each with its `code_state`.
   They come from the repository's team namespace and the `lesson_namespaces` the call
   names (over MCP the caller's memory home when it names none), never from every
-  namespace the caller can read.
+  namespace the caller can read. The read is bounded by `code_enrich_timeout_s` and
+  serves at most three; when it, or one matched member's read, fails or runs past that
+  bound, the definition carries `lessons_unread: true`, so a caller can tell it apart from
+  a symbol with none. The lessons it still carries may then be incomplete.
 - `code.search`, `code.callers`, `code.callees`, `code.impact`, `code.outline` and a task's
   `code.context_pack` attach `lessons` for the answer's top files
   (`code_result_lessons_paths`): from the same namespaces, less any other repository's code
@@ -469,8 +535,10 @@ The links are read where the code is:
   never enters the search memo, and is skipped for `include_lessons: false`, with
   `code_result_lessons` off, or for a token narrowed to its own user or session.
 - `code.grep` in matches mode focuses inline lessons on the definitions its
-  matches name in trunk files. `code.search` focuses a file's lessons when a
-  returned definition has a complete linked lesson.
+  matches name in trunk files. When selecting files to read, grep prefers
+  files with a current lesson linked to a matched definition at the returned
+  revision. `code.search` focuses a file's lessons when a returned definition
+  has a complete linked lesson.
   They count omitted lessons in `lessons_left_out`. Grep keeps lessons when
   the matches and links cannot be checked at the same revision. A line with no
   enclosing definition also keeps lessons with overlapping or unverified ranges.

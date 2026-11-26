@@ -89,7 +89,7 @@ async def _symbols_at_location(
     the span came from tree-sitter: scip-clang emits single-line spans, so
     line containment finds the tree-sitter row, and the scip row is what
     carries edges and the tier the caller wants to see."""
-    rows = await repo.functions_for_paths(org, ns, [path], limit=2000)
+    rows = await repo.functions_for_paths(org, ns, [path], limit=2000, with_revision=True)
     picked = _containing(rows, line)[:2]
     out: list[dict[str, Any]] = list(picked)
     seen = {str(r["symbol_id"]) for r in out}

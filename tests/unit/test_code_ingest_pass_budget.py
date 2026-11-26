@@ -520,6 +520,12 @@ class _ReadRepo:
         }
         return {n: table[n] for n in names if n in table}
 
+    async def name_candidate_views(
+        self, org: str, ns: str, names: list[str]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        candidates = await self.name_candidates(org, ns, names)
+        return candidates, candidates
+
     async def live_edges_for_path(
         self, org: str, ns: str, path: str, tier: str
     ) -> list[dict[str, Any]]:

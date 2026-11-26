@@ -24,6 +24,8 @@ from server.code.store.index.symbol_rank import (
 )
 from server.core.ch_params import FIELD_BYTES, chunks
 
+NameCandidates = dict[str, list[tuple[str, str, str]]]
+
 
 def _concat_key_parts(refs: list[str]) -> str:
     """Keep each concatenation small even for a name spanning thousands of fields."""
@@ -87,6 +89,34 @@ class SymbolsMixin(CodeRepoBase):
             rt = str(r["rt"] or "") or return_type_from_signature(str(r["sig"] or ""))
             if rt:
                 out[str(r["qualified_name"])] = rt
+        return out
+
+    async def declared_types_for_symbols(
+        self, org: str, ns: str, keys: list[tuple[str, str]]
+    ) -> dict[tuple[str, str], tuple[str, str]]:
+        """Declared types of the exact live parser-tier definitions selected by a binding."""
+        out: dict[tuple[str, str], tuple[str, str]] = {}
+        for batch in _batched(keys, 500):
+            key_match, key_params = _reconcile_key_match(batch)
+            rows = await self._ch.query_all(
+                f"""
+                SELECT qualified_name, symbol_id, path, return_type
+                FROM loom.code_symbols FINAL
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND tier = 'treesitter' AND {key_match}
+                  AND tombstoned_at IS NULL AND return_type != ''
+                """,
+                {"org": org, "ns": ns, **key_params},
+            )
+            out.update(
+                {
+                    (str(r["qualified_name"]), str(r["symbol_id"])): (
+                        str(r["path"]),
+                        str(r["return_type"]),
+                    )
+                    for r in rows
+                }
+            )
         return out
 
     async def live_symbols_for_path(
@@ -208,17 +238,17 @@ class SymbolsMixin(CodeRepoBase):
                     out.setdefault(str(r["path"]), []).append(r)
         return out
 
-    async def name_candidates(
+    async def name_candidates(self, org: str, ns: str, names: list[str]) -> NameCandidates:
+        """Live name candidates across both tiers, including kind for fixture resolution."""
+        merged, _ = await self.name_candidate_views(org, ns, names)
+        return merged
+
+    async def name_candidate_views(
         self, org: str, ns: str, names: list[str]
-    ) -> dict[str, list[tuple[str, str, str]]]:
-        """bare name -> [(symbol_id, qualified_name, kind)] across both
-        tiers, for edge resolution. Only for the requested names, so
-        per-merge ingest never loads the whole symbol table. `kind` rides
-        along so pytest fixture resolution can restrict candidates to
-        kind='fixture' — a test parameter must never resolve to an
-        arbitrary same-named function."""
+    ) -> tuple[NameCandidates, NameCandidates]:
+        """Return merged and parser-preferred candidates from one name-keyed read."""
         if not names:
-            return {}
+            return {}, {}
         # One statement over `code_symbol_names`. The key (name, tier,
         # qualified_name, symbol_id) mirrors every version the main table ever
         # wrote for it, so the newest version decides: kind by argMax, liveness
@@ -240,17 +270,25 @@ class SymbolsMixin(CodeRepoBase):
             """,
             {"org": org, "ns": ns, "names": names},
         )
-        table: dict[str, list[tuple[str, str, str]]] = {}
-        seen: set[tuple[str, str, str, str]] = set()
+        merged: dict[str, set[tuple[str, str, str]]] = {}
+        parser: dict[str, set[tuple[str, str, str]]] = {}
         for r in rows:
+            name = str(r["name"])
             cand = (str(r["symbol_id"]), str(r["qualified_name"]), str(r["kind"]))
-            if (str(r["name"]), *cand) in seen:
-                continue
-            seen.add((str(r["name"]), *cand))
-            table.setdefault(str(r["name"]), []).append(cand)
-        for cands in table.values():
-            cands.sort()
-        return table
+            merged.setdefault(name, set()).add(cand)
+            if r["tier"] == "treesitter":
+                parser.setdefault(name, set()).add(cand)
+        calls = {name: sorted(candidates) for name, candidates in merged.items()}
+        reads: NameCandidates = {}
+        for name, candidates in calls.items():
+            preferred = parser.get(name, set())
+            exact_parser_names = {candidate[1] for candidate in preferred}
+            reads[name] = [
+                candidate
+                for candidate in candidates
+                if candidate in preferred or candidate[1] not in exact_parser_names
+            ]
+        return calls, reads
 
     async def symbols_by_name(
         self, org: str, ns: str, name: str, *, limit: int = 50, path: str = ""
@@ -842,33 +880,38 @@ class SymbolsMixin(CodeRepoBase):
         return _prefer_scip(rows)
 
     async def symbol_spans_by_ids(
-        self, org: str, ns: str, symbol_ids: list[str]
+        self, org: str, ns: str, symbol_ids: list[str], *, source_only: bool = False
     ) -> list[dict[str, Any]]:
         """`symbols_by_ids` for a caller that needs only where each symbol
         is (code.grep's unit spans): the columns
         `_prefer_scip` reads and nothing else, and the side-table key
         discovery folded into the main read as an IN subquery on the sort
         key — one round trip where `symbols_by_ids` makes two. Same rows,
-        same collapse."""
+        same collapse. Source-only readers get parser extents with their revisions."""
         if not symbol_ids:
             return []
         cols = "tier, qualified_name, symbol_id, name, path, start_line, end_line"
+        tier_filter = "AND tier = 'treesitter'" if source_only else ""
+        if source_only:
+            cols += ", toString(indexed_commit) AS extent_commit"
         params = {"org": org, "ns": ns, "ids": symbol_ids[:500]}
         rows = await self._ch.query_all(
             f"""
             SELECT {cols} FROM loom.code_symbols FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              {tier_filter}
               AND (tier, qualified_name, symbol_id) IN (
                   SELECT tier, qualified_name, symbol_id
                   FROM loom.code_symbol_ids
                   WHERE org = {{org:String}} AND namespace = {{ns:String}}
                     AND symbol_id IN {{ids:Array(String)}}
+                    {tier_filter}
               )
               AND tombstoned_at IS NULL
             """,
             params,
         )
-        return _prefer_scip(rows)
+        return rows if source_only else _prefer_scip(rows)
 
     async def symbol_paths_for_ids(
         self, org: str, ns: str, symbol_ids: list[str]

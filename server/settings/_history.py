@@ -139,4 +139,14 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "entrypoints. Explicit lists and empty values retain their meaning."
         ),
     ),
+    DefaultChange(
+        version="1.3.1",
+        name="adoption_telemetry_share_domains",
+        old=False,
+        new=True,
+        why=(
+            "Include namespace contact domains and aggregate counts in adoption reports. "
+            "Deployments can disable domain sharing while continuing to send usage totals."
+        ),
+    ),
 )

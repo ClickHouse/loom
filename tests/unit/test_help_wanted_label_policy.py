@@ -17,6 +17,7 @@ FAKE_GH = r"""#!/usr/bin/env python3
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 state_path = Path(os.environ["FAKE_LABEL_STATE"])
@@ -27,6 +28,14 @@ path = args[1]
 payload = json.loads(sys.stdin.read()) if method == "POST" else None
 state["calls"].append({"method": method, "path": path, "payload": payload})
 code = state.get("post_exit" if method == "POST" else "get_exit", 0)
+if not code and "?" in path:
+    assert "--paginate" in args
+    print(subprocess.check_output(
+        ["jq", "-r", args[args.index("--jq") + 1]],
+        input=json.dumps(state["items"]), text=True,
+    ), end="")
+    state_path.write_text(json.dumps(state))
+    sys.exit(0)
 if not code and method == "POST":
     for label in payload["labels"]:
         if label not in state["labels"]:
@@ -44,7 +53,7 @@ class LabelPolicyTests(unittest.TestCase):
         self.policy = self.workflow["jobs"]["label"]["steps"][0]["run"]
 
     def run_policy(
-        self, labels: list[str], number: str = "1154", **options: object
+        self, labels: list[str], number: str = "1154", event: str = "issues", **options: object
     ) -> tuple[subprocess.CompletedProcess[str], dict[str, object], bool]:
         with tempfile.TemporaryDirectory(prefix="label-policy-") as folder:
             root = Path(folder)
@@ -58,6 +67,7 @@ class LabelPolicyTests(unittest.TestCase):
                 os.environ,
                 PATH=str(root) + os.pathsep + os.environ["PATH"],
                 ITEM_NUMBER=number,
+                GITHUB_EVENT_NAME=event,
                 GH_TOKEN="fixture-token",
                 GH_HOST="github.com",
                 FAKE_LABEL_STATE=str(state_path),
@@ -138,15 +148,37 @@ class LabelPolicyTests(unittest.TestCase):
         self.assertEqual(state["labels"], ["help wanted"])
         self.assertEqual(sum(call["method"] == "POST" for call in state["calls"]), 1)
 
+    def test_schedule_reconciles_only_pull_requests_needing_the_label(self) -> None:
+        wanted = {"name": "help wanted"}
+        mirrored = {"name": "up-for-grabs"}
+        result, state, _ = self.run_policy(
+            ["help wanted"],
+            event="schedule",
+            items=[
+                {"number": 1154, "pull_request": {}, "labels": [wanted]},
+                {"number": 1155, "pull_request": {}, "labels": [wanted, mirrored]},
+                {"number": 1156, "labels": [wanted]},
+            ],
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [(call["method"], call["path"]) for call in state["calls"]],
+            [
+                (
+                    "GET",
+                    "repos/ClickHouse/loom/issues?state=open&labels=help%20wanted&per_page=100",
+                ),
+                ("GET", "repos/ClickHouse/loom/issues/1154"),
+                ("POST", "repos/ClickHouse/loom/issues/1154/labels"),
+            ],
+        )
+
     def test_metadata_only_permissions_events_and_coalesced_reconciliation(self) -> None:
         job = self.workflow["jobs"]["label"]
         self.assertEqual(self.workflow["permissions"], {})
         self.assertEqual(job["permissions"], {"issues": "write"})
         self.assertEqual(job["timeout-minutes"], "5")
-        self.assertEqual(
-            set(self.workflow["on"]), {"issues", "pull_request_target", "workflow_dispatch"}
-        )
-        self.assertNotIn("synchronize", self.workflow["on"]["pull_request_target"]["types"])
+        self.assertEqual(set(self.workflow["on"]), {"issues", "schedule", "workflow_dispatch"})
         # The latest unrelated label event can replace a pending help-wanted event.
         # Every queued event must reconcile current state, including our own label.
         self.assertEqual(job["if"], "github.repository == 'ClickHouse/loom'")

@@ -31,6 +31,8 @@ import inspect
 import logging
 from typing import Any
 
+from server.code.store.index.symbols import NameCandidates
+
 logger = logging.getLogger("loom.code_index.round_reads")
 
 # The order the caller hands `ingest_file` (headers first) is kept; the round is a
@@ -74,7 +76,8 @@ class RoundReads:
         self._misses: dict[str, list[dict[str, Any]]] = {}
         self._guards: dict[str, list[dict[str, Any]]] = {}
         self._facets: dict[str, list[dict[str, Any]]] = {}
-        self._names: dict[str, list[tuple[str, str, str]]] = {}
+        self._names: NameCandidates = {}
+        self._read_names: NameCandidates = {}
         self._known: set[str] = set()
         # For the record and the tests: per-file reads answered here / sent on.
         self.hits = 0
@@ -258,12 +261,14 @@ class RoundReads:
         if not names:
             return
         try:
-            self._names = await self._repo.name_candidates(self._org, self._ns, sorted(names))
+            self._names, self._read_names = await self._repo.name_candidate_views(
+                self._org, self._ns, sorted(names)
+            )
             self._known = set(names)
             self.statements += 1
         except Exception as exc:  # noqa: BLE001 — a missed prefetch: each file reads its own names
             logger.debug("round reads: name prefetch skipped (%s)", exc)
-            self._names, self._known = {}, set()
+            self._names, self._read_names, self._known = {}, {}, set()
 
     async def _round_read(self, method: str, paths: list[str], *args: Any) -> dict[str, Any]:
         """One round-wide read by name; a repository without it, or a failing
@@ -319,11 +324,15 @@ class RoundReads:
     async def live_call_guards_for_path(self, org: str, ns: str, path: str) -> list[dict[str, Any]]:
         return await self._per_path(self._guards, "live_call_guards_for_path", org, ns, path)
 
-    async def name_candidates(
+    async def name_candidates(self, org: str, ns: str, names: list[str]) -> NameCandidates:
+        merged, _ = await self.name_candidate_views(org, ns, names)
+        return merged
+
+    async def name_candidate_views(
         self, org: str, ns: str, names: list[str]
-    ) -> dict[str, list[tuple[str, str, str]]]:
+    ) -> tuple[NameCandidates, NameCandidates]:
         if (org, ns) != (self._org, self._ns):
-            other: dict[str, list[tuple[str, str, str]]] = await self._repo.name_candidates(
+            other: tuple[NameCandidates, NameCandidates] = await self._repo.name_candidate_views(
                 org, ns, names
             )
             return other
@@ -331,12 +340,16 @@ class RoundReads:
         if missing:
             self.misses += 1
             await self.flush()  # a name read sees every symbol the round wrote
-            fetched = await self._repo.name_candidates(org, ns, missing)
+            fetched, reads_fetched = await self._repo.name_candidate_views(org, ns, missing)
             self._names.update(fetched)
+            self._read_names.update(reads_fetched)
             self._known.update(missing)
         else:
             self.hits += 1
-        return {n: list(self._names[n]) for n in names if n in self._names}
+        return (
+            {n: list(self._names[n]) for n in names if n in self._names},
+            {n: list(self._read_names[n]) for n in names if n in self._read_names},
+        )
 
     async def return_types_for_qualified(
         self, org: str, ns: str, qualified_names: list[str]
@@ -411,6 +424,7 @@ class RoundReads:
                 name = str(r.get("name") or "")
                 self._known.discard(name)
                 self._names.pop(name, None)
+                self._read_names.pop(name, None)
                 self._return_types.pop(str(r.get("qualified_name") or ""), None)
         if table == "code_chunks":
             touched = {str(r.get("path") or "") for r in rows}

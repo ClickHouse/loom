@@ -194,6 +194,8 @@ async def _lessons(
     path: str = "src/a.py",
     parse_s: float = 0.0,
     has_mirror: bool = True,
+    checked_ids: set[str] | None = None,
+    changed_read: list | None = None,
 ) -> list:
     from server.code.app import memory_links
     from server.code.domain.anchor import Definition
@@ -217,11 +219,19 @@ async def _lessons(
     async def mirror_here(org, cns, commit):
         return has_mirror
 
-    async def served(org, nss, ids):
+    async def served(org, nss, memories, *, limit, changed):
         assert nss == ["agent-a", "code-a"]  # the lesson scope bounds the read
+        # each memory is read by the identity its link was made from
+        assert set(memories) <= {code_links.linked_memory(a) for a in links}
+        assert limit == 3
+        if changed_read is not None:
+            changed_read.append(set(changed))
+        ids = {m[-1] for m in memories}
         return [e for e in excerpts if e["mid"] in ids]
 
     async def current(org, rows):
+        if checked_ids is not None:
+            checked_ids.update(a["memory_id"] for a in rows)
         return rows
 
     monkeypatch.setattr(code_links, "for_paths", for_paths)
@@ -268,11 +278,13 @@ async def test_a_lesson_reads_changed_where_the_definition_differs_from_the_link
     links = [_link("m1", body="h1"), _link("m2", body="h0", state="changed", since="c2")]
     excerpts = [_excerpt("m1", "k1"), _excerpt("m2", "k2", pinned=1)]
     trunk = [("src/a.py", "src.a::Reader::read", "h1")]
-    out = await _lessons(monkeypatch, links, excerpts, trunk)
+    changed_read: list = []
+    out = await _lessons(monkeypatch, links, excerpts, trunk, changed_read=changed_read)
     assert [(o["memory_key"], o["code_state"], o["changed_since"]) for o in out] == [
         ("k1", "fresh", ""),
         ("k2", "changed", "c2"),
     ]
+    assert changed_read == [{"m2"}]  # the read ranks a changed memory last before its cut
     # a branch still holding the definition k2 was written against reads it fresh
     branch = [("src/a.py", "src.a::Reader::read", "h0")]
     out = await _lessons(monkeypatch, links, excerpts, branch, ns="code-a-26-8")
@@ -308,6 +320,22 @@ async def test_a_lesson_is_the_symbols_own_not_a_namesakes(monkeypatch) -> None:
     defs = [("src/a.py", "src.a::Reader::read", "h1"), ("src/a.py", "src.a::Writer::read", "h1")]
     out = await _lessons(monkeypatch, links, [_excerpt("m1", "k1"), _excerpt("m2", "k2")], defs)
     assert [(o["memory_key"], o["code_state"]) for o in out] == [("k2", "fresh")]
+
+
+@pytest.mark.asyncio
+async def test_symbol_lessons_skip_live_reads_for_unrelated_names(monkeypatch) -> None:
+    links = [_link("m1", qn="src.a::Reader::write"), _link("m2")]
+    definitions = [("src/a.py", "src.a::Reader::read", "h1")]
+    checked: set[str] = set()
+    (lesson,) = await _lessons(
+        monkeypatch,
+        links,
+        [_excerpt("m1", "other"), _excerpt("m2", "linked")],
+        definitions,
+        checked_ids=checked,
+    )
+    assert lesson["memory_key"] == "linked"
+    assert checked == {"m2"}
 
 
 @pytest.mark.asyncio

@@ -38,7 +38,7 @@ def test_code_repo_liveness_reads_use_the_null_safe_idiom() -> None:
     # `live_call_guards_for_paths`, `has_live_scip_override_edges`, `exact_rerank_by_ids` (the shortlist's live
     # keys, read beside the vectors without FINAL) and `symbol_names_for_paths`
     # (the idiom in a keyed subquery, `WHERE is_live = 1` outside) and
-    # `live_callers_of_symbols` (a merged PR's context pack).
+    # `live_callers_of_symbols` and `member_edges_at_locations`.
     src = "".join(p.read_text(encoding="utf-8") for p in _CODE_REPO)
-    assert src.count("argMax(tombstoned_at IS NULL, version) AS is_live") == 20
-    assert src.count("HAVING is_live = 1") == 19
+    assert src.count("argMax(tombstoned_at IS NULL, version) AS is_live") == 21
+    assert src.count("HAVING is_live = 1") == 20

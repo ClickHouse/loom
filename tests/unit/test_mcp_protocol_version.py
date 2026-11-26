@@ -41,7 +41,9 @@ def _client(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(settings, "identity_provider", "single-user")
 
-    async def _instr(auth: Any, toolset: str | None = None) -> str:
+    async def _instr(
+        auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+    ) -> str:
         return "PRIMER"
 
     monkeypatch.setattr(mcp, "_initialize_instructions", _instr)
@@ -91,7 +93,9 @@ def test_requested_meta_version_reads_only_the_documented_key() -> None:
 
 
 def test_initialize_echoes_the_clients_version_when_served(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _instr(auth: Any, toolset: str | None = None) -> str:
+    async def _instr(
+        auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+    ) -> str:
         return ""
 
     monkeypatch.setattr(mcp, "_initialize_instructions", _instr)
@@ -105,7 +109,9 @@ def test_initialize_echoes_the_clients_version_when_served(monkeypatch: pytest.M
 def test_initialize_answers_the_latest_served_version_to_an_unknown_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _instr(auth: Any, toolset: str | None = None) -> str:
+    async def _instr(
+        auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+    ) -> str:
         return ""
 
     monkeypatch.setattr(mcp, "_initialize_instructions", _instr)
@@ -121,7 +127,9 @@ def test_initialize_answers_the_latest_served_version_to_an_unknown_one(
 def test_discover_lists_served_versions_capabilities_identity_and_instructions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _instr(auth: Any, toolset: str | None = None) -> str:
+    async def _instr(
+        auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+    ) -> str:
         return "SESSION-START-PRIMER"
 
     monkeypatch.setattr(mcp, "_initialize_instructions", _instr)
@@ -142,7 +150,9 @@ def test_discover_is_answered_whatever_version_the_probe_names(
 ) -> None:
     """The probe exists to be answered before the client has picked a version."""
 
-    async def _boom(auth: Any, toolset: str | None = None) -> str:
+    async def _boom(
+        auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+    ) -> str:
         raise RuntimeError("CH down")
 
     monkeypatch.setattr(mcp, "_initialize_instructions", _boom)

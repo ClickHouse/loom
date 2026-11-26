@@ -30,6 +30,7 @@ from server.memory.domain.decision_schema import (
 )
 from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import row_verification
+from server.memory.store.sql import FILE_LISTING_VISIBLE
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -71,15 +72,15 @@ SELECT
     tags, confidence, pinned, CAST(status AS String) AS status_text, agent, updated_at, actor,
     memory_id, conflict_with, source_resource_id,
     verified_by, verified_sha256, content_sha256,
+    if({{include_source_links:UInt8}}, files, []) AS source_files,
+    if({{include_source_links:UInt8}}, user_id, '') AS source_user_id,
+    if({{include_source_links:UInt8}}, session_id, '') AS source_session_id,
+    if({{include_source_links:UInt8}}, toString(content_sha256), '') AS source_sha,
     ({{full_values:UInt8}} = 0 AND value_len > {_READ_BYTES}) AS value_truncated,
     arrayFilter(f -> {_FILE_MATCH}, files) AS matched_files
 FROM loom.memory FINAL
 WHERE org = {{org:String}} AND namespace = {{ns:String}}
-  AND tombstoned_at IS NULL
-  AND (expires_at IS NULL OR expires_at > now())
-  AND (valid_to IS NULL OR valid_to > now())
-  -- a high row is reachable by its key only, never pushed into an edit prompt
-  AND sensitivity != 'high'
+  AND ({FILE_LISTING_VISIBLE})
   AND status IN {{statuses:Array(String)}}
   AND (length({{tags:Array(String)}}) = 0 OR hasAny(tags, {{tags:Array(String)}}))
   AND ({{whole_only:UInt8}} = 0 OR {_WHOLE_ROW})
@@ -463,6 +464,7 @@ async def _rows_for(
     *,
     whole_only: bool = False,
     full_values: bool = False,
+    include_source_links: bool = False,
 ) -> list[dict[str, Any]]:
     """One namespace's rows naming the file or linked to code still in it (`linked`:
     memory_id -> its links here, read alongside the files match; None when that read
@@ -481,20 +483,52 @@ async def _rows_for(
         "whole_bytes": _whole_bytes(),
         "whole_only": int(whole_only),
         "full_values": int(full_values),
+        "include_source_links": int(include_source_links),
     }
     ch = get_client()
     found, read = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
     links_of = read or {}
+    if include_source_links:
+        # A restored copy can retain an ID without owning the original link.
+        links_of = {
+            mid: owned
+            for mid, links in links_of.items()
+            if (owned := [link for link in links if link["namespace"] == namespace])
+        }
     ids = sorted(m for m, links in links_of.items() if {a["state"] for a in links} != {"missing"})
     # a hot file's links are bound a slice at a time; the best of the files match and
     # of each slice's own top `lim` are the namespace's
     if ids:
         found = found + await query_all_sliced(ch, _LINKED_SQL, params | {"linked": ids}, "linked")
-    unique = {str(r["memory_id"]): r for r in found}.values()
-    rows = sorted(unique, key=_order_key)[: int(input.top_k)]
+    unique = {
+        (
+            str(r["memory_id"]),
+            r["memory_key"],
+            r["agent"],
+            r["source_user_id"],
+            r["source_session_id"],
+        )
+        if include_source_links
+        else str(r["memory_id"]): r
+        for r in found
+    }
     out = []
-    for r in rows:
+    for r in sorted(unique.values(), key=_order_key):
         links = links_of.get(str(r.get("memory_id")), [])
+        source_links = []
+        if include_source_links:
+            links = [
+                link
+                for link in links
+                if link["memory_key"] == r["memory_key"]
+                and link["agent"] == r["agent"]
+                and link["user_id"] == r["source_user_id"]
+                and link["session_id"] == r["source_session_id"]
+            ]
+            if links:
+                source_links = _links_for_served_row(input.org, namespace, r, links)
+            if not (source_links or r["matched_files"]):
+                continue
         out.append(
             {
                 **r,
@@ -507,9 +541,31 @@ async def _rows_for(
                     else ""
                     for a in links
                 ],
+                "source_links": source_links,
             }
         )
+        if len(out) == int(input.top_k):
+            break
     return out
+
+
+def _links_for_served_row(
+    org: str, namespace: str, row: dict[str, Any], links: list[LinkRow]
+) -> list[LinkRow]:
+    """Recheck the owned links against the memory snapshot selected by the listing."""
+    from server.memory.app.code_link_reads import inputs_now
+
+    stamp = inputs_now(
+        org,
+        {
+            "namespace": namespace,
+            "tags": row["tags"],
+            "sha": row["source_sha"],
+            "files": row["source_files"],
+            "user_id": row["source_user_id"],
+        },
+    )
+    return [link for link in links if link["inputs_hash"] == stamp]
 
 
 async def _linked(
@@ -579,6 +635,7 @@ async def _merged_rows(
     *,
     whole_only: bool = False,
     full_values: bool = False,
+    include_source_links: bool = False,
 ) -> tuple[list[dict[str, Any]], bool]:
     """(rows, links skipped): the caller's namespace, plus each readable extra namespace
     (tag filter on the caller's only), merged in constraint-first order, deduplicated by
@@ -598,6 +655,7 @@ async def _merged_rows(
             linked,
             whole_only=whole_only,
             full_values=full_values,
+            include_source_links=include_source_links,
         )
         skipped = linked.result() is None  # read by the own read above
         if not extras:
@@ -613,6 +671,7 @@ async def _merged_rows(
                     linked,
                     whole_only=whole_only,
                     full_values=full_values,
+                    include_source_links=include_source_links,
                 )
                 for ns in extras
             ),
@@ -661,19 +720,30 @@ def _hit(r: dict[str, Any], input: MemoryForFileInput) -> _MemoryForFileHit:
 
 
 async def listing_rows(
-    input: MemoryForFileInput, *, whole_only: bool = False
+    input: MemoryForFileInput, *, whole_only: bool = False, include_source_links: bool = False
 ) -> tuple[list[dict[str, Any]], bool]:
     """(rows, links skipped) for a reader that lists several files' rows itself: each row the
     hit memory.for_file serves with its `memory_id` and `supersedes_ids` (the older rows it
     is placed above), and whether the code-links read failed (a row reached only by a link
     is then missing). Values are complete so the reader can apply its own output budget.
     `whole_only` keeps decisions and constraints (typed `decision`, or tagged `decision`
-    or `constraint`)."""
+    or `constraint`). `include_source_links` carries private checked link metadata for
+    callers that match the listing to retained source windows."""
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
-    rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only, full_values=True)
+    rows, skipped = await _merged_rows(
+        input,
+        path,
+        base,
+        whole_only=whole_only,
+        full_values=True,
+        include_source_links=include_source_links,
+    )
     return [
-        _with_ids(_hit(r, input), r) | {"code_symbols": r.get("code_symbols", [])} for r in rows
+        _with_ids(_hit(r, input), r)
+        | {"code_symbols": r.get("code_symbols", [])}
+        | ({"source_links": r.get("source_links", [])} if include_source_links else {})
+        for r in rows
     ], skipped
 
 

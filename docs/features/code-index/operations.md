@@ -91,20 +91,87 @@ the parentheses. All alternatives share a result limit, and each matching line
 or file appears once.
 `mode: "message"` and `regex: true` require a single string.
 
+To find implementation and existing tests together, batch code text and test
+name prefixes and omit `path_prefix`. To restrict the search, add
+`path_globs` that cover both roots.
+
+Use `code.edit_context` for implementation, indexed tests and linked notes in
+one request. Give the definition name or location if known. Literal `clues`
+can locate the edit target in the named file or across the index when you omit
+`name`. A repository lookup returns source when its verified matches identify
+one file. Competing files return candidate locations. A missing call
+expression can recover source from its qualified argument. It reports
+`resolved_by: file_argument` for a named file or `repository_argument` for a
+repository lookup. When several test calls are close together, Loom prefers
+examples from different source windows when it can verify their excerpts.
+When direct examples are absent, edit context can show tests that reach the
+definition through one indexed caller. Such examples carry `evidence:
+indirect_call` and a `via` source location.
+
+When an exact call expression such as `convert(row.value)` is absent,
+`related_on_miss: true` looks for its qualified argument in the same scope.
+The `related` block names the argument and carries its verified lines and any
+excerpts or bodies. It includes six lines of surrounding source when full
+bodies are disabled and `context_lines` is omitted. Set `context_lines: 0` for
+matching lines only. `matches` stays empty. Linked notes can accompany the
+related hits and their resolved dependency definitions. Coding MCP
+connections enable recovery by default. HTTP and SDK
+callers can opt in.
+
+A literal batch can recover one missing call alongside other exact literals,
+such as an existing test name. The exact matches and related source stay in
+their respective result fields.
+
+In matches mode, a literal can end with `\n` or `\r\n` to match that physical
+line ending. The check uses file metadata from the same indexed revision.
+Notebook projections and reference excerpts support literal text matches.
+The returned match text excludes the terminator.
+
+Use a list for literal alternatives. When a string of call fragments separated
+by pipes fails to compile as a regex, `related_on_miss` can find qualified uses
+of one shared member spelling in the same search scope. The `related` block
+gives the source lines and identifies the member spelling. Resolved dependency
+bodies require a verified qualified argument.
+
+A literal call prefix such as `convert(row.value` can also show where
+`row.value` appears in other scopes. Coding MCP connections enable this
+with `related_on_prefix`. The exact hit list and its pagination stay separate
+from related source. A batch with one qualified argument can return its other
+uses even when other literals fill the exact page. Use `context_lines` to
+choose the excerpt radius. It defaults to six lines for related excerpts. HTTP
+and SDK callers can opt in. A failed or incomplete related scan sets `partial`
+and keeps the exact matches.
+
+Coding MCP connections can include a resolved Python argument definition and
+its direct helper under `related.dependencies`. The index must bind the same
+argument to one target, and the retained bodies must share the hit's revision
+and satisfy the request's path filters. HTTP and SDK callers can set
+`include_dependencies: true` with `related_on_miss` or `related_on_prefix`.
+Set `include_dependencies: false` or `context_lines: 0` to omit these definitions.
+A literal batch can include the same definitions when its call expressions
+refer to one argument and the exact matches contain its use.
+When a literal names a Python function whose body forwards to a single call,
+`include_dependencies` can also return the bound target under
+`related.dependencies`. The related pattern names the forwarding function.
+This case requires enclosing bodies. The target must share the match's indexed
+revision and satisfy the path filters.
+
 In matches mode, `code.grep` returns the enclosing definitions beside the hit
-lines by default. Pass `include_body=false` for names, lines or locations only.
+lines by default. Pass `include_body=false` to omit bodies and `context_lines=0`
+for matching lines only.
 Each definition appears once. Its `lines` lists the matching
 locations. The same retained-source reader backs `code.enclosing`, including type
 and document-section fallback. The Python index keeps decorators in their
 owning function's source chunk, so a hit inside a decorator can return the
 complete definition. No token budget is imposed on these grep bodies.
 
-`code.grep(context_lines=3)` adds up to three retained lines on either side of
+`code.grep(context_lines=3)` adds up to three source lines on either side of
 each match in `contexts`. Each window gives its path, inclusive source line
-range and exact text at the match's retained revision. Overlapping lines in the
-served page appear once. Conflicting lines and context with uncertain revision
-are left out and set `contexts_partial=true`. Windows stop at the edges of
-available source chunks. The option is available in matches mode.
+range and exact text at the match's indexed revision. Overlapping lines in the
+served page appear once. Around exact matches, Loom fills gaps in retained
+source from the verified Git blob for that revision when available. Lines
+within the requested window that cannot be verified set
+`contexts_partial=true`. The option is available in matches mode.
 
 The default returns matching lines. Bodies are read only for the served page
 and must contain the matching line at its retained revision. Page reruns remove
@@ -113,6 +180,19 @@ matching lines remain available with `definitions_partial=true` and a
 `definitions_note`. Unresolved or elided definitions retain their structural
 disclosures and next lookup when available. Check those fields before treating a
 missing body as missing code. The flag is rejected outside matches mode.
+
+For MCP replies, a nested definition can carry `body_in_symbol_id` when its
+exact source lines are already present in an enclosing body on the same page
+and the reference makes the reply smaller. Its value is the enclosing
+definition's `symbol_id`. Use the nested definition's own line range to read
+its source within that body. `explain=true` returns each body separately.
+
+`code.read` reads exact indexed source lines in one file or across a batch of
+`ranges`. The reply includes lessons with verified links overlapping those
+windows at the returned revision. File-wide lessons, decisions, constraints
+and pins remain eligible. A retained decision, constraint or pin with an
+unverified link is marked `unresolved`. Set `include_lessons=false`
+when the session already has the relevant notes.
 
 A caller with a clock of its own passes `deadline_ms` to `code.grep` or `code.search`
 (clamped to 200–60000; 0 means none, and unset takes `LOOM_CODE_SEARCH_DEADLINE_MS`):
@@ -181,6 +261,28 @@ Small finite budgets prioritize result heads over optional risk annotations.
 
 For a Compose installation, put the variable in the `.env` file beside `compose.yaml`
 and recreate the server container after changing it.
+
+### Read caller lessons before editing a dependency
+
+Suppose an indexed Python test calls `App.mount`, a short method that forwards
+to `Receiver.register` in a different file. A lesson attached to `App.mount`
+says that mounts can repeat. Read the lesson before editing `Receiver.register`
+so the change preserves that behavior.
+
+1. In the repository's code namespace, call `code.edit_context` with the indexed
+   name or `path:line` of `Receiver.register` as `name` and set
+   `include_lessons: true`. Caller lessons require namespace-wide read access.
+   If the lesson is in another readable namespace, name it in `lesson_namespaces`.
+2. In the definition's `examples`, look for `evidence: "indirect_call"` and
+   the indexed name for `App.mount` in `via.symbol`. When Loom returns the
+   caller's verified source, `via.context` carries the excerpt and indexed commit.
+3. In the same definition's `lessons`, look for `code_state: "fresh"` and the
+   returned `via.symbol` in `linked_symbols`. Read the caller excerpt before
+   applying the lesson.
+
+Caller lessons must match the returned indexed revision and fit the time and
+token limits. Use `code.symbol` to inspect the caller directly when edit
+context omits its lessons.
 
 ## Follow a specification to code and back
 
@@ -287,6 +389,12 @@ exists. These call shapes are not captured output from a document/code qualifica
 grade (compiler edges are always 1.0) and `include_ambiguous` to add the call sites the
 resolver declined as a separate `candidate_sites` block. Read `epistemic` and `causes`
 on the answer ([overview.md](overview.md#reading-an-answer)).
+
+On the Python parser tier, `edge_kinds: ["reads"]` can follow member access
+through a top-level function's typed parameter or an imported value with a
+declared type.
+The graph records those accesses separately from function calls. It prefers
+parser definitions for the same qualified name and can follow compiler-only definitions.
 
 **Example: impact of a diff.**
 

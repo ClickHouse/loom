@@ -32,7 +32,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: sdk/go
+          fetch-depth: 2
+          sparse-checkout: |
+            sdk/go
+            .github/actions/patch-coverage
       - name: Install Go
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
@@ -43,7 +46,25 @@ jobs:
           go build ./...
           go vet ./...
       - name: Run the real HTTP tests with the race detector
-        run: go test -race -count=1 -timeout=3m -json ./... | tee "$RUNNER_TEMP/go-tests.jsonl"
+        run: |
+          coverage=()
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            coverage=(-coverprofile="$RUNNER_TEMP/go.cover")
+          fi
+          go test -race -count=1 -timeout=3m -json "${coverage[@]}" ./... | tee "$RUNNER_TEMP/go-tests.jsonl"
+      - name: Convert Go coverage to Cobertura
+        id: go-coverage
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: go run github.com/boumenot/gocover-cobertura@v1.5.0 < "$RUNNER_TEMP/go.cover" > "$RUNNER_TEMP/go.xml"
+      - name: Report Go SDK changed-line coverage
+        if: steps.go-coverage.outcome == 'success'
+        continue-on-error: true
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: Go SDK
+          working-directory: sdk/go
+          report: ${{ runner.temp }}/go.xml
       - name: Require executed tests and report the count
         run: |
           python3 - <<'PY'
@@ -118,14 +139,35 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: sdk/java
+          fetch-depth: 2
+          sparse-checkout: |
+            sdk/java
+            .github/actions/patch-coverage
       - name: Install the declared Java target
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: "17"
       - name: Build and run the existing fake-server tests
-        run: mvn --batch-mode --no-transfer-progress -DfailIfNoTests=true verify
+        run: |
+          goals=(verify)
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            goals=(org.jacoco:jacoco-maven-plugin:0.8.16:prepare-agent verify)
+          fi
+          mvn --batch-mode --no-transfer-progress -DfailIfNoTests=true "${goals[@]}"
+      - name: Export Java coverage as JaCoCo XML
+        id: java-coverage
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: mvn --batch-mode --no-transfer-progress org.jacoco:jacoco-maven-plugin:0.8.16:report
+      - name: Report Java SDK changed-line coverage
+        if: steps.java-coverage.outcome == 'success'
+        continue-on-error: true
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: Java SDK
+          source-root: sdk/java/src/main/java
+          report: sdk/java/target/site/jacoco/jacoco.xml
       - name: Require executed tests and consume the jar
         run: |
           python3 - <<'PY'
@@ -171,7 +213,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: sdk/dotnet
+          fetch-depth: 2
+          sparse-checkout: |
+            sdk/dotnet
+            .github/actions/patch-coverage
       - name: Select a private SDK installation
         run: |
           printf 'DOTNET_INSTALL_DIR=%s/loom-dotnet-sdk\nDOTNET_ROOT=%s/loom-dotnet-sdk\nDOTNET_ROOT_X64=%s/loom-dotnet-sdk\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
@@ -193,7 +238,29 @@ jobs:
           assert Path(core[0][2].strip("[]")).resolve().is_relative_to(root)
           PY
       - name: Build and run the existing handler and loopback tests
-        run: dotnet test ClickHouse.Loom.sln --configuration Release --logger trx --results-directory "$RUNNER_TEMP/dotnet-results"
+        run: |
+          coverage=()
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            coverage=(--collect 'XPlat Code Coverage')
+          fi
+          dotnet test ClickHouse.Loom.sln --configuration Release --logger trx --results-directory "$RUNNER_TEMP/dotnet-results" "${coverage[@]}"
+      - name: Locate the .NET coverage report
+        id: dotnet-coverage
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          reports=("$RUNNER_TEMP"/dotnet-results/*/coverage.cobertura.xml)
+          test "${#reports[@]}" -eq 1
+          test -s "${reports[0]}"
+          printf 'report=%s\n' "${reports[0]}" >> "$GITHUB_OUTPUT"
+      - name: Report .NET SDK changed-line coverage
+        if: steps.dotnet-coverage.outcome == 'success'
+        continue-on-error: true
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: .NET SDK
+          working-directory: sdk/dotnet
+          report: ${{ steps.dotnet-coverage.outputs.report }}
       - name: Require executed tests
         run: |
           python3 - <<'PY'
@@ -239,16 +306,29 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: sdk/ruby
+          fetch-depth: 2
+          sparse-checkout: |
+            sdk/ruby
+            .github/actions/patch-coverage
       - name: Install Ruby
         uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
         with:
           ruby-version: "3.4.13"
           bundler-cache: false
       - name: Install test dependencies and run the existing tests
+        env:
+          LOOM_TEST_COVERAGE: ${{ github.event_name == 'pull_request' && '1' || '' }}
         run: |
           bundle install --jobs 2 --retry 0
           bundle exec rake test | tee "$RUNNER_TEMP/ruby-tests.txt"
+      - name: Report Ruby SDK changed-line coverage
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/patch-coverage
+        with:
+          component: Ruby SDK
+          working-directory: sdk/ruby
+          report: sdk/ruby/coverage/lcov.info
       - name: Require executed tests and report the count
         run: |
           python3 - <<'PY'

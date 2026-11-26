@@ -1,0 +1,63 @@
+---
+import { periodOffset } from "../lib/adoption-view.mjs";
+
+interface Props {
+  title: string;
+  grain: "week" | "month";
+  rows: { bucket: string; new: number; retained: number; reactivated: number; inactive: number }[];
+}
+
+const { title, grain, rows } = Astro.props;
+const series = [
+  { key: "retained", label: "Retained", color: "#ffcc00" },
+  { key: "new", label: "New", color: "#a5d6a7" },
+  { key: "reactivated", label: "Reactivated", color: "#9ebaff" },
+  { key: "inactive", label: "Became inactive", color: "#f29d83" },
+] as const;
+const maximum = Math.max(1, ...rows.map((row) => series.reduce((total, { key }) => total + row[key], 0)));
+const start = rows.at(0)?.bucket;
+const end = rows.at(-1)?.bucket;
+const position = (day: string) => periodOffset(start, day, grain) + 1;
+const number = new Intl.NumberFormat("en-US");
+---
+
+{rows.length ? <>
+    <ul aria-hidden="true" class="legend">
+      {series.map(({ label, color }) => <li><i style={`--color:${color}`}></i>{label}</li>)}
+    </ul>
+    <div class="bars" style={`--periods:${position(end)}`} aria-hidden="true">
+      {rows.map((row) => (
+        <span class="bar" style={`grid-column:${position(row.bucket)}`} title={`${row.bucket} · ${series.map(({ key, label }) => `${label} ${number.format(row[key])}`).join(" · ")}`}>
+          {series.map(({ key, color }) => <i style={`--color:${color};height:${row[key] / maximum * 100}%`}></i>)}
+        </span>
+      ))}
+    </div>
+    <div class="dates" aria-hidden="true"><span>{start}</span><span>{end}</span></div>
+    <details>
+      <summary>{title}</summary>
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th scope="col">Period start (UTC)</th>{series.map(({ label }) => <th scope="col">{label}</th>)}</tr></thead>
+        <tbody>{rows.map((row) => (
+          <tr><th scope="row">{row.bucket}</th>{series.map(({ key }) => <td>{number.format(row[key])}</td>)}</tr>
+        ))}</tbody>
+      </table>
+      </div>
+    </details>
+  </> : <p>Awaiting completed periods with qualifying activity.</p>}
+
+<style>
+  details { margin-top: 0.9rem; }
+  summary { cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; padding: 0; list-style: none; font-size: 0.85rem; }
+  .legend i { display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 2px; margin-right: 0.4rem; }
+  i { background: var(--color); }
+  .bars { display: grid; grid-template-columns: repeat(var(--periods), minmax(0, 1fr)); height: 7rem; gap: min(0.4rem, calc(20% / var(--periods))); border-bottom: 1px solid var(--line); }
+  .bar { grid-row: 1; min-width: 0; display: flex; flex-direction: column-reverse; }
+  .dates { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.78rem; margin-top: 0.45rem; }
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; margin-top: 0.65rem; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { padding: 0.45rem 0.3rem; border-bottom: 1px solid var(--line); text-align: right; }
+  th:first-child { text-align: left; }
+  td { font-variant-numeric: tabular-nums; }
+</style>

@@ -760,6 +760,105 @@ export interface CodeCoverageClaimOutput {
   trace_run_id?: string;
 }
 
+export interface CodeEditContextInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
+  org?: string;
+  namespace?: string;
+  agent?: string;
+  user_id?: string;
+  consumer?: string;
+  /** Definition name, path:symbol, or path:line. File path with clues if known. */
+  name?: string;
+  /** Fragments for one target, or exact declaration fragments across files. */
+  clues?: string[];
+  /** Batch name, path:symbol or path:line. Replaces name and clues. */
+  names?: string[];
+}
+
+export interface CodeUnit {
+  unit_id?: string;
+  path: string;
+  start_line?: number;
+  end_line?: number;
+  symbol?: string;
+  kind?: string;
+  signature?: string;
+  body?: string;
+  elided?: boolean;
+  body_hash?: string;
+  description?: string;
+  tier?: string;
+  score?: number;
+  recent_prs?: Array<Record<string, unknown>>;
+  examples?: Array<Record<string, unknown>>;
+  lessons?: Array<Record<string, unknown>>;
+  lessons_unread?: boolean;
+  churn?: number;
+  amp?: number;
+  tested?: boolean;
+  callees?: Array<Record<string, unknown>>;
+  granularity?: string;
+  next?: string;
+  outline?: Array<Record<string, unknown>>;
+  fan_in?: number;
+  via?: string;
+  lexical_rank?: number;
+  vector_rank?: number;
+  namespace?: string;
+}
+
+export interface CodeEditContextTarget {
+  name: string;
+  status: "resolved" | "ambiguous" | "dependency" | "not_found";
+  definition_indices?: number[];
+  candidates?: Array<Record<string, unknown>>;
+  resolved_by?: string;
+  presence?: Array<Record<string, unknown>>;
+  hierarchy?: Record<string, Array<Record<string, unknown>>>;
+  documented_in?: Array<Record<string, unknown>>;
+  trace_run_id?: string;
+}
+
+export interface CodeEditReadSource {
+  qualified_name: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  commit: string;
+  body: string;
+  sites: CodeEditReadSite[];
+}
+
+export interface CodeEditReadSite {
+  path: string;
+  symbol: string;
+  line: number;
+}
+
+export interface CodeSymbolOutput {
+  definitions: CodeUnit[];
+  lessons_left_out?: number;
+  ambiguous?: boolean;
+  hierarchy?: Record<string, Array<Record<string, unknown>>>;
+  candidates?: Array<Record<string, unknown>>;
+  tokens_returned?: number;
+  trace_run_id?: string;
+  uses?: Array<Record<string, unknown>> | Record<string, unknown>;
+  uses_truncated?: boolean;
+  uses_tokens?: number;
+  picked_by?: string;
+  resolved_by?: string;
+  documented_in?: Array<Record<string, unknown>>;
+  neighbours?: Array<Record<string, unknown>>;
+  anchors?: number;
+  neighbour_tokens?: number;
+  presence?: Array<Record<string, unknown>>;
+  summary?: Record<string, string[]>;
+  edit_targets?: CodeEditContextTarget[];
+  read_sources?: CodeEditReadSource[] | null;
+}
+
 export interface CodeEnclosingInput {
   include_lessons?: boolean;
   lesson_namespaces?: string[];
@@ -883,17 +982,27 @@ export interface CodeGrepInput {
   consumer?: string;
   /** Literal text, a list of alternatives, or one RE2 expression with regex=true. */
   pattern: string | string[];
+  /** For a literal list, give distinct patterns a first-page slot before repeat hits (default true on coding connections). */
+  prioritize_patterns?: boolean;
   /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
+  /** Recover a missing call's qualified argument in a literal or batch, or one member spelling in malformed call alternatives (default true on coding connections). */
+  related_on_miss?: boolean;
+  /** Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. Default true on coding connections. */
+  related_on_prefix?: boolean;
+  /** Include verified argument definitions, helpers, or forwarding call targets. */
+  include_dependencies?: boolean;
   case_sensitive?: boolean;
-  /** Retained lines on each side of a match. */
+  /** Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. */
   context_lines?: number;
+  /** Use the same excerpt width to complete a short declaration. Default false. */
+  prefer_complete_context?: boolean;
   path_prefix?: string;
-  /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
+  /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. */
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";
-  /** Return bodies by default in matches mode, or set false for lines only. */
+  /** Return full enclosing bodies by default in matches mode. */
   include_body?: boolean;
   limit?: number | null;
   path_globs?: string[];
@@ -905,10 +1014,31 @@ export interface CodeGrepInput {
   deadline_ms?: number | null;
 }
 
+export interface RelatedGrepEvidence {
+  pattern: string;
+  matches: Array<Record<string, unknown>>;
+  contexts?: Array<Record<string, unknown>>;
+  contexts_partial?: boolean;
+  definitions?: Array<Record<string, unknown>>;
+  definitions_partial?: boolean;
+  definitions_note?: string;
+  truncated?: boolean;
+  dependencies?: GrepDependency[];
+}
+
+export interface GrepDependency {
+  qualified_name: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  body: string;
+}
+
 export interface CodeGrepOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
+  related?: RelatedGrepEvidence | null;
   contexts?: Array<Record<string, unknown>>;
   contexts_partial?: boolean;
   definitions?: Array<Record<string, unknown>>;
@@ -1248,19 +1378,23 @@ export interface CodePrCheckOutput {
   trace_run_id?: string;
 }
 
+export interface CodeReadRangeInput {
+  path: string;
+  start_line: number;
+  end_line?: number | null;
+}
+
 export interface CodeReadInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Batch of repo-relative path:start-end ranges with inclusive one-based lines. */
-  ranges?: string[];
-  /** File for a single range. */
+  ranges?: string[] | Array<CodeReadRangeInput | string>;
   path?: string | null;
-  /** First line of the single range, one-based. */
   start_line?: number | null;
-  /** Last line, inclusive. Defaults to start_line. */
   end_line?: number | null;
 }
 
@@ -1280,8 +1414,11 @@ export interface CodeReadWindow {
 }
 
 export interface CodeReadOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   results: CodeReadRange[];
   as_of: Record<string, unknown>;
+  trace_run_id?: string;
 }
 
 export interface CodeRecentCommitsInput {
@@ -1643,37 +1780,6 @@ export interface CodeSearchInput {
   namespaces?: string[];
 }
 
-export interface CodeUnit {
-  unit_id?: string;
-  path: string;
-  start_line?: number;
-  end_line?: number;
-  symbol?: string;
-  kind?: string;
-  signature?: string;
-  body?: string;
-  elided?: boolean;
-  body_hash?: string;
-  description?: string;
-  tier?: string;
-  score?: number;
-  recent_prs?: Array<Record<string, unknown>>;
-  examples?: Array<Record<string, unknown>>;
-  lessons?: Array<Record<string, unknown>>;
-  churn?: number;
-  amp?: number;
-  tested?: boolean;
-  callees?: Array<Record<string, unknown>>;
-  granularity?: string;
-  next?: string;
-  outline?: Array<Record<string, unknown>>;
-  fan_in?: number;
-  via?: string;
-  lexical_rank?: number;
-  vector_rank?: number;
-  namespace?: string;
-}
-
 export interface CodeSearchOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
@@ -1742,9 +1848,9 @@ export interface CodeSymbolInput {
   include_body?: boolean;
   include_history?: boolean;
   include_examples?: boolean;
-  /** Use indexed test examples. Set example_context_lines to include their source. */
+  /** Restrict usage examples to indexed tests. */
   test_examples_only?: boolean;
-  /** Retained source lines on each side of a usage example. Default 0 omits text. */
+  /** Retained source lines on each side of a usage example. Use 0 to omit text. */
   example_context_lines?: number;
   include_lessons?: boolean;
   lesson_namespaces?: string[];
@@ -1761,27 +1867,6 @@ export interface CodeSymbolInput {
   presence?: boolean;
   neighbours?: boolean | null;
   neighbour_k?: number;
-}
-
-export interface CodeSymbolOutput {
-  definitions: CodeUnit[];
-  lessons_left_out?: number;
-  ambiguous?: boolean;
-  hierarchy?: Record<string, Array<Record<string, unknown>>>;
-  candidates?: Array<Record<string, unknown>>;
-  tokens_returned?: number;
-  trace_run_id?: string;
-  uses?: Array<Record<string, unknown>> | Record<string, unknown>;
-  uses_truncated?: boolean;
-  uses_tokens?: number;
-  picked_by?: string;
-  resolved_by?: string;
-  documented_in?: Array<Record<string, unknown>>;
-  neighbours?: Array<Record<string, unknown>>;
-  anchors?: number;
-  neighbour_tokens?: number;
-  presence?: Array<Record<string, unknown>>;
-  summary?: Record<string, string[]>;
 }
 
 export interface CodeSymbolHistoryInput {
@@ -9512,6 +9597,7 @@ export interface SessionBriefGetInput {
   from_session?: string;
   project?: string;
   revision?: number;
+  snapshot_id?: string;
   include_sections?: boolean;
   full?: boolean;
 }
@@ -9519,6 +9605,7 @@ export interface SessionBriefGetInput {
 export interface BriefSections {
   goal?: string;
   status?: string;
+  verification?: string;
   decisions?: BriefDecision[];
   dead_ends?: BriefDeadEnd[];
   done?: BriefDone[];
@@ -9555,6 +9642,8 @@ export interface SessionBriefGetOutput {
   found: boolean;
   brief_key?: string;
   revision?: number;
+  snapshot_id?: string;
+  snapshot_key?: string;
   rendered?: string;
   sections?: BriefSections | null;
   project?: string;
@@ -9606,6 +9695,11 @@ export interface SessionBriefListOutput {
   rendered?: string;
 }
 
+export interface BriefCheckout {
+  dirty?: boolean | null;
+  head_in_remote_refs?: boolean | null;
+}
+
 export interface BriefEvent {
   kind: "user" | "assistant" | "edit" | "command" | "error" | "read" | "search" | "tool" | "note" | "summary";
   text?: string;
@@ -9626,6 +9720,7 @@ export interface SessionBriefSaveInput {
   repo?: string;
   branch?: string;
   head_sha?: string;
+  checkout?: BriefCheckout | null;
   trigger?: "precompact" | "session_end" | "stop" | "manual" | "model";
   events?: BriefEvent[];
   sections?: BriefSections | null;
@@ -10591,6 +10686,7 @@ export type OpName =
   | "code.coverage.unwatch"
   | "code.coverage.watch"
   | "code.coverage_claim"
+  | "code.edit_context"
   | "code.enclosing"
   | "code.examples"
   | "code.files"
@@ -10971,6 +11067,7 @@ export interface OpMap {
   "code.coverage.unwatch": { input: CodeCoverageUnwatchInput; output: CodeCoverageUnwatchOutput };
   "code.coverage.watch": { input: CodeCoverageWatchInput; output: CodeCoverageWatchOutput };
   "code.coverage_claim": { input: CodeCoverageClaimInput; output: CodeCoverageClaimOutput };
+  "code.edit_context": { input: CodeEditContextInput; output: CodeSymbolOutput };
   "code.enclosing": { input: CodeEnclosingInput; output: CodeEnclosingOutput };
   "code.examples": { input: CodeExamplesInput; output: CodeExamplesOutput };
   "code.files": { input: CodeFilesInput; output: CodeFilesOutput };
@@ -11351,6 +11448,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "code.coverage.unwatch", group: "code", method: "coverageUnwatch", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 500, audit: false, readOnly: false },
   { name: "code.coverage.watch", group: "code", method: "coverageWatch", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: false },
   { name: "code.coverage_claim", group: "code", method: "coverageClaim", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1200, audit: false, readOnly: true },
+  { name: "code.edit_context", group: "code", method: "editContext", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: true },
   { name: "code.enclosing", group: "code", method: "enclosing", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "code.examples", group: "code", method: "examples", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "code.files", group: "code", method: "files", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
@@ -11710,4 +11808,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 377;
+export const GENERATED_OP_COUNT = 378;

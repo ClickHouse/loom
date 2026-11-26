@@ -167,6 +167,12 @@ _WORKERS: tuple[_Worker, ...] = (
         "audit_verifier_interval_seconds",
     ),
     _Worker(
+        "adoption_telemetry",
+        "server.insights.workers.adoption_telemetry",
+        "adoption_telemetry_enabled",
+        "adoption_telemetry_interval_seconds",
+    ),
+    _Worker(
         "recalibration",
         "server.memory.workers.recalibration",
         "recalibration_enabled",

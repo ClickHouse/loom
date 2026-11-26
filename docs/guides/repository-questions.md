@@ -1,8 +1,61 @@
-# Answer questions about a repository
+---
+title: Repository Q&A without a local checkout
+description: Give triage agents, design assistants and team chatbots access to indexed repositories. Retrieve code citations and check answer scope, freshness and completeness.
+---
 
-Use `code.search` to retrieve source and documentation, and `code.ask` to produce a
-cited answer from that evidence. Both can serve a reader who has no local checkout.
-The repository must be indexed in the code namespace passed to the request.
+# Answer repository questions without a local checkout
+
+An AI agent can answer questions about a Git repository without cloning it onto the
+machine that runs the agent. Loom indexes the repository on the server and returns
+source ranges from the branch the caller can read. A triage bot can find where a
+retry is handled, a design assistant can look up callers, and a team chatbot can
+answer questions with file and line citations.
+
+## Try a question from a machine without the repository
+
+First [add and index the repository](../features/code-index/repositories.md). Give
+the bot a Loom identity with viewer access to the intended code namespace. Have the
+application choose the namespace from the caller's authorized repositories. The Git
+credential used to build the index grants no access to the chatbot's users.
+[Repository access rules](../features/code-index/repositories.md#who-can-read)
+
+From any client that can reach Loom, replace the organization, namespace and question
+with those of your indexed repository:
+
+```sh
+curl --fail-with-body -sS "$LOOM_BASE_URL/v1/code.ask" \
+  -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "org": "example",
+    "namespace": "code-example",
+    "question": "Where is the cache retry delay calculated?",
+    "synthesize": false,
+    "no_cache": true,
+    "rerank": "none"
+  }'
+```
+
+This returns retrieved `citations` with `path`, `start_line` and `end_line`. The
+`answer` field is empty because the request skips synthesis and cached drafts.
+`rerank: "none"` skips reranking. Retrieval can still use the deployment's
+embedding provider. To let Loom draft the answer, set `synthesize` to `true` with a
+[configured server model](../getting-started/models-and-keys.md). Omit `no_cache`
+to let Loom reuse a cached draft. The corresponding MCP tool is
+[`loom_code_ask`](../reference/operations/code.md#codeask).
+
+Use `as_of` when available to check the indexed branch and commit behind the result.
+Check `abstain`, `partial` and their reasons before displaying an answer. To test
+the integration, start with a question whose source you can verify, then ask one
+the repository cannot answer and check that the client surfaces the abstention or
+missing evidence. Use a separate identity without repository access to check that
+it cannot retrieve those citations. [Index freshness](../features/code-index/freshness.md)
+
+| Use case                    | Evidence to request                                                                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Triage a reported behavior  | `code.search` to find relevant code, then `code.symbol` and `code.callers` to inspect a definition and its indexed callers.                         |
+| Review a proposed change    | `code.impact` to inspect mapped definitions and tests, and [code-linked team lessons](../use-cases/memory-linked-to-code.md) for earlier decisions. |
+| Answer a team chat question | `code.ask` to retrieve citations or produce an answer backed by indexed source ranges.                                                              |
 
 ## Calibrate the embedding model
 

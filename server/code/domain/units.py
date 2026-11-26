@@ -21,6 +21,7 @@ from typing import Any
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
 from server.code.domain.symbol_body import retained_source_lines
+from server.code.domain.symbol_documentation import symbol_description_preview
 
 # Characters per token by content kind, measured with o200k_base over 300 randomly
 # sampled chunks per kind from a ClickHouse index (cl100k within 1%): cpp 4.33, h 4.38,
@@ -96,6 +97,7 @@ _OPTIONAL_WHEN_EMPTY: frozenset[str] = frozenset(
         "recent_prs",
         "examples",
         "lessons",
+        "lessons_unread",
         "churn",
         "amp",
         "tested",
@@ -153,6 +155,9 @@ class CodeUnit(BaseModel):
     recent_prs: list[dict[str, Any]] = Field(default_factory=list)
     examples: list[dict[str, Any]] = Field(default_factory=list)
     lessons: list[dict[str, Any]] = Field(default_factory=list)
+    # True when `lessons` was asked for but its read failed or ran past
+    # `code_enrich_timeout_s`: the symbol may have lessons this answer does not carry.
+    lessons_unread: bool = False
     # risk annotations + one-hop context (code.search fills these when
     # annotate=True; see code/app/risk.py for exact semantics — churn
     # is a floor bounded by PR-history coverage, tested means "a mapped
@@ -334,7 +339,7 @@ def unit_from_symbol(row: dict[str, Any], *, body: str = "") -> CodeUnit:
         kind="symbol",
         signature=symbol_signature(row, body=body),
         body=body,
-        description=str(row.get("doc_comment") or "")[:500],
+        description=symbol_description_preview(str(row.get("doc_comment") or "")),
         tier=str(row.get("tier") or ""),
     )
 

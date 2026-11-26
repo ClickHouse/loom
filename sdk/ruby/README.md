@@ -1,6 +1,6 @@
 # Loom Ruby client
 
-A Ruby client for [ClickHouse Loom](https://clickhouse.github.io/loom/). Every operation
+A Ruby client for [ClickHouse Loom](https://loom.clickhouse.com/docs/). Every operation
 the server serves is a method, generated from the server's registry
 (`client.memory.set(...)`, `client.task.create(...)`), so a new operation reaches the gem
 by regeneration alone. It depends on the standard library only (`net/http` and `json`)

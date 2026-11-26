@@ -130,7 +130,9 @@ For a completed code call, inspect the handler result's content counts and work:
 ```sql
 SELECT request_id, trace_id, operation, latency_ms, response_tokens,
        args['out_grep_match_lines'] AS grep_lines,
+       args['out_grep_related_lines'] AS grep_related_lines,
        args['out_source_bodies'] AS bodies,
+       args['out_source_windows'] AS source_windows,
        args['out_source_chars'] AS source_chars,
        args['out_elided_bodies'] AS elided_bodies,
        args['out_lesson_rows'] AS lessons,
@@ -149,6 +151,10 @@ An absent map entry is unknown, including rows written by an older build. A zero
 count says what that result contained; it does not explain why a lesson was absent.
 The [telemetry field definitions](../features/observability/telemetry.md#the-ledger)
 name the measured containers and character units.
+
+For an MCP result that carries `trace_run_id`, including `code.read`, use that
+value with the same organization and namespace in `loom.code_search_trace.trace_run_id`
+and `loom.agent_events.args['out_trace_run_id']`.
 
 For grep in matches mode, compare line and body counts to see what the response
 returned. Check coverage and partial-result flags before interpreting zero lines.

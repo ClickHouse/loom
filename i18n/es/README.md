@@ -22,7 +22,7 @@
   <!-- languages -->
   <a href="../../README.md">English</a> · <a href="../zh-CN/README.md">简体中文</a> · <a href="../ja/README.md">日本語</a> · <a href="../ko/README.md">한국어</a> · <a href="../pt-BR/README.md">Português (Brasil)</a> · Español
   <br>
-  <a href="https://clickhouse.github.io/loom/es/use-cases/">Documentación</a>
+  <a href="https://loom.clickhouse.com/docs/es/use-cases/">Documentación</a>
   <!-- /languages -->
 </p>
 
@@ -32,7 +32,7 @@
   <a href="#get-started">Primeros pasos</a> ·
   <a href="#why-loom">Capacidades</a> ·
   <a href="#integrations">Integraciones</a> ·
-  <a href="https://clickhouse.github.io/loom/">Documentación</a>
+  <a href="https://loom.clickhouse.com/docs/">Documentación</a>
 </p>
 
 <p>
@@ -316,12 +316,12 @@ y los protocolos completos, los modelos y los artefactos.
 ## Documentación y contribución
 
 Para contexto compartido entre agentes, inteligencia de código y recuperación con permisos, empieza por la
-[documentación](https://clickhouse.github.io/loom/). Para conocer los requisitos de despliegue, consulta los
+[documentación](https://loom.clickhouse.com/docs/). Para conocer los requisitos de despliegue, consulta los
 [requisitos previos](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites).
 
 [Despliegue](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md) · [Preguntas frecuentes](https://github.com/ClickHouse/loom/blob/main/docs/faq.md) ·
 [Cómo contribuir](https://github.com/ClickHouse/loom/blob/main/CONTRIBUTING.md) · [Reporte de seguridad](https://github.com/ClickHouse/loom/blob/main/SECURITY.md) ·
-[`llms.txt`](https://clickhouse.github.io/loom/llms.txt) ·
-[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt)
+[`llms.txt`](https://loom.clickhouse.com/docs/llms.txt) ·
+[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt)
 
 Apache-2.0 · [Licencia](https://github.com/ClickHouse/loom/blob/main/LICENSE) · [Aviso](https://github.com/ClickHouse/loom/blob/main/NOTICE)

@@ -129,18 +129,16 @@ def _raw_event_diagnostics(auth: AuthInfo | None) -> bool:
 async def admin_schema_status() -> SchemaStatusOutput:
     """Report the gap between what migrations expect and what's in CH.
 
-    expected = what a replay of the migrations leaves (creates less drops);
-    missing = expected ∖ present (run `make migrate`);
-    extra = present ∖ expected (stale tables, drift, or MV inner-ids).
+    Expected objects include the relations created by migrations and at startup.
+    Missing and extra objects are the differences between the expected and live sets.
     """
 
     from server.core.schema.journal import live_objects
     from server.core.schema.migrate_lease import RUNNER_TABLES
+    from server.insights.domain.analysis import EVENT_VIEWS
 
     expected = live_objects(MIGRATIONS_DIR.glob("*.sql")) if MIGRATIONS_DIR.exists() else set()
-    from server.insights.domain.analysis import EVENTS_VIEW
-
-    expected |= RUNNER_TABLES | {EVENTS_VIEW}
+    expected.update(RUNNER_TABLES, EVENT_VIEWS)
 
     # Skip internal MV inner_id.* tables — repo helper filters them.
     present = set(await admin_repo.list_loom_tables())

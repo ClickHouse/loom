@@ -26,6 +26,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --retry 2 --retry-all-errors --retry-max-time 85 --connect-timeout 10 --max-time 40 \
             https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
             --output actionlint.tar.gz
           echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz' | sha256sum --check --strict
@@ -34,6 +35,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            --retry 2 --retry-all-errors --retry-max-time 85 --connect-timeout 10 --max-time 40 \
             https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz \
             --output shellcheck.tar.xz
           echo '8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  shellcheck.tar.xz' | sha256sum --check --strict

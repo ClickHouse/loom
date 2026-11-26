@@ -11,6 +11,9 @@ files. Needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`. How the ind
 built and kept fresh is in [the code index overview](../features/code-index/overview.md);
 what it gives in each language is in [code index by language](code-intelligence-by-language.md).
 
+For a triage agent, design assistant or team chatbot that runs away from the source
+tree, start with [repository Q&A without a checkout](../guides/repository-questions.md).
+
 ## What you get
 
 - **Definitions, callers and impact.** `code.symbol`, `code.callers` and `code.impact`
@@ -51,6 +54,10 @@ indexed file and 79% for BM25 over `.py` files only; the `.py`-only gap is withi
 [SWE-bench Verified file localization](../benchmarks/results.md#swe-bench-verified-file-localization)
 
 ## A coding agent that reads the definition it needs
+
+For an edit to a known definition, [`code.edit_context`](../reference/operations/code.md#codeedit_context)
+reads the implementation, indexed test excerpts, and linked lessons together.
+Use the returned source revision and each lesson's code state when applying it.
 
 Start with a repository you trust. On the released stack, follow the
 [operator-configured index steps](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack);

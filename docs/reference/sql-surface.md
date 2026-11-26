@@ -46,6 +46,9 @@ listed with its value until the expiry sweep acts on it, as `memory.list` lists 
 | `sensitivity`, `source_class`, `actor`                             | the label, the provenance class, the token subject that wrote it                                   |
 | `created_at`, `updated_at`, `expires_at`, `valid_at`, `invalid_at` | when it was written and last changed, when it expires, when the fact became and stopped being true |
 
+For a report that selects counts by agent and provenance, see
+[Count active memories by agent and source](../use-cases/self-hosted-clickhouse.md#count-active-memories-by-agent-and-source).
+
 ### `sql_v1_memory_history`
 
 One row per version of every memory, the version of a deletion included (`status =

@@ -203,6 +203,7 @@ adding its row.
 
 | Worker | What it does | Switched on by | Default | Cadence setting | Default (s) |
 | --- | --- | --- | --- | --- | --- |
+| `adoption_telemetry` | Send a completed 12-hour adoption report to the event collector. | `LOOM_ADOPTION_TELEMETRY_ENABLED` | True | `LOOM_ADOPTION_TELEMETRY_INTERVAL_SECONDS` | 3600 |
 | `audit_verifier` | Audit tamper-detection worker. | `LOOM_AUDIT_VERIFIER_ENABLED` | True | `LOOM_AUDIT_VERIFIER_INTERVAL_SECONDS` | 3600 |
 | `code_backport_gaps` | Nightly set-wide backport report: for every merged trunk PR of the last `LOOM_CODE_BACKPORT_GAPS_DAYS` that the maintainers labelled for backport (`pr-must-backport*` on loom's ledger, QA's… | `LOOM_CODE_BACKPORT_GAPS_ENABLED` + `LOOM_CODE_PR_HISTORY_ENABLED` | True | `LOOM_CODE_BACKPORT_GAPS_INTERVAL_SECONDS` | 86400.0 |
 | `code_coverage_import` | Daily measured-coverage import (`server.code.app.index.coverage_import`). | `LOOM_CODE_COVERAGE_IMPORT_ENABLED` + `LOOM_CODE_INTEL_ENABLED` | False | `LOOM_CODE_COVERAGE_IMPORT_INTERVAL_SECONDS` | 86400.0 |

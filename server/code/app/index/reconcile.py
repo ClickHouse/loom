@@ -194,6 +194,7 @@ async def drain_dependents_pending(
     embedding_model: str,
     ingest_file: Any = None,
     show_file: Any = None,
+    stop_after: float | None = None,
 ) -> Any:
     """Re-extract up to `budget` paths a commit's dependents cap left in
     code_index_state `dependents_pending`, at `head` and edges-only, before the
@@ -206,7 +207,11 @@ async def drain_dependents_pending(
         from server.code.app.index.gitrepo import show_file as _sf
 
         show_file = _sf
+    from server.code.app.index.denylist import load_denylist
     from server.code.app.index.dependents import drain_pending
+
+    async def rules() -> Any:
+        return await load_denylist(cfg, head, show_file)
 
     return await drain_pending(
         repo,
@@ -218,6 +223,8 @@ async def drain_dependents_pending(
         show_file=show_file,
         ingest_file=ingest_file,
         embedding_model=embedding_model,
+        load_rules=rules,
+        stop_after=stop_after,
     )
 
 
