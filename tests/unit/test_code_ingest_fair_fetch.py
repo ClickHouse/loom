@@ -116,19 +116,14 @@ def test_fetch_many_is_one_git_fetch_with_a_refspec_per_branch(
 def _wire_streams(
     monkeypatch: pytest.MonkeyPatch,
     clock: _Clock,
-    times: dict[str, int],
     files: dict[str, int] | None = None,
     cost: float = 10.0,
 ) -> list[str]:
     ingested = _wire_commits(monkeypatch, clock, cost=cost)
 
-    async def meta(git_dir: str, shas: list[str]) -> dict[str, tuple[str, int]]:
-        return {s: ("", times[s]) for s in shas if s in times}
-
     async def names(git_dir: str, base: str, sha: str, limit: int = 2000) -> list[str]:
         return ["f"] * (files or {}).get(sha, 1)
 
-    monkeypatch.setattr(gitrepo, "commit_meta_many", meta)
     monkeypatch.setattr(gitrepo, "diff_name_only", names)
     return ingested
 
@@ -147,10 +142,8 @@ def test_a_backlog_does_not_hold_the_phase_ahead_of_another_entrys_one_merge(
     ahead of another entry's one merge: the first round serves both; each
     entry's own commits still land oldest first (the watermark contract)."""
     clock = _Clock()
-    now = int(clock.time())
     backlog = [f"p{i:02d}" for i in range(20)]
-    times = {sha: now - 600 + i for i, sha in enumerate(backlog)} | {"loom1": now - 3000}
-    ingested = _wire_streams(monkeypatch, clock, times)
+    ingested = _wire_streams(monkeypatch, clock)
     priv, priv_repo = _plan("code-private", backlog)
     loom, loom_repo = _plan("code-loom", ["loom1"])
     result = ingest_budget.CodeIngestResult()
@@ -197,9 +190,7 @@ def test_at_the_budget_every_waiting_entry_is_cut_the_next_to_serve_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = _Clock()
-    now = int(clock.time())
-    times = {"a1": now - 50, "a2": now - 40, "b1": now - 45, "b2": now - 10}
-    ingested = _wire_streams(monkeypatch, clock, times, cost=100.0)
+    ingested = _wire_streams(monkeypatch, clock, cost=100.0)
     a, _ = _plan("code-a", ["a1", "a2"])
     b, _ = _plan("code-b", ["b1", "b2"])
     result = ingest_budget.CodeIngestResult()
@@ -212,15 +203,13 @@ def test_at_the_budget_every_waiting_entry_is_cut_the_next_to_serve_first(
     assert ingest_budget.cut_points(result.resume) == {"commits": "code-a"}
 
 
-def test_an_old_dated_backlog_does_not_hold_a_recent_merge_behind_it(
+def test_a_two_commit_backlog_does_not_hold_another_entrys_one_commit_behind_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Commit dates do not order entries: the old backlog's second commit
-    waits for the next round, after the other entry's recent merge."""
+    """Commit dates do not order entries: the backlog's second commit
+    waits for the next round, after the other entry's one commit."""
     clock = _Clock()
-    now = int(clock.time())
-    times = {"old1": now - 90 * 86400, "old2": now - 89 * 86400, "new1": now - 60}
-    ingested = _wire_streams(monkeypatch, clock, times)
+    ingested = _wire_streams(monkeypatch, clock)
     a, _ = _plan("code-a", ["old1", "old2"])
     b, _ = _plan("code-b", ["new1"])
     asyncio.run(
@@ -233,13 +222,10 @@ def test_an_old_dated_backlog_does_not_hold_a_recent_merge_behind_it(
     assert ingested == ["old1", "new1", "old2"]
 
 
-def test_two_old_backlogs_alternate_round_robin(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_two_backlogs_alternate_round_robin(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two entries with backlogs alternate, one commit each per round."""
     clock = _Clock()
-    now = int(clock.time())
-    old = now - 30 * 86400
-    times = {s: old for s in ("a1", "a2", "a3", "b1", "b2", "b3")}
-    ingested = _wire_streams(monkeypatch, clock, times)
+    ingested = _wire_streams(monkeypatch, clock)
     a, _ = _plan("code-a", ["a1", "a2", "a3"])
     b, _ = _plan("code-b", ["b1", "b2", "b3"])
     asyncio.run(
@@ -267,12 +253,10 @@ def test_a_commit_that_would_run_past_the_deadline_is_not_started_unless_it_is_t
     commit starts — as a slice — while one round still fits; a commit whose
     round cannot fit waits."""
     clock = _Clock()
-    now = int(clock.time())
     monkeypatch.setattr(settings, "code_ingest_max_pass_seconds", 900)
     monkeypatch.setattr(settings, "code_ingest_seconds_per_file", 2.5)
-    times = {"s1": now - 100, "big": now - 90, "s2": now - 80}
     files = {"s1": 180, "big": 300, "s2": 4}
-    ingested = _wire_streams(monkeypatch, clock, times, files=files, cost=450.0)
+    ingested = _wire_streams(monkeypatch, clock, files=files, cost=450.0)
     a, _ = _plan("code-a", ["s1"])
     b, _ = _plan("code-b", ["big"])
     c, _ = _plan("code-c", ["s2"])

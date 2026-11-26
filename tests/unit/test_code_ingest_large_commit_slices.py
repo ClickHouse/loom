@@ -54,9 +54,6 @@ def _wire(
     async def names(git_dir: str, base: str, sha: str, limit: int = 2000) -> list[str]:
         return ["x"] * files[sha]
 
-    async def meta(git_dir: str, shas: list[str]) -> dict[str, tuple[str, int]]:
-        return {s: ("", int(clock.time()) - 3600 + i) for i, s in enumerate(shas)}
-
     async def show(git_dir: str, sha: str, path: str, max_bytes: int = 0) -> bytes:
         return b"x"
 
@@ -99,7 +96,6 @@ def _wire(
 
     monkeypatch.setattr(gitrepo, "diff_files", diff_files)
     monkeypatch.setattr(gitrepo, "diff_name_only", names)
-    monkeypatch.setattr(gitrepo, "commit_meta_many", meta)
     monkeypatch.setattr(gitrepo, "show_file", show)
     monkeypatch.setattr(gitrepo, "commit_subject", subject)
     monkeypatch.setattr(rr, "RoundReads", _Reads)

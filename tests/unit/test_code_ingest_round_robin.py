@@ -1,9 +1,8 @@
 """The commit phase's share across entries: one commit per entry per round, so an
 entry with a few new commits is never starved by an entry with a large backlog.
 
-Ordered by commit time across entries, two backlogged mirrors (hundreds of commits,
-older than the branch's new merge) took the whole budget pass after pass, while a
-one-commit branch sat at 0 of 1 for as long as the backlogs lasted."""
+Two backlogged entries (hundreds of commits) each get one commit per round, so a
+one-commit entry lands in the first round however long the backlogs are."""
 
 from __future__ import annotations
 
@@ -17,15 +16,13 @@ from tests.unit.test_code_ingest_fair_fetch import _plan, _wire_streams
 from tests.unit.test_code_ingest_pass_budget import _Clock
 
 
-def _backlogs(clock: _Clock) -> tuple[dict[str, int], list[str], list[str], list[str]]:
-    """Two entries far behind on old-dated history, one with a merge from a minute ago."""
-    now = int(clock.time())
-    big = [f"a{i:03d}" for i in range(400)]
-    other = [f"b{i:03d}" for i in range(300)]
-    times = {s: now - 30 * 86400 + i for i, s in enumerate(big)}
-    times |= {s: now - 20 * 86400 + i for i, s in enumerate(other)}
-    times["c1"] = now - 60
-    return times, big, other, ["c1"]
+def _backlogs() -> tuple[list[str], list[str], list[str]]:
+    """Two entries with backlogs of 400 and 300 commits, one with a single commit."""
+    return (
+        [f"a{i:03d}" for i in range(400)],
+        [f"b{i:03d}" for i in range(300)],
+        ["c1"],
+    )
 
 
 def _run(
@@ -43,8 +40,8 @@ def test_a_one_commit_entry_lands_in_the_pass_a_backlog_would_fill(
     """The budget fits 6 of the 701 pending commits. The backlogs each get a
     share; the one-commit entry lands in the first round."""
     clock = _Clock()
-    times, big, other, small = _backlogs(clock)
-    ingested = _wire_streams(monkeypatch, clock, times)  # 10 s a commit
+    big, other, small = _backlogs()
+    ingested = _wire_streams(monkeypatch, clock)  # 10 s a commit
     a, ra = _plan("code-a", big)
     b, rb = _plan("code-b", other)
     c, rc = _plan("code-c", small)
@@ -62,10 +59,9 @@ def test_every_entry_lands_a_commit_each_pass_while_the_backlogs_last(
     """Thirteen passes in a row: each one lands a commit of every entry still
     behind, and the shares stay within one commit of each other."""
     clock = _Clock()
-    times, big, other, _ = _backlogs(clock)
-    times |= {f"c{i}": int(clock.time()) - 600 + i for i in range(20)}
+    big, other, _ = _backlogs()
     small = [f"c{i}" for i in range(20)]
-    ingested = _wire_streams(monkeypatch, clock, times)
+    ingested = _wire_streams(monkeypatch, clock)
     heads = {"code-a": "w0", "code-b": "w0", "code-c": "w0"}
     left = {"code-a": big, "code-b": other, "code-c": small}
     for _ in range(13):
@@ -96,9 +92,7 @@ def test_a_round_the_budget_ends_resumes_next_pass_at_the_entry_it_did_not_reach
     names the entry the round did not reach, and the next pass's entry order
     (`rotate_to` on that cut) serves it first."""
     clock = _Clock()
-    now = int(clock.time())
-    times = {"a1": now - 50, "a2": now - 49, "b1": now - 40, "b2": now - 39, "c1": now - 30}
-    ingested = _wire_streams(monkeypatch, clock, times, cost=100.0)
+    ingested = _wire_streams(monkeypatch, clock, cost=100.0)
     a, _ = _plan("code-a", ["a1", "a2"])
     b, _ = _plan("code-b", ["b1", "b2"])
     c, rc = _plan("code-c", ["c1"])
@@ -122,8 +116,8 @@ def test_each_entry_still_lands_oldest_first(monkeypatch: pytest.MonkeyPatch, la
     from server.settings import settings
 
     clock = _Clock()
-    times, big, other, small = _backlogs(clock)
-    ingested = _wire_streams(monkeypatch, clock, times)
+    big, other, small = _backlogs()
+    ingested = _wire_streams(monkeypatch, clock)
     monkeypatch.setattr(settings, "code_ingest_lanes", lanes)
     a, _ = _plan("code-a", big[:5])
     b, _ = _plan("code-b", other[:3])

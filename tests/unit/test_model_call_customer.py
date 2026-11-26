@@ -804,7 +804,7 @@ def test_code_ingest_names_each_entrys_org_for_its_commits(metered, monkeypatch,
 
     seen: list[str] = []
     clock = _Clock()
-    _wire_streams(monkeypatch, clock, {"a1": int(clock.time()) - 50})
+    _wire_streams(monkeypatch, clock)
 
     async def ingest_commit(*a: Any, **k: Any) -> None:
         await _model_call(seen)
