@@ -249,7 +249,12 @@ async def _head(input: ConflictsResolveInput, memory_id: str) -> Any:
     import server.memory.store as memory_repo
 
     return await memory_repo.get_by_id(
-        memory_id, org=input.org, namespace=input.namespace, strong=True, scope=WHOLE_NAMESPACE
+        memory_id,
+        org=input.org,
+        namespace=input.namespace,
+        fresh=True,
+        strong=True,
+        scope=WHOLE_NAMESPACE,
     )
 
 
