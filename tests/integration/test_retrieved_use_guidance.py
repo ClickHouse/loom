@@ -45,5 +45,7 @@ async def test_search_and_file_follow_reviewed_content(control_plane_url, mint_t
         await check("none", "validate_lead")
         await agent.memory.verify(memory_id=written["memory_id"])
         await check("process", "validate_lead")
+        await agent.memory.touch(key, ttl_seconds=3600)
+        await check("process", "validate_lead")
         await agent.memory.update_by_id(written["memory_id"], "Refresh the catalog before imports.")
         await check("stale", "obtain_review")

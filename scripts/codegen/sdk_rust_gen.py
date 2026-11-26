@@ -752,6 +752,12 @@ def build(selected: tuple[str, ...] | None = None) -> str:
         for request, model in [(False, op.output_model), (True, op.input_model)]:
             schema = schema_for(model, request=request)
             em.defs = schema.get("$defs", {})
+            if not request:
+                for definition in (schema, *em.defs.values()):
+                    lessons = definition.get("properties", {}).get("lessons", {})
+                    if lessons.get("items", {}).get("$ref") == "#/$defs/CodeLesson":
+                        # Preserve existing Rust map access to code lesson fields.
+                        lessons["items"] = {"type": "object", "additionalProperties": True}
             root = operation_type(op, request=request)
             em.ref_names = {}
             for ref, definition in em.defs.items():

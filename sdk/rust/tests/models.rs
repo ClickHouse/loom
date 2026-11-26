@@ -315,3 +315,20 @@ fn optional_search_disclosures_distinguish_absence_from_false_and_zero() {
     .unwrap();
     assert_eq!(search.reinforcement, None);
 }
+
+#[test]
+fn code_lessons_preserve_map_field_access() {
+    use clickhouse_loom::CodeCallersOutput;
+
+    let response: CodeCallersOutput = serde_json::from_value(json!({
+        "edges": [],
+        "seed_symbols": [],
+        "lessons": [{"memory_key": "note", "use_guidance": {"next_step": "validate_lead"}}]
+    }))
+    .unwrap();
+    assert_eq!(response.lessons[0].get("memory_key"), Some(&json!("note")));
+    assert_eq!(
+        response.lessons[0]["use_guidance"]["next_step"],
+        "validate_lead"
+    );
+}

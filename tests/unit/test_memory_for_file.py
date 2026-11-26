@@ -413,7 +413,7 @@ async def test_an_escaped_constraint_under_the_ceiling_prints_whole(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     assert out.truncated is False
-    assert out.rendered.splitlines()[1] == f"- rules/zh [constraint]: {text} [use: validate_lead]"
+    assert out.rendered.splitlines()[1] == f"- rules/zh [constraint]: {text}"
 
 
 @pytest.mark.asyncio
@@ -432,9 +432,7 @@ async def test_an_emoji_constraint_under_the_ceiling_prints_whole(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     assert out.truncated is False
-    assert (
-        out.rendered.splitlines()[1] == f"- rules/emoji [constraint]: {text} [use: validate_lead]"
-    )
+    assert out.rendered.splitlines()[1] == f"- rules/emoji [constraint]: {text}"
 
 
 def test_a_more_line_from_a_left_out_constraint_fits_the_budget(
@@ -744,7 +742,7 @@ async def test_the_source_is_read_into_the_hit_and_the_block(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
     )
     assert out.rendered.splitlines()[1] == (
-        f"- design/spill [decision] (pinned): Decided X because Y. — source: {_SOURCE} [use: validate_lead]"
+        f"- design/spill [decision] (pinned): Decided X because Y. — source: {_SOURCE}"
     )
     assert out.hits[0].source_resource_id == _SOURCE
 

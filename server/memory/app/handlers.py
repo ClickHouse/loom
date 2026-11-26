@@ -1431,7 +1431,7 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
         mirror = [
             (
                 (r.org, r.namespace, r.agent, r.user_id, r.session_id, r.memory_key),
-                {"expires_at": naive_expiry},
+                {"expires_at": naive_expiry, "version": versions[r.memory_key]},
             )
             for r in (by_key[k] for k in versions)
             # a 'high' head keeps no vector: never copy one forward under it
@@ -1439,11 +1439,8 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
         ]
         if mirror:
             try:
-                if input.memory_keys:
-                    await memory_repo.reemit_embedding_rows_for_keys(mirror, ch=ch)
-                else:  # one key: the keyed read the single-key path always ran
-                    (o, n, a, u, s_, k), ov = mirror[0]
-                    await memory_repo.reemit_embedding_rows_for_key(o, n, a, u, s_, k, ch=ch, **ov)
+                hashes = {key: served_content_sha256(by_key[key[-1]].value) for key, _ in mirror}
+                await memory_repo.reemit_embedding_rows_for_keys(mirror, ch=ch, of_content=hashes)
             except Exception as e:  # noqa: BLE001 — expiry mirror is best-effort; memory rows already updated
                 log.warning("memory_embeddings expiry mirror failed (non-fatal): %s", e)
 

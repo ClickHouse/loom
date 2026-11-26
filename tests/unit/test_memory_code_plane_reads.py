@@ -621,3 +621,15 @@ def test_symbol_request_budget_preserves_source_before_whole_lessons() -> None:
     assert unit.lessons == [lesson, short]
     unlimited, _, left_out = _budget_definitions([unit], 0)
     assert unlimited[0].lessons == [lesson, short] and left_out == 0
+
+
+async def test_unloaded_code_registry_keeps_recall_guidance_unknown(monkeypatch):
+    from server.code.domain.index.repos import RegistryUnread
+    from server.memory.app import code_link_reads
+
+    def unavailable(*args):
+        raise RegistryUnread("registry unavailable")
+
+    monkeypatch.setattr(code_link_reads, "code_namespace_for", unavailable)
+    row = _excerpt("m1", "readable memory") | {"namespace": "code-a"}
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]

@@ -210,11 +210,6 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     return out + code_change.note(state, commit)
 
 
-def _use_note(hit: dict[str, Any]) -> str:
-    guidance = hit.get("use_guidance")
-    return f" [use: {guidance['next_step']}]" if guidance else ""
-
-
 def _marker(hit: dict[str, Any], *, show_decision: bool) -> str:
     """` [constraint, decision]`: the row's kinds. `decision` is added only when
     `show_decision`; a team line leaves it out because its head says `Decision`."""
@@ -238,10 +233,7 @@ def _team_line(hit: dict[str, Any], now: datetime, *, decision: bool) -> str:
     label = "Decision" if decision else "Team rule"
     head = f"{label} ({who})" if who else label
     marks = _marker(hit, show_decision=False) + _status_notes(hit, decision=decision)
-    return (
-        f"- {head}{marks}: {_body(hit, decision=decision)}"
-        f" [id: {hit['memory_key']}]{_use_note(hit)}"
-    )
+    return f"- {head}{marks}: {_body(hit, decision=decision)} [id: {hit['memory_key']}]"
 
 
 def _removal_footer(hits: list[dict[str, Any]], home: str) -> str:
@@ -301,7 +293,7 @@ def _row_line(h: dict[str, Any], now: datetime, home: str, *, whole: bool = True
     if _is_team(h, home):
         return _team_line(h, now, decision=decision)
     marks = _marker(h, show_decision=decision) + _status_notes(h, decision=decision)
-    return f"- {h['memory_key']}{marks}: {_body(h, decision=decision, whole=whole)}{_use_note(h)}"
+    return f"- {h['memory_key']}{marks}: {_body(h, decision=decision, whole=whole)}"
 
 
 def listing_line(hit: dict[str, Any]) -> str:

@@ -7756,31 +7756,6 @@ impl CodeCalibrateInput {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct CodeLesson {
-    #[serde(default)]
-    pub memory_key: Option<String>,
-    #[serde(default)]
-    pub namespace: Option<String>,
-    #[serde(default)]
-    pub excerpt: Option<String>,
-    #[serde(default)]
-    pub code_state: Option<String>,
-    #[serde(default)]
-    pub path: Option<String>,
-    #[serde(default)]
-    pub changed_since: Option<String>,
-    #[serde(default)]
-    pub supersedes_key: Option<String>,
-    #[serde(default)]
-    pub suggestion: Option<String>,
-    #[serde(default)]
-    pub owner_symbol: Option<String>,
-    #[serde(default)]
-    pub use_guidance: Option<UseGuidance>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct CodeEdgeWire {
     pub edge_kind: String,
     pub from_symbol: String,
@@ -7848,7 +7823,7 @@ pub struct CodeCandidateSitesWire {
 #[non_exhaustive]
 pub struct CodeCallersOutput {
     #[serde(default = "default_310")]
-    pub lessons: Vec<CodeLesson>,
+    pub lessons: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_311")]
     pub lessons_left_out: Integer,
     pub edges: Vec<CodeEdgeWire>,
@@ -8416,7 +8391,7 @@ pub enum CodeContextPackOutputSource {
 #[non_exhaustive]
 pub struct CodeContextPackOutput {
     #[serde(default = "default_343")]
-    pub lessons: Vec<CodeLesson>,
+    pub lessons: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_344")]
     pub lessons_left_out: Integer,
     pub context: String,
@@ -9485,7 +9460,7 @@ pub struct CodeUnit {
     #[serde(default = "default_452")]
     pub examples: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_453")]
-    pub lessons: Vec<CodeLesson>,
+    pub lessons: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_454")]
     pub lessons_unread: bool,
     #[serde(default = "default_455")]
@@ -9777,7 +9752,7 @@ impl CodeEditContextInput {
 #[non_exhaustive]
 pub struct CodeEnclosingOutput {
     #[serde(default = "default_493")]
-    pub lessons: Vec<CodeLesson>,
+    pub lessons: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_494")]
     pub lessons_left_out: Integer,
     pub results: Vec<std::collections::HashMap<String, Value>>,
@@ -10406,7 +10381,7 @@ pub enum CodeGrepOutputFallback {
 #[non_exhaustive]
 pub struct CodeGrepOutput {
     #[serde(default = "default_534")]
-    pub lessons: Vec<CodeLesson>,
+    pub lessons: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_535")]
     pub lessons_left_out: Integer,
     pub matches: Vec<std::collections::HashMap<String, Value>>,
@@ -11002,7 +10977,7 @@ impl CodeHistoryInput {
 #[non_exhaustive]
 pub struct CodeImpactOutput {
     #[serde(default = "default_574")]
-    pub lessons: Vec<CodeLesson>,
+    pub lessons: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_575")]
     pub lessons_left_out: Integer,
     pub impacted_symbols: Vec<std::collections::HashMap<String, Value>>,
@@ -11964,7 +11939,7 @@ impl CodeOutcomeInput {
 #[non_exhaustive]
 pub struct CodeOutlineOutput {
     #[serde(default = "default_663")]
-    pub lessons: Vec<CodeLesson>,
+    pub lessons: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_664")]
     pub lessons_left_out: Integer,
     pub path: String,
@@ -12471,7 +12446,7 @@ pub struct CodeReadRange {
 #[non_exhaustive]
 pub struct CodeReadOutput {
     #[serde(default = "default_689")]
-    pub lessons: Vec<CodeLesson>,
+    pub lessons: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_690")]
     pub lessons_left_out: Integer,
     pub results: Vec<CodeReadRange>,
@@ -14513,7 +14488,7 @@ pub enum CodeSearchOutputEpistemic {
 #[non_exhaustive]
 pub struct CodeSearchOutput {
     #[serde(default = "default_749")]
-    pub lessons: Vec<CodeLesson>,
+    pub lessons: Vec<std::collections::HashMap<String, Value>>,
     #[serde(default = "default_750")]
     pub lessons_left_out: Integer,
     pub results: Vec<CodeUnit>,
@@ -61517,7 +61492,7 @@ fn default_308() -> bool {
 fn default_309() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_310() -> Vec<CodeLesson> {
+fn default_310() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_311() -> Integer {
@@ -61616,7 +61591,7 @@ fn default_341() -> Option<CodeCandidateSitesWire> {
 fn default_342() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_343() -> Vec<CodeLesson> {
+fn default_343() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_344() -> Integer {
@@ -61946,7 +61921,7 @@ fn default_451() -> Vec<std::collections::HashMap<String, Value>> {
 fn default_452() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
-fn default_453() -> Vec<CodeLesson> {
+fn default_453() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_454() -> bool {
@@ -62068,7 +62043,7 @@ fn default_491() -> Vec<CodeEditContextTarget> {
 fn default_492() -> Option<Vec<CodeEditReadSource>> {
     serde_json::from_str("null").expect("schema default")
 }
-fn default_493() -> Vec<CodeLesson> {
+fn default_493() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_494() -> Integer {
@@ -62191,7 +62166,7 @@ fn default_532() -> bool {
 fn default_533() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_534() -> Vec<CodeLesson> {
+fn default_534() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_535() -> Integer {
@@ -62311,7 +62286,7 @@ fn default_572() -> Vec<std::collections::HashMap<String, Value>> {
 fn default_573() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_574() -> Vec<CodeLesson> {
+fn default_574() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_575() -> Integer {
@@ -62578,7 +62553,7 @@ fn default_661() -> String {
 fn default_662() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_663() -> Vec<CodeLesson> {
+fn default_663() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_664() -> Integer {
@@ -62656,7 +62631,7 @@ fn default_687() -> std::collections::HashMap<String, Value> {
 fn default_688() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_689() -> Vec<CodeLesson> {
+fn default_689() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_690() -> Integer {
@@ -62836,7 +62811,7 @@ fn default_747() -> String {
 fn default_748() -> String {
     serde_json::from_str("\"\"").expect("schema default")
 }
-fn default_749() -> Vec<CodeLesson> {
+fn default_749() -> Vec<std::collections::HashMap<String, Value>> {
     serde_json::from_str("[]").expect("schema default")
 }
 fn default_750() -> Integer {

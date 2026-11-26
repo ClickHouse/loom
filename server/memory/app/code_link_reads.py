@@ -13,7 +13,7 @@ from typing import Any, cast
 
 from server.code.app import memory_links as code
 from server.code.domain.index.remote import repo_tag
-from server.code.domain.index.repos import configured_repos
+from server.code.domain.index.repos import RegistryUnread, configured_repos
 from server.core.hashing import hash_text
 from server.memory.api.models_crud import CodeLink
 from server.memory.domain import code_change
@@ -151,7 +151,10 @@ async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> l
             continue
         ns = str(row["namespace"])
         tags = [str(tag) for tag in row["tags"] or ()]
-        cns = code_namespace_for(org, ns, tags)
+        try:
+            cns = code_namespace_for(org, ns, tags)
+        except RegistryUnread:
+            continue
         if not cns:
             if not any(tag.startswith("repo:") for tag in tags):
                 states[index] = "not_applicable"

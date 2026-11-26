@@ -21,6 +21,7 @@ from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.domain.search_types import SHARED_AGENT, is_shared_row
 from server.memory.domain.temporal_sql import served_statuses
 from server.memory.domain.use_guidance import guidance_for_row
+from server.memory.store.history import find_history_target
 from server.memory.store.reads import guidance_heads
 from server.memory.store.rows import IdentityKey
 from server.memory.store.shared import guidance_heads as shared_guidance_heads
@@ -48,9 +49,11 @@ def _status_kept(
     )
 
 
-def _current(row: dict[str, Any], now: datetime) -> bool:
+def _current(row: dict[str, Any], now: datetime, *, replay: bool = False) -> bool:
     if row.get("tombstoned_at") is not None or row.get("sensitivity") == "high":
         return False
+    if replay:
+        return True
     for field in ("expires_at", "valid_to"):
         if (value := row.get(field)) is not None:
             until = parse_iso_dt(value)
@@ -100,7 +103,7 @@ def _memory_evidence(
         hit = hits[i]
         if (
             row is None
-            or not _current(row, now)
+            or not _current(row, now, replay=replay)
             or row.get("redacted_at") is not None
             or (
                 not replay
@@ -109,8 +112,13 @@ def _memory_evidence(
         ):
             denied.add(i)
             continue
-        if int(row.get("version") or 0) == doc_version(hit):
-            digest = hash_text(row.get("content_sha256"))
+        digest = hash_text(row.get("content_sha256"))
+        if int(row.get("version") or 0) == doc_version(hit) or (
+            parked
+            and not replay
+            and is_content_hash(digest)
+            and digest == hit._guidance_content_sha256
+        ):
             if hit._guidance_content_sha256 and digest != hit._guidance_content_sha256:
                 denied.add(i)
                 continue
@@ -119,6 +127,30 @@ def _memory_evidence(
                 hit._guidance_content_sha256 = digest
 
     return denied, evidence
+
+
+async def _replay_evidence(
+    keys: dict[int, IdentityKey],
+    rows: dict[IdentityKey, dict[str, Any]],
+    hits: list[_MemorySearchHit],
+) -> dict[int, dict[str, Any]]:
+    async def readable(i: int, key: IdentityKey) -> bool:
+        target = await find_history_target(
+            key[0], str(rows[key]["memory_id"]), doc_version(hits[i])
+        )
+        if target is None or target.redacted_at is not None:
+            return False
+        return (
+            target.org,
+            target.namespace,
+            target.agent,
+            target.user_id,
+            target.session_id,
+            target.memory_key,
+        ) == key
+
+    allowed = await asyncio.gather(*(readable(i, key) for i, key in keys.items()))
+    return {i: rows[key] for (i, key), keep in zip(keys.items(), allowed, strict=True) if keep}
 
 
 def _shared_evidence(
@@ -205,6 +237,14 @@ async def attach_search_guidance(
     denied_memory, evidence = _memory_evidence(
         input, hits, keys, rows, replay=replay, parked=parked
     )
+    if parked and replay and rows is not None:
+        replay_keys = {i: key for i, key in keys.items() if i not in denied_memory}
+        evidence = (
+            await _read_heads(
+                _replay_evidence(replay_keys, rows, hits), timeout_s=timeout_s, parked=True
+            )
+            or {}
+        )
     denied_shared, shared_evidence = _shared_evidence(hits, shared_keys, shared)
     denied |= denied_memory | denied_shared
     evidence.update(shared_evidence)

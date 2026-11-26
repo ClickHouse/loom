@@ -41,3 +41,8 @@ async def test_changed_source_requires_current_access_and_unambiguous_identity(m
     monkeypatch.setattr(source, "request_narrowed", lambda: True)
     assert await source.guidance_source_states("org", rows) == ["unknown"] * len(rows)
     docs.assert_not_awaited()
+
+
+def test_noncanonical_procedure_keeps_unknown_status():
+    row = {"memory_type": "procedural", "value": '{"run_stats": "invalid"}'}
+    assert source.procedure_status_for_row(row) == "unknown"

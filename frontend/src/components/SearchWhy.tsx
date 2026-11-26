@@ -72,7 +72,12 @@ function Ranked({ hit, rank }: { hit: SearchHit; rank: number }) {
     .trim();
   return (
     <>
-      <GuidanceLabel hit={hit} reasons />
+      {hit.use_guidance && (
+        <>
+          <p>Matched text: {hit.content_excerpt}</p>
+          <GuidanceLabel hit={hit} reasons />
+        </>
+      )}
       <p className="flex flex-wrap gap-x-2">
         <span className="font-medium text-text">#{rank}</span>
         {similarity !== null && <span>similarity {similarity}</span>}

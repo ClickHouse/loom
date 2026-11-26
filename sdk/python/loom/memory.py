@@ -28,9 +28,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
+from loom.ops import UseGuidance
+
 if TYPE_CHECKING:
     from loom.agent import Agent
-    from loom.ops import UseGuidance
 
 # Free-form string. The default taxonomy is episodic/semantic/procedural/
 # preference, but namespaces with a registered tag_registry accept any name.

@@ -32,6 +32,7 @@ describe("SearchWhy", () => {
     const guidance = { next_step: "recheck_source", reasons: ["code_recheck_needed", "human_review_current"] };
     render(<SearchWhy rank={1} hit={hit({ use_guidance: guidance })} />);
     const why = await open();
+    expect(why).toHaveTextContent("Matched text: the user prefers oat milk");
     expect(why).toHaveTextContent("Suggested use: recheck source");
     expect(why).toHaveTextContent("code recheck needed, human review current");
   });

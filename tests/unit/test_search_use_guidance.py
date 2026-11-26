@@ -153,18 +153,34 @@ async def test_unavailable_current_evidence_cannot_reuse_a_parked_approval(
 
 
 @pytest.mark.asyncio
-async def test_replay_keeps_only_an_authorized_exact_parked_revision(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def heads(keys: list[tuple[str, ...]]) -> dict[tuple[str, ...], dict[str, Any]]:
-        return {_KEY: _head()}
+async def test_replay_keeps_edited_history_and_withholds_a_redacted_version(monkeypatch):
+    from server.memory.store.history import HistoryTarget
+
+    async def heads(keys):
+        return {_KEY: _head(memory_id="m")}
+
+    async def history(org, memory_id, version):
+        assert memory_id == "m"
+        return HistoryTarget(
+            org=org,
+            namespace="n",
+            agent="a",
+            user_id="u",
+            session_id="s",
+            memory_key=_KEY[-1],
+            version=version,
+            memory_id=memory_id,
+            content_sha256="a" * 64,
+            redacted_at="now" if version == 40 else None,
+        )
 
     monkeypatch.setattr(guidance, "guidance_heads", heads)
-    current, historical = _hit(), _hit(version=41)
+    monkeypatch.setattr(guidance, "find_history_target", history)
+    current, historical, redacted = _hit(), _hit(version=41), _hit(version=40)
     assert await guidance.attach_search_guidance(
-        _INPUT, [current, historical], parked=True, replay=True
-    ) == [current]
-    assert current.use_guidance is not None and current.use_guidance.review == "unknown"
+        _INPUT, [current, historical, redacted], parked=True, replay=True
+    ) == [current, historical]
+    assert historical.use_guidance is not None and historical.use_guidance.review == "unknown"
 
 
 @pytest.mark.asyncio
@@ -256,3 +272,19 @@ async def test_previous_build_cursor_cannot_give_folded_passage_parent_approval(
     assert hit.use_guidance is not None
     assert hit.use_guidance.review == "unknown"
     assert hit.use_guidance.next_step == "validate_lead"
+
+
+async def test_parked_hit_keeps_review_when_a_metadata_write_advances_the_version(monkeypatch):
+    head = _head()
+
+    async def heads(keys):
+        return {_KEY: head}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    hit = _hit()
+    await guidance.attach_search_guidance(_INPUT, [hit], snapshot_only=True)
+    parked = search_pages.unparked(search_pages._parked(hit))
+    assert parked is not None
+    head["version"] += 2
+    assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == [parked]
+    assert parked.use_guidance is not None and parked.use_guidance.review == "human"
