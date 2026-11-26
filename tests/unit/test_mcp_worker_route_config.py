@@ -8,6 +8,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 from cryptography.x509.oid import NameOID
+from pydantic import ValidationError
 
 from server.core import pg
 from server.knowledge.app.mcp_worker_route_config import load_worker_routes
@@ -88,3 +89,25 @@ def test_route_file_rejects_inline_upstream_credentials_without_echo(tmp_path) -
     with pytest.raises(ValueError, match="^invalid source worker route configuration$") as error:
         load_worker_routes(path)
     assert error.value.__suppress_context__
+
+
+@pytest.mark.parametrize(
+    ("field", "configured", "above_limit"),
+    [
+        ("knowledge_source_worker_frame_timeout_s", 0.25, 1.01),
+        ("knowledge_source_worker_live_timeout_s", 4.0, 8.01),
+        ("knowledge_source_worker_publication_timeout_s", 1.0, 2.01),
+        ("knowledge_source_worker_selection_parallelism", 1, 3),
+    ],
+)
+def test_worker_limits_accept_lower_values_and_reject_out_of_range_values(
+    monkeypatch, field: str, configured: float, above_limit: float
+) -> None:
+    env = f"LOOM_{field.upper()}"
+    monkeypatch.setenv(env, str(configured))
+    assert getattr(Settings(), field) == configured
+    for invalid in (0, above_limit):
+        monkeypatch.setenv(env, str(invalid))
+        with pytest.raises(ValidationError) as error:
+            Settings()
+        assert [item["loc"] for item in error.value.errors()] == [(field,)]

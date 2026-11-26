@@ -1,13 +1,14 @@
 import asyncio
 import unittest
 from dataclasses import replace
-from unittest.mock import create_autospec
+from unittest.mock import create_autospec, patch
 from uuid import UUID
 
 from server.knowledge.app.mcp_worker_read import WorkerReadChannel, WorkerReadRefused
 from server.knowledge.app.mcp_worker_selection import SelectionAuthority, verify_worker_selection
 from server.knowledge.domain.mcp_identity import ResourceIdentity, selection_sha256
 from server.knowledge.domain.mcp_worker_permissions import ReaderConnection
+from server.settings import settings
 
 
 class TestSelectionVerification(unittest.IsolatedAsyncioTestCase):
@@ -61,6 +62,14 @@ class TestSelectionVerification(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(receipt.destination_id, self.authority.destination_id)
         self.assertEqual(receipt.source_id, self.authority.source_id)
         self.assertEqual(receipt.selection_generation, self.authority.selection_generation)
+
+    async def test_configured_serial_checks_still_verify_the_whole_selection(self):
+        self.channel.run.side_effect = self._check_only
+        with patch.object(settings, "knowledge_source_worker_selection_parallelism", 1):
+            receipt = await self._verify()
+        self.assertEqual(self.started, [item.id for item in self.resources])
+        self.assertEqual(self.peak, 1)
+        self.assertEqual(receipt.resources_sha256, selection_sha256(self.resources))
 
     async def test_revocation_cancels_batch_without_a_grant_or_remaining_requests(self):
         async def read(scope, operation, require_current):
