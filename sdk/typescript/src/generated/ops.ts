@@ -467,6 +467,7 @@ export interface CodeLesson {
   supersedes_key?: string;
   suggestion?: string;
   owner_symbol?: string;
+  linked_symbols?: string[];
   use_guidance?: UseGuidance;
 }
 

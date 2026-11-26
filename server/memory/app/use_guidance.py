@@ -67,7 +67,10 @@ def procedure_status_for_row(
 
     if row.get("memory_type") != "procedural":
         return "not_applicable"
-    value = served_row_value(row) if not row.get("value_truncated") else None
+    if "procedure_value" in row:
+        value = served_row_value({"value": row["procedure_value"]})
+    else:
+        value = served_row_value(row) if not row.get("value_truncated") else None
     if not isinstance(value, dict):
         return "unknown"
     try:

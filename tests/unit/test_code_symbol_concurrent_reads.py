@@ -282,9 +282,10 @@ def test_the_lessons_read_answers_none_when_cut_off_or_failed(monkeypatch, outco
 
 
 def test_a_member_whose_lessons_went_unread_keeps_the_others_and_flags_it():
-    from server.code.api.models_symbol import CodeSymbolInput
+    from server.code.api.models_symbol import CodeSymbolInput, CodeSymbolOutput
     from server.code.app import enrich as code_enrich
     from server.code.app.symbol import symbol as h
+    from server.code.domain.units import CodeUnit
 
     async def lessons_for_symbol(org, ns, *, symbol_name, paths, extra_namespaces):
         return None if symbol_name == "A::y" else [dict(LESSON[0])]
@@ -296,6 +297,8 @@ def test_a_member_whose_lessons_went_unread_keeps_the_others_and_flags_it():
     plain = CodeSymbolInput(name="A", include_history=False, include_examples=False)
     with patch.object(code_enrich, "lessons_for_symbol", new=lessons_for_symbol):
         out = asyncio.run(h._enrichment(None, "o", "n", plain, head, matched_members=True))
-    # the member that was read still serves its lesson; the other may have had some
-    assert [lesson["linked_symbols"] for lesson in out["lessons"]] == [["A::x"]]
-    assert out["lessons_unread"] is True
+    response = CodeSymbolOutput(definitions=[CodeUnit(path="a.py", symbol="A")])
+    h._apply_enrichment(response.definitions, out)
+    definition = response.model_dump(mode="json")["definitions"][0]
+    assert [lesson["linked_symbols"] for lesson in definition["lessons"]] == [["A::x"]]
+    assert definition["lessons_unread"] is True

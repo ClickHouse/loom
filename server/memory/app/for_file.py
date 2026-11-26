@@ -35,7 +35,7 @@ from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import row_verification
 from server.memory.domain.use_guidance import guidance_for_row
 from server.memory.store import reads as memory_reads
-from server.memory.store.sql import FILE_LISTING_VISIBLE
+from server.memory.store.sql import FILE_LISTING_VISIBLE, PROCEDURE_GUIDANCE_VALUE
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -74,6 +74,7 @@ _SELECT = f"""
 SELECT
     memory_key, memory_type,
     if({{full_values:UInt8}}, value, substring(value, 1, {_READ_BYTES})) AS value,
+    {PROCEDURE_GUIDANCE_VALUE},
     tags, confidence, pinned, CAST(status AS String) AS status_text, agent, updated_at, actor,
     memory_id, user_id, session_id, version, files, conflict_with,
     source_resource_id, source_trace, source_class, requires_review,

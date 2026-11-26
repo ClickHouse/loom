@@ -3,6 +3,7 @@ per-row below-threshold flag."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from server.memory.api.models_search import _MemorySearchHit
@@ -215,15 +216,19 @@ async def _verdict_after_guidance(
     final_hits: list[_MemorySearchHit],
     evidence_support_count: int,
 ) -> tuple[RetrievalCalibration, tuple[bool, str, str]]:
-    # Preserve the verdict's original rank order and exclude late tier rows.
+    # Prefer the original relevance order when it still has a served hit.
     served_ids = {id(hit) for hit in final_hits}
     retained = [hit for hit in verdict_hits if id(hit) in served_ids]
     if evidence_support_count and len(retained) < len(verdict_hits):
         evidence_support_count = await _evidence_support_count(ctx.input, retained)
+    if not retained:
+        retained = [hit for hit in final_hits if not hit.governed]
     ctx.actual_work.pop("below_threshold_hits", None)
     calibration, abstain_verdict = _calibrate_final_hits(ctx, run, retained, evidence_support_count)
     governed_count = sum(1 for hit in final_hits if hit.governed)
     ctx.actual_work["term_leg_served"] = governed_count
     if governed_count:
         abstain_verdict = (False, "", "")
+        if not retained:
+            calibration = replace(calibration, explanation="only governed definitions survived")
     return calibration, abstain_verdict

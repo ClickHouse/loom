@@ -173,9 +173,14 @@ async def test_a_record_body_is_read_under_the_callers_session(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("body", ["reviewed text", "replacement text"])
-async def test_unit_body_keeps_approval_only_for_reviewed_content(monkeypatch, body):
+@pytest.mark.parametrize("tier", [False, True])
+async def test_unit_body_keeps_approval_only_for_reviewed_content(monkeypatch, body, tier):
     hit = _hit("k", excerpt="reviewed text")
-    hit.version = 42
+    if tier:
+        hit._row_version = 42
+        hit.score_components["recent_first"] = 1.0
+    else:
+        hit.version = 42
     digest = served_content_sha256("reviewed text")
     hit._guidance_content_sha256 = digest
     hit.use_guidance = guidance_for_row(

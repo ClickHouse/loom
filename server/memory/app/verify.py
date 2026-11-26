@@ -238,7 +238,16 @@ async def _mirror_verified_to_embeddings(
     try:
         key = identity_key(row)
         await memory_repo.reemit_embedding_rows_for_keys(
-            [(key, {"verified": 1 if verified else 0, "version": version})],
+            [
+                (
+                    key,
+                    {
+                        "verified": 1 if verified else 0,
+                        "version": version,
+                        "expires_at": row.expires_at,
+                    },
+                )
+            ],
             ch=get_client(),
             of_content={key: content_sha256},
         )

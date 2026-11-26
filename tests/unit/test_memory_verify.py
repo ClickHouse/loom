@@ -457,9 +457,15 @@ async def test_the_mirror_re_emits_every_live_row_of_the_key(
 ) -> None:
     """One private row per embedding model is re-emitted whole with `verified` set,
     keeping the columns the verify input never carried (reinforcement, mention times)."""
-    from server.memory.store import EMBEDDING_PERSISTED_COLS, build_memory_version_row
+    from server.memory.store import (
+        EMBEDDING_PERSISTED_COLS,
+        build_memory_version_row,
+        reemit_embedding_rows_for_keys,
+    )
+    from server.memory.store.rows import identity_key
 
-    row = _row()
+    expiry = _NOW + timedelta(hours=2)
+    row = _row(expires_at=expiry)
     stored = [
         {
             **{c: v for c, v in EMBEDDING_PERSISTED_COLS.items()},
@@ -476,6 +482,7 @@ async def test_the_mirror_re_emits_every_live_row_of_the_key(
             "embedding": [0.5, 0.5],
             "last_reinforced_at": datetime(2026, 1, 2),
             "mentioned_at": datetime(2026, 1, 3),
+            "expires_at": _NOW,
             "version": 7,
         }
         for scope, model in (("private", "m1"), ("private", "m2"))
@@ -494,16 +501,26 @@ async def test_the_mirror_re_emits_every_live_row_of_the_key(
         async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
             assert table == "loom.memory_embeddings"
             inserted.extend(rows)
+            stored[:] = rows
 
-    monkeypatch.setattr(mv, "get_client", lambda: _CH())
+    ch = _CH()
+    monkeypatch.setattr(mv, "get_client", lambda: ch)
     await mv._mirror_verified_to_embeddings(
         row, verified=True, version=123, content_sha256=_sha(row.value)
+    )
+    # Touch committed before verification, but its older mirror resumes afterward.
+    key = identity_key(row)
+    await reemit_embedding_rows_for_keys(
+        [(key, {"expires_at": expiry, "version": 122})],
+        ch=ch,
+        of_content={key: _sha(row.value)},
     )
     assert [(r["scope"], r["embedding_model"]) for r in inserted] == [
         ("private", "m1"),
         ("private", "m2"),
     ]
     assert all(r["verified"] == 1 and r["version"] == 123 for r in inserted)
+    assert all(r["expires_at"] == expiry for r in inserted)
     assert all(r["mentioned_at"] == datetime(2026, 1, 3) for r in inserted)
 
 

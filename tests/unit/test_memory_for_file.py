@@ -1056,13 +1056,25 @@ async def test_the_listing_and_the_block_keep_the_commit_a_changed_link_names(
 
 
 @pytest.mark.asyncio
-async def test_file_guidance_marks_quarantined_procedure_inspect_only():
+@pytest.mark.parametrize(
+    "display",
+    [
+        {"value": '{"quarantined": {}}'},
+        {"excerpt": '{"description": "preview', "procedure_value": '{"quarantined": {}}'},
+        {
+            "value": '{"description": "preview',
+            "value_truncated": True,
+            "procedure_value": '{"quarantined": {}}',
+        },
+    ],
+)
+async def test_file_guidance_marks_quarantined_procedure_inspect_only(display):
     row = {
         "memory_type": "procedural",
         "status": "active",
-        "value": '{"quarantined": {}}',
         "tags": [],
         "files": [],
+        **display,
     }
     await mff.guided_file_rows("o", [row])
     assert row["use_guidance"].next_step == "inspect_only"

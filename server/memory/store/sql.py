@@ -10,6 +10,11 @@ from typing import Any
 
 # The value memory.get serves: the native JSON column when populated, else the stored text.
 SERVED_VALUE = "if(length(toString(value_json)) > 2, toString(value_json), value)"
+PROCEDURE_GUIDANCE_VALUE = (
+    "if(memory_type = 'procedural', "
+    "if(length(toString(value_json)) > 2, toString(value_json), memory.value), '') "
+    "AS procedure_value"
+)
 
 # A high row is reachable by key, never pushed into a code or edit prompt.
 FILE_LISTING_VISIBLE = """

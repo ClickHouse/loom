@@ -312,17 +312,25 @@ def test_every_governed_definition_leads_the_memories_block(
 def test_guided_decision_uses_the_served_statement(
     monkeypatch: pytest.MonkeyPatch, matches: bool
 ) -> None:
+    from server.core.hashing import served_content_sha256
     from server.memory.domain.decision_statement import memory_value
     from server.memory.domain.use_guidance import guidance_for_row
 
     _dead_other_sections(monkeypatch)
-    record = {"scenario": "pick a store", "outcome": "use SQLite", "stage": "decided"}
+    record = {
+        "scenario": "pick a store",
+        "outcome": "use SQLite",
+        "stage": "decided",
+        "reasoning": "keep setup local",
+        "realized_outcome": "the store opened",
+    }
     selected = record if matches else {**record, "outcome": "use ClickHouse"}
     guidance = guidance_for_row({"status": "conflicted"})
     hit = NS(
         **{
             **vars(_DECISION),
-            "content_excerpt": memory_value(selected),
+            "content_excerpt": selected["scenario"] if matches else memory_value(selected),
+            "_guidance_content_sha256": served_content_sha256(memory_value(selected)),
             "use_guidance": guidance,
         }
     )
@@ -339,6 +347,9 @@ def test_guided_decision_uses_the_served_statement(
     assert selected["outcome"] in out.sections["decisions"]
     assert ("use SQLite" in out.sections["decisions"]) is matches
     assert ("decided:" in out.sections["decisions"]) is matches
+    if matches:
+        assert "because keep setup local" in out.sections["decisions"]
+        assert "realized: the store opened" in out.sections["decisions"]
     (item,) = out.use_guidance
     assert item.citation == "decision:ns/d1"
     assert item.use_guidance == guidance

@@ -235,6 +235,39 @@ async def test_belief_support_binds_exact_namespace_and_key_pairs(monkeypatch) -
     assert params == {"org": "o", "keys": [("a", "x"), ("b", "y")]}
 
 
+@pytest.mark.parametrize("governed", [False, True])
+async def test_verdict_describes_survivors_outside_the_original_verdict_pool(governed):
+    from server.memory.api.models_search import _MemorySearchHit
+    from server.memory.app.search.verdict import _verdict_after_guidance
+
+    dropped = _MemorySearchHit(
+        memory_key="dropped",
+        memory_type="semantic",
+        content_excerpt="old",
+        distance=0.1,
+        similarity=0.9,
+    )
+    survivor = _MemorySearchHit(
+        memory_key="survivor",
+        memory_type="definition" if governed else "semantic",
+        content_excerpt="current",
+        distance=1.0 if governed else 0.25,
+        similarity=0.0 if governed else 0.75,
+        governed=governed,
+    )
+    ctx = SimpleNamespace(input=_input(), actual_work={}, query_triples=[])
+    run = SimpleNamespace(ns_calibration=None, graph_seeds=0, graph_neighbors=0, triples_matched=0)
+    calibration, verdict = await _verdict_after_guidance(ctx, run, [dropped], [survivor], 0)
+
+    assert verdict == (False, "", "")
+    if governed:
+        assert calibration.confidence == 0.0
+        assert calibration.explanation == "only governed definitions survived"
+    else:
+        assert calibration.confidence > 0.0
+        assert "top_similarity=0.75" in calibration.explanation
+
+
 async def test_weak_top_hit_makes_no_hyde_call(search_env) -> None:
     # A weak top hit on the default path makes no HyDE call: the read path
     # stays LLM-free.

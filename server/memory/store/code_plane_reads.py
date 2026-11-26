@@ -10,7 +10,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.memory.store.code_links import LinkedMemory
-from server.memory.store.sql import FILE_LISTING_VISIBLE
+from server.memory.store.sql import FILE_LISTING_VISIBLE, PROCEDURE_GUIDANCE_VALUE
 
 
 async def served_excerpts(
@@ -39,7 +39,7 @@ async def served_excerpts(
                if(startsWith(value, '"'), JSONExtractString(value), value) AS excerpt,
                pinned, confidence, conflict_with, CAST(status AS String) AS status_text,
                source_trace, source_class, source_resource_id, requires_review,
-               verified_by, verified_sha256, content_sha256
+               verified_by, verified_sha256, content_sha256, {PROCEDURE_GUIDANCE_VALUE}
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
           AND (namespace, agent, user_id, session_id, memory_key, memory_id)

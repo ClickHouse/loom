@@ -23,15 +23,15 @@ the served revision. `reasons` lists every applicable reason in precedence order
 Inspect `source_class`, `lifecycle`, `review`, `freshness.source`, `freshness.code`
 and `dispute` for the underlying facts. The first applicable rule selects the step.
 
-| Evidence | Next step |
-| --- | --- |
-| Diagnostic-only lifecycle, including a quarantined procedure | `inspect_only` |
-| Visible unresolved dispute | `clarify_dispute` |
-| Changed or missing source, or changed, unresolved or missing code | `recheck_source` |
-| Pending review or an attestation covering different content | `obtain_review` |
-| Unavailable required evidence, or a candidate procedure | `validate_lead` |
+| Evidence                                                                                             | Next step              |
+| ---------------------------------------------------------------------------------------------------- | ---------------------- |
+| Diagnostic-only lifecycle, including a quarantined procedure                                         | `inspect_only`         |
+| Visible unresolved dispute                                                                           | `clarify_dispute`      |
+| Changed or missing source, or changed, unresolved or missing code                                    | `recheck_source`       |
+| Pending review or an attestation covering different content                                          | `obtain_review`        |
+| Unavailable required evidence, or a candidate procedure                                              | `validate_lead`        |
 | Eligible current content with a matching human attestation and applicable freshness checks satisfied | `follow_if_applicable` |
-| Other served claims, including authored claims without review and process-verified claims | `validate_lead` |
+| Other served claims, including authored claims without review and process-verified claims            | `validate_lead`        |
 
 A person or process attests to a content hash. A missing hash gives `unknown`;
 a successful read showing no verifier gives `none`. Freshness measures the source

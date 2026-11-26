@@ -6033,6 +6033,7 @@ class CodeLesson(TypedDict, total=False):
     supersedes_key: NotRequired[str]
     suggestion: NotRequired[str]
     owner_symbol: NotRequired[str]
+    linked_symbols: NotRequired[list[str]]
     use_guidance: NotRequired["UseGuidance"]
 
 

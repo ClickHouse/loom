@@ -16,6 +16,7 @@ class CodeLesson(TypedDict, total=False):
     supersedes_key: str
     suggestion: str
     owner_symbol: str
+    linked_symbols: list[str]
     use_guidance: UseGuidance
 
 

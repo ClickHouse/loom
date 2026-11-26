@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from server.core.background import gather_or_cancel
 from server.core.diagnostics import private_work
+from server.core.hashing import served_content_sha256
 from server.core.naming import SENTINEL as _WM_SENTINEL
 from server.core.naming import named
 from server.identity.app.request_scope import request_scope
@@ -578,11 +579,16 @@ async def _pack_decisions_from_hits(
         ns = getattr(h, "namespace", "") or input.namespace
         rec = records.get(str(h.memory_key)) or {}
         excerpt = str(getattr(h, "content_excerpt", "") or "").strip()
-        # Structured records are read by key. A guided line may use their
-        # rendering only when it describes the selected hit's statement.
+        # The record is read by key, so its full statement must match the guided revision.
         if getattr(h, "use_guidance", None) is not None and (
             ns != input.namespace
-            or (rec and memory_value(rec, proposed=rec.get("stage") == "proposed") != excerpt)
+            or (
+                rec
+                and served_content_sha256(
+                    memory_value(rec, proposed=rec.get("stage") == "proposed")
+                )
+                != getattr(h, "_guidance_content_sha256", "")
+            )
         ):
             rec = {}
         scenario = str(rec.get("scenario") or "").strip() or excerpt
