@@ -44,6 +44,39 @@ def test_a_part_of_a_qualified_name_is_not_a_mention_of_its_own() -> None:
     ]
 
 
+def test_a_pytest_node_id_does_not_name_an_anchor() -> None:
+    assert _names(
+        "`Blueprint.register` can be checked with tests/test_blueprints.py::test_nested_blueprint."
+    ) == ["Blueprint.register"]
+
+
+def test_pytest_class_and_configured_function_selectors_do_not_name_anchors() -> None:
+    assert _names(
+        "`Blueprint.register` can be checked with pytest tests/test_blueprints.py::TestBlueprints "
+        "or tests/test_blueprints.py::TestBlueprints::check_nested."
+    ) == ["Blueprint.register"]
+
+
+def test_pytest_class_nodes_and_parameters_leave_other_names_intact() -> None:
+    assert _names(
+        "`Factory.prepare` and `company.py::test_lookup` use "
+        r"`C:\work\test_cache.py::TestCache::test_lookup[outer[middle[CacheRegion::read]]]`, "
+        "then `Factory.finish`, ::Storage::write and py::test_registry."
+    ) == [
+        "Factory.prepare",
+        "company.py::test_lookup",
+        "Factory.finish",
+        "Storage::write",
+        "py::test_registry",
+    ]
+
+
+def test_unclosed_pytest_parameters_leave_other_mentions_intact() -> None:
+    assert _names("Run `tests/test_cache.py::test_lookup[case` and check `Storage::write`.") == [
+        "Storage::write"
+    ]
+
+
 def test_mentions_drop_short_names_and_repeat_once() -> None:
     assert _names("`get` and `getValue` and `getValue`") == ["getValue"]
 
