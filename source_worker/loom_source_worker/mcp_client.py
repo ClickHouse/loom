@@ -285,7 +285,7 @@ def _resource_url(identity: str) -> AnyUrl:
         uri = AnyUrl(identity)
     except ValidationError:
         raise MCPSourceError("unsupported") from None
-    if str(uri) != identity:
+    if str(uri) != identity or uri.username is not None or uri.password is not None:
         raise MCPSourceError("unsupported")
     return uri
 
@@ -484,7 +484,7 @@ def validate_mcp_tool_mapping(
         or mapping.input_schema.get("type") != "object"
         or mapping.output_schema.get("type")
         != ("string" if mapping.result_format == "text" else "object")
-        or (search and mapping.result_format == "text")
+        or (search and (mapping.result_format == "text" or not mapping.items_path))
         or (mapping.result_format == "text" and mapping.items_path)
     ):
         raise MCPSourceError("config")

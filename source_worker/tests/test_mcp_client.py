@@ -507,7 +507,14 @@ async def test_stateful_read_accepts_idle_notifications_and_does_not_drain_termi
     assert source.termination.closed and not source.termination.started.is_set()
 
 
-@pytest.mark.parametrize("identity", ["https://source.example", "https://résumé.example/item"])
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "https://source.example",
+        "https://résumé.example/item",
+        "https://user:password@source.example/item",
+    ],
+)
 def test_resource_selection_refuses_a_uri_the_sdk_would_rewrite(identity: str) -> None:
     source = _Source()
     with pytest.raises(MCPSourceError, match="^MCP source unsupported$"):
@@ -561,9 +568,12 @@ async def test_resource_parser_bounds_cover_metadata_and_extensions(
 
 
 @pytest.mark.asyncio
-async def test_list_does_not_offer_a_normalized_replacement_identity(pin: list[str]) -> None:
+@pytest.mark.parametrize(
+    "identity", ["https://UPSTREAM.example/path", "https://user:password@source.example/item"]
+)
+async def test_list_refuses_unsafe_resource_identity(pin: list[str], identity: str) -> None:
     source = _Source()
-    source.listed_uri = "https://UPSTREAM.example/path"
+    source.listed_uri = identity
     async with _client(source) as client:
         with pytest.raises(MCPSourceError, match="^MCP source unsupported$"):
             await client.list_resources()
@@ -849,3 +859,26 @@ async def test_refuses_invalid_post_response(
     async with httpx.AsyncClient(transport=transport) as client:
         with pytest.raises(MCPSourceError, match="^MCP source protocol$"):
             await client.post(_ENDPOINT, json=message)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity", ["file:///local/example", "urn:example:document"])
+async def test_native_resources_preserve_exact_hostless_identity(
+    pin: list[str], identity: str
+) -> None:
+    source = _Source()
+    source.listed_uri = source.resource_uri = identity
+    async with _client(source, approved_resource_ids=(identity,)) as client:
+        assert (await client.list_resources()).items[0].resource_id == identity
+        item = await client.read(identity)
+    assert item.receipt is not None and item.receipt.requested_id == identity
+    for request, method in source.calls:
+        if method == "resources/read":
+            assert json.loads(request.content)["params"]["uri"] == identity
+
+
+def test_mapped_search_requires_an_items_selector() -> None:
+    source, mapping = _mapped_source()
+    with pytest.raises(MCPSourceError, match="^MCP source config$"):
+        _client(source, approved_tools=(mapping.name,), search=mapping)
+    assert not source.calls
