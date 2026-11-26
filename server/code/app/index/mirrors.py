@@ -451,6 +451,7 @@ async def _named_paths() -> tuple[set[str], set[str]] | None:
     for r in rows:
         base = repo_registry.checkout_dir_for(str(r["namespace"]))
         checkouts |= {base, *(repos.sibling_checkout(base, p) for p in PRODUCERS)}
+    checkouts |= {repos.borrowing_checkout(p) for p in checkouts if p}
     return mirrors, checkouts
 
 

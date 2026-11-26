@@ -245,6 +245,13 @@ def sibling_checkout(base: str, producer: str) -> str:
     return f"{base.rstrip('/')}.{producer}"
 
 
+def borrowing_checkout(checkout: str) -> str:
+    """Where a tier makes the checkout that borrows the mirror's objects: beside the
+    `checkout_for` path, which an older version, whose jobs mount only the checkout,
+    keeps for a tree with its own objects."""
+    return f"{checkout.rstrip('/')}.borrowing"
+
+
 def _default_checkout_dir(base: RepoConfig, ns: str) -> str:
     """The scalar checkout for the scalar namespace; a sibling directory
     named after the namespace for every other entry."""

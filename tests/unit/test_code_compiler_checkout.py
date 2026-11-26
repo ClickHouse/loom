@@ -52,7 +52,7 @@ def test_registry_entry_initializes_checkout_for_its_bare_mirror(tmp_path: Path)
     actual, actual_bare, missing = resolve_checkout(cfg, "python")
 
     assert missing is None
-    assert actual == tmp_path / "checkouts" / "code-example.python"
+    assert actual == tmp_path / "checkouts" / "code-example.python.borrowing"
     assert (actual / ".git").exists()
     assert actual_bare == bare.resolve()
 
@@ -64,11 +64,12 @@ def test_operator_entry_gets_a_checkout_per_tier_scip_clang_included(tmp_path: P
     cfg = repo_config(source="env", git_dir=str(bare), scip_checkout_dir=str(checkout))
 
     actual, _bare, missing = resolve_checkout(cfg, "clang")
-    assert missing is None and actual == checkout and (checkout / ".git").exists()
+    assert missing is None and actual == tmp_path / "operator-owned.borrowing"
+    assert (actual / ".git").exists()
 
     actual, _bare, missing = resolve_checkout(cfg, "python")
     assert missing is None
-    assert actual == tmp_path / "operator-owned.python" and (actual / ".git").exists()
+    assert actual == tmp_path / "operator-owned.python.borrowing" and (actual / ".git").exists()
 
 
 def test_a_checkout_that_cannot_be_created_is_reported_with_the_reason(tmp_path: Path) -> None:
@@ -83,7 +84,10 @@ def test_a_checkout_that_cannot_be_created_is_reported_with_the_reason(tmp_path:
 
 
 @pytest.mark.parametrize("producer", ["python", "clang"])
-def test_an_existing_empty_directory_becomes_a_checkout(tmp_path: Path, producer: str) -> None:
+def test_an_existing_empty_directory_gets_a_checkout_beside_it(
+    tmp_path: Path, producer: str
+) -> None:
+    """The empty path stays free for an older version, which initializes only that path."""
     bare = _bare_repo(tmp_path)
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -92,8 +96,8 @@ def test_an_existing_empty_directory_becomes_a_checkout(tmp_path: Path, producer
     actual, actual_bare, missing = resolve_checkout(cfg, producer)
 
     assert missing is None
-    assert actual == checkout and actual_bare == bare.resolve()
-    assert (checkout / ".git").is_dir()
+    assert actual == tmp_path / "checkout.borrowing" and actual_bare == bare.resolve()
+    assert (actual / ".git").is_dir() and not any(checkout.iterdir())
 
 
 @pytest.mark.parametrize("kind", ["file", "nonempty", "bare", "nested"])
@@ -391,6 +395,68 @@ def test_a_new_checkout_borrows_its_objects_from_the_mirror(tmp_path: Path) -> N
     assert (checkout / "main.py").read_text() == "print('ok')\n"
     alternates = (objects / "info" / "alternates").read_text().strip()
     assert (objects / alternates).resolve() == (bare / "objects").resolve()
+
+
+def _previous_build_pass(cfg: Any, producer: str, bare: Path) -> str:
+    """A tier pass of the version before borrowing checkouts: it initializes only a
+    missing or empty `checkout_for` path, with a plain `git init`; its fetch mounts the
+    mirror, its `checkout --force` only the checkout (the mirror is out of its sight)."""
+    from server.code.app.index.compiler_tier import checkout_fetch_args
+    from server.code.app.index.gitrepo import auth_env
+    from server.code.domain.index.repos import checkout_for
+
+    checkout = Path(checkout_for(cfg, producer))
+    if not checkout.exists() or not any(checkout.iterdir()):
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    target = subprocess.run(
+        ["git", "--git-dir", str(bare), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    env = auth_env(remote=str(bare))
+    subprocess.run(
+        ["git", "-C", str(checkout), *checkout_fetch_args(bare, target)], env=env, check=True
+    )
+    hidden = bare.rename(bare.with_name(f"{bare.name}.unmounted"))
+    try:
+        subprocess.run(
+            ["git", "-C", str(checkout), "checkout", "-q", "--force", target], check=True
+        )
+    finally:
+        hidden.rename(bare)
+    return target
+
+
+def test_the_tier_hands_off_between_versions_on_one_repos_volume(tmp_path: Path) -> None:
+    """A mixed-version rollout moves the tier lease new → previous → new: each version
+    finds a checkout its own jobs can read."""
+    from server.code.app.index.compiler_tier import borrowed_objects
+
+    bare = _bare_repo(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    borrowing, _bare, missing = resolve_checkout(cfg, "python")
+    target = _fetch_and_check_out(borrowing, bare)
+    assert missing is None and borrowed_objects(borrowing)
+
+    assert _previous_build_pass(cfg, "python", bare) == target
+
+    again, _bare, missing = resolve_checkout(cfg, "python")
+    assert missing is None and again == borrowing and borrowed_objects(again)
+    assert _fetch_and_check_out(again, bare) == target
+
+
+def test_restricting_an_entry_reaches_its_borrowing_checkouts(tmp_path: Path) -> None:
+    from server.code.app.index.bootstrap import restrict_entry
+
+    bare = _bare_repo(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    checkout, _bare, _missing = resolve_checkout(cfg, "python")
+    checkout.chmod(0o755)
+
+    restrict_entry(cfg)
+
+    assert checkout.name == "co.python.borrowing" and checkout.stat().st_mode & 0o007 == 0
 
 
 def test_a_checkout_that_lost_its_borrowed_objects_gets_a_new_git_dir(tmp_path: Path) -> None:

@@ -847,7 +847,7 @@ async def test_scip_full_runs_in_the_clang_tree_when_clang_is_an_extra_tier(
     )
     args = argparse.Namespace(checkout="", jobs=0, apply_delta="", keep_delta="")
     await code_scip._scip_full_locked(args, "o", "code-x", cfg)
-    assert harness.await_args.args[1] == (tmp_path / "checkout.clang").resolve()
+    assert harness.await_args.args[1] == (tmp_path / "checkout.clang.borrowing").resolve()
 
 
 @pytest.mark.asyncio

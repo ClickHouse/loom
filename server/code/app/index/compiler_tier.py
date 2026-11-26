@@ -29,7 +29,7 @@ from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.repo_modes import PRIVATE_DIR_MODE, set_repo_dir_mode
 from server.code.app.index.sandbox import JobOptions, run_job, sandbox_available
 from server.code.app.index.untrusted_files import FileRefused
-from server.code.domain.index.repos import checkout_for
+from server.code.domain.index.repos import borrowing_checkout, checkout_for
 from server.core.errors import caller_text
 from server.settings import settings
 from server.workers import pass_context
@@ -160,7 +160,7 @@ async def _gc_checkout(cfg: RepoConfig, producer: str) -> None:
 
     from server.code.app.index.mirrors import gc_if_due
 
-    checkout = Path(checkout_for(cfg, producer))
+    checkout = await asyncio.to_thread(tier_checkout, cfg, producer)
     git_dir = checkout / ".git"
     try:
         if await asyncio.to_thread(_checkout_metadata_error, checkout) is None:
@@ -368,13 +368,27 @@ def _prepare_checkout(checkout: Path, objects: Path) -> str | None:
         return "checkout Git command timed out"
 
 
+def tier_checkout(cfg: RepoConfig, producer: str) -> Path:
+    """The producer's working tree: its borrowing checkout once one exists; else a tree
+    already at `checkout_for` (an operator's, or one an older version made with its own
+    objects); else a new borrowing checkout beside that path, which an older version
+    holding the tier lease never finds."""
+    checkout = Path(checkout_for(cfg, producer)).absolute()
+    borrowing = Path(borrowing_checkout(str(checkout)))
+    try:
+        taken = os.path.lexists(checkout) and (not checkout.is_dir() or any(checkout.iterdir()))
+    except OSError:
+        taken = True  # `_prepare_checkout` reports why the tree is unusable
+    return checkout if taken and not os.path.lexists(borrowing) else borrowing
+
+
 def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | None]:
     """Resolve the producer's checkout and mirror, or explain why they are unusable.
 
     Callers run this in a thread. The checkout is absolute because a harness changes
     into it before consuming the converter's paths; every branch shares the mirror.
     """
-    checkout = Path(checkout_for(cfg, producer)).absolute()
+    checkout = tier_checkout(cfg, producer)
     bare = Path(cfg.git_dir)
     if not bare.exists():
         return checkout, bare, f"bare clone missing at {bare}"

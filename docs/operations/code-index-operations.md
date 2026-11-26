@@ -369,10 +369,12 @@ initializes a missing or empty working tree directory as a Git repository and fe
 each commit into it from the entry's mirror, so a new leader starts from nothing.
 The repository it initializes borrows the mirror's objects (`objects/info/alternates`,
 relative to the checkout), so a tier costs its working tree rather than a second copy
-of the repository; a checkout an older version made keeps its own copy until its
-directory is removed. When a ref of a borrowing checkout names an object the mirror no
-longer has (the mirror was cloned again, or pruned outside Loom), the worker replaces
-the checkout's `.git` and keeps its files.
+of the repository. It sits beside the tier's path, at `<path>.borrowing`, and is used
+once it exists. A tree already at the path, an operator's or one an older version made
+with its own copy, is used while no borrowing checkout exists; an older version
+still running during a rollout keeps using that path. When a ref of a borrowing
+checkout names an object the mirror no longer has (the mirror was cloned again, or
+pruned outside Loom), the worker replaces the checkout's `.git` and keeps its files.
 An existing checkout must be the root of a standalone Git working tree, with its
 `.git` directory inside the checkout. Compiler Git jobs need writable metadata
 there. Linked worktrees, external Git metadata, regular files, bare repositories and
