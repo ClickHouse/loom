@@ -1717,7 +1717,7 @@ settings:
 
   # Share of embeddable chunks that must carry a vector before a repo is `ready`; below
   # it code.search says "lexical only". Poisoned rows count against it; rows unembedded
-  # by design (reference fixtures, `embed_exclude`) do not. [restart]
+  # by design (reference fixtures, `code_embed_exclude`) do not. [restart]
   # code_ready_embed_coverage: 0.95
 
   # --- ingest limits and denylist ---

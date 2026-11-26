@@ -1461,7 +1461,7 @@ class CodeSettings(BaseModel):
     code_embed_recovery_batch: int = 100
     # Share of embeddable chunks that must carry a vector before a repo is
     # `ready`; below it code.search says "lexical only". Poisoned rows count
-    # against it; rows unembedded by design (reference fixtures, `embed_exclude`) do not.
+    # against it; rows unembedded by design (reference fixtures, `code_embed_exclude`) do not.
     code_ready_embed_coverage: float = 0.95
     # --- ingest limits and denylist -------------------------------------------
     # Files above this size are recorded (index_error) and not chunked.

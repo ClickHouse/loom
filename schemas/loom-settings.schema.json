@@ -1568,7 +1568,7 @@
         "code_ready_embed_coverage": {
           "default": 0.95,
           "type": "number",
-          "description": "Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says \"lexical only\". Poisoned rows count against it; rows unembedded by design (reference fixtures, `embed_exclude`) do not."
+          "description": "Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says \"lexical only\". Poisoned rows count against it; rows unembedded by design (reference fixtures, `code_embed_exclude`) do not."
         },
         "code_reconcile_enabled": {
           "default": true,
