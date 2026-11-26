@@ -28,11 +28,14 @@ which change caused the bug.
 
 Start with the record that answers the question you are investigating.
 
-| Question                                   | Where to look                                                                                                                                                                                                                     |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| What did the agent rely on or write?       | Read the run by `run_id`. The [run ledger](../features/runs.md#what-a-run-records) distinguishes keys the agent reported using, keys retrieved during the run, and memories written with that run ID.                             |
-| Where did one Loom request spend its time? | Capture `X-Request-Id`, then [join the request](../guides/debugging.md#2-join-the-request-across-systems) to the operation ledger, traces and ClickHouse query log. Trace detail depends on the configured exporter and sampling. |
-| What did the run cost?                     | Check [coding-agent model turns and Loom provider spend](../features/observability/cost-and-usage.md) separately. Coding-agent costs cover reported turns, and an unpriced model can have token counts without a cost estimate.   |
+| Question                                   | Where to look                                                                                                                                                                                                                                   |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What did the agent rely on or write?       | Read the run by `run_id`. The [run ledger](../features/runs.md#what-a-run-records) distinguishes keys the agent reported using, keys retrieved during the run, and memories written with that run ID.                                           |
+| Where did one Loom request spend its time? | Capture `X-Request-Id`, then [join the request](../guides/debugging.md#2-join-the-request-across-systems) to the operation ledger, traces and ClickHouse query log. Trace detail depends on the configured exporter and sampling.               |
+| What model cost is recorded for this run?  | Read `run.get` for reported model turns in the run's session and time window. An unpriced model can have token counts without a cost estimate. Check [Loom provider spend](../features/observability/cost-and-usage.md#costsummary) separately. |
+
+Runs that overlap within a session can count the same turns. Review the
+[run cost attribution rules](../features/runs.md#budgets) before adding costs across runs.
 
 Run the [SDK ledger example](https://github.com/ClickHouse/loom/blob/main/examples/ledger_run.py)
 in a disposable namespace. It records the fact the task reports using and attaches the
