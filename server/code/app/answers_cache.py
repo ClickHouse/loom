@@ -334,15 +334,13 @@ async def _remember(ctx: _AskCtx, res: AskResult, llm: Any) -> None:
         return
     try:
         if res.abstain:
-            if int(settings.code_ask_negative_cache_ttl_s) and ctx.index_head:
-                await _store(
-                    ctx,
-                    _entry_row(
-                        ctx,
-                        kind="negative",
-                        abstain_reason=res.abstain_reason[:2000],
-                    ),
-                )
+            if (
+                int(settings.code_ask_negative_cache_ttl_s)
+                and ctx.index_head
+                and not await _answer_may_be_gone(ctx, "", [])
+            ):
+                row = _entry_row(ctx, kind="negative", abstain_reason=res.abstain_reason[:2000])
+                await shielded(_store_then_check(ctx, row), name="code-ask-answer-store")
             return
         if res.source != "synthesized" or not res.memoize or not res.answer:
             return

@@ -89,6 +89,8 @@ class Substrate:
 
 
 _HOLDS_TEXT = "(answer != '' OR citations != '')"
+# A negative entry holds only the question it was asked.
+_HOLDS_QUESTION = "(answer != '' OR citations != '' OR question != '')"
 
 _CENSUS: tuple[Substrate, ...] = (
     # Sealed provider setup is namespace configuration; retirement fences writers
@@ -246,15 +248,15 @@ _CENSUS: tuple[Substrate, ...] = (
     ),
     # code.ask's answer cache: an answer asked in the namespace quotes its code, and one
     # that quoted memory excerpts names their namespace and keys. Every version holding
-    # text counts, a tombstone an older build wrote among them; this build's tombstones
-    # hold none.
+    # text counts in the namespace scope, its question included: a negative entry holds
+    # no more, and a tombstone keeps the question.
     Substrate(
         "loom.code_answers",
         "1",
         f"{USER_MEMORY_KEYS} AND {_HOLDS_TEXT}",
         "code_answers.delete",
         "code_answers.delete",
-        ns_pred=f"{ANSWER_NS_EQ} AND {_HOLDS_TEXT}",
+        ns_pred=f"{ANSWER_NS_EQ} AND {_HOLDS_QUESTION}",
     ),
     # User scope deletes the triples/edges only the user's memories (or summaries of
     # them) carried, through the link tables — but the census cannot count

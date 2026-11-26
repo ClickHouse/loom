@@ -940,6 +940,43 @@ def test_an_abstain_is_cached_for_its_exact_text_under_the_index_head(env: dict[
     assert _ask(repo, q, head="b" * 40).cache != "negative" and env["searches"] == 3
 
 
+@pytest.mark.parametrize("pending", [True, None])
+def test_an_abstain_is_not_cached_while_an_erasure_may_have_missed_it(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, pending: Any
+) -> None:
+    # the negative entry holds the question text: an abstaining ask that overlaps an
+    # erasure must not recreate it after the namespace delete (None: unreadable ledger)
+    async def _unfinished(org: str, since_s: int, margin_s: int, **kw: Any) -> list[dict[str, Any]]:
+        if pending is None:
+            raise RuntimeError("ledger unreadable")
+        return [{"erasure_id": "e1", "scope_type": "namespace", "scope_value": NS}]
+
+    repo = env["repo"]
+    env["abstain"] = True
+    monkeypatch.setattr("server.erasure.app.ledger_reads.unfinished_since", _unfinished)
+    assert _ask(repo, "how does the server encrypt data at rest?").abstain
+    assert not repo.inserts
+
+
+def test_an_abstain_stored_before_an_erasure_marks_is_deleted_again(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # read clean before the store and marked after it: the erasure's delete may have
+    # passed, so the negative row goes by its own key and no version keeps the question
+    repo = env["repo"]
+    env["abstain"] = True
+
+    async def _unfinished(org: str, since_s: int, margin_s: int, **kw: Any) -> list[dict[str, Any]]:
+        return [{"erasure_id": "e1"}] if repo.inserts else []
+
+    monkeypatch.setattr("server.erasure.app.ledger_reads.unfinished_since", _unfinished)
+    assert _ask(repo, "how does the server encrypt data at rest?").abstain
+    stored, tomb = repo.inserts
+    assert stored["entry_kind"] == "negative"
+    assert tomb["question_id"] == stored["question_id"] and tomb["tombstoned_at"] is not None
+    assert not repo._ch.rows  # deleted by its key
+
+
 def test_a_negative_entry_expires(env: dict[str, Any]) -> None:
     repo = env["repo"]
     env["abstain"] = True

@@ -150,8 +150,28 @@ def test_a_code_namespace_erasure_deletes_the_answers_asked_in_it(tmp_path) -> N
     assert _census(ch, "namespace", "code") == 0
 
 
-def test_a_tombstone_holding_no_text_leaves_the_census_clean(tmp_path) -> None:
-    # written from a row read before the delete, it lands after it: keys, no text
+def test_a_negative_entry_holding_only_its_question_is_censused_and_deleted(tmp_path) -> None:
+    # an abstain's row has no answer, citations or memory keys, only the question
+    ch = _LocalCH(tmp_path)
+    before = _census(ch, "namespace", "code")
+    neg = _answer("8", answer="", citations="", entry_kind="negative")
+    run(
+        [
+            f"INSERT INTO loom.code_answers ({', '.join(neg)}) "
+            "SELECT * FROM format(JSONEachRow, {rows:String})"
+        ],
+        "SELECT 1",
+        {"rows": json.dumps(neg)},
+        path=tmp_path,
+    )
+    assert _census(ch, "namespace", "code") == before + 1
+    asyncio.run(graph_steps.delete_code_answers_by_namespace("o", "code", ch=ch))
+    assert _census(ch, "namespace", "code") == 0
+
+
+def test_a_tombstone_holding_no_answer_text_counts_only_its_question(tmp_path) -> None:
+    # written from a row read before the delete, it lands after it: keys and the
+    # question, no answer text; the user scope censuses answer text alone
     ch = _LocalCH(tmp_path)
     asyncio.run(graph_steps.delete_code_answers_by_namespace("o", "decisions", ch=ch))
     tomb = _answer("6", memory_ns="decisions", keys=("alice_decision",), answer="", citations="")
@@ -164,7 +184,7 @@ def test_a_tombstone_holding_no_text_leaves_the_census_clean(tmp_path) -> None:
         {"rows": json.dumps({**tomb, "tombstoned_at": "2030-01-01 00:00:00"})},
         path=tmp_path,
     )
-    assert _census(ch, "namespace", "decisions") == 0
+    assert _census(ch, "namespace", "decisions") == 1
     assert _census(ch, "user_id", "alice") == 0
 
 
