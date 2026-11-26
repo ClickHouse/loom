@@ -363,14 +363,15 @@ def _share_mirror_packs(checkout: Path, bare: Path) -> None:
         shared = _shared_stems(pack_dir)
         mirror = sorted(p.stem for p in mirror_dir.glob("pack-*.idx"))
         own = {p.stem for p in pack_dir.glob("pack-*.pack")} - shared - set(mirror)
-        linked = []
+        linked, missed = [], False
         for stem in mirror:
             try:
                 if _link_pack(mirror_dir, pack_dir, stem):
                     linked.append(stem)
             except FileNotFoundError:
-                continue  # the mirror's gc removed it a moment ago; the next pass sees why
-        stale = shared.difference(mirror)
+                missed = True  # the mirror's gc removed it a moment ago; the next pass sees why
+        # With a mirror pack unlinked, a stale pack may hold what only that one holds now.
+        stale = set() if missed else shared.difference(mirror)
         for stem in stale:
             (pack_dir / f"{stem}.keep").unlink(missing_ok=True)
         if stale or (linked and own):

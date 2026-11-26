@@ -673,6 +673,36 @@ def test_an_interrupted_link_leaves_no_pack_without_its_index(
     assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
 
 
+def test_a_mirror_pack_gone_at_link_time_keeps_the_stale_pack_shared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mirror's gc replaced the shared pack, and the new one is gone by the time the
+    pass links it: the old pack may hold what only that one held, so it stays kept and
+    no gc is brought forward to copy it out."""
+    import os
+
+    from server.code.app.index import mirrors
+
+    _gc_when_due(monkeypatch)
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    _tier_pass(cfg)
+    checkout = tmp_path / "co.python"
+    keeps = {p.name for p in (checkout / ".git" / "objects" / "pack").glob("*.keep")}
+    _mirror_gets_a_commit_and_gc(tmp_path, "next.py")
+
+    def gone(src: str | Path, _dst: str | Path) -> None:
+        raise FileNotFoundError(src)
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "link", gone)
+        resolve_checkout(cfg, "python")
+
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    assert {p.name for p in pack_dir.glob("*.keep")} == keeps != set()
+    assert (checkout / ".git" / mirrors._GC_MARK).exists()
+
+
 def test_a_pack_git_is_still_writing_is_left_alone(tmp_path: Path) -> None:
     """Git installs a pack's `.pack` before its `.idx`: an own pack without its `.idx`
     may be one another git process is writing, so the pass leaves it."""
