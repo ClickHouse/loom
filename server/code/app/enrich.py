@@ -219,6 +219,7 @@ async def indirect_test_examples(
     context_lines: int,
     *,
     ready: list[dict[str, Any]] | None = None,
+    related_names: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Same-revision test source for a verified non-test caller."""
     if not (revision and context_lines and settings.embedding_model):
@@ -248,7 +249,15 @@ async def indirect_test_examples(
     if not bridges:
         return []
     verified = _verified_indirect_examples(
-        repo, org, ns, bridges, str(definition["path"]), revision, context_lines, ready
+        repo,
+        org,
+        ns,
+        bridges,
+        str(definition["path"]),
+        revision,
+        context_lines,
+        ready,
+        related_names=related_names,
     )
     if len(bridges) != 1:
         return await verified
@@ -381,6 +390,8 @@ async def _verified_indirect_examples(
     revision: str,
     context_lines: int,
     ready: list[dict[str, Any]] | None,
+    *,
+    related_names: tuple[str, ...],
 ) -> list[dict[str, Any]]:
     tests = await repo.edges_for_symbols(
         org,
@@ -402,7 +413,8 @@ async def _verified_indirect_examples(
     if files.get(path, {}).get("indexed_commit") != revision:
         return []
     sites = _verified_indirect_sites(tests, bridges, files, revision)
-    candidates = _prefer_distinct_test_windows(_rank_test_sites(sites), context_lines)[:6]
+    ranked = _rank_test_sites(sites, related_names=related_names)
+    candidates = _prefer_distinct_test_windows(ranked, context_lines)[:6]
     by_caller: dict[str, dict[str, Any]] = {}
     for edge in tests:
         by_caller.setdefault(str(edge["from_symbol_id"]), edge)

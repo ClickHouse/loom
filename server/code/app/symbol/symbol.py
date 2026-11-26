@@ -446,6 +446,7 @@ async def _enrichment(
                         revision,
                         input.example_context_lines,
                         ready=ready_examples,
+                        related_names=related_test_names,
                     ),
                     ready_examples,
                 )

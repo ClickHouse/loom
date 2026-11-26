@@ -322,7 +322,7 @@ async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("promoted", ["present", "missing", "timeout"])
+@pytest.mark.parametrize("promoted", ["present", "batch", "missing", "timeout"])
 async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, promoted) -> None:
     revision = "a" * 40
     bridge_path = "web/app.py"
@@ -356,7 +356,7 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
                 ]
             assert ids == ["wrapper"] and options["tests_only"]
             assert options["caller_revision"] == revision and options["sites_per_caller"] == 2
-            if promoted != "present":
+            if promoted in ("missing", "timeout"):
                 return [
                     incoming(
                         test_path, line, f"test_other_{line}", str(line), "wrapper", bridge_name
@@ -420,8 +420,19 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
     monkeypatch.setattr(settings, "embedding_model", "fake-ngram-3072")
     repo: Any = Repo()
     ready: list[dict[str, Any]] = []
+    related_names = ("Blueprint.register", "Blueprint.add_app_hook") if promoted == "batch" else ()
     examples = await bounded(
-        indirect_test_examples(repo, "org", "code", ["register"], target, revision, 2, ready=ready),
+        indirect_test_examples(
+            repo,
+            "org",
+            "code",
+            ["register"],
+            target,
+            revision,
+            2,
+            ready=ready,
+            related_names=related_names,
+        ),
         ready,
         seconds=0.15,
     )
@@ -431,7 +442,9 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
         ("test_blueprint_hook", 10),
         ("test_async", 5),
     ]
-    if promoted != "present":
+    if promoted == "batch":
+        expected[0], expected[1] = expected[1], expected[0]
+    elif promoted in ("missing", "timeout"):
         expected = [("test_other_10", 10), ("test_other_40", 40), ("test_other_70", 70)]
     assert [(e["caller"], e["line"]) for e in examples] == expected
     assert all(
