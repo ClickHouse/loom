@@ -1729,6 +1729,12 @@ settings:
   # CSV of path globs never indexed (the scalar entry's `exclude`). [restart]
   # code_ingest_exclude: ""
 
+  # CSV of path globs indexed but never described or embedded (the scalar entry's
+  # `embed_exclude`, e.g. `*.test.*,*.spec.*,tests/`): chunks, symbols, edges and the
+  # test map are kept and the lexical leg finds them. Applies to chunks written after it
+  # is set. [restart]
+  # code_embed_exclude: ""
+
   # Name of the repo-local ignore file whose patterns are never indexed. [restart]
   # code_ingest_ignore_file: ".loomignore"
 

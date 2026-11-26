@@ -121,6 +121,7 @@ LOOM_CODE_REPOS_JSON='[
 | `git_branch`                         | the branch this namespace tracks                                                                                              |
 | `path_prefixes`                      | comma-separated prefixes to index; an entry without it indexes the whole tree minus the built-in denylist                     |
 | `exclude`                            | globs never indexed (list or comma-separated)                                                                                 |
+| `embed_exclude`                      | globs indexed but never described or embedded: symbols, edges, the test map and the lexical leg keep them                     |
 | `exclude_generated`                  | refuse files whose content marks them generated (`Code generated … DO NOT EDIT.`, `@generated`)                               |
 | `include_contrib_paths`              | vendored `contrib/` paths to index anyway, so their definitions bind the repository's call sites                              |
 | `depends_on`                         | other code namespaces this code calls into; a definition missing here is looked up there                                      |

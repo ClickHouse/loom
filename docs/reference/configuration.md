@@ -560,6 +560,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_INGEST_MAX_FILE_BYTES` | `int` | `1000000` |  | Files above this size are recorded (index_error) and not chunked. 0 = no cap. |
 | `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | `bool` | `False` |  | True applies the built-in generated, minified and vendored ingest rules (code/app/index/denylist.py), which match 0.19% of rows. The `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore file are always honoured. |
 | `LOOM_CODE_INGEST_EXCLUDE` | `str` | `''` |  | CSV of path globs never indexed (the scalar entry's `exclude`). |
+| `LOOM_CODE_EMBED_EXCLUDE` | `str` | `''` |  | CSV of path globs indexed but never described or embedded (the scalar entry's `embed_exclude`, e.g. `*.test.*,*.spec.*,tests/`): chunks, symbols, edges and the test map are kept and the lexical leg finds them. Applies to chunks written after it is set. |
 | `LOOM_CODE_INGEST_IGNORE_FILE` | `str` | `'.loomignore'` |  | Name of the repo-local ignore file whose patterns are never indexed. |
 
 ### Reconciliation and re-chunking

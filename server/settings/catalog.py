@@ -1470,6 +1470,11 @@ class CodeSettings(BaseModel):
     code_ingest_denylist_builtin: bool = False
     # CSV of path globs never indexed (the scalar entry's `exclude`).
     code_ingest_exclude: str = ""
+    # CSV of path globs indexed but never described or embedded (the scalar entry's
+    # `embed_exclude`, e.g. `*.test.*,*.spec.*,tests/`): chunks, symbols, edges and
+    # the test map are kept and the lexical leg finds them. Applies to chunks written
+    # after it is set.
+    code_embed_exclude: str = ""
     # Name of the repo-local ignore file whose patterns are never indexed.
     code_ingest_ignore_file: str = ".loomignore"
     # --- reconciliation and re-chunking ---------------------------------------

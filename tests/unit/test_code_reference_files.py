@@ -245,7 +245,7 @@ def test_pending_embed_read_excludes_the_unembedded_marker_under_both_filters() 
         # phase 1 judges the key's newest version
         assert "NOT startsWith(argMax(embed_last_error, version), {unembedded:String})" in ch.sql[0]
         assert "PREWHERE" not in ch.sql[0] and "GROUP BY path, chunk_id" in ch.sql[0]
-        assert ch.params[0]["unembedded"] == lr.UNEMBEDDED_BY_DESIGN
+        assert ch.params[0]["unembedded"] == lr.UNEMBEDDED_PREFIX
 
 
 # ----------------------------------------------------------- reference sibling
