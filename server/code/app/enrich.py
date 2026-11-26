@@ -669,7 +669,7 @@ async def lessons_for_symbol(
     paths: list[str],
     extra_namespaces: list[str],
     limit: int = 3,
-    expected_commit: str = "",
+    fresh_at_commit: str = "",
     seconds: float | None = None,
 ) -> list[dict[str, Any]] | None:
     """The memories linked to the symbol, from the caller's lesson scope: the readable
@@ -689,7 +689,7 @@ async def lessons_for_symbol(
             paths=paths,
             namespaces=nss,
             limit=limit,
-            expected_commit=expected_commit,
+            fresh_at_commit=fresh_at_commit,
         )
 
     return await bounded(read(), None, seconds)

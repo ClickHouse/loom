@@ -74,11 +74,12 @@ async def lessons_for_symbol(
     paths: Sequence[str],
     namespaces: Sequence[str],
     limit: int = 3,
-    expected_commit: str = "",
+    fresh_at_commit: str = "",
 ) -> list[dict[str, Any]]:
     """The served memories of `namespaces` linked to this symbol, current ones first,
-    each with the state of the symbol's code on the branch read. An expected revision
-    requires a check at that revision. Otherwise an unreadable branch uses trunk's state."""
+    each with the state of the symbol's code on the branch read.
+    `fresh_at_commit` restricts the answer to lessons confirmed fresh at that revision.
+    Otherwise an unreadable branch uses trunk's state."""
     from server.code.app import memory_links as code
     from server.memory.app.code_link_reads import current_links
 
@@ -91,7 +92,7 @@ async def lessons_for_symbol(
         ),
         code.indexed_head(org, code_namespace),
     )
-    if expected_commit and head != expected_commit:
+    if fresh_at_commit and head != fresh_at_commit:
         return []
     name = bare_name(qualified_name)
     candidates = [
@@ -106,11 +107,13 @@ async def lessons_for_symbol(
         return []
     here = await _definitions_at(org, code_namespace, head, paths, qualified_name)
     if here is None:
-        if expected_commit:
+        if fresh_at_commit:
             return []
         matched = _as_trunk_has_it(links, qualified_name)
     else:
         matched = _matched(links, here, on_trunk=code_namespace == trunk)
+    if fresh_at_commit:
+        matched = [entry for entry in matched if entry[1] == "fresh"]
     # a memory's state is that of its first matched link, as the ranking below reads it
     states: dict[str, str] = {}
     for a, state, _ in matched:

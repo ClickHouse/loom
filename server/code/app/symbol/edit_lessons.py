@@ -30,15 +30,15 @@ def _verified_callers(definitions: list[CodeUnit]) -> dict[tuple[str, str, str],
     return callers
 
 
-def _key(note: dict[str, Any]) -> tuple[str, str]:
-    return note["namespace"], note["memory_key"]
+def _key(note: dict[str, Any]) -> tuple[str, str, str]:
+    return note["namespace"], note["memory_key"], note["excerpt"]
 
 
 def _attach(
     unit: CodeUnit,
     caller: str,
     notes: list[dict[str, Any]],
-    seen: set[tuple[str, str]],
+    seen: set[tuple[str, str, str]],
 ) -> int:
     proposals = {
         _key(note): {**note, "linked_symbols": [caller]}
@@ -80,7 +80,7 @@ async def attach_verified_caller_lessons(
                     symbol_name=caller,
                     paths=[path],
                     extra_namespaces=input.lesson_namespaces,
-                    expected_commit=revision,
+                    fresh_at_commit=revision,
                     seconds=remaining,
                 )
                 for path, caller, revision in callers

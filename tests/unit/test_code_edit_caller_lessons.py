@@ -10,7 +10,7 @@ from server.code.api.models_symbol import CodeEditContextInput
 from server.code.app import enrich, memory_links
 from server.code.app.symbol import edit_lessons
 from server.code.domain.units import CodeUnit
-from server.memory.app import code_plane_reads
+from server.memory.app import code_link_reads, code_plane_reads
 from server.settings import settings
 
 REVISION = "a" * 40
@@ -39,9 +39,15 @@ async def test_verified_callers_share_lesson_scope_and_keep_one_copy(monkeypatch
     definitions = [_unit("App.mount"), _unit("App.mount"), _unit("App.other")]
     originals = [u.model_dump()["examples"] for u in definitions]
     primary = {**FRESH, "memory_key": "direct"}
+    different = {**primary, "excerpt": "Mounts need distinct endpoint names."}
     definitions[2].lessons = [primary]
     read = AsyncMock(
-        return_value=[FRESH, primary, {**NOTE, "memory_key": "old", "code_state": "changed"}]
+        return_value=[
+            FRESH,
+            primary,
+            different,
+            {**NOTE, "memory_key": "old", "code_state": "changed"},
+        ]
     )
     monkeypatch.setattr(enrich, "lessons_for_symbol", read)
     monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
@@ -57,12 +63,15 @@ async def test_verified_callers_share_lesson_scope_and_keep_one_copy(monkeypatch
     ]
     for args, kwargs in read.await_args_list:
         assert args == ("org", "repo")
-        assert kwargs["expected_commit"] == REVISION
+        assert kwargs["fresh_at_commit"] == REVISION
         assert kwargs["extra_namespaces"] == ["history"]
         assert kwargs["paths"] == ["web/app.py"]
         assert 0 < kwargs["seconds"] <= settings.code_enrich_timeout_s
     assert [d.lessons for d in definitions] == [
-        [{**FRESH, "linked_symbols": ["App.mount"]}],
+        [
+            {**FRESH, "linked_symbols": ["App.mount"]},
+            {**different, "linked_symbols": ["App.mount"]},
+        ],
         [],
         [primary],
     ]
@@ -102,8 +111,6 @@ async def test_verified_lesson_lookup_requires_its_index_revision_and_source(mon
     )
     monkeypatch.setattr(memory_links, "indexed_head", AsyncMock(return_value=head))
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda *_: "repo")
-    from server.memory.app import code_link_reads
-
     monkeypatch.setattr(
         code_link_reads, "current_links", AsyncMock(return_value=[{"state": "fresh"}])
     )
@@ -119,10 +126,55 @@ async def test_verified_lesson_lookup_requires_its_index_revision_and_source(mon
             qualified_name="App.mount",
             paths=["web/app.py"],
             namespaces=["history"],
-            expected_commit=REVISION,
+            fresh_at_commit=REVISION,
         )
         == []
     )
 
     assert parsed.await_count == int(head == REVISION)
     older.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verified_lesson_only_ranks_fresh_rows(monkeypatch):
+    states = ["moved", "moved", "moved", "fresh", "changed"]
+    links = [
+        {
+            "namespace": "history",
+            "agent": "writer",
+            "user_id": "-",
+            "session_id": "-",
+            "memory_key": str(key),
+            "memory_id": str(key),
+            "qualified_name": "App.mount",
+            "state": state,
+            "changed_since": "b" * 40,
+        }
+        for key, state in enumerate(states)
+    ]
+    monkeypatch.setattr(code_plane_reads.links_store, "for_paths", AsyncMock(return_value=links))
+    monkeypatch.setattr(memory_links, "indexed_head", AsyncMock(return_value=REVISION))
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda *_: "repo")
+    monkeypatch.setattr(code_link_reads, "current_links", AsyncMock(return_value=links))
+    monkeypatch.setattr(code_plane_reads, "_definitions_at", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        code_plane_reads,
+        "_matched",
+        lambda *_args, **_kw: [(row, row["state"], "") for row in links],
+    )
+
+    by_id = {row["memory_id"]: row for row in links}
+
+    async def excerpts(_org, _namespaces, memories, *, limit, changed):
+        matching = sorted(memories, key=lambda identity: identity[-1] in changed)
+        return [{**by_id[mid], "mid": mid, "excerpt": mid} for *_, mid in matching[:limit]]
+
+    monkeypatch.setattr(code_plane_reads.reads, "served_excerpts", excerpts)
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
+    scope = {"qualified_name": "App.mount", "paths": ["web/app.py"], "namespaces": ["history"]}
+    verified = await code_plane_reads.lessons_for_symbol(
+        "org", "repo", **scope, fresh_at_commit=REVISION
+    )
+    ordinary = await code_plane_reads.lessons_for_symbol("org", "repo", **scope, limit=len(states))
+    assert [row["code_state"] for row in verified] == ["fresh"]
+    assert [row["code_state"] for row in ordinary] == states
