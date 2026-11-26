@@ -311,8 +311,6 @@ def _module_invalidations(
         if statement.type == "expression_statement" and statement.named_child_count == 1:
             statement = statement.named_children[0]
         if statement.type == "assignment":
-            if type_name_of(statement.child_by_field_name("type"), source):
-                continue  # a declared receiver type is positive evidence
             names = _literal_write_names(statement, source)
         elif statement.type == "delete_statement":
             names = _bound_identifiers(statement, source)
@@ -335,8 +333,13 @@ def _preserve_module_receivers(node: Any, source: bytes, writes: dict[str, int])
         for name in _bound_identifiers(node, source):
             writes.pop(name, None)
         return
-    if node.type == "assignment" and node.child_by_field_name("right") is None:
-        return
+    if node.type == "assignment":
+        if type_name_of(node.child_by_field_name("type"), source):
+            for name in _bound_identifiers(node, source):
+                writes.pop(name, None)
+            return
+        if node.child_by_field_name("right") is None:
+            return
     if node.type in _MODULE_UNKNOWN_WRITES:
         names = set(writes)
     elif node.type in _MODULE_NAME_WRITES:

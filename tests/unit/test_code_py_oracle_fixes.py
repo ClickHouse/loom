@@ -156,7 +156,7 @@ def test_an_untyped_member_receiver_takes_no_same_file_guess():
         ("target += 1", "Client"),
         ("other = 0", "Client"),
         ("target: object", "Client"),
-        ("target = None\ntarget: Client | None", ""),
+        ("target = None\ntarget: Client | None", "Client"),
         ("target = Alternative()", "Alternative"),
         ("target = 0\nextra = target = Alternative()", "Alternative"),
         ("target = None\nfrom .clients import shared as target", "Client"),
@@ -228,19 +228,29 @@ def test_module_literal_receiver_declines_unrelated_calls_and_callee_returns(rec
     assert not any(line == 7 and confidence == 0.9 for line, _, confidence in calls)
 
 
-def test_module_optional_receiver_declaration_preserves_type():
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "target: Client | None = None",
+        "target = None\ntarget: Client | None",
+        "target: Client | None\ntarget = None",
+        "target: Client | None = Client()\ntarget = None",
+    ],
+)
+def test_module_optional_receiver_declaration_preserves_type(declaration):
     files = {
         "svc/__init__.py": b"",
         "svc/client.py": b"class Client:\n    def send(self): pass\n",
         "svc/alternate.py": b"class Alternate:\n    def send(self): pass\n",
         "svc/service.py": (
-            b"from .client import Client\ntarget: Client | None = None\n"
-            b"def submit():\n    if target is None:\n        raise RuntimeError()\n"
-            b"    target.send()\n"
-        ),
+            f"from .client import Client\n{declaration}\n"
+            "def submit():\n    if target is None:\n        raise RuntimeError()\n"
+            "    target.send()\n"
+        ).encode(),
     }
     calls, _ = _edges(files, "svc/service.py")
-    assert (6, "svc.client::Client::send", 0.9) in calls
+    call_line = len(files["svc/service.py"].splitlines())
+    assert (call_line, "svc.client::Client::send", 0.9) in calls
 
 
 @pytest.mark.parametrize("condition", ["False", "TYPE_CHECKING"])
