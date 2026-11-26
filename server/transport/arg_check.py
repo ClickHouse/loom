@@ -28,6 +28,8 @@ from urllib.parse import quote
 
 from pydantic import AliasChoices, AliasPath, BaseModel
 
+from server.core.operation_privacy import retains_no_payload
+
 # Keys the transports read off the raw arguments themselves (consumer,
 # traffic class, explain for the MCP lean shape, and the idempotency key MCP
 # pops before validation). Never "ignored".
@@ -87,18 +89,31 @@ def unknown_args(model: type[BaseModel], args: Any) -> list[str]:
     return sorted(k for k in args if isinstance(k, str) and k not in known and k not in skip)
 
 
+# Reserve a fixed share of the live publication envelope for argument names.
 _LIVE_IGNORED_ARGUMENT_BYTES = 1024
+LIVE_ARGUMENT_NAME_ERROR = "Ignored argument names are invalid or too large"
+
+
+def bounded_json_string_size(value: str, budget: int) -> int | None:
+    """Conservative encoded JSON size, or None if the value cannot be echoed."""
+    if len(value) > budget:
+        return None
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+    size = len(json.dumps(value, ensure_ascii=True))
+    return size if size <= budget else None
 
 
 def live_argument_names_fit(model: type[BaseModel], args: dict[str, Any]) -> bool:
     """Bound the unknown names echoed in live response bodies and headers."""
     budget = _LIVE_IGNORED_ARGUMENT_BYTES
     for name in unknown_args(model, args):
-        if len(name) > budget:
+        size = bounded_json_string_size(name, budget - 2)
+        if size is None:
             return False
-        budget -= len(json.dumps(name, ensure_ascii=True)) + 2
-        if budget < 0:
-            return False
+        budget -= size + 2
     return True
 
 
@@ -234,6 +249,8 @@ def _note(op_name: str, keys: list[str]) -> None:
     clients lose which fields without a line per call."""
     import logging
 
+    if retains_no_payload(op_name):
+        return
     fresh = [k for k in keys if (op_name, k) not in _NOTED]
     if not fresh:
         return

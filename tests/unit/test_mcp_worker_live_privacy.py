@@ -195,17 +195,94 @@ async def test_live_refuses_unbounded_ignored_argument_names_in_both_transports(
 
 
 @pytest.mark.asyncio
-async def test_live_mcp_accepts_a_bounded_string_id(monkeypatch) -> None:
+@pytest.mark.parametrize("req_id", ["x" * 4094, "文書📄"], ids=["near_limit", "unicode"])
+async def test_live_mcp_accepts_a_bounded_string_id(monkeypatch, req_id) -> None:
     from server.knowledge.api.ops_worker_source import knowledge_source_live
     from server.transport import mcp_call
 
     monkeypatch.setattr(
         mcp_call, "_resolve_connection_tool", AsyncMock(return_value=knowledge_source_live)
     )
-    req_id = "x" * 4094
     result = {"jsonrpc": "2.0", "id": req_id, "result": {}}
     admission = AsyncMock(return_value=result)
     monkeypatch.setattr(mcp_call, "_session_content_refusal", admission)
     response = await mcp_call._call_tool(req_id, {"name": "loom_knowledge_source_live"})
     assert response == result
     admission.assert_awaited_once()
+
+
+def _json_request(body: bytes):
+    from starlette.requests import Request
+
+    return Request({"type": "http"}, AsyncMock(return_value={"type": "http.request", "body": body}))
+
+
+@pytest.mark.asyncio
+async def test_live_mcp_refuses_an_escaped_lone_surrogate_id(monkeypatch) -> None:
+    from fastapi.responses import JSONResponse
+
+    from server.knowledge.api.ops_worker_source import knowledge_source_live
+    from server.transport import mcp, mcp_call
+    from server.transport.mcp_config import INVALID_REQUEST
+
+    monkeypatch.setattr(
+        mcp_call, "_resolve_connection_tool", AsyncMock(return_value=knowledge_source_live)
+    )
+    admission = AsyncMock(return_value={"id": "\ud800"})
+    monkeypatch.setattr(mcp_call, "_session_content_refusal", admission)
+    request = _json_request(
+        rb'{"jsonrpc":"2.0","id":"\ud800","method":"tools/call",'
+        rb'"params":{"name":"loom_knowledge_source_live"}}'
+    )
+    response = await mcp._handle_request(await request.json())
+    assert JSONResponse(response).status_code == 200
+    assert response["id"] is None
+    assert response["error"]["code"] == INVALID_REQUEST
+    admission.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_live_refuses_an_escaped_lone_surrogate_argument_name(monkeypatch) -> None:
+    from fastapi import HTTPException
+    from fastapi.responses import JSONResponse
+
+    from server.knowledge.api.ops_worker_source import knowledge_source_live
+    from server.transport import http, mcp_call
+
+    monkeypatch.setattr(http, "_emit_event", Mock())
+    monkeypatch.setattr(mcp_call, "_emit_refused", Mock())
+    request = _json_request(
+        rb'{"org":"test","namespace":"docs","source":"test",'
+        rb'"resource_id":"mcp://example/test","\ud800":true}'
+    )
+    with pytest.raises(HTTPException) as refusal:
+        await http._read_body(knowledge_source_live, request, "r", None)
+    assert refusal.value.status_code == 422
+    response = mcp_call._validated_input(1, knowledge_source_live, await request.json(), "r")
+    assert JSONResponse(response).status_code == 200
+    assert response["result"]["isError"]
+
+
+@pytest.mark.parametrize("transport", ["http", "mcp"])
+def test_live_reports_ignored_names_only_to_the_caller(monkeypatch, caplog, transport) -> None:
+    from fastapi.responses import JSONResponse
+
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import arg_check, lean_results
+
+    monkeypatch.setattr(arg_check, "_NOTED", set())
+    caplog.set_level("INFO", logger="server.transport.arg_check")
+    op = OPERATIONS_BY_NAME[KNOWLEDGE_SOURCE_LIVE]
+    name = "private-note\n東京"
+    arguments = {name: True}
+    result = {"status": "unavailable"}
+    assert arg_check.live_argument_names_fit(op.input_model, arguments)
+    if transport == "http":
+        body = arg_check.response_body(op, arguments, result)
+        assert arg_check.header_value(op, arguments, result) == "private-note%0A%E6%9D%B1%E4%BA%AC"
+    else:
+        body = lean_results.mcp_op_result(op.name, result, arguments, None)
+    assert JSONResponse(body).status_code == 200
+    assert body["ignored_args"] == [name]
+    assert not arg_check._NOTED
+    assert "private-note" not in caplog.text

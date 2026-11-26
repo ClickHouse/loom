@@ -15,7 +15,7 @@ from server.knowledge.app.mcp_worker_read import (
 )
 from server.knowledge.domain.mcp_identity import resource_uri
 
-# Leave room for transport metadata within the bounded frame budget.
+# not a setting: the fixed document ceiling leaves room for the transport envelope.
 _MAX_LIVE_DOCUMENT_WIRE_BYTES = 16 * 1024 * 1024
 
 ResolveScope = Callable[[], Awaitable[WorkerReadScope]]
@@ -96,8 +96,8 @@ async def read_selected_live(
                     read.document.text,
                     read.document.mime_type,
                 )
-                _check_publication_size(document)
-            # The protected publisher owns a separate deadline for validation and delivery.
+            # Check the wire size after the read and before retaining the publication fence.
+            _check_publication_size(document)
             await retain(scope, validate, deadline)
             return document
     except TimeoutError:

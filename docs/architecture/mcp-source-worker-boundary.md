@@ -80,9 +80,10 @@ admission limit from refresh work, a bounded delivery budget after the read,
 and no durable payload queue. Loom checks the size of the document before
 publication. It budgets 16 MiB for the document and its escaped MCP text copy.
 A document beyond that budget returns `unsupported` with no document. The
-transports also bound echoed unknown argument names and the MCP request ID before
-contacting a worker. Denial,
-reconnect, saturation, unavailable and timeout remain distinct outcomes. Team
+transports also reject echoed argument names and MCP request IDs that exceed their
+size limits or cannot be encoded as UTF-8. Loom returns ignored argument names to
+the caller without logging or caching them. Denial, reconnect, saturation,
+unavailable and timeout remain distinct outcomes. Team
 viewers without current source enrollment see the same denial for selected and
 unselected IDs. An authorized stored copy can be offered after timeout or worker
 outage with its own age and provenance. Denial never falls back to a stored result.

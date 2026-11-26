@@ -52,6 +52,12 @@ from server.transport._common import (
     validation_note,
 )
 from server.transport._common import validation_errors as _validation_errors
+from server.transport.arg_check import (
+    LIVE_ARGUMENT_NAME_ERROR,
+    bounded_json_string_size,
+    live_argument_names_fit,
+    named_argument_error,
+)
 from server.transport.arg_feedback import feedback, refused_result, tool_error
 from server.transport.assistant_call import answer_run, assistant_call, set_assistant_call
 from server.transport.lean_results import lean_result
@@ -253,15 +259,13 @@ async def _capture_level(operation: str, identity: dict[str, Any]) -> str:
         return "off"
 
 
+# not a setting: this is the fixed request ID allowance in the live publication envelope.
 _MAX_LIVE_REQUEST_ID_BYTES = 4096
 
 
 def _live_request_id_fits(req_id: Any) -> bool:
     if isinstance(req_id, str):
-        return (
-            len(req_id) <= _MAX_LIVE_REQUEST_ID_BYTES
-            and len(json.dumps(req_id, ensure_ascii=True)) <= _MAX_LIVE_REQUEST_ID_BYTES
-        )
+        return bounded_json_string_size(req_id, _MAX_LIVE_REQUEST_ID_BYTES) is not None
     if type(req_id) is int:
         return req_id.bit_length() <= 128
     return req_id is None
@@ -803,13 +807,11 @@ def _validated_input(
     """Phase 4 of `_call_tool`: the misspelled-argument refusal, then
     Pydantic validation. Returns the input model, or the refusal response
     (a dict) when the call ends here."""
-    from server.transport.arg_check import live_argument_names_fit, named_argument_error
-
     if op.name == KNOWLEDGE_SOURCE_LIVE and not live_argument_names_fit(op.input_model, arguments):
         _emit_refused(op.name, {}, error_code="VALIDATION_FAILED", request_id=request_id)
         return _ok(
             req_id,
-            tool_error("Ignored argument names are too large", {"code": "VALIDATION_FAILED"}),
+            tool_error(LIVE_ARGUMENT_NAME_ERROR, {"code": "VALIDATION_FAILED"}),
         )
     refused = named_argument_error(op, arguments)
     if refused is not None:

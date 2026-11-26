@@ -75,8 +75,12 @@ from server.transport._common import (
     validation_errors,
     validation_note,
 )
+from server.transport.arg_check import (
+    LIVE_ARGUMENT_NAME_ERROR,
+    live_argument_names_fit,
+    named_argument_error,
+)
 from server.transport.arg_check import header_value as arg_header_value
-from server.transport.arg_check import live_argument_names_fit, named_argument_error
 from server.transport.arg_check import response_body as arg_response_body
 from server.transport.post_rows import post_handler_rows
 
@@ -275,7 +279,7 @@ async def _read_body(
         _emit_event(op, request_id, {}, 0, success=False, error_code="VALIDATION_FAILED")
         raise HTTPException(
             status_code=422,
-            detail={"code": "VALIDATION_FAILED", "message": "Ignored argument names are too large"},
+            detail={"code": "VALIDATION_FAILED", "message": LIVE_ARGUMENT_NAME_ERROR},
         )
     # A write's misspelled argument is refused by name, not dropped.
     refused = named_argument_error(op, raw_body)
