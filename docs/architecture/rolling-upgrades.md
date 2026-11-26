@@ -929,6 +929,13 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     serving build supports the migration again. The [activation and rollback
     procedure](cost-budgets.md#activation-and-rollback) defines the maintenance boundary;
     the warning fleet check alone does not make a downgrade safe.
+63. **A code namespace being erased** (`server/code/app/index/erasing.py`): N's code
+    writers skip a namespace an unfinished erasure may reach, and N's `code_index.purge`
+    refuses, retryably, while work begun before the erasure was recorded may still write
+    it. N-1's writers do neither and N-1's purge does not wait, so an erasure during the
+    rollout can leave rows written after its purge, as before; `verify.residue` fails
+    the saga on those in `code_chunks` and `code_summaries`, and it is repeated. No gate
+    holds the rollout.
 
 ## What checks them
 

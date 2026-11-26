@@ -46,6 +46,7 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Any
 
+from server.code.app.index import erasing
 from server.code.store.index.graph_stats import GraphStatsState
 from server.core.datetimes import naive_utc_now
 from server.core.datetimes import utc_now as _utcnow
@@ -429,12 +430,13 @@ async def _run(result: CodeGraphStatsResult) -> None:
     # them — stats missing or older than the interval (the first-pass rule,
     # per namespace).
     due = await due_namespaces()
+    erased = {c.label for c in repos if await erasing.being_erased(c.org, c.namespace)}
     result.namespaces_refreshed = len(due)
     # Items are namespace-legs; planned up front so a pass cut
     # short still says how much it set out to do.
     result.legs_planned += len(due)
     for cfg in repos:
-        if cfg.label not in due:
+        if cfg.label not in due or cfg.label in erased:
             continue
         pass_context.set_namespace(cfg.namespace)  # Where a cut pass stopped
         pass_context.check_stop()
@@ -459,6 +461,8 @@ async def _run(result: CodeGraphStatsResult) -> None:
                 ",".join(left),
             )
             break
+        if cfg.label in erased:
+            continue
         pass_context.set_namespace(cfg.namespace)
         pass_context.check_stop()
         try:
