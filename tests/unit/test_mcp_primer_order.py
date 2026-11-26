@@ -105,8 +105,9 @@ def test_compact_coding_primer_preserves_scope_and_profile() -> None:
     assert "unindexed paths" in rules
     assert "ToolSearch" in rules
     assert "code_state" in rules
-    assert "loom_code_callers" not in rules
-    assert "loom_code_callers" in _split(full)[0]
+    callers = "`loom_code_callers` for callers and indexed uses of a known definition"
+    assert callers in rules and callers in _split(full)[0]
+    assert "loom_code_impact" not in rules
 
 
 def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) -> None:

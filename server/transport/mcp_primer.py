@@ -601,11 +601,12 @@ def _coding_instructions(
             ("code.search", "for behavior or an issue"),
             ("code.grep", "for exact text or an error"),
             ("code.read", "to read known line ranges together"),
-            ("code.callers", "for callers"),
+            ("code.callers", "for callers and indexed uses of a known definition"),
             ("code.impact", "for change effects"),
             ("code.context_pack", "for a task briefing"),
         )
-        if tool[name] and (not compact or name in {"code.search", "code.grep", "code.read"})
+        if tool[name]
+        and (not compact or name in {"code.search", "code.grep", "code.read", "code.callers"})
     ]
     definition_hint = (
         f"Before editing, use {tool['code.edit_context']} with a definition or literal clues. "
