@@ -661,6 +661,7 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
         limit=0,
         paths_file="",
         concurrency=1,
+        workers=1,
     )
     assert asyncio.run(code_backfill._backfill(args)) == 1
     assert sent == []  # nothing of the switched-off org's code went out

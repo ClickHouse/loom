@@ -237,6 +237,7 @@
             "commit",
             "paths_file",
             "concurrency",
+            "workers",
             "edges_second_pass",
             "no_edges_second_pass",
             "dialect_folder_pass",
@@ -430,6 +431,21 @@
            "type": "builtins:int",
            "required": false,
            "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--workers"
+           ],
+           "dest": "workers",
+           "action": "_StoreAction",
+           "default": 1,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "server.cli.ops:_positive_int",
+           "required": false,
+           "help": "--phase index: processes that index the cursor batches and run the edge pass, each with its own connection and --concurrency (1: this process)",
            "metavar": null
           },
           {

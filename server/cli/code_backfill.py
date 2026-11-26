@@ -5,16 +5,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import itertools
 import logging
 import os
 import pathlib
 import sys
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from server.cli import code_backfill_workers
 from server.cli._ch import connect_code_plane
 from server.cli.code_maintenance import _compact_after_bulk
 from server.cli.code_run import _identity, _note, _repo_cfg
@@ -73,9 +75,15 @@ def edge_counters() -> dict[str, int]:
     return {"files": 0, "edges": 0, "errors": 0}
 
 
+def add_counters(total: dict[str, int], part: dict[str, int]) -> None:
+    for key, n in part.items():
+        total[key] = total.get(key, 0) + n
+
+
 @dataclass
 class _Run:
-    """What the index phase's cursor batches and its edge pass run with."""
+    """What the index phase's cursor batches and its edge pass run with: one in the CLI
+    process, and one in each `--workers` process (`code_backfill_workers`)."""
 
     repo: Any
     cfg: Any
@@ -232,12 +240,105 @@ class _Run:
         )
 
 
+async def worker_run(args: argparse.Namespace, head: str) -> _Run:
+    """A `--workers` process's run: its own connection, the entry's config and denylist
+    at the parent's `head`. The worker is the command itself (`code_backfill_workers`),
+    so this runs once the registry is read and the active configuration loaded."""
+    from server.code.store.index import CodeRepo
+    from server.core.ch import get_client
+    from server.embedding.embedder import get_embedder
+
+    cfg = _repo_cfg(args)
+    await connect_code_plane(get_client(), args)
+    org, ns = _identity(args)
+    embedder = get_embedder() if args.embed else None
+    return await _Run.open(CodeRepo(), cfg, args, head, org=org, ns=ns, embedder=embedder)
+
+
+def _workers_for(
+    args: argparse.Namespace, head: str, batches: int, edge_batches: int
+) -> contextlib.AbstractAsyncContextManager[code_backfill_workers.Workers | None]:
+    """The run's `--workers` processes, for both passes and no more than either has
+    batches; None runs them in this one."""
+    n = min(args.workers, max(batches, edge_batches))
+    if n > 1:
+        return code_backfill_workers.opened(n, args, head)
+    return contextlib.nullcontext(None)
+
+
+async def _index_batches(
+    run: _Run, batches: list[tuple[int, list[str]]], workers: code_backfill_workers.Workers | None
+) -> AsyncGenerator[tuple[int, list[str], dict[str, int], str], None]:
+    """The index phase's cursor batches in order, each with its own counters and why the
+    org's switch held it ("" once written): in this process, or across `workers`."""
+    if workers is not None:
+        async for done in workers.index_batches(batches):
+            yield done
+        return
+    for b, chunk in batches:
+        run.counters = index_counters()
+        held = await run.batch(chunk)
+        yield b, chunk, run.counters, held
+        if held:
+            return
+
+
+async def _index_phase(
+    run: _Run,
+    paths: list[str],
+    batches: list[tuple[int, list[str]]],
+    workers: code_backfill_workers.Workers | None,
+    *,
+    counters: dict[str, int],
+    cursor_key: str,
+    started: float,
+) -> str:
+    """Run the batches, moving the cursor past each one once every earlier one is
+    written; why the org's switch held one, "" once all are written. A batch written
+    beside the held one is counted and the cursor stays."""
+    held = ""
+    paths_file = bool(getattr(run.args, "paths_file", ""))
+    async with contextlib.aclosing(_index_batches(run, batches, workers)) as done:
+        async for b_start, chunk_paths, part, why in done:
+            add_counters(counters, part)
+            if held:
+                continue
+            if why:
+                held = why
+                print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
+                continue
+            if not paths_file:
+                await run.repo.set_state(
+                    run.org, run.ns, cursor_key, str(b_start + len(chunk_paths))
+                )
+            rate = counters["files"] / max(time.monotonic() - started, 1e-9)
+            print(
+                f"  [{b_start + len(chunk_paths)}/{len(paths)}] files={counters['files']} "
+                f"chunks={counters['chunks']} symbols={counters['symbols']} "
+                f"edges={counters['edges']} errors={counters['errors']} "
+                f"({rate:.1f} files/s)"
+            )
+    return held
+
+
 async def _backfill(args: argparse.Namespace) -> int:
+    # The run's `--workers` processes close on this stack once the run returns, its
+    # records written, as one process retires after its command returns.
+    async with contextlib.AsyncExitStack() as stack:
+        return await _backfill_run(args, stack)
+
+
+async def _backfill_run(args: argparse.Namespace, stack: contextlib.AsyncExitStack) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
     if args.phase == "embed":
+        if args.workers > 1:
+            print("--workers applies to --phase index", file=sys.stderr)
+            return 2
         return await _backfill_embed(CodeRepo(), *_identity(args), args)
+    if (worker := getattr(args, "backfill_worker", None)) is not None:
+        return await code_backfill_workers.serve(await worker_run(args, worker.head), worker)
     # Before declaring the org: an unconfigured entry records nothing.
     cfg = _repo_cfg(args)
     await connect_code_plane(get_client(), args)
@@ -287,33 +388,38 @@ async def _backfill(args: argparse.Namespace) -> int:
     owed_key = f"backfill_edges_owed:index{suffix}"
     mode = "repair" if paths_file else "twin" if suffix else "backfill"
     done_upto = "" if paths_file else await repo.get_state(org, ns, cursor_key)
-    owed, recorded = await _record_edge_pass(repo, org, ns, args, owed_key, str(done_upto or ""))
     start_idx = int(done_upto) if done_upto.isdigit() else 0
+    batches = _cursor_batches(paths, start_idx)
+    owed, recorded = await _record_edge_pass(
+        repo,
+        org,
+        ns,
+        args,
+        owed_key,
+        str(done_upto or ""),
+        side_by_side=args.workers > 1 and code_backfill_workers.side_by_side(batches),
+    )
     started = time.monotonic()
-    counters = run.counters
-    for b_start, chunk_paths in _cursor_batches(paths, start_idx):
-        held = await run.batch(chunk_paths)
-        if held:
-            print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
-            # The batches written before the hold are compacted and recorded.
-            await _close_index(repo, counters, org, ns, model_name, started, head, mode)
-            return 1
-        if not paths_file:
-            await repo.set_state(org, ns, cursor_key, str(b_start + len(chunk_paths)))
-        rate = counters["files"] / max(time.monotonic() - started, 1e-9)
-        print(
-            f"  [{b_start + len(chunk_paths)}/{len(paths)}] files={counters['files']} "
-            f"chunks={counters['chunks']} symbols={counters['symbols']} "
-            f"edges={counters['edges']} errors={counters['errors']} "
-            f"({rate:.1f} files/s)"
-        )
-
-    if owed:
+    counters = index_counters()
+    second: dict[str, int] | None = None
+    edge_batches = len(_cursor_batches(paths)) if owed else 0
+    workers = await stack.enter_async_context(_workers_for(args, head, len(batches), edge_batches))
+    held = await _index_phase(
+        run, paths, batches, workers, counters=counters, cursor_key=cursor_key, started=started
+    )
+    if owed and not held:
         if recorded:
             print(f"edge second pass owed by an earlier run of this backfill ({recorded})")
         elif owed == "first-backfill":
             print("first full backfill of this namespace: edge second pass implied")
-        second = await _second_edge_pass(run, paths)
+        elif owed == "workers":
+            print("--workers: batches were written side by side; the edge pass binds them")
+        second = await _second_edge_pass(run, paths, workers)
+    if held:
+        # The batches written before the hold are compacted, republished and recorded.
+        await _close_index(repo, counters, org, ns, model_name, started, head, mode)
+        return 1
+    if second is not None:
         counters["edges_second_pass"] = second["edges"]
         counters["errors"] += second["errors"]
         if not paths_file:
@@ -408,7 +514,14 @@ async def _backfill_paths(
 
 
 async def _record_edge_pass(
-    repo: Any, org: str, ns: str, args: argparse.Namespace, owed_key: str, done_upto: str
+    repo: Any,
+    org: str,
+    ns: str,
+    args: argparse.Namespace,
+    owed_key: str,
+    done_upto: str,
+    *,
+    side_by_side: bool,
 ) -> tuple[str, str]:
     """(why this run owes the edge pass, why an earlier run recorded it owed). A cursor
     run records its reason before its first batch, so a run interrupted from there on
@@ -421,6 +534,7 @@ async def _record_edge_pass(
         paths_file=paths_file,
         done_upto=done_upto,
         recorded=recorded,
+        side_by_side=side_by_side,
     )
     if not paths_file and owed != recorded:
         await repo.set_state(org, ns, owed_key, owed)
@@ -428,7 +542,13 @@ async def _record_edge_pass(
 
 
 def edge_pass_owed(
-    *, explicit: bool, declined: bool, paths_file: bool, done_upto: str, recorded: str
+    *,
+    explicit: bool,
+    declined: bool,
+    paths_file: bool,
+    done_upto: str,
+    recorded: str,
+    side_by_side: bool,
 ) -> str:
     """Why this run owes the edges-only second pass, '' when it does not. A
     namespace's FIRST full backfill indexes files in tree order, so a call to a
@@ -439,7 +559,15 @@ def edge_pass_owed(
     declines it. A cursor run records the reason before its first batch and
     clears it once the pass is done (`recorded`), so a resumed run, or a rerun
     after an interrupted pass, still runs it. A resumed run with nothing
-    recorded, and a `--paths-file` repair, imply nothing."""
+    recorded, and a `--paths-file` repair, imply nothing.
+
+    A run whose `--workers` wrote batches side by side (`side_by_side`) owes it
+    whatever the flags say: a file there resolved against a name table the other
+    workers were still filling, where one process would have bound it, so a
+    `--paths-file` repair runs it too and `--no-edges-second-pass` does not
+    decline it."""
+    if side_by_side or recorded == "workers":
+        return "workers"
     if explicit:
         return "requested"
     if declined or paths_file:
@@ -449,18 +577,32 @@ def edge_pass_owed(
     return "" if done_upto else "first-backfill"
 
 
-async def _second_edge_pass(run: _Run, paths: list[str]) -> dict[str, int]:
+async def _second_edge_pass(
+    run: _Run, paths: list[str], workers: code_backfill_workers.Workers | None
+) -> dict[str, int]:
     """The edges-only pass over the same paths once the whole
     tree is indexed. The first pass resolved each file against the name table
     as it stood — a fresh namespace's dbt model indexed before the model it
     `ref()`s bound nothing (bench callers F1 0.286 → 1.0 on the second
     pass). Same rounds as the index phase; chunks, symbols and facets are
-    left alone, edges are key-diffed against the live rows."""
+    left alone, edges are key-diffed against the live rows. It starts from the
+    index as it now stands (`forget_index_reads`), not what the index phase cached
+    of it. Across `workers` its batches run in any order: names resolve against the
+    finished symbols, but a Python class's inherited members are read from the edges
+    the pass has rewritten so far, which one process reads in tree order."""
+    from server.code.app.index.ingest_resolve import forget_index_reads
+
+    forget_index_reads()
     started = time.monotonic()
     counters = run.edges
+    batches = _cursor_batches(paths)
     print(f"second edge pass: {len(paths)} files against the finished name table")
-    for _b, chunk in _cursor_batches(paths):
-        await run.edge_batch(chunk)
+    if workers is None:
+        for _b, chunk in batches:
+            await run.edge_batch(chunk)
+    else:
+        for part in await workers.edge_batches(batches):
+            add_counters(counters, part)
     print(
         f"second edge pass complete: files={counters['files']} edges=+{counters['edges']} "
         f"errors={counters['errors']} in {time.monotonic() - started:.0f}s"

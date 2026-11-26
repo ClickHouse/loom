@@ -180,6 +180,7 @@ def test_a_full_index_run_publishes_coverage_at_its_new_watermark(
         limit=0,
         paths_file="",
         concurrency=1,
+        workers=1,
         no_edges_second_pass=True,
     )
     asyncio.run(code_backfill._backfill(args))

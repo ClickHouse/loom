@@ -225,6 +225,30 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   the work, since the unembedded rows are the embed phase's queue. `--commit <sha>` pins
   the tree (and implies `--no-fetch`); `--concurrency N` parallelises files; `--limit N`
   indexes a sample.
+- One process parses and extracts at about one core. `--workers N` runs the index
+  phase's batches of 200 files and the edge pass in N more processes. Each worker is the
+  same command, started with the same arguments, so it runs as the command does: as
+  `background` traffic, under the command's query tag and operation, enrolled and
+  admitted for model work, with its own connection and `--concurrency`, its own
+  `cli.code.backfill` root span (stamped `loom.cli.worker`) and its own start and exit
+  log lines. The cursor moves past a batch once every earlier one is written, the header
+  batches are all written before the first source batch starts, and after a held batch
+  nothing more is handed out. A worker resolves names and imports against what it last
+  read of the index, so during the index phase it misses what the other workers are
+  writing; each worker reads the index again at the sources and at the edge pass, and
+  such a run owes the edge pass whatever the flags say (`--paths-file` and
+  `--no-edges-second-pass` runs included), so the pass binds them against the finished
+  index. One difference remains: a Python call or base class that resolves through
+  another file's inherited members reads the `inherits` edges the pass has rewritten so
+  far, which one process reads in tree order and the workers in the order they finish,
+  so a few such edges can carry another confidence (the same edge, its target found by
+  another rule). A later `loom code backfill` that finds the pass owed runs it; the
+  server's own first index does not. Each worker parses in its own child, so the run holds up to N
+  times the parse memory (`LOOM_CODE_PARSE_MEMORY_MB`) plus one server process per
+  worker. Stopping the command (SIGTERM or Ctrl-C, to the command or its whole process
+  group) or killing it stops every worker inside its batch before the worker retires,
+  and a worker that fails, its retirement included, fails the command with its batch
+  named, after the command has written its own end of the run.
 - The first full backfill of a namespace also re-derives every file's edges after the
   name table is complete, so cross-file references bind (`--no-edges-second-pass` skips
   it). The run records that it owes the pass before its first batch and clears the record

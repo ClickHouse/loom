@@ -17,37 +17,41 @@ from server.cli.code_backfill import edge_pass_owed
 from tests.unit.code_fixtures import repo_config
 
 
+def _owed(**kw: Any) -> str:
+    base: dict[str, Any] = {
+        "explicit": False,
+        "declined": False,
+        "paths_file": False,
+        "done_upto": "",
+        "recorded": "",
+        "side_by_side": False,
+    }
+    return edge_pass_owed(**{**base, **kw})
+
+
 def test_first_full_backfill_implies_the_second_pass() -> None:
-    owed = edge_pass_owed(
-        explicit=False, declined=False, paths_file=False, done_upto="", recorded=""
-    )
-    assert owed == "first-backfill"
+    assert _owed() == "first-backfill"
 
 
 def test_a_resumed_run_or_a_repair_does_not_imply_it() -> None:
-    assert not edge_pass_owed(
-        explicit=False, declined=False, paths_file=False, done_upto="412", recorded=""
-    )
-    assert not edge_pass_owed(
-        explicit=False, declined=False, paths_file=True, done_upto="", recorded=""
-    )
+    assert not _owed(done_upto="412")
+    assert not _owed(paths_file=True)
 
 
 def test_a_resumed_run_runs_the_pass_an_earlier_run_owed() -> None:
-    owed = edge_pass_owed(
-        explicit=False, declined=False, paths_file=False, done_upto="412", recorded="first-backfill"
-    )
-    assert owed == "first-backfill"
+    assert _owed(done_upto="412", recorded="first-backfill") == "first-backfill"
 
 
 def test_the_flags_decide_when_given() -> None:
-    owed = edge_pass_owed(
-        explicit=True, declined=False, paths_file=True, done_upto="9", recorded=""
-    )
-    assert owed == "requested"
-    assert not edge_pass_owed(
-        explicit=False, declined=True, paths_file=False, done_upto="", recorded="first-backfill"
-    )
+    assert _owed(explicit=True, paths_file=True, done_upto="9") == "requested"
+    assert not _owed(declined=True, recorded="first-backfill")
+
+
+def test_batches_written_side_by_side_owe_the_pass_whatever_the_flags_say() -> None:
+    assert _owed(side_by_side=True, paths_file=True) == "workers"
+    assert _owed(side_by_side=True, declined=True, done_upto="412") == "workers"
+    # and a later run, with one process or the pass declined, still owes it
+    assert _owed(declined=True, done_upto="412", recorded="workers") == "workers"
 
 
 class _Interrupted(Exception):
@@ -125,6 +129,7 @@ def _backfill(**kw: Any) -> int:
         "paths_file": "",
         "limit": 0,
         "concurrency": 2,
+        "workers": 1,
         "edges_second_pass": False,
         "no_edges_second_pass": False,
         "dialect_folder_pass": False,
