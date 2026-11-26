@@ -289,8 +289,10 @@ locally when Loom abstains or cannot supply the missing evidence. If the
 editor requires a local read before using the exact source already in
 context, start with one line near the edit.
 
-Reuse linked lessons that cover the same scope. When a repeat lookup only
-needs source, pass include_lessons: false.
+Check a linked lesson's code_state before reusing it. Recheck changed,
+unresolved or missing links against the current source. When the earlier
+lessons cover the same scope and a repeat lookup only needs source, pass
+include_lessons: false.
 
 Respect ambiguity, truncation and lower-bound warnings. An empty result
 does not prove that no callers or affected tests exist. Report limitations
