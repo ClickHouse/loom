@@ -156,10 +156,12 @@ async def _declaration_targets(
             locations = frozenset((hit["path"], hit["line"]) for hit in hits)
             declaration_hits.add(locations)
             declarations.update(locations)
-    # An unmatched clue can use the fallback only when every literal can be
-    # checked in the trimmed, single-line grep previews.
+    # An unmatched clue needs complete line previews. A revision conflict can
+    # hide a matching line even when the surviving preview is not a declaration.
     if missing_clue and (
-        len(declaration_hits) < 2 or any(clue != clue.strip() or "\n" in clue for clue in required)
+        len(declaration_hits) < 2
+        or any(clue != clue.strip() or "\n" in clue for clue in required)
+        or any(not revisions.get(match["path"]) for match in matches)
     ):
         return []
     matches = [match for match in matches if (match["path"], match["line"]) in declarations]

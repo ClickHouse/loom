@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from server.code.api.models_grep import CodeGrepInput
-from server.code.app.grep import _matching_lines
-from server.code.app.grep_source import collect_contexts, page_contexts
+from server.code.app.grep import _line_coverage_fields, _matching_lines
+from server.code.app.grep_source import collect_contexts, match_revisions, page_contexts
 from server.code.app.symbol.uses import _uses_lines
 
 
@@ -145,6 +145,66 @@ def test_a_grep_line_uses_retained_chunk_provenance() -> None:
     repeated, _ = _matching_lines([row, other], {}, request, None, 20, match_commits=commits)
     assert repeated == matches
     assert commits == {("m.py", 124): ""}
+
+
+@pytest.mark.parametrize("alternate_revision", ["a" * 40, "b" * 40])
+async def test_edit_context_keeps_candidates_when_grep_discards_a_conflicting_hit(
+    alternate_revision, monkeypatch
+) -> None:
+    from unittest.mock import Mock
+
+    from server.code.app.symbol import edit_target
+
+    revision = "a" * 40
+    chunks = [
+        {
+            "path": f"{name}.py",
+            "scope": name,
+            "start_line": 1,
+            "end_line": 1,
+            "content": f"def {name}():\n",
+            "indexed_commit": revision,
+        }
+        for name in ("alpha", "beta")
+    ]
+    chunks.extend(
+        [
+            {
+                "path": "gamma.py",
+                "scope": "old",
+                "start_line": 15,
+                "end_line": 16,
+                "content": "def old():\n    marker = 3\n",
+                "indexed_commit": revision,
+            },
+            {
+                "path": "gamma.py",
+                "scope": "gamma",
+                "start_line": 16,
+                "end_line": 16,
+                "content": "def gamma():\n",
+                "indexed_commit": alternate_revision,
+            },
+        ]
+    )
+    spans = {(row["path"], row["scope"]): (row["start_line"], row["end_line"]) for row in chunks}
+    clues = ["def alpha(", "def beta(", "def gamma(", "marker = 3"]
+    commits: dict[tuple[str, int], str] = {}
+    hits, capped = _matching_lines(
+        chunks, spans, CodeGrepInput(pattern=clues), None, 20, match_commits=commits
+    )
+    assert not capped and not _line_coverage_fields(chunks, None).get("partial")
+    assert [(hit["path"], hit["line"]) for hit in hits] == [
+        ("alpha.py", 1),
+        ("beta.py", 1),
+        ("gamma.py", 16),
+    ]
+    revisions = match_revisions(hits, commits)
+    assert revisions == {"alpha.py": revision, "beta.py": revision}
+    repo = Mock()
+    monkeypatch.setattr(edit_target, "CodeRepo", repo)
+    assert await edit_target._declaration_targets("o", "n", hits, revisions, clues) == []
+    repo.assert_not_called()
 
 
 def test_compacted_class_text_does_not_invent_a_matching_source_line() -> None:
