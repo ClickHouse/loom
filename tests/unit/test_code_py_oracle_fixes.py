@@ -146,6 +146,8 @@ def test_an_untyped_member_receiver_takes_no_same_file_guess():
     ("statement", "owner"),
     [
         ("target = 0", ""),
+        ("target = (0)", ""),
+        ("target = -1", ""),
         ("del target", ""),
         ("target, other = 0, 1", ""),
         ("target, other = (0, 1)", ""),
@@ -214,11 +216,13 @@ def test_module_literal_receiver_declines_unrelated_calls_and_callee_returns():
         ),
         "svc/service.py": (
             b"from .clients import Client, Other, Reply\ntarget = Client()\ntarget = 0\n"
-            b"def submit():\n    target.send()\n    reply = target.flush_reply()\n    reply.close_reply()\n"
+            b"def submit():\n    target.send()\n    reply = target.flush_reply()\n"
+            b"    reply.close_reply()\n    target.unknown()\n"
         ),
     }
-    calls, _ = _edges(files, "svc/service.py")
-    assert not any(line in {5, 6} for line, _, _ in calls)
+    calls, misses = _edges(files, "svc/service.py")
+    assert not any(line in {5, 6, 8} for line, _, _ in calls)
+    assert not any(miss.call_text.startswith("target.") for miss in misses)
     assert not any(line == 7 and confidence == 0.9 for line, _, confidence in calls)
 
 

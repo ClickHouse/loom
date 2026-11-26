@@ -256,6 +256,19 @@ def _body_bindings(
         _body_bindings(child, source, into, fields=fields, params=params)
 
 
+def _scalar_literal(node: Any) -> bool:
+    if node.type == "parenthesized_expression" and node.named_child_count == 1:
+        return _scalar_literal(node.named_children[0])
+    if node.type == "unary_operator":
+        operator = node.child_by_field_name("operator")
+        argument = node.child_by_field_name("argument")
+        return (
+            operator is not None and operator.type in {"+", "-"}
+            and argument is not None and argument.type in {"integer", "float"}
+        )
+    return node.type in _SCALAR_LITERALS
+
+
 def _literal_write_names(node: Any, source: bytes) -> set[str]:
     """Names overwritten by a scalar literal or unpacked scalar literals."""
     writes = [node]
@@ -265,7 +278,7 @@ def _literal_write_names(node: Any, source: bytes) -> set[str]:
         value = value.child_by_field_name("right")
     if value is None:
         return set()
-    if value.type in _SCALAR_LITERALS:
+    if _scalar_literal(value):
         return {name for write in writes for name in _bound_identifiers(write, source)}
     left = node.child_by_field_name("left")
     if (
@@ -274,7 +287,7 @@ def _literal_write_names(node: Any, source: bytes) -> set[str]:
         and value.type in {"expression_list", "tuple", "list"}
         and len(left.named_children) == len(value.named_children)
         and all(c.type == "identifier" for c in left.named_children)
-        and all(c.type in _SCALAR_LITERALS for c in value.named_children)
+        and all(_scalar_literal(c) for c in value.named_children)
     ):
         return _bound_identifiers(node, source)
     return set()
