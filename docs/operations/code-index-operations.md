@@ -1103,8 +1103,9 @@ has a gold question set; it is never run in CI, whose embedder is fake
   import and graph stats workers skip it and `code.refresh` answers `ERASURE_RUNNING`. The
   purge refuses with `OVERLOADED` while work begun before the erasure was recorded may
   still write the namespace: a live entry lock or `code.refresh` lease on it, or a code
-  worker's pass that may have begun before then, until that pass's deadline. The
-  recovery worker retries the erasure; once it has given up, repeat the request. This is
+  worker's pass that may have begun before then (an enabled worker with no finished pass
+  yet counts), until that pass's deadline; a worker status that cannot be read refuses
+  too. The recovery worker retries the erasure; once it has given up, repeat the request. This is
   best effort: a statement already sent, or a writer of an older build, can still leave
   rows, and `verify.residue` then fails the saga so it is repeated.
 

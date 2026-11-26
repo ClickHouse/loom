@@ -36,10 +36,20 @@ async def being_erased(org: str, namespace: str) -> bool:
 
 async def _pass_begun_before(recorded: datetime) -> str:
     """A code worker whose newest pass row finished an interval (none after a failure) before
-    `recorded`, so its next pass may have begun by then, and whose deadline is not past."""
-    from server.workers import status_store
+    `recorded`, so its next pass may have begun by then, and whose deadline is not past. An
+    enabled one with no finished row (its first pass) counts the same way from `recorded`; a
+    status store that cannot be read refuses, retryably, since nothing is then known."""
+    from server.workers import registry, status_store
 
-    rows = [r for r in await status_store.latest_rows() if r.get("trigger") != "manual"]
+    try:
+        all_rows = await status_store.latest_rows(strict=True)
+    except Exception as e:
+        raise OverloadedError(
+            f"worker state unknown ({type(e).__name__}); the code index is purged once it "
+            "can be read: the recovery worker retries the erasure, or repeat it",
+            retry_after_s=60,
+        ) from e
+    rows = [r for r in all_rows if r.get("trigger") != "manual"]
     newest = {r["worker"]: r for r in sorted(rows, key=lambda r: r.get("pass_finished") or "")}
     now = datetime.now(UTC)
     for name, row in sorted(newest.items()):
@@ -49,6 +59,11 @@ async def _pass_begun_before(recorded: datetime) -> str:
         began_by = datetime.fromisoformat(row["pass_finished"]) + timedelta(seconds=rest or 0)
         if began_by <= recorded and now < recorded + timedelta(seconds=row["deadline_s"] or 0):
             return str(name)
+    finished = {n for n, r in newest.items() if r.get("pass_finished")}
+    for spec in registry.enabled_workers():
+        if spec.name.startswith("code_") and spec.name not in _ENTRY_LOCKED | finished:
+            if now < recorded + timedelta(seconds=spec.deadline_seconds()):
+                return spec.name
     return ""
 
 

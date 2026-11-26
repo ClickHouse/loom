@@ -9,6 +9,7 @@ rows are fakes."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -22,7 +23,7 @@ from server.erasure.app import ledger_reads, saga_steps
 from server.erasure.store import ledger
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store import steps_memory as memory_steps
-from server.workers import status_store
+from server.workers import registry, status_store
 from tests.unit.test_code_ingest_pass_budget import _cfg, _Clock, _wire_run
 
 # The real ones: the unit conftest stubs them for every other test.
@@ -38,6 +39,8 @@ class _World:
         self.held: set[str] = set()
         self.rows: list[dict[str, Any]] = []
         self.purged: list[Any] = []
+        self.unreadable = False
+        self.enabled = ["code_ingest"]  # the enabled code workers
 
     def ingest_row(self, finished: datetime, **kw: Any) -> None:
         self.rows.append(
@@ -67,8 +70,15 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     async def has_live_holder(name: str, **_: Any) -> bool:
         return name in world.held
 
-    async def latest_rows(**_: Any) -> list[dict[str, Any]]:
+    async def latest_rows(**kw: Any) -> list[dict[str, Any]]:
+        if world.unreadable:
+            if kw.get("strict"):
+                raise ConnectionError("status store down")
+            return []  # what the lenient read answers
         return list(world.rows)
+
+    def enabled_workers() -> list[Any]:
+        return [SimpleNamespace(name=n, deadline_seconds=lambda: 900.0) for n in world.enabled]
 
     async def request(erasure_id: str, **_: Any) -> dict[str, Any]:
         return {"requested_at": world.recorded.replace(tzinfo=None)}
@@ -79,6 +89,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
 
     monkeypatch.setattr(leases, "has_live_holder", has_live_holder)
     monkeypatch.setattr(status_store, "latest_rows", latest_rows)
+    monkeypatch.setattr(registry, "enabled_workers", enabled_workers)
     monkeypatch.setattr(ledger, "fetch_request_status", request)
     monkeypatch.setattr(memory_steps, "purge_code_index_by_namespace", purge)
     return world
@@ -110,6 +121,7 @@ async def test_a_pass_in_flight_refuses_the_purge_until_it_ends(world: _World) -
 async def test_a_lease_on_the_namespace_refuses_the_purge(
     world: _World, lease: str, says: str
 ) -> None:
+    world.ingest_row(world.recorded + timedelta(seconds=20))  # no pass in flight
     world.held.add(lease)
     with pytest.raises(OverloadedError, match=says):
         await _purge(["code-b", "code-a"])
@@ -125,6 +137,27 @@ async def test_a_worker_idle_at_the_record_or_a_memory_namespace_does_not_hold_i
     world.rows.clear()
     world.ingest_row(world.recorded - timedelta(seconds=200))
     world.indexed = []  # no code index: a memory namespace
+    assert await _purge() == 7
+
+
+async def test_an_unreadable_status_store_refuses_the_purge_retryably(world: _World) -> None:
+    world.ingest_row(world.recorded + timedelta(seconds=20))
+    world.unreadable = True
+    with pytest.raises(OverloadedError, match="worker state unknown") as refused:
+        await _purge()
+    assert refused.value.extra["retry_after_s"] == 60 and world.purged == []
+    world.unreadable = False
+    assert await _purge() == 7
+
+
+async def test_an_enabled_worker_with_no_finished_row_holds_the_purge_to_its_deadline(
+    world: _World,
+) -> None:
+    world.enabled = ["code_ingest", "code_summary"]  # its first pass: no row yet
+    world.ingest_row(world.recorded + timedelta(seconds=20))
+    with pytest.raises(OverloadedError, match="code_summary pass that began before"):
+        await _purge()
+    world.recorded = datetime.now(UTC) - timedelta(seconds=920)  # its deadline is past
     assert await _purge() == 7
 
 
@@ -172,7 +205,9 @@ def _entries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         repos,
         "configured_repos",
-        lambda: [SimpleNamespace(org="o", namespace=n) for n in ("code-a", "code-b")],
+        lambda: [
+            SimpleNamespace(org="o", namespace=n, label=f"o/{n}") for n in ("code-a", "code-b")
+        ],
     )
 
     async def being_erased(org: str, ns: str) -> bool:
@@ -216,3 +251,28 @@ async def test_embed_recovery_skips_a_namespace_being_erased(
     monkeypatch.setattr(w, "_recover_table", fake_recover)
     await w._run(w.CodeEmbedRecoveryResult())
     assert seen and all(r == [("o", "code-b")] for r in seen)
+
+
+async def test_graph_stats_does_not_refit_the_risk_of_a_namespace_being_erased(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.workers import graph_stats as gs
+
+    _entries(monkeypatch)
+
+    async def none_due() -> set[str]:
+        return set()
+
+    async def unit_risk(*a: Any, **kw: Any) -> None:
+        return None
+
+    refit: list[list[str]] = []
+
+    async def fake_refit(repos: list[Any], result: Any) -> None:
+        refit.append([c.namespace for c in repos])
+
+    monkeypatch.setattr(gs, "due_namespaces", none_due)
+    monkeypatch.setattr(gs, "_run_unit_risk", unit_risk)
+    monkeypatch.setattr(gs, "_refit_jit_risk", fake_refit)
+    await gs._run(gs.CodeGraphStatsResult())
+    assert refit == [["code-b"]]

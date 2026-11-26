@@ -474,7 +474,7 @@ async def _run(result: CodeGraphStatsResult) -> None:
             result.errors.append(f"{cfg.label}: unit_risk: {type(e).__name__}: {e}")
             logger.exception("code_graph_stats: unit risk failed for %s", cfg.label)
             pass_context.note_failure(e, f"{cfg.namespace}:unit_risk")
-    await _refit_jit_risk(list(repos), result)
+    await _refit_jit_risk([c for c in repos if c.label not in erased], result)
 
 
 async def _run_unit_risk(org: str, ns: str, result: CodeGraphStatsResult, deadline: float) -> None:
