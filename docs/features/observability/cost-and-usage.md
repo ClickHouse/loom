@@ -292,8 +292,8 @@ See the [configuration reference](../../reference/configuration.md#runtime) for 
 
 ## Limits and failure modes
 
-- **The price table is a table.** Provider prices change; a model missing from
-  `PRICE_PER_1K_TOKENS` bills $0 on Loom's side and is `unpriced` on the agent side.
+- **Unpriced models.** A model missing from `PRICE_PER_1K_TOKENS` contributes zero
+  to Loom's cost estimate. The provider charge remains unknown to Loom.
 - **Telemetry is best-effort.** The ledger emitter is batched and never fails a request; a
   crash can lose the unflushed queue (`LOOM_EVENTS_STREAM_FLUSH_INTERVAL_S` bounds the
   window when the events stream is on).

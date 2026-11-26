@@ -455,8 +455,10 @@ reading needs a grant or a token that names it.
 - Refreshing requires `writer` and administering requires `admin`. Standard code
   namespaces accept sufficient token claims or grants, subject to scoped-token
   ceilings and live grant caps. Restricted namespaces require both (below).
-- An unowned code namespace is adopted with `POST /v1/admin/namespace.adopt` (or
-  `loom namespaces-adopt`); a restricted one never is (below).
+- An org admin adopts an unowned, standard code namespace with
+  `POST /v1/admin/namespace.adopt`. For a private repository, follow the
+  [configured repository setup order](../operations/code-index-operations.md#configure-the-entry):
+  register the namespace and adopt it before restricting it.
 
 See [code index repositories](../features/code-index/repositories.md).
 

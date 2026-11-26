@@ -57,7 +57,11 @@ spans. Add `--include` to show the `X-Trace-Id` response header and `"no_cache":
 to the JSON body. In that trace, look for a successful generation span with
 `loom.llm.stage=code_answer` and the intended provider and model. An abstention can
 skip synthesis, and a successful generation at another stage is not proof of answer
-synthesis. This probe can incur model charges.
+synthesis. With `LOOM_READS_LLM_FREE=true`, the request returns HTTP 409
+`READS_LLM_FREE` without calling the synthesis model. A
+[spend cap](../features/observability/cost-and-usage.md#daily-spend-caps) can skip synthesis
+while still returning retrieval results. Check those policies before diagnosing a
+missing span as a provider failure. This probe can incur model charges.
 
 A grounded answer returns `answer` and `citations`; an unanswerable question can return
 `abstain` and `abstain_reason`. With cache lookup enabled, a matching cached synthesized

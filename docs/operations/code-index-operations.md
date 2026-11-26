@@ -173,9 +173,13 @@ configured restricted namespace, so a private repository is set up in this order
    and `join_policy: "approval"` or `"closed"`; both are required); then set
    `classification: "restricted"` on the entry as well to align the configured default
    with the stored policy. A stored access decision takes precedence over the
-   configured classification and join policy. Run
-   `loom code backfill`. Mirrors and compiler-tier checkouts are created at mode 2770
-   when they belong to `code_repos_shared_gid`, open to the server's
+   configured classification and join policy. Wait the `effective_within_s` returned
+   by `code.repo.set_access` for the change to reach all serving processes. Check
+   `code.repos` with the maintainer's token and with a same-org token outside the
+   restricted scope. The maintainer's row has `readable: true`; the other token must
+   not get a readable row. If the check fails, do not index the repository. Once
+   both checks pass, run `loom code backfill`. Mirrors and compiler-tier checkouts are
+   created at mode 2770 when they belong to `code_repos_shared_gid`, open to the server's
    user and that group only, and 0700 otherwise (see "Writable git mirrors"); one an
    older build created, or whose mode was changed by hand, is set to that mode at once
    on the host that serves the call, and on every other host that holds it at that
