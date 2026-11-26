@@ -68,9 +68,7 @@ async def test_replaced_source_cleanup_keeps_the_new_copy(monkeypatch: pytest.Mo
             await pg.close_pool()
 
 
-async def test_queue_roundtrip_cursor_tenant_isolation_and_erasure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_queue_roundtrip_cursor_tenant_isolation_and_erasure() -> None:
     os.environ.get("LOOM_CH_HOST") or pytest.skip("LOOM_CH_HOST not set")
     from server.core import pg
     from server.core.ch import get_client
@@ -123,10 +121,6 @@ async def test_queue_roundtrip_cursor_tenant_isolation_and_erasure(
         assert not await queue.pending(first) and await queue.pending(other)
         state = await sources.read_states(first.org, first.mirror, [first.source_id])
         assert state[first.source_id]["detail"] == '{"changed": 47, "error": "Private turn error"}'
-        from server.workers import registry
-
-        # no supervisor runs here, so no code worker can still be writing the namespace
-        monkeypatch.setattr(registry, "enabled_workers", lambda: [])
         await _step_purge_code_index_by_ns(other.org, other.mirror)
         assert not await queue.pending(other)
     finally:

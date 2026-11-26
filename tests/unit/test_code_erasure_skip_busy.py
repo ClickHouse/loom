@@ -161,6 +161,12 @@ async def test_an_enabled_worker_with_no_finished_row_holds_the_purge_to_its_dea
     assert await _purge() == 7
 
 
+async def test_no_supervised_row_holds_no_enabled_worker(world: _World) -> None:
+    # No supervisor runs (a CLI-only install, a test job): no worker can be in a first pass.
+    world.enabled = ["code_ingest", "code_summary"]
+    assert await _purge() == 7
+
+
 async def test_the_refusal_ends_at_the_pass_deadline(world: _World) -> None:
     # A worker that never reports again (crashed, stopped): its pass was cut by now.
     world.recorded = datetime.now(UTC) - timedelta(seconds=880)

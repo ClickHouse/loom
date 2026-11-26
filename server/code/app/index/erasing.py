@@ -37,7 +37,8 @@ async def being_erased(org: str, namespace: str) -> bool:
 async def _pass_begun_before(recorded: datetime) -> str:
     """A code worker whose newest pass row finished an interval (none after a failure) before
     `recorded`, so its next pass may have begun by then, and whose deadline is not past. An
-    enabled one with no finished row (its first pass) counts the same way from `recorded`; a
+    enabled one with no finished row (its first pass, while a supervisor reports) counts the same
+    way from `recorded`; a
     status store that cannot be read refuses, retryably, since nothing is then known."""
     from server.workers import registry, status_store
 
@@ -59,6 +60,8 @@ async def _pass_begun_before(recorded: datetime) -> str:
         began_by = datetime.fromisoformat(row["pass_finished"]) + timedelta(seconds=rest or 0)
         if began_by <= recorded and now < recorded + timedelta(seconds=row["deadline_s"] or 0):
             return str(name)
+    if not rows:  # no supervisor reports here, so no worker can be in its first pass
+        return ""
     finished = {n for n, r in newest.items() if r.get("pass_finished")}
     for spec in registry.enabled_workers():
         if spec.name.startswith("code_") and spec.name not in _ENTRY_LOCKED | finished:
