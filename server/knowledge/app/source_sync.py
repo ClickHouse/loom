@@ -122,6 +122,7 @@ from server.knowledge.domain.sources import (
     KnowledgeSource,
     home,
     include_in,
+    is_worker_source,
     json_object,
     mirror_synced,
     mirror_uri,
@@ -1258,12 +1259,18 @@ def ours(src: KnowledgeSource, doc: documents.DocumentRow) -> bool:
     return doc.actor == SYNC_WORKER_ACTOR and tag in doc.tags
 
 
+async def _current_native_source(src: KnowledgeSource) -> KnowledgeSource | None:
+    fresh = await store.get_source(src.org, src.namespace, src.name)
+    if fresh is None or fresh.source_id != src.source_id or is_worker_source(fresh):
+        return None
+    return fresh
+
+
 async def require_current(src: KnowledgeSource) -> None:
-    """SourceGone unless the source is still active as the registration this turn
-    started with: a remove during the turn stops it before its next write."""
+    """Raise SourceGone before a write if the native registration is no longer active."""
     with sequential_reads():
-        fresh = await store.get_source(src.org, src.namespace, src.name)
-    if fresh is None or not fresh.active or fresh.source_id != src.source_id:
+        fresh = await _current_native_source(src)
+    if fresh is None or not fresh.active:
         raise SourceGone(_cursor_of(src))
     if src.credential_mode == "connected":
         from server.knowledge.app import connected_accounts
@@ -1399,11 +1406,10 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
     derived from the mirror's documents, so it goes under the mirror (`mirror_state`)."""
     async with source_ops.sources_lease(src.org, src.namespace):
         with sequential_reads():
-            fresh = await store.get_source(src.org, src.namespace, src.name)
+            if await _current_native_source(src) is None:
+                return
             states = await store.read_states(src.org, src.namespace, [src.name])
             mirror_row = await mirror_state(src, turn.mirror) if turn.mirror else {}
-        if fresh is None or fresh.source_id != src.source_id:
-            return
         current = states.get(src.name) or {}
         if mirror_synced(src):
             await _write_mirrored_state(src, read, turn, current, mirror_row)
@@ -1914,10 +1920,9 @@ async def _write_mined(
     as `extract_error`. Nothing is written when none of it changed."""
     async with source_ops.sources_lease(src.org, src.namespace):
         with sequential_reads():
-            fresh = await store.get_source(src.org, src.namespace, src.name)
+            if await _current_native_source(src) is None:
+                return
             states = await store.read_states(src.org, src.namespace, [src.name])
-        if fresh is None or fresh.source_id != src.source_id:
-            return
         current = states.get(src.name) or {}
         detail = json_object(current.get("detail", ""))
         before = dict(detail)

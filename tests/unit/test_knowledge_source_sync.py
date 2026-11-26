@@ -423,6 +423,45 @@ def _source(name: str = "decks", **kw: Any) -> KnowledgeSource:
     )
 
 
+@pytest.mark.parametrize("worker_marked", [False, True], ids=["native", "worker-history"])
+@pytest.mark.parametrize("path", ["document", "turn-state", "extraction-state"])
+def test_native_sync_rechecks_worker_history(world: _World, worker_marked: bool, path: str) -> None:
+    source = _source()
+    fresh = source_sync.store._source(
+        {
+            "org": source.org,
+            "namespace": source.namespace,
+            "name": source.name,
+            "source_id": source.source_id,
+            "source_kind": "gdrive",
+            "kind": "mcp" if worker_marked else "",
+            "credential_mode": "shared",
+            "active": True,
+        }
+    )
+    world.sources = [fresh]
+
+    if path == "document":
+        if worker_marked:
+            with pytest.raises(source_sync.SourceGone):
+                asyncio.run(source_sync.require_current(source))
+        else:
+            asyncio.run(source_sync.require_current(source))
+        return
+
+    if path == "turn-state":
+        asyncio.run(source_sync._write_state(source, {}, source_sync.TurnResult()))
+    else:
+        asyncio.run(source_sync._write_mined(source, None, [], pending=2))
+
+    if worker_marked:
+        assert source.name not in world.states
+    elif path == "turn-state":
+        assert _detail(world)["status"] == "ok"
+    else:
+        assert _detail(world)["pending_extract"] == 2
+
+
 def _detail(world: _World, name: str = "decks") -> dict[str, Any]:
     return json.loads(world.states[name]["detail"])
 
