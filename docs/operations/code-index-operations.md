@@ -587,8 +587,9 @@ operator's proxy: a host that runs the sandbox runs no network git while
 (`dev/docker-compose.colour.yml`) set the container options below. The other Compose
 files (`compose.yaml`, `dev/docker-compose.cloud.yml`) do not: an
 AppArmor profile the host has not loaded stops a container from starting, so they keep
-Docker's defaults, the probe fails and every repository job runs as a plain process (see
-_Without the sandbox_). To run it there, once the host has the profile:
+Docker's defaults. When the sandbox probe fails, jobs may run without it, skip work
+or be refused, depending on the repository type and sandbox policy (see _Without the
+sandbox_). To run it there, once the host has the profile:
 
 - copy the colour file's `security_opt` block and its `pids_limit` (the container's
   backstop). The `seccomp=` path is relative to the project directory (the compose

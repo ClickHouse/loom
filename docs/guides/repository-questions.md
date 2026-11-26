@@ -54,8 +54,9 @@ curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/code.ask" \
 
 A grounded answer returns `answer` and `citations`; an unanswerable question can return
 `abstain` and `abstain_reason`. With cache lookup enabled, a matching cached synthesized
-answer can still be returned. Keep both `synthesize: false` and `no_cache: true` to
-request uncached retrieval only. The [code operation reference](../reference/operations/code.md#codeask)
+answer can still be returned. Set `synthesize: false` and `no_cache: true` to retrieve
+citations without fresh synthesis or a cached answer. Retrieval can still use the
+query-embedding cache. The [code operation reference](../reference/operations/code.md#codeask)
 gives the full contract.
 
 Use `as_of` when available to check the indexed branch and commit behind the result.
