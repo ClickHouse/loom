@@ -465,7 +465,9 @@ async def count_belief_support(ch: _CHClient, org: str, keys: list[tuple[str, st
 
 
 async def guidance_heads(keys: Sequence[IdentityKey]) -> dict[IdentityKey, dict[str, Any]]:
-    """Current guidance metadata, without loading the value or source text."""
+    """Current guidance metadata and procedure lifecycle fields."""
+    from server.memory.store.sql import PROCEDURE_GUIDANCE_FIELDS
+
     if not keys:
         return {}
     if pg.enabled():
@@ -474,7 +476,8 @@ async def guidance_heads(keys: Sequence[IdentityKey]) -> dict[IdentityKey, dict[
     rows = await query_all_sliced(
         _default_client(),
         f"""
-        SELECT org, namespace, agent, user_id, session_id, memory_key, {columns}
+        SELECT org, namespace, agent, user_id, session_id, memory_key,
+               {columns}, {PROCEDURE_GUIDANCE_FIELDS}
         FROM loom.memory FINAL
         PREWHERE (org, namespace, agent, user_id, session_id, memory_key)
                  IN {{keys:{_IDENTITY_KEY_TUPLE}}}

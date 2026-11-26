@@ -217,18 +217,53 @@ async def get_many_by_uris(
     commit adopts (`pg_documents.commit`). A head that owes nothing while ClickHouse
     holds no row at its version, read where every write is, was erased by such a build:
     it is dropped, not served."""
+    rows = await _latest_by_uris(org, namespace, source_uris, include_superseded, ch)
+    return [_hydrate(row) for row in rows]
+
+
+_SOURCE_METADATA = (
+    "source_uri",
+    "version",
+    "superseded_at",
+    "access_json",
+    "tags",
+    "blob_erased_at",
+)
+
+
+async def ordinary_live_source_uris(
+    org: str, namespace: str, source_uris: list[str], *, ch: _CHClient | None = None
+) -> set[str]:
+    """Live sources that need only the caller's namespace grant."""
+    return {
+        row["source_uri"]
+        for row in await _latest_by_uris(org, namespace, source_uris, False, ch, _SOURCE_METADATA)
+        if not row.get("access_json")
+        and not any(tag.startswith("source-id:") for tag in row.get("tags") or [])
+        and row.get("blob_erased_at") is None
+    }
+
+
+async def _latest_by_uris(
+    org: str,
+    namespace: str,
+    source_uris: list[str],
+    include_superseded: bool,
+    ch: _CHClient | None,
+    columns: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
     from server.core import pg
 
     if not source_uris:
         return []
     if not pg.enabled():
-        return [
-            _hydrate(r) for r in await _read(org, namespace, source_uris, include_superseded, ch)
-        ]
+        return await _read(org, namespace, source_uris, include_superseded, ch, columns)
     from server.knowledge.store import pg_documents
 
-    heads = await pg_documents.heads(org, namespace, source_uris)
-    newest = {r["source_uri"]: r for r in await _read(org, namespace, source_uris, True, ch)}
+    heads = await pg_documents.heads(org, namespace, source_uris, columns=columns)
+    newest = {
+        r["source_uri"]: r for r in await _read(org, namespace, source_uris, True, ch, columns)
+    }
     # A head that owes nothing is published: a replica showing nothing at its version is
     # behind, or a build that keeps no heads erased it (a purge leaves older writers'
     # rows). Confirmed where every write is, then dropped.
@@ -240,7 +275,7 @@ async def get_many_by_uris(
     if unbacked:
         with sequential_reads():
             confirmed = {
-                r["source_uri"]: r for r in await _read(org, namespace, unbacked, True, ch)
+                r["source_uri"]: r for r in await _read(org, namespace, unbacked, True, ch, columns)
             }
         for uri in unbacked:
             got = confirmed.get(uri)
@@ -258,9 +293,7 @@ async def get_many_by_uris(
         # place (an older build's erasure tombstone, an erased original).
         if uri not in newest or int(newest[uri]["version"]) < int(head.row["version"]):
             newest[uri] = head.row
-    return [
-        _hydrate(r) for r in newest.values() if include_superseded or r.get("superseded_at") is None
-    ]
+    return [r for r in newest.values() if include_superseded or r.get("superseded_at") is None]
 
 
 async def _read(
@@ -269,6 +302,7 @@ async def _read(
     source_uris: list[str],
     include_superseded: bool,
     ch: _CHClient | None,
+    columns: tuple[str, ...],
 ) -> list[dict[str, Any]]:
     """The sources' latest loom.documents rows in ClickHouse (only live ones unless
     `include_superseded`)."""
@@ -280,15 +314,22 @@ async def _read(
     ]
     if not include_superseded:
         where.append("superseded_at IS NULL")
-    return await ch.query_all(
-        f"""
-        SELECT org, namespace, source_uri, doc_id, title, description, content,
+    projection = (
+        ", ".join(columns)
+        if columns
+        else """
+               org, namespace, source_uri, doc_id, title, description, content,
                tags, metadata, version, superseded_at, ingested_at, blob_path, blob_size,
                toString(blob_content_type) AS blob_content_type,
                original_filename, content_sha256, blob_erased_at,
                agent, user_id, session_id, actor, toString(source_class) AS source_class,
                revision, toString(format) AS format, artifact_sha256, parser, coverage,
                ingestion_id, access_json
+    """
+    )
+    return await ch.query_all(
+        f"""
+        SELECT {projection}
         FROM loom.documents FINAL
         WHERE {" AND ".join(where)}
         """,

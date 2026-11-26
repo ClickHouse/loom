@@ -19,6 +19,11 @@ export interface InspectedOwner {
   session_id: string;
 }
 
+export interface InspectedScope {
+  namespace?: string;
+  exact: boolean;
+}
+
 export interface Place {
   scrollTop: number;
   /** The `data-focus-key` of the element that had focus; null when nothing keyed did. */
@@ -28,6 +33,7 @@ export interface Place {
   inspectedAgent: string;
   /** The user and session it was read under; null for the caller's own. */
   inspectedOwner: InspectedOwner | null;
+  inspectedScope?: InspectedScope | null;
 }
 
 /** How long a restore waits for the page to draw what it restores (a lazy chunk, a list
@@ -57,7 +63,7 @@ function mainElement(): HTMLElement | null {
  *  Back should focus when the focused one is not it (a popover link that opened the jump,
  *  where Back should land on the chip that opened the popover). */
 export function rememberPlace(
-  inspected: { key: string | null; agent: string; owner?: InspectedOwner | null },
+  inspected: { key: string | null; agent: string; owner?: InspectedOwner | null; scope?: InspectedScope | null },
   focusKey?: string | null,
 ): void {
   if (typeof window === "undefined") return;
@@ -69,6 +75,7 @@ export function rememberPlace(
     inspected: inspected.key,
     inspectedAgent: inspected.agent,
     inspectedOwner: inspected.owner ?? null,
+    ...(inspected.scope ? { inspectedScope: inspected.scope } : {}),
   };
   patchEntry({ loomPlace: place });
 }
@@ -79,13 +86,23 @@ export function readPlace(state: unknown): Place | null {
   const p = (state as Record<string, unknown>).loomPlace;
   if (!p || typeof p !== "object") return null;
   const r = p as Record<string, unknown>;
+  const scope = inspectionScope(r.inspectedScope);
   return {
     scrollTop: typeof r.scrollTop === "number" ? r.scrollTop : 0,
     focusKey: typeof r.focusKey === "string" ? r.focusKey : null,
     inspected: typeof r.inspected === "string" ? r.inspected : null,
     inspectedAgent: typeof r.inspectedAgent === "string" ? r.inspectedAgent : "",
     inspectedOwner: owner(r.inspectedOwner),
+    ...(scope ? { inspectedScope: scope } : {}),
   };
+}
+
+function inspectionScope(v: unknown): InspectedScope | null {
+  if (!v || typeof v !== "object") return null;
+  const scope = v as Record<string, unknown>;
+  return typeof scope.exact === "boolean"
+    ? { namespace: typeof scope.namespace === "string" ? scope.namespace : undefined, exact: scope.exact }
+    : null;
 }
 
 function owner(v: unknown): InspectedOwner | null {

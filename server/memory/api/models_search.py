@@ -9,7 +9,6 @@ from pydantic import (
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
-    field_serializer,
     model_serializer,
 )
 
@@ -479,15 +478,13 @@ TermLegStatus = Literal["complete", "empty", "capped", "timed_out", "failed", "o
 
 
 class _MemorySearchHit(BaseModel):
-    @field_serializer("agent")
-    def _writer_agent(self, value: str) -> str:
-        return self._row_identity[0] if self._row_identity is not None else value
-
     @model_serializer(mode="wrap")
     def _omit_unrequested(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # `tags` is on the wire only when the request asked for it: None = not
         # requested, so the key is dropped.
         data: dict[str, Any] = handler(self)
+        if self._row_identity is not None:
+            data["agent"], data["user_id"], data["session_id"] = self._row_identity
         if self.tags is None:
             data.pop("tags", None)
         if self.use_guidance is None:
@@ -542,6 +539,8 @@ class _MemorySearchHit(BaseModel):
     _row_version: int = 0
     # A chunk made into its row's hit shows the chunk's type, not the row's.
     _chunk_typed: bool = False
+    # Digest recorded by the leg that retrieved this body and digest confirmed by the head.
+    _row_content_sha256: str = ""
     _guidance_content_sha256: str = ""
     # The hit's code links in repositories the caller may read, as the search's code
     # annotation read them; None = not read (memory.ask reads them itself then).

@@ -21,6 +21,8 @@ const entry = (memory_key: string): MemoryListEntry => ({
   pinned: false,
   tags: [],
   agent: "claude-desktop",
+  user_id: "-",
+  session_id: "-",
   value: `value of ${memory_key}`,
 });
 
@@ -32,6 +34,9 @@ const hit = (memory_key: string, rank_score: number): SearchHit => ({
   similarity: 0.6,
   rank_score,
   confidence: 1,
+  agent: "claude-desktop",
+  user_id: "-",
+  session_id: "-",
   score_components: { semantic: 0.6 },
 });
 

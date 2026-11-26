@@ -10,11 +10,28 @@ from typing import Any
 
 # The value memory.get serves: the native JSON column when populated, else the stored text.
 SERVED_VALUE = "if(length(toString(value_json)) > 2, toString(value_json), value)"
-PROCEDURE_GUIDANCE_VALUE = (
-    "if(memory_type = 'procedural', "
-    "if(length(toString(value_json)) > 2, toString(value_json), memory.value), '') "
-    "AS procedure_value"
-)
+# The file projection also names its display column `value`. Read the stored column here.
+_PROCEDURE_BODY = SERVED_VALUE.replace(", value)", ", memory.value)")
+
+
+def _procedure_field(path: str) -> str:
+    return f"ifNull(nullIf(JSONExtractRaw({_PROCEDURE_BODY}, {path}), ''), 'null')"
+
+
+PROCEDURE_GUIDANCE_FIELDS = f"""
+    if(memory_type = 'procedural' AND JSONType({_PROCEDURE_BODY}) = 'Object',
+        concat(
+            '{{"quarantined":',
+                if(JSONType({_PROCEDURE_BODY}, 'quarantined') = 'Object', '{{}}', 'null'),
+            ',"template":', {_procedure_field("'template'")},
+            ',"run_stats":',
+                if(JSONType({_PROCEDURE_BODY}, 'run_stats') = 'Object',
+                   concat('{{"total":', {_procedure_field("'run_stats', 'total'")}, '}}'),
+                   {_procedure_field("'run_stats'")}),
+            ',"tags":', {_procedure_field("'tags'")},
+            '}}'
+        ), '') AS procedure_fields
+"""
 
 # A high row is reachable by key, never pushed into a code or edit prompt.
 FILE_LISTING_VISIBLE = """

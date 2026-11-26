@@ -144,6 +144,7 @@ function SectionEmpty({ children }: { children: React.ReactNode }) {
 
 interface InspectorProps {
   identity: Identity;
+  verifyWriter?: boolean;
   memoryKey: string;
   onClose: () => void;
   onChanged: () => void;
@@ -170,6 +171,7 @@ interface InspectorProps {
 
 export function MemoryInspector({
   identity,
+  verifyWriter,
   memoryKey,
   onClose,
   onChanged,
@@ -246,14 +248,40 @@ export function MemoryInspector({
   // Set by "Ask about this", which closes the drawer for the assistant panel's field.
   const leaving = useRef(false);
   const inspect = useStore((s) => s.inspect);
-  const openMemory = onInspectMemory ?? inspect;
+  const openMemory = onInspectMemory ?? ((key: string) => inspect(key, { namespace: identity.namespace }));
   // A rename's destination is this row moved: it opens under the writer identity this one
   // was read as. A redirect's target may be another writer's (a deduplicated row's
   // canonical), as may related rows, mentions and provenance links: those open as before.
   const followMoved =
     onInspectMemory ??
     ((key: string) =>
-      inspect(key, { agent: identity.agent, userId: identity.user_id, sessionId: identity.session_id }));
+      inspect(key, {
+        agent: identity.agent,
+        userId: identity.user_id,
+        sessionId: identity.session_id,
+        namespace: identity.namespace,
+        exact: verifyWriter,
+      }));
+  const readMemory = useCallback(async (): Promise<MemoryDetail> => {
+    const row = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+    // A key lookup can fall back to a namesake if the selected writer's row disappeared.
+    if (
+      verifyWriter &&
+      row.found &&
+      (row.agent !== identity.agent || row.user_id !== identity.user_id || row.session_id !== identity.session_id)
+    ) {
+      return {
+        found: false,
+        value: null,
+        memory_type: null,
+        confidence: null,
+        version: null,
+        pinned: false,
+        created_at: null,
+      };
+    }
+    return row;
+  }, [identity, memoryKey, verifyWriter]);
   const searchByTag = useStore((s) => s.searchByTag);
   const openConversationThread = useStore((s) => s.openConversationThread);
   // A dialog over the drawer owns the keys and the outside clicks while it is open.
@@ -340,7 +368,7 @@ export function MemoryInspector({
     // A read for a key the drawer has moved off must not land: its value under the new
     // key would be what Edit, Pin and Verify then write back.
     let live = true;
-    getMemory(identity, memoryKey, { include_recall_breakdown: true })
+    readMemory()
       .then((res) => {
         if (!live) return;
         detailOf.current = inspection.current;
@@ -361,7 +389,7 @@ export function MemoryInspector({
       inspection.current += 1;
       shown.current = null;
     };
-  }, [identity, memoryKey]);
+  }, [identity, memoryKey, readMemory]);
 
   const loadHistory = (key: string) => memoryHistory(identity, key, 8).then((r) => r.rows || []);
   useEffect(() => {
@@ -629,7 +657,7 @@ export function MemoryInspector({
     onChanged();
     if (!showing()) return;
     try {
-      const row = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+      const row = await readMemory();
       if (!showing()) return;
       setDetail(row);
       // A row the write took away leaves no form open behind "not found".
@@ -857,7 +885,7 @@ export function MemoryInspector({
         // restore, so read it again.
         if (r.restored && showing()) {
           const now = inspection.current;
-          getMemory(identity, memoryKey, { include_recall_breakdown: true })
+          readMemory()
             .then((fresh) => {
               if (inspection.current === now) setDetail(fresh);
             })
@@ -870,7 +898,7 @@ export function MemoryInspector({
       // Nothing to restore means the row changed since it was read: show it as it is now.
       toast(r.restored ? "Restored" : "Nothing to restore", r.restored ? "ok" : "info");
       try {
-        const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+        const fresh = await readMemory();
         if (!stale()) setDetail(fresh);
       } catch (e) {
         if (!stale()) toastError("Reload failed", e, { read: true });

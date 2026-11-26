@@ -10,7 +10,6 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.identity.app.request_scope import request_scope
-from server.memory.app.search.pg_validation import doc_version
 from server.memory.app.search.request import apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
@@ -389,8 +388,7 @@ async def _expand_unit_bodies(
         if spent + cost <= budget:
             try:
                 if getattr(h, "use_guidance", None) is not None and (
-                    body_row.version != doc_version(h)
-                    or served_content_sha256(v) != h._guidance_content_sha256
+                    served_content_sha256(v) != h._guidance_content_sha256
                 ):
                     h.use_guidance = None
                 h.content_excerpt = text

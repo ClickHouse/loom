@@ -158,6 +158,7 @@ async def _run_anchor_pool(ctx: SearchContext) -> None:
                     row.get("tags"),
                 )
                 hit._row_identity = row_identity(row)
+                hit._row_content_sha256 = str(row.get("content_sha256") or "")
                 ctx.all_hits.append(_stamp_row_owner(hit, row.get("agent"), row.get("scope")))
     except Exception as e:  # noqa: BLE001 — the anchor pool is an optional recall stage
         log.warning("anchor-pool stage failed (non-fatal): %s", e)

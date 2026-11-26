@@ -1517,11 +1517,14 @@ async def test_a_merge_retires_only_the_rows_still_holding_the_text_it_read(monk
 
 
 @pytest.mark.asyncio
-async def test_a_copy_of_one_content_leaves_another_versions_vectors_alone() -> None:
+@pytest.mark.parametrize("as_bytes", [False, True])
+async def test_a_copy_of_one_content_leaves_another_versions_vectors_alone(as_bytes: bool) -> None:
     """`of_content` copies only the rows of the head's hash: a row of another version's
     text, which a redaction may be purging, is not carried forward."""
     ch = _SiteCH()
-    ch.emb.append({**_LIVE, "content_sha256": sha256_value("text"), "version": 10})
+    digest = sha256_value("text")
+    raw_digest = digest.encode() if as_bytes else digest
+    ch.emb.append({**_LIVE, "content_sha256": raw_digest, "version": 10})
     ch.emb.append(
         {**_LIVE, "embedding_model": "m2", "content_sha256": sha256_value("old"), "version": 10}
     )
@@ -1529,8 +1532,8 @@ async def test_a_copy_of_one_content_leaves_another_versions_vectors_alone() -> 
     n = await M.reemit_embedding_rows_for_keys(
         [(_KEY, {"status": "conflicted", "version": 20})],
         ch=ch,
-        of_content={_KEY: sha256_value("text")},
+        of_content={_KEY: digest},
     )
     assert n == 1
     copied = [r for r in ch.emb if r["version"] == 20]
-    assert [r["content_sha256"] for r in copied] == [sha256_value("text")]
+    assert [r["content_sha256"] for r in copied] == [raw_digest]

@@ -4,7 +4,7 @@ import { hasToken, isAuthDisabled, isProxyMode } from "../api";
 import { sameIdentity } from "./boot";
 import { NAMESPACE_NAME, isCollectionName } from "./namespace";
 import { HANDOFF_QUERY_KEYS, readSessionHandoff, type SessionHandoffRef } from "./sessionHandoff";
-import { patchEntry, readPlace, rememberPlace, type InspectedOwner, type Place } from "./place";
+import { patchEntry, readPlace, rememberPlace, type InspectedOwner, type InspectedScope, type Place } from "./place";
 
 export type View =
   | "memories"
@@ -210,7 +210,10 @@ function pushView(v: View, opts: NavOptions = {}, remember = true): void {
   // under the sheet, which remembered its place when the sheet opened.
   const replace = sheetEntry();
   if (!replace)
-    rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent, owner: s.inspectedOwner }, opts.focusKey);
+    rememberPlace(
+      { key: s.inspectedMemoryKey, agent: s.inspectedAgent, owner: s.inspectedOwner, scope: s.inspectedScope },
+      opts.focusKey,
+    );
   // A navigation's entry is made in the current namespace.
   const namespace = s.identity?.namespace ?? null;
   const state = {
@@ -303,7 +306,9 @@ function stampFor(namespace: string | null): Record<string, unknown> {
   return {
     loomNamespace: namespace,
     loomInspect: null,
-    ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "", inspectedOwner: null } } : {}),
+    ...(place
+      ? { loomPlace: { ...place, inspected: null, inspectedAgent: "", inspectedOwner: null, inspectedScope: null } }
+      : {}),
   };
 }
 
@@ -322,6 +327,7 @@ function openedByUrl(v: View): Partial<AppState> {
     inspectedMemoryKey: memory,
     inspectedAgent: memory ? linkedAgent(memory) : "",
     inspectedOwner: null,
+    inspectedScope: null,
     ...(doc ? { pendingDocSourceUri: doc } : {}),
     ...(thread ? { pendingConversationThread: { threadId: thread } } : {}),
   };
@@ -392,6 +398,7 @@ interface AppState {
   // The user and session the inspected row is filed under, when the view that opened it
   // names them (the Assistant's inspected and cited rows); null reads the caller's own.
   inspectedOwner: InspectedOwner | null;
+  inspectedScope: InspectedScope | null;
   // Tag-chip navigation target; Recent.tsx filters by it.
   memoryTagFilter: string | null;
   // Header-search document target; Documents.tsx opens its preview dialog.
@@ -434,7 +441,10 @@ interface AppState {
   /** The sidebar's latest badge answer for the current namespace, which it writes; the
    *  phone's More sheet reads it too. */
   adminBadges: AdminBadges | null;
-  inspect: (memoryKey: string | null, opts?: { agent?: string; userId?: string; sessionId?: string }) => void;
+  inspect: (
+    memoryKey: string | null,
+    opts?: { agent?: string; userId?: string; sessionId?: string; namespace?: string; exact?: boolean },
+  ) => void;
   toggleSidebar: () => void;
   sidebarCollapsed: boolean;
   /** Navigate to Memories filtered by tag. */
@@ -495,6 +505,7 @@ export const useStore = create<AppState>((set, get) => ({
   inspectedMemoryKey: null,
   inspectedAgent: "",
   inspectedOwner: null,
+  inspectedScope: null,
   memoryTagFilter: null,
   pendingDocSourceUri: null,
   pendingConversationThread: null,
@@ -524,6 +535,7 @@ export const useStore = create<AppState>((set, get) => ({
         deniedNamespace: null,
         linkOpened: null,
         inspectedMemoryKey: null,
+        inspectedScope: null,
         pendingConversationThread: null,
         sessionHandoff: null,
         pendingDocSourceUri: null,
@@ -550,6 +562,7 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({
       view,
       inspectedMemoryKey: null,
+      inspectedScope: null,
       navSeq: s.navSeq + 1,
       sessionHandoff: linkedSessionHandoff(view),
       navNote: opts.note ?? null,
@@ -564,7 +577,9 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       view,
       sessionHandoff: here ? linkedSessionHandoff(view) : null,
-      ...(here ? openedByUrl(view) : { inspectedMemoryKey: null, inspectedAgent: "", inspectedOwner: null }),
+      ...(here
+        ? openedByUrl(view)
+        : { inspectedMemoryKey: null, inspectedAgent: "", inspectedOwner: null, inspectedScope: null }),
     });
   },
   arriveFromHistory: (view, place) => {
@@ -580,6 +595,7 @@ export const useStore = create<AppState>((set, get) => ({
       inspectedMemoryKey: inspected ?? opened.inspectedMemoryKey ?? null,
       inspectedAgent: inspected ? (place?.inspectedAgent ?? "") : (opened.inspectedAgent ?? ""),
       inspectedOwner: inspected ? (place?.inspectedOwner ?? null) : null,
+      inspectedScope: inspected ? (place?.inspectedScope ?? null) : null,
     });
     addressPageNamespace();
   },
@@ -594,7 +610,8 @@ export const useStore = create<AppState>((set, get) => ({
     const agent = opts?.agent || "";
     const owner =
       opts?.userId || opts?.sessionId ? { user_id: opts.userId || "-", session_id: opts.sessionId || "-" } : null;
-    set({ inspectedMemoryKey, inspectedAgent: agent, inspectedOwner: owner });
+    const scope = opts?.namespace || opts?.exact ? { namespace: opts.namespace, exact: !!opts.exact } : null;
+    set({ inspectedMemoryKey, inspectedAgent: agent, inspectedOwner: owner, inspectedScope: scope });
     // On Memories the open memory is the page's URL (`?memory=`), with the agent it was
     // read as in the entry's state for a reload.
     if (get().view === "memories") {

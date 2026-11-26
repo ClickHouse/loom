@@ -142,6 +142,7 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
                 )
                 _stamp_row_tags(hit, row.get("tags"))
                 hit._row_identity = row_identity(row)
+                hit._row_content_sha256 = str(row.get("content_sha256") or "")
                 present.add(row_key)
                 ctx.all_hits.append(hit)
                 added += 1

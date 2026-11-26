@@ -73,17 +73,10 @@ async def document_counts(org: str, namespaces: list[str]) -> dict[str, int]:
 async def ordinary_source_uris(org: str, namespace: str, uris: set[str]) -> set[str]:
     """Currently live ordinary sources in a namespace already authorized by the caller."""
     from server.core.ch import sequential_reads
-    from server.knowledge.store.documents import get_many_by_uris
+    from server.knowledge.store.documents import ordinary_live_source_uris
 
     with sequential_reads():
-        rows = await get_many_by_uris(org, namespace, sorted(uris))
-    return {
-        row.source_uri
-        for row in rows
-        if not row.access_json
-        and not any(tag.startswith("source-id:") for tag in row.tags)
-        and row.blob_erased_at is None
-    }
+        return await ordinary_live_source_uris(org, namespace, sorted(uris))
 
 
 @dataclass(frozen=True)

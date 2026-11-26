@@ -59,6 +59,8 @@ async def test_search_and_page_project_same_exact_authorized_revision(
     hit = _hit()
     assert await guidance.attach_search_guidance(_INPUT, [hit]) == [hit]
     assert hit.use_guidance is not None and hit.use_guidance.review == "human"
+    wire = hit.model_dump()
+    assert (wire["agent"], wire["user_id"], wire["session_id"]) == ("a", "u", "s")
     parked = search_pages._parked(hit)
     assert "use_guidance" not in parked
     parked["use_guidance"] = hit.use_guidance.model_dump()
@@ -69,7 +71,7 @@ async def test_search_and_page_project_same_exact_authorized_revision(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["changed", "unknown"])
+@pytest.mark.parametrize("state", ["fresh", "changed", "unknown", "not_applicable"])
 async def test_parked_hit_refreshes_cached_code_state(
     monkeypatch: pytest.MonkeyPatch, state: str
 ) -> None:
@@ -83,13 +85,27 @@ async def test_parked_hit_refreshes_cached_code_state(
     monkeypatch.setattr(guidance, "guidance_heads", heads)
     monkeypatch.setattr(guidance, "guidance_code_states", code_states)
     hit = _hit()
-    hit.code_state = "fresh"
+    hit.code_state = "missing"
     await guidance.attach_search_guidance(_INPUT, [hit], snapshot_only=True)
     parked = search_pages.unparked(search_pages._parked(hit))
     assert parked is not None
     assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == [parked]
     assert parked.use_guidance is not None and parked.use_guidance.freshness.code == state
-    assert parked.code_state == ("changed" if state == "changed" else "")
+    assert parked.code_state == (state if state in ("changed", "fresh") else "missing")
+
+
+@pytest.mark.asyncio
+async def test_search_guidance_classifies_the_served_quarantined_procedure(monkeypatch):
+    async def heads(keys):
+        return {_KEY: _head(procedure_fields='{"quarantined": {}}')}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    hit = _hit()
+    hit.memory_type = "procedural"
+    assert await guidance.attach_search_guidance(_INPUT, [hit]) == [hit]
+    assert hit.use_guidance is not None
+    assert hit.use_guidance.lifecycle.procedure_status == "quarantined"
+    assert hit.use_guidance.next_step == "inspect_only"
 
 
 @pytest.mark.asyncio
@@ -187,16 +203,20 @@ async def test_replay_keeps_edited_history_and_withholds_a_redacted_version(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("procedure_fields", [None, '{"quarantined": {}}'])
 async def test_postgres_guidance_projection_decodes_sparse_defaults(
     monkeypatch: pytest.MonkeyPatch,
+    procedure_fields: str | None,
 ) -> None:
     async def fetch(query: str, *params: Any) -> list[dict[str, Any]]:
         assert params[:6] == tuple([part] for part in _KEY)
         assert "value" not in params[6]
+        assert "c.row->>'memory_type' = 'procedural'" in query
         return [
             {
                 **dict(zip(IDENTITY_COLUMNS, _KEY, strict=True)),
                 "evidence": {"version": 42, "source_class": "asserted", "requires_review": 0},
+                "procedure_fields": procedure_fields,
             }
         ]
 
@@ -208,6 +228,7 @@ async def test_postgres_guidance_projection_decodes_sparse_defaults(
     assert heads[_KEY]["source_trace"] == ""
     assert heads[_KEY]["tags"] == []
     assert "value" not in heads[_KEY]
+    assert heads[_KEY].get("procedure_fields") == procedure_fields
 
 
 @pytest.mark.asyncio
@@ -293,6 +314,30 @@ async def test_parked_hit_keeps_review_when_a_metadata_write_advances_the_versio
     assert parked.use_guidance is not None and parked.use_guidance.review == "human"
 
 
+@pytest.mark.parametrize("matches", [True, False])
+async def test_fresh_vector_uses_current_review_only_for_matching_content(monkeypatch, matches):
+    from server.memory.app.search.vector_legs import _stamp_row_fields
+    from server.memory.domain.search_types import SearchHit
+
+    async def heads(keys):
+        return {_KEY: _head(version=43)}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    hit = _stamp_row_fields(
+        SearchHit(
+            _KEY[-1],
+            "semantic",
+            "a deployed excerpt",
+            0,
+            content_sha256=("a" if matches else "b") * 64,
+        ),
+        _hit(),
+    )
+    assert await guidance.attach_search_guidance(_INPUT, [hit]) == [hit]
+    assert hit.use_guidance is not None
+    assert hit.use_guidance.review == ("human" if matches else "unknown")
+
+
 @pytest.mark.parametrize("history_fails", [False, True])
 async def test_replay_rechecks_ttl_and_keeps_confirmed_hits(monkeypatch, history_fails):
     from server.memory.store.history import HistoryTarget
@@ -302,11 +347,11 @@ async def test_replay_rechecks_ttl_and_keeps_confirmed_hits(monkeypatch, history
     async def heads(keys):
         return {
             _KEY: _head(memory_id="m", valid_to="2000-01-01T00:00:00"),
-            expired_key: _head(memory_id="expired", expires_at="2000-01-01T00:00:00"),
+            expired_key: _head(memory_id="expired"),
         }
 
     async def history(org, memory_id, version):
-        assert (memory_id, version) == ("m", 41)
+        assert version == 41
         if history_fails:
             raise TimeoutError
         return HistoryTarget(
@@ -315,16 +360,18 @@ async def test_replay_rechecks_ttl_and_keeps_confirmed_hits(monkeypatch, history
             agent="a",
             user_id="u",
             session_id="s",
-            memory_key=_KEY[-1],
+            memory_key=expired_key[-1] if memory_id == "expired" else _KEY[-1],
             version=version,
             memory_id=memory_id,
             content_sha256="a" * 64,
+            expires_at="2000-01-01T00:00:00" if memory_id == "expired" else None,
         )
 
     monkeypatch.setattr(guidance, "guidance_heads", heads)
     monkeypatch.setattr(guidance, "find_history_target", history)
-    current, edited, expired = _hit(), _hit(version=41), _hit()
+    current, edited, expired = _hit(), _hit(version=41), _hit(version=41)
     expired.memory_key = "expired"
+    expired.governed = True
     kept = await guidance.attach_search_guidance(
         _INPUT, [current, edited, expired], parked=True, replay=True
     )

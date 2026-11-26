@@ -104,7 +104,9 @@ async def test_under_postgres_the_newer_of_the_head_and_clickhouse_answers(
     from server.core import pg
     from server.knowledge.store import pg_documents
 
-    async def _heads(org: str, namespace: str, uris: list[str]) -> dict[str, Any]:
+    async def _heads(
+        org: str, namespace: str, uris: list[str], *, columns: tuple[str, ...]
+    ) -> dict[str, Any]:
         if head_version is None:
             return {}
         row = {**_doc_row(), "version": head_version, "title": "head"}
@@ -129,7 +131,9 @@ async def test_under_postgres_a_newer_deleted_row_hides_the_live_head(
     from server.core import pg
     from server.knowledge.store import pg_documents
 
-    async def _heads(org: str, namespace: str, uris: list[str]) -> dict[str, Any]:
+    async def _heads(
+        org: str, namespace: str, uris: list[str], *, columns: tuple[str, ...]
+    ) -> dict[str, Any]:
         return {"kb://policy.md": pg_documents.Head({**_doc_row(), "version": 3}, owed=False)}
 
     monkeypatch.setattr(pg, "enabled", lambda: True)
@@ -167,6 +171,49 @@ async def test_get_many_by_uris_empty_input_skips_ch() -> None:
     assert ch.query_all_calls == []
 
 
+@pytest.mark.parametrize("uses_postgres", [False, True])
+async def test_ordinary_sources_read_only_metadata_and_respect_the_current_revision(
+    monkeypatch: pytest.MonkeyPatch, uses_postgres: bool
+) -> None:
+    from server.core import pg
+    from server.knowledge.store.documents import ordinary_live_source_uris
+
+    rows = [
+        {"source_uri": "plain", "version": 1, "tags": []},
+        {"source_uri": "mirror", "version": 1, "tags": ["source-id:connector"]},
+        {"source_uri": "erased", "version": 1, "blob_erased_at": "2026-05-01T00:00:00"},
+        {"source_uri": "changed", "version": 1, "tags": []},
+    ]
+    monkeypatch.setattr(pg, "enabled", lambda: uses_postgres)
+
+    async def fetch(sql, org, namespace, uris, columns):
+        assert "jsonb_object_agg" in sql
+        assert set(columns) == {
+            "source_uri",
+            "version",
+            "superseded_at",
+            "access_json",
+            "tags",
+            "blob_erased_at",
+        }
+        return [
+            {
+                "source_uri": "changed",
+                "row": {"source_uri": "changed", "version": 2, "access_json": "{}"},
+                "owed": True,
+            }
+        ]
+
+    monkeypatch.setattr(pg, "fetch", fetch)
+    ch = StubCH()
+    ch.query_all_returns.append(rows)
+    uris = [row["source_uri"] for row in rows]
+    expected = {"plain"} if uses_postgres else {"plain", "changed"}
+    assert await ordinary_live_source_uris("clickhouse", "ns", uris, ch=ch) == expected
+    sql, _ = ch.query_all_calls[0]
+    assert "content" not in sql and "FINAL" in sql
+
+
 @pytest.mark.asyncio
 async def test_insert_one_forces_synchronous_visibility() -> None:
     ch = StubCH()
@@ -202,7 +249,9 @@ async def test_under_postgres_a_head_clickhouse_lost_serves_only_while_owed(
 
     dropped: list[tuple[str, int]] = []
 
-    async def _heads(org: str, namespace: str, uris: list[str]) -> dict[str, Any]:
+    async def _heads(
+        org: str, namespace: str, uris: list[str], *, columns: tuple[str, ...]
+    ) -> dict[str, Any]:
         return {"kb://policy.md": pg_documents.Head({**_doc_row(), "version": 3}, owed=owed)}
 
     async def _drop(org: str, namespace: str, uri: str, version: int) -> None:
@@ -229,7 +278,9 @@ async def test_under_postgres_a_replica_behind_the_head_never_drops_it(
     dropped: list[str] = []
     sequential: list[bool] = []
 
-    async def _heads(org: str, namespace: str, uris: list[str]) -> dict[str, Any]:
+    async def _heads(
+        org: str, namespace: str, uris: list[str], *, columns: tuple[str, ...]
+    ) -> dict[str, Any]:
         return {"kb://policy.md": pg_documents.Head({**_doc_row(), "version": 3}, owed=False)}
 
     async def _drop(org: str, namespace: str, uri: str, version: int) -> None:
@@ -282,7 +333,9 @@ async def test_under_postgres_a_published_head_an_older_build_purged_is_dropped(
     dropped: list[int] = []
     older = {**_doc_row(), "version": 1, "superseded_at": datetime(2026, 5, 2, tzinfo=UTC)}
 
-    async def _heads(org: str, namespace: str, uris: list[str]) -> dict[str, Any]:
+    async def _heads(
+        org: str, namespace: str, uris: list[str], *, columns: tuple[str, ...]
+    ) -> dict[str, Any]:
         return {"kb://policy.md": pg_documents.Head({**_doc_row(), "version": 3}, owed=False)}
 
     async def _drop(org: str, namespace: str, uri: str, version: int) -> None:

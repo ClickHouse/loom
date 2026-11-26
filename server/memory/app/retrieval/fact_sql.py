@@ -97,6 +97,7 @@ async def _fact_leg_sql(
             e.content_excerpt  AS content_excerpt,
             e.status           AS status,
             e.version          AS version,
+            e.content_sha256   AS content_sha256,
             -- Multi-vector axis: min(value_dist, key_dist). CH's IF is eager,
             -- so we can't gate cosineDistance on key-dim; the inner IF falls
             -- back to the value embedding on dim mismatch, making `least` a

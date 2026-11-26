@@ -15,7 +15,7 @@ from server.identity.domain.read_scope import row_in_read_scope
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app.code_link_reads import guidance_code_states
 from server.memory.app.search.pg_validation import doc_key, doc_version
-from server.memory.app.use_guidance import guidance_source_states
+from server.memory.app.use_guidance import guidance_source_states, procedure_status_for_row
 from server.memory.domain.code_change import worst
 from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.domain.search_types import SHARED_AGENT, is_shared_row
@@ -119,13 +119,11 @@ def _memory_evidence(
             denied.add(i)
             continue
         digest = hash_text(row.get("content_sha256"))
+        served_digest = hit._guidance_content_sha256 if parked else hit._row_content_sha256
         if int(row.get("version") or 0) == version or (
-            parked
-            and not replay
-            and is_content_hash(digest)
-            and digest == hit._guidance_content_sha256
+            not replay and is_content_hash(digest) and digest == served_digest
         ):
-            if hit._guidance_content_sha256 and digest != hit._guidance_content_sha256:
+            if is_content_hash(served_digest) and digest != served_digest:
                 denied.add(i)
                 continue
             evidence[i] = dict(row, namespace=key[1], user_id=key[3])
@@ -287,7 +285,9 @@ async def attach_search_guidance(
 
     kept = []
     for i, hit in enumerate(hits):
-        if i in denied or (parked and _fact_row(hit) and not hit.governed and i not in authorized):
+        if i in denied or (
+            parked and _fact_row(hit) and (replay or not hit.governed) and i not in authorized
+        ):
             continue
         if _fact_row(hit):
             row = usable.get(i, {"status": hit.status, "source_class": hit.source_class})
@@ -295,12 +295,10 @@ async def attach_search_guidance(
                 row,
                 code_state=code_states.get(i, "unknown"),
                 source_state=source_states.get(i, "unknown"),
-                procedure_status=(
-                    "unknown" if hit.memory_type == "procedural" else "not_applicable"
-                ),
+                procedure_status=procedure_status_for_row(row | {"memory_type": hit.memory_type}),
             )
             if parked:
                 # Link state can change while the served memory revision stays the same.
-                hit.code_state = worst([hit.use_guidance.freshness.code])
+                hit.code_state = worst([hit.use_guidance.freshness.code]) or hit.code_state
         kept.append(hit)
     return kept

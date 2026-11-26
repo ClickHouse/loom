@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -9,14 +8,9 @@ from server.memory.app import use_guidance as source
 
 @pytest.mark.asyncio
 async def test_changed_source_requires_current_access_and_unambiguous_identity(monkeypatch):
-    docs = AsyncMock(
-        return_value=[
-            SimpleNamespace(source_uri="public", access_json="", tags=[], blob_erased_at=None),
-            SimpleNamespace(source_uri="mirror", access_json="{}", tags=[], blob_erased_at=None),
-        ]
-    )
+    docs = AsyncMock(return_value={"public"})
     gate = AsyncMock(side_effect=lambda org, ns, **kw: ns == "team")
-    monkeypatch.setattr(documents, "get_many_by_uris", docs)
+    monkeypatch.setattr(documents, "ordinary_live_source_uris", docs)
     monkeypatch.setattr(source, "row_in_scope", gate)
     monkeypatch.setattr(source, "request_narrowed", lambda: False)
     rows = [

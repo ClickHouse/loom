@@ -63,12 +63,12 @@ async def guidance_source_states(org: str, rows: Sequence[Mapping[str, Any]]) ->
 def procedure_status_for_row(
     row: dict[str, Any],
 ) -> ProcedureStatus | Literal["unknown", "not_applicable"]:
-    from server.memory.app.procedure import _procedure_status
-
     if row.get("memory_type") != "procedural":
         return "not_applicable"
-    if "procedure_value" in row:
-        value = served_row_value({"value": row["procedure_value"]})
+    from server.memory.app.procedure import _procedure_status
+
+    if "procedure_fields" in row:
+        value = served_row_value({"value": row["procedure_fields"]})
     else:
         value = served_row_value(row) if not row.get("value_truncated") else None
     if not isinstance(value, dict):

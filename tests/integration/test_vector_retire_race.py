@@ -1455,7 +1455,7 @@ async def test_hashless_touch_restores_vector_search_eligibility(ch: Any, monkey
         memory_type="semantic",
         scope="private",
         content_excerpt=value,
-        content_sha256="",
+        content_sha256=sha256_value(value),
         embedding_model="fake",
         embedding_dim=_DIM,
         embedding=_wide([0.1, 0.2, 0.3]),
@@ -1476,7 +1476,7 @@ async def test_hashless_touch_restores_vector_search_eligibility(ch: Any, monkey
     monkeypatch.setattr(handlers, "get_client", lambda: ch)
     try:
         await M.insert_memory_versions([row], ch=ch)
-        await M.insert_embedding_rows([vector], ch=ch)
+        assert len(await M.insert_embedding_rows([vector], ch=ch)) == 1
         assert await eligible() == []
         result = await handlers.handle_memory_touch(
             MemoryTouchInput(

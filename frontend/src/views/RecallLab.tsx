@@ -264,11 +264,27 @@ function RecallHistory() {
 
 /** One row of the Memories list's search order: a keyword match, a ranked hit, or both. */
 interface RecallRow {
+  id: string;
   key: string;
   text: string;
   memoryType: string;
   keyword: boolean;
+  writer: Pick<SearchHit, "namespace" | "agent" | "user_id" | "session_id">;
   hit?: SearchHit;
+}
+
+function hasWriter(row: RecallRow["writer"]): boolean {
+  return Boolean(row.agent && row.agent !== "*" && row.user_id && row.session_id);
+}
+
+function recallRowId(
+  namespace: string,
+  row: Pick<SearchHit, "namespace" | "agent" | "user_id" | "session_id" | "memory_key">,
+  unidentified: string,
+): string {
+  return hasWriter(row)
+    ? JSON.stringify([row.namespace || namespace, row.agent, row.user_id, row.session_id, row.memory_key])
+    : unidentified;
 }
 
 // The entity boost has its own column; the other terms that moved a hit sit under its score.
@@ -295,17 +311,17 @@ const ASK_HEADERS = [
 /** One scored row: the key opens the memory (a button, so the keyboard reaches it), the
  *  score draws Click UI's table bar against the top ranked hit, and the last cell asks the
  *  assistant about the result (its click, even an unavailable one, opens nothing). */
-function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) => void, query: string): TableRowType {
+function scoreRow(row: RecallRow, i: number, top: number, open: (row: RecallRow) => void, query: string): TableRowType {
   const hit = row.hit;
   const terms = whyTerms(hit?.score_components);
   const entity = terms.find((t) => t.label === ENTITY);
   const width = hit && top > 0 ? Math.max(0, Math.min(100, (hit.rank_score / top) * 100)) : 0;
   return {
-    id: row.key,
+    id: row.id,
     onClick: (e) => {
-      if (!e.defaultPrevented) open(row.key);
+      if (!e.defaultPrevented) open(row);
     },
-    className: "cursor-pointer",
+    className: hasWriter(row.writer) ? "cursor-pointer" : undefined,
     items: [
       { className: CARD, label: <span className={`${NUMERIC} text-text-muted`}>{i + 1}</span> },
       {
@@ -314,9 +330,10 @@ function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) =>
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <button
               type="button"
+              disabled={!hasWriter(row.writer)}
               onClick={(e) => {
                 e.stopPropagation();
-                open(row.key);
+                open(row);
               }}
               className="min-w-0 max-w-full line-clamp-1 break-all rounded text-left font-mono text-xs text-text"
             >
@@ -418,7 +435,19 @@ export function RecallLab() {
   // Bumped by Retry: the same query is asked again.
   const [attempt, setAttempt] = useState(0);
   const inspect = useStore((s) => s.inspect);
-  const open = useCallback((key: string) => inspect(key, { agent: "*" }), [inspect]);
+  const open = useCallback(
+    ({ key, writer }: RecallRow) => {
+      if (!hasWriter(writer)) return;
+      inspect(key, {
+        agent: writer.agent,
+        userId: writer.user_id,
+        sessionId: writer.session_id,
+        namespace: writer.namespace || identity.namespace,
+        exact: true,
+      });
+    },
+    [identity.namespace, inspect],
+  );
   // The ranked search failed while keyword rows stood: those still show, with this said.
   const [rankedError, setRankedError] = useState<string | null>(null);
   // A result set the search abstained on stays collapsed until the user opts in.
@@ -463,7 +492,7 @@ export function RecallLab() {
         const kw = await listMemories(identity, KEYWORD_PAGE, {
           contains: q,
           // `sensitivity` comes with every entry; naming it would 422 on an older replica
-          fields: ["memory_key", "memory_type", "value"],
+          fields: ["memory_key", "memory_type", "value", "agent", "user_id", "session_id"],
           previewChars: 200,
           signal: ac.signal,
         }).catch(() => null);
@@ -475,21 +504,29 @@ export function RecallLab() {
             )
           : search.then((res) => [res, null] as const));
         if (ac.signal.aborted) return;
-        const keyword = new Map((kw?.entries ?? []).map((e) => [e.memory_key, e] as const));
-        const ranked = new Map((r?.results ?? []).map((h) => [h.memory_key, h] as const));
+        const keyword = new Map(
+          (kw?.entries ?? []).map((e, i) => [recallRowId(identity.namespace, e, `keyword:${i}`), e]),
+        );
+        const ranked = new Map(
+          (r?.results ?? []).map((h, i) => [recallRowId(identity.namespace, h, `ranked:${i}`), h]),
+        );
         const order = keywordThenRanked([...keyword.keys()], [...ranked.keys()]);
         setRowsQuery(q);
         setRows(
-          order.map((key) => {
-            const hit = ranked.get(key);
-            const entry = keyword.get(key);
+          order.flatMap((id) => {
+            const hit = ranked.get(id);
+            const entry = keyword.get(id);
+            const row = hit ?? entry;
+            if (!row) return [];
             return {
-              key,
+              id,
+              key: row.memory_key,
               // A high row comes without its value: say so rather than show an empty row.
               text:
                 hit?.content_excerpt ?? (entry?.sensitivity === "high" ? SENSITIVE_LABEL : previewValue(entry?.value)),
               memoryType: hit?.memory_type ?? entry?.memory_type ?? "",
               keyword: entry !== undefined,
+              writer: row,
               hit,
             };
           }),

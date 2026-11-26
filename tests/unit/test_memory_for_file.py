@@ -1060,11 +1060,11 @@ async def test_the_listing_and_the_block_keep_the_commit_a_changed_link_names(
     "display",
     [
         {"value": '{"quarantined": {}}'},
-        {"excerpt": '{"description": "preview', "procedure_value": '{"quarantined": {}}'},
+        {"excerpt": '{"description": "preview', "procedure_fields": '{"quarantined": {}}'},
         {
             "value": '{"description": "preview',
             "value_truncated": True,
-            "procedure_value": '{"quarantined": {}}',
+            "procedure_fields": '{"quarantined": {}}',
         },
     ],
 )

@@ -238,6 +238,7 @@ def _fact_rows_to_hits(
             valid_at=_iso_date(str(r.get("valid_at", ""))),
             status=str(r.get("status") or ""),
             version=int(r.get("version") or 0),
+            content_sha256=str(r.get("content_sha256") or ""),
             created_at=_iso_date(str(r.get("created_at", ""))),
             source_resource_id=str(r.get("source_resource_id") or ""),
             source_class=str(r.get("source_class") or ""),

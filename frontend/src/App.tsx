@@ -207,6 +207,7 @@ export default function App() {
   const inspectedKey = useStore((s) => s.inspectedMemoryKey);
   const inspectedAgent = useStore((s) => s.inspectedAgent);
   const inspectedOwner = useStore((s) => s.inspectedOwner);
+  const inspectedScope = useStore((s) => s.inspectedScope);
   // Override agent with the writer's identity (captured when the list-view
   // card was clicked) so strict-tuple memory.get doesn't 404 on cross-agent
   // rows. Memoised: a fresh object every render would replay the inspector's seven reads
@@ -216,12 +217,13 @@ export default function App() {
       identity
         ? {
             ...identity,
+            namespace: inspectedScope?.namespace ?? identity.namespace,
             ...(inspectedAgent ? { agent: inspectedAgent } : {}),
             // A row filed under a user or session is read under them, or memory.get misses it.
             ...(inspectedOwner ?? {}),
           }
         : null,
-    [identity, inspectedAgent, inspectedOwner],
+    [identity, inspectedAgent, inspectedOwner, inspectedScope],
   );
   const inspect = useStore((s) => s.inspect);
   const setAuthed = useStore((s) => s.setAuthed);
@@ -675,6 +677,7 @@ export default function App() {
         <Suspense fallback={null}>
           <MemoryInspector
             identity={inspectorIdentity}
+            verifyWriter={inspectedScope?.exact}
             memoryKey={inspectedKey}
             onClose={() => inspect(null)}
             onChanged={() => useStore.getState().bumpMemoriesVersion()}

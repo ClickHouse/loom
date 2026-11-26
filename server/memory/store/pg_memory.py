@@ -1657,7 +1657,7 @@ async def heads_by_keys(
 async def guidance_heads(
     keys: Sequence[IdentityKey], columns: tuple[str, ...]
 ) -> dict[IdentityKey, dict[str, Any]]:
-    """Small current-head projections for authorized exact identities."""
+    """Current-head evidence and procedure lifecycle fields for authorized exact identities."""
     keys = [k for k in keys if not pg.unstorable(k)]
     if not keys:
         return {}
@@ -1665,14 +1665,40 @@ async def guidance_heads(
         f"""
         SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key,
                (SELECT jsonb_object_agg(k, c.row->k) FROM unnest($7::text[]) AS f(k)
-                WHERE c.row ? k) AS evidence
+                WHERE c.row ? k) AS evidence,
+               CASE WHEN body.fields IS NOT NULL THEN jsonb_build_object(
+                   'quarantined', CASE WHEN jsonb_typeof(body.fields->'quarantined') = 'object'
+                                       THEN '{{}}'::jsonb END,
+                   'template', body.fields->'template',
+                   'run_stats', CASE WHEN jsonb_typeof(body.fields->'run_stats') = 'object'
+                                     THEN jsonb_build_object(
+                                         'total', body.fields->'run_stats'->'total')
+                                     ELSE body.fields->'run_stats' END,
+                   'tags', body.fields->'tags'
+               )::text END AS procedure_fields
         {_EXACT_KEYS}
+        CROSS JOIN LATERAL (
+            SELECT CASE WHEN c.row->>'memory_type' = 'procedural' THEN
+                CASE WHEN length(coalesce(c.row->>'value_json', '{{}}')) > 2
+                     THEN c.row->>'value_json' ELSE c.row->>'value' END
+            END AS encoded
+        ) AS proc
+        CROSS JOIN LATERAL (
+            SELECT CASE WHEN pg_input_is_valid(proc.encoded, 'jsonb')
+                              AND proc.encoded IS JSON OBJECT THEN proc.encoded::jsonb END AS fields
+        ) AS body
         """,
         *_key_arrays(keys),
         list(columns),
     )
-    decoded = ((identity_key(r), decode_row(r["evidence"] or {})) for r in rows)
-    return {key: {c: row[c] for c in columns if c in row} for key, row in decoded}
+    evidence = {}
+    for row in rows:
+        decoded = decode_row(row["evidence"] or {})
+        metadata = {c: decoded[c] for c in columns if c in decoded}
+        if row.get("procedure_fields") is not None:
+            metadata["procedure_fields"] = row["procedure_fields"]
+        evidence[identity_key(row)] = metadata
+    return evidence
 
 
 async def heads_on_connection(
