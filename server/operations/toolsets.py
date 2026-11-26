@@ -65,11 +65,10 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
         # Learnings / curation triage queue.
         "learnings.list",
         "learnings.review",
-        # Conflict review queue (conversational conflict already surfaces in
-        # search results).
-        "conflicts.list",
+        # The Review queue's own views: the suggestions it renders and the allowlist.
+        # conflicts.list and conflicts.resolve stay callable, so an agent with nobody
+        # at a dashboard settles the namespace it administers or owns.
         "conflicts.propose_revision",
-        "conflicts.resolve",
         "conflicts.allowlist_list",
         "conflicts.allowlist_remove",
         # Privacy filter config. blacklist.add stays visible (the in-band

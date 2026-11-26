@@ -14,12 +14,15 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.auth import machines
 from server.auth.grant_claims import account_change
 from server.core.ch import get_client
 from server.observability import metrics
+
+if TYPE_CHECKING:
+    from server.auth.jwt import AuthInfo
 
 # The agent's name as its claim must give it: it becomes part of a subject and
 # a namespace, so it is refused, never rewritten into another agent's name.
@@ -54,6 +57,38 @@ def home_of(subject_: str) -> str:
     other subject."""
     found = parse(subject_)
     return namespace(*found) if found else ""
+
+
+# The ops an agent calls on its own namespace although they need `admin`: it holds
+# the owner's `admin` grant there (`ensure_namespace`), which its token names as a
+# writer's. Nobody sits at a dashboard for such a namespace, so its owner settles it.
+OWNER_OPS: frozenset[str] = frozenset({"conflicts.resolve"})
+
+
+async def owns(auth: AuthInfo | None, op_name: str, org: str | None, namespace: str | None) -> bool:
+    """True when `auth` is the agent whose own namespace `(org, namespace)` is, its
+    owner's `admin` grant there is live, and `op_name` is one the owner calls. Asked
+    once the ordinary gate refused the op's role; the caller must still pass that gate
+    as a writer, so every refusal but the role's stands (another org, an ended trust,
+    a token that may not write there). A restricted namespace is never settled this
+    way: there the token's own role must reach the op's."""
+    from server.auth.authz import check_authorized, claim_cap, may_be_restricted
+    from server.core.errors import IdentityIncompleteError
+    from server.operations.base import Role, grant_rank
+
+    if auth is None or not org or not namespace or op_name not in OWNER_OPS:
+        return False
+    if auth.org != org or home_of(auth.subject) != namespace:
+        return False
+    if await may_be_restricted(org, namespace):
+        return False
+    if await claim_cap(auth, org, namespace) != grant_rank("admin"):
+        return False
+    try:
+        await check_authorized(auth, Role.WRITER, org=org, namespace=namespace)
+    except (PermissionError, IdentityIncompleteError):
+        return False
+    return True
 
 
 async def granted(org: str, subject_: str) -> dict[str, str]:

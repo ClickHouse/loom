@@ -260,9 +260,9 @@ Fields for every `conflicts` op: [operations/conflicts.md](operations/conflicts.
 | --- | --- | --- | --- | --- | --- |
 | [`conflicts.allowlist_list`](operations/conflicts.md#conflictsallowlist_list) | List (memory_key, memory_key) pairs marked as known-non-conflicting so the conflicts worker stops flagging them. | viewer | read | no |  |
 | [`conflicts.allowlist_remove`](operations/conflicts.md#conflictsallowlist_remove) | Revoke an allow decision; the pair will re-flag on future writes. | admin | idempotent | no | yes |
-| [`conflicts.list`](operations/conflicts.md#conflictslist) | List unresolved conflicts where two memories contradict each other. | viewer | read | no |  |
+| [`conflicts.list`](operations/conflicts.md#conflictslist) | List unresolved conflicts: memories flagged as contradicting another, each with its peers' ids in `conflict_with`. | viewer | read | yes |  |
 | [`conflicts.propose_revision`](operations/conflicts.md#conflictspropose_revision) | Return non-destructive revise/contract/allow suggestions. | viewer | read | no |  |
-| [`conflicts.resolve`](operations/conflicts.md#conflictsresolve) | Pick the winner of a conflict (keep A, keep B, keep both, merge). | admin | idempotent | no | yes |
+| [`conflicts.resolve`](operations/conflicts.md#conflictsresolve) | Settle a conflict for one `memory_id`: `revise` keeps it and tombstones its peers, `contract` tombstones it and reactivates the peers, `allow` keeps all as distinct facts. | admin | idempotent | yes | yes |
 
 ### connection
 

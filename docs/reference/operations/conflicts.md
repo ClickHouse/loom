@@ -45,9 +45,9 @@ Revoke an allow decision; the pair will re-flag on future writes.
 
 ## `conflicts.list`
 
-List unresolved conflicts where two memories contradict each other.
+List unresolved conflicts: memories flagged as contradicting another, each with its peers' ids in `conflict_with`.
 
-`POST /v1/conflicts.list` · MCP `loom_conflicts_list` · role `viewer` · read · not listed under the MCP `all` toolset
+`POST /v1/conflicts.list` · MCP `loom_conflicts_list` · role `viewer` · read
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -89,9 +89,9 @@ Return non-destructive revise/contract/allow suggestions.
 
 ## `conflicts.resolve`
 
-Pick the winner of a conflict (keep A, keep B, keep both, merge).
+Settle a conflict for one `memory_id`: `revise` keeps it and tombstones its peers, `contract` tombstones it and reactivates the peers, `allow` keeps all as distinct facts.
 
-`POST /v1/conflicts.resolve` · MCP `loom_conflicts_resolve` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
+`POST /v1/conflicts.resolve` · MCP `loom_conflicts_resolve` · role `admin` · idempotent · audited
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |

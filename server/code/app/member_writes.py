@@ -75,16 +75,21 @@ async def code_member_may_write(
 async def authorize_op(
     auth: AuthInfo | None, op: Any, *, org: str | None, namespace: str | None, **flags: Any
 ) -> None:
-    """The transports' authorization: the ordinary gate at the op's role; when it
-    refuses, the member rule may admit the call, and the request is marked so its
-    handler refuses another principal's row."""
+    """The transports' authorization: the ordinary gate at the op's role. When it
+    refuses, the agent that owns the namespace is admitted to an owner's op
+    (`agents.owns`), or the member rule admits the call and the request is marked so
+    its handler refuses another principal's row."""
+    from server.auth import agents
     from server.auth.authz import check_authorized
 
     _member_write.set(False)
     try:
         await check_authorized(auth, op.required_role, org=org, namespace=namespace, **flags)
     except PermissionError:
-        if not await code_member_may_write(auth, str(getattr(op, "name", "")), org, namespace):
+        name = str(getattr(op, "name", ""))
+        if await agents.owns(auth, name, org, namespace):
+            return
+        if not await code_member_may_write(auth, name, org, namespace):
             raise
         _member_write.set(True)
 

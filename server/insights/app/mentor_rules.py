@@ -78,9 +78,6 @@ SETS = (
 PACKS = ("context.pack", "loom_activate", "memory.stack", "memory.brief")
 HISTORY_OPS = ("code.blame_range", "code.history", "code.symbol_history")
 
-# Who acts on a conflict: an agent cannot settle one over MCP.
-_CONFLICTS_ACTOR = "the user resolves conflicts in the dashboard's Review queue"
-
 # The plane an op belongs to, for `mentor.brief`'s planes table and the
 # "when" a hint points at. Prefix → (plane, one-line when).
 PLANES: tuple[tuple[str, str, str, bool], ...] = (
@@ -160,7 +157,8 @@ PLANES: tuple[tuple[str, str, str, bool], ...] = (
     (
         "conflicts",
         "conflicts",
-        "two facts that disagree: " + _CONFLICTS_ACTOR,
+        "two facts that disagree: conflicts.list, then conflicts.resolve as the namespace's "
+        "admin, or as a workload trust's agent on its own namespace",
         True,
     ),
     (
@@ -288,9 +286,6 @@ def _unlisted(ops: tuple[str, ...]) -> str:
         except Exception:  # noqa: BLE001 — an op with no toolset entry is skipped
             continue
         if op in _MCP_HIDDEN_OPS:
-            # Name who acts, never a route an agent could chase.
-            if op.startswith("conflicts."):
-                return f" ({_CONFLICTS_ACTOR})"
             return f" ({op} is not an agent tool; skip it over MCP)"
         if "core" not in sets:
             return _LOOM_OP_NOTE.format(op)
@@ -666,7 +661,8 @@ def _rules_shapes(c: _Ctx) -> None:
             "conflicts_pending",
             "info",
             f"{conflicted} facts in this namespace disagree with another and nobody has looked: "
-            f"conflicts.list shows the pairs, conflicts.resolve settles one; "
+            "conflicts.list shows the pairs, and conflicts.resolve settles one for the "
+            "namespace's admin or a workload trust's agent on its own namespace; "
             "search penalises them until then.",
             ("conflicts.list", "conflicts.resolve"),
             conflicted_rows=conflicted,

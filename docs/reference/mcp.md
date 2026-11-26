@@ -241,8 +241,8 @@ listed or callable. See
 
 **Hidden ops** (`_MCP_HIDDEN_OPS` in `server/operations/toolsets.py`) are neither
 listed nor callable over MCP: the per-store searches `loom_search` replaces
-(`memory.search`, `knowledge.search`, `conversation.search`), review queues,
-snapshot and restore, policy administration, audit and cost dashboards, code-index
+(`memory.search`, `knowledge.search`, `conversation.search`), the learnings review
+queue, the conflict queue's suggestions and allowlist, snapshot and restore, policy administration, audit and cost dashboards, code-index
 ingest. A call to one answers `isError` with code `OP_NOT_ON_MCP` and what to use
 instead. They stay reachable over HTTP and the SDKs. On the `assistant` toolset
 `memory.search` and `knowledge.search` are listed and callable, and a call to any

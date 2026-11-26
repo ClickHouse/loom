@@ -192,7 +192,7 @@ the billing service".
 
 | Op | Use it to |
 |---|---|
-| `conflicts.list`‡, `conflicts.resolve`‡ | Contradictions waiting for a decision; settle one (admin). |
+| `conflicts.list`, `conflicts.resolve` | Contradictions waiting for a decision; settle one (admin, or a workload trust's agent on its own namespace). |
 | `blacklist.add`†, `blacklist.list`‡ | Refuse a pattern the user never wants stored (422 `BLACKLISTED`). |
 | `namespace.validate` | An integrity report for the namespace; fix the findings on keys you wrote. |
 | `namespace.audit` | Find whole-namespace mistakes (documents as memories, hash keys, coordination as memory). |

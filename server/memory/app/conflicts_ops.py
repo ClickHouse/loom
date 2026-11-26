@@ -242,9 +242,9 @@ async def handle_conflicts_propose_revision(
 
 async def _live_peers(input: ConflictsResolveInput, peers: list[str]) -> list[str] | None:
     """The peers still live in the body's namespace, the only one a resolve reads or
-    writes: a conflict is surfaced within one namespace, whose ADMIN the transport
-    checked, and a namespace restored from another's snapshot keeps the memory ids.
-    None when the target is not live there either."""
+    writes: a conflict is surfaced within one namespace, whose ADMIN or owning agent
+    the transport admitted (`agents.owns`), and a namespace restored from another's
+    snapshot keeps the memory ids. None when the target is not live there either."""
     import server.memory.store as memory_repo
 
     async def live(memory_id: str) -> bool:
@@ -260,6 +260,16 @@ async def _live_peers(input: ConflictsResolveInput, peers: list[str]) -> list[st
     return [p for p in peers if await live(p)]
 
 
+def _refuse_locked(head: Any) -> bool:
+    """`tombstone_ids`' `skip`: a lock refuses a resolve's tombstone as it refuses
+    `memory.delete`. An agent settles its own namespace with a writer's token, and a
+    resolve must not delete for it what `memory.delete` refuses it."""
+    from server.memory.domain import lock
+
+    lock.assert_unlocked(head, "delete", op="conflicts.resolve")
+    return False
+
+
 async def handle_conflicts_resolve(
     input: ConflictsResolveInput,
 ) -> ConflictsResolveOutput:
@@ -269,6 +279,8 @@ async def handle_conflicts_resolve(
     contract: the chosen memory is wrong. It becomes tombstoned;
               peers restored to active.
     allow:    both are legitimately distinct. Flip ALL back to active.
+
+    A lock refuses the tombstone (423) before anything is written.
     """
     from server.memory.store import conflicts as conflicts_repo
 
@@ -300,7 +312,7 @@ async def handle_conflicts_resolve(
     ns = input.namespace
     if input.decision == "revise":
         tombstoned = await conflicts_repo.tombstone_ids(
-            input.org, peers, audit_note, now, namespace=ns
+            input.org, peers, audit_note, now, namespace=ns, skip=_refuse_locked
         )
         await webhooks.announce([("memory.tombstoned", row) for row in tombstoned])
         affected.extend(peers)
@@ -309,7 +321,7 @@ async def handle_conflicts_resolve(
 
     elif input.decision == "contract":
         tombstoned = await conflicts_repo.tombstone_ids(
-            input.org, [input.memory_id], audit_note, now, namespace=ns
+            input.org, [input.memory_id], audit_note, now, namespace=ns, skip=_refuse_locked
         )
         await webhooks.announce([("memory.tombstoned", row) for row in tombstoned])
         affected.append(input.memory_id)

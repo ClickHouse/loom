@@ -360,3 +360,55 @@ async def test_a_share_never_takes_over_an_admins_lower_grant(ch: Any) -> None:
         and row.role == "viewer"
         and row.granted_by != agents.subject(m["name"], "a1")
     )
+
+
+async def test_an_agent_settles_conflicts_in_its_own_namespace_only(ch: Any) -> None:
+    # The owner grant its first exchange wrote admits an agent to conflicts.resolve on
+    # its own namespace, which the exchange's token names as a writer's. A namespace an
+    # admin granted it admin on refuses, as does another admin op, and its own once the
+    # owner grant is gone.
+    import time
+
+    from server.auth import oauth, revocation
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import verify_token
+    from server.code.app.member_writes import authorize_op
+    from server.identity.api.models_grants import GrantsCreateInput, GrantsRevokeInput
+    from server.identity.app.grants import handle_grants_create, handle_grants_revoke
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    m = _trust()
+    org = m["org"]
+    a1 = await agents.ensure_namespace(m, "a1")
+    a2 = await agents.ensure_namespace(m, "a2")
+    who = agents.subject(m["name"], "a1")
+    resolve = OPERATIONS_BY_NAME["conflicts.resolve"]
+    await handle_grants_create(GrantsCreateInput(org=org, namespace=a2, subject=who, role="admin"))
+    since = int(time.time())
+    with own_write_reads():
+        issued = await oauth._machine_tokens(
+            m, since, since + 600, {"by": "workload", "workload_sub": "a1"}, "a1", a1
+        )
+    await revocation.refresh()  # what every process loads before it verifies a token
+    owner = verify_token(issued["access_token"])
+    assert (owner.subject, dict(owner.ns_roles)) == (who, {a1: "writer", a2: "writer"})
+
+    try:
+        set_current_auth(owner)
+        await authorize_op(owner, resolve, org=org, namespace=a1)
+        with pytest.raises(PermissionError):
+            await authorize_op(owner, resolve, org=org, namespace=a2)
+        with pytest.raises(PermissionError):
+            await authorize_op(owner, OPERATIONS_BY_NAME["memory.unlock"], org=org, namespace=a1)
+
+        # A namespace keeps one admin, so another takes over before the agent's goes.
+        set_current_auth(None)
+        await handle_grants_create(
+            GrantsCreateInput(org=org, namespace=a1, subject="curator", role="admin")
+        )
+        out = await handle_grants_revoke(GrantsRevokeInput(org=org, namespace=a1, subject=who))
+        assert out.revoked
+        with own_write_reads(), pytest.raises(PermissionError):
+            await authorize_op(owner, resolve, org=org, namespace=a1)
+    finally:
+        set_current_auth(None)

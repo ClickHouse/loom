@@ -1,6 +1,7 @@
 """conflicts.resolve acts only on rows of the body's namespace.
 
-The transport authorizes ADMIN on the body's `namespace`, and a conflict is
+The transport admits the ADMIN of the body's `namespace`, or the agent that owns
+it, and a conflict is
 surfaced within one namespace, so every row the resolve reads, tombstones,
 re-activates or pairs in the allowlist is read and written there. A target
 elsewhere reads like an unknown id: resolved=False, nothing written; a peer

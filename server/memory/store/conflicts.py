@@ -4,9 +4,10 @@ loom.conflict_allowlist.
 Conflict semantics: when memory.set writes a row that's
 semantically close to an existing row in the same scope, both get
 `status='conflicted'` and link to each other via `conflict_with`.
-Operators resolve in the dashboard's Review queue; the three decisions are
-`revise` (target wins), `contract` (target loses), `allow`
-(both legit; remember the pair via loom.conflict_allowlist).
+The namespace's admin resolves in the dashboard's Review queue or with
+`conflicts.resolve`, as does an agent of a workload trust on its own
+namespace; the three decisions are `revise` (target wins), `contract` (target
+loses), `allow` (both legit; remember the pair via loom.conflict_allowlist).
 
 This repo carries the SQL for:
   - listing conflicted rows for the operator surface
@@ -18,14 +19,17 @@ This repo carries the SQL for:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.delete_marks import carried_trace
+
+if TYPE_CHECKING:
+    from server.memory.store.rows import MemoryRow
 
 
 async def list_conflicted(
@@ -233,10 +237,13 @@ async def tombstone_ids(
     *,
     namespace: str,
     ch: _CHClient | None = None,
+    skip: Callable[[MemoryRow], bool] | None = None,
 ) -> list[dict[str, Any]]:
     """Tombstone N rows of `namespace` by memory_id. `audit_note` is appended to
     source_trace so the resolution-audit trail is queryable.
     Empty list short-circuits (an empty IN would mutate every row).
+    `skip(head)` leaves a head as it is, or raises to refuse the whole call: every
+    head is read current and judged before the first is written.
 
     Returns each tombstoned row's identity tuple, memory_key, memory_id and
     tombstone version, for the handler's webhook events."""
@@ -257,6 +264,8 @@ async def tombstone_ids(
         update=_note,
         ch=ch,
         namespace=namespace,
+        skip=skip,
+        strong=skip is not None,
     )
 
 
