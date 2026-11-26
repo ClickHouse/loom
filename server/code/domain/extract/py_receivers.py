@@ -21,6 +21,7 @@ by `lang_python` for return annotations, so it imports neither.
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -239,7 +240,6 @@ def _value_binding(right: Any, source: bytes, params: dict[str, str] | None) -> 
 def _body_bindings(
     node: Any, source: bytes, into: dict[str, str], *, fields: bool,
     params: dict[str, str] | None = None,
-    module: bool = False,
 ) -> None:
     """Assignments inside a body, without entering nested functions or
     classes (their scopes are their own). `fields` also records `self.x`
@@ -247,11 +247,6 @@ def _body_bindings(
     for child in node.named_children:
         if child.type in _FUNCTION_NODES or child.type == "class_definition":
             continue
-        if module and child.type in _MODULE_REBIND_NODES:
-            if child.type != "assignment" or child.child_by_field_name("right") is not None:
-                for name in _bound_identifiers(child, source):
-                    # A rebind can replace the receiver with an unknown value.
-                    into[name] = ""
         if child.type == "assignment":
             target, tname = _assignment_binding(child, source, params)
             if target and (fields or "." not in target):
@@ -259,7 +254,43 @@ def _body_bindings(
                     into.setdefault(target, tname)
                 else:
                     into[target] = tname
-        _body_bindings(child, source, into, fields=fields, params=params, module=module)
+        _body_bindings(child, source, into, fields=fields, params=params)
+
+
+def _module_rebindings(node: Any, source: bytes) -> dict[str, list[tuple[int, str]]]:
+    """Source-ordered, unconditional writes that can invalidate a known receiver."""
+    writes: dict[str, list[tuple[int, str]]] = {}
+    compound = []
+    for statement in node.named_children:
+        if statement.type in _MODULE_COMPOUND_NODES:
+            compound.append(statement)
+            continue
+        if statement.type == "expression_statement" and statement.named_child_count == 1:
+            statement = statement.named_children[0]
+        if statement.type not in _MODULE_REBIND_NODES:
+            continue
+        target, tname = "", ""
+        if statement.type == "assignment":
+            if statement.child_by_field_name("right") is None:
+                continue
+            target, tname = _assignment_binding(statement, source)
+        line = statement.end_point[0] + 1
+        for name in _bound_identifiers(statement, source):
+            value = tname if target == name else ""
+            events = writes.setdefault(name, [])
+            if not events or events[-1][1] != value:
+                events.append((line, value))
+    changes = {
+        name: events for name, events in writes.items()
+        if len(events) > 1 and any(not value for _, value in events)
+    }
+    if not changes:
+        return changes
+    nested: dict[str, str] = {}
+    for statement in compound:
+        _body_bindings(statement, source, nested, fields=False)
+    # Keep the existing lookup where a compound statement can supply a type.
+    return {name: events for name, events in changes.items() if name not in nested}
 
 
 def _class_bindings(class_node: Any, source: bytes) -> dict[str, str]:
@@ -303,6 +334,7 @@ class PyReceiverTyper:
     def __init__(self, pf: Any, callee_returns: dict[str, str] | None = None) -> None:
         self._scopes: list[_Scope] = []
         self._module = _Scope(1, 1 << 30)
+        self._module_rebindings: dict[str, list[tuple[int, str]]] = {}
         self._returns: dict[str, str] = dict(callee_returns or {})
         self._same_file: dict[str, str] = {}
         # `get_client().query_all()` — the receiver is a call;
@@ -315,12 +347,14 @@ class PyReceiverTyper:
             self._fixture_params.setdefault(int(line), set()).add(param)
         if pf.tree is not None:
             self._collect(pf.tree.root_node, pf.source, class_bindings=None)
-            _body_bindings(
-                pf.tree.root_node, pf.source, self._module.bindings, fields=False, module=True,
-            )
+            _body_bindings(pf.tree.root_node, pf.source, self._module.bindings, fields=False)
+            self._module_rebindings = _module_rebindings(pf.tree.root_node, pf.source)
             self._collect_receiver_callees(pf.tree.root_node, pf.source)
             self._receiver_names -= self._bound_names
         self._scopes.sort(key=lambda s: s.end - s.start)
+        self._function_at = first_span_at(
+            [(s.start, s.end, s) for s in self._scopes] if self._module_rebindings else [],
+        )
         # Per receiver, the scopes binding it, innermost first; looked up by line (a scan
         # of every scope per call site is quadratic in a file of many functions)
         self._binders: dict[str, list[_Scope]] = {}
@@ -426,11 +460,24 @@ class PyReceiverTyper:
         scope = self._binder_at[key](line)
         if scope is not None:
             return self._resolve(scope.bindings[key])
-        if key in self._module.bindings or "." in key:
-            return self._resolve(self._module.bindings.get(key, ""))
+        if (writes := self._module_rebindings.get(key)) is not None:
+            return self._type_at_module_write(line, writes)
+        bound = self._resolve(self._module.bindings.get(key, ""))
+        if bound or "." in key:
+            return bound
         # a name no scope binds is an import's — its
         # definition's annotation (`conf: AirflowConfigParser = …`) is its type
         return self._returns.get(NAME_PREFIX + key, "")
+
+    def _type_at_module_write(self, line: int, writes: list[tuple[int, str]]) -> str:
+        function = self._function_at(line)
+        cutoff = function.start if function else line
+        index = bisect_left(writes, (cutoff, ""))
+        # The function can run at any point after its definition. A write
+        # on the exact call line cannot be ordered with line data alone.
+        if index < len(writes) and (function or writes[index][0] == cutoff):
+            return ""
+        return self._resolve(writes[index - 1][1]) if index else ""
 
     def _resolve(self, binding: str) -> str:
         if binding.startswith(_FIXTURE_PREFIX):
@@ -460,6 +507,10 @@ class PyReceiverTyper:
 
 
 _MODULE_REBIND_NODES = frozenset({"assignment", "augmented_assignment", "delete_statement"})
+_MODULE_COMPOUND_NODES = frozenset({
+    "if_statement", "for_statement", "while_statement", "try_statement", "with_statement",
+    "match_statement",
+})
 _BINDING_NODES = frozenset({
     "parameters", "lambda_parameters", "assignment", "augmented_assignment",
     "for_statement", "for_in_clause", "with_item", "except_clause", "named_expression",

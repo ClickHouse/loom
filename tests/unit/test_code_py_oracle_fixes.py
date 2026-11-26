@@ -171,6 +171,36 @@ def test_module_receiver_types_follow_assignment_and_deletion(statement, owner):
     assert [(target, confidence) for line, target, confidence in calls if line == 6] == expected
 
 
+def test_module_receiver_keeps_earlier_call_and_forgets_later_call():
+    files = {
+        "svc/__init__.py": b"",
+        "svc/clients.py": (
+            b"class Client:\n    def send(self):\n        return 1\n\n"
+            b"class Alternative:\n    def send(self):\n        return 2\n"
+        ),
+        "svc/service.py": (
+            b"from .clients import Client\ntarget = Client()\n"
+            b"before = target.send()\ntarget = 0\nafter = target.send()\n"
+        ),
+    }
+    calls, _ = _edges(files, "svc/service.py")
+    targets = {(line, target) for line, target, _ in calls if line in {3, 5}}
+    assert targets == {(3, "svc.clients::Client::send")}
+
+
+@pytest.mark.parametrize("condition", ["False", "TYPE_CHECKING"])
+def test_module_receiver_ignores_nonexecuting_replacement(condition):
+    from server.code.domain.extract.py_receivers import PyReceiverTyper
+
+    source = (
+        "from typing import TYPE_CHECKING\ntarget = Client()\n"
+        f"if {condition}:\n    target = 0\n"
+        "def submit():\n    return target.send()\n"
+    ).encode()
+    typer = PyReceiverTyper(parse_file("svc/service.py", source))
+    assert typer.type_of(6, "target") == "Client"
+
+
 CROSS = {
     "sa/compiler.py": b"class Compiled:\n    def process(self, x):\n        return x\n\n\nclass SQLCompiler(Compiled):\n    pass\n",
     "sa/other.py": b"class Other:\n    def process(self, x):\n        return x\n",
