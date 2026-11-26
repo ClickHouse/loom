@@ -673,6 +673,20 @@ def test_an_interrupted_link_leaves_no_pack_without_its_index(
     assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
 
 
+def test_a_pack_git_is_still_writing_is_left_alone(tmp_path: Path) -> None:
+    """Git installs a pack's `.pack` before its `.idx`: an own pack without its `.idx`
+    may be one another git process is writing, so the pass leaves it."""
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    checkout, _bare, _missing = resolve_checkout(cfg, "python")
+    writing = checkout / ".git" / "objects" / "pack" / f"pack-{'0' * 40}.pack"
+    writing.write_bytes(b"PACK")
+
+    resolve_checkout(cfg, "python")
+
+    assert writing.read_bytes() == b"PACK"
+
+
 @pytest.mark.asyncio
 async def test_a_job_that_removes_a_keep_still_gets_the_shared_pack_read_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

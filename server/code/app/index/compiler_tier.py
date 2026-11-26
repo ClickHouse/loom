@@ -294,21 +294,26 @@ def shared_packs(checkout: Path) -> list[Path]:
     a git job in the checkout mounts them read-only, so it cannot change the mirror's
     packs. An older version's git jobs mount none of them."""
     pack_dir = checkout / ".git" / "objects" / "pack"
-    return sorted(
-        p for p in pack_dir.glob("pack-*") if p.suffix in _LINKED and p.stat().st_nlink > 1
-    )
+    return sorted(p for p in pack_dir.glob("pack-*") if p.suffix in _LINKED and _linked(p))
+
+
+def _linked(path: Path) -> bool:
+    try:
+        return path.stat().st_nlink > 1
+    except FileNotFoundError:
+        return False  # gone since the listing: nothing to mount
 
 
 def _drop_partial_links(pack_dir: Path) -> None:
-    """Remove what a killed pass left: a link temporary, and a pack with no `.idx`, with
-    its `.rev` and our `.keep`. Git never uses such a pack and no gc removes it, so it
-    would hold a dead mirror pack's blocks for good."""
+    """Remove what a killed pass left: a link temporary, and a shared pack (our `.keep`,
+    written before any file is renamed into place) with no `.idx`. Git never uses such
+    a pack and no gc removes it, so it would hold a dead mirror pack's blocks for good.
+    A pack without our `.keep` is not ours: git may be writing it (`.idx` comes last)."""
     for tmp in pack_dir.glob(".loom-link-*"):
         tmp.unlink()
-    shared = _shared_stems(pack_dir)
-    for stem in {p.stem for p in pack_dir.glob("pack-*")}:
+    for stem in _shared_stems(pack_dir):
         if not (pack_dir / f"{stem}.idx").exists():
-            for ext in (".pack", ".rev", ".keep") if stem in shared else (".pack", ".rev"):
+            for ext in (".pack", ".rev", ".keep"):
                 (pack_dir / f"{stem}{ext}").unlink(missing_ok=True)
 
 
@@ -358,14 +363,18 @@ def _share_mirror_packs(checkout: Path, bare: Path) -> None:
         shared = _shared_stems(pack_dir)
         mirror = sorted(p.stem for p in mirror_dir.glob("pack-*.idx"))
         own = {p.stem for p in pack_dir.glob("pack-*.pack")} - shared - set(mirror)
-        linked = [stem for stem in mirror if _link_pack(mirror_dir, pack_dir, stem)]
+        linked = []
+        for stem in mirror:
+            try:
+                if _link_pack(mirror_dir, pack_dir, stem):
+                    linked.append(stem)
+            except FileNotFoundError:
+                continue  # the mirror's gc removed it a moment ago; the next pass sees why
         stale = shared.difference(mirror)
         for stem in stale:
-            (pack_dir / f"{stem}.keep").unlink()
+            (pack_dir / f"{stem}.keep").unlink(missing_ok=True)
         if stale or (linked and own):
             (checkout / ".git" / _GC_MARK).unlink(missing_ok=True)
-    except FileNotFoundError:
-        return  # the mirror's gc is replacing its packs: the next pass shares the new ones
     except OSError as e:
         if str(checkout) not in _unshared_logged:
             _unshared_logged.add(str(checkout))
