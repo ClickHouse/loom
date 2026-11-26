@@ -456,11 +456,11 @@ async def _named_paths() -> tuple[set[str], set[str]] | None:
 
 
 async def sweep() -> list[str]:
-    """Remove from `code_repos_root` the mirrors, `checkout-*` trees and mirror lock
-    files no active entry names (a removed repository, restricted ones included, on
-    every host, not only the one `code.repo.remove` reached) and clones a killed
-    process left half done. Returns what it removed. One process per host sweeps at
-    a time."""
+    """Remove from `code_repos_root` the mirrors, `checkout-*` trees (borrowing ones
+    included) and mirror lock files no active entry names (a removed repository,
+    restricted ones included, on every host, not only the one `code.repo.remove`
+    reached) and clones a killed process left half done. Returns what it removed. One
+    process per host sweeps at a time."""
     if not settings.code_self_service_enabled:
         return []
     root = settings.code_repos_root
@@ -493,7 +493,9 @@ def _sweep_root(root: str, named_mirrors: set[str], named_checkouts: set[str]) -
             gone = _remove_under_lock(path, f"{mirror}.clone-lock")
         elif name.endswith(".git") and path not in mirrors:
             gone = _remove_under_lock(path, f"{path}.clone-lock")
-        elif name.startswith("checkout-") and path not in checkouts:
+        elif name.removeprefix(repos.BORROWING_PREFIX).startswith("checkout-") and (
+            path not in checkouts
+        ):
             shutil.rmtree(path, ignore_errors=True)
             gone = True
         else:

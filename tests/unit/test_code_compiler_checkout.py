@@ -52,7 +52,7 @@ def test_registry_entry_initializes_checkout_for_its_bare_mirror(tmp_path: Path)
     actual, actual_bare, missing = resolve_checkout(cfg, "python")
 
     assert missing is None
-    assert actual == tmp_path / "checkouts" / "code-example.python.borrowing"
+    assert actual == tmp_path / "checkouts" / "borrowing-code-example.python"
     assert (actual / ".git").exists()
     assert actual_bare == bare.resolve()
 
@@ -64,12 +64,12 @@ def test_operator_entry_gets_a_checkout_per_tier_scip_clang_included(tmp_path: P
     cfg = repo_config(source="env", git_dir=str(bare), scip_checkout_dir=str(checkout))
 
     actual, _bare, missing = resolve_checkout(cfg, "clang")
-    assert missing is None and actual == tmp_path / "operator-owned.borrowing"
+    assert missing is None and actual == tmp_path / "borrowing-operator-owned"
     assert (actual / ".git").exists()
 
     actual, _bare, missing = resolve_checkout(cfg, "python")
     assert missing is None
-    assert actual == tmp_path / "operator-owned.python.borrowing" and (actual / ".git").exists()
+    assert actual == tmp_path / "borrowing-operator-owned.python" and (actual / ".git").exists()
 
 
 def test_a_checkout_that_cannot_be_created_is_reported_with_the_reason(tmp_path: Path) -> None:
@@ -96,7 +96,7 @@ def test_an_existing_empty_directory_gets_a_checkout_beside_it(
     actual, actual_bare, missing = resolve_checkout(cfg, producer)
 
     assert missing is None
-    assert actual == tmp_path / "checkout.borrowing" and actual_bare == bare.resolve()
+    assert actual == tmp_path / "borrowing-checkout" and actual_bare == bare.resolve()
     assert (actual / ".git").is_dir() and not any(checkout.iterdir())
 
 
@@ -446,6 +446,73 @@ def test_the_tier_hands_off_between_versions_on_one_repos_volume(tmp_path: Path)
     assert _fetch_and_check_out(again, bare) == target
 
 
+def _previous_build_sweep(
+    root: str, named_mirrors: set[str], named_checkouts: set[str]
+) -> list[str]:
+    """`mirrors._sweep_root` of the version before borrowing checkouts, as it was: it
+    removes every unnamed `checkout-*` tree older than ten minutes."""
+    import glob
+    import os
+    import shutil
+    import time
+
+    from server.code.app.index.mirror_locks import partial_mirror
+    from server.code.app.index.mirrors import _remove_lock, _remove_under_lock
+
+    root = os.path.abspath(root)
+    mirrors = {os.path.abspath(p) for p in named_mirrors if p}
+    checkouts = {os.path.abspath(p) for p in named_checkouts if p}
+    removed: list[str] = []
+    now = time.time()
+    for path in sorted(glob.glob(os.path.join(glob.escape(root), "*"))):
+        name = os.path.basename(path)
+        if now - os.path.getmtime(path) < 600.0:
+            continue
+        if not os.path.isdir(path):
+            if not name.endswith((".clone-lock", ".fetch-lock", ".gc-lock")):
+                continue
+            gone = _remove_lock(path, mirrors)
+        elif (mirror := partial_mirror(path)) is not None:
+            gone = _remove_under_lock(path, f"{mirror}.clone-lock")
+        elif name.endswith(".git") and path not in mirrors:
+            gone = _remove_under_lock(path, f"{path}.clone-lock")
+        elif name.startswith("checkout-") and path not in checkouts:
+            shutil.rmtree(path, ignore_errors=True)
+            gone = True
+        else:
+            continue
+        if gone:
+            removed.append(path)
+    return removed
+
+
+def test_the_previous_versions_sweep_keeps_a_borrowing_checkout(tmp_path: Path) -> None:
+    """A mixed-version rollout on one repos volume: the previous version's sweep names
+    only the `checkout_for` paths, and the borrowing checkout survives it."""
+    import os
+
+    from server.code.domain.index.repos import checkout_for
+
+    root = tmp_path / "repos"
+    root.mkdir()
+    bare = _bare_repo(root)
+    cfg = repo_config(
+        source="registry", git_dir=str(bare), scip_checkout_dir=str(root / "checkout-code-a")
+    )
+    borrowing, _bare, missing = resolve_checkout(cfg, "python")
+    _fetch_and_check_out(borrowing, bare)
+    (root / "checkout-code-gone").mkdir()
+    for path in root.iterdir():
+        os.utime(path, (0, 0))  # older than the sweep's ten minutes
+
+    named = {checkout_for(cfg, p) for p in ("", "python")} | {cfg.scip_checkout_dir}
+    removed = _previous_build_sweep(str(root), {str(bare)}, named)
+
+    assert missing is None and borrowing.parent == root
+    assert removed == [str(root / "checkout-code-gone")]
+    assert (borrowing / "main.py").read_text() == "print('ok')\n"
+
+
 def test_restricting_an_entry_reaches_its_borrowing_checkouts(tmp_path: Path) -> None:
     from server.code.app.index.bootstrap import restrict_entry
 
@@ -456,7 +523,7 @@ def test_restricting_an_entry_reaches_its_borrowing_checkouts(tmp_path: Path) ->
 
     restrict_entry(cfg)
 
-    assert checkout.name == "co.python.borrowing" and checkout.stat().st_mode & 0o007 == 0
+    assert checkout.name == "borrowing-co.python" and checkout.stat().st_mode & 0o007 == 0
 
 
 def test_a_checkout_that_lost_its_borrowed_objects_gets_a_new_git_dir(tmp_path: Path) -> None:

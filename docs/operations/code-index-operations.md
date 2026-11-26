@@ -369,8 +369,8 @@ initializes a missing or empty working tree directory as a Git repository and fe
 each commit into it from the entry's mirror, so a new leader starts from nothing.
 The repository it initializes borrows the mirror's objects (`objects/info/alternates`,
 relative to the checkout), so a tier costs its working tree rather than a second copy
-of the repository. It sits beside the tier's path, at `<path>.borrowing`, and is used
-once it exists. A tree already at the path, an operator's or one an older version made
+of the repository. It sits beside the tier's path, at `borrowing-<name>` (the path's
+last component after the prefix), and is used once it exists. A tree already at the path, an operator's or one an older version made
 with its own copy, is used while no borrowing checkout exists; an older version
 still running during a rollout keeps using that path. When a ref of a borrowing
 checkout names an object the mirror no longer has (the mirror was cloned again, or

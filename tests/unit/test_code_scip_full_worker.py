@@ -69,7 +69,7 @@ async def test_an_unseeded_entry_gets_its_first_index_and_a_checkout(tmp_path, m
     cfg = _cfg(tmp_path, "code-a")
     res, run = await _full_pass(tmp_path, monkeypatch, {("code-a", "git_head"): "a" * 40}, [cfg])
     assert res.deltas_applied == 1 and not res.errors
-    assert (tmp_path / "checkout-code-a.borrowing" / ".git").is_dir()
+    assert (tmp_path / "borrowing-checkout-code-a" / ".git").is_dir()
     assert run.await_args.args[5] == "a" * 40
 
 

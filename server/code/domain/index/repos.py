@@ -245,11 +245,16 @@ def sibling_checkout(base: str, producer: str) -> str:
     return f"{base.rstrip('/')}.{producer}"
 
 
+BORROWING_PREFIX = "borrowing-"
+
+
 def borrowing_checkout(checkout: str) -> str:
     """Where a tier makes the checkout that borrows the mirror's objects: beside the
     `checkout_for` path, which an older version, whose jobs mount only the checkout,
-    keeps for a tree with its own objects."""
-    return f"{checkout.rstrip('/')}.borrowing"
+    keeps for a tree with its own objects. The prefix keeps it out of an older
+    version's sweep, which removes every `checkout-*` tree it does not name."""
+    parent, name = os.path.split(checkout.rstrip("/"))
+    return os.path.join(parent, f"{BORROWING_PREFIX}{name}")
 
 
 def _default_checkout_dir(base: RepoConfig, ns: str) -> str:
