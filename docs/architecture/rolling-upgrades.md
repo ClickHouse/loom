@@ -930,6 +930,21 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     procedure](cost-budgets.md#activation-and-rollback) defines the maintenance boundary;
     the warning fleet check alone does not make a downgrade safe.
 
+63. **The `embed_exclude` marker** (`unembedded by design: embed_exclude` in
+    `embed_last_error` on `code_chunks` and `code_summaries`): N-1 matches only
+    `unembedded by design: reference`, and it reads neither `LOOM_CODE_EMBED_EXCLUDE`
+    nor an entry's `embed_exclude`. Where N-1 runs, its recovery takes N's marked rows as
+    stubs, embeds them and clears the marker; its ingest embeds a matching path's new
+    chunks, and its `code_summary` pass writes their files' cards. Its coverage counts
+    the marked rows as embeddable, so until its recovery has embedded them a namespace
+    with many of them reads below `LOOM_CODE_READY_EMBED_COVERAGE` for both builds, which
+    share the published `table_counts` row. A code-only release keeps the worker lease on
+    N-1 until it stops (rule 6), so during a rollout only N-1's CLI reaches the marked
+    rows; a rollback hands them all to N-1. Rolling forward again does not restore the
+    exclusion for a chunk N-1 embedded: it stays embedded until its content changes or
+    the repository is indexed into a new namespace. N clears a card N-1 wrote at its next
+    `code_summary` pass.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

@@ -985,7 +985,7 @@ Health of the code index: indexed head commit, compiler-tier commit, row counts,
 | `symbol_stats_at` | `str` | The newest fan-in pass stamp (ISO-8601 UTC); '' when the pass has not written the table. |
 | `unit_risk_rows` | `int` | The precomputed risk table for this namespace — live rows and the newest stamp (ISO 8601, UTC), so an operator sees the weekly leg's progress and a resumed pass's remainder. 0 / "" = no row written (every served unit is read live). |
 | `unit_risk_at` | `str` | The newest risk-table stamp (ISO-8601 UTC); '' when no row is written. |
-| `chunks_total` | `int` | Live chunks, those carrying a vector, and their ratio (0..1; reference fixtures unembedded by design are outside the denominator). |
+| `chunks_total` | `int` | Live chunks, those carrying a vector, and their ratio (0..1; rows unembedded by design, reference fixtures and `embed_exclude` paths, are outside the denominator). |
 | `chunks_embedded` | `int` | Live chunks that carry an embedding vector. |
 | `embedding_coverage` | `float` | Embedded share of the embeddable chunks (0..1); 1.0 when the counts do not carry it. |
 
