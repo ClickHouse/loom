@@ -148,10 +148,13 @@ def test_an_untyped_member_receiver_takes_no_same_file_guess():
         ("target = 0", ""),
         ("del target", ""),
         ("target, other = 0, 1", ""),
+        ("target, other = (0, 1)", ""),
+        ("[target, other] = [0, 1]", ""),
         ("extra = target = 0", ""),
         ("target += 1", "Client"),
         ("other = 0", "Client"),
         ("target: object", "Client"),
+        ("target = None\ntarget: Client | None", ""),
         ("target = Alternative()", "Alternative"),
         ("target = 0\nextra = target = Alternative()", "Alternative"),
         ("target = None\nfrom .clients import shared as target", "Client"),
@@ -159,6 +162,7 @@ def test_an_untyped_member_receiver_takes_no_same_file_guess():
         ("target = 0\ntarget, other = Client(), 2", "Client"),
         ("target = 0\ndef restore():\n    global target\n    target = Client()", "Client"),
         ("target = 0; target = Alternative()", "Alternative"),
+        ("target = None\nif __name__ == '__main__':\n    print('cli')", ""),
     ],
 )
 def test_module_receiver_types_follow_assignment_and_deletion(statement, owner):
@@ -171,7 +175,7 @@ def test_module_receiver_types_follow_assignment_and_deletion(statement, owner):
         ),
         "svc/service.py": (
             f"from .clients import Client, Alternative\ntarget = Client()\n{statement}\n\n"
-            "def submit():\n    return target.send()\n"
+            "def submit(ready=True):\n    if ready:\n        return target.send()\n"
         ).encode(),
     }
     calls, _ = _edges(files, "svc/service.py")

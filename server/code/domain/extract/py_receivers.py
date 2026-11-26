@@ -270,8 +270,8 @@ def _literal_write_names(node: Any, source: bytes) -> set[str]:
     left = node.child_by_field_name("left")
     if (
         len(writes) == 1
-        and left is not None and left.type == "pattern_list"
-        and value.type == "expression_list"
+        and left is not None and left.type in {"pattern_list", "tuple_pattern", "list_pattern"}
+        and value.type in {"expression_list", "tuple", "list"}
         and len(left.named_children) == len(value.named_children)
         and all(c.type == "identifier" for c in left.named_children)
         and all(c.type in _SCALAR_LITERALS for c in value.named_children)
@@ -310,6 +310,8 @@ def _preserve_module_receivers(node: Any, source: bytes, writes: dict[str, int])
     if node.type == "global_statement":
         for name in _bound_identifiers(node, source):
             writes.pop(name, None)
+        return
+    if node.type == "assignment" and node.child_by_field_name("right") is None:
         return
     if node.type in _MODULE_UNKNOWN_WRITES:
         names = set(writes)
@@ -533,13 +535,11 @@ class PyReceiverTyper:
 
 
 _SCALAR_LITERALS = frozenset({"integer", "float", "true", "false", "none", "string"})
-_MODULE_UNKNOWN_WRITES = frozenset({
-    "if_statement", "for_statement", "while_statement", "try_statement", "with_statement",
-    "match_statement", "wildcard_import",
-})
+_MODULE_UNKNOWN_WRITES = frozenset({"match_statement", "wildcard_import"})
 _MODULE_NAME_WRITES = frozenset({
     "assignment", "augmented_assignment", "named_expression", "import_statement",
-    "import_from_statement", "type_alias_statement",
+    "import_from_statement", "type_alias_statement", "for_statement", "for_in_clause",
+    "with_item", "except_clause",
 })
 _BINDING_NODES = frozenset({
     "parameters", "lambda_parameters", "assignment", "augmented_assignment",
