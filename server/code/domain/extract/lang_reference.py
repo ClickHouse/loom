@@ -46,13 +46,12 @@ EXPECTATION_SUFFIXES: tuple[str, ...] = (".reference.j2", ".reference")
 REFERENCE_SUFFIXES: tuple[str, ...] = (*EXPECTATION_SUFFIXES, ".expect")
 REFERENCE_HEAD_CHARS = 4000
 REFERENCE_MAX_BYTES = 1 << 20
-# The `embed_last_error` prefix of every row left without a vector on purpose; the
-# embed-recovery read and the coverage counts match it as a prefix.
-UNEMBEDDED_PREFIX = "unembedded by design"
-# A reference fixture's marker.
-UNEMBEDDED_BY_DESIGN = f"{UNEMBEDDED_PREFIX}: reference"
-# A chunk, or a cleared card, of a path the entry's `embed_exclude` globs name.
-UNEMBEDDED_EMBED_EXCLUDE = f"{UNEMBEDDED_PREFIX}: embed_exclude"
+# Matched as a prefix of `embed_last_error`, so rows stored under a longer marker
+# still read as unembedded by design.
+UNEMBEDDED_BY_DESIGN = "unembedded by design: reference"
+# A chunk of a path the entry's `embed_exclude` globs name. It extends the marker
+# above, so every build's recovery and coverage reads skip it.
+UNEMBEDDED_EMBED_EXCLUDE = f"{UNEMBEDDED_BY_DESIGN} (embed_exclude)"
 
 # Runnable stateless test files whose expectation is `<stem>.reference`.
 _RUNNABLE_EXTS: tuple[str, ...] = (".sql", ".sh", ".py", ".expect", ".sql.j2", ".sh.j2")
@@ -61,7 +60,7 @@ _RUNNABLE_EXTS: tuple[str, ...] = (".sql", ".sh", ".py", ".expect", ".sql.j2", "
 def unembedded_by_design(embed_last_error: object) -> bool:
     """Whether a row's `embed_last_error` marks it as left without a vector on purpose:
     no writer describes or embeds it, and a copy keeps the marker."""
-    return str(embed_last_error or "").startswith(UNEMBEDDED_PREFIX)
+    return str(embed_last_error or "").startswith(UNEMBEDDED_BY_DESIGN)
 
 
 def is_reference_path(path: str) -> bool:

@@ -140,20 +140,17 @@ add refuses any other, so the two spell a host alike.
 `embed_exclude` (`LOOM_CODE_EMBED_EXCLUDE` for the scalar entry, and for a
 `LOOM_CODE_REPOS_JSON` entry without its own list) applies to configured entries only: a
 self-service entry has none and is embedded in full. The chunks of a matching path carry
-the `unembedded by design: embed_exclude` marker, which ingest, the round prefetch, embed
-recovery, the backfill embed phase, `loom code describe`, `loom code reembed` and the
-provider rebuild all honour. The `code_summary` pass writes no card for such a file and
-clears a card it wrote before the glob: the row keeps its rank, loses its text and
-vector, and carries the marker. The globs apply to chunks written after they change:
+the `unembedded by design: reference (embed_exclude)` marker: no writer describes or
+embeds them, and the coverage counts leave them out. The `code_summary` pass writes no
+card for such a file. The globs apply to chunks written after they change:
 
 1. Adding a glob leaves the path's existing vectors in place until a chunk's content
-   changes.
+   changes, and its existing card in place.
 2. Removing a glob leaves the path's chunks without a vector and outside the coverage
-   denominator, so `code.repos` still reports them covered. Recovery, the backfill embed
-   phase (with `--include-poisoned` too), `loom code describe`, `loom code reembed` and a
-   `--paths-file` repair all keep an unchanged chunk as it is. A chunk is embedded when
-   its content changes; to embed them all, index the repository into a new namespace
-   with `loom code backfill`. The file's card comes back at the next `code_summary` pass.
+   denominator, so `code.repos` still reports them covered. No writer re-embeds an
+   unchanged chunk: a chunk is embedded when its content changes, and to embed them all,
+   index the repository into a new namespace with `loom code backfill`. The file's card
+   comes back at the next `code_summary` pass.
 
 An entry whose `git_remote` is a local path or `file://` mirror is known by its `repo`,
 which a page add of the same repository must match: name a mirror of a repository on a

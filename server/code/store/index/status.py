@@ -11,7 +11,7 @@ import logging
 import time
 from typing import Any
 
-from server.code.domain.extract.lang_reference import UNEMBEDDED_PREFIX
+from server.code.domain.extract.lang_reference import UNEMBEDDED_BY_DESIGN
 from server.code.domain.index.state import IndexState, StateEntry
 from server.code.store.index.base import CodeRepoBase
 
@@ -421,8 +421,8 @@ class StatusMixin(CodeRepoBase):
 
     async def _chunk_embed_row(self, org: str, ns: str) -> dict[str, int]:
         """Live chunks of one namespace: `n` (all), `embedded` (a vector is
-        stored) and `embeddable` (all but the rows unembedded by design:
-        reference fixtures and embed-excluded paths). One aggregate scan of the
+        stored) and `embeddable` (all but the reference fixtures that are
+        unembedded by design). One aggregate scan of the
         UInt16 / String columns; the vector is not read."""
         row = await self._ch.query_one(
             """
@@ -433,7 +433,7 @@ class StatusMixin(CodeRepoBase):
             WHERE org = {org:String} AND namespace = {ns:String}
               AND tombstoned_at IS NULL
             """,
-            {"org": org, "ns": ns, "unembedded": UNEMBEDDED_PREFIX},
+            {"org": org, "ns": ns, "unembedded": UNEMBEDDED_BY_DESIGN},
         )
         if not row:
             return {"n": 0, "embedded": 0, "embeddable": 0}

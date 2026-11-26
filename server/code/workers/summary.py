@@ -8,8 +8,7 @@ its own model name are tombstoned once the active model has the file, and
 their card text is carried over first when it still matches the file.
 Cards are embedded inline; failures leave a dim=0 stub the
 code_embed_recovery worker fills. A file the entry's `embed_exclude` globs name
-gets no card, and a card written before its glob is cleared (no text, no
-vector, the `unembedded by design` marker) so recovery and the card leg skip it.
+gets no card.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.code.domain.extract.lang_reference import UNEMBEDDED_EMBED_EXCLUDE
 from server.code.domain.index.card_selection import (
     churn_eligible,
     select_card_paths,
@@ -51,7 +49,6 @@ _BATCH = 5000
 class CodeSummaryResult:
     cards_written: int = 0
     cards_carried: int = 0
-    cards_cleared: int = 0
     skipped_unchanged: int = 0
     twins_tombstoned: int = 0
     errors: list[str] = field(default_factory=list)
@@ -74,7 +71,6 @@ async def run_pass() -> CodeSummaryResult:
         rec.outcome = {
             "cards_written": result.cards_written,
             "cards_carried": result.cards_carried,
-            "cards_cleared": result.cards_cleared,
             "skipped_unchanged": result.skipped_unchanged,
             "twins_tombstoned": result.twins_tombstoned,
             "errors": len(result.errors),
@@ -258,25 +254,6 @@ async def _card_row(
     return row
 
 
-def _cleared_card(live: dict[str, Any]) -> dict[str, Any]:
-    """An embed-excluded file's card row without its text or vector; its rank stays."""
-    from server.code.store.index import CodeRepo
-
-    row = CodeRepo.tombstone_of("code_summaries", live)  # full mirror
-    row.update(
-        tombstoned_at=None,
-        summary="",
-        summary_model="",
-        inputs_hash="",
-        embedding=[],
-        embedding_dim=0,
-        embed_attempts=0,
-        embed_last_error=UNEMBEDDED_EMBED_EXCLUDE,
-        embed_failed_at=None,
-    )
-    return row
-
-
 async def _summarize_repo(
     org: str,
     ns: str,
@@ -311,14 +288,6 @@ async def _summarize_repo(
         if str(r["scope_type"]) == "file"
     }
     await _dedupe_models(repo, embedder, org, ns, model, summaries, file_hashes, result, excluded)
-    cleared = [
-        _cleared_card(live)
-        for path, live in summaries.items()
-        if excluded(path) and (live.get("summary") or int(live.get("embedding_dim") or 0))
-    ]
-    for start in range(0, len(cleared), _BATCH):
-        await repo.insert_rows("code_summaries", cleared[start : start + _BATCH])
-    result.cards_cleared += len(cleared)
 
     candidates = [
         path

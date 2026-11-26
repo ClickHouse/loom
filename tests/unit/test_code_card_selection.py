@@ -132,7 +132,7 @@ def _live(path, *, model="m", pagerank=0.0, summary="", inputs_hash=""):
     }
 
 
-async def _run_worker(repo, monkeypatch, **overrides):
+async def _run_worker(repo, monkeypatch, cfg=None, **overrides):
     from server.code.workers import summary as code_summary
 
     for k, v in overrides.items():
@@ -149,7 +149,7 @@ async def _run_worker(repo, monkeypatch, **overrides):
             "server.code.store.index.CodeRepo.tombstone_of",
             side_effect=lambda table, live: {**live, "tombstoned_at": "now"},
         ),
-        patch("server.code.domain.index.repos.configured_repos", return_value=[_cfg()]),
+        patch("server.code.domain.index.repos.configured_repos", return_value=[cfg or _cfg()]),
         patch("server.embedding.embedder.get_embedder", return_value=embedder),
         patch("server.llm.client.get_llm_client", return_value=llm),
         patch("server.observability.budget.namespace_over_cap", AsyncMock(return_value=False)),
@@ -249,6 +249,18 @@ async def test_worker_dedupe_tombstones_twins_and_carries_text(monkeypatch):
         if r["scope_path"] == "src/a.cpp" and r["embedding_model"] == "m"
     )
     assert carried["summary"] == "a card" and carried["embedding_dim"] == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_writes_and_carries_no_card_for_an_embed_excluded_file(monkeypatch):
+    hashes = {"src/a.cpp": "ha", "tests/b.cpp": "hb"}
+    live = [_live("src/a.cpp", pagerank=0.1), _live("tests/b.cpp", pagerank=0.9)]
+    # a twin whose text matches would be carried, but not into an excluded file
+    others = [_live("tests/b.cpp", model="gemini", summary="b card", inputs_hash="hb")]
+    repo = _fake_repo(hashes=hashes, live=live, others=others, churn=[])
+    res = await _run_worker(repo, monkeypatch, cfg=_cfg(embed_exclude=("tests/",)))
+    assert res.cards_written == 1 and res.cards_carried == 0 and not res.errors
+    assert _written(repo) == [("tests/b.cpp", "gemini", True), ("src/a.cpp", "m", False)]
 
 
 @pytest.mark.asyncio

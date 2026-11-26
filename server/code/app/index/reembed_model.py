@@ -90,7 +90,7 @@ def _target_row(r: dict[str, Any], vec: Any, *, org: str, ns: str, target: str) 
     and the source's marker, for a row unembedded by design); FixedString columns
     come back as bytes and go in as text."""
     cols = {k: r[k] for k in _COPY_COLS}
-    marker = str(r.get("embed_last_error") or "")
+    marker = str(r["embed_last_error"])
     cols["chunk_id"] = str(cols["chunk_id"])
     for key in ("content_hash", "indexed_commit"):
         v = cols.get(key)
@@ -167,8 +167,10 @@ async def reembed_namespace(
         todo = [r for r in rows if (str(r["path"]), str(r["chunk_id"])) not in have]
         stats.rows_skipped += len(rows) - len(todo)
         if todo:
-            keep = [r for r in todo if unembedded_by_design(r.get("embed_last_error"))]
-            embed = [r for r in todo if not unembedded_by_design(r.get("embed_last_error"))]
+            keep: list[dict[str, Any]] = []
+            embed: list[dict[str, Any]] = []
+            for r in todo:
+                (keep if unembedded_by_design(r["embed_last_error"]) else embed).append(r)
             t0 = time.perf_counter()
             texts = [clip_for_embedding(str(r["context_text"]) or str(r["content"])) for r in embed]
             vecs = await document_vectors(embedder, texts) if texts else []

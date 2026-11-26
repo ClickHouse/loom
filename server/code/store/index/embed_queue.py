@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.code.domain.extract.lang_reference import UNEMBEDDED_PREFIX
+from server.code.domain.extract.lang_reference import UNEMBEDDED_BY_DESIGN
 from server.code.store.index.base import CodeRepoBase
 
 
@@ -31,8 +31,8 @@ class EmbedQueueMixin(CodeRepoBase):
             if include_poisoned
             else "AND embed_attempts < {max_attempts:UInt16} AND embed_failed_at IS NULL"
         )
-        # A reference fixture's or an embed-excluded path's row is unembedded BY
-        # DESIGN: neither a stub to fill nor a poisoned row to retry, under either filter.
+        # A reference fixture's row is unembedded BY DESIGN: neither a stub to
+        # fill nor a poisoned row to retry, under either filter.
         poison_filter += " AND NOT startsWith(embed_last_error, {unembedded:String})"
         params = {
             "org": org,
@@ -40,7 +40,7 @@ class EmbedQueueMixin(CodeRepoBase):
             "model": model,
             "max_attempts": max_attempts,
             "limit": limit,
-            "unembedded": UNEMBEDDED_PREFIX,
+            "unembedded": UNEMBEDDED_BY_DESIGN,
         }
         # Two phases, as the memory store's find_embedding_stubs: a FINAL read
         # filters after the merge and so reads every column of the (org, namespace,
@@ -150,7 +150,7 @@ class EmbedQueueMixin(CodeRepoBase):
                 "repos": [(str(o), str(n)) for o, n in repos],
                 "model": model,
                 "max_attempts": int(max_attempts),
-                "unembedded": UNEMBEDDED_PREFIX,
+                "unembedded": UNEMBEDDED_BY_DESIGN,
                 "min_version": int(min_version),
                 "limit": int(limit),
             },
@@ -192,7 +192,7 @@ class EmbedQueueMixin(CodeRepoBase):
             {
                 "keys": tuples,
                 "max_attempts": int(max_attempts),
-                "unembedded": UNEMBEDDED_PREFIX,
+                "unembedded": UNEMBEDDED_BY_DESIGN,
             },
         )
         # `newest`, not `version`: aliasing an aggregate to its source column
@@ -237,6 +237,6 @@ class EmbedQueueMixin(CodeRepoBase):
             {
                 "keys": tuples,
                 "max_attempts": int(max_attempts),
-                "unembedded": UNEMBEDDED_PREFIX,
+                "unembedded": UNEMBEDDED_BY_DESIGN,
             },
         )
