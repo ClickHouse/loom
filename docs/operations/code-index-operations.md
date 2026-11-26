@@ -137,11 +137,22 @@ Name a `git_remote` host in ASCII, as punycode for an internationalised name: a 
 add refuses any other, so the two spell a host alike.
 
 A git server under a private certificate authority needs `LOOM_CODE_GIT_CA_FILE`: a PEM
-bundle git verifies https remotes with in place of the image's default roots, so include
-the public roots when other remotes are public. Repository jobs read no system or global
-git config and inherit no `GIT_SSL_CAINFO` or `SSL_CERT_FILE`, so this setting is how a
-bundle reaches them. Put it under `/etc/ssl`, which the repository-job sandbox mounts.
-Through the forward proxy, `LOOM_CODE_GIT_PROXY_CA_FILE` takes its place when set.
+bundle git verifies https remotes with in place of the image's default roots. The bundle
+applies to every git a repository job runs, the compiler tier's dependency fetches and
+submodule updates included, not only the entry's remote, so include the public roots
+when any of those reach a public host. Repository jobs read no system or global git
+config and inherit no `GIT_SSL_CAINFO` or `SSL_CERT_FILE`, so this setting is how a
+bundle reaches them. Loom does not check the path when it loads the setting: name an
+absolute path to a file the job can see. Inside the repository-job sandbox that is the
+tree it mounts read-only, `/etc/ssl`; a relative path, a `~/` path, or a link that
+leaves `/etc/ssl` resolves differently there than on the host, and git fails the job
+with its own words. Through the forward proxy, `LOOM_CODE_GIT_PROXY_CA_FILE` takes its
+place when set.
+
+The setting settles trust, not reach. In the sandbox the egress proxy refuses a remote
+whose name resolves to a loopback, private or link-local address, whatever bundle is
+set, and no setting admits one. A forge on a private address therefore indexes only as an
+operator repository on a host that does not run the sandbox (see _Without the sandbox_).
 
 An entry whose `git_remote` is a local path or `file://` mirror is known by its `repo`,
 which a page add of the same repository must match: name a mirror of a repository on a
@@ -860,8 +871,11 @@ uses the proxy, repository jobs are plain processes, so a compiler tier's build 
 Loom's user and can read the token file. Run compiler tiers there only for repositories
 you trust.
 
-**The CA bundles.** There are two, one for each TLS connection, and neither stands in
-for the other. `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo` (in git
+**The CA bundles.** There are three.
+`LOOM_CODE_GIT_CA_FILE` (above) is git's `http.sslCAInfo` for the remotes with no proxy,
+and through the proxy while `LOOM_CODE_GIT_PROXY_CA_FILE` is unset. The proxy's own
+certificate is always `LOOM_CODE_GIT_PROXY_TLS_CA_FILE`, never one of the other two.
+`LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo` (in git
 since release 2.27, older than the git every repository job already needs): the bundle
 git verifies an `https://` proxy's own certificate with, before it sends the identity
 and the token. Without it git checks the proxy against its default roots, so a proxy
