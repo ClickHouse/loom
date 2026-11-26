@@ -52,6 +52,17 @@ same issue searches to choose a related test, example or small fix for your next
 The repository's [contributor history](https://github.com/ClickHouse/loom/graphs/contributors)
 and merged pull requests record contributions.
 
+## Contribute a test report
+
+Reproducing a failure, checking an installation instruction or trying a dashboard task
+is a contribution; a product-code patch is optional. Start with one track in the
+[source contribution lab](.devcontainer/source/README.md#run-a-bounded-check-in-a-public-fork).
+Its disposable checks need no provider account.
+
+Use the lab's [report guidance](.devcontainer/source/README.md#report-what-failed) to
+describe what you tested, the smallest reproduction and the expected result. It also
+explains which investigations need a separate private stack or package check.
+
 ## Filing an issue
 
 Every issue goes through a form in `.github/ISSUE_TEMPLATE/`; pick the one that fits:
