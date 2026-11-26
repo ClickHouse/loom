@@ -169,6 +169,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.setting_facts": ("sdk_method",),
     "code.symbol": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
