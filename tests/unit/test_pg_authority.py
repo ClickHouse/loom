@@ -6507,7 +6507,7 @@ def test_the_worker_and_the_cli_wire_the_commits_writer(monkeypatch: pytest.Monk
     """Each root calls `wire()` before it runs: a commit in a process that never did is
     refused (`WriterNotWired`)."""
     from server import worker_main
-    from server.cli import app
+    from server.cli import app, dispatch
     from server.memory.app import provenance
     from server.memory.store import pg_publish
     from server.workers import child
@@ -6523,7 +6523,7 @@ def test_the_worker_and_the_cli_wire_the_commits_writer(monkeypatch: pytest.Monk
     worker_main.main(["--lease-fd", "3", "--alive-fd", "4"])
     assert pg_publish._writer is provenance.writer_actor
 
-    monkeypatch.setattr(app, "_dispatch", lambda args: 0)
+    monkeypatch.setattr(dispatch, "_dispatch", lambda args: 0)
     monkeypatch.setattr(app, "_load_dotenv_like_the_container", lambda: None)
     monkeypatch.setattr(pg_publish, "_writer", None)
     assert app.main(["period-digest", "--org", "o", "--namespace", "n"]) == 0

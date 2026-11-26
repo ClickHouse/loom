@@ -288,7 +288,7 @@ def test_a_provider_rebuild_batch_makes_one_call_per_org(metered, monkeypatch) -
 def test_a_cli_command_for_one_org_bills_it(metered, monkeypatch) -> None:
     import argparse
 
-    from server.cli import app
+    from server.cli import dispatch
 
     seen: list[str] = []
 
@@ -296,10 +296,10 @@ def test_a_cli_command_for_one_org_bills_it(metered, monkeypatch) -> None:
         seen.append(customer.current())
         return 0
 
-    app._dispatch(argparse.Namespace(cmd="reembed", org="acme", func=command))
+    dispatch._dispatch(argparse.Namespace(cmd="reembed", org="acme", func=command))
     monkeypatch.setattr(settings, "code_org", "code-org")
-    app._dispatch(argparse.Namespace(cmd="code", org=None, func=command))  # LOOM_CODE_ORG
-    app._dispatch(
+    dispatch._dispatch(argparse.Namespace(cmd="code", org=None, func=command))  # LOOM_CODE_ORG
+    dispatch._dispatch(
         argparse.Namespace(cmd="reembed", func=command)
     )  # every org: each row names its own
     assert seen == ["acme", "code-org", ""]

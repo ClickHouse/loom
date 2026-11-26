@@ -259,7 +259,7 @@ def test_dispatch_tags_every_clickhouse_query_with_the_command(
 ) -> None:
     import asyncio
 
-    from server.cli.app import _dispatch
+    from server.cli.dispatch import _dispatch
     from server.core.ch import current_query_tag
 
     seen: list[str] = []
@@ -280,7 +280,7 @@ def test_dispatch_tags_every_clickhouse_query_with_the_command(
 def test_serve_runs_with_no_command_context_bound() -> None:
     """The server's writes and reads bind their own actor, class and tag; a
     process-wide `process:cli:serve` would outrank every worker's fallback."""
-    from server.cli.app import _dispatch
+    from server.cli.dispatch import _dispatch
     from server.core.ch import current_query_tag
     from server.memory.app.provenance import writer_actor
     from server.observability.traffic_class import current_traffic_class
@@ -300,7 +300,7 @@ def test_serve_runs_with_no_command_context_bound() -> None:
 def test_a_command_refused_for_another_deployment_prints_one_line_and_exits_2(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from server.cli.app import _dispatch
+    from server.cli.dispatch import _dispatch
     from server.core.pg import AuthorityMismatch
 
     def _func(_: argparse.Namespace) -> int:
