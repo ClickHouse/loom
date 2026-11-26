@@ -192,8 +192,9 @@ class SelectedCheckReports(unittest.TestCase):
             previous.write_text('<testsuites><testsuite tests="2" skipped="0"/></testsuites>')
             with patch("subprocess.run", return_value=SimpleNamespace(returncode=0)):
                 result = self.module.check("functional", Path(directory))
-            self.assertFalse(result["passed"])
-            self.assertEqual(result["tests"], 0)
+            self.assertEqual(
+                result, {"track": "functional", "passed": False, "error": "missing report"}
+            )
 
     def test_one_failed_quality_check_fails_the_track(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
