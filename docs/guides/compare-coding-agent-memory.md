@@ -58,6 +58,22 @@ Keep the same tasks, starting revisions, and acceptance tests. Count model use, 
 maintenance, and human review time before assigning a budget. See the
 [paired coding-task scorecard](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory).
 
+## What changed in a paired coding-agent test?
+
+Claude Code answered 36 file-location questions on the ClickHouse repository in ten
+pairs of runs per question. Both setups had the same local tools. The Loom setup
+also had the plugin and indexed code tools. The correct file appeared among the
+first three named files in 96.4% of Loom runs and 91.4% of baseline runs.
+
+Mean session model cost fell from $0.096 to $0.076 per question. Mean elapsed time
+rose from 19.7 to 25.0 seconds. The cost covers the agent's model bill. Include
+server model calls, indexing, and hosting when estimating the full cost of a deployment.
+The test scored file identification. Use your repository's acceptance tests to
+measure whether the resulting patches pass review and CI.
+
+The [paired benchmark](../benchmarks/results.md#with-and-without-loom) includes the
+setup, raw runs, and answer-quality results for other repository questions.
+
 ## Move a saved decision to a fresh setup
 
 The fixture copies the corrected retry decision into fresh storage, then reads it
