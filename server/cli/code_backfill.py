@@ -184,7 +184,7 @@ async def _backfill(args: argparse.Namespace) -> int:
         if held:
             print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
             # The batches written before the hold are compacted and recorded.
-            await _close_index(counters, org, ns, model_name, started, head, mode)
+            await _close_index(repo, counters, org, ns, model_name, started, head, mode)
             return 1
         if not paths_file:
             await repo.set_state(org, ns, cursor_key, str(b_start + len(chunk_paths)))
@@ -221,7 +221,9 @@ async def _backfill(args: argparse.Namespace) -> int:
     if getattr(args, "dialect_folder_pass", False):
         folder = await _dialect_folder_pass(repo, org, ns, head)
         counters["dialect_inherited"] = folder["inherited"]
-    await _close_index(counters, org, ns, model_name, started, head, mode)
+    # A full run republishes after its `git_head` write: the rows carry that watermark.
+    full = not paths_file and not suffix
+    await _close_index(repo, counters, org, ns, model_name, started, head, mode, republish=not full)
     if paths_file:
         # a targeted repair proves nothing about the rest of the tree: the
         # per-merge watermark must keep walking every commit it has not seen
@@ -238,6 +240,7 @@ async def _backfill(args: argparse.Namespace) -> int:
     from server.code.app.index.bootstrap import record_backfill_stamps
 
     await record_backfill_stamps(repo, org, ns)
+    await _republish_counts(repo, org, ns)
     print(f"backfill index phase complete at {head[:12]}: {counters}")
     _note(phase="index", head=head[:12], total_paths=len(paths), **counters)
     if not args.embed:
@@ -435,6 +438,7 @@ async def _dialect_folder_pass(repo: Any, org: str, ns: str, head: str) -> dict[
 
 
 async def _close_index(
+    repo: Any,
     counters: dict[str, int],
     org: str,
     ns: str,
@@ -442,9 +446,15 @@ async def _close_index(
     started: float,
     head: str,
     mode: str,
+    *,
+    republish: bool = True,
 ) -> None:
-    """The index phase's end: compact what it wrote and record its pass."""
+    """The index phase's end: compact what it wrote, republish its counts and record
+    its pass. A full run passes `republish=False` and republishes once its watermark
+    is written."""
     await _compact_after_bulk(counters["chunks"] + counters.get("moved", 0), model_name)
+    if republish:
+        await _republish_counts(repo, org, ns)
     await _record_manual_pass(
         "code_ingest",
         org,
@@ -458,6 +468,22 @@ async def _close_index(
         head=head[:12],
         mode=mode,
     )
+
+
+async def _republish_counts(repo: Any, org: str, ns: str) -> None:
+    """The shared counts and coverage rows, as the ingest pass publishes them after it
+    moves rows; a CLI phase moves rows outside that pass. A reader serves the counts
+    row whatever watermarks it was computed at, the coverage row while they match, and
+    embedding moves none. Every phase end that declared its org republishes: a resumed
+    phase may find its rows written by a process that died before it got here."""
+    try:
+        await repo.refresh_table_counts(org, ns)
+    except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
+        print(f"  table counts not republished: {type(e).__name__}: {e}", file=sys.stderr)
+    try:
+        await repo.refresh_coverage(org, ns)
+    except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
+        print(f"  coverage not republished: {type(e).__name__}: {e}", file=sys.stderr)
 
 
 async def _held_batch(
@@ -616,10 +642,13 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
     total = 0
     started = time.monotonic()
     result = CodeEmbedRecoveryResult()
+    declared = False
 
     async def _finish(code: int) -> int:
         _note(phase="embed", embedded=total, failed=result.failed, poisoned=result.poisoned)
         await _compact_after_bulk(total, embedder.model_name)
+        if declared:
+            await _republish_counts(repo, org, ns)
         await _record_manual_pass(
             "code_embed_recovery",
             org,
@@ -648,9 +677,12 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
 
     # The first page is read before the org is declared (on the client `code_run`
     # connected): a mistyped --org has none, so a `recording` cell records nothing,
-    # and the pass's status row, keyed by namespace, needs no org.
+    # and the pass's status row, keyed by namespace, needs no org. With nothing pending,
+    # a namespace that has a counts row still declares and republishes: its last page
+    # may have landed in a process that died before `_finish`.
     rows = await _pending()
-    if rows:
+    declared = bool(rows) or await repo.get_state_or_none(org, ns, "table_counts") is not None
+    if declared:
         from server.core.ch import get_client
 
         await connect_code_plane(get_client(), args)  # declares the org it now writes

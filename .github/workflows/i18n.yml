@@ -13,12 +13,9 @@ on:
       - "scripts/docs_site/indexnow.py"
       - "scripts/docs_site/paths.py"
       - ".github/workflows/i18n.yml"
-  workflow_run:
-    workflows: [ci]
-    types: [completed]
-    branches: [i18n/update]
   schedule:
     - cron: "37 */6 * * *"
+    - cron: "11,26,41,56 * * * *" # Finalize batches after hosted CI passes.
   workflow_dispatch:
     inputs:
       all:
@@ -36,6 +33,7 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   update:
@@ -43,7 +41,8 @@ jobs:
     needs: finalize
     if: >-
       !cancelled() && github.ref == 'refs/heads/main' && vars.LOOM_I18N_RUNNER != '' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && github.event.schedule == '37 */6 * * *'))
     runs-on: ${{ fromJSON(vars.LOOM_I18N_RUNNER) }}
     timeout-minutes: 45
     # Environment and runner-group restrictions admit this main-only workflow.
@@ -103,13 +102,7 @@ jobs:
 
   finalize:
     name: merge validated translations
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'workflow_dispatch' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository))
+    if: github.ref == 'refs/heads/main' && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

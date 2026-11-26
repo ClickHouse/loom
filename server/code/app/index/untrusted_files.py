@@ -24,6 +24,16 @@ PACKAGE_JSON_MAX_BYTES = 1024 * 1024
 class FileRefused(OSError):
     """The file is a symlink, not a regular file, over its cap, or changed while read."""
 
+    # The file changed while it was read (`changed_while_read`): another read can pass.
+    changed = False
+
+
+def changed_while_read(path: Path) -> FileRefused:
+    """The refusal of a file at `path` that changed while it was read."""
+    refused = FileRefused(f"{path} changed while it was read")
+    refused.changed = True
+    return refused
+
 
 def open_regular(path: Path, max_bytes: int) -> tuple[int, os.stat_result]:
     """An open descriptor of the regular file at `path` and its stat, refused when it is
@@ -62,7 +72,7 @@ def read_bounded(path: Path, max_bytes: int) -> bytearray:
     finally:
         os.close(fd)
     if got != size:
-        raise FileRefused(f"{path} changed while it was read")
+        raise changed_while_read(path)
     del data[got:]  # the spare byte; shrinks in place
     return data
 
