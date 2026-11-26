@@ -88,7 +88,7 @@ def _guard_state(deadline: float, failure: ErrorCode | None, *, active: bool = T
         raise MCPSourceError("timeout")
 
 
-def _check_response(method: str, response: httpx.Response) -> None:
+def _check_response(method: str, response: httpx.Response, body: bytes) -> None:
     status = response.status_code
     if response.is_redirect or status in {401, 403}:
         raise MCPSourceError("denied")
@@ -99,6 +99,8 @@ def _check_response(method: str, response: httpx.Response) -> None:
             raise MCPSourceError("protocol")
         return
     if method == "POST" and status == 202:
+        if isinstance(types.JSONRPCMessage.model_validate_json(body).root, types.JSONRPCRequest):
+            raise MCPSourceError("protocol")
         return
     if status != 200:
         raise MCPSourceError("protocol")
@@ -205,13 +207,17 @@ class MCPDiscovery:
     tools: tuple[str, ...]
 
 
-def _json(value: Any, maximum: int) -> bytes:
+def _canonical_json(value: Any) -> bytes:
     try:
-        encoded = json.dumps(
+        return json.dumps(
             value, ensure_ascii=True, allow_nan=False, separators=(",", ":"), sort_keys=True
         ).encode()
     except (ValueError, TypeError, RecursionError):
         raise MCPSourceError("schema") from None
+
+
+def _json(value: Any, maximum: int) -> bytes:
+    encoded = _canonical_json(value)
     if len(encoded) > maximum:
         raise MCPSourceError("limit")
     return encoded
@@ -465,7 +471,7 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                 await self._authorize()
                 response = await self.inner.handle_async_request(outgoing)
                 await self._authorize()
-                _check_response(request.method, response)
+                _check_response(request.method, response, body)
                 # Reject compression so the wire budget bounds decoded protocol bytes.
                 if response.headers.get("content-encoding", "identity") != "identity":
                     raise MCPSourceError("protocol")
@@ -485,6 +491,42 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         await self.inner.aclose()
+
+
+def _validate_tool_mapping(mapping: MCPToolMapping) -> None:
+    _string(mapping.name, 128)
+    _string(mapping.argument_name, 128)
+    _schema(mapping.input_schema)
+    _schema(mapping.output_schema)
+    if mapping.input_schema["type"] != "object" or mapping.output_schema["type"] != "object":
+        raise MCPSourceError("config")
+    if not isinstance(mapping.fixed_arguments, dict):
+        raise MCPSourceError("config")
+    if mapping.cursor_argument is not None:
+        _string(mapping.cursor_argument, 128)
+    _json(mapping.fixed_arguments, 16_384)
+    if mapping.argument_name in mapping.fixed_arguments or (
+        mapping.cursor_argument is not None
+        and (
+            mapping.cursor_argument == mapping.argument_name
+            or mapping.cursor_argument in mapping.fixed_arguments
+        )
+    ):
+        raise MCPSourceError("config")
+    for path in (
+        mapping.items_path,
+        mapping.id_path,
+        mapping.title_path,
+        mapping.text_path,
+        mapping.uri_path,
+        mapping.revision_path,
+        mapping.next_cursor_path,
+    ):
+        if path is not None:
+            if not isinstance(path, tuple) or len(path) > 8:
+                raise MCPSourceError("config")
+            for part in path:
+                _string(part, 128)
 
 
 _T = TypeVar("_T")
@@ -525,43 +567,10 @@ class MCPSourceClient:
         mappings = [m for m in (self._config.search, self._config.read) if m is not None]
         if set(config.approved_tools) != {m.name for m in mappings}:
             raise MCPSourceError("config")
+        if self._config.read is not None and not self._config.read.text_path:
+            raise MCPSourceError("config")
         for mapping in mappings:
-            _string(mapping.name, 128)
-            _string(mapping.argument_name, 128)
-            _schema(mapping.input_schema)
-            _schema(mapping.output_schema)
-            if (
-                mapping.input_schema["type"] != "object"
-                or mapping.output_schema["type"] != "object"
-            ):
-                raise MCPSourceError("config")
-            if not isinstance(mapping.fixed_arguments, dict):
-                raise MCPSourceError("config")
-            if mapping.cursor_argument is not None:
-                _string(mapping.cursor_argument, 128)
-            _json(mapping.fixed_arguments, 16_384)
-            if mapping.argument_name in mapping.fixed_arguments or (
-                mapping.cursor_argument is not None
-                and (
-                    mapping.cursor_argument == mapping.argument_name
-                    or mapping.cursor_argument in mapping.fixed_arguments
-                )
-            ):
-                raise MCPSourceError("config")
-            for path in (
-                mapping.items_path,
-                mapping.id_path,
-                mapping.title_path,
-                mapping.text_path,
-                mapping.uri_path,
-                mapping.revision_path,
-                mapping.next_cursor_path,
-            ):
-                if path is not None:
-                    if not isinstance(path, tuple) or len(path) > 8:
-                        raise MCPSourceError("config")
-                    for part in path:
-                        _string(part, 128)
+            _validate_tool_mapping(mapping)
         self._privacy: ExitStack | None = None
         self._owner_task: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[None] | None = None
@@ -573,7 +582,8 @@ class MCPSourceClient:
         self._operation_failure: ErrorCode | None = None
         self._deadline = 0.0
         self._discovery: MCPDiscovery | None = None
-        self._schema_changed = False
+        self._tools_supported = False
+        self._tool_catalog_generation = 0
         self._pages, self._results = 0, 0
         self._issued_cursors: set[tuple[tuple[str, str], str]] = set()
         self._used_cursors: set[tuple[tuple[str, str], str]] = set()
@@ -583,6 +593,7 @@ class MCPSourceClient:
             _string(identity) for identity in config.approved_resource_ids
         )
         self._resource_titles: dict[str, str] = {}
+        self._config_sha256 = hashlib.sha256(_json(asdict(self._config), 131_072)).hexdigest()
 
     def __repr__(self) -> str:
         return "MCPSourceClient(<redacted>)"
@@ -593,7 +604,7 @@ class MCPSourceClient:
 
     @property
     def config_sha256(self) -> str:
-        return hashlib.sha256(_json(asdict(self._config), 131_072)).hexdigest()
+        return self._config_sha256
 
     def _with_receipt(
         self, evidence: MCPEvidence, operation: Literal["resources/read", "tools/call"]
@@ -608,11 +619,11 @@ class MCPSourceClient:
 
     def _check_state(self, *, require_session: bool = False) -> None:
         owner = self._owner_task
-        failure = self._operation_failure or self._owner_failure
-        if failure is None and self._transport is not None:
-            failure = self._transport.failure
         # The lifecycle owner may perform SDK session termination during cleanup.
         lifecycle = not require_session and asyncio.current_task() is owner
+        failure = self._operation_failure or (None if lifecycle else self._owner_failure)
+        if failure is None and self._transport is not None:
+            failure = self._transport.failure
         active = (
             owner is not None
             and not owner.done()
@@ -679,20 +690,27 @@ class MCPSourceClient:
                             if not self._ready.done():
                                 self._ready.set_result(None)
                             await asyncio.Future[None]()
+                    except Exception as error:
+                        self._owner_failure = self._lifecycle_failure(error)
+                        raise
                     finally:
                         self._draining = True
             except (
                 Exception,  # noqa: BLE001 — SDK lifecycle failures must remain fixed codes
                 asyncio.CancelledError,
             ) as error:
-                failure = self._transport.failure if self._transport else None
-                expected_close = self._closing and isinstance(error, asyncio.CancelledError)
-                if failure is not None or not expected_close:
-                    self._owner_failure = failure or _error_code(error)
+                self._owner_failure = self._owner_failure or self._lifecycle_failure(error)
                 if self._ready is not None and not self._ready.done():
                     self._ready.set_exception(MCPSourceError(self._owner_failure or "closed"))
             finally:
                 self._session = None
+
+    def _lifecycle_failure(self, error: BaseException) -> ErrorCode | None:
+        if self._transport is not None and self._transport.failure is not None:
+            return self._transport.failure
+        if self._closing and isinstance(error, asyncio.CancelledError):
+            return None
+        return _error_code(error)
 
     async def _initialize(self, stack: AsyncExitStack) -> None:
         await self._authorize()
@@ -741,6 +759,7 @@ class MCPSourceClient:
         result = await self._session.initialize()
         protocol_version = str(result.protocolVersion)
         self._discovery = MCPDiscovery(result.capabilities.resources is not None, ())
+        self._tools_supported = result.capabilities.tools is not None
         await self._authorize()
 
     async def _close(self) -> None:
@@ -782,7 +801,7 @@ class MCPSourceClient:
         if isinstance(message, types.ServerNotification) and isinstance(
             message.root, types.ToolListChangedNotification
         ):
-            self._schema_changed = True
+            self._tool_catalog_generation += 1
 
     async def _run(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
         with private_work():
@@ -805,7 +824,11 @@ class MCPSourceClient:
             asyncio.CancelledError,
         ) as error:
             if isinstance(error, asyncio.CancelledError):
-                code: ErrorCode = "closed"
+                code: ErrorCode = (
+                    self._owner_failure
+                    or (self._transport.failure if self._transport else None)
+                    or "closed"
+                )
             elif isinstance(error, MCPSourceError):
                 code = error.code
             else:
@@ -828,10 +851,15 @@ class MCPSourceClient:
             cursor: str | None = None
             seen: set[str] = set()
             if approved:
+                if not self._tools_supported:
+                    raise MCPSourceError("unsupported")
+                generation = self._tool_catalog_generation
                 for _ in range(self._config.limits.max_pages):
                     result = await session.list_tools(
                         params=types.PaginatedRequestParams(cursor=cursor)
                     )
+                    if generation != self._tool_catalog_generation:
+                        raise MCPSourceError("schema")
                     if len(result.tools) > self._config.limits.max_results:
                         raise MCPSourceError("limit")
                     for tool in result.tools:
@@ -842,10 +870,9 @@ class MCPSourceClient:
                             continue
                         for mapping in (self._config.search, self._config.read):
                             if mapping is not None and mapping.name == tool.name:
-                                if (
-                                    tool.inputSchema != mapping.input_schema
-                                    or tool.outputSchema != mapping.output_schema
-                                ):
+                                if _canonical_json(
+                                    (tool.inputSchema, tool.outputSchema)
+                                ) != _canonical_json((mapping.input_schema, mapping.output_schema)):
                                     raise MCPSourceError("schema")
                         found.add(tool.name)
                     if len(seen) > self._config.limits.max_results:
@@ -860,7 +887,6 @@ class MCPSourceClient:
                     raise MCPSourceError("unsupported")
             assert self._discovery is not None
             self._discovery = MCPDiscovery(self._discovery.resources, tuple(sorted(found)))
-            self._schema_changed = False
             return self._discovery
 
         return await self._run(action)
@@ -911,12 +937,9 @@ class MCPSourceClient:
     async def _tool(
         self, session: ClientSession, mapping: MCPToolMapping, value: str, cursor: str | None = None
     ) -> Any:
-        await self.discover()
-        if (
-            self._schema_changed
-            or self._discovery is None
-            or mapping.name not in self._discovery.tools
-        ):
+        generation = self._tool_catalog_generation
+        discovery = await self.discover()
+        if generation != self._tool_catalog_generation or mapping.name not in discovery.tools:
             raise MCPSourceError("schema")
         arguments = dict(mapping.fixed_arguments)
         arguments[mapping.argument_name] = _string(value, 4096)
@@ -926,7 +949,7 @@ class MCPSourceClient:
             arguments[mapping.cursor_argument] = cursor
         _validate(mapping.input_schema, arguments, 32_768)
         result = await session.call_tool(mapping.name, arguments)
-        if self._schema_changed:
+        if generation != self._tool_catalog_generation:
             raise MCPSourceError("schema")
         if result.isError or result.structuredContent is None:
             raise MCPSourceError("protocol")

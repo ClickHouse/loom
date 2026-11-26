@@ -166,6 +166,86 @@ class FixtureTransport(httpx.MockTransport):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("changed", [False, True], ids=["stable", "list-changed"])
+async def test_tool_catalog_invalidated_between_pages(
+    monkeypatch: pytest.MonkeyPatch, changed: bool
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HTTPFixture("tools", block=False)
+    cursors: list[str | None] = []
+
+    async def reply(request: httpx.Request) -> httpx.Response:
+        if request.method != "POST":
+            return await fixture.reply(request)
+        payload = json.loads(request.content)
+        if payload["method"] != "tools/list":
+            return await fixture.reply(request)
+        cursor = payload.get("params", {}).get("cursor")
+        cursors.append(cursor)
+        if cursor is None:
+            response = (await fixture.reply(request)).json()
+            response["result"]["nextCursor"] = "page-two"
+            return httpx.Response(200, json=response)
+        final = {"jsonrpc": "2.0", "id": payload["id"], "result": {"tools": []}}
+        if not changed:
+            return httpx.Response(200, json=final)
+        notification = {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+        events = "".join(
+            f"event: message\ndata: {json.dumps(item)}\n\n" for item in (notification, final)
+        )
+        return httpx.Response(200, text=events, headers={"content-type": "text/event-stream"})
+
+    transport = FixtureTransport(fixture)
+    transport.handler = reply
+    async with source.MCPSourceClient(
+        fixture.config(), None, validate_access=access, _transport=transport
+    ) as remote:
+        if changed:
+            with pytest.raises(source.MCPSourceError, match="^MCP source schema$"):
+                await remote.read(IDENTITY)
+        else:
+            evidence = await remote.read(IDENTITY)
+            assert evidence.text == TEXT and evidence.receipt is not None
+    assert cursors == [None, "page-two"]
+    assert fixture.reads == (0 if changed else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("discover_only", [False, True], ids=["read", "discover"])
+async def test_tool_rpc_requires_negotiated_capability(
+    monkeypatch: pytest.MonkeyPatch, discover_only: bool
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HTTPFixture("tools", block=False)
+    methods: list[str] = []
+
+    async def reply(request: httpx.Request) -> httpx.Response:
+        response = await fixture.reply(request)
+        if request.method != "POST":
+            return response
+        method = json.loads(request.content)["method"]
+        methods.append(method)
+        if method == "initialize":
+            payload = response.json()
+            payload["result"]["capabilities"] = {"resources": {}}
+            return httpx.Response(200, json=payload)
+        return response
+
+    transport = FixtureTransport(fixture)
+    transport.handler = reply
+    async with source.MCPSourceClient(
+        fixture.config(), None, validate_access=access, _transport=transport
+    ) as remote:
+        with pytest.raises(source.MCPSourceError, match="^MCP source unsupported$"):
+            if discover_only:
+                await remote.discover()
+            else:
+                await remote.read(IDENTITY)
+    assert [method for method in methods if method.startswith("tools/")] == []
+    assert fixture.reads == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["resources", "tools"])
 @pytest.mark.parametrize("phase", ["headers", "json", "sse"])
 async def test_cancelled_read_drains_http_before_context_close(
@@ -347,8 +427,9 @@ async def test_idle_session_deadline_closes_pool_before_context_exit(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("read_after_deadline", [False, True], ids=["exit", "read"])
+@pytest.mark.parametrize("pool_raises", [False, True], ids=["clean-pool", "failing-pool"])
 async def test_caller_joins_pool_close_started_by_deadline(
-    monkeypatch: pytest.MonkeyPatch, read_after_deadline: bool
+    monkeypatch: pytest.MonkeyPatch, read_after_deadline: bool, pool_raises: bool
 ) -> None:
     loop = asyncio.get_running_loop()
     clock = ManualClock(t=loop.time())
@@ -366,6 +447,8 @@ async def test_caller_joins_pool_close_started_by_deadline(
             pool_closing.set()
             await release_pool.wait()
             await super().aclose()
+            if pool_raises:
+                raise RuntimeError("synthetic-private-pool-failure")
 
     async def use_client() -> None:
         async with source.MCPSourceClient(
@@ -375,9 +458,8 @@ async def test_caller_joins_pool_close_started_by_deadline(
             await proceed.wait()
             joining.set()
             if read_after_deadline:
-                with pytest.raises(source.MCPSourceError) as refusal:
+                with pytest.raises(source.MCPSourceError, match="^MCP source timeout$"):
                     await client.read(IDENTITY)
-                assert refusal.value.code == "timeout"
 
     task = asyncio.create_task(use_client())
     try:
@@ -397,9 +479,8 @@ async def test_caller_joins_pool_close_started_by_deadline(
         if read_after_deadline:
             await task
         else:
-            with pytest.raises(source.MCPSourceError) as refusal:
+            with pytest.raises(source.MCPSourceError, match="^MCP source timeout$"):
                 await task
-            assert refusal.value.code == "timeout"
         assert fixture.pool_closes == 1
         assert fixture.reads == 0
     finally:
@@ -516,6 +597,8 @@ async def test_background_refusal_preserves_cancel_and_joins_cleanup(
             assert task.cancelled()
             assert fixture.stopped.is_set()
             assert fixture.pool_closed.is_set()
+            with pytest.raises(source.MCPSourceError, match="denied"):
+                await remote.discover()
         finally:
             fixture.release.set()
             fixture.cleanup_release.set()
@@ -1347,6 +1430,33 @@ async def test_status_cursor_post_unexpected_status_is_terminal_protocol(
             await remote.read(IDENTITY)
         assert remote._transport is not None and remote._transport.failure == "protocol"
         assert fixture.stopped.is_set() and fixture.pool_closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_accepted_notification_does_not_allow_accepted_read_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+
+    class AcceptedRead(HTTPFixture):
+        async def reply(self, request: httpx.Request) -> httpx.Response:
+            if (
+                request.method == "POST"
+                and json.loads(await request.aread())["method"] == "resources/read"
+            ):
+                self.reads += 1
+                return httpx.Response(202)
+            return await super().reply(request)
+
+    fixture = AcceptedRead("resources")
+    conf = replace(fixture.config(), limits=source.MCPLimits(request_seconds=0.25))
+    async with source.MCPSourceClient(
+        conf, None, validate_access=access, _transport=FixtureTransport(fixture)
+    ) as remote:
+        with pytest.raises(source.MCPSourceError, match="protocol"):
+            await remote.read(IDENTITY)
+    assert fixture.reads == 1
+    assert fixture.pool_closes == 1
 
 
 @pytest.mark.asyncio

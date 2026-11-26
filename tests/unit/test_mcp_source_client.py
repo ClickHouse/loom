@@ -138,7 +138,9 @@ async def synthetic_server(
                     outputSchema=state.get("search_output_schema", SEARCH_SCHEMA),
                 ),
                 types.Tool(
-                    name="fetch", inputSchema=read.input_schema, outputSchema=DOCUMENT_SCHEMA
+                    name="fetch",
+                    inputSchema=state.get("read_input_schema", read.input_schema),
+                    outputSchema=state.get("read_output_schema", DOCUMENT_SCHEMA),
                 ),
                 types.Tool(
                     name="destroy",
@@ -344,6 +346,66 @@ async def test_schema_drift_is_checked_before_tool_execution(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("schema_side", ["input", "output"])
+async def test_pinned_schema_distinguishes_booleans_from_numbers(
+    monkeypatch: pytest.MonkeyPatch, schema_side: str
+) -> None:
+    read = mapping("fetch")
+    if schema_side == "input":
+        pinned = read.input_schema
+        pinned["properties"]["flag"] = {"type": "boolean", "const": False}
+        read.fixed_arguments["flag"] = False
+        advertised = copy.deepcopy(pinned)
+        advertised["properties"]["flag"]["const"] = 0
+    else:
+        pinned = read.output_schema
+        pinned["properties"]["flag"] = {"type": "boolean", "enum": [True]}
+        advertised = copy.deepcopy(pinned)
+        advertised["properties"]["flag"]["enum"] = [1]
+    conf = replace(config(tools=True, approved_resource_ids=(IDENTITY,)), read=read)
+    async with synthetic_server(monkeypatch, tools=True) as state, client(conf) as remote:
+        state[f"read_{schema_side}_schema"] = advertised
+        with pytest.raises(source.MCPSourceError, match="^MCP source schema$"):
+            await remote.read(IDENTITY)
+        assert state["calls"] == []
+        assert [
+            request["body"]["method"]
+            for request in state["requests"]
+            if request["body"] and request["body"]["method"].startswith("tools/")
+        ] == ["tools/list"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selector", [None, ()], ids=["omitted", "empty-path"])
+async def test_mapped_read_requires_text_selector(
+    monkeypatch: pytest.MonkeyPatch, selector: tuple[str, ...] | None
+) -> None:
+    read = replace(mapping("fetch"), text_path=selector)
+    conf = replace(config(tools=True, approved_resource_ids=(IDENTITY,)), read=read)
+    async with synthetic_server(monkeypatch, tools=True) as state:
+        with pytest.raises(source.MCPSourceError, match="^MCP source config$"):
+            async with client(conf) as remote:
+                await remote.read(IDENTITY)
+        assert state["requests"] == []
+
+
+@pytest.mark.asyncio
+async def test_mapped_read_receipts_selected_empty_text_and_search_can_omit_snippet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    search = replace(mapping("find", search=True), text_path=None)
+    conf = replace(config(tools=True, approved_resource_ids=(IDENTITY,)), search=search)
+    async with synthetic_server(monkeypatch, tools=True) as state, client(conf) as remote:
+        page = await remote.search("query")
+        assert len(page.items) == 1
+        assert page.items[0].text == "" and page.items[0].receipt is None
+        state["text"] = ""
+        evidence = await remote.read(IDENTITY)
+        assert evidence.text == "" and evidence.receipt is not None
+        assert evidence.receipt.content_sha256 == hashlib.sha256(b"").hexdigest()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("tools", [False, True])
 async def test_selected_identity_cannot_expand_through_listing(
     monkeypatch: pytest.MonkeyPatch, tools: bool
@@ -515,6 +577,13 @@ async def test_list_and_search_cannot_grant_read_authority(
         with pytest.raises(source.MCPSourceError, match="denied"):
             await remote.read(IDENTITY)
         assert len(state["calls"]) == before
+
+
+def test_configuration_must_fit_receipt_fingerprint_before_contact() -> None:
+    ids = tuple(f"doc://workspace/{index}/" + "x" * 1900 for index in range(73))
+    assert len(client(config(approved_resource_ids=ids[:64])).config_sha256) == 64
+    with pytest.raises(source.MCPSourceError, match="limit"):
+        client(config(approved_resource_ids=ids))
 
 
 @pytest.mark.asyncio
