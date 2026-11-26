@@ -256,56 +256,73 @@ def _body_bindings(
         _body_bindings(child, source, into, fields=fields, params=params)
 
 
-def _module_statement_bindings(statement: Any, source: bytes) -> dict[str, str]:
-    if statement.type != "assignment":
-        return dict.fromkeys(_bound_identifiers(statement, source), "")
-    assignments = [statement]
-    value = statement.child_by_field_name("right")
+def _literal_write_names(node: Any, source: bytes) -> set[str]:
+    """Names overwritten by a scalar literal or unpacked scalar literals."""
+    writes = [node]
+    value = node.child_by_field_name("right")
     while value is not None and value.type == "assignment":
-        assignments.append(value)
+        writes.append(value)
         value = value.child_by_field_name("right")
     if value is None:
-        return {}
-    inferred = _value_binding(value, source, None)
-    bindings: dict[str, str] = {}
-    for assignment in assignments:
-        left = assignment.child_by_field_name("left")
-        if left is not None and left.type == "identifier":
-            annotated = type_name_of(assignment.child_by_field_name("type"), source)
-            bindings[node_text(left, source)] = annotated or inferred
-        else:
-            bindings.update(dict.fromkeys(_bound_identifiers(assignment, source), ""))
-    return bindings
+        return set()
+    if value.type in _SCALAR_LITERALS:
+        return {name for write in writes for name in _bound_identifiers(write, source)}
+    left = node.child_by_field_name("left")
+    if (
+        len(writes) == 1
+        and left is not None and left.type == "pattern_list"
+        and value.type == "expression_list"
+        and len(left.named_children) == len(value.named_children)
+        and all(c.type == "identifier" for c in left.named_children)
+        and all(c.type in _SCALAR_LITERALS for c in value.named_children)
+    ):
+        return _bound_identifiers(node, source)
+    return set()
 
 
 def _module_invalidations(
     node: Any, source: bytes, known: dict[str, str],
 ) -> dict[str, int]:
-    """Final straight-line module writes that replace an inferred receiver."""
-    writes: dict[str, tuple[int, str]] = {}
-    compound = []
+    """Straight-line module writes that cannot supply the earlier receiver."""
+    changes: dict[str, int] = {}
     for statement in node.named_children:
-        if statement.type in _MODULE_COMPOUND_NODES:
-            compound.append(statement)
-            continue
         if statement.type == "expression_statement" and statement.named_child_count == 1:
             statement = statement.named_children[0]
-        if statement.type not in _MODULE_REBIND_NODES:
+        if statement.type == "assignment":
+            names = _literal_write_names(statement, source)
+        elif statement.type == "delete_statement":
+            names = _bound_identifiers(statement, source)
+        else:
             continue
-        line = statement.end_point[0] + 1
-        for name, value in _module_statement_bindings(statement, source).items():
-            if name in known:
-                writes[name] = line, value
-    changes = {
-        name: line for name, (line, value) in writes.items() if not value
-    }
-    if not changes:
-        return changes
-    nested: dict[str, str] = {}
-    for statement in compound:
-        _body_bindings(statement, source, nested, fields=False)
-    # Keep the existing lookup where a compound statement can supply a type.
-    return {name: line for name, line in changes.items() if name not in nested}
+        changes.update(dict.fromkeys(names & known.keys(), statement.end_byte))
+    return changes
+
+
+def _preserve_module_receivers(node: Any, source: bytes, writes: dict[str, int]) -> None:
+    """Keep earlier receiver evidence when a use or a later binding is possible."""
+    if node.type == "attribute":
+        receiver = node.child_by_field_name("object")
+        if receiver is not None and receiver.type == "identifier":
+            name = node_text(receiver, source)
+            if node.start_byte < writes.get(name, -1):
+                writes.pop(name)
+        return
+    if node.type == "global_statement":
+        for name in _bound_identifiers(node, source):
+            writes.pop(name, None)
+        return
+    if node.type in _MODULE_UNKNOWN_WRITES:
+        names = set(writes)
+    elif node.type in _MODULE_NAME_WRITES:
+        names = _bound_identifiers(node, source).intersection(writes)
+    elif node.type in {"function_definition", "class_definition"}:
+        name_node = node.child_by_field_name("name")
+        names = {node_text(name_node, source)} if name_node is not None else set()
+    else:
+        return
+    for name in names:
+        if (end := writes.get(name)) is not None and node.start_byte >= end:
+            writes.pop(name)
 
 
 def _class_bindings(class_node: Any, source: bytes) -> dict[str, str]:
@@ -385,16 +402,8 @@ class PyReceiverTyper:
                 # a parameter, an assignment target, a loop or
                 # `with … as` name, an except alias — bound here, not imported
                 self._bound_names.update(_bound_identifiers(child, source))
-            if invalidations and child.type == "attribute":
-                receiver = child.child_by_field_name("object")
-                if receiver is not None and receiver.type == "identifier":
-                    name = node_text(receiver, source)
-                    # Keep facts that may already serve a source call before the write.
-                    if (
-                        (line := invalidations.get(name)) is not None
-                        and child.start_point[0] + 1 <= line
-                    ):
-                        invalidations.pop(name)
+            if invalidations:
+                _preserve_module_receivers(child, source, invalidations)
             if child.type == "call":
                 fn = child.child_by_field_name("function")
                 obj = None
@@ -523,10 +532,14 @@ class PyReceiverTyper:
         self._returns.update({k: v for k, v in returns.items() if v})
 
 
-_MODULE_REBIND_NODES = frozenset({"assignment", "augmented_assignment", "delete_statement"})
-_MODULE_COMPOUND_NODES = frozenset({
+_SCALAR_LITERALS = frozenset({"integer", "float", "true", "false", "none", "string"})
+_MODULE_UNKNOWN_WRITES = frozenset({
     "if_statement", "for_statement", "while_statement", "try_statement", "with_statement",
-    "match_statement",
+    "match_statement", "wildcard_import",
+})
+_MODULE_NAME_WRITES = frozenset({
+    "assignment", "augmented_assignment", "named_expression", "import_statement",
+    "import_from_statement", "type_alias_statement",
 })
 _BINDING_NODES = frozenset({
     "parameters", "lambda_parameters", "assignment", "augmented_assignment",
