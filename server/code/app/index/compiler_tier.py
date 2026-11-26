@@ -327,6 +327,18 @@ def _has_loose_objects(objects: Path) -> bool:
     return any(len(d.name) == 2 and d.is_dir() and any(d.iterdir()) for d in objects.iterdir())
 
 
+def shared_packs(checkout: Path) -> list[Path]:
+    """The checkout's pack files that are its mirror's files, hard-linked: a git job in
+    the checkout mounts them read-only, so it cannot change the mirror's packs."""
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    files = (
+        pack_dir / f"{stem}{ext}"
+        for stem in sorted(_shared_stems(pack_dir))
+        for ext in _LINK_ORDER[1:]
+    )
+    return [p for p in files if p.exists()]
+
+
 def _link_pack(mirror_dir: Path, pack_dir: Path, stem: str) -> None:
     """Hard-link one mirror pack into the checkout unless it is linked already, replacing
     a copy of the same name (pack names are content hashes). A killed pass leaves only
@@ -613,13 +625,13 @@ async def git(
     proxy_identity: str = "",
 ) -> None:
     """Run one git command in a checkout, as a repository job: the checkout writable,
-    `local_remote` (the bare clone a fetch reads) read-only, the network only with
-    `network`. `token` authenticates to the owner of `remote` (the repository's own
-    https remote), so a private submodule of that owner can be fetched; with an
-    operator's git proxy the network job goes through it as `proxy_identity` (the
-    entry's git_proxy_identity). On timeout, name the command (a bare TimeoutError says
-    nothing) and retry `retries` times — a stall is usually transient contention on
-    the shared bare clone."""
+    `local_remote` (the bare clone a fetch reads) and the packs the checkout shares with
+    it read-only, the network only with `network`. `token` authenticates to the owner of
+    `remote` (the repository's own https remote), so a private submodule of that owner
+    can be fetched; with an operator's git proxy the network job goes through it as
+    `proxy_identity` (the entry's git_proxy_identity). On timeout, name the command (a
+    bare TimeoutError says nothing) and retry `retries` times — a stall is usually
+    transient contention on the shared bare clone."""
     from server.code.app.index.gitrepo import auth_env
 
     # The file transport follows the bare clone alone, never the entry's remote.
@@ -631,7 +643,7 @@ async def git(
         "env": env,
         "timeout_s": timeout_s,
         "writable": [cwd],
-        "readonly": [local_remote] if local_remote else [],
+        "readonly": [*([local_remote] if local_remote else []), *shared_packs(cwd)],
         "network": network,
         "merge_stderr": True,
     }
