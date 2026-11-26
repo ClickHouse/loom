@@ -358,3 +358,94 @@ async def test_no_git_command_in_a_checkout_starts_a_repack(tmp_path: Path, monk
     monkeypatch.setattr(compiler_tier, "run_job", _job)
     await compiler_tier.git(tmp_path, "fetch", "origin")
     assert seen[0][3:7] == ["-c", "gc.auto=0", "-c", "maintenance.auto=false"]
+
+
+def _fetch_and_check_out(checkout: Path, bare: Path) -> str:
+    from server.code.app.index.compiler_tier import checkout_fetch_args
+    from server.code.app.index.gitrepo import auth_env
+
+    target = subprocess.run(
+        ["git", "--git-dir", str(bare), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    env = auth_env(remote=str(bare))
+    for args in (checkout_fetch_args(bare, target), ["checkout", "-q", "--force", target]):
+        subprocess.run(["git", "-C", str(checkout), *args], env=env, check=True)
+    return target
+
+
+def test_a_new_checkout_borrows_its_objects_from_the_mirror(tmp_path: Path) -> None:
+    """A tier's fetch from the mirror moves refs: the checkout holds no object of its own."""
+    bare = _bare_repo(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+
+    checkout, _bare, missing = resolve_checkout(cfg, "python")
+    _fetch_and_check_out(checkout, bare)
+
+    objects = checkout / ".git" / "objects"
+    own = [p for p in objects.rglob("*") if p.is_file() and p.parent.name != "info"]
+    assert missing is None and own == []
+    assert (checkout / "main.py").read_text() == "print('ok')\n"
+    alternates = (objects / "info" / "alternates").read_text().strip()
+    assert (objects / alternates).resolve() == (bare / "objects").resolve()
+
+
+def test_a_checkout_that_lost_its_borrowed_objects_gets_a_new_git_dir(tmp_path: Path) -> None:
+    """A replaced mirror lacks a commit the checkout's refs name; every fetch would fail."""
+    bare = _bare_repo(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    checkout, _bare, _missing = resolve_checkout(cfg, "python")
+    _fetch_and_check_out(checkout, bare)
+    (checkout / ".git" / "refs" / "loom" / "scip-head").write_text("1" * 40 + "\n")
+    (checkout / "build-cache").write_text("kept\n")
+
+    _actual, _bare, missing = resolve_checkout(cfg, "python")
+    target = _fetch_and_check_out(checkout, bare)
+
+    head = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True
+    )
+    assert missing is None and head.stdout.strip() == target
+    assert (checkout / "build-cache").read_text() == "kept\n"
+
+
+def test_a_checkout_with_its_own_objects_is_left_as_it_is(tmp_path: Path) -> None:
+    bare = _bare_repo(tmp_path)
+    checkout = tmp_path / "checkout"
+    subprocess.run(["git", "clone", "-q", str(bare), str(checkout)], check=True)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(checkout), scip_producer="python")
+    before = {p.relative_to(checkout): p.read_bytes() for p in checkout.rglob("*") if p.is_file()}
+
+    _actual, _bare, missing = resolve_checkout(cfg, "python")
+
+    after = {p.relative_to(checkout): p.read_bytes() for p in checkout.rglob("*") if p.is_file()}
+    assert missing is None and after == before
+
+
+@pytest.mark.asyncio
+async def test_repository_jobs_in_a_borrowing_checkout_mount_its_objects_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.app.index import compiler_tier
+    from server.code.app.index.sandbox import JobResult
+
+    bare = _bare_repo(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    checkout, _bare, _missing = resolve_checkout(cfg, "python")
+    seen: list[dict] = []
+
+    async def _job(_argv, **kw):
+        seen.append(kw)
+        return JobResult(0, b"", b"")
+
+    monkeypatch.setattr(compiler_tier, "run_job", _job)
+    await compiler_tier.git(checkout, "checkout", "--force", "HEAD")
+    await compiler_tier.run_harness(
+        tmp_path / "harness.sh", checkout, [], {}, out_dir=tmp_path, timeout_s=1
+    )
+
+    objects = (bare / "objects").resolve()
+    assert [objects in job["readonly"] for job in seen] == [True, True]
+    assert all(objects not in job["writable"] for job in seen)

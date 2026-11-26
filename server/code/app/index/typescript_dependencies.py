@@ -17,6 +17,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
+from server.code.app.index.compiler_tier import borrowed_objects
 from server.code.app.index.gitrepo import auth_env
 from server.code.app.index.sandbox import run_job
 from server.code.app.index.tier_health import ToolOutputError, error_text
@@ -190,7 +191,7 @@ async def prepare_dependencies(
                 env=install_env,
                 timeout_s=timeout_s,
                 writable=[checkout],
-                readonly=[checkout / ".git"],
+                readonly=[checkout / ".git", *borrowed_objects(checkout)],
                 cwd=root,
                 network=True,
                 merge_stderr=True,

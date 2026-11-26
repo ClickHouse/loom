@@ -367,6 +367,12 @@ the rest of the C/C++ toolchain but no scip-clang: point `LOOM_CODE_SCIP_CLANG_P
 your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each worker
 initializes a missing or empty working tree directory as a Git repository and fetches
 each commit into it from the entry's mirror, so a new leader starts from nothing.
+The repository it initializes borrows the mirror's objects (`objects/info/alternates`,
+relative to the checkout), so a tier costs its working tree rather than a second copy
+of the repository; a checkout an older version made keeps its own copy until its
+directory is removed. When a ref of a borrowing checkout names an object the mirror no
+longer has (the mirror was cloned again, or pruned outside Loom), the worker replaces
+the checkout's `.git` and keeps its files.
 An existing checkout must be the root of a standalone Git working tree, with its
 `.git` directory inside the checkout. Compiler Git jobs need writable metadata
 there. Linked worktrees, external Git metadata, regular files, bare repositories and

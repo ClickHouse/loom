@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
@@ -270,10 +271,58 @@ def _checkout_metadata_error(checkout: Path) -> str | None:
     return None
 
 
-def _prepare_checkout(checkout: Path) -> str | None:
-    """Initialize only empty directories; an existing tree must own its Git root."""
+def borrowed_objects(checkout: Path) -> list[Path]:
+    """The object directories the checkout's `objects/info/alternates` names: a
+    repository job that reads the checkout's history mounts them read-only."""
+    objects = checkout.resolve() / ".git" / "objects"
+    try:
+        lines = (objects / "info" / "alternates").read_text().splitlines()
+    except OSError:
+        return []
+    return [Path(os.path.normpath(objects / ln)) for ln in lines if ln and ln[0] != "#"]
+
+
+def _init_checkout(checkout: Path, objects: Path) -> str | None:
+    """`git init` the checkout, borrowing `objects` (the mirror's object directory):
+    a fetch from the mirror then moves refs, not objects. The path is relative, so
+    the host and the containers sharing the repos root both resolve it."""
     from server.code.app.index.gitrepo import auth_env
 
+    init = subprocess.run(
+        ["git", "init", "-q", str(checkout)],
+        capture_output=True,
+        text=True,
+        env=auth_env(),
+        timeout=settings.code_git_timeout_s,
+    )
+    if init.returncode:
+        return f"git init: {init.stderr.strip()}"
+    own = checkout.resolve() / ".git" / "objects"
+    (own / "info" / "alternates").write_text(os.path.relpath(objects, own) + "\n")
+    return None
+
+
+def _lost_borrowed_objects(checkout: Path) -> bool:
+    """Whether the checkout borrows objects and a ref of it (HEAD included) names one
+    it cannot read: the mirror was replaced, or pruned by its owner. Every fetch into
+    such a checkout fails."""
+    from server.code.app.index.gitrepo import auth_env
+
+    if not borrowed_objects(checkout):
+        return False
+    refs = subprocess.run(
+        ["git", "-C", str(checkout), "show-ref", "--head", "-q"],
+        capture_output=True,
+        env=auth_env(),
+        timeout=settings.code_git_timeout_s,
+    )
+    return refs.returncode == 128
+
+
+def _prepare_checkout(checkout: Path, objects: Path) -> str | None:
+    """Initialize only empty directories, borrowing `objects`; an existing tree must
+    own its Git root. A borrowing tree that lost objects gets a new `.git`; its files
+    stay."""
     if not checkout.exists():
         try:
             os.makedirs(checkout, mode=PRIVATE_DIR_MODE, exist_ok=True)
@@ -284,18 +333,15 @@ def _prepare_checkout(checkout: Path) -> str | None:
     try:
         if not checkout.is_dir():
             return "not a directory"
-        if not any(checkout.iterdir()):
+        if any(checkout.iterdir()):
+            error = _checkout_metadata_error(checkout)
+            if error or not _lost_borrowed_objects(checkout):
+                return error
+            logger.warning("compiler tier: %s lost borrowed objects; new .git", checkout)
+            shutil.rmtree(checkout / ".git")
+        else:
             set_repo_dir_mode(str(checkout))
-            init = subprocess.run(
-                ["git", "init", "-q", str(checkout)],
-                capture_output=True,
-                text=True,
-                env=auth_env(),
-                timeout=settings.code_git_timeout_s,
-            )
-            if init.returncode:
-                return f"git init: {init.stderr.strip()}"
-        return _checkout_metadata_error(checkout)
+        return _init_checkout(checkout, objects) or _checkout_metadata_error(checkout)
     except OSError as e:
         logger.warning("compiler tier: checkout %s unavailable: %s", checkout, e)
         return f"checkout unavailable: {caller_text(e)}"
@@ -313,7 +359,7 @@ def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | 
     bare = Path(cfg.git_dir)
     if not bare.exists():
         return checkout, bare, f"bare clone missing at {bare}"
-    if reason := _prepare_checkout(checkout):
+    if reason := _prepare_checkout(checkout, bare.resolve() / "objects"):
         return checkout, bare, f"checkout missing at {checkout} ({reason})"
     return checkout, bare.resolve(), None
 
@@ -452,8 +498,6 @@ def resolve_binary(configured: str) -> Path:
     written, `.absolute()` and never `.resolve()`: an npm-installed
     binary is a symlink under node_modules/.bin, and the pnpm shim
     the harness needs sits beside the LINK, not beside its target."""
-    import shutil
-
     if os.sep not in configured:
         found = shutil.which(configured)
         if found:
@@ -493,13 +537,13 @@ async def git(
     proxy_identity: str = "",
 ) -> None:
     """Run one git command in a checkout, as a repository job: the checkout writable,
-    `local_remote` (the bare clone a fetch reads) read-only, the network only with
-    `network`. `token` authenticates to the owner of `remote` (the repository's own
-    https remote), so a private submodule of that owner can be fetched; with an
-    operator's git proxy the network job goes through it as `proxy_identity` (the
-    entry's git_proxy_identity). On timeout, name the command (a bare TimeoutError says
-    nothing) and retry `retries` times — a stall is usually transient contention on
-    the shared bare clone."""
+    `local_remote` (the bare clone a fetch reads) and the objects the checkout borrows
+    read-only, the network only with `network`. `token` authenticates to the owner of
+    `remote` (the repository's own https remote), so a private submodule of that owner
+    can be fetched; with an operator's git proxy the network job goes through it as
+    `proxy_identity` (the entry's git_proxy_identity). On timeout, name the command (a
+    bare TimeoutError says nothing) and retry `retries` times — a stall is usually
+    transient contention on the shared bare clone."""
     from server.code.app.index.gitrepo import auth_env
 
     # The file transport follows the bare clone alone, never the entry's remote.
@@ -511,7 +555,7 @@ async def git(
         "env": env,
         "timeout_s": timeout_s,
         "writable": [cwd],
-        "readonly": [local_remote] if local_remote else [],
+        "readonly": [*([local_remote] if local_remote else []), *borrowed_objects(cwd)],
         "network": network,
         "merge_stderr": True,
     }
@@ -565,7 +609,8 @@ async def run_harness(
     """A tier harness as a repository job: (exit code, output). It runs the
     repository's own build files, so only the checkout, `out_dir` and `writable`
     are writable; the checkout's .git stays read-only (a hook or config planted
-    there would run outside the sandbox later), as do the harness scripts.
+    there would run outside the sandbox later), as do the objects it borrows and the
+    harness scripts.
     RuntimeError naming the timeout past `timeout_s`."""
     from server.core.paths import SCIP_HARNESS_DIR
 
@@ -575,7 +620,7 @@ async def run_harness(
             env=env,
             timeout_s=timeout_s,
             writable=[checkout, out_dir, *writable],
-            readonly=[checkout / ".git", SCIP_HARNESS_DIR, *readonly],
+            readonly=[checkout / ".git", *borrowed_objects(checkout), SCIP_HARNESS_DIR, *readonly],
             network=network,
             merge_stderr=True,
         )
