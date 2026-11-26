@@ -2,17 +2,67 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import re
+import textwrap
 from typing import Any
 
 from server.code.app.symbol.resolve import _indexed_commit
 from server.code.app.symbol_uses import TYPE_KINDS, single_declaration
 from server.code.domain.anchor import local_name
+from server.code.domain.extract.treesitter import lang_for_path
 from server.code.domain.symbol_body import retained_source_lines, retained_source_window
 from server.code.store.index import CodeRepo
 from server.embedding.embedder import served_model_label
 from server.settings import settings
+
+
+def _with_decorators(
+    chunks: list[dict[str, Any]],
+    window: tuple[int, int, str],
+    row: dict[str, Any],
+    revision: str,
+    minimum: int,
+) -> tuple[int, int, str]:
+    first, end, text = window
+    if first != row["start_line"] or minimum >= first or lang_for_path(row["path"]) != "python":
+        return window
+    last = row["end_line"]
+    # Python function chunks start at their first decorator. Symbol extents start at def.
+    starts = {
+        chunk["start_line"]
+        for chunk in chunks
+        if chunk["kind"] == "function"
+        and chunk.get("scope") == row["qualified_name"]
+        and _indexed_commit(chunk.get("indexed_commit")) == revision
+        and minimum <= chunk["start_line"] < first
+        and chunk["end_line"] == last
+    }
+    if len(starts) != 1:
+        return window
+    (start,) = starts
+    complete = retained_source_window(chunks, start, last, anchor=first, revision=revision)
+    if complete is None or complete[:2] != (start, last):
+        return window
+    source = complete[2]
+    if len(source) > settings.code_chunk_max_chars or not source.lstrip().startswith("@"):
+        return window
+    try:
+        nodes = ast.parse(textwrap.dedent(source)).body
+    except (RecursionError, SyntaxError, ValueError):
+        return window
+    if len(nodes) != 1 or not isinstance(node := nodes[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return window
+    if (
+        not node.decorator_list
+        or node.name != row["name"]
+        or node.lineno != first - start + 1
+        or node.end_lineno != last - start + 1
+    ):
+        return window
+    prefix = "\n".join(source.split("\n", first - start)[:-1])
+    return start, end, f"{prefix}\n{text}"
 
 
 async def owning_type(
@@ -97,7 +147,7 @@ async def named_test_examples(
             )
             if window is None:
                 continue
-            start, end, text = window
+            start, end, text = _with_decorators(chunks, window, row, revision, max(1, hit - radius))
             result = {
                 "caller": str(row["qualified_name"]),
                 "path": path,
