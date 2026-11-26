@@ -41,6 +41,13 @@ class MemberRead:
     imported: tuple[str, str] | None = None
 
 
+def parser_candidate_names(sites: list[MemberRead]) -> set[str]:
+    """Look up member and imported binding names in the parser's symbol tier."""
+    names = {site.member for site in sites}
+    names.update(site.imported[1] for site in sites if site.imported)
+    return names
+
+
 @dataclass(frozen=True)
 class _FunctionScope:
     name: str
