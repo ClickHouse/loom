@@ -349,3 +349,45 @@ async def test_a_page_whose_fan_out_cannot_be_read_serves_the_addressed_namespac
     )
     out = await h.handle_memory_search(page)
     assert [r.memory_key for r in out.results] == ["b"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_user", ["user", "other", None])
+async def test_narrowed_continuation_keeps_chunks_only_under_the_original_scope(
+    monkeypatch, stored_user
+):
+    from server.identity.domain.read_scope import READ_SCOPE_KEY, ReadFilters
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app import search as h
+    from server.memory.app.search import output
+
+    chunk = _hit("chunk", 0.9, ns="n")
+    chunk.source = "chunk"
+    chunk._row_identity = None
+    fact = _hit("fact", 0.8, ns="n")
+    unbound_fact = _hit("unbound", 0.7, ns="n")
+    unbound_fact._row_identity = None
+    scope = ReadFilters("own_user", "user", None)
+    monkeypatch.setattr(output, "request_scope", lambda: scope)
+    monkeypatch.setattr(guidance, "request_scope", lambda: scope)
+    if stored_user is not None:
+        monkeypatch.setattr(sp, "request_scope", lambda: ReadFilters("own_user", stored_user, None))
+    payload = json.loads(_encode(3, 3, [chunk, fact, unbound_fact]))
+    if stored_user is None:
+        payload.pop(READ_SCOPE_KEY)
+    content = json.dumps(payload)
+    _callers_namespaces(monkeypatch, ["n"])
+    patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
+    result = await h.handle_memory_search(
+        MemorySearchInput(
+            org="o",
+            namespace="n",
+            query="q",
+            top_k=3,
+            page=sp.make_handle(sp.page_blob_key(content), 0),
+        )
+    )
+
+    expected = ["chunk", "fact"] if stored_user == "user" else ["fact"]
+    assert [hit.memory_key for hit in result.results] == expected
+    assert result.candidates_total == len(expected)

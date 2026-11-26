@@ -45,7 +45,10 @@ def _row(key: str, **kw: Any) -> Any:
 def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     ch = _CH()
     calls: dict[str, Any] = {"many": [], "one": [], "reemit_many": [], "reemit_one": []}
-    rows = {k: _row(k, entities=["mergetree"], reinforcement_count=4) for k in ("a", "b")}
+    rows = {
+        k: _row(k, entities=["mergetree"], reinforcement_count=4, content_sha256=k * 64)
+        for k in ("a", "b")
+    }
     ch.heads = {identity_key(row): row for row in rows.values()}
 
     async def _get_many(
@@ -90,7 +93,7 @@ async def test_clear_expiry_on_one_key(stubs: dict[str, Any]) -> None:
     assert rows[0]["entities"] == ["mergetree"] and rows[0]["reinforcement_count"] == 4
     ([(key, ov)],) = stubs["calls"]["reemit_many"]
     assert key[-1] == "a" and ov == {"expires_at": None, "version": out.version}
-    assert stubs["calls"]["content_hashes"][key]
+    assert stubs["calls"]["content_hashes"][key] == "a" * 64
 
 
 @pytest.mark.asyncio

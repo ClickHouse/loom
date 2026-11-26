@@ -52,6 +52,7 @@ from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.domain.delete_marks import delete_version_trace
+from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.domain.served import served_totals
 from server.memory.domain.webhook_events import memory_change
 from server.memory.store import key_write_lock
@@ -1435,11 +1436,11 @@ async def handle_memory_touch(input: MemoryTouchInput) -> MemoryTouchOutput:
             )
             for r in (by_key[k] for k in versions)
             # a 'high' head keeps no vector: never copy one forward under it
-            if is_embedded(r.memory_type, r.sensitivity)
+            if is_embedded(r.memory_type, r.sensitivity) and is_content_hash(r.content_sha256)
         ]
         if mirror:
             try:
-                hashes = {key: served_content_sha256(by_key[key[-1]].value) for key, _ in mirror}
+                hashes = {key: by_key[key[-1]].content_sha256 for key, _ in mirror}
                 await memory_repo.reemit_embedding_rows_for_keys(mirror, ch=ch, of_content=hashes)
             except Exception as e:  # noqa: BLE001 — expiry mirror is best-effort; memory rows already updated
                 log.warning("memory_embeddings expiry mirror failed (non-fatal): %s", e)

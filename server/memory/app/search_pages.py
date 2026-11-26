@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Any
 
 from server.core import pg
 from server.core.datetimes import naive_utc_now
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import READ_SCOPE_KEY, stored_read_scope
 from server.memory.domain.search_types import RowKey, hit_row_key
 from server.settings import settings
 
@@ -127,11 +129,17 @@ def encode_page(
         "namespaces_searched": namespaces_searched,
         "namespaces_skipped": namespaces_skipped,
         "hits": hits,
+        READ_SCOPE_KEY: stored_read_scope(request_scope()),
     }
     if first_page:
         # Scope metadata lets later pages count the original hits without keeping their text.
         page["first_page_scope"] = [
-            {"namespace": hit.namespace, "row_identity": hit._row_identity} for hit in first_page
+            {
+                "namespace": hit.namespace,
+                "row_identity": hit._row_identity,
+                "source": hit.source,
+            }
+            for hit in first_page
         ]
     if replay:
         page["replay"] = True

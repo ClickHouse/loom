@@ -61,11 +61,17 @@ def _current(row: dict[str, Any], now: datetime, *, replay: bool = False) -> boo
     return True
 
 
-def hit_in_read_scope(identity: tuple[str, ...] | list[str] | None) -> bool:
+def hit_in_read_scope(
+    identity: tuple[str, ...] | list[str] | None,
+    *,
+    allow_unidentified: bool = False,
+) -> bool:
     scope = request_scope()
     if not scope.narrowed:
         return True
-    if identity is None or len(identity) != 3:
+    if identity is None:
+        return allow_unidentified
+    if len(identity) != 3:
         return False
     agent, user_id, session_id = identity
     return agent == SHARED_AGENT or row_in_read_scope(scope, user_id, session_id)
@@ -195,6 +201,7 @@ async def attach_search_guidance(
     replay: bool = False,
     timeout_s: float = 0.2,
     snapshot_only: bool = False,
+    same_parked_scope: bool = False,
 ) -> list[_MemorySearchHit]:
     """Project authorization-scoped evidence for the served window.
 
@@ -205,7 +212,10 @@ async def attach_search_guidance(
     denied = {
         i
         for i, hit in enumerate(hits)
-        if (parked or hit._row_identity is not None) and not hit_in_read_scope(hit._row_identity)
+        if (parked or hit._row_identity is not None)
+        and not hit_in_read_scope(
+            hit._row_identity, allow_unidentified=same_parked_scope and not _fact_row(hit)
+        )
     }
     keys: dict[int, IdentityKey] = {
         i: (input.org, *doc_key(hit, input.namespace))

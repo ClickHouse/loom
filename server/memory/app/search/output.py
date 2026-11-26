@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 from server.core.ch import get_client, sequential_reads
 from server.embedding import get_embedder
+from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import READ_SCOPE_KEY, stored_read_scope
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
 from server.memory.app.search import pg_validation, term_leg
 from server.memory.app.search.context import SearchContext
@@ -92,11 +94,15 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
     hits, nxt, stale_dropped = await _parked_slice(input, payload, offset, readable)
     # Count authorized first-page hits as well as the tail when access changed.
     parked_rows = (payload.get("first_page_scope") or []) + (payload.get("hits") or [])
+    same_scope = _same_parked_scope(payload)
     withheld = sum(
         1
         for row in parked_rows
         if row.get("namespace", "") not in readable
-        or not hit_in_read_scope(row.get("row_identity"))
+        or not hit_in_read_scope(
+            row.get("row_identity"),
+            allow_unidentified=same_scope and row.get("source") not in (None, "fact", "anchor"),
+        )
     )
     # Rows the authority no longer serves stay in it, counted per page in `stale_dropped`;
     # a shared definition withheld since the first page stays in it too, counted nowhere.
@@ -183,6 +189,12 @@ async def _parked_shared_flags(
     return [flags.get(i, False) for i in range(len(hits))]
 
 
+def _same_parked_scope(payload: dict[str, Any]) -> bool:
+    # Identity-less results cannot be re-scoped row by row. Only a page created
+    # under these same predicates can supply one to a narrowed caller.
+    return payload.get(READ_SCOPE_KEY) == stored_read_scope(request_scope())
+
+
 async def _parked_slice(
     input: MemorySearchInput, payload: dict[str, Any], offset: int, readable: set[str]
 ) -> tuple[list[_MemorySearchHit], int, int]:
@@ -198,6 +210,7 @@ async def _parked_slice(
     hits: list[_MemorySearchHit] = []
     dropped = 0
     j = offset
+    same_scope = _same_parked_scope(payload)
     for refill in (False, True):
         if len(hits) == top_k or j >= len(rows):
             break
@@ -205,7 +218,10 @@ async def _parked_slice(
         window: list[tuple[int, _MemorySearchHit]] = []
         while j < len(rows) and len(window) < size:
             hit = _pages.unparked(rows[j]) if rows[j].get("namespace", "") in readable else None
-            if hit is not None and hit_in_read_scope(hit._row_identity):
+            if hit is not None and hit_in_read_scope(
+                hit._row_identity,
+                allow_unidentified=same_scope and hit.source not in ("fact", "anchor"),
+            ):
                 window.append((j, hit))
             j += 1
         window_hits = [h for _, h in window]
@@ -231,6 +247,7 @@ async def _parked_slice(
                 if h is not None and not stale_hit and not withheld_hit
             ],
             parked=True,
+            same_parked_scope=same_scope,
             replay=bool(payload.get("replay")),
         )
         current_ids = {id(h) for h in current}

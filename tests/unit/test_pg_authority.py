@@ -1864,22 +1864,57 @@ async def test_a_parked_page_reads_on_past_stale_rows_and_resumes_after_the_last
 
 
 @pytest.mark.asyncio
-async def test_an_as_of_replay_page_does_not_inherit_current_guidance(
-    monkeypatch: pytest.MonkeyPatch, current_parked_heads: None
+async def test_an_as_of_replay_page_returns_since_edited_hits_without_live_guidance(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app import search_pages
-    from server.memory.app.search import output, pg_validation
+    from server.memory.app.search import guidance, output, pg_validation
+    from server.memory.store.history import HistoryTarget
+
+    edited = _hit("edited", version=5)
+    edited.content_excerpt = "historical text from the search cut"
+    current = _hit("unchanged", version=5)
+    payload = _parked_page(
+        [edited, current], replay=True, first_page=[_hit("first"), _hit("second")]
+    )
 
     async def _flags(org: str, namespace: str, hits: list[Any]) -> list[bool]:
-        raise AssertionError("a replay's page is not checked")
+        raise AssertionError("replay does not run live version validation")
 
-    monkeypatch.setattr(pg_validation, "stale_flags", _flags)
-    payload = _parked_page([_hit("a"), _hit("b")], replay=True)
+    async def heads(keys):
+        return {
+            key: {
+                "version": 8 if key[-1] == "edited" else 5,
+                "status": "active",
+                "memory_id": key[-1],
+                "verified_by": "human:reviewer",
+                "content_sha256": "a" * 64,
+                "verified_sha256": "a" * 64,
+            }
+            for key in keys
+        }
+
+    async def history(org, memory_id, version):
+        assert (org, memory_id, version) == ("o", "edited", 5)
+        return HistoryTarget(
+            org=org,
+            namespace="n",
+            agent="a",
+            user_id="u",
+            session_id="s",
+            memory_key="edited",
+            version=version,
+            memory_id=memory_id,
+            content_sha256="b" * 64,
+        )
 
     async def _load(*a: Any, **kw: Any) -> dict[str, Any]:
         return payload
 
+    monkeypatch.setattr(pg_validation, "stale_flags", _flags)
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    monkeypatch.setattr(guidance, "find_history_target", history)
     monkeypatch.setattr(search_pages, "load_page", _load)
     monkeypatch.setattr(output, "get_client", lambda: None)
     page = MemorySearchInput(
@@ -1890,7 +1925,9 @@ async def test_an_as_of_replay_page_does_not_inherit_current_guidance(
         page=search_pages.make_handle("page/" + "b" * 16, 0),
     )
     out = await output._serve_parked_page(page)
-    assert [h.memory_key for h in out.results] == ["a", "b"] and out.stale_dropped == 0
+    assert [h.memory_key for h in out.results] == ["edited", "unchanged"]
+    assert out.results[0].content_excerpt == "historical text from the search cut"
+    assert out.stale_dropped == 0
     assert all(
         h.use_guidance is not None and h.use_guidance.review == "unknown" for h in out.results
     )
