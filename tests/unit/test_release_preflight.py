@@ -745,7 +745,7 @@ def test_release_sdk_inventory_generates_canonical_extra_and_peerless_row(tmp_pa
     assert json.loads(outputs["node_peers"]) == {
         "include": [
             {"peer": "none", "requirement": ""},
-            {"peer": "@example/adapter", "requirement": "@example/adapter@>=1 <2"},
+            {"peer": "@example/adapter", "requirement": ">=1 <2"},
         ]
     }
 
