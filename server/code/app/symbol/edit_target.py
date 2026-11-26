@@ -150,6 +150,9 @@ async def _declaration_targets(
     for clue in required:
         hits = [match for match in matches if clue in match["text"]]
         if not hits:
+            # A grep preview strips whitespace, so it cannot prove this clue unmatched.
+            if clue != clue.strip():
+                return []
             missing_clue = True
             continue
         if all(hit["line"] == hit["scope_start_line"] for hit in hits):
