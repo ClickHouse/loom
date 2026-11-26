@@ -688,6 +688,46 @@ def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:
     ]
 
 
+def test_grep_reuses_exact_match_text_in_the_same_path_and_line() -> None:
+    source = "return submit_job_with_priority(job, priority=DEFAULT_PRIORITY)"
+    match = {"path": "worker.py", "line": 8, "text": source}
+    different_path = {**match, "path": "other.py"}
+    different_text = {**match, "text": "return ..."}
+    context = {
+        "path": "worker.py",
+        "start_line": 7,
+        "end_line": 8,
+        "text": f"def run(job):\r\n    {source}\r\n",
+    }
+    payload = {"matches": [match, different_path, different_text], "contexts": [context]}
+
+    projected = lr.mcp_op_result("code.grep", {**payload, "related": payload}, {}, None)
+    for result in (projected, projected["related"]):
+        assert result["match_text_in_context"] is True
+        assert result["matches"] == [
+            {"path": "worker.py", "line": 8},
+            different_path,
+            different_text,
+        ]
+        assert result["contexts"] == [context]
+    raw = lr.mcp_op_result("code.grep", payload, {"explain": True}, None)
+    assert raw["matches"] == [match, different_path, different_text]
+    assert "match_text_in_context" not in raw
+
+
+def test_grep_keeps_match_text_when_excerpt_coordinates_are_uncertain() -> None:
+    text = "return submit_job_with_priority(job, priority=DEFAULT_PRIORITY)"
+    match = {"path": "worker.py", "line": 8, "text": text}
+    context = {"path": "worker.py", "start_line": 8, "end_line": 8, "text": f"    {text}"}
+    for contexts in (
+        [{**context, "end_line": 9}],
+        [context, {**context, "text": "    return job"}],
+    ):
+        result = lean_code("code.grep", {"matches": [match], "contexts": contexts})
+        assert result["matches"] == [match]
+        assert "match_text_in_context" not in result
+
+
 def test_lean_grep_omits_redundant_metadata_only_with_complete_source() -> None:
     body = "    def inspect(self, value: str):\n        return value"
     definition = {

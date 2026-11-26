@@ -1358,12 +1358,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "per-frame grep-and-open loop."
     ),
     "code.grep": (
-        "Find known text in indexed source. Use code.search for behavior. "
-        "Batch code and test-name prefixes in a `pattern` list. Path filters scope the batch. "
-        "Matches include bodies by default. "
-        "`include_body: false` omits enclosing bodies. Add `context_lines: 0` for locations. "
+        "Find indexed text. Batch code and test prefixes in `pattern`. "
+        "Path filters scope the batch. Bodies are on by default. "
+        "Set `include_body: false` for excerpts, `context_lines: 0` for locations. "
+        "Omitted match text is in its excerpt at the same path and line. "
+        "Use code.search for behavior. "
         "Use literal strings or one RE2 string with `regex: true`. "
-        "Filter by `path_prefix`, `path_globs` or `langs`. "
+        "Filter the batch by `path_prefix`, `path_globs` or `langs`. "
         "`neighbours` adds graph links. `deadline_ms` allows partial results. "
         "`mode: 'message'` finds printed error templates. "
         "`mode: 'presence'` checks `namespaces`. "
@@ -2170,12 +2171,12 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.grep": (
         "Batch exact code and test literals with path_globs. Keep default bodies for edits. "
         "For excerpts, set `include_body: false` and `context_lines`. "
+        "Omitted match text is in its excerpt at the same path and line. "
         "Use mode=files for paths only and regex=true for RE2.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
         "For locations, set `include_body: false`, `context_lines: 0`. "
-        "Use code.search for behavior or code.edit_context for a known definition. "
-        "Call prefixes and misses can return related source and notes. "
-        "Use code.read for exact lines. "
+        "Use code.search for behavior, code.edit_context for a known definition. "
+        "Prefixes and misses can return related source and notes. "
         "`definitions_partial` flags missing source. Check coverage."
     ),
     # The coding tier lists blast radius with the sentences a coding session
