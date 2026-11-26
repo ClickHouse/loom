@@ -194,18 +194,32 @@ class Host:
     ) -> str:
         """The last check before a reply leaves: it goes where its context was chosen
         for, that context (`generation`, read from the conversation when the reply was
-        drafted) was not discarded since, and the destination still has the readers and
-        the sources it had then. If those changed, the context goes with the reply and
-        the next request starts over."""
+        drafted) was not discarded since, the destination still has the readers and the
+        sources it had then, and Loom still lets the person read each source. If those
+        changed, the context goes with the reply and the next request starts over."""
         if destination != talk.destination:
             raise ScopeRefused(f"a reply built for {talk.destination} cannot go to {destination}")
         scope = await self.scope(talk.person, destination)
-        # Read after the await, so no change to the record slips in between the checks.
+        # The listing can still name a collection whose grant was just revoked, so one
+        # held document of each source is read again: Loom checks that read against the
+        # grants it has now, and nothing is asked of Loom after it.
+        held = {p["namespace"]: p["source_uri"] for p in talk.passages.values()}
+        try:
+            for namespace, source_uri in held.items():
+                if namespace in scope:
+                    async with self.as_person(talk.person, namespace) as loom:
+                        await loom.knowledge.get(source_uri)
+        except AuthInsufficient:
+            talk.discard()
+            raise ScopeRefused(f"{destination} lost a source since the search") from None
+        # Read after the awaits, so no change to the record slips in between the checks.
         where = self.destinations.get(destination)
         if where is None or talk.person not in where.members:
             raise ScopeRefused(f"{destination} is not a destination {talk.person} is in")
         if generation != talk.generation:
             raise ScopeRefused("the context this reply was drafted from was discarded")
+        if not where.private:  # the record's sources may have changed during the reads
+            scope = [ns for ns in scope if ns in where.sources]
         new_reader = talk.readers is not None and not where.members <= talk.readers
         if new_reader or any(p["namespace"] not in scope for p in talk.passages.values()):
             talk.discard()

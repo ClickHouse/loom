@@ -53,7 +53,7 @@ class Server:
         self.calls: list[tuple[str, str, dict[str, Any]]] = []  # (user, op, body)
         self.deleted: list[str] = []
         self.distances: dict[tuple[str, str], float] = {}  # a document's, when not 0.2
-        self.during_list: Any = None  # called while a collection.list is in flight
+        self.during: dict[str, Any] = {}  # op → called while a call of it is in flight
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
@@ -76,6 +76,8 @@ class Server:
         user = req.headers["Authorization"].removeprefix("Bearer ")
         own = f"col-me-{user}"
         self.calls.append((user, op, body))
+        if op in self.during:
+            self.during[op]()
 
         def name(namespace: str) -> str:
             return own if namespace == "@me" else namespace
@@ -85,8 +87,6 @@ class Server:
 
         ns = name(body.get("namespace", "@me"))
         if op == "collection.list":
-            if self.during_list:
-                self.during_list()
             rows = [{"namespace": own, "personal": True, "role": "admin"}]
             rows += [
                 {"namespace": c, "personal": False, "role": "viewer"}
@@ -307,7 +307,7 @@ async def test_a_draft_is_refused_on_every_retry_after_its_source_is_removed(
             await host.deliver(talk, "channel:a", "reply", drafted)
 
 
-@pytest.mark.parametrize("tool", ["search", "open_citation"])
+@pytest.mark.parametrize("tool", ["search", "open_citation", "none before delivery"])
 async def test_a_read_loom_refuses_in_a_collection_still_listed_drops_the_draft(
     monkeypatch: pytest.MonkeyPatch, tool: str
 ) -> None:
@@ -328,9 +328,13 @@ async def test_a_read_loom_refuses_in_a_collection_still_listed_drops_the_draft(
     # Loom refuses the read; the host turns that into its own answer.
     if tool == "search":
         assert await host.call_tool(talk, "search", {"query": "q"}) == []
-    else:
+    elif tool == "open_citation":
         with pytest.raises(example.ScopeRefused, match="no longer in scope"):
             await host.call_tool(talk, "open_citation", {"handle": passage["handle"]})
+    else:  # delivery comes straight after the revoke, and makes the refused read itself
+        with pytest.raises(example.ScopeRefused, match="lost a source"):
+            await host.deliver(talk, "channel:a", "reply", drafted)
+    assert not talk.passages, "the context the reply was drafted from is gone"
     # The listing would still pass the draft, so the refused read is what drops it.
     with pytest.raises(example.ScopeRefused, match="was discarded"):
         await host.deliver(talk, "channel:a", "reply", drafted)
@@ -372,11 +376,12 @@ async def test_a_scope_wider_than_one_search_takes_is_searched_in_batches(
     assert [p["content"] for p in found] == ["my note"]
 
 
+@pytest.mark.parametrize("op", ["collection.list", "knowledge.get"])
 @pytest.mark.parametrize(
     ("members", "sources"), [({"ana", "lead", "guest"}, ("col-a",)), ({"ana", "lead"}, ())]
 )
-async def test_a_record_changed_while_delivery_lists_collections_stops_the_reply(
-    monkeypatch: pytest.MonkeyPatch, members: set[str], sources: tuple[str, ...]
+async def test_a_record_changed_while_delivery_asks_loom_stops_the_reply(
+    monkeypatch: pytest.MonkeyPatch, op: str, members: set[str], sources: tuple[str, ...]
 ) -> None:
     server = Server()
     server.install(monkeypatch)
@@ -389,8 +394,32 @@ async def test_a_record_changed_while_delivery_lists_collections_stops_the_reply
     talk = host.conversation("ana", "channel:a")
     assert len(await host.call_tool(talk, "search", {"query": "q"})) == 1
     changed = example.Destination(frozenset(members), sources)
-    server.during_list = lambda: host.destinations.update({"channel:a": changed})
+    server.during[op] = lambda: host.destinations.update({"channel:a": changed})
     with pytest.raises(example.ScopeRefused, match="changed its readers or sources"):
+        await host.deliver(talk, "channel:a", "reply", talk.generation)
+
+
+async def test_a_grant_revoked_while_delivery_lists_collections_stops_the_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = Server(lists_revoked=True)
+    server.install(monkeypatch)
+    example = load_example(monkeypatch)
+    server.grants["col-a"] = {"ana", "lead"}
+    server.docs[("col-a", "docs://a")] = "shared text"
+    host = example.Host(
+        "acme", str, {"channel:a": example.Destination(frozenset({"ana", "lead"}), ("col-a",))}
+    )
+    talk = host.conversation("ana", "channel:a")
+    assert len(await host.call_tool(talk, "search", {"query": "q"})) == 1
+
+    def revoke() -> None:
+        server.grants["col-a"].discard("ana")
+        server.revoked.add(("col-a", "ana"))
+
+    # The listing still names the collection, so the read has to come after it.
+    server.during["collection.list"] = revoke
+    with pytest.raises(example.ScopeRefused, match="lost a source"):
         await host.deliver(talk, "channel:a", "reply", talk.generation)
 
 

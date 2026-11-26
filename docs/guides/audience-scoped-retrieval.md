@@ -82,28 +82,32 @@ reaches the other. The host keeps one state per person and destination: the pass
 it retrieved and the handles it issued. Summaries and cached answers built from that
 context belong in the same state, never in a store keyed by the person alone.
 
-Before a reply leaves, the host checks three things and refuses the reply when one
+Before a reply leaves, the host checks four things and refuses the reply when one
 fails:
 
 1. Its target is the destination the context was chosen for. A reply moved to another
    destination is a new request with a new scope.
 2. The destination has no reader it did not have when the passages were retrieved.
 3. Every passage's collection is still in the scope, computed again at delivery.
+4. Loom still answers a read of every passage's collection for the person: the host
+   reads one held document from each, and a 403 refuses the reply.
 
 So a reply drafted before a member joined, or before a grant was revoked, does not
-reach the conversation afterwards. When the second or third check fails, the host also
-drops the passages the reply was drafted from, and the next request starts over with
-the readers and the sources the destination has then.
+reach the conversation afterwards. When one of the last three checks fails, the host
+also drops the passages the reply was drafted from, and the next request starts over
+with the readers and the sources the destination has then.
 
 Dropping the passages removes what the checks compare a draft with, so the state also
 counts how many times its context was dropped. A draft carries the count it was
 written under, and delivery refuses one whose count is no longer current: the same
 draft sent again is refused again. The host drops the context the same way when a
 search finds a held passage's collection out of scope, and when Loom answers 403 to a
-search or to a citation read. `collection.list` can still name a collection for a moment
-after its grant is revoked, so the host treats that 403 as its own refusal. Until the
-listing catches up or a read is refused, delivery cannot see that revoke: see
-[Limits](#limits).
+search, to a citation read or to the read of the fourth check. `collection.list` can
+still name a collection for a moment after its grant is revoked, so the listing alone
+never passes a reply: the read of the fourth check comes after it, Loom holds that read
+to the grants it has, and the host treats a 403 as its own refusal. A revoke that lands
+after that read, or that the answering server process has not yet taken, is not seen
+by this delivery: see [Limits](#limits).
 
 ## What Loom enforces and what the host does
 
