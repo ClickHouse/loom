@@ -9,6 +9,7 @@ import pytest
 from server.code.api.models_symbol import CodeEditContextInput
 from server.code.app import enrich, memory_links
 from server.code.app.symbol import edit_lessons
+from server.code.domain.anchor import Definition
 from server.code.domain.units import CodeUnit
 from server.memory.app import code_link_reads, code_plane_reads
 from server.settings import settings
@@ -178,3 +179,61 @@ async def test_verified_lesson_only_ranks_fresh_rows(monkeypatch):
     ordinary = await code_plane_reads.lessons_for_symbol("org", "repo", **scope, limit=len(states))
     assert [row["code_state"] for row in verified] == ["fresh"]
     assert [row["code_state"] for row in ordinary] == states
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("recovered", "stored", "legacy", "ordinary", "confirmed"),
+    [
+        ("new", "original", True, "fresh", False),
+        ("", "original", False, "fresh", False),
+        ("new", "", False, "fresh", False),
+        ("new", "original", False, "changed", False),
+        ("original", "original", False, "fresh", True),
+    ],
+)
+async def test_verified_caller_requires_matching_fingerprint(
+    monkeypatch, recovered, stored, legacy, ordinary, confirmed
+):
+    path = "web/app.py"
+    symbol = "web.app::App::mount"
+    link = {
+        "namespace": "history",
+        "agent": "writer",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": NOTE["memory_key"],
+        "memory_id": "one",
+        "path": path,
+        "anchored_path": path,
+        "qualified_name": symbol,
+        "anchored_name": symbol,
+        "state": "fresh",
+        "carried": False,
+        "checked_hash": stored,
+        "body_hash": stored,
+        "anchored_hash": stored,
+        "fingerprint_version": "older" if legacy else code_plane_reads.fingerprint_version(),
+        "changed_since": REVISION,
+        "suggestion": "",
+    }
+    definition = Definition(path, symbol, "mount", body_hash=recovered)
+    monkeypatch.setattr(code_plane_reads.links_store, "for_paths", AsyncMock(return_value=[link]))
+    monkeypatch.setattr(memory_links, "indexed_head", AsyncMock(return_value=REVISION))
+    monkeypatch.setattr(memory_links, "trunk_namespace", lambda *_: "repo")
+    monkeypatch.setattr(code_link_reads, "current_links", AsyncMock(return_value=[link]))
+    monkeypatch.setattr(
+        code_plane_reads, "_definitions_at", AsyncMock(return_value={(path, symbol): definition})
+    )
+    monkeypatch.setattr(
+        code_plane_reads.reads, "served_excerpts", AsyncMock(return_value=[{**NOTE, "mid": "one"}])
+    )
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
+
+    scope = {"qualified_name": symbol, "paths": [path], "namespaces": ["history"]}
+    verified = await code_plane_reads.lessons_for_symbol(
+        "org", "repo", **scope, fresh_at_commit=REVISION
+    )
+    direct = await code_plane_reads.lessons_for_symbol("org", "repo", **scope)
+    assert [row["code_state"] for row in direct] == [ordinary]
+    assert [row["code_state"] for row in verified] == (["fresh"] if confirmed else [])

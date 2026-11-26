@@ -111,7 +111,9 @@ async def lessons_for_symbol(
             return []
         matched = _as_trunk_has_it(links, qualified_name)
     else:
-        matched = _matched(links, here, on_trunk=code_namespace == trunk)
+        matched = _matched(
+            links, here, on_trunk=code_namespace == trunk, require_fingerprint=bool(fresh_at_commit)
+        )
     if fresh_at_commit:
         matched = [entry for entry in matched if entry[1] == "fresh"]
     # a memory's state is that of its first matched link, as the ranking below reads it
@@ -284,7 +286,11 @@ async def _definitions_at(
 
 
 def _matched(
-    links: list[LinkRow], here: dict[tuple[str, str], Definition], *, on_trunk: bool
+    links: list[LinkRow],
+    here: dict[tuple[str, str], Definition],
+    *,
+    on_trunk: bool,
+    require_fingerprint: bool,
 ) -> list[tuple[LinkRow, str, str]]:
     """(link, code state, suggestion) of each link whose definition the branch has."""
     out = []
@@ -304,6 +310,7 @@ def _matched(
             at_anchor=now is anchored,
             on_trunk=on_trunk,
             baseline=was[1] if was else "",
+            require_fingerprint=require_fingerprint,
         )
         # `current` serves a correction only for trunk's checked code: the branch must have it
         judged = state == "changed" and now.body_hash == a["checked_hash"]
@@ -345,16 +352,20 @@ def _lesson_state(
     at_current: bool,
     at_anchor: bool,
     on_trunk: bool,
+    require_fingerprint: bool,
     baseline: str = "",
 ) -> str:
     """The code state of link `a` for the definition `now` a read found it at: where
     trunk has it now (`at_current`), where it was before a move (with the `baseline` it
-    had there), or where the memory was written against (`at_anchor`)."""
+    had there), or where the memory was written against (`at_anchor`).
+    A verified read needs a comparison under the current fingerprint rules."""
     stored = a["state"] if a["state"] in ("changed", "moved") else "fresh"
     if a["carried"] and not at_anchor:
         return "changed"  # a renamed class carried it: what surrounds it is not the original
     if a["fingerprint_version"] != fingerprint_version():
-        return stored  # hashed under other rules: compared once the worker re-hashed it
+        return "unresolved" if require_fingerprint else stored
+    if require_fingerprint and not now.body_hash:
+        return "unresolved"
     if on_trunk and at_current and now.body_hash == a["checked_hash"]:
         return stored  # trunk's definition as the worker last checked it
     # compare with the baseline; a branch that still has the code under its anchored
@@ -363,6 +374,8 @@ def _lesson_state(
     if at_anchor:
         linked.add(a["anchored_hash"])
     linked.discard("")
+    if require_fingerprint and not linked:
+        return "unresolved"
     if linked and now.body_hash and now.body_hash not in linked:
         return "changed"
     return "moved" if on_trunk and a["state"] == "moved" else "fresh"
