@@ -1,6 +1,6 @@
 ---
 title: Memory for coding agents across sessions and tools
-description: Compare repository instructions, session history, and shared memory for coding agents. Test recall, scoped access, and lessons linked to code.
+description: Choose an AI agent memory tool for user preferences, project rules, or decisions shared across coding agents. Test recall, access, and source changes.
 seo:
   title: Shared memory for coding agents
 ---
@@ -35,10 +35,19 @@ to the function that enforces it. A later agent can retrieve the lesson with the
 function and check the source before changing the retry. Use [memory history and provenance](../features/memory/history-and-provenance.md)
 to see who saved the lesson and how it changed.
 
+## Choose a memory tool for AI agents
+
+Start with who should be able to retrieve the information in a fresh session. For
+an assistant that remembers a person's preferences, test whether storage can scope
+recall and deletion to that user. For an agent that needs approved policy, test whether
+document search returns a passage from the current revision. For a team of agents,
+test whether a decision survives a client switch and whether a reader on another
+project is refused. The [self-hosted comparison](../guides/compare-coding-agent-memory.md)
+shows what a fresh reader could retrieve in one coding example.
+
 ## Choosing a memory tool for coding agents
 
 Choose a source based on what the next agent needs to retrieve and who maintains it.
-For observed results, see the [self-hosted memory comparison](../guides/compare-coding-agent-memory.md).
 
 | Source                                      | Use it for                                                              | What to verify                                                                      |
 | ------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
