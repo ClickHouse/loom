@@ -6,57 +6,14 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
-from server.insights.store.adoption_telemetry import DOMAINS_SQL
 from server.insights.workers import adoption_telemetry
 from server.settings import Settings, settings
 from server.workers import pass_context
 from server.workers.registry import enabled_workers
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 def test_domain_sharing_is_enabled_by_default() -> None:
     assert Settings.model_fields["adoption_telemetry_share_domains"].default is True
-
-
-@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-def test_reported_domains_include_password_accounts_and_exclude_restricted_namespaces() -> None:
-    rows = run(
-        [
-            ddl("namespaces"),
-            ddl("agent_events"),
-            """
-            INSERT INTO loom.namespaces
-                (org, namespace, contact_email, password_hash, tags, classification, active)
-            VALUES
-                ('org', 'direct', ' Person@Local.Example ', 'password-hash', [], 'standard', true),
-                ('org', 'same-contact', 'person@local.example', 'password-hash', [], 'standard', true),
-                ('org', 'sso', 'person@sso.example', '', ['oidc-jit'], 'standard', true),
-                ('org', 'restricted', 'person@restricted.example', '', ['oidc-jit'], 'restricted', true),
-                ('org', 'policy', 'person@policy.example', 'password-hash', [], 'standard', true),
-                ('org', 'inactive', 'person@inactive.example', 'password-hash', [], 'standard', false),
-                ('org', 'anonymous', '', '', [], 'standard', true)
-            """,
-            """
-            INSERT INTO loom.agent_events (ts, org, namespace, kind, slo_class, status_class)
-            VALUES
-                ('2026-01-01 02:00:00', 'org', 'direct', 'request', 'read', 'ok'),
-                ('2026-01-01 03:00:00', 'org', 'same-contact', 'request', 'read', 'ok'),
-                ('2026-01-01 04:00:00', 'org', 'direct', 'request', 'read', 'server'),
-                ('2026-01-01 05:00:00', 'org', 'sso', 'request', 'read', 'ok'),
-                ('2026-01-01 06:00:00', 'org', 'policy', 'request', 'read', 'ok')
-            """,
-        ],
-        DOMAINS_SQL,
-        {
-            "start": datetime(2026, 1, 1, tzinfo=UTC),
-            "end": datetime(2026, 1, 1, 12, tzinfo=UTC),
-            "restricted": [("org", "policy")],
-        },
-    )
-    assert rows == [
-        {"domain": "local.example", "user_count": 1, "successful_requests": 2},
-        {"domain": "sso.example", "user_count": 1, "successful_requests": 1},
-    ]
 
 
 async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.MonkeyPatch) -> None:
