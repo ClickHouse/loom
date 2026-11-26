@@ -36,24 +36,24 @@ the application.
 
 ### What is sent
 
-| Columns                                                                                                                | Meaning                                                                                                                                                                                                                   |
-| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema_version`, `installation_id`, `day`                                                                             | Report format version, installation UUID and UTC usage date                                                                                                                                                               |
-| `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                                                             |
-| `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                                                              |
-| `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                                                    |
-| `user_domains`                                                                                                         | Empty by default. With domain sharing enabled, up to 30 verified email domains with distinct address counts and successful requests in their verified namespaces. Restricted namespaces and private mirrors are excluded. |
-| `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                                                               |
-| `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace.                                   |
-| `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                                                   |
-| `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                                                          |
-| `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                                                  |
+| Columns                                                                                                                | Meaning                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`, `installation_id`, `day`                                                                             | Report format version, installation UUID and UTC usage date                                                                                                                             |
+| `window_start`, `window_end`                                                                                           | UTC start (inclusive) and end (exclusive) of the usage window                                                                                                                           |
+| `loom_version`, `clickhouse_version`                                                                                   | Loom server and connected ClickHouse versions at report time                                                                                                                            |
+| `total_namespaces`                                                                                                     | Active registered namespaces at report time, excluding private mirrors                                                                                                                  |
+| `user_domains`                                                                                                         | Up to 30 namespace contact domains with distinct contact counts and successful requests. Domain sharing is enabled by default. Restricted namespaces and private mirrors are excluded.  |
+| `requests`, `successful_requests`, `server_errors`                                                                     | Registered operation attempts, requests with an OK status, and requests with a server error                                                                                             |
+| `active_orgs`, `active_namespaces`, `active_agents`, `active_sessions`                                                 | Approximate distinct identifiers with a successful call in the window, excluding missing identifiers. Namespaces and agents are scoped to an org, and sessions to an org and namespace. |
+| `memory_requests`, `code_requests`, `knowledge_requests`, `conversation_requests`, `tracker_requests`, `task_requests` | Successful requests by operation prefix                                                                                                                                                 |
+| `mcp_requests`, `http_requests`                                                                                        | Successful requests by transport                                                                                                                                                        |
+| `llm_calls`, `input_tokens`, `output_tokens`, `embedding_tokens`                                                       | Totals recorded on the included requests                                                                                                                                                |
 
 The report excludes private mirror events, benchmark traffic, background traffic, and
 unclassified routes. It contains no full email addresses, names, operation strings,
-actor identifiers, customer content, or credentials. Email domains come from active
-accounts provisioned through verified OIDC or explicitly linked through SSO. Per-domain requests come from standard namespaces with verified contacts. A
-domain can help identify a company for follow-up. A reporting installation with zero
+actor identifiers, customer content, or credentials. Email domains come from contact
+addresses on active standard namespaces, including self-reported addresses from password
+signup. Verified companies enroll separately. A reporting installation with zero
 successful requests is idle for that window. A missing report leaves its activity unknown.
 
 ### Can I disable telemetry?
@@ -62,8 +62,9 @@ Set `LOOM_ADOPTION_TELEMETRY_ENABLED=false` on every server and worker replica.
 With a settings file, set `adoption_telemetry_enabled: false`. In the Helm chart, put
 that setting under `settingsFile`.
 
-Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=true` to share domain activity with the
-aggregate report. Domain sharing is off by default.
+Set `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false` on every server and worker replica
+to omit domains while sending aggregate usage. In a settings file, set
+`adoption_telemetry_share_domains: false`.
 
 ### Adoption dashboard
 

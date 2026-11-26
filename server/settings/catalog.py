@@ -4429,8 +4429,8 @@ class ObservabilitySettings(BaseModel):
 
     # Self-hosted adoption reports. Set false to stop all adoption reporting.
     adoption_telemetry_enabled: bool = True
-    # Share verified email domain counts in adoption reports. Off by default.
-    adoption_telemetry_share_domains: bool = False
+    # Share namespace contact domains and counts in adoption reports. Set false to omit them.
+    adoption_telemetry_share_domains: bool = True
     # Seconds between adoption checks and retries. A report covers 12 hours.
     adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 

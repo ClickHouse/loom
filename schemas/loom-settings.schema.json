@@ -48,9 +48,9 @@
           "description": "Seconds between adoption checks and retries. A report covers 12 hours."
         },
         "adoption_telemetry_share_domains": {
-          "default": false,
+          "default": true,
           "type": "boolean",
-          "description": "Share verified email domain counts in adoption reports. Off by default."
+          "description": "Share namespace contact domains and counts in adoption reports. Set false to omit them."
         },
         "allow_insecure": {
           "default": false,

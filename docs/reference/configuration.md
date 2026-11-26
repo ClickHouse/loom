@@ -44,6 +44,7 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
+| 1.3.1 | `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `False` | `True` | Include namespace contact domains and aggregate counts in adoption reports. Deployments can disable domain sharing while continuing to send usage totals. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | `'auto'` | Keep source lookups upfront on the coding toolset. General search and the dispatcher are available through discovery. Other toolsets retain their entrypoints. Explicit lists and empty values retain their meaning. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,loom_op'` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | Make literal code search callable without a preliminary tool lookup. An explicit list still replaces the defaults; an empty value leaves loading to the host. |
 | 1.3.1 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `250` | `0` | Return selected review rationale without an implicit token cap. |
@@ -1704,7 +1705,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_LATENCY_BUDGET_OVERRIDES_BY_CONSUMER` | `str` | `''` |  | JSON map {consumer: {op \| "*": ms \| "<n>x"}}: an integer is a budget in ms, "3x" multiplies the op's declared budget. Checked after runtime `admin/budget.set` overrides, before per-op ones; malformed = logged once and ignored. '' = none. |
 | `LOOM_WORKER_LEDGER_ROWS` | `bool` | `True` |  | One agent_events row per worker pass that spent something or failed (operation worker.<name>.pass, kind='worker'); loom.worker_status records every pass. |
 | `LOOM_ADOPTION_TELEMETRY_ENABLED` | `bool` | `True` |  | Self-hosted adoption reports. Set false to stop all adoption reporting. |
-| `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `bool` | `False` |  | Share verified email domain counts in adoption reports. Off by default. |
+| `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `bool` | `True` |  | Share namespace contact domains and counts in adoption reports. Set false to omit them. |
 | `LOOM_ADOPTION_TELEMETRY_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between adoption checks and retries. A report covers 12 hours. |
 | `LOOM_OTEL_ENABLED` | `bool` | `True` |  | Master switch for OTel emission. `init_otel()` also refuses under pytest regardless: server/main.py calls it at import, and a test run must never ship rows into production observability tables. |
 | `LOOM_LANGFUSE_URL` | `str` | `''` |  | Langfuse: with both set, OTel spans are forwarded to Langfuse's OTLP endpoint as a second span processor beside the ClickHouse exporter, retrieval scores are posted, and the erasure saga makes real HTTP DELETE calls (empty = log intent only). The token is `pk-lf-…:sk-lf-…`. |
