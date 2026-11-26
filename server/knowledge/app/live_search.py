@@ -137,11 +137,13 @@ async def search(
                                 authority.source, access, query, top_k=source_quota, deadline=deadline
                             )
 
-                        hits = tuple(await authority.run(native))[:source_quota]
+                        async with asyncio.timeout_at(deadline):
+                            hits = tuple(await authority.run(native))[:source_quota]
+
                         if hits:
                             contributions.append(Contribution(authority, hits))
                             total_budget -= len(hits)
-                    except Exception:  # noqa: BLE001 - isolated source failure or expiry never discards prior hits
+                    except Exception:  # noqa: BLE001 - timeout or provider failure never drops prior contributions
                         if time.monotonic() >= deadline:
                             break
                         continue
