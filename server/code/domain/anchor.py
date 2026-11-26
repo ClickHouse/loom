@@ -25,6 +25,10 @@ from server.code.domain.python_names import import_forms
 
 _TICKS = re.compile(r"`([^`\n]{3,160})`")
 _IDENT = re.compile(r"~?[A-Za-z_]\w*(?:(?:::|\.)~?[A-Za-z_]\w*)*")
+_PYTEST_NODE_ID = re.compile(
+    r"(?<![\w./\\-])(?:[A-Za-z]:)?(?:[\w.-]*[/\\])+[\w.-]+\.py(?:::[^\W\d]\w*)+"
+)
+_PYTEST_PARAM_TOKENS = re.compile(r"[\[\]`\r\n]")
 _QUALIFIED = re.compile(r"\b[A-Za-z_]\w*(?:::~?[A-Za-z_]\w*)+")
 _DOTTED_CALL = re.compile(r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+(?=\()")
 _EMPTY_CALL = re.compile(r"\b[A-Za-z_]\w{3,}(?=\(\))")
@@ -129,13 +133,46 @@ class Mention(NamedTuple):
 _RECEIVER = re.compile(r"^(?:self|cls|this)\.")
 
 
+def _pytest_parameter_ends(text: str, start: int) -> dict[int, int]:
+    """Pair nested brackets without crossing lines or backticks."""
+    openings: list[int] = []
+    ends: dict[int, int] = {}
+    for token in _PYTEST_PARAM_TOKENS.finditer(text, start):
+        if token[0] == "[":
+            openings.append(token.start())
+        elif token[0] != "]":
+            openings.clear()
+        elif openings:
+            ends[openings.pop()] = token.end()
+    return ends
+
+
+def _mask_pytest_nodes(text: str) -> str:
+    parts: list[str] = []
+    parameter_ends: dict[int, int] | None = None
+    end = 0
+    for node in _PYTEST_NODE_ID.finditer(text):
+        if node.start() < end:
+            continue
+        parts.append(text[end : node.start()])
+        end = node.end()
+        if text.startswith("[", end):
+            if parameter_ends is None:
+                parameter_ends = _pytest_parameter_ends(text, end)
+            end = parameter_ends.get(end, end)
+        # Keep the span so backticks still pair.
+        parts.append(" " * (end - node.start()))
+    parts.append(text[end:])
+    return "".join(parts)
+
+
 def mentions(text: str, *, cap: int = 16) -> list[Mention]:
     """The first `cap` code-shaped names in `text`, each once: its backticked identifiers
     in text order, then by kind (`A::b`, `a.b(` calls, `f()` calls, camelCase /
     PascalCase, snake_case), each kind in text order; so a backticked name is never
     capped out by one of the prose. Plain words never qualify, and a part of a qualified
     name is not a mention of its own."""
-    text = text or ""
+    text = _mask_pytest_nodes(text or "")
     found: list[tuple[int, int, str, bool]] = []
     for m in _TICKS.finditer(text):
         span = m.group(1).strip().split("(", 1)[0]
