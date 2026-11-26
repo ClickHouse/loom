@@ -551,6 +551,47 @@ def test_grep_offers_edit_context_for_declarations_without_context_windows(monke
         reset_code_scope(token)
 
 
+def test_grep_follows_matches_inside_an_indexed_scope() -> None:
+    path = "src/config.py"
+    inside = {
+        "path": path,
+        "line": 13,
+        "text": "value = read_config()",
+        "scope": "Config::load",
+        "scope_start_line": 9,
+        "scope_end_line": 16,
+    }
+    declaration = {
+        "path": path,
+        "line": 22,
+        "text": "def validate():",
+        "scope": "validate",
+        "scope_start_line": 22,
+        "scope_end_line": 26,
+    }
+    payload = {
+        "matches": [inside, {**inside, "line": 14}, declaration],
+        "contexts": [{"path": path, "start_line": 12, "end_line": 15, "text": "excerpt"}],
+    }
+    result = lr.mcp_op_result("code.grep", payload, {"include_body": False}, None, toolset="coding")
+    assert result["matches"] == payload["matches"]
+    assert result["edit_context_next"]["arguments"] == {
+        "names": [f"{path}:22", f"{path}:Config::load"],
+    }
+    assert json.loads(result["next"].partition(" with ")[2]) == {
+        "ranges": [
+            {"path": path, "start_line": 22, "end_line": 26},
+            {"path": path, "start_line": 9, "end_line": 16},
+        ],
+    }
+    wide = {"matches": [declaration, *[{**inside, "path": f"src/file{i}.py"} for i in range(9)]]}
+    result = lr.mcp_op_result("code.grep", wide, {"include_body": False}, None, toolset="coding")
+    assert result["edit_context_next"]["arguments"] == {"names": [f"{path}:22"]}
+    assert json.loads(result["next"].partition(" with ")[2]) == {
+        "ranges": [{"path": path, "start_line": 22, "end_line": 26}],
+    }
+
+
 def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:
     match = {
         "path": "server/a.py",
