@@ -36,6 +36,16 @@ def test_every_tile_reads_its_declared_source_within_a_time_window() -> None:
         assert _TIME_BOUND.search(t["sql"]), f"{t['id']}: no time bound"
 
 
+def test_failed_code_calls_group_by_invocation_outcome() -> None:
+    query = next(tile["sql"] for tile in _tiles() if tile["id"] == "errors")
+    assert "SpanAttributes['loom.call.root'] = 'true'" in query
+    assert "SpanAttributes['loom.operation'] LIKE 'code.%'" in query
+    assert "SpanAttributes['loom.call.outcome'] AS outcome" in query
+    assert "outcome IN ('error', 'refusal', 'timeout')" in query
+    assert "GROUP BY t, op, outcome" in query
+    assert "http.status_code" not in query
+
+
 def test_every_alert_names_its_condition_and_reason() -> None:
     alerts = [t["alert"] for t in _tiles() if "alert" in t]
     assert alerts
