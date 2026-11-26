@@ -150,18 +150,17 @@ async def _declaration_targets(
     for clue in required:
         hits = [match for match in matches if clue in match["text"]]
         if not hits:
-            # A grep preview strips whitespace, so it cannot prove this clue unmatched.
-            if clue != clue.strip():
-                return []
             missing_clue = True
             continue
         if all(hit["line"] == hit["scope_start_line"] for hit in hits):
             locations = frozenset((hit["path"], hit["line"]) for hit in hits)
             declaration_hits.add(locations)
             declarations.update(locations)
-    # With an unmatched clue, require distinct declaration evidence. Several
-    # spellings of the same hit set may still be clues for one ambiguous name.
-    if missing_clue and len(declaration_hits) < 2:
+    # With an unmatched clue, require distinct declaration evidence. Preview
+    # trimming can hide a whitespace-sensitive occurrence even if others remain.
+    if missing_clue and (
+        len(declaration_hits) < 2 or any(clue != clue.strip() for clue in required)
+    ):
         return []
     matches = [match for match in matches if (match["path"], match["line"]) in declarations]
     if not 1 < len(matches) <= EDIT_CONTEXT_MAX_NAMES:

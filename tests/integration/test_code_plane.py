@@ -601,6 +601,7 @@ async def test_edit_context_batches_definitions_and_their_tests(code_env, monkey
         "one_plus_missing",
         "same_hits",
         "stripped",
+        "mixed_preview",
     ],
 )
 async def test_edit_context_reads_verified_declarations_across_files(
@@ -621,6 +622,8 @@ async def test_edit_context_reads_verified_declarations_across_files(
         "src/beta.py": b"def submit(value):\n    result = value * 2\n    return result\n",
         "src/gamma.py": b"def handle(value):\n    return value - 1\n",
     }
+    if clue_shape == "mixed_preview":
+        sources["src/alpha.py"] = b'def submit(value="    def other("):\n    return value\n'
     for path, body in sources.items():
         await _ingest(repo, org, ns, source=body, path=path)
     clues = ["def submit(", "def handle("]
@@ -634,7 +637,7 @@ async def test_edit_context_reads_verified_declarations_across_files(
         clues[0] = "return result"
     elif clue_shape == "missing":
         clues.append("def removed(")
-    elif clue_shape == "stripped":
+    elif clue_shape in {"stripped", "mixed_preview"}:
         path = "src/delta.py"
         await _ingest(
             repo,
@@ -643,7 +646,11 @@ async def test_edit_context_reads_verified_declarations_across_files(
             source=b"class Handler:\n    def other(self):\n        return 1\n",
             path=path,
         )
-        clues.append("    def other(")
+        if clue_shape == "mixed_preview":
+            clues = ["    def other(", "def handle(", "def removed("]
+            candidate_paths.remove("src/beta.py")
+        else:
+            clues.append("    def other(")
         candidate_paths.add(path)
     elif clue_shape in {"one_plus_missing", "same_hits"}:
         clues[1] = "def removed("
@@ -655,7 +662,13 @@ async def test_edit_context_reads_verified_declarations_across_files(
     )
     assert result.ambiguous
     assert {candidate["path"] for candidate in result.candidates} == candidate_paths
-    if clue_shape in {"one_declaration", "one_plus_missing", "same_hits", "stripped"}:
+    if clue_shape in {
+        "one_declaration",
+        "one_plus_missing",
+        "same_hits",
+        "stripped",
+        "mixed_preview",
+    }:
         assert result.definitions == []
         return
     assert {unit.path: unit.body.encode().rstrip(b"\n") for unit in result.definitions} == {
