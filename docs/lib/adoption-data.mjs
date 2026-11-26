@@ -9,7 +9,7 @@ async function readSource(url, options, decode = (response) => response.json()) 
     const response = await fetch(url, {
       ...options,
       redirect: "error",
-      signal: AbortSignal.timeout(5000),
+      signal: options?.signal ?? AbortSignal.timeout(5_000),
     });
     if (response.ok) return await decode(response);
   } catch {
@@ -36,6 +36,8 @@ async function loadWarehouse(env) {
   url.searchParams.set("format", "JSON");
   const response = await readSource(url, {
     headers: { Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}` },
+    // An idle warehouse needs time to resume before it runs the query.
+    signal: AbortSignal.timeout(30_000),
   });
   const row = response?.data?.[0];
   if (datasets.every((name) => Array.isArray(row?.[name]))) {
@@ -168,7 +170,18 @@ let published;
 export function loadPublishedAdoption() {
   const now = Date.now();
   if (!published || now >= published.expires) {
-    published = { expires: now + 5 * 60_000, data: loadAdoption(process.env, new Date(now)) };
+    const refresh = { expires: now + 5 * 60_000 };
+    refresh.data = loadAdoption(process.env, new Date(now)).then(
+      (data) => {
+        if (data.selfHosted.totals === undefined) refresh.expires = 0;
+        return data;
+      },
+      (error) => {
+        refresh.expires = 0;
+        throw error;
+      },
+    );
+    published = refresh;
   }
   return published.data;
 }

@@ -65,12 +65,13 @@ Authorize a dedicated API key for the endpoint and set
 `/run/<id>` URL from the endpoint configuration. Redeploy the site after saving
 the variables.
 
-Vercel caches the aggregate page for an hour. The site fetches repository and release counts
-from GitHub, SDK downloads from PyPI Stats and npm, and container pulls from
-the public package page. Stored registry metrics fill gaps when the public
-sources are unavailable. The page shows the latest observation date for each
-metric and compares reporting periods when both periods have coverage on
-every date.
+The site caches pages with warehouse data for an hour.
+
+The site fetches repository and release counts from GitHub, SDK downloads from
+PyPI Stats and npm, and container pulls from the public package page. Stored
+registry metrics fill gaps when the public sources are unavailable. The page
+shows the latest observation date for each metric and compares reporting
+periods when both periods have coverage on every date.
 
 The public page supports 30-, 90-, and 365-day windows. Its chart links preserve
 the selected filters. CSV links export aggregate activity, lifecycle, download,

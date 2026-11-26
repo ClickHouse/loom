@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { loadAdoption } from "./adoption-data.mjs";
+import { loadAdoption, loadPublishedAdoption } from "./adoption-data.mjs";
 import { summarizeOss } from "./adoption-view.mjs";
 
 test("calls the saved aggregate endpoint and reports monthly coverage and missing data", async (t) => {
@@ -96,4 +96,46 @@ test("keeps Query API credentials off unrecognized endpoint URLs", async (t) => 
   );
   assert.ok(requests.every(([host, authorization]) => host !== "external.example" && authorization === undefined));
   assert.equal(result.selfHosted.totals, undefined);
+});
+
+test("retries a timed-out warehouse and caches the next successful refresh", async (t) => {
+  const originalEnv = process.env;
+  t.after(() => {
+    process.env = originalEnv;
+  });
+  process.env = {
+    ...originalEnv,
+    LOOM_ADOPTION_QUERY_ENDPOINT_URL: "https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001",
+    LOOM_ADOPTION_QUERY_KEY_ID: "fixture-id",
+    LOOM_ADOPTION_QUERY_KEY_SECRET: "fixture-secret",
+  };
+  t.mock.method(console, "warn", () => {});
+  const timeoutBySignal = new Map();
+  t.mock.method(AbortSignal, "timeout", (delay) => {
+    const { signal } = new AbortController();
+    timeoutBySignal.set(signal, delay);
+    return signal;
+  });
+  const publicTimeouts = new Set();
+  const warehouseTimeouts = [];
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    if (new URL(input).hostname !== "queries.clickhouse.cloud") {
+      publicTimeouts.add(timeoutBySignal.get(init.signal));
+      return new Response(null, { status: 502 });
+    }
+    warehouseTimeouts.push(timeoutBySignal.get(init.signal));
+    if (warehouseTimeouts.length === 1) throw new DOMException("Warehouse wake-up timed out", "TimeoutError");
+    return Response.json({ data: [{ totals: [], versions: [], retention: [], activity: [], lifecycle: [], oss: [] }] });
+  });
+
+  const first = loadPublishedAdoption();
+  assert.equal(loadPublishedAdoption(), first);
+  assert.equal((await first).selfHosted.totals, undefined);
+
+  const retry = loadPublishedAdoption();
+  assert.notEqual(retry, first);
+  assert.deepEqual((await retry).selfHosted.totals, []);
+  assert.equal(loadPublishedAdoption(), retry);
+  assert.deepEqual(warehouseTimeouts, [30_000, 30_000]);
+  assert.deepEqual([...publicTimeouts], [5_000]);
 });

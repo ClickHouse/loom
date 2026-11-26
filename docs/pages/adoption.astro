@@ -20,12 +20,16 @@ import {
 
 export const prerender = false;
 
-Astro.response.headers.set("Cache-Control", "public, max-age=0, must-revalidate");
-Astro.response.headers.set("Vercel-CDN-Cache-Control", "public, s-maxage=3600, stale-while-revalidate=86400");
-
 const filters = adoptionFilters(Astro.url.searchParams);
 const { today, refreshedAt, selfHosted, openSource } = await loadPublishedAdoption();
 const { totals: summaries, retention, versions, activity, lifecycle } = selfHosted;
+const warehouseAvailable = Array.isArray(summaries);
+if (warehouseAvailable) {
+  Astro.response.headers.set("Cache-Control", "public, max-age=0, must-revalidate");
+  Astro.response.headers.set("Vercel-CDN-Cache-Control", "public, s-maxage=3600, stale-while-revalidate=86400");
+} else {
+  Astro.response.headers.set("Cache-Control", "no-store");
+}
 const totals = summaries?.find(({ range_days, comparison }) => range_days === filters.days && comparison === "current");
 const previous = summaries?.find(
   ({ range_days, comparison }) => range_days === filters.days && comparison === "previous",
@@ -71,7 +75,7 @@ if (dataset) {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="loom-${dataset}.csv"`,
-      "Cache-Control": "public, max-age=300",
+      "Cache-Control": warehouseAvailable ? "public, max-age=300" : "no-store",
     },
   });
 }
@@ -196,8 +200,8 @@ const overview = [
         </article>;
       })}
     </div>
-    {!Array.isArray(summaries) && <p class="notice">Self-hosted metrics will appear when the telemetry warehouse is connected.</p>}
-    {Array.isArray(summaries) && !totals && <p class="notice">No installations reported in this period.</p>}
+    {!warehouseAvailable && <p class="notice">Self-hosted metrics will appear when the telemetry warehouse is connected.</p>}
+    {warehouseAvailable && !totals && <p class="notice">No installations reported in this period.</p>}
     {totals && <p class="notice">Latest reporting date <time datetime={totals.last_reported}>{totals.last_reported}</time> UTC. Period changes appear when both windows have a report on every date.</p>}
 
     <article class="card activity" id="installation-activity">
