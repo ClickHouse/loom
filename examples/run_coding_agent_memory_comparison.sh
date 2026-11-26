@@ -27,7 +27,13 @@ server_pid=''
 started_db=''
 cleanup() {
   if [ -n "$server_pid" ]; then
-    kill "$server_pid" 2>/dev/null || true
+    # Signal the shell's job so an exited server's PID cannot target another process.
+    kill '%?uvicorn' 2>/dev/null || true
+    for _ in $(seq 1 10); do
+      kill -0 '%?uvicorn' 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL '%?uvicorn' 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
   if [ -n "$started_db" ]; then docker rm -fv "$container" >/dev/null 2>&1 || true; fi
@@ -46,7 +52,9 @@ export LOOM_CH_HOST=127.0.0.1 LOOM_CH_PORT="$LOOM_CH_HOST_PORT" LOOM_CH_DATABASE
 export LOOM_CH_USER=loom LOOM_CH_READER_USER=loom_reader LOOM_CH_PASSWORD=loomdev LOOM_STORAGE_AUTHORITY=clickhouse
 export LOOM_BASE_URL="http://127.0.0.1:$api_port" LOOM_INSTANCE_LABEL="iso:coding-agent-comparison:${scratch##*.}"
 export LOOM_CODE_INGEST_ENABLED=true LOOM_GIT_HISTORY=local LOOM_CODE_REPOS_ROOT="$scratch/mirrors"
+export LOOM_CODE_ENRICH_TIMEOUT_S=5 LOOM_MEMORY_CODE_PLANE_PARSE_TIMEOUT_S=2
 export LOOM_AUTH_REQUIRED=true LOOM_EMBEDDING_MODEL=fake-ngram-1024 LOOM_LLM_PROVIDER=fake
+export LOOM_SHUTDOWN_READY_DELAY_S=0
 export LOOM_BACKGROUND_WORKERS=off LOOM_ADOPTION_TELEMETRY_ENABLED=false LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS=10
 LOOM_JWT_SECRET=$(python -c 'import secrets; print(secrets.token_hex(32))')
 export LOOM_JWT_SECRET
