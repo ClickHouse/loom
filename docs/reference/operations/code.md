@@ -615,6 +615,7 @@ Read source, tests, and notes.
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
 | `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Batched edit context only. |
 
 ## `code.enclosing`
 
@@ -770,6 +771,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `include_dependencies` | `bool` | `False` | Include verified argument definitions, helpers, or forwarding call targets. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
+| `prefer_complete_context` | `bool` | `False` | Use the same excerpt width to complete a short declaration. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
 | `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |
@@ -1160,6 +1162,7 @@ Read inclusive, one-based indexed lines.
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `results` | `list[CodeReadRange]` |  |
 | `as_of` | `dict[str, Any]` |  |
+| `trace_run_id` | `str` | Joins this read to the code trace and request ledger. |
 
 ## `code.recent_commits`
 
@@ -1678,6 +1681,7 @@ Find an exact definition by name or path:line.
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
 | `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Batched edit context only. |
 
 ## `code.symbol_history`
 

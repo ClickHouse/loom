@@ -97,24 +97,33 @@ def test_compact_coding_primer_preserves_scope_and_profile() -> None:
     assert len(compact) < len(full)
     assert "repository bound to this connection" in rules
     assert "`loom_code_edit_context`" in rules
+    edit_read = "If the editor needs a local read first, start with one line near the edit."
+    assert edit_read in rules
+    assert edit_read in _split(full)[0]
     assert "`loom_code_grep`" in rules
+    assert "`loom_code_read` to read known line ranges together" in rules
+    assert "unindexed paths" in rules
     assert "ToolSearch" in rules
     assert "code_state" in rules
-    assert "loom_code_callers" not in rules
-    assert "loom_code_callers" in _split(full)[0]
+    callers = "`loom_code_callers` for callers and indexed uses of a known definition"
+    assert callers in rules and callers in _split(full)[0]
+    assert "loom_code_impact" not in rules
 
 
 def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) -> None:
     defaults = {"org": "project", "namespace": "history", "agent": "coding"}
     bound = mcp_primer._coding_instructions("coding", defaults, compact=True)
+    standard = mcp_primer._coding_instructions("coding", defaults)
     assert "First step of each task" not in bound
     assert "For prior decisions or procedures beyond linked code lessons" in bound
-    assert "For prior decisions or procedures beyond linked code lessons" in (
-        mcp_primer._coding_instructions("coding", defaults)
-    )
+    assert "For prior decisions or procedures beyond linked code lessons" in standard
+    reuse = "For a repeat source lookup, set `include_lessons: false`"
     activation = asyncio.run(mcp_primer._loom_primer_text(object(), toolset="coding"))
     assert "For prior decisions or procedures beyond linked code lessons" in activation
+    for primer in (bound, standard, activation):
+        assert primer.index(reuse) < primer.index("with the task as `query`. Skip it when")
     assert "first with the task" not in activation
+    assert reuse not in mcp_primer._coding_instructions("coding", compact=True)
     monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: None)
     unbound = mcp_primer._coding_instructions("coding", defaults, compact=True)
     assert "First step of each task" in unbound

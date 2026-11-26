@@ -18,6 +18,8 @@ from server.code.app.enrich import (
     usage_examples,
 )
 from server.code.app.symbol import examples as h
+from server.code.app.symbol.edit_reads import _read_candidates
+from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.core.errors import NotFoundError, PreconditionFailedError
 from server.settings import settings
@@ -188,6 +190,110 @@ def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None
     assert [site["line"] for site in examples] == [25, 10, 40]
 
 
+def test_edit_examples_prefer_a_test_named_for_the_related_target() -> None:
+    path = "test_routes.py"
+    edges = [
+        _edge(path, 5, "test_routes::test_url_for_with_scheme"),
+        _edge(path, 10, "test_routes::test_blueprint_url_processors::index"),
+        _edge(path, 14, "test_routes::test_blueprint_url_processors::about"),
+        _edge(path, 30, "test_routes::test_url_for_with_anchor"),
+    ]
+    for edge in edges:
+        edge["to_qualified_name"] = "web.helpers::url_for"
+    repo = _Repo(seeds=[], edges=edges, tests_only=True)
+
+    examples = asyncio.run(
+        usage_examples(
+            repo, "org", "code", ["s"], tests_only=True, related_names=("Blueprint.register",)
+        )  # type: ignore[arg-type]
+    )
+
+    assert [site["line"] for site in examples] == [10, 5, 30]
+    assert examples[0]["caller"] == "test_routes::test_blueprint_url_processors::index"
+
+
+def test_edit_read_target_requires_one_member_within_the_returned_definition() -> None:
+    path, symbol = "src/handlers.py", "src.handlers::render"
+    revision = "a" * 40
+    unit = CodeUnit(path=path, symbol=symbol, start_line=4, end_line=9)
+    edge = {
+        "path": path,
+        "line": 6,
+        "from_qualified_name": symbol,
+        "tier": "treesitter",
+        "to_qualified_name": "src.options::Options::label",
+        "to_symbol_id": "label",
+        "indexed_commit": revision,
+    }
+    anchors = {(path, symbol): unit}
+    targets = _read_candidates(anchors, [edge, {**edge, "line": 7}, {**edge, "line": 12}])
+    assert [site.line for site in targets["label", "src.options::Options::label", revision]] == [
+        6,
+        7,
+    ]
+
+    alternate = {
+        **edge,
+        "to_qualified_name": "src.options::Options::style",
+        "to_symbol_id": "style",
+    }
+    assert not _read_candidates(anchors, [edge, alternate])
+    other = unit.model_copy(
+        update={"symbol": "src.handlers::render_summary", "start_line": 10, "end_line": 16}
+    )
+    anchors[path, other.symbol] = other
+    shared = _read_candidates(
+        anchors,
+        [
+            edge,
+            alternate,
+            {**edge, "line": 7},
+            {**edge, "from_qualified_name": other.symbol, "line": 12},
+        ],
+    )
+    assert [site.line for site in shared["label", "src.options::Options::label", revision]] == [
+        7,
+        12,
+    ]
+
+
+async def test_edit_read_sources_verify_a_shared_root_once(monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditReadSite
+    from server.code.app.symbol import edit_reads
+
+    revision = "a" * 40
+    caller = CodeUnit(path="src/handlers.py", symbol="src.handlers::show", body="def show(): pass")
+    names = ["src.options::Options::label", "src.options::Options::style"]
+    keys = [(name, name, revision) for name in names]
+    destinations = {
+        key: {"path": "src/options.py", "qualified_name": key[1], "start_line": 1, "end_line": 2}
+        for key in keys
+    }
+    groups = {
+        key: [CodeEditReadSite(path=caller.path, symbol=caller.symbol, line=line)]
+        for line, key in enumerate(keys, start=2)
+    }
+    reads: list[str] = []
+
+    class SourceRecords:
+        async def file_rows_for_paths(self, org, ns, paths):
+            return {path: {"indexed_commit": revision} for path in paths}
+
+    async def body(repo, org, ns, row, *, expected_commit):
+        assert (org, ns, expected_commit) == ("org", "scope", revision)
+        name = row["qualified_name"]
+        reads.append(name)
+        return caller.body if name == caller.symbol else f"body of {name}"
+
+    monkeypatch.setattr(edit_reads, "symbol_body", body)
+    repo: Any = SourceRecords()
+    sources = await edit_reads._hydrate_read_sources(
+        repo, "org", "scope", {(caller.path, caller.symbol): caller}, destinations, groups
+    )
+    assert [source.qualified_name for source in sources] == names
+    assert sorted(reads) == sorted([caller.symbol, *names])
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stale_setup", [False, True])
 async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(
@@ -239,7 +345,7 @@ async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("promoted", ["present", "missing", "timeout"])
+@pytest.mark.parametrize("promoted", ["present", "batch", "missing", "timeout"])
 async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, promoted) -> None:
     revision = "a" * 40
     bridge_path = "web/app.py"
@@ -274,7 +380,7 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
             assert ids == ["wrapper"] and options["tests_only"]
             assert options["caller_revision"] == revision and options["sites_per_caller"] == 2
             assert options["limit"] == 10
-            if promoted != "present":
+            if promoted in ("missing", "timeout"):
                 return [
                     incoming(
                         test_path, line, f"test_other_{line}", str(line), "wrapper", bridge_name
@@ -339,8 +445,19 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
     monkeypatch.setattr(settings, "code_enrich_indirect_test_caller_limit", 5)
     repo: Any = Repo()
     ready: list[dict[str, Any]] = []
+    related_names = ("Blueprint.register", "Blueprint.add_app_hook") if promoted == "batch" else ()
     examples = await bounded(
-        indirect_test_examples(repo, "org", "code", ["register"], target, revision, 2, ready=ready),
+        indirect_test_examples(
+            repo,
+            "org",
+            "code",
+            ["register"],
+            target,
+            revision,
+            2,
+            ready=ready,
+            related_names=related_names,
+        ),
         ready,
         seconds=0.15,
     )
@@ -350,13 +467,53 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
         ("test_blueprint_hook", 10),
         ("test_async", 5),
     ]
-    if promoted != "present":
+    if promoted == "batch":
+        expected[0], expected[1] = expected[1], expected[0]
+    elif promoted in ("missing", "timeout"):
         expected = [("test_other_10", 10), ("test_other_40", 40), ("test_other_70", 70)]
     assert [(e["caller"], e["line"]) for e in examples] == expected
     assert all(
         e["evidence"] == "indirect_call" and e["via"]["symbol"] == bridge_name for e in examples
     )
     assert all(e["context"]["commit"] == revision for e in examples)
+
+
+@pytest.mark.parametrize("source_position", [0, 1])
+async def test_edit_context_keeps_optional_caller_source_when_aliases_share_definition(
+    monkeypatch, source_position
+):
+    from server.code.api.models_symbol import CodeEditContextInput, CodeSymbolOutput
+    from server.code.app.symbol import symbol
+    from server.code.domain.units import CodeUnit
+
+    names = ["value", "src/value.py:value"]
+    context = {
+        "commit": "a" * 40,
+        "start_line": 1,
+        "end_line": 2,
+        "text": "def run():\n    value()",
+    }
+
+    async def read(request):
+        via = {"symbol": "src.action::run", "path": "src/action.py", "line": 2}
+        if request.name == names[source_position]:
+            via["context"] = context
+        unit = CodeUnit(
+            path="src/value.py",
+            symbol="src.value::value",
+            body="def value():\n    return 7",
+            examples=[{"path": "tests/test_action.py", "line": 3, "via": via}],
+        )
+        return CodeSymbolOutput(definitions=[unit])
+
+    monkeypatch.setattr(symbol, "_single_edit_context", read)
+    monkeypatch.setattr(symbol, "_symbol_trace", lambda *args, **kwargs: "")
+    answer = await symbol._batched_edit_context(
+        CodeEditContextInput(org="test-org", namespace="test-ns", names=names)
+    )
+    assert [target.definition_indices for target in answer.edit_targets] == [[0], [0]]
+    (definition,) = answer.definitions
+    assert definition.examples[0]["via"]["context"] == context
 
 
 @pytest.mark.parametrize(

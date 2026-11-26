@@ -54,7 +54,6 @@
  "ch_analysis_max_result_rows": 500,
  "ch_analysis_max_rows_to_read": 200000000,
  "ch_analysis_max_threads": 4,
- "ch_analysis_observer_urls": [],
  "ch_analysis_probe_interval_s": 60.0,
  "ch_backup_interval_minutes": 1440,
  "ch_batched_insert_background_wait_max_ms": 200,

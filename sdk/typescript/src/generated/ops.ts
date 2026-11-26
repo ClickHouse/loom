@@ -820,6 +820,22 @@ export interface CodeEditContextTarget {
   trace_run_id?: string;
 }
 
+export interface CodeEditReadSource {
+  qualified_name: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  commit: string;
+  body: string;
+  sites: CodeEditReadSite[];
+}
+
+export interface CodeEditReadSite {
+  path: string;
+  symbol: string;
+  line: number;
+}
+
 export interface CodeSymbolOutput {
   definitions: CodeUnit[];
   lessons_left_out?: number;
@@ -840,6 +856,7 @@ export interface CodeSymbolOutput {
   presence?: Array<Record<string, unknown>>;
   summary?: Record<string, string[]>;
   edit_targets?: CodeEditContextTarget[];
+  read_sources?: CodeEditReadSource[] | null;
 }
 
 export interface CodeEnclosingInput {
@@ -978,6 +995,8 @@ export interface CodeGrepInput {
   case_sensitive?: boolean;
   /** Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. */
   context_lines?: number;
+  /** Use the same excerpt width to complete a short declaration. Default false. */
+  prefer_complete_context?: boolean;
   path_prefix?: string;
   /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. */
   cursor?: string;
@@ -1399,6 +1418,7 @@ export interface CodeReadOutput {
   lessons_left_out?: number;
   results: CodeReadRange[];
   as_of: Record<string, unknown>;
+  trace_run_id?: string;
 }
 
 export interface CodeRecentCommitsInput {

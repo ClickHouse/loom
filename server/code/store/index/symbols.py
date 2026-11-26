@@ -870,33 +870,38 @@ class SymbolsMixin(CodeRepoBase):
         return _prefer_scip(rows)
 
     async def symbol_spans_by_ids(
-        self, org: str, ns: str, symbol_ids: list[str]
+        self, org: str, ns: str, symbol_ids: list[str], *, source_only: bool = False
     ) -> list[dict[str, Any]]:
         """`symbols_by_ids` for a caller that needs only where each symbol
         is (code.grep's unit spans): the columns
         `_prefer_scip` reads and nothing else, and the side-table key
         discovery folded into the main read as an IN subquery on the sort
         key — one round trip where `symbols_by_ids` makes two. Same rows,
-        same collapse."""
+        same collapse. Source-only readers get parser extents with their revisions."""
         if not symbol_ids:
             return []
         cols = "tier, qualified_name, symbol_id, name, path, start_line, end_line"
+        tier_filter = "AND tier = 'treesitter'" if source_only else ""
+        if source_only:
+            cols += ", toString(indexed_commit) AS extent_commit"
         params = {"org": org, "ns": ns, "ids": symbol_ids[:500]}
         rows = await self._ch.query_all(
             f"""
             SELECT {cols} FROM loom.code_symbols FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              {tier_filter}
               AND (tier, qualified_name, symbol_id) IN (
                   SELECT tier, qualified_name, symbol_id
                   FROM loom.code_symbol_ids
                   WHERE org = {{org:String}} AND namespace = {{ns:String}}
                     AND symbol_id IN {{ids:Array(String)}}
+                    {tier_filter}
               )
               AND tombstoned_at IS NULL
             """,
             params,
         )
-        return _prefer_scip(rows)
+        return rows if source_only else _prefer_scip(rows)
 
     async def symbol_paths_for_ids(
         self, org: str, ns: str, symbol_ids: list[str]

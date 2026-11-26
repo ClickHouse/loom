@@ -674,9 +674,6 @@ class ClickHouseSettings(BaseModel):
     ch_cluster: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]*$")] = "default"
     # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
     ch_secure: bool | None = None
-    # Extra trusted HTTP origins if the service endpoint cannot reach every writer.
-    # Analyst setup discovers checked replica sessions with the service credentials.
-    ch_analysis_observer_urls: list[str] = Field(default_factory=list, max_length=32)
     # Append `sql:<shape12> <first 200 chars>` of each statement to its
     # `log_comment` ("<op> <request_id>"), so query_log rows group by shape.
     # A statement that carries a secret, or one run as the analyst, gets its

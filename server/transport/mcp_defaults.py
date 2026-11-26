@@ -25,7 +25,8 @@ Coding connections also default to indexed tests with source excerpts at the def
 function), the cursor for the rest: in paired runs an agent's grep through the
 index cost about three times the shell grep it stood in for.
 Coding connections give distinct literal patterns a first-page slot and ask for related
-source on a call expression miss or a call prefix.
+source on a call expression miss or a call prefix. An excerpt can use its line budget
+for a complete short declaration when the indexed source covers it.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ _CODING_ARGUMENT_DEFAULTS: dict[str, dict[str, Any]] = {
         "related_on_miss": True,
         "related_on_prefix": True,
         "include_dependencies": True,
+        "prefer_complete_context": True,
     },
 }
 

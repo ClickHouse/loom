@@ -136,7 +136,9 @@ export function buildObservation(event, payload, scope) {
   const actionType = inferActionType(toolName, isError);
   const files = extractFiles(toolInput);
   const errText = isError
-    ? (toolResponse && (toolResponse.error || toolResponse.stderr || toolResponse.message)) || toolResponse
+    ? payload.error ||
+      (toolResponse && (toolResponse.error || toolResponse.stderr || toolResponse.message)) ||
+      toolResponse
     : "";
   return {
     org: scope.org,

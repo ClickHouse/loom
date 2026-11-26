@@ -31,3 +31,5 @@ seo:
 
 - [Connect an agent](../getting-started/connect-a-coding-agent.md) through a plugin or MCP.
 - [Set up tokens and grants](tokens-and-grants.md) for the namespaces each client needs.
+- [Choose retrieval scope from the audience](audience-scoped-retrieval.md), so a reply
+  in a shared conversation draws only on what its readers may see.

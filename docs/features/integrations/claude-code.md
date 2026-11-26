@@ -272,9 +272,11 @@ policy, add this to the repository's `CLAUDE.md`:
 For code indexed by Loom, prefer its available code tools:
 
 - loom_code_symbol for definitions, signatures and implementations.
-- loom_code_callers for callers.
+- loom_code_edit_context for source and available tests of named edit targets.
+- loom_code_callers for callers and indexed uses of a known definition.
 - loom_code_search for concepts or unknown names.
 - loom_code_grep for exact strings, when exposed.
+- loom_code_read to batch known path:start-end ranges.
 - loom_code_impact before changing behavior or shared interfaces.
 
 Use the code-index scope supplied at startup. Never guess a namespace.
@@ -282,8 +284,15 @@ Reuse current hook or tool evidence when it answers the question;
 request only the missing information.
 
 Check that indexed evidence applies to the target revision. Use local
-tools for uncommitted or unindexed code, and focused reads when a result
-omits needed code. Fall back locally when Loom is unavailable or abstains.
+tools for uncommitted or unindexed code, edits, test execution and Git. Fall back
+locally when Loom abstains or cannot supply the missing evidence. If the
+editor requires a local read before using the exact source already in
+context, start with one line near the edit.
+
+Check a linked lesson's code_state before reusing it. Recheck changed,
+unresolved or missing links against the current source. When the earlier
+lessons cover the same scope and a repeat lookup only needs source, pass
+include_lessons: false.
 
 Respect ambiguity, truncation and lower-bound warnings. An empty result
 does not prove that no callers or affected tests exist. Report limitations

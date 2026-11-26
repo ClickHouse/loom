@@ -6447,6 +6447,7 @@ class CodeSymbolOutput(TypedDict, total=False):
     presence: NotRequired[list[dict[str, Any]]]
     summary: NotRequired[dict[str, list[str]]]
     edit_targets: NotRequired[list["CodeEditContextTarget"]]
+    read_sources: NotRequired[Optional[list["CodeEditReadSource"]]]
 
 
 class CodeUnit(TypedDict, total=False):
@@ -6493,6 +6494,22 @@ class CodeEditContextTarget(TypedDict, total=False):
     hierarchy: NotRequired[dict[str, list[dict[str, Any]]]]
     documented_in: NotRequired[list[dict[str, Any]]]
     trace_run_id: NotRequired[str]
+
+
+class CodeEditReadSource(TypedDict, total=False):
+    qualified_name: Required[str]
+    path: Required[str]
+    start_line: Required[int]
+    end_line: Required[int]
+    commit: Required[str]
+    body: Required[str]
+    sites: Required[list["CodeEditReadSite"]]
+
+
+class CodeEditReadSite(TypedDict, total=False):
+    path: Required[str]
+    symbol: Required[str]
+    line: Required[int]
 
 
 class CodeEnclosingInput(TypedDict, total=False):
@@ -6680,6 +6697,7 @@ class CodeGrepInput(TypedDict, total=False):
     include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
+    prefer_complete_context: NotRequired[bool]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
@@ -6713,6 +6731,7 @@ class CodeGrepBody(TypedDict, total=False):
     include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
+    prefer_complete_context: NotRequired[bool]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
@@ -7284,6 +7303,7 @@ class CodeReadOutput(TypedDict, total=False):
     lessons_left_out: NotRequired[int]
     results: Required[list["CodeReadRange"]]
     as_of: Required[dict[str, Any]]
+    trace_run_id: NotRequired[str]
 
 
 class CodeReadRange(TypedDict, total=False):

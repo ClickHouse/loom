@@ -13,6 +13,12 @@ evidence behind it.
 Use the [knowledge factory pilot scorecard](https://loom.clickhouse.com/knowledge-factory#pilot-scorecard)
 to choose what to check before running this walkthrough.
 
+Before expanding to another team, choose a set of recurring questions and have the
+source owner record the approved passage and revision for each answerable question.
+Count how many fresh sessions return an answer supported by the expected source.
+Keep unanswered questions and answers based on superseded sources visible in the
+results. Test separately that readers without access cannot retrieve the material.
+
 ## Decide what to keep
 
 | What you learned                                      | Where to keep it                                                                                               | What the next agent can inspect                                           |

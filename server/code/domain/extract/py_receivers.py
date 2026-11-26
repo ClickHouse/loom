@@ -120,17 +120,18 @@ def callee_text(value: Any, source: bytes) -> str:
     if node.type != "call":
         return ""
     fn = node.child_by_field_name("function")
-    return _chain_text(fn, source)
+    return receiver_chain(fn, source)
 
 
-def _chain_text(fn: Any, source: bytes) -> str:
+def receiver_chain(fn: Any, source: bytes) -> str:
+    fn = unwrap_parentheses(fn)
     if fn is None:
         return ""
     if fn.type == "identifier":
         text = node_text(fn, source)
         return text if _NAME_RE.match(text) else ""
     if fn.type == "attribute":
-        obj = fn.child_by_field_name("object")
+        obj = unwrap_parentheses(fn.child_by_field_name("object"))
         attr = fn.child_by_field_name("attribute")
         if obj is None or attr is None:
             return ""
@@ -138,7 +139,7 @@ def _chain_text(fn: Any, source: bytes) -> str:
         if not _NAME_RE.match(attr_text):
             return ""
         if obj.type in {"identifier", "attribute"}:
-            head = _chain_text(obj, source)
+            head = receiver_chain(obj, source)
         elif obj.type in {"call", "await"}:
             inner = callee_text(obj, source)
             head = inner + "()" if inner else ""
@@ -256,6 +257,103 @@ def _body_bindings(
         _body_bindings(child, source, into, fields=fields, params=params)
 
 
+def unwrap_parentheses(node: Any) -> Any:
+    while node is not None and node.type == "parenthesized_expression":
+        expressions = [child for child in node.named_children if child.type != "comment"]
+        if len(expressions) != 1:
+            return node
+        node = expressions[0]
+    return node
+
+
+def _scalar_literal(node: Any) -> bool:
+    node = unwrap_parentheses(node)
+    if node.type == "unary_operator":
+        operator = node.child_by_field_name("operator")
+        argument = node.child_by_field_name("argument")
+        return (
+            operator is not None and operator.type in {"+", "-"}
+            and argument is not None and argument.type in {"integer", "float"}
+        )
+    return node.type in _SCALAR_LITERALS
+
+
+def _literal_write_names(node: Any, source: bytes) -> set[str]:
+    """Names overwritten by a scalar literal or unpacked scalar literals."""
+    writes = [node]
+    value = node.child_by_field_name("right")
+    while value is not None and value.type == "assignment":
+        writes.append(value)
+        value = value.child_by_field_name("right")
+    if value is None:
+        return set()
+    if _scalar_literal(value):
+        return {name for write in writes for name in _bound_identifiers(write, source)}
+    left = node.child_by_field_name("left")
+    if (
+        len(writes) == 1
+        and left is not None and left.type in {"pattern_list", "tuple_pattern", "list_pattern"}
+        and value.type in {"expression_list", "tuple", "list"}
+        and len(left.named_children) == len(value.named_children)
+        and all(c.type == "identifier" for c in left.named_children)
+        and all(_scalar_literal(c) for c in value.named_children)
+    ):
+        return _bound_identifiers(node, source)
+    return set()
+
+
+def _module_invalidations(
+    node: Any, source: bytes, known: dict[str, str],
+) -> dict[str, int]:
+    """Straight-line module writes that cannot supply the earlier receiver."""
+    changes: dict[str, int] = {}
+    for statement in node.named_children:
+        if statement.type == "expression_statement" and statement.named_child_count == 1:
+            statement = statement.named_children[0]
+        if statement.type == "assignment":
+            names = _literal_write_names(statement, source)
+        elif statement.type == "delete_statement":
+            names = _bound_identifiers(statement, source)
+        else:
+            continue
+        changes.update(dict.fromkeys(names & known.keys(), statement.end_byte))
+    return changes
+
+
+def _preserve_module_receivers(node: Any, source: bytes, writes: dict[str, int]) -> None:
+    """Keep earlier receiver evidence when a use or a later binding is possible."""
+    if node.type == "attribute":
+        receiver = unwrap_parentheses(node.child_by_field_name("object"))
+        if receiver is not None and receiver.type == "identifier":
+            name = node_text(receiver, source)
+            if node.start_byte < writes.get(name, -1):
+                writes.pop(name)
+        return
+    if node.type in {"global_statement", "parameters", "lambda_parameters"}:
+        for name in _bound_identifiers(node, source):
+            writes.pop(name, None)
+        return
+    if node.type == "assignment":
+        if type_name_of(node.child_by_field_name("type"), source):
+            for name in _bound_identifiers(node, source):
+                writes.pop(name, None)
+            return
+        if node.child_by_field_name("right") is None:
+            return
+    if node.type in _MODULE_UNKNOWN_WRITES:
+        names = set(writes)
+    elif node.type in _MODULE_NAME_WRITES:
+        names = _bound_identifiers(node, source).intersection(writes)
+    elif node.type in {"function_definition", "class_definition"}:
+        name_node = node.child_by_field_name("name")
+        names = {node_text(name_node, source)} if name_node is not None else set()
+    else:
+        return
+    for name in names:
+        if (end := writes.get(name)) is not None and node.start_byte >= end:
+            writes.pop(name)
+
+
 def _class_bindings(class_node: Any, source: bytes) -> dict[str, str]:
     """`self` / `cls` → the class; `self.<field>` from annotated fields in
     the class body and from `self.<field> = …` in any method."""
@@ -310,7 +408,11 @@ class PyReceiverTyper:
         if pf.tree is not None:
             self._collect(pf.tree.root_node, pf.source, class_bindings=None)
             _body_bindings(pf.tree.root_node, pf.source, self._module.bindings, fields=False)
-            self._collect_receiver_callees(pf.tree.root_node, pf.source)
+            invalidations = _module_invalidations(
+                pf.tree.root_node, pf.source, self._module.bindings,
+            )
+            self._collect_receiver_callees(pf.tree.root_node, pf.source, invalidations)
+            self._module.bindings.update(dict.fromkeys(invalidations, ""))
             self._receiver_names -= self._bound_names
         self._scopes.sort(key=lambda s: s.end - s.start)
         # Per receiver, the scopes binding it, innermost first; looked up by line (a scan
@@ -321,12 +423,16 @@ class PyReceiverTyper:
                 self._binders.setdefault(key, []).append(scope)
         self._binder_at: dict[str, Callable[[int], _Scope | None]] = {}
 
-    def _collect_receiver_callees(self, node: Any, source: bytes) -> None:
+    def _collect_receiver_callees(
+        self, node: Any, source: bytes, invalidations: dict[str, int],
+    ) -> None:
         for child in node.named_children:
             if child.type in _BINDING_NODES:
                 # a parameter, an assignment target, a loop or
                 # `with … as` name, an except alias — bound here, not imported
                 self._bound_names.update(_bound_identifiers(child, source))
+            if invalidations:
+                _preserve_module_receivers(child, source, invalidations)
             if child.type == "call":
                 fn = child.child_by_field_name("function")
                 obj = None
@@ -345,7 +451,7 @@ class PyReceiverTyper:
                     for part in _chain_calls(callee):
                         if not _last(part)[0].isupper():
                             self._receiver_callees.add(part)
-            self._collect_receiver_callees(child, source)
+            self._collect_receiver_callees(child, source, invalidations)
 
     def type_of_expr(self, line: int, text: str) -> str:
         """The named type of a receiver expression — a name
@@ -418,7 +524,10 @@ class PyReceiverTyper:
         scope = self._binder_at[key](line)
         if scope is not None:
             return self._resolve(scope.bindings[key])
-        bound = self._resolve(self._module.bindings.get(key, ""))
+        binding = self._module.bindings.get(key)
+        if binding == "":
+            return ""
+        bound = self._resolve(binding or "")
         if bound or "." in key:
             return bound
         # a name no scope binds is an import's — its
@@ -433,6 +542,10 @@ class PyReceiverTyper:
         callee = binding[len(_CALL_PREFIX):]
         return self._returns.get(callee, "") or self._returns.get(_last(callee), "")
 
+    def receiver_replaced(self, receiver: str) -> bool:
+        """The module withdrew this receiver before the observed member use."""
+        return self._module.bindings.get(receiver.partition(".")[0]) == ""
+
     def callees(self) -> set[str]:
         """Every callee some binding's type waits on."""
         out: set[str] = set(self._receiver_callees)
@@ -446,12 +559,19 @@ class PyReceiverTyper:
                     out.add(v)  # `fixture:<name>`, resolved by the fixture ladder
         # `name:<receiver>` for a bare receiver no scope binds
         out.update(NAME_PREFIX + n for n in self._receiver_names if n not in bound_anywhere)
-        return out
+        return {callee for callee in out if "." not in callee or not self.receiver_replaced(callee)}
 
     def bind_returns(self, returns: dict[str, str]) -> None:
         self._returns.update({k: v for k, v in returns.items() if v})
 
 
+_SCALAR_LITERALS = frozenset({"integer", "float", "true", "false", "none", "string"})
+_MODULE_UNKNOWN_WRITES = frozenset({"match_statement", "wildcard_import"})
+_MODULE_NAME_WRITES = frozenset({
+    "assignment", "augmented_assignment", "named_expression", "import_statement",
+    "import_from_statement", "type_alias_statement", "for_statement", "for_in_clause",
+    "with_item", "except_clause",
+})
 _BINDING_NODES = frozenset({
     "parameters", "lambda_parameters", "assignment", "augmented_assignment",
     "for_statement", "for_in_clause", "with_item", "except_clause", "named_expression",
