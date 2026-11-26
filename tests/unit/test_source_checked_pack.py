@@ -349,3 +349,36 @@ async def test_accounting_wait_cannot_publish_a_mixed_pack_after_either_pool_cha
     with pytest.raises(request_tail.RequiredTailError):
         await request_tail.RequestTailMiddleware(app)({"type": "http"}, None, send)
     assert sent == [] and world.state.renders == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("section", ["pinned", "recent"])
+async def test_stack_excludes_mirror_rows_without_matching_postgres_heads(monkeypatch, section):
+    from server.memory.api.models_lifecycle import MemoryStackInput
+    from server.memory.app import for_file
+
+    row = {
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": "k",
+        "memory_id": "memory",
+        "version": 10,
+        "value": '"stale text"',
+    }
+
+    class Mirror:
+        async def query_all(self, sql, **kwargs):
+            return [row]
+
+    async def heads(keys):
+        assert keys == [("o", "n", "a", "-", "-", "k")]
+        return {keys[0]: {"version": 11}}
+
+    monkeypatch.setattr(for_file.pg, "enabled", lambda: True)
+    monkeypatch.setattr(for_file.memory_reads, "guidance_heads", heads)
+    fill = stack._StackFill(budget=100)
+    reader = stack._stack_pinned if section == "pinned" else stack._stack_recent
+    await reader(Mirror(), MemoryStackInput(org="o", namespace="n", agent="a"), fill)
+    assert fill.entries == []

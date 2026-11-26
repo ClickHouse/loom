@@ -1055,3 +1055,16 @@ async def test_the_listing_and_the_block_keep_the_commit_a_changed_link_names(
     assert rows[0]["code_changed_since"] == "ab" * 20
     out = await mff.handle_memory_for_file(request)
     assert "commit abababababab" in out.rendered
+
+
+@pytest.mark.asyncio
+async def test_file_guidance_marks_quarantined_procedure_inspect_only():
+    row = {
+        "memory_type": "procedural",
+        "status": "active",
+        "value": '{"quarantined": {}}',
+        "tags": [],
+        "files": [],
+    }
+    await mff.guided_file_rows("o", [row])
+    assert row["use_guidance"].next_step == "inspect_only"

@@ -542,6 +542,7 @@ class _MemorySearchHit(BaseModel):
     _row_version: int = 0
     # A chunk made into its row's hit shows the chunk's type, not the row's.
     _chunk_typed: bool = False
+    _guidance_content_sha256: str = ""
     # The hit's code links in repositories the caller may read, as the search's code
     # annotation read them; None = not read (memory.ask reads them itself then).
     _code_links: list[dict[str, Any]] | None = None

@@ -72,6 +72,8 @@ def _parked(hit: Any) -> dict[str, Any]:
         out["row_chunk"] = list(hit._row_chunk)
     if getattr(hit, "_row_version", 0):
         out["row_version"] = int(hit._row_version)
+    if hit._guidance_content_sha256:
+        out["guidance_content_sha256"] = hit._guidance_content_sha256
     if getattr(hit, "_chunk_typed", False):
         out["chunk_typed"] = True
     return out
@@ -87,6 +89,7 @@ def unparked(row: dict[str, Any]) -> _MemorySearchHit | None:
     identity, chunk = r.pop("row_identity", None), r.pop("row_chunk", None)
     row_version = int(r.pop("row_version", 0) or 0)
     chunk_typed = bool(r.pop("chunk_typed", False))
+    digest = str(r.pop("guidance_content_sha256", "") or "")
     try:
         hit = _MemorySearchHit.model_validate(r)
     except Exception:  # noqa: BLE001 — a row this build cannot read is skipped
@@ -97,6 +100,7 @@ def unparked(row: dict[str, Any]) -> _MemorySearchHit | None:
         hit._row_chunk = tuple(chunk)
     hit._row_version = row_version
     hit._chunk_typed = chunk_typed
+    hit._guidance_content_sha256 = digest
     return hit
 
 

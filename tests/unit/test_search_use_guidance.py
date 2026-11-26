@@ -84,6 +84,7 @@ async def test_parked_hit_refreshes_cached_code_state(
     monkeypatch.setattr(guidance, "guidance_code_states", code_states)
     hit = _hit()
     hit.code_state = "fresh"
+    await guidance.attach_search_guidance(_INPUT, [hit], snapshot_only=True)
     parked = search_pages.unparked(search_pages._parked(hit))
     assert parked is not None
     assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == [parked]
@@ -213,3 +214,45 @@ async def test_source_lookup_failure_keeps_authorized_code_evidence(
     assert hit.use_guidance.freshness.source == "unknown"
     assert hit.use_guidance.freshness.code == "changed"
     assert hit.use_guidance.next_step == "recheck_source"
+
+
+async def test_parked_hit_rejects_replacement_with_same_version(monkeypatch):
+    head = _head()
+
+    async def heads(keys):
+        return {_KEY: head}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    hit = _hit()
+    await guidance.attach_search_guidance(_INPUT, [hit], snapshot_only=True)
+    parked = search_pages.unparked(search_pages._parked(hit))
+    assert parked is not None
+    head.update(content_sha256="b" * 64, verified_sha256="b" * 64)
+    assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == []
+
+
+async def test_previous_build_cursor_cannot_give_folded_passage_parent_approval(monkeypatch):
+    async def heads(keys):
+        return {_KEY: _head()}
+
+    async def states(org, rows):
+        return ["not_applicable"] * len(rows)
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    monkeypatch.setattr(guidance, "guidance_code_states", states)
+    monkeypatch.setattr(guidance, "guidance_source_states", states)
+    parent = _hit()
+    await guidance.attach_search_guidance(_INPUT, [parent])
+    assert parent.use_guidance is not None
+    assert parent.use_guidance.next_step == "follow_if_applicable"
+
+    # The old ClickHouse cursor retained the identity and version but omitted chunk identity.
+    cursor = _hit().model_dump()
+    cursor.update(content_excerpt="folded passage", row_identity=["a", "u", "s"])
+    hit = search_pages.unparked(cursor)
+    assert hit is not None
+    assert await guidance.attach_search_guidance(_INPUT, [hit], parked=True) == [hit]
+    assert hit.content_excerpt == "folded passage"
+    assert hit.use_guidance is not None
+    assert hit.use_guidance.review == "unknown"
+    assert hit.use_guidance.next_step == "validate_lead"

@@ -7,19 +7,20 @@ import json
 import logging
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from server.code.app.common import repo_relative
 from server.core import pg
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt
-from server.core.hashing import hash_text
+from server.core.hashing import hash_text, served_row_value
 from server.core.repo_base import query_all_sliced
 from server.memory.api.models_for_file import (
     MemoryForFileInput,
     MemoryForFileOutput,
     _MemoryForFileHit,
 )
+from server.memory.api.models_procedure import ProcedureStatus
 from server.memory.app.code_link_reads import guidance_code_states
 from server.memory.app.use_guidance import guidance_source_states
 from server.memory.domain import code_change
@@ -768,6 +769,17 @@ async def current_file_rows(org: str, rows: list[dict[str, Any]]) -> list[dict[s
     return kept
 
 
+def _file_procedure_status(
+    row: dict[str, Any],
+) -> ProcedureStatus | Literal["unknown", "not_applicable"]:
+    from server.memory.app.procedure import _procedure_status
+
+    if row.get("memory_type") != "procedural":
+        return "not_applicable"
+    value = served_row_value(row) if not row.get("value_truncated") else None
+    return _procedure_status(value) if isinstance(value, dict) else "unknown"
+
+
 async def guided_file_rows(
     org: str, rows: list[dict[str, Any]], *, local_code_changes: set[str] | None = None
 ) -> None:
@@ -782,7 +794,12 @@ async def guided_file_rows(
             and state not in code_change.DEMOTED
         ):
             state = "changed"
-        row["use_guidance"] = guidance_for_row(row, code_state=state, source_state=source_state)
+        row["use_guidance"] = guidance_for_row(
+            row,
+            code_state=state,
+            source_state=source_state,
+            procedure_status=_file_procedure_status(row),
+        )
 
 
 async def listing_rows(

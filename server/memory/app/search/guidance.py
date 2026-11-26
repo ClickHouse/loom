@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.core.hashing import hash_text
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import row_in_read_scope
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
@@ -16,6 +17,7 @@ from server.memory.app.code_link_reads import guidance_code_states
 from server.memory.app.search.pg_validation import doc_key, doc_version
 from server.memory.app.use_guidance import guidance_source_states
 from server.memory.domain.code_change import worst
+from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.domain.search_types import SHARED_AGENT, is_shared_row
 from server.memory.domain.temporal_sql import served_statuses
 from server.memory.domain.use_guidance import guidance_for_row
@@ -108,7 +110,13 @@ def _memory_evidence(
             denied.add(i)
             continue
         if int(row.get("version") or 0) == doc_version(hit):
+            digest = hash_text(row.get("content_sha256"))
+            if hit._guidance_content_sha256 and digest != hit._guidance_content_sha256:
+                denied.add(i)
+                continue
             evidence[i] = dict(row, namespace=key[1], user_id=key[3])
+            if not parked and hit._row_chunk is None and is_content_hash(digest):
+                hit._guidance_content_sha256 = digest
 
     return denied, evidence
 
@@ -152,6 +160,7 @@ async def attach_search_guidance(
     parked: bool = False,
     replay: bool = False,
     timeout_s: float = 0.2,
+    snapshot_only: bool = False,
 ) -> list[_MemorySearchHit]:
     """Project authorization-scoped evidence for the served window.
 
@@ -198,7 +207,16 @@ async def attach_search_guidance(
     denied |= denied_memory | denied_shared
     evidence.update(shared_evidence)
     authorized = evidence.keys()
-    usable = {} if replay else {i: row for i, row in evidence.items() if not hits[i]._chunk_typed}
+    if snapshot_only:
+        return [hit for i, hit in enumerate(hits) if i not in denied]
+    usable = {
+        i: row
+        for i, row in evidence.items()
+        if not replay
+        and not hits[i]._chunk_typed
+        and hits[i]._row_chunk is None
+        and (not parked or hits[i]._guidance_content_sha256)
+    }
     code_states: dict[int, str] = {}
     source_states: dict[int, str] = {}
     if usable:

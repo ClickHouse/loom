@@ -280,6 +280,7 @@ async def _expand_unit_bodies(
     tokens_returned)."""
     if (getattr(input, "bodies", "full") or "full") not in ("unit", "source") or not hits:
         return (0, 0, 0)
+    from server.core.hashing import served_content_sha256
     from server.memory.store import Identity, get_many_by_keys
 
     budget = int(getattr(input, "body_budget_tokens", 4000) or 4000)
@@ -386,6 +387,11 @@ async def _expand_unit_bodies(
         cost = max(1, len(text) // 4)
         if spent + cost <= budget:
             try:
+                if getattr(h, "use_guidance", None) is not None and (
+                    body_row.version != h.version
+                    or served_content_sha256(v) != h._guidance_content_sha256
+                ):
+                    h.use_guidance = None
                 h.content_excerpt = text
                 h.body_truncated = False
             except Exception:  # noqa: BLE001
@@ -543,6 +549,8 @@ async def _expand_source_bodies(
             h.content_excerpt = text
             h.body_truncated = False
             h.score_components = {**(getattr(h, "score_components", {}) or {}), "source_body": 1.0}
+            if getattr(h, "use_guidance", None) is not None:
+                h.use_guidance = None
         except Exception:  # noqa: BLE001
             continue
         served.add(eid)

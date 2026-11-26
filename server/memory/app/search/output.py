@@ -451,11 +451,14 @@ async def _finish_search_output(
             from server.memory.app import search_pages as _pages
             from server.settings import settings as _pg_settings
 
+            tail = await attach_search_guidance(
+                input, ctx.page_tail, replay=input.as_of is not None, snapshot_only=True
+            )
             _content = _pages.encode_page(
                 query=input.query,
                 top_k=int(input.top_k),
                 candidates_total=_output.candidates_total,
-                tail=ctx.page_tail,
+                tail=tail,
                 namespaces_searched=_output.namespaces_searched,
                 namespaces_skipped=_output.namespaces_skipped,
                 replay=input.as_of is not None,

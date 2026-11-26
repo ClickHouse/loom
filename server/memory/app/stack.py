@@ -18,6 +18,7 @@ from server.knowledge.app.source_access import ReadPlan
 from server.knowledge.app.source_search_proofs import SearchProofs
 from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput, _StackEntry
 from server.memory.app.code_link_reads import guidance_code_states
+from server.memory.app.for_file import current_file_rows
 from server.memory.app.stack_knowledge import StackKnowledge
 from server.memory.app.use_guidance import guidance_source_states
 from server.memory.domain.use_guidance import UseGuidance, guidance_for_row
@@ -148,7 +149,7 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
         SELECT memory_key, memory_type, value, recall_count, last_recalled_at, actor,
                status, source_class, requires_review, verified_by, verified_sha256,
                content_sha256, source_resource_id, source_trace, conflict_with,
-               memory_id, namespace, tags, files, user_id
+               memory_id, namespace, tags, files, user_id, agent, session_id, version
         FROM loom.memory FINAL
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -166,6 +167,7 @@ async def _stack_pinned(ch: Any, input: MemoryStackInput, fill: _StackFill) -> N
         """,
         params=params,
     )
+    pinned_rows = await current_file_rows(input.org, pinned_rows)
     guidance = await recall_guidance_for_rows(input.org, pinned_rows)
     for r, use_guidance in zip(pinned_rows, guidance, strict=True):
         val = _value_str(r.get("value"))
@@ -215,7 +217,7 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
                evidence_count, last_recalled_at, actor,
                status, source_class, requires_review, verified_by, verified_sha256,
                content_sha256, source_resource_id, source_trace, conflict_with,
-               memory_id, namespace, tags, files, user_id
+               memory_id, namespace, tags, files, user_id, agent, session_id, version
         FROM loom.memory FINAL
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -237,6 +239,7 @@ async def _stack_recent(ch: Any, input: MemoryStackInput, fill: _StackFill) -> s
         params=params,
     )
     most_recent_excerpt = ""
+    recent_rows = await current_file_rows(input.org, recent_rows)
     guidance = await recall_guidance_for_rows(input.org, recent_rows)
     for r, use_guidance in zip(recent_rows, guidance, strict=True):
         if r["memory_key"] in pinned_keys:

@@ -9,8 +9,10 @@ from types import SimpleNamespace
 import pytest
 
 import server.memory.store as repo
+from server.core.hashing import served_content_sha256
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.payload import _expand_unit_bodies
+from server.memory.domain.use_guidance import guidance_for_row
 
 CLIP = "x" * 1200
 
@@ -167,3 +169,32 @@ async def test_a_record_body_is_read_under_the_callers_session(monkeypatch):
     h.source = "record"
     await _expand_unit_bodies([h], _input(session_id="s1"))
     assert sessions == ["s1"] and h.content_excerpt == "the fact"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", ["reviewed text", "replacement text"])
+async def test_unit_body_keeps_approval_only_for_reviewed_content(monkeypatch, body):
+    hit = _hit("k", excerpt="reviewed text")
+    hit.version = 42
+    digest = served_content_sha256("reviewed text")
+    hit._guidance_content_sha256 = digest
+    hit.use_guidance = guidance_for_row(
+        {
+            "status": "active",
+            "requires_review": False,
+            "verified_by": "human:reviewer",
+            "content_sha256": digest,
+            "verified_sha256": digest,
+        },
+        source_state="not_applicable",
+        code_state="not_applicable",
+    )
+    assert hit.use_guidance.next_step == "follow_if_applicable"
+
+    async def fake_get_many(identity, keys, **kwargs):
+        return [SimpleNamespace(memory_key="k", value=body, version=42)]
+
+    monkeypatch.setattr(repo, "get_many_by_keys", fake_get_many)
+    await _expand_unit_bodies([hit], _input())
+    assert hit.content_excerpt == body
+    assert (hit.use_guidance is not None) == (body == "reviewed text")
