@@ -25,6 +25,11 @@ from server.code.domain.python_names import import_forms
 
 _TICKS = re.compile(r"`([^`\n]{3,160})`")
 _IDENT = re.compile(r"~?[A-Za-z_]\w*(?:(?:::|\.)~?[A-Za-z_]\w*)*")
+_PYTEST_NODE_ID = re.compile(
+    r"(?<![\w./\\-])(?:[A-Za-z]:)?(?:[\w.-]*[/\\])+[\w.-]+\.py"
+    r"(?:::[A-Za-z_]\w*)*::test\w*\b(?!::)"
+    r"(?:\[(?:[^][`\r\n]|\[[^][`\r\n]*\])*\])?"
+)
 _QUALIFIED = re.compile(r"\b[A-Za-z_]\w*(?:::~?[A-Za-z_]\w*)+")
 _DOTTED_CALL = re.compile(r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+(?=\()")
 _EMPTY_CALL = re.compile(r"\b[A-Za-z_]\w{3,}(?=\(\))")
@@ -135,7 +140,8 @@ def mentions(text: str, *, cap: int = 16) -> list[Mention]:
     PascalCase, snake_case), each kind in text order; so a backticked name is never
     capped out by one of the prose. Plain words never qualify, and a part of a qualified
     name is not a mention of its own."""
-    text = text or ""
+    # Skip pytest selectors with explicit paths. Keep the span so backticks still pair.
+    text = _PYTEST_NODE_ID.sub(lambda m: " " * len(m[0]), text or "")
     found: list[tuple[int, int, str, bool]] = []
     for m in _TICKS.finditer(text):
         span = m.group(1).strip().split("(", 1)[0]
