@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from server.code.store.index import CodeRepo
-from server.core.ch import sequential_reads
+from server.core.ch import sequential_reads, sequential_reads_active
 from server.workers import pass_context
 
 ORG, NS = "acme", "code-a"
@@ -293,6 +293,56 @@ async def test_current_counts_over_a_coverage_row_behind_are_republished_after_a
     assert drained.idle and drained.full_scan and drained.errors == []
     counts, coverage_embedded = await _published(repo)
     assert counts["code_chunks_embedded"] == coverage_embedded == 3
+
+
+async def test_a_coverage_row_alone_behind_the_chunks_is_republished_after_a_restart(
+    configured: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The index phase published coverage and its counts write failed; the last
+    # vectors landed afterwards. Only the coverage row exists, and it trails.
+    table = _Table(chunks=3, embedded=0)
+    repo = await _namespace(monkeypatch, table)
+    del table.state["table_counts"]
+    for c in table.chunks:
+        c["embedding_dim"] = 2
+    _restart(monkeypatch)
+
+    drained = await _pass()
+    assert drained.idle and drained.full_scan and drained.errors == []
+    counts, coverage_embedded = await _published(repo)
+    assert counts["code_chunks_embedded"] == coverage_embedded == 3
+
+
+async def test_the_comparison_and_the_republish_read_with_sequential_consistency(
+    configured: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A lagging replica must not make a current row read as behind, nor let a
+    # republish overwrite a current row with older figures.
+    table = _Table(chunks=3, embedded=0)
+    repo = await _namespace(monkeypatch, table)
+    await _pass()  # the last vectors land
+    _restart(monkeypatch)
+    seen: dict[str, bool] = {}
+
+    def spy(name: str) -> Any:
+        real = getattr(repo, name)
+
+        async def call(*a: Any, **k: Any) -> Any:
+            seen[name] = sequential_reads_active()
+            return await real(*a, **k)
+
+        return call
+
+    for name in ("published_chunks_behind", "refresh_coverage", "refresh_table_counts"):
+        monkeypatch.setattr(repo, name, spy(name))
+
+    drained = await _pass()
+    assert drained.idle and drained.errors == []
+    assert seen == {
+        "published_chunks_behind": True,
+        "refresh_coverage": True,
+        "refresh_table_counts": True,
+    }
 
 
 async def test_a_full_scan_that_meets_unmerged_stub_versions_still_notes_the_namespace(

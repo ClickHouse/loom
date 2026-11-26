@@ -33,6 +33,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now
 from server.core.errors import caller_text
 from server.llm import customer
@@ -169,7 +170,9 @@ async def _note_behind(
     restart reads superseded stub versions from zero and is seldom idle."""
     for org, ns in sorted(repos):
         try:
-            if await repo.published_chunks_behind(org, ns):
+            with sequential_reads():  # a lagging replica must not read a current row as behind
+                behind = await repo.published_chunks_behind(org, ns)
+            if behind:
                 _unpublished.add((org, ns))
         except Exception as e:  # noqa: BLE001 — the next full scan reads it again
             logger.warning("code_embed_recovery: %s/%s counts not read: %s", org, ns, e)
@@ -186,8 +189,9 @@ async def _republish(
     after its purge."""
     for org, ns in sorted(_unpublished & repos):
         try:
-            await repo.refresh_coverage(org, ns, must_land=True)
-            await repo.refresh_table_counts(org, ns, must_land=True)
+            with sequential_reads():  # a lagging replica must not replace a row with older figures
+                await repo.refresh_coverage(org, ns, must_land=True)
+                await repo.refresh_table_counts(org, ns, must_land=True)
         except Exception as e:  # noqa: BLE001 — never fail a pass over a cache row
             logger.warning("code_embed_recovery: %s/%s not republished: %s", org, ns, e)
             result.errors.append(f"{org}/{ns}: republish: {caller_text(e)}")
