@@ -325,7 +325,7 @@ its per-hit score breakdown).
 
 Lean grep definitions keep source, matching lines and qualified names. When
 the full body is present, Loom can omit a short name already in the qualified
-name and a signature already on the first source line.
+name and a signature already in the source declaration.
 
 ### The assistant toolset
 

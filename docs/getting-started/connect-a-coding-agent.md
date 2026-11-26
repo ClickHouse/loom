@@ -18,6 +18,9 @@ pinned release and prove it works, give it the latest release's
 `https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt` ([Set up
 Loom with your coding agent](agent-setup.md)).
 
+Already connected both clients? [Verify that a fresh Codex session can read a memory
+saved in Claude Code](#verify-shared-memory-between-claude-code-and-codex).
+
 ## What you need
 
 ![Settings → Tokens: a new token and the Claude Code setup it prints](../images/dashboard-connect.png)
@@ -313,6 +316,7 @@ self-signup leaves the session without a token, and the primer says how to get o
 
 ## Next
 
+- [Switch coding agents with shared project memory](../use-cases/agent-memory.md#switch-coding-agents-with-shared-project-memory).
 - [Your first agent](first-agent.md): the same memory from your own code with the SDK.
 - [Agent integration](../guides/agent-integration.md): what to save, when to search, and
   mistakes to avoid.

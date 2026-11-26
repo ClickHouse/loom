@@ -13,6 +13,9 @@ deployment can choose Postgres at first boot for live memory and knowledge state
 stores and model providers are separate deployment choices. What your agents remember
 is queryable with SQL.
 
+To see what a SQL reader can inspect, [save and correct a decision, then query its
+version history](#audit-a-changed-decision-with-sql).
+
 ## What you get
 
 - **Docker or Kubernetes.** The one-line installer starts the local stack; the Helm chart
@@ -60,6 +63,39 @@ egress to the destinations you approved.
 3. If the team needs extraction or generated answers, configure its approved LLM and
    run those examples separately. Check the destinations observed at runtime for both
    Loom and the coding client.
+
+## Reuse SQL lessons across agent sessions
+
+Give the agent two connections. Use the [ClickHouse MCP server](https://github.com/ClickHouse/mcp-clickhouse)
+with a read-only ClickHouse user to inspect current tables and run queries. Use
+[Loom over MCP](../features/integrations/mcp-clients.md) to save and recall metric
+definitions and decisions. Grant database access and [memory namespace access](../guides/tokens-and-grants.md)
+separately. Share metric rules and schema references that every reader in the namespace
+may see. Keep query results and credentials out of shared lessons.
+
+In a disposable ClickHouse database, create a table and three test rows as an operator:
+
+```sql
+CREATE TABLE ingest_events (id UInt64, accepted UInt8)
+ENGINE = MergeTree ORDER BY id;
+INSERT INTO ingest_events VALUES (1, 1), (2, 0), (3, 1);
+```
+
+Set `CLICKHOUSE_DATABASE` on the read-only MCP connection to the test database.
+Limit that database user's `SELECT` grant to `ingest_events`.
+
+1. With the read-only client, use `run_query` to check `system.columns` for `ingest_events`
+   in the test database. Run `SELECT count() FROM ingest_events WHERE accepted = 1`
+   and expect `2`. Save the predicate and a reminder to recheck the schema under
+   `example/sql/accepted-events` using `loom_memory_set` in a test namespace.
+2. As the operator, run `ALTER TABLE ingest_events RENAME COLUMN accepted TO is_accepted`.
+   Start a fresh session with a separate Loom token that can read the same namespace.
+   Call `loom_memory_get` with that test `namespace` and `memory_key="example/sql/accepted-events"`.
+   Check that it returns the writer and the saved predicate containing `accepted`.
+3. Repeat the metadata lookup and verify `is_accepted` before applying the lesson.
+   Run `SELECT count() FROM ingest_events WHERE is_accepted = 1` and expect `2`.
+4. Repeat the same lookup arguments with a token that lacks access to the test namespace.
+   Require an access refusal with no saved value. Remove the disposable table and lesson when done.
 
 ## Query agent memory with SQL
 
@@ -115,6 +151,35 @@ of a key ever labeled `high` and gives the reason in `value_withheld`. Under the
 Postgres authority, the version appears once it has been
 [published to ClickHouse](../reference/sql-surface.md#freshness).
 
+### Trace a saved memory to its agent run
+
+Use the same SQL reader to inspect the requests recorded for the run attached to a
+memory. For a test, [start a run](../reference/operations/run.md#runbegin) and pass
+its `run_id` to [`memory.set`](../reference/operations/memory.md#memoryset) with
+the same identity. Keep the `memory_id` from the write. Reopen the ClickHouse client
+with the same reader and add `--param_memory_id=<uuid>`, using the returned ID.
+
+```sql
+SELECT ts, run_id, operation, success, request_id
+FROM loom.sql_v1_agent_events
+WHERE (org, namespace, agent, user_id, session_id, run_id) IN (
+    SELECT org, namespace, agent, user_id, session_id, run_id
+    FROM loom.sql_v1_memories
+    WHERE org = 'dev'
+      AND namespace = 'local'
+      AND memory_id = {memory_id:UUID}
+      AND run_id NOT IN ('', '-')
+)
+ORDER BY ts, request_id;
+```
+
+Read the timestamps, operation statuses and request IDs to see what the agent did
+during the run. The query matches the saved memory's org, namespace, agent, user,
+session and run ID. It returns no rows for a memory without a run or for a run
+with no requests in the [ledger's retention window](../reference/sql-surface.md#sql_v1_agent_events).
+Allow the [ledger to flush](../reference/sql-surface.md#freshness) before checking
+requests that just finished.
+
 ### Count active memories by agent and source
 
 Use the same SQL reader to see how many active, unexpired memories each agent has by
@@ -154,3 +219,7 @@ until they merge.
 
 [Quickstart](../getting-started/quickstart.md) · [Prerequisites](../getting-started/overview.md#prerequisites) ·
 [Upgrades](../operations/upgrades.md) · [Backup and recovery](../operations/backup-and-recovery.md)
+
+If you self-host Loom, share a deployment write-up in
+[Show and tell](https://github.com/ClickHouse/loom/discussions/categories/show-and-tell).
+Describe the workflow, what changed for the team and what you still operate yourself.

@@ -1,3 +1,9 @@
+---
+description: Read earlier versions of a memory, see who wrote each version, and trace extracted facts to the turns that support them.
+seo:
+  title: Agent memory history and provenance
+---
+
 # History and provenance
 
 Every write to memory makes a new version; nothing is edited in place. Versions are kept

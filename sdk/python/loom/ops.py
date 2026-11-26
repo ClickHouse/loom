@@ -6411,6 +6411,7 @@ class CodeEditContextInput(TypedDict, total=False):
     consumer: NotRequired[str]
     name: NotRequired[str]
     clues: NotRequired[list[str]]
+    names: NotRequired[list[str]]
 
 
 class CodeEditContextBody(TypedDict, total=False):
@@ -6423,6 +6424,7 @@ class CodeEditContextBody(TypedDict, total=False):
     consumer: NotRequired[str]
     name: NotRequired[str]
     clues: NotRequired[list[str]]
+    names: NotRequired[list[str]]
 
 
 class CodeSymbolOutput(TypedDict, total=False):
@@ -6444,6 +6446,8 @@ class CodeSymbolOutput(TypedDict, total=False):
     neighbour_tokens: NotRequired[int]
     presence: NotRequired[list[dict[str, Any]]]
     summary: NotRequired[dict[str, list[str]]]
+    edit_targets: NotRequired[list["CodeEditContextTarget"]]
+    read_sources: NotRequired[Optional[list["CodeEditReadSource"]]]
 
 
 class CodeUnit(TypedDict, total=False):
@@ -6465,6 +6469,7 @@ class CodeUnit(TypedDict, total=False):
     recent_prs: NotRequired[list[dict[str, Any]]]
     examples: NotRequired[list[dict[str, Any]]]
     lessons: NotRequired[list[dict[str, Any]]]
+    lessons_unread: NotRequired[bool]
     churn: NotRequired[int]
     amp: NotRequired[int]
     tested: NotRequired[bool]
@@ -6477,6 +6482,34 @@ class CodeUnit(TypedDict, total=False):
     lexical_rank: NotRequired[int]
     vector_rank: NotRequired[int]
     namespace: NotRequired[str]
+
+
+class CodeEditContextTarget(TypedDict, total=False):
+    name: Required[str]
+    status: Required[Literal["resolved", "ambiguous", "dependency", "not_found"]]
+    definition_indices: NotRequired[list[int]]
+    candidates: NotRequired[list[dict[str, Any]]]
+    resolved_by: NotRequired[str]
+    presence: NotRequired[list[dict[str, Any]]]
+    hierarchy: NotRequired[dict[str, list[dict[str, Any]]]]
+    documented_in: NotRequired[list[dict[str, Any]]]
+    trace_run_id: NotRequired[str]
+
+
+class CodeEditReadSource(TypedDict, total=False):
+    qualified_name: Required[str]
+    path: Required[str]
+    start_line: Required[int]
+    end_line: Required[int]
+    commit: Required[str]
+    body: Required[str]
+    sites: Required[list["CodeEditReadSite"]]
+
+
+class CodeEditReadSite(TypedDict, total=False):
+    path: Required[str]
+    symbol: Required[str]
+    line: Required[int]
 
 
 class CodeEnclosingInput(TypedDict, total=False):
@@ -6664,6 +6697,7 @@ class CodeGrepInput(TypedDict, total=False):
     include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
+    prefer_complete_context: NotRequired[bool]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
@@ -6697,6 +6731,7 @@ class CodeGrepBody(TypedDict, total=False):
     include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
+    prefer_complete_context: NotRequired[bool]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
@@ -7268,6 +7303,7 @@ class CodeReadOutput(TypedDict, total=False):
     lessons_left_out: NotRequired[int]
     results: Required[list["CodeReadRange"]]
     as_of: Required[dict[str, Any]]
+    trace_run_id: NotRequired[str]
 
 
 class CodeReadRange(TypedDict, total=False):
@@ -19498,6 +19534,7 @@ class SessionBriefGetInput(TypedDict, total=False):
     from_session: NotRequired[str]
     project: NotRequired[str]
     revision: NotRequired[int]
+    snapshot_id: NotRequired[str]
     include_sections: NotRequired[bool]
     full: NotRequired[bool]
 
@@ -19515,6 +19552,7 @@ class SessionBriefGetBody(TypedDict, total=False):
     from_session: NotRequired[str]
     project: NotRequired[str]
     revision: NotRequired[int]
+    snapshot_id: NotRequired[str]
     include_sections: NotRequired[bool]
     full: NotRequired[bool]
 
@@ -19523,6 +19561,8 @@ class SessionBriefGetOutput(TypedDict, total=False):
     found: Required[bool]
     brief_key: NotRequired[str]
     revision: NotRequired[int]
+    snapshot_id: NotRequired[str]
+    snapshot_key: NotRequired[str]
     rendered: NotRequired[str]
     sections: NotRequired[Optional["BriefSections"]]
     project: NotRequired[str]
@@ -19546,6 +19586,7 @@ class BriefSections(TypedDict, total=False):
 
     goal: NotRequired[str]
     status: NotRequired[str]
+    verification: NotRequired[str]
     decisions: NotRequired[list["BriefDecision"]]
     dead_ends: NotRequired[list["BriefDeadEnd"]]
     done: NotRequired[list["BriefDone"]]
@@ -19640,12 +19681,20 @@ class SessionBriefSaveInput(TypedDict, total=False):
     repo: NotRequired[str]
     branch: NotRequired[str]
     head_sha: NotRequired[str]
+    checkout: NotRequired[Optional["BriefCheckout"]]
     trigger: NotRequired[Literal["precompact", "session_end", "stop", "manual", "model"]]
     events: NotRequired[list["BriefEvent"]]
     sections: NotRequired[Optional["BriefSections"]]
     event_cursor: NotRequired[str]
     if_revision: NotRequired[Optional[int]]
     use_llm: NotRequired[Optional[bool]]
+
+
+class BriefCheckout(TypedDict, total=False):
+    "Git observations from the sender's checkout at save time."
+
+    dirty: NotRequired[Optional[bool]]
+    head_in_remote_refs: NotRequired[Optional[bool]]
 
 
 class BriefEvent(TypedDict, total=False):
@@ -19685,6 +19734,7 @@ class SessionBriefSaveBody(TypedDict, total=False):
     repo: NotRequired[str]
     branch: NotRequired[str]
     head_sha: NotRequired[str]
+    checkout: NotRequired[Optional["BriefCheckout"]]
     trigger: NotRequired[Literal["precompact", "session_end", "stop", "manual", "model"]]
     events: NotRequired[list["BriefEvent"]]
     sections: NotRequired[Optional["BriefSections"]]

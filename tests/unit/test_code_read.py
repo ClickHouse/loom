@@ -81,12 +81,14 @@ async def test_read_keeps_file_commit_while_reconciliation_checks_head(
     async def present(_):
         return str(tmp_path / ".git")
 
+    traces: list[dict] = []
     monkeypatch.setattr(read, "CodeRepo", Repo)
     monkeypatch.setattr(read, "require_code_intel", lambda: None)
     monkeypatch.setattr(read, "resolve_code_identity", lambda org, ns: (org, ns))
     monkeypatch.setattr(read, "repo_for_namespace", lambda *_: None)
     monkeypatch.setattr(read, "index_as_of", as_of)
     monkeypatch.setattr(read, "present_dir", present)
+    monkeypatch.setattr(read, "schedule_code_trace", lambda **row: traces.append(row))
     state = await find_stale_paths(Repo(), str(tmp_path / ".git"), "org", "source", head)
     result = await read.handle_code_read(
         CodeReadInput(org="org", namespace="source", path="src/lib.rs", start_line=1, end_line=1)
@@ -99,3 +101,7 @@ async def test_read_keeps_file_commit_while_reconciliation_checks_head(
     assert source.status == "complete"
     assert source.indexed_commit == old
     assert source.windows[0].text == raw.decode()
+    (trace,) = traces
+    assert result.trace_run_id and trace["trace_run_id"] == result.trace_run_id
+    assert trace["org"] == "org" and trace["ns"] == "source"
+    assert trace["op"] == "code.read" and trace["returned_paths"] == ["src/lib.rs"]

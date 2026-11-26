@@ -770,8 +770,10 @@ export interface CodeEditContextInput {
   consumer?: string;
   /** Definition name, path:symbol, or path:line. File path with clues if known. */
   name?: string;
-  /** Literal fragments to find the edit target in a file or across the index. */
+  /** Fragments for one target, or exact declaration fragments across files. */
   clues?: string[];
+  /** Batch name, path:symbol or path:line. Replaces name and clues. */
+  names?: string[];
 }
 
 export interface CodeUnit {
@@ -791,6 +793,7 @@ export interface CodeUnit {
   recent_prs?: Array<Record<string, unknown>>;
   examples?: Array<Record<string, unknown>>;
   lessons?: Array<Record<string, unknown>>;
+  lessons_unread?: boolean;
   churn?: number;
   amp?: number;
   tested?: boolean;
@@ -803,6 +806,34 @@ export interface CodeUnit {
   lexical_rank?: number;
   vector_rank?: number;
   namespace?: string;
+}
+
+export interface CodeEditContextTarget {
+  name: string;
+  status: "resolved" | "ambiguous" | "dependency" | "not_found";
+  definition_indices?: number[];
+  candidates?: Array<Record<string, unknown>>;
+  resolved_by?: string;
+  presence?: Array<Record<string, unknown>>;
+  hierarchy?: Record<string, Array<Record<string, unknown>>>;
+  documented_in?: Array<Record<string, unknown>>;
+  trace_run_id?: string;
+}
+
+export interface CodeEditReadSource {
+  qualified_name: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  commit: string;
+  body: string;
+  sites: CodeEditReadSite[];
+}
+
+export interface CodeEditReadSite {
+  path: string;
+  symbol: string;
+  line: number;
 }
 
 export interface CodeSymbolOutput {
@@ -824,6 +855,8 @@ export interface CodeSymbolOutput {
   neighbour_tokens?: number;
   presence?: Array<Record<string, unknown>>;
   summary?: Record<string, string[]>;
+  edit_targets?: CodeEditContextTarget[];
+  read_sources?: CodeEditReadSource[] | null;
 }
 
 export interface CodeEnclosingInput {
@@ -957,11 +990,13 @@ export interface CodeGrepInput {
   related_on_miss?: boolean;
   /** Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. Default true on coding connections. */
   related_on_prefix?: boolean;
-  /** Include the resolved argument definition and direct helper in related source. */
+  /** Include verified argument definitions, helpers, or forwarding call targets. */
   include_dependencies?: boolean;
   case_sensitive?: boolean;
   /** Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. */
   context_lines?: number;
+  /** Use the same excerpt width to complete a short declaration. Default false. */
+  prefer_complete_context?: boolean;
   path_prefix?: string;
   /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. */
   cursor?: string;
@@ -1383,6 +1418,7 @@ export interface CodeReadOutput {
   lessons_left_out?: number;
   results: CodeReadRange[];
   as_of: Record<string, unknown>;
+  trace_run_id?: string;
 }
 
 export interface CodeRecentCommitsInput {
@@ -9561,6 +9597,7 @@ export interface SessionBriefGetInput {
   from_session?: string;
   project?: string;
   revision?: number;
+  snapshot_id?: string;
   include_sections?: boolean;
   full?: boolean;
 }
@@ -9568,6 +9605,7 @@ export interface SessionBriefGetInput {
 export interface BriefSections {
   goal?: string;
   status?: string;
+  verification?: string;
   decisions?: BriefDecision[];
   dead_ends?: BriefDeadEnd[];
   done?: BriefDone[];
@@ -9604,6 +9642,8 @@ export interface SessionBriefGetOutput {
   found: boolean;
   brief_key?: string;
   revision?: number;
+  snapshot_id?: string;
+  snapshot_key?: string;
   rendered?: string;
   sections?: BriefSections | null;
   project?: string;
@@ -9655,6 +9695,11 @@ export interface SessionBriefListOutput {
   rendered?: string;
 }
 
+export interface BriefCheckout {
+  dirty?: boolean | null;
+  head_in_remote_refs?: boolean | null;
+}
+
 export interface BriefEvent {
   kind: "user" | "assistant" | "edit" | "command" | "error" | "read" | "search" | "tool" | "note" | "summary";
   text?: string;
@@ -9675,6 +9720,7 @@ export interface SessionBriefSaveInput {
   repo?: string;
   branch?: string;
   head_sha?: string;
+  checkout?: BriefCheckout | null;
   trigger?: "precompact" | "session_end" | "stop" | "manual" | "model";
   events?: BriefEvent[];
   sections?: BriefSections | null;

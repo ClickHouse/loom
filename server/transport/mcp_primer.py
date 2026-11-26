@@ -364,6 +364,8 @@ def _bound_coding_connection(toolset: str | None) -> bool:
 
 def _linked_history_guidance(task_pack: str | None) -> str:
     return (
+        "For a repeat source lookup, set `include_lessons: false` when you already have "
+        "the linked lessons for that scope. "
         "For prior decisions or procedures beyond linked code lessons, use "
         f"{task_pack} with the task as `query`. "
     )
@@ -599,14 +601,16 @@ def _coding_instructions(
             ("code.search", "for behavior or an issue"),
             ("code.grep", "for exact text or an error"),
             ("code.read", "to read known line ranges together"),
-            ("code.callers", "for callers"),
+            ("code.callers", "for callers and indexed uses of a known definition"),
             ("code.impact", "for change effects"),
             ("code.context_pack", "for a task briefing"),
         )
-        if tool[name] and (not compact or name in {"code.search", "code.grep"})
+        if tool[name]
+        and (not compact or name in {"code.search", "code.grep", "code.read", "code.callers"})
     ]
     definition_hint = (
         f"Before editing, use {tool['code.edit_context']} with a definition or literal clues. "
+        "If the editor needs a local read first, start with one line near the edit. "
         if tool["code.edit_context"]
         else ""
     )
@@ -617,8 +621,9 @@ def _coding_instructions(
         lead = "\n\nUse Loom first for unchanged indexed code and tests. "
         follow = (
             "Batch lookups, check revision and `code_state`, and reuse source and notes. "
-            "Use local tools for edits, tests, Git, working-copy changes, explicit requests, "
-            "and evidence missing from Loom. Find deferred tools with ToolSearch."
+            "Find deferred tools with ToolSearch. Use local tools for edits, tests, Git, "
+            "working-copy changes, unindexed paths, explicit requests, "
+            "and evidence Loom cannot supply."
         )
     else:
         lead = "\n\nUse Loom first to search and read unchanged indexed source, including tests. "

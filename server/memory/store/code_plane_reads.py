@@ -9,19 +9,26 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.identity.domain.read_scope import ReadFilters, scope_and
+from server.memory.store.code_links import LinkedMemory
 
 
 async def served_excerpts(
     org: str,
     namespaces: Sequence[str],
-    memory_ids: Sequence[str],
+    memories: Sequence[LinkedMemory],
     *,
+    limit: int,
+    changed: Sequence[str] = (),
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """The served rows of `namespaces` among `memory_ids` (live, unexpired, not `high`),
-    with the complete value as text (a JSON string value decoded), for a code read's
-    lessons."""
-    if not memory_ids or not namespaces:
+    """The best `limit` served rows of `namespaces` among `memories` (live, unexpired,
+    not `high`), each read by its identity, the table's sort key, and kept only while
+    that identity still holds its memory_id; with the complete value as text (a JSON
+    string value decoded), for a code read's lessons. Best is a memory not in `changed`
+    (its code still matches), then pinned, then the most confident: a file with many
+    linked memories reads no more excerpts than the answer serves. Each slice of
+    `memories` keeps its own `limit`, so the caller ranks and cuts again."""
+    if not memories or not namespaces:
         return []
     return await query_all_sliced(
         ch or _default_client(),
@@ -31,12 +38,21 @@ async def served_excerpts(
                pinned, confidence
         FROM loom.memory FINAL
         WHERE org = {org:String} AND namespace IN {nss:Array(String)}
-          AND memory_id IN {ids:Array(UUID)}
+          AND (namespace, agent, user_id, session_id, memory_key, memory_id)
+              IN {memories:Array(Tuple(String, String, String, String, String, UUID))}
           AND tombstoned_at IS NULL AND status IN ('active', 'conflicted')
           AND (expires_at IS NULL OR expires_at > now()) AND sensitivity != 'high'
+        ORDER BY memory_id IN {changed:Array(UUID)}, pinned DESC, confidence DESC
+        LIMIT {limit:UInt32}
         """,
-        {"org": org, "nss": sorted(set(namespaces)), "ids": sorted({str(i) for i in memory_ids})},
-        "ids",
+        {
+            "org": org,
+            "nss": sorted(set(namespaces)),
+            "memories": sorted(set(memories)),
+            "changed": sorted(set(changed)),
+            "limit": limit,
+        },
+        "memories",
     )
 
 

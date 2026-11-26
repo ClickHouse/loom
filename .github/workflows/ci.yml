@@ -361,7 +361,7 @@ jobs:
           done
           uvx --python "$PYTHON_VERSION" --from "$coverage_package" coverage lcov -o "$RUNNER_TEMP/python.lcov"
       - name: Report Python changed-line coverage
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Python server and SDK
           report: ${{ runner.temp }}/python.lcov
@@ -707,7 +707,7 @@ jobs:
       - name: Collect dashboard unit coverage
         run: npm run test -- --coverage --testTimeout=10000
       - name: Report dashboard changed-line coverage
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Dashboard
           working-directory: frontend
@@ -1373,8 +1373,9 @@ jobs:
       # target branch's tip can carry a newer migration by the time the run starts.
       - name: Mixed-version gate
         run: python scripts/gates/mixed_version.py --require --base HEAD~1
-      - name: Published build ordinary-event compatibility
-        run: python scripts/gates/mixed_version.py --require --base 1cbaf0411114512957b96ec5ea7bbb8058828543
+      # v1.3.0 checks the analyst version before probing retired relations.
+      - name: Published build event-view compatibility
+        run: python scripts/gates/mixed_version.py --require --base 47b479dcdae4c089aef2690428fa4c9a8f54554c
 
   sdk-rust:
     needs: validate-ref
@@ -1403,6 +1404,11 @@ jobs:
         run: |
           rustup toolchain install "${RUST_TOOLCHAIN}" --profile minimal --component rustfmt --component clippy
           rustup override set "${RUST_TOOLCHAIN}"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Check the independent Rust SDK version
+        run: python ../../scripts/release/rust_sdk.py check-version
       # The library leaves dependency locking to its consumers; each toolchain resolves once.
       - name: Resolve dependencies for this toolchain
         run: cargo generate-lockfile
@@ -1433,7 +1439,7 @@ jobs:
       - name: Report Rust SDK changed-line coverage
         if: steps.rust-coverage.outcome == 'success'
         continue-on-error: true
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Rust SDK
           working-directory: sdk/rust
@@ -1446,11 +1452,11 @@ jobs:
         run: cargo doc --locked --no-deps $RUST_SDK_FEATURES
       - name: Verify the distributable crate and its license
         run: |
+          version=$(python ../../scripts/release/rust_sdk.py check-version)
           cargo package --locked $RUST_SDK_FEATURES
-          for archive in target/package/clickhouse-loom-*.crate; do
-            package="$(basename "$archive" .crate)"
-            tar -xOf "$archive" "$package/LICENSE" | cmp - ../../LICENSE
-          done
+          python ../../scripts/release/rust_sdk.py verify-package \
+            "target/package/clickhouse-loom-$version.crate" \
+            --expected-commit "$(git rev-parse HEAD)"
 
   sdk-typescript:
     needs: validate-ref
@@ -1498,7 +1504,7 @@ jobs:
       - name: Report TypeScript SDK changed-line coverage
         if: github.event_name == 'pull_request'
         continue-on-error: true
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: TypeScript SDK
           working-directory: sdk/typescript

@@ -1,6 +1,8 @@
 ---
 title: Memory for coding agents across sessions and tools
-description: Compare repository instructions, session history, and shared memory for coding agents. Test recall, scoped access, and lessons linked to code.
+description: Choose an AI agent memory tool for user preferences, project rules, or decisions shared across coding agents. Test recall, access, and source changes.
+seo:
+  title: Shared memory for coding agents
 ---
 
 # Memory for coding agents across sessions and tools
@@ -33,6 +35,16 @@ to the function that enforces it. A later agent can retrieve the lesson with the
 function and check the source before changing the retry. Use [memory history and provenance](../features/memory/history-and-provenance.md)
 to see who saved the lesson and how it changed.
 
+## Choose a memory tool for AI agents
+
+Start with who should be able to retrieve the information in a fresh session. For
+an assistant that remembers a person's preferences, test whether storage can scope
+recall and deletion to that user. For an agent that needs approved policy, test whether
+document search returns a passage from the current revision. For a team of agents,
+test whether a decision survives a client switch and whether a reader on another
+project is refused. The [self-hosted comparison](../guides/compare-coding-agent-memory.md)
+shows what a fresh reader could retrieve in one coding example.
+
 ## Choosing a memory tool for coding agents
 
 Choose a source based on what the next agent needs to retrieve and who maintains it.
@@ -52,12 +64,13 @@ definition that implements the change. When the policy comes from a document, us
 
 Check these requirements before choosing Loom:
 
-| Requirement                    | What to check                                                                                                                                  |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Recall after a fresh session   | Save a fact, start another session and require the stored value and writer in the tool response.                                               |
-| Shared context across tools    | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript. |
-| Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false.    |
-| Access and operations          | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers.           |
+| Requirement                    | What to check                                                                                                                                                              |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recall after a fresh session   | Save a fact, start another session and require the stored value and writer in the tool response.                                                                           |
+| Shared context across tools    | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript.                             |
+| Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false.                                |
+| Access and operations          | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers.                                       |
+| Data portability               | [Compare what a fresh reader recovers](../guides/compare-coding-agent-memory.md#move-a-saved-decision-to-a-fresh-setup) after copying the files or importing the decision. |
 
 Follow [coding-agent setup](../getting-started/connect-a-coding-agent.md) for the plugin
 or MCP connection your client supports. Read its capture settings before using private
@@ -87,6 +100,55 @@ An exact-key read checks storage and wiring. Evaluate semantic retrieval separat
 with questions that do not name the key, including questions the store cannot answer.
 To measure the effect on completed work, [compare coding tasks with and without memory](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
 using the same acceptance tests.
+
+## Switch coding agents with shared project memory
+
+To switch from Claude Code to Codex or Cursor, connect the new client to the same Loom
+server and project namespace. The new session can retrieve decisions already saved there.
+
+1. Pick a reviewed decision the next agent needs, such as why a retry needs an idempotency
+   key. If it only exists in client-local notes or a transcript, check it against the
+   source, then explicitly save the decision in the shared namespace. Keep rules that
+   apply to every checkout in version control.
+2. On an authenticated server, give the new client its own token scoped to the project
+   namespace. Start a fresh session and give it the exact key and scope shown in the
+   saved memory. Compare the returned value and writer with the original. Check the
+   current source before applying a code-linked decision.
+3. For work in progress, include the branch, commit, and remaining checks in the task
+   handoff. Keep each client's local configuration and session history with that client.
+
+Use the [authenticated Claude Code-to-Codex check](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex)
+to verify the handoff on a disposable key before switching a project.
+
+## Share memory across repositories
+
+Give each repository its own memory namespace. Put reviewed rules that both teams
+can read in a shared namespace. Use a separate writer to maintain those rules.
+Use an [authenticated deployment](../getting-started/quickstart.md#start-in-multi-user-mode) for this
+exercise. Create three disposable memory namespaces in the same org and grant the roles
+below with repeatable `--namespace-role` options. [Tokens and grants](../guides/tokens-and-grants.md)
+
+| Token holder            | `web-app`      | `worker-app`   | `team-rules` |
+| ----------------------- | -------------- | -------------- | ------------ |
+| Web repository agent    | Writer         | Access refused | Viewer       |
+| Worker repository agent | Access refused | Writer         | Viewer       |
+| Rules maintainer        | Access refused | Access refused | Writer       |
+
+For plugin capture, set `LOOM_PROJECT_SCOPE=namespace` and match the project name to
+its repository namespace. Set `LOOM_PROJECT_NAME` when the checkout directory has a
+different name. In the default `tag` mode, project tags label rows in the configured
+namespace. Namespace roles enforce access. [Plugin configuration](../features/integrations/claude-code.md#configuration)
+
+Pass `namespace` and `memory_key` explicitly in each tool call. The org comes from the token.
+
+1. In each repository, use its writer token and `loom_memory_set` to save a different
+   local release check under `example/repo/release-review`. Use the maintainer's token to
+   write a rule for both teams under `example/team/release-review` in `team-rules`.
+2. Open a fresh session with each repository token and call `loom_memory_get` for its
+   local and shared rules. Each session should read its own local rule and the same team rule.
+3. Use each repository token to read the other repository's local key by naming that
+   namespace. Require an access refusal without the value. Try writing the shared key
+   with each repository token. Require a refusal and verify the shared rule's value.
 
 ## What you get
 

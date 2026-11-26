@@ -28,14 +28,17 @@ from server.code.app.common import (
     schedule_code_trace,
 )
 from server.code.app.grep_bodies import definitions_for, definitions_tokens
-from server.code.app.grep_dependencies import add_dependencies
+from server.code.app.grep_dependencies import add_dependencies, forwarded_dependency
 from server.code.app.grep_source import (
     GREP_MATCH_TEXT_CHARS,
+    CompleteContexts,
     ContextSource,
     collect_contexts,
     match_revisions,
     page_contexts,
+    recover_page_context,
     recover_source_chunks,
+    verify_complete_contexts,
 )
 from server.code.app.search.shared import (
     _not_covered_output,
@@ -451,6 +454,58 @@ async def _scan_grep_lines(
     )
 
 
+async def _grep_page_context(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    input: CodeGrepInput,
+    scan: _GrepLineScan,
+    matches: list[dict[str, Any]],
+    budget: code_deadline.Budget | None,
+) -> tuple[dict[str, Any], ContextSource, int, CompleteContexts]:
+    context_lines = input.context_lines
+    if (
+        scan.related_pattern
+        and matches
+        and not input.include_body
+        and "context_lines" not in input.model_fields_set
+    ):
+        context_lines = RELATED_GREP_CONTEXT_LINES
+    if not context_lines:
+        return {}, {}, 0, frozenset()
+    complete_contexts: CompleteContexts = frozenset()
+    if input.prefer_complete_context and not input.include_body:
+        with code_span("grep.declaration_extents") as span:
+            complete_contexts = await verify_complete_contexts(
+                repo, org, ns, scan.chunks, scan.matches, scan.match_commits, context_lines, budget
+            )
+            span_attrs(span, verified=len(complete_contexts))
+    source = await asyncio.to_thread(
+        collect_contexts,
+        scan.chunks,
+        scan.matches,
+        context_lines,
+        _LINE_SCAN_MAX_CHARS,
+        match_commits=scan.match_commits,
+        complete_contexts=complete_contexts,
+    )
+    if input.context_lines:
+        await recover_page_context(
+            repo,
+            org,
+            ns,
+            source,
+            matches,
+            context_lines,
+            match_revisions(scan.matches, scan.match_commits),
+            complete_contexts=complete_contexts,
+            max_source_bytes=_LINE_SCAN_MAX_CHARS,
+            budget=budget,
+        )
+    page = page_contexts(source, matches, context_lines, complete_contexts=complete_contexts)
+    return page, source, context_lines, complete_contexts
+
+
 async def _grep_lines(
     repo: CodeRepo,
     org: str,
@@ -485,34 +540,24 @@ async def _grep_lines(
     route, related_pattern, note = scan.route, scan.related_pattern, scan.note
     trace_run_id = new_trace_run_id()
     matches = scan.matches[offset : offset + served_limit]
-    context: dict[str, Any] = {}
-    context_source: ContextSource = {}
-    context_lines = input.context_lines
-    if (
-        related_pattern
-        and matches
-        and not input.include_body
-        and "context_lines" not in input.model_fields_set
-    ):
-        context_lines = RELATED_GREP_CONTEXT_LINES
-    if context_lines:
-        context_source = await asyncio.to_thread(
-            collect_contexts,
-            scan.chunks,
-            scan.matches,
-            context_lines,
-            _LINE_SCAN_MAX_CHARS,
-            match_commits=scan.match_commits,
-        )
-        context = page_contexts(context_source, matches, context_lines)
-    bodies = await definitions_for(input, matches, budget, match_commits=scan.match_commits)
+    # Keep the scan's coverage for the cursor and record enrichment cuts for this page.
+    page_budget = replace(budget, cut=[]) if budget is not None else None
+    context, context_source, context_lines, complete_contexts = await _grep_page_context(
+        repo, org, ns, input, scan, matches, page_budget
+    )
+    bodies = await definitions_for(input, matches, page_budget, match_commits=scan.match_commits)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
-        repo, org, ns, input, matches, route, budget=budget
+        repo, org, ns, input, matches, route, budget=page_budget
     )
     exact_coverage = await asyncio.to_thread(
         _line_coverage_fields, scan.chunks, budget, additional_reason=scan.batch_partial_reason
     )
     coverage = dict(exact_coverage)
+    if page_budget is not None and page_budget.partial:
+        coverage.update(
+            partial=True,
+            partial_reason=_notes(coverage.get("partial_reason", ""), page_budget.reason()),
+        )
     extra_related = None
     if not (related_pattern or offset or coverage.get("partial")):
         extra_related, extra_coverage = await _extra_related_source(
@@ -525,7 +570,7 @@ async def _grep_lines(
             scan=scan,
             exact_definitions=bodies.get("definitions", []),
             limit=served_limit,
-            budget=budget,
+            budget=page_budget,
         )
         coverage.update(extra_coverage)
         if extra_related is not None:
@@ -546,9 +591,10 @@ async def _grep_lines(
         scan,
         matches,
         related,
-        budget=budget,
+        budget=page_budget,
         incomplete=bool(coverage.get("partial")),
         whole_page=not offset and len(matches) == len(scan.matches),
+        definitions=bodies.get("definitions", []) if not offset else [],
     )
     if missing:
         coverage.update(
@@ -568,6 +614,7 @@ async def _grep_lines(
             partial=bool(exact_coverage.get("partial")),
             partial_reason=str(exact_coverage.get("partial_reason") or ""),
             context_source=context_source,
+            complete_contexts=complete_contexts,
             match_commits=scan.match_commits,
         )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
@@ -578,9 +625,7 @@ async def _grep_lines(
     risk = "low" if returned else "abstain"
     if (matches and related_pattern) or (extra_related and extra_related.matches):
         risk = "medium"
-    related_tokens = (
-        _extra_related_chars(extra_related) + sum(len(d.body) for d in dependencies)
-    ) // 4
+    related_chars = _extra_related_chars(extra_related) + sum(len(d.body) for d in dependencies)
     schedule_code_trace(
         org=org,
         ns=ns,
@@ -594,7 +639,7 @@ async def _grep_lines(
         top_k=served_limit,
         tokens_returned=sum(len(m["text"]) for m in returned) // 4
         + _context_tokens(context)
-        + related_tokens
+        + related_chars // 4
         + neighbour_tokens
         + definitions_tokens(bodies),
         abstain=not returned,
@@ -756,6 +801,7 @@ async def _related_dependencies(
     budget: code_deadline.Budget | None,
     incomplete: bool,
     whole_page: bool,
+    definitions: list[dict[str, Any]],
 ) -> tuple[RelatedGrepEvidence | None, str]:
     if incomplete or not input.include_dependencies:
         return related, ""
@@ -772,11 +818,13 @@ async def _related_dependencies(
         )
         related.dependencies = evidence.dependencies
         return related, reason
-    if not matches or not whole_page or scan.truncated:
-        return None, ""
-    argument = _batch_dependency_argument(input)
+    argument = (
+        _batch_dependency_argument(input) if matches and whole_page and not scan.truncated else ""
+    )
     if not argument:
-        return None, ""
+        return await forwarded_dependency(
+            repo, org, ns, input, scope, definitions, matches, scan.match_commits, budget
+        )
     evidence = RelatedGrepEvidence(pattern=argument, matches=matches)
     reason = await add_dependencies(
         repo, org, ns, input, evidence, scope, scan.match_commits, budget
@@ -1168,7 +1216,7 @@ def _matching_lines(
     pending = set(first_hits)
     excluded_paths = set(input.exclude_unit_ids)
     matches: list[dict[str, Any]] = []
-    seen: set[tuple[str, int]] = set()
+    seen: dict[tuple[str, int], str] = {}
     scanned = 0
     for c in chunks:
         if pending and priority_until is not None and time.monotonic() >= priority_until:
@@ -1198,7 +1246,7 @@ def _matching_lines(
             key = (str(c["path"]), int(c["start_line"] or 1) + off)
             if match_commits is not None:
                 commit = str(c.get("indexed_commit") or "").rstrip("\0")
-                if match_commits.setdefault(key, commit) != commit:
+                if match_commits.setdefault(key, commit) != commit or seen.get(key, line) != line:
                     match_commits[key] = ""
             if key in seen:
                 continue  # the same span indexed twice (re-parse race)
@@ -1211,7 +1259,7 @@ def _matching_lines(
                 if not pending:
                     return _promote_pattern_hits(matches, first_hits, priority_limit), False
                 continue
-            seen.add(key)
+            seen[key] = line
             for literal in new_patterns:
                 first_hits[literal] = len(matches)
             pending_here.difference_update(new_patterns)
@@ -1267,6 +1315,7 @@ def _grep_trace_args(input: CodeGrepInput, *, context_lines: int | None = None) 
         "related_on_prefix",
         "include_dependencies",
         "context_lines",
+        "prefer_complete_context",
         context_lines=context_lines,
         paged=bool(input.cursor) or None,
     )
@@ -1301,6 +1350,7 @@ def _issue_grep_cursor(
     partial: bool = False,
     partial_reason: str = "",
     context_source: ContextSource | None = None,
+    complete_contexts: CompleteContexts = frozenset(),
     match_commits: dict[tuple[str, int], str],
 ) -> str:
     """Store every extracted line (served ones included, so offsets are
@@ -1327,6 +1377,7 @@ def _issue_grep_cursor(
             "partial": partial,
             "partial_reason": partial_reason,
             **({"context_source": context_source} if context_source else {}),
+            **({"complete_contexts": sorted(complete_contexts)} if complete_contexts else {}),
         },
         indexed_commit="",
         route="grep",
@@ -1384,14 +1435,42 @@ async def _serve_grep_page(
     )
     files = list(dict.fromkeys(m["path"] for m in page))
     context: dict[str, Any] = {}
+    budget = code_deadline.start(input.deadline_ms, started=started)
     if input.context_lines:
-        context = page_contexts(payload.get("context_source") or {}, page, input.context_lines)
+        complete_contexts = (
+            frozenset(
+                (str(path), int(line)) for path, line in (payload.get("complete_contexts") or ())
+            )
+            if input.prefer_complete_context and not input.include_body
+            else frozenset()
+        )
+        source = payload.get("context_source") or {}
+        revisions = match_revisions(
+            pool,
+            dict(zip(((hit["path"], hit["line"]) for hit in pool), pool_commits, strict=False)),
+        )
+        await recover_page_context(
+            repo,
+            org,
+            ns,
+            source,
+            page,
+            input.context_lines,
+            revisions,
+            complete_contexts=complete_contexts,
+            max_source_bytes=_LINE_SCAN_MAX_CHARS,
+            budget=budget,
+        )
+        context = page_contexts(
+            source, page, input.context_lines, complete_contexts=complete_contexts
+        )
+    context_budget = _partial_fields(budget)
     trace_run_id = new_trace_run_id()
     route = route + "+page"
     bodies = await definitions_for(
         input,
         page,
-        code_deadline.start(input.deadline_ms, started=started),
+        budget,
         match_commits=match_commits,
     )
     schedule_code_trace(
@@ -1439,8 +1518,11 @@ async def _serve_grep_page(
                 await index_as_of(repo, org, ns), page_commit="", offset=offset, fallback=""
             ),
             trace_run_id=trace_run_id,
-            partial=bool(payload.get("partial")),
-            partial_reason=str(payload.get("partial_reason") or ""),
+            partial=bool(payload.get("partial") or context_budget.get("partial")),
+            partial_reason=_notes(
+                str(payload.get("partial_reason") or ""),
+                str(context_budget.get("partial_reason") or ""),
+            ),
             **bodies,
             **context,
         ),

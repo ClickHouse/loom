@@ -9,7 +9,13 @@ const config = JSON.parse(readFileSync(manifest, "utf8"));
 const publicPagesFile = new URL("./public-pages.json", import.meta.url);
 const publicPages = new Map(Object.entries(JSON.parse(readFileSync(publicPagesFile, "utf8"))));
 const homeLocales = JSON.parse(readFileSync(new URL("./home-locales.json", import.meta.url), "utf8"));
+const productDates = JSON.parse(readFileSync(new URL(".blume-content/.product-dates.json", docs), "utf8"));
 const adoptionDestination = "/docs/adoption";
+const snapshotPath = "/api/oss-snapshot";
+const telemetryFunctions = [
+  ["/api/v1/adoption", "adoption-collector.mjs"],
+  [snapshotPath, "oss-snapshot.mjs"],
+];
 
 if (!Array.isArray(config.routes)) throw new Error("Vercel build manifest has no routes.");
 const siteRoutes = [...publicPages].map(([path, destination]) => {
@@ -27,6 +33,21 @@ const siteRoutes = [...publicPages].map(([path, destination]) => {
   return { src, dest: destination };
 });
 
+const telemetryRoutes = telemetryFunctions.map(([path, handler]) => {
+  const directory = new URL(`functions${path}.func/`, output);
+  mkdirSync(directory, { recursive: true });
+  copyFileSync(new URL(`lib/${handler}`, docs), new URL(handler, directory));
+  const functionConfig = {
+    runtime: "nodejs24.x",
+    handler,
+    launcherType: "Nodejs",
+    maxDuration: 10,
+    supportsResponseStreaming: true,
+  };
+  writeFileSync(new URL(".vc-config.json", directory), JSON.stringify(functionConfig));
+  return { src: `^${path}$`, dest: path };
+});
+
 const agentIndexRedirects = ["", "-full"].map((suffix) => ({
   src: `^/llms${suffix}\\.txt$`,
   status: 308,
@@ -41,15 +62,18 @@ const translationRedirects = publishSiteDiscovery(new URL("static/", output), {
   root: [...publicPages.keys()],
   aliases: [...publicPages.values()],
   homeLocales,
+  productDates,
 });
 const publicPaths = new Set(siteRoutes.map(({ src }) => src));
 config.routes = [
   ...agentIndexRedirects,
   ...aliasRedirects,
   ...translationRedirects,
+  ...telemetryRoutes,
   ...siteRoutes,
   ...config.routes.filter(({ src }) => !publicPaths.has(src)),
 ];
+config.crons = [...(config.crons ?? []), { path: snapshotPath, schedule: "30 2 * * *" }];
 copyFileSync(new URL("../llms-install.md", docs), new URL("static/docs/llms-install.md", output));
 
 if (process.env.VERCEL_TARGET_ENV === "production") {

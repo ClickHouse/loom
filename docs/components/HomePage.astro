@@ -18,7 +18,7 @@ const docLink = (path: string) => documentationLink(locale, path);
 const start = docLink("/getting-started/quickstart");
 const enterprise = enterpriseLink(locale);
 const knowledgeFactory =
-  "knowledgeFactory" in homeLocale
+  locale !== "en" && "knowledgeFactory" in homeLocale
     ? { href: homeLocale.knowledgeFactory, hreflang: locale }
     : docLink("/use-cases/knowledge-factory");
 const capabilities = [

@@ -24,8 +24,29 @@ function splitAlternatives(paths, limit) {
   return groups;
 }
 
-function translationRedirects(sitemap, staticRoot) {
-  const paths = new Set([...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map(([, url]) => new URL(url).pathname));
+function markdownCanonicalRoutes(paths, staticRoot) {
+  const canonical = (src, path) => ({
+    src,
+    headers: { Link: `<${origin}${path}>; rel="canonical"` },
+    continue: true,
+    caseSensitive: true,
+  });
+
+  return ["md", "mdx"].flatMap((extension) => {
+    const hasMirror = (path) => existsSync(new URL(`${path.slice(1)}.${extension}`, staticRoot));
+    const pages = [...paths].filter((path) => path.startsWith("/docs/") && hasMirror(path)).map(escapePattern);
+    const prefix = "^(";
+    const suffix = `)\\.${extension}$`;
+    const limit = maxRoutePatternLength - prefix.length - suffix.length;
+    const routes = splitAlternatives(pages, limit).map((group) => canonical(`${prefix}${group}${suffix}`, "$1"));
+    if (paths.has("/docs") && hasMirror("/docs/index")) {
+      routes.push(canonical(`^/docs/index\\.${extension}$`, "/docs"));
+    }
+    return routes;
+  });
+}
+
+function translationRedirects(sitemap, paths, staticRoot) {
   const locales = new Set([...sitemap.matchAll(/hreflang="([^"]+)"/g)].map(([, locale]) => locale));
   locales.delete("en");
   locales.delete("x-default");
@@ -59,7 +80,7 @@ function translationRedirects(sitemap, staticRoot) {
   });
 }
 
-export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = {} }) {
+export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = {}, productDates = {} }) {
   const docsSitemap = new URL("docs/sitemap.xml", staticRoot);
   const sitemap = readFileSync(docsSitemap, "utf8");
   if (!sitemap.includes("</urlset>")) {
@@ -91,7 +112,8 @@ export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = 
   }
   const siteEntries = root.map((path) => {
     const loc = escape(new URL(path, origin).href);
-    return `  <url><loc>${loc}</loc>${alternatesByPath.get(path) ?? ""}</url>`;
+    const lastmod = productDates[path] ? `<lastmod>${escape(productDates[path])}</lastmod>` : "";
+    return `  <url><loc>${loc}</loc>${lastmod}${alternatesByPath.get(path) ?? ""}</url>`;
   });
 
   writeFileSync(docsSitemap, docs);
@@ -100,5 +122,6 @@ export function publishSiteDiscovery(staticRoot, { root, aliases, homeLocales = 
     new URL("robots.txt", staticRoot),
     `User-agent: *\nAllow: /\n\nSitemap: ${origin}/sitemap.xml\n\n${daumOwnershipProof}\n`,
   );
-  return translationRedirects(docs, staticRoot);
+  const paths = new Set([...docs.matchAll(/<loc>([^<]+)<\/loc>/g)].map(([, url]) => new URL(url).pathname));
+  return [...translationRedirects(docs, paths, staticRoot), ...markdownCanonicalRoutes(paths, staticRoot)];
 }

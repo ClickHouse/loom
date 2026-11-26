@@ -56,6 +56,20 @@ retrieves saved claims. When a claim comes from a policy, [link it to the source
 document](../features/knowledge.md#how-do-agents-connect-a-memory-to-a-source-document)
 so a later reader can verify the evidence.
 
+## How to tell whether an agent used a memory
+
+Suppose the agent retrieves an earlier refund exception while processing a return.
+Check which evidence the agent applied to the current order.
+
+1. **Check what the model received.** Record the memory keys returned by search and
+   compare them with the evidence your application passes to the model.
+2. **Check what the agent relied on.** Inspect the answer or action for the rule the
+   agent applied to the order. [Run history](../features/runs.md#recalled-is-not-relied-on)
+   separates recalled keys from `memories_used`, which records what the agent reports using.
+3. **Check the outcome.** Grade the decision against the approved policy. To measure
+   the effect of memory, [compare runs with and without saved lessons](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
+   using the same model, tools, policy revision, and acceptance criteria.
+
 ## Rows in ClickHouse
 
 Memories, document chunks, conversation turns, entity edges, code symbols, runs, audit
@@ -503,7 +517,10 @@ The links are read where the code is:
 - `code.symbol` attaches the linked memories as `lessons`, each with its `code_state`.
   They come from the repository's team namespace and the `lesson_namespaces` the call
   names (over MCP the caller's memory home when it names none), never from every
-  namespace the caller can read.
+  namespace the caller can read. The read is bounded by `code_enrich_timeout_s` and
+  serves at most three; when it, or one matched member's read, fails or runs past that
+  bound, the definition carries `lessons_unread: true`, so a caller can tell it apart from
+  a symbol with none. The lessons it still carries may then be incomplete.
 - `code.search`, `code.callers`, `code.callees`, `code.impact`, `code.outline` and a task's
   `code.context_pack` attach `lessons` for the answer's top files
   (`code_result_lessons_paths`): from the same namespaces, less any other repository's code

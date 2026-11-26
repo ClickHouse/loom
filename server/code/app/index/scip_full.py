@@ -22,7 +22,7 @@ from server.code.app.index.gitrepo import git_config_env
 from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.scip_delta import ScipApplyStats, apply_delta
 from server.code.app.index.tier_health import ToolOutputError
-from server.code.app.index.untrusted_files import FileRefused, open_regular
+from server.code.app.index.untrusted_files import changed_while_read, open_regular
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -212,7 +212,7 @@ def _keep(delta_path: Path, keep_delta: str) -> None:
                     dst.write(data)
                     left -= len(data)
                 if left or src.read(1):
-                    raise FileRefused(f"{delta_path} changed while it was read")
+                    raise changed_while_read(delta_path)
             os.replace(tmp_name, dest)
         except BaseException:
             Path(tmp_name).unlink(missing_ok=True)

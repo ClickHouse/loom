@@ -409,10 +409,12 @@ def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None
     edit = next(tool for tool in tools if tool["name"] == "loom_code_edit_context")
     schema = edit["inputSchema"]
     assert "name" not in schema.get("required", [])
-    assert {"name", "clues"} <= schema["properties"].keys()
+    assert {"name", "names", "clues"} <= schema["properties"].keys()
+    assert "Batch exact `names` or declaration `clues`" in edit["description"]
     assert edit["annotations"]["readOnlyHint"]
     grep = next(tool for tool in tools if tool["name"] == "loom_code_grep")
-    assert grep["description"].startswith("Read full enclosing definitions for exact text")
+    assert "Keep default bodies for edits" in grep["description"]
+    assert {"include_body", "context_lines"} <= grep["inputSchema"]["properties"].keys()
     if profile != "compact":
         assert "loom_code_edit_context for a known definition" in grep["description"]
 

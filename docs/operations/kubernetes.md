@@ -1,3 +1,9 @@
+---
+description: Deploy Loom on Kubernetes with its Helm chart, connect the pods to ClickHouse, and configure ingress and worker replicas.
+seo:
+  title: Self-host AI agent memory on Kubernetes
+---
+
 # Kubernetes
 
 `deploy/helm/loom` runs Loom as [N identical replicas](./replicas.md) on Kubernetes: one

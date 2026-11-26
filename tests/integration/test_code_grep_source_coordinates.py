@@ -105,6 +105,66 @@ async def test_stored_chunks_retain_kind_and_physical_source_lines(ch_client: An
 
 
 @pytest.mark.asyncio
+async def test_grep_completes_an_indexed_declaration_within_its_excerpt_width(
+    ch_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("grep-declaration-excerpt"), "source"
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_search_cursor_enabled", True)
+    monkeypatch.setattr(settings, "jwt_secret", "grep-test-cursor-signing-value")
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    await get_client().connect()
+    path = "src/example.py"
+    source = b"""def preceding():
+    first = 1
+    second = first + 1
+    third = second + 1
+    return third
+def target():
+    first = 2
+    second = first + 2
+    third = second + 2
+    return third
+"""
+    await ingest_file(
+        CodeRepo(),
+        org,
+        ns,
+        path=path,
+        source=source,
+        commit_sha="a" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    request = CodeGrepInput(
+        org=org,
+        namespace=ns,
+        pattern=["def preceding", "def target"],
+        context_lines=3,
+        include_body=False,
+        prefer_complete_context=True,
+        limit=1,
+    )
+    first = await handle_code_grep(request)
+    assert first.next_cursor and first.matches[0]["scope"] == "src.example::preceding"
+    next_page = request.model_copy(update={"cursor": first.next_cursor})
+    preferred = await handle_code_grep(next_page)
+    ordinary = await handle_code_grep(
+        next_page.model_copy(update={"prefer_complete_context": False})
+    )
+    assert preferred.matches == ordinary.matches
+    assert preferred.matches[0]["scope"] == "src.example::target"
+    lines = source.decode().splitlines(keepends=True)
+    assert preferred.contexts == [
+        {"path": path, "start_line": 4, "end_line": 10, "text": "".join(lines[3:10])}
+    ]
+    assert ordinary.contexts == [
+        {"path": path, "start_line": 3, "end_line": 9, "text": "".join(lines[2:9])}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_related_grep_returns_the_bound_argument_and_helper(ch_client, monkeypatch) -> None:
     org, ns = unique_org("grep-dependencies"), "source"
     monkeypatch.setattr(settings, "code_intel_enabled", True)
@@ -238,6 +298,82 @@ def use(client: Client):
         wide.model_copy(update={"cursor": focused.next_cursor, "related_on_prefix": True})
     )
     assert next_focused.matches == next_exact.matches and next_focused.related is None
+
+
+@pytest.mark.asyncio
+async def test_named_forwarder_returns_its_verified_implementation(ch_client, monkeypatch) -> None:
+    org, ns = unique_org("grep-forwarding"), "source"
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    await get_client().connect()
+    await ingest_file(
+        CodeRepo(),
+        org,
+        ns,
+        path="src/service.py",
+        source=b'''def implement(value):
+    return value + 1
+
+def dispatch(value):
+    """Delegate implementation to the internal handler."""
+    return implement(value)
+
+class Queue:
+    def dispatch(self, value):
+        return self.pending.append(value)
+
+def alternate(value):
+    return value - 1
+
+def other_dispatch(value):
+    return alternate(value)
+
+def conditional(value):
+    if value:
+        return implement(value)
+    return 0
+
+class Service:
+    def implementation(self, value):
+        return value * 2
+
+    def forward(self, value):
+        return self.implementation(value)
+''',
+        commit_sha="a" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    args = CodeGrepInput(
+        org=org,
+        namespace=ns,
+        pattern=["def dispatch", "def conditional"],
+        include_dependencies=True,
+    )
+    out = await handle_code_grep(args)
+    exact = await handle_code_grep(args.model_copy(update={"include_dependencies": False}))
+    assert out.matches == exact.matches
+    assert out.definitions == exact.definitions
+    assert out.related and not out.related.matches and exact.related is None
+    assert out.related.pattern == "src.service::dispatch"
+    [dependency] = out.related.dependencies
+    assert dependency.qualified_name == "src.service::implement"
+    assert dependency.body.splitlines() == ["def implement(value):", "    return value + 1"]
+    for changes in (
+        {"include_body": False},
+        {"context_lines": 0},
+        {"pattern": "dispatch"},
+        {"pattern": "def conditional"},
+        {"pattern": ["def dispatch", "def other_dispatch"]},
+        {"pattern": ["def dispatch", "def implement"]},
+    ):
+        assert (await handle_code_grep(args.model_copy(update=changes))).related is None
+    enclosed = await handle_code_grep(
+        args.model_copy(update={"pattern": ["class Service", "def forward"]})
+    )
+    assert any("return value * 2" in d.get("body", "") for d in enclosed.definitions)
+    assert enclosed.related is None
 
 
 @pytest.mark.asyncio

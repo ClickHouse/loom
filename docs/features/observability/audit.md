@@ -1,3 +1,9 @@
+---
+description: Inspect state-changing operations and use row hashes and sealed hourly checkpoints to detect edits or deletions in the audit log.
+seo:
+  title: Tamper-evident audit log for agent memory
+---
+
 # Audit log
 
 Audit rows, the `audit_verifier` worker and the checkpoint chain are on by default.

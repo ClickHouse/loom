@@ -362,3 +362,5 @@ One text serves agents and people, so there is no second copy to drift.
 - [Security](security.md): tokens, the gate, restricted namespaces.
 - [Identities and namespaces](../concepts/identities-and-namespaces.md).
 - [Tokens and grants](../guides/tokens-and-grants.md).
+- [Choose retrieval scope from the audience](../guides/audience-scoped-retrieval.md):
+  what a host adds when a reply has more readers than the person who asked.

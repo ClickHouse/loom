@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from server.memory.domain.session_brief import (
     RENDER_CHAR_CAP,
+    BriefCheckout,
     BriefEvent,
     BriefSections,
     _clip,
@@ -31,6 +32,7 @@ class RenderMeta:
     project: str = ""
     branch: str = ""
     head_sha: str = ""
+    checkout: BriefCheckout | None = None
     sessions: int = 0
     events_total: int = 0
     source_chars: int = 0
@@ -71,6 +73,8 @@ def _body(s: BriefSections) -> list[tuple[str, list[str]]]:
         out.append(("Goal", [s.goal]))
     if s.status:
         out.append(("Status", [s.status]))
+    if s.verification:
+        out.append(("Last recorded verification", [s.verification]))
     if s.next_steps:
         out.append(("Next steps", [f"{i}. {x}" for i, x in enumerate(s.next_steps, 1)]))
     if s.open_questions:
@@ -105,6 +109,10 @@ def render_brief(s: BriefSections, meta: RenderMeta, *, char_cap: int = RENDER_C
     their oldest lines first (pointers, files, rules, dead ends, decisions);
     goal, status and next steps are never trimmed away."""
     head = _header(meta)
+    if meta.checkout and meta.checkout.dirty:
+        head.append("The sender had uncommitted changes when this revision was saved.")
+    if meta.checkout and meta.checkout.head_in_remote_refs is False:
+        head.append("The saved commit was absent from the sender's cached remote refs.")
     body = _body(s)
     detail = (
         f"Detail: session.brief_get(brief_key={meta.brief_key!r}, revision=N) reads an "
@@ -126,7 +134,7 @@ def render_brief(s: BriefSections, meta: RenderMeta, *, char_cap: int = RENDER_C
         return "\n\n".join(parts)
 
     out = text()
-    protected = {"Goal", "Status", "Next steps"}
+    protected = {"Goal", "Status", "Last recorded verification", "Next steps"}
     while len(out) > char_cap:
         victim = next((b for b in reversed(body) if b[0] not in protected and b[1]), None)
         if victim is None:

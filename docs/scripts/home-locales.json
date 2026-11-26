@@ -6,7 +6,7 @@
     "enterprise": "/enterprise",
     "knowledgeFactory": "/knowledge-factory"
   },
-  "ar": { "name": "العربية", "href": "/ar", "docs": null },
+  "ar": { "name": "العربية", "href": "/ar", "docs": null, "enterprise": "/ar/enterprise" },
   "cs": { "name": "Čeština", "href": "/cs", "docs": null },
   "de": { "name": "Deutsch", "href": "/de", "docs": null, "enterprise": "/de/enterprise" },
   "es": {
@@ -22,6 +22,7 @@
   "it": { "name": "Italiano", "href": "/it", "docs": null },
   "ja": { "name": "日本語", "href": "/ja", "docs": "/docs/ja", "enterprise": "/ja/enterprise" },
   "ko": { "name": "한국어", "href": "/ko", "docs": "/docs/ko", "enterprise": "/ko/enterprise" },
+  "pl": { "name": "Polski", "href": "/pl", "docs": null },
   "pt-BR": { "name": "Português (Brasil)", "href": "/pt-BR", "docs": "/docs/pt-BR", "enterprise": "/pt-BR/enterprise" },
   "ru": { "name": "Русский", "href": "/ru", "docs": null },
   "tr": { "name": "Türkçe", "href": "/tr", "docs": null },

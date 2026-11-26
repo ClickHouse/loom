@@ -52,7 +52,9 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
         for route in (
             "/",
             "/adoption",
+            "/agent-memory-selector",
             "/ar",
+            "/ar/enterprise",
             "/cs",
             "/de",
             "/de/enterprise",
@@ -71,6 +73,7 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/ko",
             "/ko/enterprise",
             "/knowledge-factory",
+            "/pl",
             "/platform",
             "/pt-BR",
             "/pt-BR/enterprise",

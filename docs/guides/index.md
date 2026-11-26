@@ -9,6 +9,8 @@ seo:
 
 ## Evaluate a workflow
 
+- [Compare self-hosted memory tools for coding agents](compare-coding-agent-memory.md).
+  Try the same handoff, source change, and audit across three setups.
 - [Choose AI software factory tools](software-factory-tools.md). Run a pilot on one
   repository to measure handoffs, required checks, rework, and cost.
 - [Evaluate shared agent memory and code intelligence](../getting-started/evaluate.md).
@@ -29,3 +31,5 @@ seo:
 
 - [Connect an agent](../getting-started/connect-a-coding-agent.md) through a plugin or MCP.
 - [Set up tokens and grants](tokens-and-grants.md) for the namespaces each client needs.
+- [Choose retrieval scope from the audience](audience-scoped-retrieval.md), so a reply
+  in a shared conversation draws only on what its readers may see.

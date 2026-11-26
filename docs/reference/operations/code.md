@@ -577,7 +577,7 @@ Is this already tested?
 
 ## `code.edit_context`
 
-Read implementation, indexed tests, and linked notes before editing.
+Read source, tests, and notes.
 
 `POST /v1/code.edit_context` · MCP `loom_code_edit_context` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -591,7 +591,8 @@ Read implementation, indexed tests, and linked notes before editing.
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `name` | `str` | `''` | Definition name, path:symbol, or path:line. |
-| `clues` | `list[str]` | *(computed)* | Literal fragments to find the edit target in a file or across the index. |
+| `clues` | `list[str]` | *(computed)* | Fragments for one target, or exact declaration fragments across files. |
+| `names` | `list[str]` | *(computed)* | Batch name, path:symbol or path:line. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -613,6 +614,8 @@ Read implementation, indexed tests, and linked notes before editing.
 | `neighbour_tokens` | `int` | Estimated tokens the `neighbours` block cost (counted in `tokens_returned`). |
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
+| `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Batched edit context only. |
 
 ## `code.enclosing`
 
@@ -765,9 +768,10 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
 | `related_on_miss` | `bool` | `False` | Recover a missing call's qualified argument in a literal or batch, or one member spelling in malformed call alternatives (default true on coding connections). |
 | `related_on_prefix` | `bool` | `False` | Show other uses of a literal call prefix's qualified argument, including in a batch with one argument. |
-| `include_dependencies` | `bool` | `False` | Include the resolved argument definition and direct helper in related source. |
+| `include_dependencies` | `bool` | `False` | Include verified argument definitions, helpers, or forwarding call targets. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
+| `prefer_complete_context` | `bool` | `False` | Use the same excerpt width to complete a short declaration. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
 | `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |
@@ -1158,6 +1162,7 @@ Read inclusive, one-based indexed lines.
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `results` | `list[CodeReadRange]` |  |
 | `as_of` | `dict[str, Any]` |  |
+| `trace_run_id` | `str` | Joins this read to the code trace and request ledger. |
 
 ## `code.recent_commits`
 
@@ -1675,6 +1680,8 @@ Find an exact definition by name or path:line.
 | `neighbour_tokens` | `int` | Estimated tokens the `neighbours` block cost (counted in `tokens_returned`). |
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
+| `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Batched edit context only. |
 
 ## `code.symbol_history`
 

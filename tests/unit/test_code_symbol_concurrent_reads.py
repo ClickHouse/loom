@@ -210,7 +210,35 @@ def test_a_failing_leg_leaves_the_definition_served():
     d = out.definitions[0]
     assert d.body == "<body f1>"
     assert d.lessons == []  # the leg degraded to nothing; the answer did not
+    assert d.lessons_unread  # and it says so, unlike a symbol with no lessons
     assert [p["pr_number"] for p in d.recent_prs] == [7]
+
+
+def test_an_unread_lessons_leg_is_flagged_on_the_definition():
+    # None is what the bounded read answers when cut off or failed (tested below)
+    out, _wall = _run(_Clock(), lessons=None)
+    d = out.definitions[0]
+    assert d.lessons == [] and d.lessons_unread
+    assert d.model_dump()["lessons_unread"] is True
+
+
+def test_a_narrowed_token_gets_no_lessons_and_no_unread_flag():
+    from server.code.app.symbol import symbol as h
+
+    clock = _Clock()
+    with patch.object(h, "request_narrowed", return_value=True):
+        out, _wall = _run(clock, lessons=LESSON)
+    d = out.definitions[0]
+    assert "lessons" not in clock.calls  # the read is not made
+    assert not d.lessons_unread
+    assert "lessons_unread" not in d.model_dump() and "lessons" not in d.model_dump()
+
+
+def test_a_symbol_with_no_lessons_says_nothing_about_them():
+    out, _wall = _run(_Clock(), lessons=[])
+    d = out.definitions[0]
+    assert not d.lessons_unread
+    assert "lessons_unread" not in d.model_dump() and "lessons" not in d.model_dump()
 
 
 def test_enrichment_not_asked_reads_nothing_extra():
@@ -225,3 +253,49 @@ def test_enrichment_not_asked_reads_nothing_extra():
     assert not {"pr_history", "test_map", "lessons"} & set(clock.calls), clock.calls
     assert "edges:calls" not in clock.calls  # usage examples were not asked for
     assert out.definitions[0].recent_prs == [] and out.definitions[0].lessons == []
+    assert not out.definitions[0].lessons_unread  # not asked is not unread
+
+
+@pytest.mark.parametrize("outcome", ["slow", "failing"])
+def test_the_lessons_read_answers_none_when_cut_off_or_failed(monkeypatch, outcome):
+    from server.code.app import enrich as code_enrich
+    from server.memory.app import code_plane_reads
+
+    async def nss(org, ns, extra):
+        return ["code-a"]
+
+    async def read(*a, **kw):
+        if outcome == "failing":
+            raise RuntimeError("memory plane down")
+        await asyncio.sleep(5)
+        return [{"memory_key": "late"}]
+
+    monkeypatch.setattr(code_plane_reads, "lesson_namespaces", nss)
+    monkeypatch.setattr(code_plane_reads, "lessons_for_symbol", read)
+    monkeypatch.setattr(settings, "code_enrich_timeout_s", 0.05)
+    got = asyncio.run(
+        code_enrich.lessons_for_symbol(
+            "o", "code-a", symbol_name="f", paths=["a.py"], extra_namespaces=[]
+        )
+    )
+    assert got is None
+
+
+def test_a_member_whose_lessons_went_unread_keeps_the_others_and_flags_it():
+    from server.code.api.models_symbol import CodeSymbolInput
+    from server.code.app import enrich as code_enrich
+    from server.code.app.symbol import symbol as h
+
+    async def lessons_for_symbol(org, ns, *, symbol_name, paths, extra_namespaces):
+        return None if symbol_name == "A::y" else [dict(LESSON[0])]
+
+    head = [
+        {"qualified_name": "A::x", "path": "a.py", "symbol_id": "s1"},
+        {"qualified_name": "A::y", "path": "a.py", "symbol_id": "s2"},
+    ]
+    plain = CodeSymbolInput(name="A", include_history=False, include_examples=False)
+    with patch.object(code_enrich, "lessons_for_symbol", new=lessons_for_symbol):
+        out = asyncio.run(h._enrichment(None, "o", "n", plain, head, matched_members=True))
+    # the member that was read still serves its lesson; the other may have had some
+    assert [lesson["linked_symbols"] for lesson in out["lessons"]] == [["A::x"]]
+    assert out["lessons_unread"] is True

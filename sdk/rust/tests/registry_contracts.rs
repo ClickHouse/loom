@@ -7592,6 +7592,16 @@ fn session_brief_get() {
         "session.brief_get:revision"
     );
     assert_eq!(
+        encoded["snapshot_id"],
+        serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
+        "session.brief_get:snapshot_id"
+    );
+    assert_eq!(
+        encoded["snapshot_key"],
+        serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
+        "session.brief_get:snapshot_key"
+    );
+    assert_eq!(
         encoded["rendered"],
         serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
         "session.brief_get:rendered"
@@ -8708,6 +8718,16 @@ fn code_symbol() {
         serde_json::from_str::<serde_json::Value>("{}").unwrap(),
         "code.symbol:summary"
     );
+    assert_eq!(
+        encoded["edit_targets"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.symbol:edit_targets"
+    );
+    assert_eq!(
+        encoded["read_sources"],
+        serde_json::from_str::<serde_json::Value>("null").unwrap(),
+        "code.symbol:read_sources"
+    );
 }
 #[test]
 fn code_edit_context() {
@@ -8802,6 +8822,16 @@ fn code_edit_context() {
         encoded["summary"],
         serde_json::from_str::<serde_json::Value>("{}").unwrap(),
         "code.edit_context:summary"
+    );
+    assert_eq!(
+        encoded["edit_targets"],
+        serde_json::from_str::<serde_json::Value>("[]").unwrap(),
+        "code.edit_context:edit_targets"
+    );
+    assert_eq!(
+        encoded["read_sources"],
+        serde_json::from_str::<serde_json::Value>("null").unwrap(),
+        "code.edit_context:read_sources"
     );
 }
 #[test]
@@ -10441,6 +10471,11 @@ fn code_read() {
         encoded["lessons_left_out"],
         serde_json::from_str::<serde_json::Value>("0").unwrap(),
         "code.read:lessons_left_out"
+    );
+    assert_eq!(
+        encoded["trace_run_id"],
+        serde_json::from_str::<serde_json::Value>("\"\"").unwrap(),
+        "code.read:trace_run_id"
     );
 }
 #[test]

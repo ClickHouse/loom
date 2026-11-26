@@ -31,6 +31,15 @@ release record. Store pointers to those records next to the lessons and decision
 that a future run can reuse. See the [software factory memory walkthrough](../use-cases/multi-agent.md#memory-for-a-software-factory)
 for the implementation and review roles and their scoped credentials.
 
+## Choose an agent memory tool for a software factory
+
+Pick a past issue whose resolution changed after review. Give the review agent the
+issue and commit, then ask it to recover the final decision, its author and the
+definition it applies to. Check whether it can spot an outdated lesson after the
+definition changes. Repeat the read with a credential from an unrelated project.
+Use the [measured memory comparison](compare-coding-agent-memory.md) to see how these
+checks differ across repository files, a file-backed MCP server, and Loom.
+
 ## Run a pilot on one repository
 
 1. **Choose representative work.** Include a small fix, a change that depends on an
@@ -58,6 +67,8 @@ deciding whether the prior lesson still applies.
 
 For a memory pilot, use the [cross-client recall and access checks](../getting-started/evaluate.md#shared-memory-across-clients)
 and the [code-linked lesson exercise](../use-cases/memory-linked-to-code.md#check-a-lesson-after-a-code-edit).
+Use the [software factory handoff output](../use-cases/multi-agent.md#check-the-handoff-output)
+to see what a reviewer can verify about the source and the saved lesson.
 Use the [paired task scorecard](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
 to see which tasks passed with memory, without it, or in both setups.
 Use the [cost comparison procedure](../use-cases/coding-agent-cost.md#compare-completed-tasks-including-overhead)

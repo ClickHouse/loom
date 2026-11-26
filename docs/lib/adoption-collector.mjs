@@ -169,3 +169,9 @@ export async function handleAdoption(request, { env = process.env, fetcher = fet
   }
   return reply({ error: "store_unavailable" }, 503);
 }
+
+export default {
+  fetch(request) {
+    return handleAdoption(request);
+  },
+};

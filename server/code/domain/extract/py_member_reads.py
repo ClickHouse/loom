@@ -41,6 +41,13 @@ class MemberRead:
     imported: tuple[str, str] | None = None
 
 
+def read_candidate_names(sites: list[MemberRead]) -> set[str]:
+    """Names that need parser-preferred candidates for typed reads."""
+    names = {site.member for site in sites}
+    names.update(site.imported[1] for site in sites if site.imported)
+    return names
+
+
 @dataclass(frozen=True)
 class _FunctionScope:
     name: str

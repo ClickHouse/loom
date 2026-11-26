@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -294,6 +295,84 @@ def test_break_settings_ride_every_scan_builder() -> None:
 def test_broke_reads_a_wall_at_the_bound() -> None:
     assert code_deadline.broke(0.95, 1.0) and not code_deadline.broke(0.5, 1.0)
     assert not code_deadline.broke(10.0, None)
+
+
+@pytest.mark.parametrize("scan_partial", [False, True])
+async def test_cursor_keeps_scan_coverage_and_recovers_from_page_deadline(
+    monkeypatch: pytest.MonkeyPatch, scan_partial: bool
+) -> None:
+    from server.code.api.models_grep import CodeGrepInput
+    from server.code.app import grep, grep_source, read, search_cursor
+
+    revision = "a" * 40
+    paths = ["src/first.py", "src/second.py"]
+    matches = [{"path": path, "line": 2, "text": "target"} for path in paths]
+    chunks = [{**_chunk(path, 2, "", "target\n"), "indexed_commit": revision} for path in paths]
+    scan = grep._GrepLineScan(
+        chunks, matches, {(path, 2): revision for path in paths}, 2, False, "grep_literal", "", ""
+    )
+    cursor_pool: dict[str, Any] = {}
+    clock = ManualClock(t=10)
+    deadline = CodeGrepInput(pattern="target", context_lines=1, include_body=False, limit=1)
+    scan_reason = "scan stopped at the deadline"
+
+    async def scan_lines(*_, budget, **__):
+        if scan_partial:
+            budget.drop(scan_reason)
+        return scan
+
+    async def read_pool(*_):
+        return {"payload": json.loads(json.dumps(cursor_pool))}
+
+    async def fill_second_page(*args, **_):
+        ranges = args[3]
+        assert {result.path for result in ranges} == {paths[1]}
+        read._fill_ranges(b"before\ntarget\nafter\n", ranges, 1_024)
+
+    monkeypatch.setattr(code_deadline, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(grep, "_scan_grep_lines", scan_lines)
+    monkeypatch.setattr(grep, "_as_of_early", _as_of)
+    monkeypatch.setattr(grep, "index_as_of", _as_of)
+    monkeypatch.setattr(grep, "schedule_code_trace", lambda **_: None)
+    monkeypatch.setattr(grep, "_read_pool_settling", read_pool)
+    monkeypatch.setattr(grep_source, "fill_verified_ranges", fill_second_page)
+    monkeypatch.setattr(search_cursor, "enabled", lambda: True)
+    monkeypatch.setattr(search_cursor, "put_pool", lambda *args, **_: cursor_pool.update(args[3]))
+    monkeypatch.setattr(search_cursor, "encode", lambda **_: "cursor")
+    monkeypatch.setattr(search_cursor, "decode", lambda *_, **__: {"o": 1, "r": "pool"})
+    monkeypatch.setattr(search_cursor, "expired", lambda _: False)
+
+    first = await grep._grep_lines(
+        _Repo(),
+        "org",
+        "ns",
+        deadline,
+        route="grep",
+        started=9,
+        scope=None,
+        line_re=None,
+        budget=code_deadline.Budget(200, started=9),
+    )
+    assert (
+        first.contexts_partial
+        and first.partial
+        and "context recovery skipped" in first.partial_reason
+    )
+    second, _, _ = await grep._serve_grep_page(
+        deadline.model_copy(update={"cursor": first.next_cursor, "deadline_ms": 200}),
+        "org",
+        "ns",
+        _Repo(),
+        "grep",
+        clock.monotonic(),
+    )
+    assert (
+        cursor_pool["partial"] is scan_partial
+        and "context recovery" not in cursor_pool["partial_reason"]
+    )
+    assert second is not None and second.partial is scan_partial and not second.contexts_partial
+    assert (scan_reason in second.partial_reason) is scan_partial
+    assert second.contexts[0]["text"] == "before\ntarget\nafter\n"
 
 
 # --------------------------------------------------------------- message fallback

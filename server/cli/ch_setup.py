@@ -481,13 +481,8 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
             _apply_analyst()
         except Exception as error:  # noqa: BLE001 — administrative failures need one safe line
             from server.insights.app.analysis import SetupRefused, shown_cause
-            from server.insights.store.event_cutover import EventCutoverUnavailable
 
-            cause = (
-                error_line(error)
-                if isinstance(error, (SetupRefused, EventCutoverUnavailable))
-                else shown_cause(error)[0]
-            )
+            cause = error_line(error) if isinstance(error, SetupRefused) else shown_cause(error)[0]
             print(f"✗ {cause}", file=sys.stderr)
             return 2
         print("✓ loom_analyst (insights.query): written")
