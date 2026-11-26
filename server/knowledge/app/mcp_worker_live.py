@@ -1,8 +1,9 @@
 """Transient selected reads and their publication check."""
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -13,6 +14,9 @@ from server.knowledge.app.mcp_worker_read import (
     WorkerReadScope,
 )
 from server.knowledge.domain.mcp_identity import resource_uri
+
+# Leave room for transport metadata within the bounded frame budget.
+_MAX_LIVE_DOCUMENT_WIRE_BYTES = 16 * 1024 * 1024
 
 ResolveScope = Callable[[], Awaitable[WorkerReadScope]]
 ResolveWorker = Callable[[UUID], WorkerReadChannel | None]
@@ -45,6 +49,19 @@ def _display_link(uri: str | None) -> str | None:
     return None
 
 
+def _check_publication_size(document: LiveDocument) -> None:
+    fields = asdict(document)
+    fields["source_id"] = str(document.source_id)
+    # MCP sends a JSON value and an escaped copy as text. ASCII escaping
+    # bounds the larger of the HTTP and MCP document encodings.
+    value = json.dumps(fields, ensure_ascii=True)
+    size = len(value)
+    if size > _MAX_LIVE_DOCUMENT_WIRE_BYTES or (
+        size + len(json.dumps(value)) > _MAX_LIVE_DOCUMENT_WIRE_BYTES
+    ):
+        raise WorkerReadRefused("unsupported")
+
+
 async def read_selected_live(
     *,
     resolve: ResolveScope,
@@ -69,17 +86,19 @@ async def read_selected_live(
                         raise WorkerReadRefused("denied")
 
                 await validate()
+                document = LiveDocument(
+                    scope.source_id,
+                    scope.resource_id,
+                    resource_uri(str(scope.source_id), scope.resource_id),
+                    _display_link(read.document.source_link),
+                    read.fetched_at,
+                    read.document.title,
+                    read.document.text,
+                    read.document.mime_type,
+                )
+                _check_publication_size(document)
             # The protected publisher owns a separate deadline for validation and delivery.
             await retain(scope, validate, deadline)
-            return LiveDocument(
-                scope.source_id,
-                scope.resource_id,
-                resource_uri(str(scope.source_id), scope.resource_id),
-                _display_link(read.document.source_link),
-                read.fetched_at,
-                read.document.title,
-                read.document.text,
-                read.document.mime_type,
-            )
+            return document
     except TimeoutError:
         raise WorkerReadRefused("timeout") from None

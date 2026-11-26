@@ -111,7 +111,7 @@ async def test_large_live_body_fits_the_publication_budget_without_repeat_lookup
     from server.knowledge.app import mcp_worker_protected as protected
     from server.knowledge.app import sources
 
-    body = "🌍".encode() * 4_000_000
+    body = b"x" * (16 * 1024 * 1024)
     sent = 0
     elapsed_ms = 0
     locked_checks = 0

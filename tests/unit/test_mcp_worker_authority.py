@@ -362,6 +362,10 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
             from server.core.errors import OverloadedError
 
             assert (org, namespace) == ("org", "collection")
+            if body and retire_during_body:
+                # Retirement commits under the same lease before publication acquires it.
+                async with lease:
+                    self.row = None
             if lease.locked():
                 second_claim.set()
                 if not wait_s:
@@ -374,8 +378,6 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
             if body and unlink_during_body and owner == "bob":
                 # The ordinary check already read the link and now sees a valid account.
                 self.bob_enrollment = None
-            if body and retire_during_body and owner == "bob" and not lease.locked():
-                self.row = None
             return record
 
         async def fence_delivery(scope, deliver, deadline) -> None:
@@ -517,7 +519,9 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.bob_enrollment)
         self.assertEqual([frame["type"] for frame in published], ["http.response.start"])
 
-    async def test_source_retirement_after_ordinary_body_recheck_withholds_document(self) -> None:
+    async def test_source_retirement_before_publication_takes_the_lease_withholds_document(
+        self,
+    ) -> None:
         attempts, published = await self._live_publication(retire_during_body=True)
         self.assertEqual(len(attempts), 1)
         self.assertIsNone(self.row)

@@ -77,10 +77,13 @@ refuses tokens restricted to one user or session. Registration remains disabled,
 so this prerequisite does not enable user setup on its own.
 A live request lives with its API request. It has a separate read deadline and
 admission limit from refresh work, a bounded delivery budget after the read,
-and no durable payload queue. Denial, reconnect, saturation, unavailable and timeout are distinct
-outcomes. Team viewers without current source enrollment see the same denial for
-selected and unselected IDs. An authorized stored copy can be offered after timeout or worker outage
-with its own age and provenance. Denial never falls back to a stored result.
+and no durable payload queue. Loom checks the size of the document before
+publication. It budgets 16 MiB for the document and its escaped MCP text copy.
+A document beyond that budget returns `unsupported` with no document. Denial,
+reconnect, saturation, unavailable and timeout remain distinct outcomes. Team
+viewers without current source enrollment see the same denial for selected and
+unselected IDs. An authorized stored copy can be offered after timeout or worker
+outage with its own age and provenance. Denial never falls back to a stored result.
 The initial live read returns the explicit error without a stored substitute.
 
 Each worker resolves approved profiles to its own endpoint and read mappings.

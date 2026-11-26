@@ -4,6 +4,7 @@ import json
 import ssl
 import unittest
 from dataclasses import replace
+from functools import partial
 from uuid import uuid4
 
 import httpx
@@ -37,7 +38,7 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
             resource_id="urn:source:Résumé",
         )
 
-    async def _wire_fixture(self, request: httpx.Request) -> httpx.Response:
+    async def _wire_fixture(self, request: httpx.Request, *, text: str = "alpha") -> httpx.Response:
         grant = jwt.decode(
             request.headers["authorization"].removeprefix("Bearer "),
             self.key.public_key(),
@@ -59,7 +60,7 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
             document = {
                 "resource_id": binding["resource_id"],
                 "title": "Unpublished",
-                "text": "alpha",
+                "text": text,
                 "revision": None,
                 "source_link": None,
                 "mime_type": "text/plain",
@@ -76,7 +77,7 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
                     "status": "ok",
                     "request_id": claims["request_id"],
                     "fetched_at": grant["iat"],
-                    "content_sha256": hashlib.sha256(b"alpha").hexdigest(),
+                    "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
                     "document": document,
                 }
             ).encode()
@@ -88,6 +89,7 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
         transport: httpx.AsyncBaseTransport | None = None,
         *,
         max_inflight: int = 8,
+        max_response_bytes: int = 8192,
         tls: ssl.SSLContext | None = None,
     ) -> WorkerReadChannel:
         if transport is None:
@@ -98,7 +100,7 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
             issuer="loom",
             signing_key=self.key,
             grant_seconds=5,
-            max_response_bytes=8192,
+            max_response_bytes=max_response_bytes,
             max_inflight=max_inflight,
             tls=tls,
             _transport=transport,
@@ -164,6 +166,88 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
         self.scope = replace(self.scope, selection_generation=4)
         with self.assertRaisesRegex(WorkerReadRefused, "^denied$"):
             await tail[0]()
+
+    async def _encode_live(self, text: str):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+
+        from starlette.responses import JSONResponse
+
+        from server.knowledge.api.models_source_live import KnowledgeSourceLiveInput
+        from server.knowledge.api.ops_worker_source import knowledge_source_live
+        from server.knowledge.app.mcp_worker_live_op import read_source_live
+        from server.transport.arg_check import response_body
+        from server.transport.mcp_outcome import _success_response
+
+        channel = self._channel(
+            httpx.MockTransport(partial(self._wire_fixture, text=text)),
+            max_response_bytes=25_000_000,
+        )
+        result = await channel.run(self.scope, "live", require_current=self._authorized)
+        assert result.document is not None
+        self.assertEqual(result.document.text, text)
+        retain = AsyncMock()
+        request = KnowledgeSourceLiveInput(
+            org=self.scope.org,
+            namespace=self.scope.namespace,
+            source="documents",
+            resource_id=self.scope.resource_id,
+        )
+
+        async def read(_target, _directory, *, deadline):
+            return await read_selected_live(
+                resolve=self._authorized, worker=lambda _: channel, retain=retain, deadline=deadline
+            )
+
+        arguments = request.model_dump()
+        call = SimpleNamespace(
+            req_id=1,
+            op=knowledge_source_live,
+            input_obj=request,
+            arguments=arguments,
+            auth=None,
+            request_id="request",
+            rl_ns=request.namespace,
+            rl_org=request.org,
+        )
+        with (
+            patch("server.knowledge.app.mcp_worker_live_op.protected_live_read", read),
+            patch("server.transport.post_rows.post_handler_rows", AsyncMock()),
+        ):
+            output = await read_source_live(request, unittest.mock.Mock(spec=LiveSourceDirectory))
+            mcp = await _success_response(call, output, 0, (None, None), None)
+        http = response_body(knowledge_source_live, arguments, output)
+        return retain, JSONResponse(http).body, JSONResponse(mcp).body
+
+    async def test_live_refuses_unpublishable_worker_content_before_retaining_it(self) -> None:
+        for size in (1_400_000, 4_000_000):
+            with self.subTest(size=size):
+                retain, http, mcp = await self._encode_live("\x01" * size)
+                retain.assert_not_awaited()
+                self.assertLess(len(http), 1_024)
+                self.assertLess(len(mcp), 1_024)
+                result = json.loads(mcp)["result"]
+                for payload in (
+                    json.loads(http),
+                    result["structuredContent"],
+                    json.loads(result["content"][0]["text"]),
+                ):
+                    self.assertEqual(payload["status"], "unsupported")
+                    self.assertIsNone(payload.get("document"))
+
+    async def test_live_preserves_content_fitting_both_encodings(self) -> None:
+        text = "\x01" * 1_200_000
+        retain, http, mcp = await self._encode_live(text)
+        retain.assert_awaited_once()
+        self.assertLess(len(mcp), 16 * 1024 * 1024)
+        result = json.loads(mcp)["result"]
+        for payload in (
+            json.loads(http),
+            result["structuredContent"],
+            json.loads(result["content"][0]["text"]),
+        ):
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["document"]["text"], text)
 
     async def test_unprotected_request_cannot_look_up_any_worker_or_source(self) -> None:
         def refuse(*args):
