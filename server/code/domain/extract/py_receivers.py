@@ -307,7 +307,7 @@ def _preserve_module_receivers(node: Any, source: bytes, writes: dict[str, int])
             if node.start_byte < writes.get(name, -1):
                 writes.pop(name)
         return
-    if node.type == "global_statement":
+    if node.type in {"global_statement", "parameters", "lambda_parameters"}:
         for name in _bound_identifiers(node, source):
             writes.pop(name, None)
         return
@@ -515,6 +515,10 @@ class PyReceiverTyper:
         callee = binding[len(_CALL_PREFIX):]
         return self._returns.get(callee, "") or self._returns.get(_last(callee), "")
 
+    def receiver_replaced(self, receiver: str) -> bool:
+        """The module withdrew this receiver before the observed member use."""
+        return self._module.bindings.get(receiver.partition(".")[0]) == ""
+
     def callees(self) -> set[str]:
         """Every callee some binding's type waits on."""
         out: set[str] = set(self._receiver_callees)
@@ -528,7 +532,7 @@ class PyReceiverTyper:
                     out.add(v)  # `fixture:<name>`, resolved by the fixture ladder
         # `name:<receiver>` for a bare receiver no scope binds
         out.update(NAME_PREFIX + n for n in self._receiver_names if n not in bound_anywhere)
-        return out
+        return {callee for callee in out if "." not in callee or not self.receiver_replaced(callee)}
 
     def bind_returns(self, returns: dict[str, str]) -> None:
         self._returns.update({k: v for k, v in returns.items() if v})

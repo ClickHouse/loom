@@ -204,6 +204,24 @@ def test_module_receiver_keeps_calls_before_a_write(earlier):
     assert any(target == "svc.clients::Client::send" for _, target, _ in calls)
 
 
+def test_module_literal_receiver_declines_unrelated_calls_and_callee_returns():
+    files = {
+        "svc/__init__.py": b"",
+        "svc/clients.py": (
+            b"class Client:\n    def send(self):\n        return 1\n\n"
+            b"class Reply:\n    def close_reply(self):\n        pass\n\n"
+            b"class Other:\n    def flush_reply(self) -> Reply:\n        return Reply()\n"
+        ),
+        "svc/service.py": (
+            b"from .clients import Client, Other, Reply\ntarget = Client()\ntarget = 0\n"
+            b"def submit():\n    target.send()\n    reply = target.flush_reply()\n    reply.close_reply()\n"
+        ),
+    }
+    calls, _ = _edges(files, "svc/service.py")
+    assert not any(line in {5, 6} for line, _, _ in calls)
+    assert not any(line == 7 and confidence == 0.9 for line, _, confidence in calls)
+
+
 @pytest.mark.parametrize("condition", ["False", "TYPE_CHECKING"])
 def test_module_receiver_ignores_nonexecuting_replacement(condition):
     from server.code.domain.extract.py_receivers import PyReceiverTyper

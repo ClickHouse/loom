@@ -3212,6 +3212,8 @@ class _CallResolver:
     ) -> Edge | None:
         if self.python and receiver == "super()":
             return self.py_super_target(caller, bare, line)
+        if self.python and self.typer is not None and self.typer.receiver_replaced(receiver):
+            return None
         if (self.go or self.python) and receiver and receiver not in ("self", "cls"):
             # A Go member call on a receiver the tree types
             # is that type's method or nothing of this file — the same-file
