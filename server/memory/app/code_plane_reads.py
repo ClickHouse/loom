@@ -21,6 +21,8 @@ from server.memory.store import code_plane_reads as reads
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
 
+_LOCATED_STATES = ("fresh", "moved", "changed")
+
 
 async def lesson_namespaces(org: str, code_namespace: str, extra: Sequence[str]) -> list[str]:
     """Whose linked memories a code read shows: the namespaces the call names (over MCP
@@ -322,7 +324,7 @@ def _as_trunk_has_it(links: list[LinkRow], qualified_name: str) -> list[tuple[Li
     """(link, code state, suggestion) of each link to the symbol, as trunk's last check
     left it: what is served where the branch's own files cannot be read. A link trunk
     lost is left out, since nothing here shows the code exists."""
-    live = [a for a in links if a["state"] in ("fresh", "moved", "changed")]
+    live = [a for a in links if a["state"] in _LOCATED_STATES]
     defs = [
         Definition(a["path"], a["qualified_name"], bare_name(a["qualified_name"])) for a in live
     ]
@@ -352,7 +354,7 @@ def _lesson_state(
     at_current: bool,
     at_anchor: bool,
     on_trunk: bool,
-    require_fingerprint: bool,
+    require_fingerprint: bool = False,
     baseline: str = "",
 ) -> str:
     """The code state of link `a` for the definition `now` a read found it at: where
@@ -366,7 +368,12 @@ def _lesson_state(
         return "unresolved" if require_fingerprint else stored
     if require_fingerprint and not now.body_hash:
         return "unresolved"
-    if on_trunk and at_current and now.body_hash == a["checked_hash"]:
+    if (
+        on_trunk
+        and at_current
+        and now.body_hash == a["checked_hash"]
+        and (not require_fingerprint or a["state"] in _LOCATED_STATES)
+    ):
         return stored  # trunk's definition as the worker last checked it
     # compare with the baseline; a branch that still has the code under its anchored
     # name may also match the anchored text

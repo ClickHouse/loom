@@ -183,17 +183,20 @@ async def test_verified_lesson_only_ranks_fresh_rows(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("recovered", "stored", "legacy", "ordinary", "confirmed"),
+    ("recovered", "stored", "checked", "state", "legacy", "ordinary", "confirmed"),
     [
-        ("new", "original", True, "fresh", False),
-        ("", "original", False, "fresh", False),
-        ("new", "", False, "fresh", False),
-        ("new", "original", False, "changed", False),
-        ("original", "original", False, "fresh", True),
+        ("new", "original", "original", "fresh", True, "fresh", False),
+        ("", "original", "original", "fresh", False, "fresh", False),
+        ("new", "", "", "fresh", False, "fresh", False),
+        ("new", "original", "original", "fresh", False, "changed", False),
+        ("original", "original", "original", "fresh", False, "fresh", True),
+        ("new", "original", "new", "missing", False, "fresh", False),
+        ("new", "original", "new", "unresolved", False, "fresh", False),
+        ("original", "original", "new", "missing", False, "fresh", True),
     ],
 )
 async def test_verified_caller_requires_matching_fingerprint(
-    monkeypatch, recovered, stored, legacy, ordinary, confirmed
+    monkeypatch, recovered, stored, checked, state, legacy, ordinary, confirmed
 ):
     path = "web/app.py"
     symbol = "web.app::App::mount"
@@ -208,9 +211,9 @@ async def test_verified_caller_requires_matching_fingerprint(
         "anchored_path": path,
         "qualified_name": symbol,
         "anchored_name": symbol,
-        "state": "fresh",
+        "state": state,
         "carried": False,
-        "checked_hash": stored,
+        "checked_hash": checked,
         "body_hash": stored,
         "anchored_hash": stored,
         "fingerprint_version": "older" if legacy else code_plane_reads.fingerprint_version(),
