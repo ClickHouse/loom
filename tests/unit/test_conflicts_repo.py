@@ -14,7 +14,6 @@ from server.memory.store.conflicts import (
     allowlist_list,
     allowlist_remove,
     list_conflicted,
-    lookup_keys_for_ids,
     lookup_target,
     mark_active_by_ids,
     tombstone_ids,
@@ -169,27 +168,6 @@ async def test_mark_active_by_ids_empty_input_skips_ch() -> None:
     ch = StubCH()
     await mark_active_by_ids("clickhouse", [], namespace="ns", ch=ch)
     assert ch.execute_calls == []
-
-
-@pytest.mark.asyncio
-async def test_lookup_keys_for_ids_returns_dict() -> None:
-    ch = StubCH()
-    ch.query_all_returns.append(
-        [
-            {"memory_id": "id-1", "memory_key": "alpha"},
-            {"memory_id": "id-2", "memory_key": "beta"},
-        ]
-    )
-    out = await lookup_keys_for_ids("clickhouse", ["id-1", "id-2"], namespace="ns", ch=ch)
-    assert out == {"id-1": "alpha", "id-2": "beta"}
-
-
-@pytest.mark.asyncio
-async def test_lookup_keys_for_ids_empty_skips_ch() -> None:
-    ch = StubCH()
-    out = await lookup_keys_for_ids("clickhouse", [], namespace="ns", ch=ch)
-    assert out == {}
-    assert ch.query_all_calls == []
 
 
 @pytest.mark.asyncio

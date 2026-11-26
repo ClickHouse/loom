@@ -366,7 +366,8 @@ async def test_an_agent_settles_conflicts_in_its_own_namespace_only(ch: Any) -> 
     # The owner grant its first exchange wrote admits an agent to conflicts.resolve on
     # its own namespace, which the exchange's token names as a writer's. A namespace an
     # admin granted it admin on refuses, as does another admin op, and its own once the
-    # owner grant is gone.
+    # owner grant is gone. Admitted, it settles a flagged pair, and a `contract` on a
+    # memory that is not flagged resolves nothing.
     import time
 
     from server.auth import oauth, revocation
@@ -375,6 +376,14 @@ async def test_an_agent_settles_conflicts_in_its_own_namespace_only(ch: Any) -> 
     from server.code.app.member_writes import authorize_op
     from server.identity.api.models_grants import GrantsCreateInput, GrantsRevokeInput
     from server.identity.app.grants import handle_grants_create, handle_grants_revoke
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_conflicts import ConflictsResolveInput
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.api.models_graph import MemoryLinkInput
+    from server.memory.app.conflicts_ops import handle_conflicts_resolve
+    from server.memory.app.ops import handle_memory_link
+    from server.memory.app.write import handle_memory_set
     from server.operations.registry import OPERATIONS_BY_NAME
 
     m = _trust()
@@ -400,6 +409,45 @@ async def test_an_agent_settles_conflicts_in_its_own_namespace_only(ch: Any) -> 
             await authorize_op(owner, resolve, org=org, namespace=a2)
         with pytest.raises(PermissionError):
             await authorize_op(owner, OPERATIONS_BY_NAME["memory.unlock"], org=org, namespace=a1)
+
+        async def fact(key: str, value: str) -> str:
+            row = MemorySetInput(org=org, namespace=a1, agent="a1", memory_key=key, value=value)
+            return str((await handle_memory_set(row)).memory_id)
+
+        async def settle(memory_id: str, decision: Any) -> Any:
+            return await handle_conflicts_resolve(
+                ConflictsResolveInput(org=org, namespace=a1, memory_id=memory_id, decision=decision)
+            )
+
+        async def statuses(*memory_ids: str) -> list[str | None]:
+            rows = [
+                await memory_repo.get_by_id(
+                    i, org=org, namespace=a1, scope=WHOLE_NAMESPACE, strong=True
+                )
+                for i in memory_ids
+            ]
+            return [None if row is None else row.status for row in rows]
+
+        kept = await fact("deploy_day", "Deploys go out on Friday.")
+        dropped = await fact("deploy_day_before", "The release day is Thursday.")
+        plain = await fact("on_call", "The on-call shift starts on Monday.")
+        with own_write_reads():
+            # A `contradicts` edge flags the two rows it joins, as a write's check does.
+            await handle_memory_link(
+                MemoryLinkInput(
+                    org=org,
+                    namespace=a1,
+                    from_key="deploy_day",
+                    to_key="deploy_day_before",
+                    relation="contradicts",
+                )
+            )
+            assert await statuses(kept, dropped, plain) == ["conflicted", "conflicted", "active"]
+            nothing = await settle(plain, "contract")
+            assert (nothing.resolved, nothing.affected_memory_ids) == (False, [])
+            done = await settle(kept, "revise")
+            assert (done.resolved, done.affected_memory_ids) == (True, [dropped, kept])
+            assert await statuses(kept, dropped, plain) == ["active", None, "active"]
 
         # A namespace keeps one admin, so another takes over before the agent's goes.
         set_current_auth(None)

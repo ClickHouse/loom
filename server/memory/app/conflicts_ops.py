@@ -240,34 +240,70 @@ async def handle_conflicts_propose_revision(
     )
 
 
-async def _live_peers(input: ConflictsResolveInput, peers: list[str]) -> list[str] | None:
-    """The peers still live in the body's namespace, the only one a resolve reads or
-    writes: a conflict is surfaced within one namespace, whose ADMIN or owning agent
-    the transport admitted (`agents.owns`), and a namespace restored from another's
-    snapshot keeps the memory ids. None when the target is not live there either."""
+async def _head(input: ConflictsResolveInput, memory_id: str) -> Any:
+    """A row's live head in the body's namespace, the only one a resolve reads or writes:
+    a conflict is surfaced within one namespace, whose ADMIN or owning agent the transport
+    admitted (`agents.owns`), and a namespace restored from another's snapshot keeps the
+    memory ids. Read current, from the authority: the answer decides what is tombstoned,
+    and ClickHouse may not hold the Postgres authority's last write of the row yet."""
     import server.memory.store as memory_repo
 
-    async def live(memory_id: str) -> bool:
-        row = await memory_repo.get_by_id(
-            memory_id, org=input.org, namespace=input.namespace, fresh=True, scope=WHOLE_NAMESPACE
-        )
-        return row is not None
+    return await memory_repo.get_by_id(
+        memory_id, org=input.org, namespace=input.namespace, strong=True, scope=WHOLE_NAMESPACE
+    )
 
-    # Read from the authority: `lookup_target` reads ClickHouse, which may not hold the
-    # Postgres authority's delete of the target yet.
-    if not await live(input.memory_id):
-        return None
-    return [p for p in peers if await live(p)]
+
+def _awaits_decision(head: Any) -> bool:
+    """The row is one side of an unresolved conflict: flagged `conflicted`, and not held
+    for a proposal's review, which only `memory.proposal_decide` clears (the write fence
+    refuses it here). A resolve decides no other target and writes no other peer."""
+    from server.memory.domain.proposal_review import pending_review
+
+    return str(getattr(head, "status", "") or "") == "conflicted" and not pending_review(head)
+
+
+def _settled(head: Any) -> bool:
+    """`mark_active_by_ids`' `skip`: a row that does not await a decision when the write
+    reads it is left as it is. A row keeps its `conflict_with` once its conflict is
+    settled, so a target names peers settled earlier beside the ones flagged now; a peer
+    may also be a proposal on trial, and any row may have been settled since it was read."""
+    return not _awaits_decision(head)
 
 
 def _refuse_locked(head: Any) -> bool:
-    """`tombstone_ids`' `skip`: a lock refuses a resolve's tombstone as it refuses
-    `memory.delete`. An agent settles its own namespace with a writer's token, and a
-    resolve must not delete for it what `memory.delete` refuses it."""
+    """A lock refuses a resolve's tombstone as it refuses `memory.delete`. An agent
+    settles its own namespace with a writer's token, and a resolve must not delete for it
+    what `memory.delete` refuses it."""
     from server.memory.domain import lock
 
     lock.assert_unlocked(head, "delete", op="conflicts.resolve")
     return False
+
+
+def _spared(head: Any) -> bool:
+    """`tombstone_ids`' `skip`: a row that does not await a decision when the tombstone
+    reads it is left as it is (`_settled`), and a lock on one that does refuses the whole
+    resolve."""
+    return _settled(head) or _refuse_locked(head)
+
+
+async def _sides(input: ConflictsResolveInput) -> tuple[Any, dict[str, Any]] | None:
+    """What a resolve acts on, decided before its first write: the target's head and the
+    heads of the live peers it fans out to (every peer the target names, or the one in
+    `peer_id`). None when it resolves nothing: the target is gone, is outside an
+    unresolved conflict, or does not name `peer_id`.
+
+    An ordinary fact is not a resolve's to tombstone, and a `revise` on a proposal
+    awaiting review would tombstone its peers and then be refused the activation."""
+    target = await _head(input, input.memory_id)
+    if target is None or not _awaits_decision(target):
+        return None
+    named = [str(p) for p in (target.conflict_with or []) if p]
+    if input.peer_id and input.peer_id not in named:
+        # A stale or foreign peer id must not widen the resolve to every peer.
+        return None
+    heads = {p: await _head(input, p) for p in ([input.peer_id] if input.peer_id else named)}
+    return target, {p: head for p, head in heads.items() if head is not None}
 
 
 async def handle_conflicts_resolve(
@@ -280,7 +316,10 @@ async def handle_conflicts_resolve(
               peers restored to active.
     allow:    both are legitimately distinct. Flip ALL back to active.
 
-    A lock refuses the tombstone (423) before anything is written.
+    Only rows that await a decision are written. A target outside an unresolved
+    conflict resolves nothing (`_sides`), decided before anything is written. Each
+    write judges the heads it reads, before it writes one: a peer that is not flagged
+    is left as it is (`_settled`), and a lock refuses the tombstone (423).
     """
     from server.memory.store import conflicts as conflicts_repo
 
@@ -289,53 +328,54 @@ async def handle_conflicts_resolve(
     by = (input.resolved_by or "")[:128]
     audit_note = f"resolve:{input.decision}:{reason}:{by}"
 
-    # Look up the target + its conflict_with set; the resolve fans
-    # out to either every peer or just the one named in `peer_id`.
     unresolved = ConflictsResolveOutput(
         resolved=False, decision=input.decision, affected_memory_ids=[]
     )
-    target = await conflicts_repo.lookup_target(input.org, input.namespace, input.memory_id)
-    if target is None:
+    sides = await _sides(input)
+    if sides is None:
         return unresolved
-    all_peers = list(target.conflict_with)
-    if input.peer_id and input.peer_id not in all_peers:
-        # A stale or foreign peer id must not widen the resolve to every peer.
-        return unresolved
-    peers = await _live_peers(input, [input.peer_id] if input.peer_id else all_peers)
-    if peers is None:
-        return unresolved
-    affected: list[str] = []
+    # `peers`: live, so `allow` allowlists each with the target. The writes below leave
+    # the ones that are not flagged as they are.
+    target, peers = sides
+    org, ns, ids = input.org, input.namespace, list(peers)
+    tombstoned: list[dict[str, Any]] = []
 
-    # The tombstones are announced as soon as they are in, before the kept side's status
-    # change: a retry finds the tombstoned side gone and would not announce it. The rows a
-    # resolve keeps live change only their status, as on memory.verify: no event.
-    ns = input.namespace
+    # A tombstone is announced as soon as it is in. The rows a resolve keeps live change
+    # only their status, as on memory.verify: no event.
     if input.decision == "revise":
+        # The peers go first: after a failure of the target's status write it is still
+        # flagged, and a retry finds the peers gone and completes.
         tombstoned = await conflicts_repo.tombstone_ids(
-            input.org, peers, audit_note, now, namespace=ns, skip=_refuse_locked
+            org, ids, audit_note, now, namespace=ns, skip=_spared
         )
         await webhooks.announce([("memory.tombstoned", row) for row in tombstoned])
-        affected.extend(peers)
-        await conflicts_repo.mark_active_by_ids(input.org, [input.memory_id], namespace=ns)
-        affected.append(input.memory_id)
+        kept = await conflicts_repo.mark_active_by_ids(
+            org, [input.memory_id], namespace=ns, skip=_settled
+        )
 
     elif input.decision == "contract":
+        # The target goes last: a status write of the peers that fails or is refused
+        # leaves every row flagged, and after a failure a retry completes. Its lock is
+        # asserted first.
+        _refuse_locked(target)
+        kept = await conflicts_repo.mark_active_by_ids(org, ids, namespace=ns, skip=_settled)
         tombstoned = await conflicts_repo.tombstone_ids(
-            input.org, [input.memory_id], audit_note, now, namespace=ns, skip=_refuse_locked
+            org, [input.memory_id], audit_note, now, namespace=ns, skip=_spared
         )
         await webhooks.announce([("memory.tombstoned", row) for row in tombstoned])
-        affected.append(input.memory_id)
-        await conflicts_repo.mark_active_by_ids(input.org, peers, namespace=ns)
-        affected.extend(peers)
 
     else:  # allow
         # Record the pair in conflict_allowlist so check_on_commit skips
-        # them on future writes.
-        all_ids = [input.memory_id, *peers]
-        await conflicts_repo.mark_active_by_ids(input.org, all_ids, namespace=ns)
-        affected.extend(all_ids)
-        if peers:
-            await _allow_pairs(input, peers, now=now, by=by, reason=reason or audit_note)
+        # them on future writes. The allowlist goes first: after a failure between the
+        # two writes the rows are still flagged, and a retry completes.
+        await _allow_pairs(input, target, peers, now=now, by=by, reason=reason or audit_note)
+        kept = await conflicts_repo.mark_active_by_ids(
+            org, [input.memory_id, *ids], namespace=ns, skip=_settled
+        )
+
+    affected = [str(row["memory_id"]) for row in tombstoned] + kept
+    if not affected:
+        return unresolved  # every row left the conflict before its write
 
     # The badge's cached counts (one per read scope) are stale now.
     for key in [k for k in _count_cache if k[:2] == (input.org, input.namespace)]:
@@ -358,22 +398,23 @@ async def handle_conflicts_resolve(
 
 
 async def _allow_pairs(
-    input: ConflictsResolveInput, peers: list[str], *, now: datetime, by: str, reason: str
+    input: ConflictsResolveInput,
+    target: Any,
+    peers: dict[str, Any],
+    *,
+    now: datetime,
+    by: str,
+    reason: str,
 ) -> None:
-    """Allowlist the target's key against each peer's: the conflict check skips the pair
-    from now on."""
+    """Allowlist the target's key against each live peer's: the conflict check skips the
+    pair from now on. The keys are the ones on the heads the resolve read."""
     from server.memory.store import conflicts as conflicts_repo
 
-    key_by_id = await conflicts_repo.lookup_keys_for_ids(
-        input.org, [input.memory_id, *peers], namespace=input.namespace
-    )
-    target_key = key_by_id.get(input.memory_id)
-    if not target_key:
-        return
+    target_key = str(getattr(target, "memory_key", "") or "")
     rows = []
-    for peer_id in peers:
-        peer_key = key_by_id.get(peer_id)
-        if not peer_key or peer_key == target_key:
+    for head in peers.values():
+        peer_key = str(getattr(head, "memory_key", "") or "")
+        if not target_key or not peer_key or peer_key == target_key:
             continue
         a, b = (target_key, peer_key) if target_key < peer_key else (peer_key, target_key)
         rows.append(

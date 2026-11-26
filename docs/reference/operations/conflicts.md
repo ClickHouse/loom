@@ -105,7 +105,7 @@ Settle a conflict for one `memory_id`: `revise` keeps it and tombstones its peer
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `resolved` | `bool` | False when the memory or the named peer is unknown, or the memory is not in `namespace`; nothing was written then. |
+| `resolved` | `bool` | False when the memory or the named peer is unknown, the memory is not in `namespace`, or it is not an unresolved conflict (a memory that is not flagged, or a proposal awaiting review); no memory was written then. |
 | `decision` | `Literal['revise', 'contract', 'allow']` | The decision, echoed. |
 | `affected_memory_ids` | `list[str]` | Every memory id this call tombstoned or reactivated. |
 | `resolved_at` | `datetime \| None` | When the resolve ran (UTC); null when nothing was resolved. |

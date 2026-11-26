@@ -212,8 +212,8 @@ async def lookup_target(
     """Fetch one target row's id + conflict_with set + status, in `namespace` (a
     namespace restored from another's snapshot keeps its memory ids).
 
-    Used by resolve as the precheck: if None, the target is already
-    tombstoned and we return resolved=False.
+    Used by `conflicts.propose_revision`. A resolve reads the authority's head
+    instead (`conflicts_ops._sides`): its answer decides a tombstone.
     """
     ch = ch or _default_client()
     r = await ch.query_one(
@@ -275,43 +275,31 @@ async def mark_active_by_ids(
     *,
     namespace: str,
     ch: _CHClient | None = None,
-) -> None:
-    """Flip status='active' for the listed rows of `namespace`. Empty short-circuits."""
+    skip: Callable[[MemoryRow], bool] | None = None,
+) -> list[str]:
+    """Flip status='active' for the listed rows of `namespace`, and return the ids of
+    the rows written. Empty short-circuits. `skip(head)` leaves a head as it is; the
+    heads it judges are read current."""
     if not memory_ids:
-        return
+        return []
     import server.memory.store as memory_repo
+
+    written: list[str] = []
+
+    def _activate(row: MemoryRow) -> dict[str, Any]:
+        written.append(str(row.memory_id))
+        return {"status": "active"}
 
     await memory_repo.write_versions_by_ids(
         org,
         memory_ids,
-        lambda _row: {"status": "active"},
+        _activate,
         ch=ch,
         namespace=namespace,
+        skip=skip,
+        strong=skip is not None,
     )
-
-
-async def lookup_keys_for_ids(
-    org: str,
-    memory_ids: list[str],
-    *,
-    namespace: str,
-    ch: _CHClient | None = None,
-) -> dict[str, str]:
-    """Resolve memory_id → memory_key for the listed rows of `namespace`. Used by
-    the resolve(allow) path to canonicalize allowlist pairs."""
-    if not memory_ids:
-        return {}
-    ch = ch or _default_client()
-    rows = await ch.query_all(
-        """
-        SELECT memory_id, memory_key FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND memory_id IN {ids:Array(UUID)}
-          AND tombstoned_at IS NULL
-        """,
-        params={"org": org, "ns": namespace, "ids": memory_ids},
-    )
-    return {str(r["memory_id"]): r["memory_key"] for r in rows}
+    return written
 
 
 async def allowlist_list(

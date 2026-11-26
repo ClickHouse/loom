@@ -91,8 +91,10 @@ class ConflictsResolveInput(BaseModel):
 
 
 class ConflictsResolveOutput(BaseModel):
-    # False when the memory or the named peer is unknown, or the memory is not in
-    # `namespace`; nothing was written then. A peer not in `namespace` is left as it is.
+    # False when the memory or the named peer is unknown, the memory is not in
+    # `namespace`, or it is not an unresolved conflict (a memory that is not flagged, or a
+    # proposal awaiting review); no memory was written then. A peer not in `namespace` is
+    # left as it is, as is a peer that is not flagged.
     resolved: bool
     # The decision, echoed.
     decision: ResolveDecision

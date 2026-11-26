@@ -1238,7 +1238,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "conflicts.resolve": (
         "Settle a conflict for one `memory_id`: `revise` keeps it and "
         "tombstones its peers, `contract` tombstones it and reactivates "
-        "the peers, `allow` keeps all as distinct facts. A locked memory "
+        "the peers, `allow` keeps all as distinct facts. Only memories "
+        "`conflicts.list` shows are decided or changed. A locked memory "
         "is never tombstoned (423). Needs the namespace's admin; an agent "
         "of a workload trust also settles its own namespace. Where a user "
         "owns the facts, ask which one stands first."

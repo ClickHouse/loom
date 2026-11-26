@@ -160,6 +160,12 @@ tombstones: `memory.restore` revives them within 14 days. A locked memory is nev
 tombstoned: a `revise` or `contract` that would tombstone one answers 423 `LOCKED` and
 changes nothing, and `allow` still settles the pair.
 
+A resolve decides a row that `conflicts.list` shows. On a row that is not flagged, or on
+a proposal awaiting review, it answers `resolved: false` and changes nothing. Of the
+peers it writes the flagged ones only. A row keeps its `conflict_with` once its conflict
+is settled, so a peer settled earlier, revised since or still a proposal is neither
+tombstoned nor returned to `active`; `allow` still puts its pair on the allowlist.
+
 ```python
 from loom import Agent
 
