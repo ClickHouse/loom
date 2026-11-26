@@ -72,7 +72,7 @@ def _error_code(error: BaseException) -> ErrorCode:
         return error.code
     if isinstance(error, (TimeoutError, httpx.TimeoutException)):
         return "timeout"
-    if isinstance(error, httpx.NetworkError):
+    if isinstance(error, (httpx.NetworkError, httpx.RemoteProtocolError)):
         return "unavailable"
     if isinstance(error, McpError) and error.error.code == httpx.codes.REQUEST_TIMEOUT:
         return "timeout"

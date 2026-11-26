@@ -105,6 +105,7 @@ class _Source(httpx.MockTransport):
         self.resource_parts = 1
         self.initialize_error: int | None = None
         self.resource_error: int | None = None
+        self.resource_transport_error: httpx.TransportError | None = None
         self.resource_rpc_error = False
         self.resource_extensions: dict[str, Any] = {}
         self.notifications: _IdleBody | None = None
@@ -181,7 +182,11 @@ class _Source(httpx.MockTransport):
             envelope = json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": result})
             return httpx.Response(
                 200,
-                stream=_Body(f"event: message\ndata: {envelope}\n\n".encode()),
+                stream=(
+                    _Body(f"event: message\ndata: {envelope}\n\n".encode())
+                    if self.resource_transport_error is None
+                    else _InterruptedBody(self.resource_transport_error)
+                ),
                 headers={
                     "content-type": "text/event-stream",
                     "content-encoding": self.content_encoding,
@@ -217,6 +222,15 @@ class _Body(httpx.AsyncByteStream):
     async def __aiter__(self) -> AsyncIterator[bytes]:
         yield self.content[:64]
         yield self.content[64:]
+
+
+class _InterruptedBody(httpx.AsyncByteStream):
+    def __init__(self, failure: httpx.TransportError) -> None:
+        self.failure = failure
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b"event: message\ndata: "
+        raise self.failure
 
 
 class _IdleBody(httpx.AsyncByteStream):
@@ -661,6 +675,20 @@ async def test_revocation_after_remote_read_is_reported_without_waiting_for_time
         MCPSourceClient(config, None, validate_access=validate_access, _transport=source) as client,
     ):
         with pytest.raises(MCPSourceError, match="^MCP source denied$"):
+            await client.read(_DOCUMENT)
+    assert source.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "status"),
+    [(httpx.RemoteProtocolError, "unavailable"), (httpx.ReadTimeout, "timeout")],
+)
+async def test_interrupted_response_retains_transport_status(pin, failure, status) -> None:
+    source = _Source()
+    source.resource_transport_error = failure("synthetic upstream detail")
+    async with _client(source, approved_resource_ids=(_DOCUMENT,)) as client:
+        with pytest.raises(MCPSourceError, match=f"^MCP source {status}$"):
             await client.read(_DOCUMENT)
     assert source.closed
 
