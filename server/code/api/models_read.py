@@ -53,3 +53,5 @@ class CodeReadRange(BaseModel):
 class CodeReadOutput(_LessonsOut):
     results: list[CodeReadRange]
     as_of: dict[str, Any]
+    # Joins this read to the code trace and request ledger.
+    trace_run_id: str = ""

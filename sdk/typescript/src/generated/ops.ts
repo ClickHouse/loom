@@ -1418,6 +1418,7 @@ export interface CodeReadOutput {
   lessons_left_out?: number;
   results: CodeReadRange[];
   as_of: Record<string, unknown>;
+  trace_run_id?: string;
 }
 
 export interface CodeRecentCommitsInput {

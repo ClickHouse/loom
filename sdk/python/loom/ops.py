@@ -7303,6 +7303,7 @@ class CodeReadOutput(TypedDict, total=False):
     lessons_left_out: NotRequired[int]
     results: Required[list["CodeReadRange"]]
     as_of: Required[dict[str, Any]]
+    trace_run_id: NotRequired[str]
 
 
 class CodeReadRange(TypedDict, total=False):

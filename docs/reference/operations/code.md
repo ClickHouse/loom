@@ -1162,6 +1162,7 @@ Read inclusive, one-based indexed lines.
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `results` | `list[CodeReadRange]` |  |
 | `as_of` | `dict[str, Any]` |  |
+| `trace_run_id` | `str` | Joins this read to the code trace and request ledger. |
 
 ## `code.recent_commits`
 
