@@ -127,6 +127,27 @@ def test_a_namespace_erasure_deletes_the_answers_that_quoted_it(tmp_path, scope)
     assert _census(ch, "namespace", scope) == 0
 
 
+def test_a_code_namespace_erasure_deletes_the_answers_asked_in_it(tmp_path) -> None:
+    # every answer in _ROWS was asked in the code namespace `code`, memory or none
+    ch = _LocalCH(tmp_path)
+    other = _answer("7", namespace="other-code")
+    cols = ", ".join(other)
+    run(
+        [
+            f"INSERT INTO loom.code_answers ({cols}) "
+            "SELECT * FROM format(JSONEachRow, {rows:String})"
+        ],
+        "SELECT 1",
+        {"rows": json.dumps(other)},
+        path=tmp_path,
+    )
+    assert _census(ch, "namespace", "code") == 5  # the tombstoned 5 holds its text
+    n = asyncio.run(graph_steps.delete_code_answers_by_namespace("o", "code", ch=ch))
+    assert n == 5
+    assert ch.left() == ["answer 7"]
+    assert _census(ch, "namespace", "code") == 0
+
+
 def test_a_tombstone_holding_no_text_leaves_the_census_clean(tmp_path) -> None:
     # written from a row read before the delete, it lands after it: keys, no text
     ch = _LocalCH(tmp_path)

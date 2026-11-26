@@ -1517,9 +1517,11 @@ and drops a hit of any other, so every excerpt is the bound namespace's. The
 `loom.code_answers` row of such an answer carries `memory_namespace` and the excerpts'
 `memory_keys`: a fact's own key, a chunk's parent fact key. Its `namespace` is the code
 namespace the question was asked in. The `code_answers.delete` step deletes every version
-of the rows whose `memory_namespace` is an erased namespace or whose `memory_keys` hold
-one of an erased user's keys, tombstones included, since a tombstone version mirrors the
-text; `memory.redact` deletes the rows that hold the redacted key.
+of the rows whose `namespace` or `memory_namespace` is an erased namespace (an answer asked
+in an erased code namespace quotes its repository's code, whatever memory it quoted) or
+whose `memory_keys` hold one of an erased user's keys, tombstones included, since a
+tombstone version mirrors the text; `memory.redact` deletes the rows that hold the redacted
+key.
 
 An answer is memoized only when its memory namespace is in the asking org and every
 excerpt is a fact the user's keys reach or a chunk with a parent key, so these predicates
