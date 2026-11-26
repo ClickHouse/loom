@@ -40,7 +40,7 @@ from server.knowledge.domain.connected_accounts import (
     source_matches,
     stopped,
 )
-from server.knowledge.domain.sources import MIRRORED_ACCESS, KnowledgeSource
+from server.knowledge.domain.sources import MIRRORED_ACCESS, KnowledgeSource, is_worker_source
 from server.knowledge.store import connected_accounts as store
 from server.knowledge.store import sources as source_store
 from server.observability import audit
@@ -373,7 +373,7 @@ async def _stop_locked(account: ConnectedAccount, *, strict: bool = False) -> Co
         raise unavailable()
     await store.put(ended)
     for source in await source_store.connected_sources(account.org, account.subject):
-        if source.kind != account.kind:
+        if source.kind != account.kind or is_worker_source(source):
             continue
         async with source_ops.sources_lease(source.org, source.namespace):
             current = await source_store.latest_source(source.org, source.namespace, source.name)
@@ -381,6 +381,7 @@ async def _stop_locked(account: ConnectedAccount, *, strict: bool = False) -> Co
                 current is None
                 or current.source_id != source.source_id
                 or current.credential_mode != "connected"
+                or is_worker_source(current)
                 or current.owner_subject != account.subject
                 or current.kind != account.kind
             ):
@@ -535,7 +536,8 @@ async def _source_standing(source: KnowledgeSource, account: ConnectedAccount) -
     from server.knowledge.app import sources as source_ops
 
     if (
-        account.org != source.org
+        is_worker_source(source)
+        or account.org != source.org
         or account.subject != source.owner_subject
         or account.kind != source.kind
     ):
@@ -578,6 +580,7 @@ async def _source_standing(source: KnowledgeSource, account: ConnectedAccount) -
         or current.owner_subject != source.owner_subject
         or current.kind != source.kind
         or current.credential_mode != "connected"
+        or is_worker_source(current)
         or current.access != MIRRORED_ACCESS
         or current.items != source.items
         or current.config != source.config

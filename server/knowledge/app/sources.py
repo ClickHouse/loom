@@ -374,6 +374,11 @@ def _require_served(src: KnowledgeSource) -> None:
         )
 
 
+def _require_native(src: KnowledgeSource) -> None:
+    if domain.is_worker_source(src):
+        _require_served(src)
+
+
 @contextlib.contextmanager
 def _store_refusals(suffix: str = "", about: Container[str] | None = None) -> Iterator[None]:
     """A probe's or a lookup's refusal, as the op answers it; one about an item (of
@@ -402,6 +407,8 @@ def _sync(src: KnowledgeSource, state: dict[str, str] | None) -> KnowledgeSource
 
 
 async def _details_allowed(src: KnowledgeSource) -> bool:
+    if domain.is_worker_source(src):
+        return False
     if src.credential_mode == "shared":
         return True
     if src.credential_mode != "connected" or not request_work.mark_mirrored():
@@ -428,7 +435,9 @@ async def handle_knowledge_source_list(
 ) -> KnowledgeSourceListOutput:
     ch.set_query_tag("knowledge.source.list")
     found = await store.list_sources(input.org, input.namespace)
-    states = await store.read_states(input.org, input.namespace, [s.name for s in found])
+    states = await store.read_states(
+        input.org, input.namespace, [s.name for s in found if not domain.is_worker_source(s)]
+    )
     entries = []
     for s in found:
         details = await _details_allowed(s)
@@ -460,8 +469,8 @@ async def handle_knowledge_source_inspect(
     plan = await source_access.prepare(input.org, [input.namespace])
     with private_work() if plan.marked else contextlib.nullcontext():
         src = await _source_or_404(input.org, input.namespace, input.name)
-        states = await store.read_states(src.org, src.namespace, [src.name])
         details = await _details_allowed(src)
+        states = await store.read_states(src.org, src.namespace, [src.name]) if details else {}
         output = KnowledgeSourceInspectOutput(
             name=src.name,
             kind=src.kind,
@@ -743,6 +752,7 @@ async def handle_knowledge_source_rotate(
                 f"source {src.name!r} was removed and added again while its new credential "
                 "was probed; rotate the current source"
             )
+        _require_native(fresh)
         if _moved(fresh, src):
             # Another write changed what this credential was probed against.
             raise OverloadedError("the source changed during the probe; retry", retry_after_s=1)
@@ -759,6 +769,7 @@ async def handle_knowledge_source_update(
     input: KnowledgeSourceUpdateInput,
 ) -> KnowledgeSourceUpdateOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
+    _require_native(src)
     if src.credential_mode == "connected":
         from server.knowledge.app.connected_sources import update
 
@@ -790,6 +801,7 @@ async def handle_knowledge_source_update(
                 f"source {src.name!r} was removed and added again while its new items were "
                 "probed; update the current source"
             )
+        _require_native(fresh)
         if _moved(fresh, src):
             raise OverloadedError("the source changed during the probe; retry", retry_after_s=1)
         change = _updated(fresh, plan.added, plan.removed, plan.include)
@@ -1058,18 +1070,23 @@ async def handle_knowledge_source_remove(
     return KnowledgeSourceRemoveOutput(name=src.name, documents_pending=pending)
 
 
-async def handle_knowledge_source_sync_now(
-    input: KnowledgeSourceSyncNowInput,
-) -> KnowledgeSourceSyncNowOutput:
-    src = await _source_or_404(input.org, input.namespace, input.name)
+async def _require_sync_operator(src: KnowledgeSource) -> None:
+    _require_native(src)
     if src.credential_mode == "connected":
         from server.knowledge.app.connected_sources import require_operator
 
         await require_operator(src)
     else:
-        if not await authz.row_in_scope(input.org, input.namespace, Role.ADMIN):
+        if not await authz.row_in_scope(src.org, src.namespace, Role.ADMIN):
             raise AuthInsufficientError("a namespace administrator is required for a shared source")
         _require_served(src)
+
+
+async def handle_knowledge_source_sync_now(
+    input: KnowledgeSourceSyncNowInput,
+) -> KnowledgeSourceSyncNowOutput:
+    src = await _source_or_404(input.org, input.namespace, input.name)
+    await _require_sync_operator(src)
     _require_supported_recording_provider(src)
     await _require_source_namespace(input.org, input.namespace)
     async with sources_lease(input.org, input.namespace):
@@ -1082,8 +1099,7 @@ async def handle_knowledge_source_sync_now(
                 f"source {src.name!r} was removed and added again; call "
                 "knowledge.source.sync_now again for the current source"
             )
-        if fresh.credential_mode == "connected":
-            await require_operator(fresh)
+        await _require_sync_operator(fresh)
         state = await _read_state(fresh)
         # A full request waiting (an update's) already asks for more: a plain sync now
         # leaves it as it is, neither narrowed nor started over.

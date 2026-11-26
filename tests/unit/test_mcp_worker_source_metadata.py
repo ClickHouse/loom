@@ -167,3 +167,13 @@ async def test_invalid_worker_slot_never_runs_a_native_erase(slot):
     with pytest.raises(ValueError, match="Invalid worker source slot"):
         await sources.erase_connected_owner("tenant", "docs", "reader", slot, ch=ch)
     assert not ch.calls
+
+
+async def test_native_connected_inventory_excludes_any_worker_marker():
+    ch = RecordingCH().on("loom.knowledge_sources FINAL", [])
+    assert await sources.connected_sources("tenant", "reader", ch=ch) == []
+    [query] = ch.calls
+    assert (
+        "AND NOT (source_kind = 'mcp' OR kind = 'mcp' OR credential_mode = 'worker')" in query.sql
+    )
+    assert query.params["org"] == "tenant" and query.params["subject"] == "reader"

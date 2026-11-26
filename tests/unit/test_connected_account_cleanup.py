@@ -1,8 +1,10 @@
 """Disconnect fences credentials and source work before any remote cleanup."""
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -10,7 +12,7 @@ from server.erasure.store import census
 from server.knowledge.app import connected_accounts as connections
 from server.knowledge.app import source_push, sources
 from server.knowledge.domain.connected_accounts import ConnectedAccount
-from server.knowledge.domain.sources import KnowledgeSource
+from server.knowledge.domain.sources import KnowledgeSource, WorkerSourceHistory
 
 
 class _World:
@@ -173,6 +175,28 @@ async def test_disconnect_queues_source_retirement_before_inactivation_and_remot
     )
     assert world.events[-1] == ("provider", "gdrive")
     assert world.sources["gdrive"].credential_enc == world.sources["gdrive"].secret_enc == ""
+
+
+@pytest.mark.asyncio
+async def test_native_stop_rechecks_worker_marker_under_source_lease(monkeypatch):
+    world = _World(monkeypatch)
+    account = world.accounts["team", "person", "gdrive"]
+    native = world.sources["gdrive"]
+    listed = replace(native, name="other", source_id="other-source")
+    worker = replace(
+        listed,
+        connection_id=str(UUID(int=2)),
+        worker_history=WorkerSourceHistory("mcp", "gdrive", "{}", "[]"),
+    )
+    world.sources[worker.name] = worker
+    world.stale_sources = [listed, native]
+
+    await connections._stop_locked(account)
+
+    assert world.sources[worker.name] == worker
+    assert not world.sources[native.name].active
+    assert ("retire", native.source_id) in world.events
+    assert not any(event[1] == worker.source_id for event in world.events)
 
 
 @pytest.mark.asyncio

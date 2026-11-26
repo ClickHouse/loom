@@ -166,7 +166,7 @@ async def connected_sources(
     rows = await (ch or _default_client()).query_all(
         f"SELECT {_COLUMNS} FROM {TABLE} FINAL WHERE org = {{org:String}} "
         "AND credential_mode = 'connected' AND owner_subject = {subject:String} "
-        "ORDER BY namespace, name LIMIT {limit:UInt64}",
+        f"AND NOT {WORKER_HISTORY} ORDER BY namespace, name LIMIT {{limit:UInt64}}",
         params={
             "org": org,
             "subject": subject,

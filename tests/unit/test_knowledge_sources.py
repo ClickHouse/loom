@@ -973,6 +973,60 @@ def test_a_name_added_again_starts_with_a_fresh_sync_state(fake: _Store) -> None
     assert seen.sync.model_dump() == app.KnowledgeSourceSync().model_dump()
 
 
+def test_list_and_inspect_hide_details_of_a_worker_marked_shared_source(fake):
+    asyncio.run(app.handle_knowledge_source_add(_add()))
+    name = "design-decks"
+    key = (ORG, NS, name)
+    fake.rows[key] = dataclasses.replace(
+        fake.rows[key],
+        owner_subject="synthetic-owner",
+        created_by="synthetic-creator",
+        worker_history=domain.WorkerSourceHistory("mcp", "gdrive", "{}", "[]"),
+    )
+    fake.states[name] = {"detail": '{"status":"private-worker-status"}'}
+
+    listing = asyncio.run(
+        app.handle_knowledge_source_list(KnowledgeSourceListInput(org=ORG, namespace=NS))
+    )
+    inspected = asyncio.run(
+        app.handle_knowledge_source_inspect(
+            KnowledgeSourceInspectInput(org=ORG, namespace=NS, name=name)
+        )
+    )
+    for entry in (listing.sources[0], inspected):
+        assert not entry.owner_subject and not entry.created_by
+        assert not entry.items and not entry.config
+        assert entry.sync == app.KnowledgeSourceSync()
+    assert not inspected.documents
+
+
+@pytest.mark.parametrize("after_lease", [False, True])
+def test_native_sync_refuses_a_worker_marker_without_writing(fake, monkeypatch, after_lease):
+    from server.knowledge.app import connected_sources
+
+    asyncio.run(app.handle_knowledge_source_add(_add()))
+    name = "design-decks"
+    key = (ORG, NS, name)
+    native = dataclasses.replace(fake.rows[key], credential_mode="connected", access="mirrored")
+    worker = dataclasses.replace(
+        native,
+        worker_history=domain.WorkerSourceHistory("mcp", "gdrive", "{}", "[]"),
+    )
+    selected = iter((native, worker) if after_lease else (worker, worker))
+
+    async def load(*args):
+        return next(selected)
+
+    monkeypatch.setattr(app, "_source_or_404", load)
+    monkeypatch.setattr(connected_sources, "current_auth", lambda: object_auth)
+    monkeypatch.setattr(connected_sources.request_work, "mark_mirrored", lambda: True)
+    object_auth = object()
+    before = dict(fake.states)
+    body = KnowledgeSourceSyncNowInput(org=ORG, namespace=NS, name=name, full=True)
+    assert _code(app.handle_knowledge_source_sync_now(body)) == "SOURCE_NOT_SERVED"
+    assert fake.states == before
+
+
 def test_the_call_ledger_keeps_no_credential() -> None:
     # Only allow-listed argument names reach loom.agent_events (MCP and HTTP alike).
     from server.observability.event_args import IDENTIFIER_KEYS, TEXT_KEYS, project_args
