@@ -475,7 +475,7 @@ async def _republish_counts(repo: Any, org: str, ns: str) -> None:
 
     with sequential_reads():
         try:
-            await repo.refresh_coverage(org, ns)
+            await repo.refresh_coverage(org, ns, must_land=True)
         except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
             print(
                 f"  coverage and counts not republished: {type(e).__name__}: {e}", file=sys.stderr

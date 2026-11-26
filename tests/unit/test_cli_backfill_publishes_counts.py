@@ -41,6 +41,7 @@ class _Replica:
         self.inserted: list[str] = []
         self.interrupt_counts = False
         self.fail_coverage: type[BaseException] | None = None
+        self.refuse_writes: set[str] = set()
 
     def _state(self) -> dict[str, dict[str, Any]]:
         return self.rows if sequential_reads_active() else self.lagging
@@ -83,6 +84,8 @@ class _Replica:
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         assert table == "loom.code_index_state", table
         for r in rows:
+            if r["state_key"] in self.refuse_writes:
+                raise ConnectionError(f"{r['state_key']} not written")
             self.inserted.append(r["state_key"])
             self.rows[r["state_key"]] = {
                 "state_value": r["state_value"],
@@ -232,6 +235,39 @@ def test_an_embed_phase_stopped_before_its_coverage_is_republished_by_the_rerun(
     state_after = _read_back(repo)
     assert _published(state_after)["code_chunks_embedded"] == 4
     assert _coverage_embedded(state_after) == 4
+
+
+def test_a_refused_coverage_write_keeps_the_counts_behind_for_the_rerun(
+    declared: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The real store's coverage write fails: the counts stay where they were, so
+    # the next phase still finds them behind and republishes both rows.
+    repo = _Namespace(
+        _Replica({"table_counts": json.dumps(_COUNTS)}, chunks=4, embedded=2), pages=2
+    )
+    repo.replica.refuse_writes = {"coverage"}
+    assert _embed(repo) == 0
+    assert "table_counts" not in repo.replica.inserted
+    assert "coverage and counts not republished: ConnectionError" in capsys.readouterr().err
+    repo.replica.refuse_writes = set()
+    assert _embed(repo) == 0
+    state = _read_back(repo)
+    assert _published(state)["code_chunks_embedded"] == 4
+    assert _coverage_embedded(state) == 4
+
+
+def test_current_counts_over_a_coverage_row_behind_republish_the_coverage(
+    declared: list[str],
+) -> None:
+    # The coverage row was written before the last vectors, the counts row after
+    # them: the counts match the chunks and the coverage still trails.
+    coverage = json.dumps({"cov": {"chunks": [{"embedded": 2}]}, "gaps": None})
+    done = {**_COUNTS, "code_chunks_embedded": 4}
+    state = {"table_counts": json.dumps(done), "coverage": coverage}
+    repo = _Namespace(_Replica(state, chunks=4, embedded=4))
+    assert _embed(repo) == 0
+    assert declared == ["acme"]
+    assert _coverage_embedded(_read_back(repo)) == 4
 
 
 @pytest.mark.parametrize("counts_row", [None, "zeros"])
