@@ -39,40 +39,11 @@ curl --fail-with-body -sS "$LOOM_BASE_URL/v1/code.ask" \
 This returns retrieved `citations` with `path`, `start_line` and `end_line`. The
 `answer` field is empty because the request skips synthesis and cached drafts.
 `rerank: "none"` skips reranking. Retrieval can still use the deployment's
-embedding provider. To let Loom draft the answer, set `synthesize` to `true` with a
-[configured server model](../getting-started/models-and-keys.md). Omit `no_cache`
-to let Loom reuse a cached draft. The corresponding MCP tool is
+embedding provider. The corresponding MCP tool is
 [`loom_code_ask`](../reference/operations/code.md#codeask).
 
-Use `as_of` when available to check the indexed branch and commit behind the result.
-Check `abstain`, `partial` and their reasons before displaying an answer. To test
-the integration, start with a question whose source you can verify, then ask one
-the repository cannot answer and check that the client surfaces the abstention or
-missing evidence. Use a separate identity without repository access to check that
-it cannot retrieve those citations. [Index freshness](../features/code-index/freshness.md)
-
-| Use case                    | Evidence to request                                                                                                                                 |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Triage a reported behavior  | `code.search` to find relevant code, then `code.symbol` and `code.callers` to inspect a definition and its indexed callers.                         |
-| Review a proposed change    | `code.impact` to inspect mapped definitions and tests, and [code-linked team lessons](../use-cases/memory-linked-to-code.md) for earlier decisions. |
-| Answer a team chat question | `code.ask` to retrieve citations or produce an answer backed by indexed source ranges.                                                              |
-
-## Serve triage agents, design assistants and team chatbots
-
-Run the assistant against the indexed repository, with a Loom token that can read its
-code namespace. The application supplies the repository scope; the user supplies the
-question. Git fetch credentials used to build the index do not grant a chatbot's users
-access to it. Follow the [repository access rules](../features/code-index/repositories.md#who-can-read)
-and preserve each caller's authorized scope.
-
-| Assistant        | Evidence to request                                                                                           | Result to check                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Triage agent     | `code.search` for the symptom, then `code.symbol` and `code.callers` for the relevant definition              | Cited implementation and callers that explain the reported path            |
-| Design assistant | `code.impact` for a proposed symbol change and [linked team decisions](../use-cases/memory-linked-to-code.md) | Affected definitions, test mappings and lessons with their freshness state |
-| Team chatbot     | `code.ask` for a cited answer, or `code.search` for the application's own reader                              | Source ranges supporting each claim, or an explicit abstention             |
-
-For example, replace the organization, namespace and question with those of your indexed
-repository. Server-side synthesis needs a configured real LLM:
+To let Loom draft the answer, use a [configured server model](../getting-started/models-and-keys.md)
+and set `synthesize: true`:
 
 ```sh
 curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/code.ask" \
@@ -82,13 +53,25 @@ curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/code.ask" \
 ```
 
 A grounded answer returns `answer` and `citations`; an unanswerable question can return
-`abstain` and `abstain_reason`. Inspect the completeness signals below before displaying
-an answer. For an uncached retrieval-only response, pass both `synthesize: false` and
-`no_cache: true`; `answer` is empty and `citations` holds the retrieved units. With cache
-lookup enabled, a matching cached synthesized answer can still be returned. These flags
-do not disable any
-embedding or reranking provider used by retrieval. The
-[code operation reference](../reference/operations/code.md#codeask) gives the full contract.
+`abstain` and `abstain_reason`. With cache lookup enabled, a matching cached synthesized
+answer can still be returned. Keep both `synthesize: false` and `no_cache: true` to
+request uncached retrieval only. The [code operation reference](../reference/operations/code.md#codeask)
+gives the full contract.
+
+Use `as_of` when available to check the indexed branch and commit behind the result.
+Check `abstain`, `partial` and their reasons before displaying an answer. To test
+the integration, start with a question whose source you can verify, then ask one
+the repository cannot answer and check that the client surfaces the abstention or
+missing evidence. Use a separate identity without repository access to check that
+it cannot retrieve those citations. [Index freshness](../features/code-index/freshness.md)
+
+## Serve triage agents, design assistants and team chatbots
+
+| Assistant        | Evidence to request                                                                                           | Result to check                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Triage agent     | `code.search` for the symptom, then `code.symbol` and `code.callers` for the relevant definition              | Cited implementation and callers that explain the reported path            |
+| Design assistant | `code.impact` for a proposed symbol change and [linked team decisions](../use-cases/memory-linked-to-code.md) | Affected definitions, test mappings and lessons with their freshness state |
+| Team chatbot     | `code.ask` for a cited answer, or `code.search` for the application's own reader                              | Source ranges supporting each claim, or an explicit abstention             |
 
 The answer concerns the indexed branch, not an uncommitted local checkout. Check
 [freshness](../features/code-index/freshness.md), [language and compiler-tier support](../features/code-index/overview.md#language-support),

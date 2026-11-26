@@ -730,8 +730,10 @@ that endpoint. Check its request errors and exercise retrieval.
 After checking configuration, use the [end-to-end smoke](../operations/monitoring.md#smoke-test)
 with fresh authorized input and confirm a new embedding call. To check the LLM, use
 [repository Q&A](../guides/repository-questions.md) on a readable indexed namespace with
-`synthesize: true` and `no_cache: true`. An abstention can skip synthesis, so confirm a
-new provider outcome or request trace tied to the probe on the serving process.
-A missing observation leaves inference unverified; returned prose alone can come from
-cache. These probes make model calls and can incur charges. For a stored memory missing
-from search, also check the embedding backlog described in the smoke guide.
+`synthesize: true` and `no_cache: true`. An abstention can skip synthesis. Use the
+response's `X-Trace-Id` to find a successful [generation span](../features/observability/telemetry.md#traces-and-logs)
+for the intended provider and model, or verify a provider success attributable to the
+probe. A request span alone does not prove the model ran. Without that evidence, leave
+inference unverified; returned prose alone can come from cache. These probes make model
+calls and can incur charges. For a stored memory missing from search, also check the
+embedding backlog described in the smoke guide.
