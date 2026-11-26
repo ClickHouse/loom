@@ -227,8 +227,10 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   indexes a sample.
 - The first full backfill of a namespace also re-derives every file's edges after the
   name table is complete, so cross-file references bind (`--no-edges-second-pass` skips
-  it). `--dialect-folder-pass` lets SQL files of undecided dialect take the dialect their
-  directory agrees on.
+  it). The run records that it owes the pass before its first batch and clears the record
+  once the pass is done, so a resumed run, or a rerun after an interrupted pass, still
+  runs it. `--dialect-folder-pass` lets SQL files of undecided dialect take the dialect
+  their directory agrees on.
 - `backfill-prs` loads merged-PR history from GitHub, resumable by cursor and bounded by
   GitHub's rate limit (`LOOM_CODE_PR_BACKFILL_MONTHS`, default 12). `backfill-reviews`
   adds inline review comments, `backfill-assignees` requested reviewers, and

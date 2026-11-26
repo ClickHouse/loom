@@ -108,8 +108,10 @@ async def _backfill(args: argparse.Namespace) -> int:
         print(f"twin label: rows written under embedding_model={model_name!r}")
     denylist = await load_denylist(cfg, head, gitrepo.show_file)
     cursor_key = f"backfill_cursor:index{suffix}"
+    owed_key = f"backfill_edges_owed:index{suffix}"
     mode = "repair" if paths_file else "twin" if suffix else "backfill"
     done_upto = "" if paths_file else await repo.get_state(org, ns, cursor_key)
+    owed, recorded = await _record_edge_pass(repo, org, ns, args, owed_key, str(done_upto or ""))
     start_idx = int(done_upto) if done_upto.isdigit() else 0
     started = time.monotonic()
     sem = asyncio.Semaphore(max(1, args.concurrency))
@@ -196,13 +198,10 @@ async def _backfill(args: argparse.Namespace) -> int:
             f"({rate:.1f} files/s)"
         )
 
-    if second_pass_wanted(
-        explicit=bool(getattr(args, "edges_second_pass", False)),
-        declined=bool(getattr(args, "no_edges_second_pass", False)),
-        paths_file=bool(paths_file),
-        done_upto=str(done_upto or ""),
-    ):
-        if not getattr(args, "edges_second_pass", False):
+    if owed:
+        if recorded:
+            print(f"edge second pass owed by an earlier run of this backfill ({recorded})")
+        elif owed == "first-backfill":
             print("first full backfill of this namespace: edge second pass implied")
         second = await _second_edge_pass(
             repo,
@@ -218,6 +217,8 @@ async def _backfill(args: argparse.Namespace) -> int:
         )
         counters["edges_second_pass"] = second["edges"]
         counters["errors"] += second["errors"]
+        if not paths_file:
+            await repo.set_state(org, ns, owed_key, "")
     if getattr(args, "dialect_folder_pass", False):
         folder = await _dialect_folder_pass(repo, org, ns, head)
         counters["dialect_inherited"] = folder["inherited"]
@@ -307,20 +308,46 @@ async def _backfill_paths(
     return headers_first(paths)
 
 
-def second_pass_wanted(*, explicit: bool, declined: bool, paths_file: bool, done_upto: str) -> bool:
-    """A namespace's FIRST full backfill indexes files in
-    tree order, so a call to a function whose file comes later binds
-    nothing (a call in fastify.js to `buildRouting(…)` reads `unresolved,
-    0 candidates` while lib/route.js is not yet indexed). The edges-only
-    second pass is what repairs that, so a first full
-    backfill implies it; `--edges-second-pass` asks for it on any run,
-    `--no-edges-second-pass` declines the implied one. A resumed run
-    (cursor set) or a `--paths-file` repair implies nothing."""
+async def _record_edge_pass(
+    repo: Any, org: str, ns: str, args: argparse.Namespace, owed_key: str, done_upto: str
+) -> tuple[str, str]:
+    """(why this run owes the edge pass, why an earlier run recorded it owed). A cursor
+    run records its reason before its first batch, so a run interrupted from there on
+    leaves the pass owed; a `--paths-file` repair records nothing."""
+    paths_file = bool(getattr(args, "paths_file", ""))
+    recorded = "" if paths_file else await repo.get_state(org, ns, owed_key)
+    owed = edge_pass_owed(
+        explicit=bool(getattr(args, "edges_second_pass", False)),
+        declined=bool(getattr(args, "no_edges_second_pass", False)),
+        paths_file=paths_file,
+        done_upto=done_upto,
+        recorded=recorded,
+    )
+    if not paths_file and owed != recorded:
+        await repo.set_state(org, ns, owed_key, owed)
+    return owed, recorded
+
+
+def edge_pass_owed(
+    *, explicit: bool, declined: bool, paths_file: bool, done_upto: str, recorded: str
+) -> str:
+    """Why this run owes the edges-only second pass, '' when it does not. A
+    namespace's FIRST full backfill indexes files in tree order, so a call to a
+    function whose file comes later binds nothing (a call in fastify.js to
+    `buildRouting(…)` reads `unresolved, 0 candidates` while lib/route.js is not
+    yet indexed); the second pass repairs that, so a first full backfill implies
+    it. `--edges-second-pass` asks for it on any run, `--no-edges-second-pass`
+    declines it. A cursor run records the reason before its first batch and
+    clears it once the pass is done (`recorded`), so a resumed run, or a rerun
+    after an interrupted pass, still runs it. A resumed run with nothing
+    recorded, and a `--paths-file` repair, imply nothing."""
     if explicit:
-        return True
+        return "requested"
     if declined or paths_file:
-        return False
-    return not done_upto
+        return ""
+    if recorded:
+        return recorded
+    return "" if done_upto else "first-backfill"
 
 
 async def _second_edge_pass(
