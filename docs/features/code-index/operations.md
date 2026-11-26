@@ -262,6 +262,25 @@ Small finite budgets prioritize result heads over optional risk annotations.
 For a Compose installation, put the variable in the `.env` file beside `compose.yaml`
 and recreate the server container after changing it.
 
+### Read caller lessons before editing a dependency
+
+Suppose an indexed test calls `App.mount`, which forwards to `Receiver.register`.
+A lesson attached to `App.mount` says that mounts can repeat. Read the lesson
+before editing `Receiver.register` so the change preserves that behavior.
+
+1. Call `code.edit_context` with `name: "Receiver.register"` and `include_lessons: true`
+   in the repository's code namespace. If the lesson is in another namespace
+   the credential can read, name it in `lesson_namespaces`.
+2. In the definition's `examples`, look for `evidence: "indirect_call"` and
+   `via.symbol: "App.mount"`. When Loom returns the caller's verified source,
+   `via.context` carries the excerpt and indexed commit.
+3. In the same definition's `lessons`, look for `linked_symbols: ["App.mount"]`
+   and `code_state: "fresh"`. Read the caller excerpt before applying the lesson.
+
+Caller lessons must match the returned indexed revision and fit the time and
+token limits. Use `code.symbol` to inspect the caller directly when edit
+context omits its lessons.
+
 ## Follow a specification to code and back
 
 Repository Markdown and imported knowledge documents take different paths. An indexed

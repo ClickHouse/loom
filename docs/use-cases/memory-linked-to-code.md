@@ -47,7 +47,9 @@ reported commit](#check-a-lesson-after-a-code-edit).
   definition as `lessons`; `code.search`, `code.callers`, `code.callees`, `code.impact`,
   `code.outline` and a task's `code.context_pack` attach the lessons for the files they
   return; each lesson carries its link state. A slow or failed file read leaves the
-  completed files' lessons intact within the enrichment timeout. The Claude Code and
+  completed files' lessons intact within the enrichment timeout. An edit lookup can
+  include [fresh lessons from an indexed caller](../features/code-index/operations.md#read-caller-lessons-before-editing-a-dependency)
+  when it returns that caller's verified source. The Claude Code and
   Codex hooks show a file's memories (`memory.for_file`) before an agent edits it, and
   the Cline hooks when it reads
   or edits one. [`code.symbol`](../reference/operations/code.md#codesymbol) ·
