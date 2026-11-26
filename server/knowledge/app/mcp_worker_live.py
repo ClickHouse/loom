@@ -69,16 +69,17 @@ async def read_selected_live(
                         raise WorkerReadRefused("denied")
 
                 await validate()
-                await retain(scope, validate, deadline)
-                return LiveDocument(
-                    scope.source_id,
-                    scope.resource_id,
-                    resource_uri(str(scope.source_id), scope.resource_id),
-                    _display_link(read.document.source_link),
-                    read.fetched_at,
-                    read.document.title,
-                    read.document.text,
-                    read.document.mime_type,
-                )
+            # The protected publisher owns a separate deadline for validation and delivery.
+            await retain(scope, validate, deadline)
+            return LiveDocument(
+                scope.source_id,
+                scope.resource_id,
+                resource_uri(str(scope.source_id), scope.resource_id),
+                _display_link(read.document.source_link),
+                read.fetched_at,
+                read.document.title,
+                read.document.text,
+                read.document.mime_type,
+            )
     except TimeoutError:
         raise WorkerReadRefused("timeout") from None

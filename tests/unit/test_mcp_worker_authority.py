@@ -290,6 +290,7 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         retire_during_body: bool = False,
         retire_during_delivery: bool = False,
         settle_past_read_deadline: bool = False,
+        retain_past_read_deadline: bool = False,
     ) -> tuple[list, list]:
         from unittest.mock import AsyncMock, patch
 
@@ -399,14 +400,32 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
             is_service_account=False,
         )
 
+        retain = protected._retain
+        retention_started = False
+        retention_wait_until = None
+
+        async def mark_retention(*args) -> None:
+            nonlocal retention_started
+            retention_started = True
+            await retain(*args)
+
+        async def check_session(_auth) -> None:
+            nonlocal retention_wait_until
+            if retention_started and retention_wait_until is not None:
+                wait_until, retention_wait_until = retention_wait_until, None
+                await asyncio.sleep(max(0, wait_until - asyncio.get_running_loop().time()) + 0.01)
+
         async def downstream(scope, _receive, send) -> None:
-            nonlocal body
+            nonlocal body, retention_wait_until
             with request_declaration(scope), request_work.http_owner(scope):
                 set_current_auth(auth)
                 try:
                     request_work.begin()
                     loop = asyncio.get_running_loop()
-                    deadline = loop.time() + (0.8 if settle_past_read_deadline else 5)
+                    short_read = settle_past_read_deadline or retain_past_read_deadline
+                    deadline = loop.time() + (0.8 if short_read else 5)
+                    if retain_past_read_deadline:
+                        retention_wait_until = deadline
                     result = await protected.protected_live_read(
                         self.request, directory, deadline=deadline
                     )
@@ -437,7 +456,8 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
             patch.object(type(protected.settings), "auth_actually_required", return_value=True),
             patch.object(protected.settings, "knowledge_mirrored_sources_enabled", True),
             patch("server.knowledge.app.sources.sources_lease", source_lease),
-            patch.object(protected.session_admission, "require", AsyncMock()),
+            patch.object(protected, "_retain", mark_retention),
+            patch.object(protected.session_admission, "require", check_session),
             patch.object(protected.authz, "row_in_scope", AsyncMock(return_value=True)),
             patch.object(
                 protected.connected_accounts, "own_subject", AsyncMock(return_value=("org", "bob"))
@@ -480,6 +500,11 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
 
     async def test_live_document_remains_deliverable_after_read_budget_ends(self) -> None:
         attempts, published = await self._live_publication(settle_past_read_deadline=True)
+        self.assertEqual(len(attempts), 1)
+        self.assertIn(b"synthetic live canary", published[-1]["body"])
+
+    async def test_initial_retention_can_finish_after_read_deadline(self) -> None:
+        attempts, published = await self._live_publication(retain_past_read_deadline=True)
         self.assertEqual(len(attempts), 1)
         self.assertIn(b"synthetic live canary", published[-1]["body"])
 
