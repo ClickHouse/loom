@@ -63,7 +63,9 @@ Once Loom answers, the installer:
 2. **Learns whether sign-in is on.** With sign-in on, it connects no agent and says where
    tokens come from.
 3. **Offers to connect your coding agents.** On a terminal it asks, for each one it finds:
-   Claude Code and Codex through their plugins, VS Code through `code --add-mcp`.
+   Claude Code and Codex through their plugins, and the VS Code editor profile through
+   `code --add-mcp`. For the Copilot harness, follow the
+   [VS Code setup](../features/integrations/vscode.md#local-single-user-server).
    `LOOM_CONNECT` answers instead, for a run without a terminal too, and only the clients
    it names are looked at: a comma list of `claude-code`, `codex` and `vscode`, `all`, or
    `none` alone; any other value stops the install. Without a terminal and without
