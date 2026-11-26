@@ -164,12 +164,9 @@ def test_code_embed_recovery_scans_no_repository_of_a_switched_off_org(monkeypat
     read: list[str] = []
 
     class _Counts:
-        async def shared_counts(self, org: str, ns: str) -> dict[str, int]:
+        async def published_chunks_behind(self, org: str, ns: str) -> bool:
             read.append(ns)
-            return {"code_chunks_embedded": 0}
-
-        async def chunk_embed_coverage(self, org: str, ns: str) -> tuple[int, int]:
-            return 0, 0
+            return False
 
     class _CodeRepo(code_index.CodeRepo):  # static row helpers stay real for later importers
         def __new__(cls) -> Any:

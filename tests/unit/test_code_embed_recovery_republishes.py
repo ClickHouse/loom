@@ -91,6 +91,9 @@ class _Namespace(CodeRepo):
     def __init__(self, table: _Table) -> None:
         super().__init__(ch=table)  # type: ignore[arg-type]
         self.table = table
+        # Stub versions ReplacingMergeTree has not merged away: a scan returns them,
+        # and `live_stub_keys` drops them, as the newer embedded version wins.
+        self.superseded: list[dict[str, Any]] = []
 
     async def pending_embed_keys(
         self,
@@ -104,13 +107,12 @@ class _Namespace(CodeRepo):
     ) -> list[dict[str, Any]]:
         if table != "code_chunks":
             return []
-        stubs = [
-            c for c in self.table.chunks if not c["embedding_dim"] and c["version"] > min_version
-        ]
-        return [dict(c) for c in stubs[:limit]]
+        stubs = [c for c in self.table.chunks if not c["embedding_dim"]] + self.superseded
+        page = sorted((c for c in stubs if c["version"] > min_version), key=lambda c: c["version"])
+        return [dict(c) for c in page[:limit]]
 
     async def live_stub_keys(self, table: str, model: str, keys: Any, max_attempts: int) -> Any:
-        return keys
+        return [k for k in keys if k not in self.superseded]
 
     async def pending_embed_rows_by_keys(
         self, table: str, model: str, keys: Any, max_attempts: int
@@ -264,3 +266,69 @@ async def test_a_restart_before_the_drain_still_republishes_on_the_full_scan_pas
     monkeypatch.setattr(w, "_full_scan_at", 0.0)
     await _pass()
     assert table.state_writes == writes
+
+
+def _restart(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The process memory gone: the next pass is the boot's full scan."""
+    from server.code.workers import embed_recovery as w
+
+    monkeypatch.setattr(w, "_unpublished", set())
+    monkeypatch.setattr(w, "_watermark", {})
+    monkeypatch.setattr(w, "_full_scan_at", 0.0)
+
+
+async def test_current_counts_over_a_coverage_row_behind_are_republished_after_a_restart(
+    configured: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A handoff: the previous build published coverage, its last vectors landed,
+    # then it published counts. The counts match the chunks; the coverage does not.
+    table = _Table(chunks=3, embedded=0)
+    repo = await _namespace(monkeypatch, table)
+    for c in table.chunks:
+        c["embedding_dim"] = 2
+    await repo.refresh_table_counts(ORG, NS)
+    _restart(monkeypatch)
+
+    drained = await _pass()
+    assert drained.idle and drained.full_scan and drained.errors == []
+    counts, coverage_embedded = await _published(repo)
+    assert counts["code_chunks_embedded"] == coverage_embedded == 3
+
+
+async def test_a_full_scan_that_meets_unmerged_stub_versions_still_notes_the_namespace(
+    configured: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    table = _Table(chunks=3, embedded=0)
+    repo = await _namespace(monkeypatch, table)
+    await _pass()  # the last vectors land
+    # The stub versions those vectors replaced are not merged yet.
+    repo.superseded = [{**table.chunks[0], "embedding_dim": 0, "version": 1}]
+    _restart(monkeypatch)
+
+    restarted = await _pass()
+    assert restarted.full_scan and not restarted.idle and restarted.chunks_embedded == 0
+    drained = await _pass()  # above the watermark: idle, and not a full scan
+    assert drained.idle and not drained.full_scan and drained.errors == []
+    counts, coverage_embedded = await _published(repo)
+    assert counts["code_chunks_embedded"] == coverage_embedded == 3
+
+
+async def test_a_failed_comparison_does_not_fail_the_pass(
+    configured: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.workers import embed_recovery as w
+
+    table = _Table(chunks=3, embedded=0)
+    repo = await _namespace(monkeypatch, table)
+    await _pass()
+    _restart(monkeypatch)
+
+    table.failing = "aggregate"
+    failed = await _pass()
+    assert failed.full_scan and len(failed.errors) == 1 and "TimeoutError" in failed.errors[0]
+
+    table.failing = ""
+    monkeypatch.setattr(w, "_full_scan_at", 0.0)
+    assert (await _pass()).errors == []
+    counts, coverage_embedded = await _published(repo)
+    assert counts["code_chunks_embedded"] == coverage_embedded == 3

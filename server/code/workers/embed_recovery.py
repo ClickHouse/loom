@@ -21,8 +21,8 @@ per-repo scan and a per-repo FINAL read every 30 s whatever the backlog.
 Vectors written here change the shared `table_counts` and `coverage` rows, which
 only an ingest pass that indexed a commit republishes. So the first idle pass
 after a namespace's stubs were embedded republishes both rows for it, and a
-full-scan idle pass republishes them for any namespace whose published embedded
-count differs from its chunks.
+full-scan pass notes any namespace whose published rows trail its chunks for
+the next idle pass.
 """
 
 from __future__ import annotations
@@ -154,8 +154,26 @@ async def _run(result: CodeEmbedRecoveryResult) -> None:
             result.chunks_embedded += embedded
         else:
             result.summaries_embedded += embedded
+    if result.full_scan:
+        await _note_behind(repo, set(repos) - _unpublished, result)
     if result.idle:
         await _republish(repo, set(repos), result)
+
+
+async def _note_behind(
+    repo: Any, repos: set[tuple[str, str]], result: CodeEmbedRecoveryResult
+) -> None:
+    """Notes each namespace whose published counts or coverage trail its chunks.
+    `_unpublished` lives in memory, so a restart between the last vectors and the
+    drain loses it. Every full-scan pass checks, idle or not: the first after a
+    restart reads superseded stub versions from zero and is seldom idle."""
+    for org, ns in sorted(repos):
+        try:
+            if await repo.published_chunks_behind(org, ns):
+                _unpublished.add((org, ns))
+        except Exception as e:  # noqa: BLE001 — the next full scan reads it again
+            logger.warning("code_embed_recovery: %s/%s counts not read: %s", org, ns, e)
+            result.errors.append(f"{org}/{ns}: published counts: {caller_text(e)}")
 
 
 async def _republish(
@@ -165,17 +183,7 @@ async def _republish(
     publishes them after a commit. A namespace whose republish failed stays
     unpublished, so the next idle pass retries it. One this pass did not scan
     (removed, or its org switched off) waits, so a removed one is never written
-    after its purge.
-
-    `_unpublished` lives in memory, so a full-scan pass also notes each namespace
-    whose published embedded count differs from its chunks, so a restart between
-    the last vectors and the drain delays the republish to the next idle full scan."""
-    if result.full_scan:
-        for org, ns in repos - _unpublished:
-            published = (await repo.shared_counts(org, ns) or {}).get("code_chunks_embedded")
-            _, embedded = await repo.chunk_embed_coverage(org, ns)
-            if published != embedded:
-                _unpublished.add((org, ns))
+    after its purge."""
     for org, ns in sorted(_unpublished & repos):
         try:
             await repo.refresh_coverage(org, ns, must_land=True)

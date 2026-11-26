@@ -199,13 +199,9 @@ class _FakeCodeRepo:
     async def refresh_table_counts(self, org, ns, *, must_land=False):
         self.calls.append(("table_counts", ns))
 
-    async def shared_counts(self, org, ns):
-        self.calls.append(("shared_counts", ns))
-        return {"code_chunks_embedded": 0}
-
-    async def chunk_embed_coverage(self, org, ns):
-        self.calls.append(("chunk_embed_coverage", ns))
-        return 0, 0
+    async def published_chunks_behind(self, org, ns):
+        self.calls.append(("published_chunks_behind", ns))
+        return False
 
 
 class _Embedder:
@@ -283,12 +279,9 @@ async def test_an_idle_pass_is_one_scan_per_table_over_every_repo_and_marks_idle
     assert [c[0] for c in repo.calls[:2]] == ["keys", "keys"], repo.calls
     assert {c[1] for c in repo.calls[:2]} == {"code_chunks", "code_summaries"}
     assert result.idle and result.rows_written == 0 and result.scans == 2 and result.full_scan
-    # A full-scan idle pass reads each namespace's published and live counts once;
-    # they match, so nothing is republished.
-    reads = {
-        (k, ns) for k in ("shared_counts", "chunk_embed_coverage") for ns in ("n1", "n2", "n3")
-    }
-    assert sorted(repo.calls[2:]) == sorted(reads)
+    # A full-scan pass checks each namespace's published rows once; they match, so
+    # nothing is republished.
+    assert repo.calls[2:] == [("published_chunks_behind", ns) for ns in ("n1", "n2", "n3")]
 
 
 async def test_a_pass_that_only_met_stale_stub_versions_is_not_idle(
