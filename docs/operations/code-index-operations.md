@@ -143,10 +143,11 @@ submodule updates included, not only the entry's remote, so include the public r
 when any of those reach a public host. Repository jobs read no system or global git
 config and inherit no `GIT_SSL_CAINFO` or `SSL_CERT_FILE`, so this setting is how a
 bundle reaches them. Loom does not check the path when it loads the setting: name an
-absolute path to a file the job can see. Inside the repository-job sandbox that is the
-tree it mounts read-only, `/etc/ssl`; a relative path, a `~/` path, or a link that
-leaves `/etc/ssl` resolves differently there than on the host, and git fails the job
-with its own words. Through the forward proxy, `LOOM_CODE_GIT_PROXY_CA_FILE` takes its
+absolute path to a file the job can see. The sandbox mounts `/etc/ssl`,
+`/etc/ca-certificates` and `/usr` read-only, so `/etc/ssl` is the place to put the
+bundle; a link works when its target is inside one of those trees too. A relative path,
+a `~/` path, or a link whose target is outside them resolves differently there than on
+the host, and git fails the job with its own words. Through the forward proxy, `LOOM_CODE_GIT_PROXY_CA_FILE` takes its
 place when set.
 
 The setting settles trust, not reach. In the sandbox the egress proxy refuses a remote
