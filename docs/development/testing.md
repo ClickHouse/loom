@@ -421,6 +421,19 @@ with the race detector. The other jobs build their package and load or compile a
 independent consumer outside the source tree. Java adapter modules have their own
 requirements and are not part of the core job.
 
+Compiler and linter diagnostics follow each SDK's configuration:
+
+| SDK       | Warning checks                                                                                                    | Configuration                                                                                                                                              |
+| --------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Go        | The native SDK workflow runs `go vet ./...`.                                                                      | [Native SDK workflow](../../.github/workflows/sdk-native.yml)                                                                                              |
+| Java core | Compiler arguments enable `-Xlint:all` and `-Werror`.                                                             | [Compiler configuration](../../sdk/java/pom.xml)                                                                                                           |
+| .NET      | Both projects enable `Nullable` and `TreatWarningsAsErrors`.                                                      | [Library](../../sdk/dotnet/src/ClickHouse.Loom/ClickHouse.Loom.csproj), [tests](../../sdk/dotnet/tests/ClickHouse.Loom.Tests/ClickHouse.Loom.Tests.csproj) |
+| Ruby      | The native SDK workflow runs `bundle exec rake test`; the default `Rake::TestTask` settings enable Ruby warnings. | [Test task](../../sdk/ruby/Rakefile)                                                                                                                       |
+
+Fix diagnostics in the affected component. Review its enabled checks and any scoped
+exceptions when investigating warnings. The Python type-checking ratchet is described
+in [CI gates](#ci-gates).
+
 The Go job also runs the pinned vulnerability analyzer on production packages under
 the selected Linux toolchain. Before scanning the SDK, it requires detection of a
 known vulnerable call and its absence after that dependency is fixed in a temporary
