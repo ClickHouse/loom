@@ -40,6 +40,9 @@ mod update_filters;
 #[path = "review_regressions/mod.rs"]
 mod review_regressions;
 
+#[path = "routes/mod.rs"]
+mod routes;
+
 #[cfg(feature = "blocking")]
 #[path = "blocking_cases/mod.rs"]
 mod blocking_cases;
@@ -48,6 +51,8 @@ struct Request {
     line: String,
     headers: HashMap<String, String>,
     body: Value,
+    /// The body as sent, which a route outside the op registry may not encode as JSON.
+    raw: Vec<u8>,
 }
 
 struct Server {
@@ -168,13 +173,17 @@ fn read_request(stream: &mut TcpStream) -> Request {
         let (key, value) = header.split_once(':').unwrap();
         headers.insert(key.to_ascii_lowercase(), value.trim().to_owned());
     }
-    let len: usize = headers["content-length"].parse().unwrap();
-    let mut body = vec![0; len];
-    reader.read_exact(&mut body).unwrap();
+    let len: usize = headers
+        .get("content-length")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let mut raw = vec![0; len];
+    reader.read_exact(&mut raw).unwrap();
     Request {
         line: line.trim().into(),
         headers,
-        body: serde_json::from_slice(&body).unwrap(),
+        body: serde_json::from_slice(&raw).unwrap_or(Value::Null),
+        raw,
     }
 }
 
