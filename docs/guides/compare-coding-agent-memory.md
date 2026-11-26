@@ -1,8 +1,8 @@
 ---
 title: Compare self-hosted memory tools for coding agents
-description: Compare Git instructions, file-backed MCP memory, and Loom. See which setups share decisions, track source changes, and support project access controls.
+description: Compare Git instructions, file-backed MCP memory, and Loom on one coding example. Check cross-session recall, project access, source changes, and portability.
 seo:
-  title: Compare coding-agent memory tools
+  title: Memory tools for coding agents compared
 ---
 
 # Compare self-hosted memory tools for coding agents
@@ -58,6 +58,22 @@ Keep the same tasks, starting revisions, and acceptance tests. Count model use, 
 maintenance, and human review time before assigning a budget. See the
 [paired coding-task scorecard](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory).
 
+## Move a saved decision to a fresh setup
+
+The fixture copies the corrected retry decision into fresh storage, then reads it
+with a new checkout or client. This checks what a team can take when it moves its
+memory setup.
+
+| Setup                            | What the new reader recovered                                                                                                                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Git-tracked `AGENTS.md`          | A fresh checkout contained the corrected rule. Its Git history still contained the earlier rule.                                                                                                                       |
+| File-backed MCP reference server | A new server read both observations from a copy of the JSONL file. A reader still had to decide which one applied.                                                                                                     |
+| Loom                             | A source viewer exported the corrected rule as Markdown. A separate writer imported the bundle into an empty namespace. A viewer there read the corrected value under the same key and saw the importer as its writer. |
+
+The Loom test moves the current decision within one deployment. A Markdown export
+omits the source namespace's grants and full version history. Use the [portability walkthrough](../features/integrations/okf.md#test-agent-memory-portability)
+to repeat the check with different deployments.
+
 ## Shared memory between Claude Code and Codex
 
 In two local trials, Claude Code stored a different value over MCP and a fresh Codex
@@ -88,7 +104,8 @@ bash examples/run_coding_agent_memory_comparison.sh
 The runner creates a temporary repository, storage file, local server, and ClickHouse
 container. It installs `@modelcontextprotocol/server-memory@2.2.1` as the MCP reference
 arm and prints the two source revisions, the fields returned by the graph, the
-project-access check, and the observed author and version records. If a default port is taken, set
+project-access and portability results, and the observed author and version records.
+If a default port is taken, set
 `COMPARISON_CH_HTTP_PORT`, `COMPARISON_CH_NATIVE_PORT`, or `COMPARISON_API_PORT` to
 unused ports before running it.
 

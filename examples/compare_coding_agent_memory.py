@@ -8,7 +8,9 @@ import json
 import os
 import secrets
 import select
+import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -313,6 +315,17 @@ async def compare(origin: str, graph: Path, directory: Path) -> dict[str, Any]:
         (f"process:{WRITER}", note),
         (f"process:{REVIEWER}", revised),
     ], rows
+    git_copy = directory / "restored-repo"
+    git(directory, "clone", "-q", "--no-hardlinks", str(repo), str(git_copy))
+    assert (git_copy / "AGENTS.md").read_text().strip() == revised
+    assert git(git_copy, "show", "HEAD~1:AGENTS.md") == note
+
+    graph_copy = directory / "restored-graph.jsonl"
+    shutil.copyfile(storage, graph_copy)
+    copied = graph_tool(graph, graph_copy, "restored-reader", "open_nodes", names=[KEY])
+    assert copied["entities"][0]["observations"] == [note, revised], copied
+
+    import_actor = check_loom_portability(origin, org, directory / "memory-bundle", revised)
     return {
         "source_before": first,
         "source_after": second,
@@ -321,6 +334,11 @@ async def compare(origin: str, graph: Path, directory: Path) -> dict[str, Any]:
         "loom_denied_other_project": True,
         "loom_changed_since": changed["changed_since"],
         "loom_sql_versions": [[row[0], row[1]] for row in rows],
+        "portable_copies": {
+            "git_note_versions": 2,
+            "mcp_observations": len(copied["entities"][0]["observations"]),
+            "loom_import_actor": import_actor,
+        },
     }
 
 
@@ -336,6 +354,68 @@ def check_project_boundary(origin: str, org: str, reviewer: Loom, memory_id: str
         assert response.status_code == 403, response.status_code
     finally:
         other.close()
+
+
+def run_okf(origin: str, org: str, namespace: str, name: str, role: str, *arguments: str) -> None:
+    token = mint_token(subject=name, org=org, namespaces=[namespace], roles=[role], ttl_seconds=600)
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "server.cli",
+            *arguments,
+            "--server-url",
+            origin,
+            "--org",
+            org,
+            "--namespace",
+            namespace,
+        ],
+        env={**os.environ, "LOOM_API_KEY": token},
+        stdout=subprocess.PIPE,
+        check=True,
+        timeout=60,
+    )
+
+
+def check_loom_portability(origin: str, org: str, bundle: Path, expected: str) -> str:
+    target = "restored-memory"
+    importer = "fixture-importer"
+    reader = Loom(origin, org, "restored-reader", "viewer", namespace=target)
+    try:
+        assert not reader.mcp.tool("loom_memory_get", namespace=target, memory_key=KEY)["found"]
+        run_okf(
+            origin,
+            org,
+            NAMESPACE,
+            "export-viewer",
+            "viewer",
+            "export-okf",
+            "--out",
+            str(bundle),
+            "--no-evidence",
+            "--no-links",
+        )
+        assert any(expected in file.read_text() for file in bundle.rglob("*.md"))
+        run_okf(
+            origin,
+            org,
+            target,
+            importer,
+            "writer",
+            "import-okf",
+            str(bundle),
+            "--agent",
+            importer,
+            "--no-evidence",
+        )
+        restored = reader.mcp.tool("loom_memory_get", namespace=target, memory_key=KEY)
+        assert restored["found"] and restored["value"] == expected, restored
+        actor = str(restored["actor"])
+        assert actor == f"process:{importer}", restored
+        return actor
+    finally:
+        reader.close()
 
 
 async def main() -> None:
