@@ -48,9 +48,9 @@
           "description": "Seconds between adoption checks and retries. A report covers 12 hours."
         },
         "adoption_telemetry_share_domains": {
-          "default": false,
+          "default": true,
           "type": "boolean",
-          "description": "Share verified email domain counts in adoption reports. Off by default."
+          "description": "Share namespace contact domains and counts in adoption reports. Set false to omit them."
         },
         "allow_insecure": {
           "default": false,
@@ -1034,6 +1034,20 @@
           "default": 30,
           "type": "integer",
           "description": "Seconds between recovery passes while stubs are pending."
+        },
+        "code_enrich_example_candidate_limit": {
+          "default": 50,
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Incoming call sites read before ranking usage examples. The coverage lookup accepts up to 50 paths."
+        },
+        "code_enrich_indirect_test_caller_limit": {
+          "default": 30,
+          "maximum": 30,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Indirect test callers ranked as backups. The edge query reads up to twice this many call sites, within its 60-site work limit."
         },
         "code_enrich_timeout_s": {
           "default": 0.5,

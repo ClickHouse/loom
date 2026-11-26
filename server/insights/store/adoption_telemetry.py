@@ -52,7 +52,7 @@ WHERE {_REQUEST_SCOPE}
 SETTINGS optimize_move_to_prewhere_if_final = 0
 """
 
-# Attribute requests to the verified contact of their namespace.
+# Attribute requests to the contact domain of their namespace.
 DOMAINS_SQL = f"""
 SELECT contacts.domain, uniqExact(contacts.email) AS user_count,
        sum(activity.requests) AS successful_requests
@@ -65,12 +65,6 @@ FROM (
     WHERE active = 1 AND classification = 'standard' AND {not_mirror_sql()}
       AND (org, namespace) NOT IN {{restricted:Array(Tuple(String, String))}}
       AND contact_email != ''
-      AND (
-          (password_hash = '' AND has(tags, 'oidc-jit'))
-          OR (org, namespace, contact_email) IN (
-              SELECT org, namespace, email FROM loom.sso_links FINAL WHERE linked = 1
-          )
-      )
 ) AS contacts
 LEFT JOIN (
     SELECT org, namespace, count() AS requests

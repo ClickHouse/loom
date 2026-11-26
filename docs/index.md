@@ -18,7 +18,7 @@ follow the reading order below.
 
 | Step                     | Read                                                                                                                                                                                      |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Decide                | [Overview](getting-started/overview.md) → [Evaluate Loom](getting-started/evaluate.md)                                                                                                    |
+| 1. Decide                | [Overview](getting-started/overview.md) · [Compare memory tools for coding agents](guides/compare-coding-agent-memory.md) · [Evaluate Loom](getting-started/evaluate.md)                  |
 | 2. Install               | [Quickstart](getting-started/quickstart.md) → [Deployment](operations/deployment.md)                                                                                                      |
 | 3. Connect agents        | [Connect a coding agent](getting-started/connect-a-coding-agent.md) → [Integrations](features/integrations/index.md)                                                                      |
 | 4. SDK and API           | [Your first agent](getting-started/first-agent.md) → [Python SDK](reference/python-sdk.md) / [HTTP API](reference/http-api.md)                                                            |

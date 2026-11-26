@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from io import StringIO
 from typing import Any
 
+from server.code.api.models_read import CodeReadRange
+from server.code.app.read import fill_verified_ranges
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.deadline import Budget
 from server.code.domain.symbol_body import complete_source_span, retained_source_lines
@@ -110,6 +113,7 @@ def _wanted_lines(
     *,
     complete_contexts: CompleteContexts,
     source: ContextSource | None = None,
+    include_incomplete_preferred: bool = False,
 ) -> dict[str, set[int]]:
     wanted: dict[str, set[int]] = {}
     for hit in matches:
@@ -119,10 +123,10 @@ def _wanted_lines(
         if (path, line) in complete_contexts and (
             complete := _complete_excerpt(hit, line, window)
         ) != window:
-            if source is None:
-                window = range(window.start, complete.stop)
-            elif _retains_window(source.get(path, {}), complete):
+            if source is not None and _retains_window(source.get(path, {}), complete):
                 window = complete
+            elif source is None or include_incomplete_preferred:
+                window = range(window.start, complete.stop)
         wanted.setdefault(path, set()).update(window)
     return wanted
 
@@ -213,6 +217,99 @@ def page_contexts(
                 {"path": path, "start_line": start, "end_line": previous, "text": "".join(window)}
             )
     return {"contexts": contexts, "contexts_partial": partial}
+
+
+def _missing_context_ranges(
+    source: ContextSource, wanted: dict[str, set[int]]
+) -> list[CodeReadRange]:
+    ranges: list[CodeReadRange] = []
+    for path, lines in wanted.items():
+        retained = source.setdefault(path, {})
+        for line in sorted(lines):
+            key = str(line)
+            if retained.get(key) is not None:
+                continue
+            retained[key] = None
+            if ranges and ranges[-1].path == path and ranges[-1].end_line + 1 == line:
+                ranges[-1].end_line = line
+            else:
+                ranges.append(
+                    CodeReadRange(path=path, start_line=line, end_line=line, status="not_indexed")
+                )
+    return ranges
+
+
+def _merge_verified_context(source: ContextSource, ranges: list[CodeReadRange]) -> None:
+    for result in ranges:
+        retained = source[result.path]
+        if result.windows:
+            window = result.windows[0]
+            lines = StringIO(window.text, newline="\n")
+            for line, text in enumerate(lines, window.start_line):
+                retained[str(line)] = text
+            eof_start = window.end_line + 1
+        elif result.status == "out_of_range":
+            eof_start = result.start_line
+        else:
+            continue
+        for line in range(eof_start, result.end_line + 1):
+            retained.pop(str(line), None)
+
+
+async def recover_page_context(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    source: ContextSource,
+    matches: list[dict[str, Any]],
+    radius: int,
+    revisions: dict[str, str],
+    *,
+    max_source_bytes: int,
+    complete_contexts: CompleteContexts = frozenset(),
+    budget: Budget | None = None,
+) -> None:
+    """Fill gaps around served hits only at revisions agreed by the full pool."""
+    wanted = _wanted_lines(
+        matches,
+        radius,
+        complete_contexts=complete_contexts,
+        source=source,
+        include_incomplete_preferred=True,
+    )
+    missing = _missing_context_ranges(source, wanted)
+    if not missing:
+        return
+    readable = [result for result in missing if result.path in revisions]
+    with code_span("grep.context_recovery") as span:
+        if not readable:
+            span_attrs(span, abstain=True, reason="revision_unavailable")
+            return
+        if budget is not None and budget.left_ms() <= 0:
+            budget.drop("grep context recovery skipped")
+            span_attrs(span, abstain=True, reason="deadline")
+            return
+        try:
+            async with asyncio.timeout(None if budget is None else budget.left_ms() / 1000):
+                await fill_verified_ranges(
+                    repo,
+                    org,
+                    ns,
+                    readable,
+                    expected_revisions=revisions,
+                    max_source_bytes=max_source_bytes,
+                )
+        except TimeoutError:
+            if budget is not None:
+                budget.drop("grep context recovery timed out")
+            span_attrs(span, reason="deadline")
+        except Exception as exc:  # noqa: BLE001 — keep the surrounding indexed evidence when recovery fails
+            logger.debug("grep context recovery failed: %s", type(exc).__name__)
+            span_attrs(span, reason="source_unavailable")
+        recovered = sum(bool(result.windows) for result in readable)
+        eof = sum(result.status == "out_of_range" for result in readable)
+        span_attrs(span, results=recovered, truncated=recovered + eof < len(missing))
+    _merge_verified_context(source, readable)
 
 
 def _summary_spans(chunks: list[dict[str, Any]]) -> dict[tuple[str, str, str], tuple[int, int]]:

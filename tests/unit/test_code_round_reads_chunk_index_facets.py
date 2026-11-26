@@ -40,9 +40,9 @@ class _Repo:
         assert model == MODEL
         return await self._by_path("live_chunk_index_for_paths", paths)
 
-    async def name_candidates(self, org: str, ns: str, names: list[str]) -> Any:
+    async def name_candidate_views(self, org: str, ns: str, names: list[str]) -> Any:
         self.calls.append("name_candidates")
-        return {}
+        return {}, {}
 
     async def live_facets_for_path(self, org: str, ns: str, path: str) -> Any:
         self.calls.append("live_facets_for_path")

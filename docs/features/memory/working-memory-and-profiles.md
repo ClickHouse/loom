@@ -1,3 +1,9 @@
+---
+description: Save checkpoints in named working memory blocks and load user or agent profiles with each session’s context.
+seo:
+  title: AI agent working memory and profiles
+---
+
 # Working memory and profiles
 
 Two planes hold text an agent is given every time instead of finding it by search:
