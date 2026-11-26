@@ -316,7 +316,10 @@ structured output (`output_config.format`, beside the effort) and writes it into
 directive appended to the system prompt, so a model that refuses `output_config` still
 answers in the schema's shape; a `json_object` format gets the directive alone. A refusal
 that names one key of `output_config` drops that key alone for the model, so a refused
-effort leaves the format in place and a refused format leaves the effort. It strips code
+effort leaves the format in place and a refused format leaves the effort. A 400 that points
+inside the sent schema (a keyword the API does not take) rejects that schema, not the
+model's structured output: the call is re-sent without the format, the directive still
+names the schema, and later requests send theirs. It strips code
 fences and marks the system block cacheable.
 The caller parses (`server/llm/json_text.py`).
 

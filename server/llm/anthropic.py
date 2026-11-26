@@ -35,6 +35,10 @@ _ANTHROPIC_ROOT = "https://api.anthropic.com"
 # A 400 naming one key of output_config refuses that key alone
 # ("output_config.effort", "output_config.format"), so the other is still sent.
 _OPTIONAL = ("temperature", "output_config")
+# A 400 pointing inside the sent schema rejects that schema alone: the call is
+# re-sent without the format, and later requests still send theirs.
+_SCHEMA_REJECTED = "schema"
+_LEARNED = "learned"
 
 _JSON_DIRECTIVE = (
     "Respond with exactly one valid JSON object and nothing else — "
@@ -133,23 +137,39 @@ def _payload(
     return payload
 
 
-def _learn_from_refusal(model: str, r: httpx.Response, payload: dict[str, Any]) -> bool:
-    """Whether a 400 named a field the model does not take (then re-sent without it)."""
+def _schema_rejected(body: Any, payload: dict[str, Any]) -> bool:
+    """Whether a 400 points inside the schema this request sent (a keyword the
+    API does not take). That rejects this schema, not the model's structured
+    output, so it is never learned for the model."""
+    sent = payload.get("output_config")
+    return (
+        isinstance(sent, dict)
+        and "format" in sent
+        and traits.names_inside(body, "output_config.format")
+    )
+
+
+def _refusal(model: str, r: httpx.Response, payload: dict[str, Any]) -> str | None:
+    """What a 400 refused, for a re-send without it: `_SCHEMA_REJECTED` for this
+    request's schema (dropped for this call alone), `_LEARNED` for a limit or a
+    field the model does not take (remembered for the model), None for no refusal."""
     if r.status_code != 400:
-        return False
+        return None
     try:
         body = r.json()
     except Exception:  # noqa: BLE001 — an undecodable body is not a refusal
-        return False
+        return None
+    if _schema_rejected(body, payload):
+        return _SCHEMA_REJECTED
     if traits.learn_output_limit(model, body):
-        return True
+        return _LEARNED
     name = traits.refused_key(body, payload, "output_config") or traits.refused_field(
         body, payload, _OPTIONAL
     )
     if name is None:
-        return False
+        return None
     traits.traits(model).refused.add(name)
-    return True
+    return _LEARNED
 
 
 def _thinking_tokens(data: dict[str, Any]) -> int:
@@ -228,8 +248,11 @@ class AnthropicLLMClient:
                         r = await _post(client, self.model, key, payload, who)
                         for _ in range(traits.MAX_NEGOTIATION):
                             # A refused field: re-send without it.
-                            if not _learn_from_refusal(self.model, r, payload):
+                            refused = _refusal(self.model, r, payload)
+                            if refused is None:
                                 break
+                            if refused == _SCHEMA_REJECTED:
+                                schema = None  # the directive still names it
                             payload = _payload(
                                 self.model, system, user, max_tokens, temperature, schema
                             )

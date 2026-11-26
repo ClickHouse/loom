@@ -221,6 +221,55 @@ async def test_a_format_refusal_keeps_the_effort(monkeypatch: pytest.MonkeyPatch
     assert '"required": ["peers"]' in stub.calls[1]["json"]["system"][0]["text"]
 
 
+_OTHER_SCHEMA = {
+    "type": "object",
+    "properties": {"facts": {"type": "array", "items": {"type": "string"}}},
+    "required": ["facts"],
+}
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        {
+            "message": "For 'string' type, property 'minLength' is not supported",
+            "param": "output_config.format.schema.properties.name.minLength",
+        },
+        {
+            "message": "output_config.format.schema: For 'string' type, "
+            "property 'minLength' is not supported"
+        },
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_rejected_schema_drops_the_format_for_that_request_alone(
+    monkeypatch: pytest.MonkeyPatch, keyed, error: dict
+) -> None:
+    """A 400 pointing inside the sent schema re-sends that call without the
+    format, and a later request with another schema still sends its format."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_anthropic_effort", "low")
+    stub = _SeqHTTP(
+        [({"type": "error", "error": error}, 400), _canned('{"peers": []}'), _canned("{}")]
+    )
+    monkeypatch.setattr(anthropic_mod, "_http_client", lambda: stub)
+    client = AnthropicLLMClient(model="claude-schema")
+    other = {"type": "json_schema", "json_schema": {"name": "facts", "schema": _OTHER_SCHEMA}}
+
+    await client.complete("judge", "notes", response_format=_SCHEMA_FORMAT)
+    await client.complete("extract", "msgs", response_format=other)
+
+    resent = stub.calls[1]["json"]
+    assert resent["output_config"] == {"effort": "low"}
+    assert '"required": ["peers"]' in resent["system"][0]["text"]
+    assert stub.calls[2]["json"]["output_config"] == {
+        "effort": "low",
+        "format": {"type": "json_schema", "schema": _OTHER_SCHEMA},
+    }
+    assert traits.traits("claude-schema").refused == set()
+
+
 @pytest.mark.asyncio
 async def test_json_object_sends_no_output_format(monkeypatch: pytest.MonkeyPatch, keyed) -> None:
     stub = _StubHTTP(_canned(text="{}"))
