@@ -125,9 +125,9 @@ If a default port is taken, set
 `COMPARISON_CH_HTTP_PORT`, `COMPARISON_CH_NATIVE_PORT`, or `COMPARISON_API_PORT` to
 unused ports before running it.
 
-The comparison runner checks the protocol and storage for one fixture. It exercises
-separate MCP sessions without a coding model. The comparison gives no estimates of model
-accuracy, semantic recall, latency, throughput, or hosted cost.
+The runner uses separate MCP sessions to check exact-key reads, project access, source
+changes, and portability in one storage fixture. The [paired coding-agent test](#what-changed-in-a-paired-coding-agent-test)
+measures file identification, session model cost, and elapsed time separately.
 
 [Read how Loom tracks code-linked decisions](../use-cases/memory-linked-to-code.md) or
 [query memory history with SQL](../use-cases/self-hosted-clickhouse.md#audit-a-changed-decision-with-sql).
