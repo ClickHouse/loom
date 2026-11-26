@@ -367,14 +367,14 @@ the rest of the C/C++ toolchain but no scip-clang: point `LOOM_CODE_SCIP_CLANG_P
 your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each worker
 initializes a missing or empty working tree directory as a Git repository and fetches
 each commit into it from the entry's mirror, so a new leader starts from nothing.
-The repository it initializes borrows the mirror's objects (`objects/info/alternates`,
-relative to the checkout), so a tier costs its working tree rather than a second copy
-of the repository. It sits beside the tier's path, at `borrowing-<name>` (the path's
-last component after the prefix), and is used once it exists. A tree already at the path, an operator's or one an older version made
-with its own copy, is used while no borrowing checkout exists; an older version
-still running during a rollout keeps using that path. When a ref of a borrowing
-checkout names an object the mirror no longer has (the mirror was cloned again, or
-pruned outside Loom), the worker replaces the checkout's `.git` and keeps its files.
+The checkout's packs are hard links of the mirror's (each marked by a `.keep` file),
+so a tier costs its working tree rather than a second copy of the repository; a
+checkout that already holds its own copy, from an earlier version or an operator,
+drops it after the tier's next pass (for C/C++, the full-index worker's) with a
+`git repack` that keeps the shared packs. The checkout stays a standalone repository.
+Hard links need the checkout on the mirror's filesystem, and the kernel refuses a
+link to another user's pack file the server cannot write (`fs.protected_hardlinks`):
+there the checkout keeps its own copy, and the log says so once.
 An existing checkout must be the root of a standalone Git working tree, with its
 `.git` directory inside the checkout. Compiler Git jobs need writable metadata
 there. Linked worktrees, external Git metadata, regular files, bare repositories and

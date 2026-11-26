@@ -941,17 +941,12 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     cards, and its `loom code reembed` and provider rebuild embed the marked rows under the
     target model. A chunk N-1 embedded keeps its vector until its content changes.
 
-64. **A compiler tier's borrowing checkout** (`objects/info/alternates` naming the
-    entry's mirror): N makes it at `borrowing-<name>`, beside the path N-1 uses, and
-    keeps using it once it exists; a tree already at the path is used while there is no
-    borrowing checkout. N-1's `git checkout` and harness jobs mount only the checkout and
-    could not read a borrowed object, so N never writes one where N-1 looks: with the
-    tier lease, N-1 finds that path missing, empty or holding a tree with its own
-    objects. N-1's repos-root sweep removes the `checkout-*` and `*.git` trees it does
-    not name; the prefix keeps a borrowing checkout out of both. After a rollback the
-    borrowing checkouts sit unused until removed.
-    `tests/unit/test_code_compiler_checkout.py` checks the handoff N → N-1 → N and
-    N-1's sweep on one repository volume.
+64. **A compiler tier's checkout shares its mirror's packs** by hard link, each kept by
+    a `.keep` file. It stays a standalone repository with every object in its own
+    `.git`, so N-1's jobs, which mount only the checkout, read it, and N-1's gc keeps
+    the shared packs. N converts a checkout N-1 filled with its own copy in place.
+    `tests/unit/test_code_compiler_checkout.py` checks the handoff N → N-1 → N on one
+    repository volume.
 
 ## What checks them
 

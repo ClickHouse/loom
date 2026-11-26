@@ -174,13 +174,12 @@ def restrict_entry(cfg: Any) -> None:
     """`repo_dir_mode` on the entry's bare mirror and on every compiler-tier checkout it may
     have (`checkout_for` each producer). Sync: callers run it in a thread."""
     from server.code.app.index.producer_inference import PRODUCERS
-    from server.code.domain.index.repos import borrowing_checkout, checkout_for
+    from server.code.domain.index.repos import checkout_for
 
     restrict_dir(cfg.git_dir)
     if cfg.scip_checkout_dir or settings.code_scip_checkout_dir:
         for producer in PRODUCERS:
             restrict_dir(checkout_for(cfg, producer))
-            restrict_dir(borrowing_checkout(checkout_for(cfg, producer)))
 
 
 async def restrict_if_restricted(cfg: Any) -> None:

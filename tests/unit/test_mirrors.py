@@ -272,14 +272,7 @@ async def test_the_sweep_removes_what_no_active_entry_names(monkeypatch, tmp_pat
     root = tmp_path / "self"
     monkeypatch.setattr(settings, "code_repos_root", str(root))
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
-    for name in (
-        "o__kept.git",
-        "o__removed.git",
-        "checkout-code-kept",
-        "borrowing-checkout-code-kept",
-        "checkout-code-gone",
-        "borrowing-checkout-code-gone",
-    ):
+    for name in ("o__kept.git", "o__removed.git", "checkout-code-kept", "checkout-code-gone"):
         _old(root / name)
     _old(root / "o__kept.git.partial-1234-5678")  # a half-done clone
     (root / "o__young.git").mkdir()  # cloned a moment ago for an entry just added
@@ -314,7 +307,6 @@ async def test_the_sweep_removes_what_no_active_entry_names(monkeypatch, tmp_pat
     assert removed == {
         "o__removed.git",
         "checkout-code-gone",
-        "borrowing-checkout-code-gone",
         "o__kept.git.partial-1234-5678",
         "o__removed.git.fetch-lock",
         "o__gone.git.clone-lock",
@@ -326,7 +318,6 @@ async def test_the_sweep_removes_what_no_active_entry_names(monkeypatch, tmp_pat
         ".sweep-lock",
     }
     assert sorted(p.name for p in root.iterdir() if p.is_dir()) == [
-        "borrowing-checkout-code-kept",
         "checkout-code-kept",
         "o__kept.git",
         "o__young.git",

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -52,7 +51,7 @@ def test_registry_entry_initializes_checkout_for_its_bare_mirror(tmp_path: Path)
     actual, actual_bare, missing = resolve_checkout(cfg, "python")
 
     assert missing is None
-    assert actual == tmp_path / "checkouts" / "borrowing-code-example.python"
+    assert actual == tmp_path / "checkouts" / "code-example.python"
     assert (actual / ".git").exists()
     assert actual_bare == bare.resolve()
 
@@ -64,12 +63,11 @@ def test_operator_entry_gets_a_checkout_per_tier_scip_clang_included(tmp_path: P
     cfg = repo_config(source="env", git_dir=str(bare), scip_checkout_dir=str(checkout))
 
     actual, _bare, missing = resolve_checkout(cfg, "clang")
-    assert missing is None and actual == tmp_path / "borrowing-operator-owned"
-    assert (actual / ".git").exists()
+    assert missing is None and actual == checkout and (checkout / ".git").exists()
 
     actual, _bare, missing = resolve_checkout(cfg, "python")
     assert missing is None
-    assert actual == tmp_path / "borrowing-operator-owned.python" and (actual / ".git").exists()
+    assert actual == tmp_path / "operator-owned.python" and (actual / ".git").exists()
 
 
 def test_a_checkout_that_cannot_be_created_is_reported_with_the_reason(tmp_path: Path) -> None:
@@ -84,10 +82,7 @@ def test_a_checkout_that_cannot_be_created_is_reported_with_the_reason(tmp_path:
 
 
 @pytest.mark.parametrize("producer", ["python", "clang"])
-def test_an_existing_empty_directory_gets_a_checkout_beside_it(
-    tmp_path: Path, producer: str
-) -> None:
-    """The empty path stays free for an older version, which initializes only that path."""
+def test_an_existing_empty_directory_becomes_a_checkout(tmp_path: Path, producer: str) -> None:
     bare = _bare_repo(tmp_path)
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -96,8 +91,8 @@ def test_an_existing_empty_directory_gets_a_checkout_beside_it(
     actual, actual_bare, missing = resolve_checkout(cfg, producer)
 
     assert missing is None
-    assert actual == tmp_path / "borrowing-checkout" and actual_bare == bare.resolve()
-    assert (actual / ".git").is_dir() and not any(checkout.iterdir())
+    assert actual == checkout and actual_bare == bare.resolve()
+    assert (checkout / ".git").is_dir()
 
 
 @pytest.mark.parametrize("kind", ["file", "nonempty", "bare", "nested"])
@@ -365,6 +360,31 @@ async def test_no_git_command_in_a_checkout_starts_a_repack(tmp_path: Path, monk
     assert seen[0][3:7] == ["-c", "gc.auto=0", "-c", "maintenance.auto=false"]
 
 
+def _packed_bare(tmp_path: Path) -> Path:
+    """A mirror as Loom clones one: its objects in a pack."""
+    bare = _bare_repo(tmp_path)
+    subprocess.run(["git", "--git-dir", str(bare), "repack", "-a", "-d", "-q"], check=True)
+    return bare
+
+
+def _packs(git_dir: Path) -> set[tuple[str, int]]:
+    """(name, inode) of each pack: equal sets mean the same files on disk."""
+    return {(p.name, p.stat().st_ino) for p in (git_dir / "objects" / "pack").glob("*.pack")}
+
+
+def _own_objects(checkout: Path) -> list[Path]:
+    """The checkout's object files no other directory links: what it costs on disk."""
+    objects = checkout / ".git" / "objects"
+    files = [p for p in objects.rglob("*") if p.is_file() and p.parent.name != "info"]
+    return [p for p in files if p.suffix != ".keep" and p.stat().st_nlink == 1]
+
+
+def _git(checkout: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(checkout), *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
 def _fetch_and_check_out(checkout: Path, bare: Path) -> str:
     from server.code.app.index.compiler_tier import checkout_fetch_args
     from server.code.app.index.gitrepo import auth_env
@@ -381,31 +401,15 @@ def _fetch_and_check_out(checkout: Path, bare: Path) -> str:
     return target
 
 
-def test_a_new_checkout_borrows_its_objects_from_the_mirror(tmp_path: Path) -> None:
-    """A tier's fetch from the mirror moves refs: the checkout holds no object of its own."""
-    bare = _bare_repo(tmp_path)
-    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
-
-    checkout, _bare, missing = resolve_checkout(cfg, "python")
-    _fetch_and_check_out(checkout, bare)
-
-    objects = checkout / ".git" / "objects"
-    own = [p for p in objects.rglob("*") if p.is_file() and p.parent.name != "info"]
-    assert missing is None and own == []
-    assert (checkout / "main.py").read_text() == "print('ok')\n"
-    alternates = (objects / "info" / "alternates").read_text().strip()
-    assert (objects / alternates).resolve() == (bare / "objects").resolve()
-
-
-def _previous_build_pass(cfg: Any, producer: str, bare: Path) -> str:
-    """A tier pass of the version before borrowing checkouts: it initializes only a
-    missing or empty `checkout_for` path, with a plain `git init`; its fetch mounts the
-    mirror, its `checkout --force` only the checkout (the mirror is out of its sight)."""
+def _previous_build_pass(cfg: object, producer: str, bare: Path) -> str:
+    """A tier pass of the version before shared packs: it initializes only a missing or
+    empty `checkout_for` path, with a plain `git init`; its fetch mounts the mirror, its
+    `checkout --force` only the checkout (the mirror is out of its sight)."""
     from server.code.app.index.compiler_tier import checkout_fetch_args
     from server.code.app.index.gitrepo import auth_env
     from server.code.domain.index.repos import checkout_for
 
-    checkout = Path(checkout_for(cfg, producer))
+    checkout = Path(checkout_for(cfg, producer))  # type: ignore[arg-type]
     if not checkout.exists() or not any(checkout.iterdir()):
         subprocess.run(["git", "init", "-q", str(checkout)], check=True)
     target = subprocess.run(
@@ -428,195 +432,165 @@ def _previous_build_pass(cfg: Any, producer: str, bare: Path) -> str:
     return target
 
 
-def test_the_tier_hands_off_between_versions_on_one_repos_volume(tmp_path: Path) -> None:
-    """A mixed-version rollout moves the tier lease new → previous → new: each version
-    finds a checkout its own jobs can read."""
-    from server.code.app.index.compiler_tier import borrowed_objects
+def _tier_pass(cfg: object, monkeypatch: pytest.MonkeyPatch) -> str | None:
+    """What a tier pass does to its checkout: resolve it, then the checkout gc (its
+    interval off, so only a due repack runs)."""
+    from server.code.app.index import compiler_tier
+    from server.settings import settings
 
-    bare = _bare_repo(tmp_path)
+    monkeypatch.setattr(settings, "code_mirror_gc_interval_h", 0.0)
+    _checkout, _bare, missing = resolve_checkout(cfg, "python")  # type: ignore[arg-type]
+    asyncio.run(compiler_tier._gc_checkout(cfg, "python"))  # type: ignore[arg-type]
+    return missing
+
+
+def test_a_new_checkout_shares_the_mirrors_packs(tmp_path: Path) -> None:
+    """The tier's fetch finds every object already there: the checkout's packs are the
+    mirror's files, and it holds no object of its own."""
+    bare = _packed_bare(tmp_path)
     cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
-    borrowing, _bare, missing = resolve_checkout(cfg, "python")
-    target = _fetch_and_check_out(borrowing, bare)
-    assert missing is None and borrowed_objects(borrowing)
+
+    checkout, _bare, missing = resolve_checkout(cfg, "python")
+    _fetch_and_check_out(checkout, bare)
+
+    assert missing is None and checkout == tmp_path / "co.python"
+    assert _packs(checkout / ".git") == _packs(bare) != set()
+    assert _own_objects(checkout) == []
+    assert (checkout / "main.py").read_text() == "print('ok')\n"
+
+
+def test_a_full_copy_from_an_older_version_is_reclaimed_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout an older version filled with its own copy, at the same path: the next
+    pass shares the mirror's packs and drops the copy; HEAD and the files stay."""
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    target = _previous_build_pass(cfg, "python", bare)
+    checkout = tmp_path / "co.python"
+    (checkout / "build-cache").write_text("kept\n")
+    assert _own_objects(checkout) != []
+
+    missing = _tier_pass(cfg, monkeypatch)
+
+    assert missing is None and not (checkout / ".git" / "loom-repack-due").exists()
+    assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
+    assert _git(checkout, "rev-parse", "HEAD") == target
+    assert (checkout / "build-cache").read_text() == "kept\n"
+    assert _git(checkout, "status", "--porcelain", "--untracked-files=no") == ""
+
+
+def test_the_tier_hands_off_between_versions_on_one_repos_volume(tmp_path: Path) -> None:
+    """A mixed-version rollout moves the tier lease new → previous → new over one
+    checkout: the previous version's jobs, which mount only the checkout, read it."""
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    checkout, _bare, missing = resolve_checkout(cfg, "python")
+    target = _fetch_and_check_out(checkout, bare)
+    assert missing is None
 
     assert _previous_build_pass(cfg, "python", bare) == target
 
     again, _bare, missing = resolve_checkout(cfg, "python")
-    assert missing is None and again == borrowing and borrowed_objects(again)
+    assert missing is None and again == checkout
     assert _fetch_and_check_out(again, bare) == target
+    assert _packs(checkout / ".git") == _packs(bare) and _own_objects(checkout) == []
 
 
-def _previous_build_sweep(
-    root: str, named_mirrors: set[str], named_checkouts: set[str]
-) -> list[str]:
-    """`mirrors._sweep_root` of the version before borrowing checkouts, as it was: it
-    removes every unnamed `checkout-*` tree older than ten minutes."""
-    import glob
-    import os
-    import shutil
-    import time
-
-    from server.code.app.index.mirror_locks import partial_mirror
-    from server.code.app.index.mirrors import _remove_lock, _remove_under_lock
-
-    root = os.path.abspath(root)
-    mirrors = {os.path.abspath(p) for p in named_mirrors if p}
-    checkouts = {os.path.abspath(p) for p in named_checkouts if p}
-    removed: list[str] = []
-    now = time.time()
-    for path in sorted(glob.glob(os.path.join(glob.escape(root), "*"))):
-        name = os.path.basename(path)
-        if now - os.path.getmtime(path) < 600.0:
-            continue
-        if not os.path.isdir(path):
-            if not name.endswith((".clone-lock", ".fetch-lock", ".gc-lock")):
-                continue
-            gone = _remove_lock(path, mirrors)
-        elif (mirror := partial_mirror(path)) is not None:
-            gone = _remove_under_lock(path, f"{mirror}.clone-lock")
-        elif name.endswith(".git") and path not in mirrors:
-            gone = _remove_under_lock(path, f"{path}.clone-lock")
-        elif name.startswith("checkout-") and path not in checkouts:
-            shutil.rmtree(path, ignore_errors=True)
-            gone = True
-        else:
-            continue
-        if gone:
-            removed.append(path)
-    return removed
-
-
-def test_the_previous_versions_sweep_keeps_a_borrowing_checkout(tmp_path: Path) -> None:
-    """A mixed-version rollout on one repos volume: the previous version's sweep names
-    only the `checkout_for` paths, and the borrowing checkout survives it."""
-    import os
-
-    from server.code.domain.index.repos import checkout_for
-
-    root = tmp_path / "repos"
-    root.mkdir()
-    bare = _bare_repo(root)
-    cfg = repo_config(
-        source="registry", git_dir=str(bare), scip_checkout_dir=str(root / "checkout-code-a")
-    )
-    borrowing, _bare, missing = resolve_checkout(cfg, "python")
-    _fetch_and_check_out(borrowing, bare)
-    (root / "checkout-code-gone").mkdir()
-    for path in root.iterdir():
-        os.utime(path, (0, 0))  # older than the sweep's ten minutes
-
-    named = {checkout_for(cfg, p) for p in ("", "python")} | {cfg.scip_checkout_dir}
-    removed = _previous_build_sweep(str(root), {str(bare)}, named)
-
-    assert missing is None and borrowing.parent == root
-    assert removed == [str(root / "checkout-code-gone")]
-    assert (borrowing / "main.py").read_text() == "print('ok')\n"
-
-
-def test_restricting_an_entry_reaches_its_borrowing_checkouts(tmp_path: Path) -> None:
-    from server.code.app.index.bootstrap import restrict_entry
-
-    bare = _bare_repo(tmp_path)
-    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
-    checkout, _bare, _missing = resolve_checkout(cfg, "python")
-    checkout.chmod(0o755)
-
-    restrict_entry(cfg)
-
-    assert checkout.name == "borrowing-co.python" and checkout.stat().st_mode & 0o007 == 0
-
-
-def test_a_checkout_that_lost_its_borrowed_objects_gets_a_new_git_dir(tmp_path: Path) -> None:
-    """A replaced mirror lacks a commit the checkout's refs name; every fetch would fail."""
-    bare = _bare_repo(tmp_path)
-    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
-    checkout, _bare, _missing = resolve_checkout(cfg, "python")
-    _fetch_and_check_out(checkout, bare)
-    (checkout / ".git" / "refs" / "loom" / "scip-head").write_text("1" * 40 + "\n")
-    (checkout / "build-cache").write_text("kept\n")
-
-    _actual, _bare, missing = resolve_checkout(cfg, "python")
-    target = _fetch_and_check_out(checkout, bare)
-
-    head = subprocess.run(
-        ["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True
-    )
-    assert missing is None and head.stdout.strip() == target
-    assert (checkout / "build-cache").read_text() == "kept\n"
-
-
-@pytest.mark.parametrize("failure", ["fails", "times-out"])
-def test_a_failed_new_git_dir_restores_the_old_one_and_the_next_pass_retries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+@pytest.mark.parametrize("mirror", ["repacked", "cloned-again"])
+def test_a_changed_mirror_is_shared_again_and_the_checkout_keeps_its_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mirror: str
 ) -> None:
-    """A full disk fails `git init`: the tree keeps its `.git`, so the next pass finds
-    the same lost objects instead of a tree with no Git metadata."""
-    bare = _bare_repo(tmp_path)
+    """The mirror's gc writes a new pack, or the mirror is cloned again without the
+    commit the checkout is at: the next pass shares the mirror's current packs, and any
+    object only the old pack held moves into the checkout's own pack."""
+    import shutil
+
+    bare = _packed_bare(tmp_path)
     cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
     checkout, _bare, _missing = resolve_checkout(cfg, "python")
+    old = _fetch_and_check_out(checkout, bare)
+    if mirror == "repacked":
+        source = tmp_path / "source"
+        (source / "next.py").write_text("print('next')\n")
+        _git(source, "add", "next.py")
+        _git(source, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "n")
+        subprocess.run(
+            ["git", "--git-dir", str(bare), "fetch", "-q", str(source), "+HEAD:refs/heads/next"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "--git-dir", str(bare), "-c", "gc.auto=0", "gc", "-q", "--no-prune"],
+            check=True,
+        )
+    else:
+        shutil.rmtree(bare)
+        (tmp_path / "other").mkdir()
+        other = _bare_repo(tmp_path / "other").parent / "source"
+        _git(
+            other,
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "--amend",
+            "-qm",
+            "o",
+        )
+        subprocess.run(["git", "clone", "-q", "--bare", "--no-local", str(other), str(bare)])
+        assert subprocess.run(["git", "--git-dir", str(bare), "cat-file", "-e", old]).returncode
+    assert _packs(checkout / ".git") != _packs(bare)
+
+    missing = _tier_pass(cfg, monkeypatch)
+
+    assert missing is None and _packs(bare) <= _packs(checkout / ".git")
+    assert _git(checkout, "cat-file", "-t", f"{old}^{{tree}}") == "tree"
+    shared = {p.name for p in (checkout / ".git" / "objects" / "pack").glob("*.keep")}
+    assert shared == {name.replace(".pack", ".keep") for name, _ino in _packs(bare)}
+    if mirror == "repacked":
+        assert _own_objects(checkout) == []
     _fetch_and_check_out(checkout, bare)
-    lost = checkout / ".git" / "refs" / "loom" / "scip-head"
-    lost.write_text("1" * 40 + "\n")
-    real_run = subprocess.run
-
-    def init_fails(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if argv[:2] != ["git", "init"]:
-            return real_run(argv, **kwargs)
-        if failure == "times-out":
-            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
-        return subprocess.CompletedProcess(argv, 1, "", "No space left on device")
-
-    with monkeypatch.context() as m:
-        m.setattr("server.code.app.index.compiler_tier.subprocess.run", init_fails)
-        _actual, _bare, missing = resolve_checkout(cfg, "python")
-
-    assert missing is not None and ("timed out" in missing or "No space" in missing)
-    assert lost.read_text() == "1" * 40 + "\n"
-    assert sorted(p.name for p in checkout.iterdir()) == [".git", "main.py"]
-    _actual, _bare, missing = resolve_checkout(cfg, "python")
-    target = _fetch_and_check_out(checkout, bare)
-    head = subprocess.run(
-        ["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True
-    )
-    assert missing is None and head.stdout.strip() == target
-    assert lost.read_text().strip() == target
 
 
-def test_a_checkout_with_its_own_objects_is_left_as_it_is(tmp_path: Path) -> None:
-    bare = _bare_repo(tmp_path)
-    checkout = tmp_path / "checkout"
-    subprocess.run(["git", "clone", "-q", str(bare), str(checkout)], check=True)
-    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(checkout), scip_producer="python")
-    before = {p.relative_to(checkout): p.read_bytes() for p in checkout.rglob("*") if p.is_file()}
+def test_a_checkout_on_another_filesystem_keeps_its_own_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A hard link across filesystems fails: the tier works as before, with a copy."""
+    import errno
+    import os
 
-    _actual, _bare, missing = resolve_checkout(cfg, "python")
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
 
-    after = {p.relative_to(checkout): p.read_bytes() for p in checkout.rglob("*") if p.is_file()}
-    assert missing is None and after == before
+    def cross_device(_src: object, _dst: object) -> None:
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr(os, "link", cross_device)
+    checkout, _bare, missing = resolve_checkout(cfg, "python")
+    _fetch_and_check_out(checkout, bare)
+
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    assert missing is None and (checkout / "main.py").exists()
+    assert not [p for p in pack_dir.iterdir() if p.suffix == ".keep" or p.name.startswith(".")]
+    assert "cross-device" in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_repository_jobs_in_a_borrowing_checkout_mount_its_objects_read_only(
+def test_a_repack_past_its_timeout_is_killed_and_retried(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.code.app.index import compiler_tier
-    from server.code.app.index.sandbox import JobResult
+    from server.settings import settings
 
-    bare = _bare_repo(tmp_path)
+    bare = _packed_bare(tmp_path)
     cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
-    checkout, _bare, _missing = resolve_checkout(cfg, "python")
-    seen: list[dict] = []
+    target = _previous_build_pass(cfg, "python", bare)
+    checkout = tmp_path / "co.python"
 
-    async def _job(_argv, **kw):
-        seen.append(kw)
-        return JobResult(0, b"", b"")
+    with monkeypatch.context() as m:
+        m.setattr(settings, "code_mirror_gc_timeout_s", 1e-6)
+        missing = _tier_pass(cfg, monkeypatch)
+    assert missing is None and _git(checkout, "rev-parse", "HEAD") == target
+    assert (checkout / ".git" / "loom-repack-due").exists() and _own_objects(checkout) != []
 
-    monkeypatch.setattr(compiler_tier, "run_job", _job)
-    await compiler_tier.git(checkout, "checkout", "--force", "HEAD")
-    await compiler_tier.run_harness(
-        tmp_path / "harness.sh", checkout, [], {}, out_dir=tmp_path, timeout_s=1
-    )
-
-    objects = (bare / "objects").resolve()
-    assert [objects in job["readonly"] for job in seen] == [True, True]
-    assert all(objects not in job["writable"] for job in seen)
+    assert _tier_pass(cfg, monkeypatch) is None and _own_objects(checkout) == []
+    assert _git(checkout, "rev-parse", "HEAD") == target

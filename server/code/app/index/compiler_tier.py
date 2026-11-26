@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
 import subprocess
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
@@ -29,7 +28,7 @@ from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.repo_modes import PRIVATE_DIR_MODE, set_repo_dir_mode
 from server.code.app.index.sandbox import JobOptions, run_job, sandbox_available
 from server.code.app.index.untrusted_files import FileRefused
-from server.code.domain.index.repos import borrowing_checkout, checkout_for
+from server.code.domain.index.repos import checkout_for
 from server.core.errors import caller_text
 from server.settings import settings
 from server.workers import pass_context
@@ -160,15 +159,47 @@ async def _gc_checkout(cfg: RepoConfig, producer: str) -> None:
 
     from server.code.app.index.mirrors import gc_if_due
 
-    checkout = await asyncio.to_thread(tier_checkout, cfg, producer)
+    checkout = Path(checkout_for(cfg, producer))
     git_dir = checkout / ".git"
     try:
         if await asyncio.to_thread(_checkout_metadata_error, checkout) is None:
+            await _repack_if_due(checkout)
             await gc_if_due(str(git_dir))
     except Exception as e:  # noqa: BLE001 — housekeeping never fails the tier: a pass not due records nothing to clear it
         logger.warning(
             "%s: checkout gc of %s failed: %s: %s", producer, git_dir, type(e).__name__, e
         )
+
+
+async def _repack_if_due(checkout: Path) -> None:
+    """`git repack -a -d` of a checkout `_share_mirror_packs` marked: the shared packs
+    are kept, so the new pack holds only the objects none of them holds, and the
+    checkout's other packs and loose objects go. At low CPU and IO priority; a timed
+    out or cancelled repack is killed (git leaves the old packs then), and the mark
+    stays for the next pass."""
+    import asyncio
+
+    from server.code.app.index.gitrepo import auth_env
+
+    due = checkout / ".git" / REPACK_DUE
+    if not due.exists():
+        return
+    argv = ["nice", "-n", "19", "git", "-C", str(checkout), "-c", "gc.auto=0", "repack"]
+    proc = await asyncio.create_subprocess_exec(
+        *argv, "-a", "-d", "-q", env=auth_env(), stdout=asyncio.subprocess.DEVNULL
+    )
+    rc = -1
+    try:
+        rc = await asyncio.wait_for(proc.wait(), settings.code_mirror_gc_timeout_s)
+    except TimeoutError:
+        pass
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+    if rc == 0:
+        due.unlink(missing_ok=True)
+    logger.info("compiler tier: repack of %s exit %s", checkout, rc)
 
 
 UNSANDBOXED_SKIP = "self-registered repository, no build tier without the sandbox"
@@ -271,77 +302,95 @@ def _checkout_metadata_error(checkout: Path) -> str | None:
     return None
 
 
-def borrowed_objects(checkout: Path) -> list[Path]:
-    """The object directories the checkout's `objects/info/alternates` names: a
-    repository job that reads the checkout's history mounts them read-only."""
-    objects = checkout.resolve() / ".git" / "objects"
+# The `.keep` beside a pack a checkout shares with its mirror by hard link: no repack in
+# the checkout rewrites a kept pack, and the text tells it from the checkout's own packs.
+SHARED_PACK_KEEP = "loom: a hard link of the entry's mirror pack\n"
+# In a checkout's .git: its own packs may hold what the shared ones hold (a copy an older
+# version fetched, or what a pack the mirror dropped held), so a repack is due.
+REPACK_DUE = "loom-repack-due"
+_LINK_ORDER = (".keep", ".pack", ".rev", ".idx")  # git uses a pack once its .idx is there
+_unshared_logged: set[str] = set()
+
+
+def _shared_stems(pack_dir: Path) -> set[str]:
+    stems = set()
+    for keep in pack_dir.glob("pack-*.keep"):
+        try:
+            if keep.read_text() == SHARED_PACK_KEEP:
+                stems.add(keep.name.removesuffix(".keep"))
+        except OSError:
+            continue
+    return stems
+
+
+def _has_loose_objects(objects: Path) -> bool:
+    return any(len(d.name) == 2 and d.is_dir() and any(d.iterdir()) for d in objects.iterdir())
+
+
+def _link_pack(mirror_dir: Path, pack_dir: Path, stem: str) -> None:
+    """Hard-link one mirror pack into the checkout unless it is linked already, replacing
+    a copy of the same name (pack names are content hashes). A killed pass leaves only
+    a hidden temporary."""
+    keep = pack_dir / f"{stem}.keep"
+    had_keep = keep.exists()
+    if not had_keep or keep.read_text() != SHARED_PACK_KEEP:
+        keep.write_text(SHARED_PACK_KEEP)
     try:
-        lines = (objects / "info" / "alternates").read_text().splitlines()
+        for ext in _LINK_ORDER[1:]:
+            src, dst = mirror_dir / f"{stem}{ext}", pack_dir / f"{stem}{ext}"
+            if ext == ".rev" and not src.exists():
+                continue
+            if dst.exists() and os.path.samefile(src, dst):
+                continue
+            tmp = pack_dir / f".loom-link-{stem}{ext}"
+            tmp.unlink(missing_ok=True)
+            os.link(src, tmp)
+            os.replace(tmp, dst)
     except OSError:
-        return []
-    return [Path(os.path.normpath(objects / ln)) for ln in lines if ln and ln[0] != "#"]
+        if not had_keep:
+            keep.unlink(missing_ok=True)
+        raise
 
 
-def _init_checkout(checkout: Path, objects: Path) -> str | None:
-    """`git init` the checkout, borrowing `objects` (the mirror's object directory):
-    a fetch from the mirror then moves refs, not objects. The path is relative, so
-    the host and the containers sharing the repos root both resolve it."""
-    from server.code.app.index.gitrepo import auth_env
-
-    init = subprocess.run(
-        ["git", "init", "-q", str(checkout)],
-        capture_output=True,
-        text=True,
-        env=auth_env(),
-        timeout=settings.code_git_timeout_s,
-    )
-    if init.returncode:
-        return f"git init: {init.stderr.strip()}"
-    own = checkout.resolve() / ".git" / "objects"
-    (own / "info" / "alternates").write_text(os.path.relpath(objects, own) + "\n")
-    return None
-
-
-def _lost_borrowed_objects(checkout: Path) -> bool:
-    """Whether the checkout borrows objects and a ref of it (HEAD included) names one
-    it cannot read: the mirror was replaced, or pruned by its owner. Every fetch into
-    such a checkout fails."""
-    from server.code.app.index.gitrepo import auth_env
-
-    if not borrowed_objects(checkout):
-        return False
-    refs = subprocess.run(
-        ["git", "-C", str(checkout), "show-ref", "--head", "-q"],
-        capture_output=True,
-        env=auth_env(),
-        timeout=settings.code_git_timeout_s,
-    )
-    return refs.returncode == 128
-
-
-def _renew_checkout(checkout: Path, objects: Path) -> str | None:
-    """A new `.git` for a borrowing tree that lost objects. The old one stays aside
-    until the new one is made and goes back otherwise (a full disk, a timeout), so
-    the next pass finds the same tree and retries."""
-    metadata, aside = checkout / ".git", checkout / ".git.lost"
-    shutil.rmtree(aside, ignore_errors=True)
-    metadata.rename(aside)
-    error: str | None = "raised"  # an exception (OSError, TimeoutExpired) restores too
+def _share_mirror_packs(checkout: Path, bare: Path) -> None:
+    """Make the checkout's packs the mirror's files: hard-link each mirror pack it lacks,
+    and mark a repack due (`REPACK_DUE`, run by `_gc_checkout`) once its own packs may
+    duplicate them: a copy an older version fetched, or a shared pack the mirror's gc
+    or a new clone dropped, which loses its `.keep` so the repack keeps what only it
+    holds. The checkout stays a standalone repository, so an older version's jobs,
+    which mount only the checkout, still read it. Across filesystems, or where the
+    kernel refuses a link to another user's file (`fs.protected_hardlinks`), the
+    checkout keeps its own copy. Housekeeping: a failure is logged, never returned."""
+    pack_dir = checkout / ".git" / "objects" / "pack"
+    mirror_dir = bare / "objects" / "pack"
+    due = checkout / ".git" / REPACK_DUE
     try:
-        error = _init_checkout(checkout, objects) or _checkout_metadata_error(checkout)
-    finally:
-        if error:
-            shutil.rmtree(metadata, ignore_errors=True)
-            aside.rename(metadata)
-        else:
-            shutil.rmtree(aside, ignore_errors=True)
-    return error
+        for tmp in pack_dir.glob(".loom-link-*"):
+            tmp.unlink(missing_ok=True)
+        mirror = {p.name.removesuffix(".idx") for p in mirror_dir.glob("pack-*.idx")}
+        shared = _shared_stems(pack_dir)
+        own = {p.name.removesuffix(".pack") for p in pack_dir.glob("pack-*.pack")} - shared
+        if ((own or _has_loose_objects(pack_dir.parent)) and not shared) or shared - mirror:
+            due.touch()
+        for stem in shared - mirror:
+            (pack_dir / f"{stem}.keep").unlink(missing_ok=True)
+        for stem in sorted(mirror):
+            try:
+                _link_pack(mirror_dir, pack_dir, stem)
+            except FileNotFoundError:
+                continue  # the mirror's gc removed it a moment ago; the next pass sees why
+    except OSError as e:
+        if str(checkout) not in _unshared_logged:
+            _unshared_logged.add(str(checkout))
+            logger.warning("compiler tier: %s keeps its own objects: %s", checkout, e)
+        return
 
 
-def _prepare_checkout(checkout: Path, objects: Path) -> str | None:
-    """Initialize only empty directories, borrowing `objects`; an existing tree must
-    own its Git root. A borrowing tree that lost objects gets a new `.git`; its files
-    stay."""
+def _prepare_checkout(checkout: Path, bare: Path) -> str | None:
+    """Initialize only empty directories; an existing tree must own its Git root. A
+    valid checkout shares the mirror `bare`'s packs (`_share_mirror_packs`)."""
+    from server.code.app.index.gitrepo import auth_env
+
     if not checkout.exists():
         try:
             os.makedirs(checkout, mode=PRIVATE_DIR_MODE, exist_ok=True)
@@ -352,34 +401,26 @@ def _prepare_checkout(checkout: Path, objects: Path) -> str | None:
     try:
         if not checkout.is_dir():
             return "not a directory"
-        if any(checkout.iterdir()):
-            error = _checkout_metadata_error(checkout)
-            if error or not _lost_borrowed_objects(checkout):
-                return error
-            logger.warning("compiler tier: %s lost borrowed objects; new .git", checkout)
-            return _renew_checkout(checkout, objects)
-        else:
+        if not any(checkout.iterdir()):
             set_repo_dir_mode(str(checkout))
-        return _init_checkout(checkout, objects) or _checkout_metadata_error(checkout)
+            init = subprocess.run(
+                ["git", "init", "-q", str(checkout)],
+                capture_output=True,
+                text=True,
+                env=auth_env(),
+                timeout=settings.code_git_timeout_s,
+            )
+            if init.returncode:
+                return f"git init: {init.stderr.strip()}"
+        if error := _checkout_metadata_error(checkout):
+            return error
     except OSError as e:
         logger.warning("compiler tier: checkout %s unavailable: %s", checkout, e)
         return f"checkout unavailable: {caller_text(e)}"
     except subprocess.TimeoutExpired:
         return "checkout Git command timed out"
-
-
-def tier_checkout(cfg: RepoConfig, producer: str) -> Path:
-    """The producer's working tree: its borrowing checkout once one exists; else a tree
-    already at `checkout_for` (an operator's, or one an older version made with its own
-    objects); else a new borrowing checkout beside that path, which an older version
-    holding the tier lease never finds."""
-    checkout = Path(checkout_for(cfg, producer)).absolute()
-    borrowing = Path(borrowing_checkout(str(checkout)))
-    try:
-        taken = os.path.lexists(checkout) and (not checkout.is_dir() or any(checkout.iterdir()))
-    except OSError:
-        taken = True  # `_prepare_checkout` reports why the tree is unusable
-    return checkout if taken and not os.path.lexists(borrowing) else borrowing
+    _share_mirror_packs(checkout, bare)
+    return None
 
 
 def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | None]:
@@ -388,11 +429,11 @@ def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | 
     Callers run this in a thread. The checkout is absolute because a harness changes
     into it before consuming the converter's paths; every branch shares the mirror.
     """
-    checkout = tier_checkout(cfg, producer)
+    checkout = Path(checkout_for(cfg, producer)).absolute()
     bare = Path(cfg.git_dir)
     if not bare.exists():
         return checkout, bare, f"bare clone missing at {bare}"
-    if reason := _prepare_checkout(checkout, bare.resolve() / "objects"):
+    if reason := _prepare_checkout(checkout, bare.resolve()):
         return checkout, bare, f"checkout missing at {checkout} ({reason})"
     return checkout, bare.resolve(), None
 
@@ -531,6 +572,8 @@ def resolve_binary(configured: str) -> Path:
     written, `.absolute()` and never `.resolve()`: an npm-installed
     binary is a symlink under node_modules/.bin, and the pnpm shim
     the harness needs sits beside the LINK, not beside its target."""
+    import shutil
+
     if os.sep not in configured:
         found = shutil.which(configured)
         if found:
@@ -570,13 +613,13 @@ async def git(
     proxy_identity: str = "",
 ) -> None:
     """Run one git command in a checkout, as a repository job: the checkout writable,
-    `local_remote` (the bare clone a fetch reads) and the objects the checkout borrows
-    read-only, the network only with `network`. `token` authenticates to the owner of
-    `remote` (the repository's own https remote), so a private submodule of that owner
-    can be fetched; with an operator's git proxy the network job goes through it as
-    `proxy_identity` (the entry's git_proxy_identity). On timeout, name the command (a
-    bare TimeoutError says nothing) and retry `retries` times — a stall is usually
-    transient contention on the shared bare clone."""
+    `local_remote` (the bare clone a fetch reads) read-only, the network only with
+    `network`. `token` authenticates to the owner of `remote` (the repository's own
+    https remote), so a private submodule of that owner can be fetched; with an
+    operator's git proxy the network job goes through it as `proxy_identity` (the
+    entry's git_proxy_identity). On timeout, name the command (a bare TimeoutError says
+    nothing) and retry `retries` times — a stall is usually transient contention on
+    the shared bare clone."""
     from server.code.app.index.gitrepo import auth_env
 
     # The file transport follows the bare clone alone, never the entry's remote.
@@ -588,7 +631,7 @@ async def git(
         "env": env,
         "timeout_s": timeout_s,
         "writable": [cwd],
-        "readonly": [*([local_remote] if local_remote else []), *borrowed_objects(cwd)],
+        "readonly": [local_remote] if local_remote else [],
         "network": network,
         "merge_stderr": True,
     }
@@ -642,8 +685,7 @@ async def run_harness(
     """A tier harness as a repository job: (exit code, output). It runs the
     repository's own build files, so only the checkout, `out_dir` and `writable`
     are writable; the checkout's .git stays read-only (a hook or config planted
-    there would run outside the sandbox later), as do the objects it borrows and the
-    harness scripts.
+    there would run outside the sandbox later), as do the harness scripts.
     RuntimeError naming the timeout past `timeout_s`."""
     from server.core.paths import SCIP_HARNESS_DIR
 
@@ -653,7 +695,7 @@ async def run_harness(
             env=env,
             timeout_s=timeout_s,
             writable=[checkout, out_dir, *writable],
-            readonly=[checkout / ".git", *borrowed_objects(checkout), SCIP_HARNESS_DIR, *readonly],
+            readonly=[checkout / ".git", SCIP_HARNESS_DIR, *readonly],
             network=network,
             merge_stderr=True,
         )

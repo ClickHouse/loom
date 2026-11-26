@@ -91,7 +91,7 @@ async def test_uninstalled_checkout_is_prepared_before_indexing(monkeypatch, tmp
         steps.append(args[0])
 
     async def prepare(co, projects, env, **kw):
-        assert co == tmp_path / "borrowing-checkout" and not (co / "node_modules").exists()
+        assert co == checkout and not (co / "node_modules").exists()
         steps.append("dependencies")
 
     async def harness(*a, **kw):

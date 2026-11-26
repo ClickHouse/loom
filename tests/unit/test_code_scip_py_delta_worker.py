@@ -62,7 +62,7 @@ async def test_missing_checkout_is_created(monkeypatch, tmp_path: Path):
     p1, p2 = _patched(repo, [_Cfg()])
     with p1, p2:
         res = await w.run_pass()
-    assert (tmp_path / "borrowing-nope" / ".git").is_dir()
+    assert (tmp_path / "nope" / ".git").is_dir()
     assert not any("checkout missing" in s for s in res.skipped)
 
 
