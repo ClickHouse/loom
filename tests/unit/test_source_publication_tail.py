@@ -320,7 +320,7 @@ async def test_stream_completion_after_delivered_payload_keeps_next_request_usab
 async def test_large_body_uses_a_fresh_fence_for_each_bounded_send(mode):
     from starlette.responses import Response, StreamingResponse
 
-    limit = 256 * 1024
+    limit = 512 * 1024
     body = b"a" * limit + b"b" * 123
     sent = []
     live = True

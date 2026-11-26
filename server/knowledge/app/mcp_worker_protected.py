@@ -56,9 +56,7 @@ def _require_context(org: str, auth: AuthInfo) -> None:
         raise WorkerReadRefused("denied")
 
 
-async def _retain(
-    auth: AuthInfo, check: Deliver, fence: request_tail.PublicationFence, deadline: float
-) -> None:
+async def _retain(auth: AuthInfo, fence: request_tail.PublicationFence, deadline: float) -> None:
     loop = asyncio.get_running_loop()
     checked = False
 
@@ -69,13 +67,13 @@ async def _retain(
             async with asyncio.timeout_at(deadline):
                 _require_context(auth.org, auth)
                 await session_admission.require(auth)
-                await check()
                 _require_context(auth.org, auth)
                 checked = True
 
     def fresh() -> bool:
         return checked and loop.time() < deadline
 
+    # The fence rechecks source and worker authority under the publication locks.
     await validate()
     if not fresh() or not request_tail.retain_publication(validate, validate, fresh, fence=fence):
         raise WorkerReadRefused("denied")
@@ -142,7 +140,7 @@ async def protected_live_read(
                             await check()
                         await fence_delivery(scope, deliver, end)
 
-            await _retain(auth, check, fence, retain_until)
+            await _retain(auth, fence, retain_until)
 
         return await read_selected_live(
             resolve=current.resolve, worker=directory.worker, retain=retain, deadline=deadline
