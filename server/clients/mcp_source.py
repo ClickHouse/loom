@@ -443,6 +443,23 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
             if isinstance(message, types.JSONRPCRequest) and message.method == "tools/call":
                 self.guard_tool_dispatch()
 
+    async def _validated_response(
+        self, method: str, response: httpx.Response, body: bytes
+    ) -> httpx.Response:
+        _check_response(method, response, body)
+        # Reject compression so the wire budget bounds decoded protocol bytes.
+        if response.headers.get("content-encoding", "identity") != "identity":
+            raise MCPSourceError("protocol")
+        if not isinstance(response.stream, httpx.AsyncByteStream):
+            raise MCPSourceError("protocol")
+        response.stream = _LimitedStream(response.stream, self)
+        if method == "POST" and response.status_code == 202:
+            async for chunk in response.stream:
+                if chunk:
+                    raise MCPSourceError("protocol")
+            return httpx.Response(202, headers=response.headers, content=b"")
+        return response
+
     async def _handle(self, request: httpx.Request) -> httpx.Response:
         response: httpx.Response | None = None
         handed_off = False
@@ -506,15 +523,9 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                 self._check_tool_dispatch(request.method, body)
                 response = await self.inner.handle_async_request(outgoing)
                 await self._authorize()
-                _check_response(request.method, response, body)
-                # Reject compression so the wire budget bounds decoded protocol bytes.
-                if response.headers.get("content-encoding", "identity") != "identity":
-                    raise MCPSourceError("protocol")
-                if not isinstance(response.stream, httpx.AsyncByteStream):
-                    raise MCPSourceError("protocol")
-                response.stream = _LimitedStream(response.stream, self)
-                handed_off = True
-                return response
+                validated = await self._validated_response(request.method, response, body)
+                handed_off = validated is response
+                return validated
         except Exception as error:  # noqa: BLE001 — poison the session before awaiting private failure cleanup
             self.failure = self.failure or _error_code(error)
             raise MCPSourceError(self.failure) from None

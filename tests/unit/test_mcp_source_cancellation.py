@@ -1730,21 +1730,26 @@ async def test_catalog_change_during_final_access_refuses_mapped_read(
 
 
 @pytest.mark.asyncio
-async def test_initialized_notification_requires_accepted_status(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("status", [200, 202])
+async def test_initialized_notification_requires_empty_accepted_response(
+    monkeypatch: pytest.MonkeyPatch, status: int
 ) -> None:
     monkeypatch.setattr(source, "pinned_target", pin)
 
-    class OKNotification(HTTPFixture):
+    class NotificationWithBody(HTTPFixture):
         async def reply(self, request: httpx.Request) -> httpx.Response:
             if (
                 request.method == "POST"
                 and json.loads(await request.aread())["method"] == "notifications/initialized"
             ):
-                return httpx.Response(200, json={})
+                return httpx.Response(
+                    status,
+                    stream=httpx.ByteStream(b'{"unexpected":true}'),
+                    headers={"content-type": "application/json"},
+                )
             return await super().reply(request)
 
-    fixture = OKNotification("resources", block=False)
+    fixture = NotificationWithBody("resources", block=False)
     with pytest.raises(source.MCPSourceError, match="protocol"):
         async with fixture.client() as remote:
             await remote.read(IDENTITY)
