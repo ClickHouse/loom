@@ -117,8 +117,17 @@ jobs:
               output.write("| Track | Checks/tests | Passed |\n| --- | ---: | --- |\n")
               for row in rows:
                   name, count, passed = row["track"], row.get("tests", row.get("checks")), row["passed"]
-                  assert name in allowed and type(count) is int and 0 < count <= 100000 and type(passed) is bool
-                  output.write(f"| {name} | {count} | {passed} |\n")
+                  assert name in allowed and type(passed) is bool
+                  error = row.get("error")
+                  if error is not None:
+                      assert error in ("timeout", "missing report", "invalid report")
+                      assert count is None and passed is False
+                      count, result = "unknown", f"False ({error})"
+                  else:
+                      assert type(count) is int and 0 <= count <= 100000
+                      assert count > 0 or passed is False
+                      result = str(passed)
+                  output.write(f"| {name} | {count} | {result} |\n")
           PY
       - name: Remove exactly the container created by this run
         if: always()
