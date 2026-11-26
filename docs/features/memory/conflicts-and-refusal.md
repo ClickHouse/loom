@@ -1,3 +1,9 @@
+---
+description: Review conflicting facts, choose which memory to keep, and block future writes that match a refused pattern.
+seo:
+  title: Resolve conflicts in AI agent memory
+---
+
 # Conflicts and refusal
 
 Every memory write is judged against the facts the namespace already holds. A close but

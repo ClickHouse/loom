@@ -1,3 +1,9 @@
+---
+description: Search recorded conversation turns and resume a coding agent’s work from a saved session brief.
+seo:
+  title: Agent session history and briefs
+---
+
 # Conversations and sessions
 
 Loom keeps three kinds of session state, each in its own plane:

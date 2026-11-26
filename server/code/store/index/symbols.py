@@ -24,6 +24,8 @@ from server.code.store.index.symbol_rank import (
 )
 from server.core.ch_params import FIELD_BYTES, chunks
 
+NameCandidates = dict[str, list[tuple[str, str, str]]]
+
 
 def _concat_key_parts(refs: list[str]) -> str:
     """Keep each concatenation small even for a name spanning thousands of fields."""
@@ -236,17 +238,17 @@ class SymbolsMixin(CodeRepoBase):
                     out.setdefault(str(r["path"]), []).append(r)
         return out
 
-    async def name_candidates(
+    async def name_candidates(self, org: str, ns: str, names: list[str]) -> NameCandidates:
+        """Live name candidates across both tiers, including kind for fixture resolution."""
+        merged, _ = await self.name_candidate_views(org, ns, names)
+        return merged
+
+    async def name_candidate_views(
         self, org: str, ns: str, names: list[str]
-    ) -> dict[str, list[tuple[str, str, str]]]:
-        """bare name -> [(symbol_id, qualified_name, kind)] across both
-        tiers, for edge resolution. Only for the requested names, so
-        per-merge ingest never loads the whole symbol table. `kind` rides
-        along so pytest fixture resolution can restrict candidates to
-        kind='fixture' — a test parameter must never resolve to an
-        arbitrary same-named function."""
+    ) -> tuple[NameCandidates, NameCandidates]:
+        """Return merged and parser-preferred candidates from one name-keyed read."""
         if not names:
-            return {}
+            return {}, {}
         # One statement over `code_symbol_names`. The key (name, tier,
         # qualified_name, symbol_id) mirrors every version the main table ever
         # wrote for it, so the newest version decides: kind by argMax, liveness
@@ -268,17 +270,25 @@ class SymbolsMixin(CodeRepoBase):
             """,
             {"org": org, "ns": ns, "names": names},
         )
-        table: dict[str, list[tuple[str, str, str]]] = {}
-        seen: set[tuple[str, str, str, str]] = set()
+        merged: dict[str, set[tuple[str, str, str]]] = {}
+        parser: dict[str, set[tuple[str, str, str]]] = {}
         for r in rows:
+            name = str(r["name"])
             cand = (str(r["symbol_id"]), str(r["qualified_name"]), str(r["kind"]))
-            if (str(r["name"]), *cand) in seen:
-                continue
-            seen.add((str(r["name"]), *cand))
-            table.setdefault(str(r["name"]), []).append(cand)
-        for cands in table.values():
-            cands.sort()
-        return table
+            merged.setdefault(name, set()).add(cand)
+            if r["tier"] == "treesitter":
+                parser.setdefault(name, set()).add(cand)
+        calls = {name: sorted(candidates) for name, candidates in merged.items()}
+        reads: NameCandidates = {}
+        for name, candidates in calls.items():
+            preferred = parser.get(name, set())
+            exact_parser_names = {candidate[1] for candidate in preferred}
+            reads[name] = [
+                candidate
+                for candidate in candidates
+                if candidate in preferred or candidate[1] not in exact_parser_names
+            ]
+        return calls, reads
 
     async def symbols_by_name(
         self, org: str, ns: str, name: str, *, limit: int = 50, path: str = ""

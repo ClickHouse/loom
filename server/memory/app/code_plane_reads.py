@@ -21,6 +21,8 @@ from server.memory.store import code_plane_reads as reads
 from server.memory.store.code_links import LinkRow
 from server.settings import settings
 
+_LOCATED_STATES = ("fresh", "moved", "changed")
+
 
 async def lesson_namespaces(org: str, code_namespace: str, extra: Sequence[str]) -> list[str]:
     """Whose linked memories a code read shows: the namespaces the call names (over MCP
@@ -74,10 +76,12 @@ async def lessons_for_symbol(
     paths: Sequence[str],
     namespaces: Sequence[str],
     limit: int = 3,
+    fresh_at_commit: str = "",
 ) -> list[dict[str, Any]]:
     """The served memories of `namespaces` linked to this symbol, current ones first,
-    each with the state of the symbol's code on the branch read (trunk's state where
-    the branch's files cannot be read here)."""
+    each with the state of the symbol's code on the branch read.
+    `fresh_at_commit` restricts the answer to lessons confirmed fresh at that revision.
+    Otherwise an unreadable branch uses trunk's state."""
     from server.code.app import memory_links as code
     from server.memory.app.code_link_reads import current_links
 
@@ -90,6 +94,8 @@ async def lessons_for_symbol(
         ),
         code.indexed_head(org, code_namespace),
     )
+    if fresh_at_commit and head != fresh_at_commit:
+        return []
     name = bare_name(qualified_name)
     candidates = [
         a
@@ -103,9 +109,15 @@ async def lessons_for_symbol(
         return []
     here = await _definitions_at(org, code_namespace, head, paths, qualified_name)
     if here is None:
+        if fresh_at_commit:
+            return []
         matched = _as_trunk_has_it(links, qualified_name)
     else:
-        matched = _matched(links, here, on_trunk=code_namespace == trunk)
+        matched = _matched(
+            links, here, on_trunk=code_namespace == trunk, require_fingerprint=bool(fresh_at_commit)
+        )
+    if fresh_at_commit:
+        matched = [entry for entry in matched if entry[1] == "fresh"]
     # a memory's state is that of its first matched link, as the ranking below reads it
     states: dict[str, str] = {}
     for a, state, _ in matched:
@@ -276,7 +288,11 @@ async def _definitions_at(
 
 
 def _matched(
-    links: list[LinkRow], here: dict[tuple[str, str], Definition], *, on_trunk: bool
+    links: list[LinkRow],
+    here: dict[tuple[str, str], Definition],
+    *,
+    on_trunk: bool,
+    require_fingerprint: bool,
 ) -> list[tuple[LinkRow, str, str]]:
     """(link, code state, suggestion) of each link whose definition the branch has."""
     out = []
@@ -296,6 +312,7 @@ def _matched(
             at_anchor=now is anchored,
             on_trunk=on_trunk,
             baseline=was[1] if was else "",
+            require_fingerprint=require_fingerprint,
         )
         # `current` serves a correction only for trunk's checked code: the branch must have it
         judged = state == "changed" and now.body_hash == a["checked_hash"]
@@ -307,7 +324,7 @@ def _as_trunk_has_it(links: list[LinkRow], qualified_name: str) -> list[tuple[Li
     """(link, code state, suggestion) of each link to the symbol, as trunk's last check
     left it: what is served where the branch's own files cannot be read. A link trunk
     lost is left out, since nothing here shows the code exists."""
-    live = [a for a in links if a["state"] in ("fresh", "moved", "changed")]
+    live = [a for a in links if a["state"] in _LOCATED_STATES]
     defs = [
         Definition(a["path"], a["qualified_name"], bare_name(a["qualified_name"])) for a in live
     ]
@@ -337,17 +354,26 @@ def _lesson_state(
     at_current: bool,
     at_anchor: bool,
     on_trunk: bool,
+    require_fingerprint: bool = False,
     baseline: str = "",
 ) -> str:
     """The code state of link `a` for the definition `now` a read found it at: where
     trunk has it now (`at_current`), where it was before a move (with the `baseline` it
-    had there), or where the memory was written against (`at_anchor`)."""
+    had there), or where the memory was written against (`at_anchor`).
+    A verified read needs a comparison under the current fingerprint rules."""
     stored = a["state"] if a["state"] in ("changed", "moved") else "fresh"
     if a["carried"] and not at_anchor:
         return "changed"  # a renamed class carried it: what surrounds it is not the original
     if a["fingerprint_version"] != fingerprint_version():
-        return stored  # hashed under other rules: compared once the worker re-hashed it
-    if on_trunk and at_current and now.body_hash == a["checked_hash"]:
+        return "unresolved" if require_fingerprint else stored
+    if require_fingerprint and not now.body_hash:
+        return "unresolved"
+    if (
+        on_trunk
+        and at_current
+        and now.body_hash == a["checked_hash"]
+        and (not require_fingerprint or a["state"] in _LOCATED_STATES)
+    ):
         return stored  # trunk's definition as the worker last checked it
     # compare with the baseline; a branch that still has the code under its anchored
     # name may also match the anchored text
@@ -355,6 +381,8 @@ def _lesson_state(
     if at_anchor:
         linked.add(a["anchored_hash"])
     linked.discard("")
+    if require_fingerprint and not linked:
+        return "unresolved"
     if linked and now.body_hash and now.body_hash not in linked:
         return "changed"
     return "moved" if on_trunk and a["state"] == "moved" else "fresh"

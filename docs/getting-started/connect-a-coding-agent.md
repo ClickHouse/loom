@@ -18,6 +18,9 @@ pinned release and prove it works, give it the latest release's
 `https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt` ([Set up
 Loom with your coding agent](agent-setup.md)).
 
+Already connected both clients? [Verify that a fresh Codex session can read a memory
+saved in Claude Code](#verify-shared-memory-between-claude-code-and-codex).
+
 ## What you need
 
 ![Settings → Tokens: a new token and the Claude Code setup it prints](../images/dashboard-connect.png)
