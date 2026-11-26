@@ -35,7 +35,7 @@ from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
 if TYPE_CHECKING:
-    from server.code.app.index.delta_file import DeltaFile
+    from server.code.app.index.delta_file import DeltaCaps, DeltaFile
     from server.code.domain.index.repos import RepoConfig
     from server.code.store.index import CodeRepo
 
@@ -343,14 +343,9 @@ async def restart_full(
     )
 
 
-def _refusal_hold(target: str) -> str:
-    """What a refused delta holds: its target and every cap `open_delta` reads."""
-    caps = (
-        settings.code_scip_delta_file_max_mb,
-        settings.code_scip_delta_max_nodes,
-        settings.code_scip_delta_round_max_nodes,
-    )
-    return json.dumps({"target": target, "caps": caps})
+def _refusal_hold(target: str, caps: DeltaCaps) -> str:
+    """What a refused delta holds: its target and the caps its open read."""
+    return json.dumps({"target": target, "caps": list(caps)})
 
 
 async def refusal_held(
@@ -360,8 +355,10 @@ async def refusal_held(
     (`open_tier_delta`): the same run would write the same delta, so the harness is
     not run and the entry is a skip, which leaves its failing record and its fix.
     A new target, or a raised cap (a live setting), releases the hold."""
+    from server.code.app.index.delta_file import delta_caps
+
     held = await repo.get_state(cfg.org, cfg.namespace, f"{watermark}_refused")
-    if held != _refusal_hold(target):
+    if held != _refusal_hold(target, delta_caps()):
         return False
     result.skipped.append(
         f"{cfg.namespace}: delta refused at {target[:12]}; held until a cap or the target changes"
@@ -373,19 +370,21 @@ async def open_tier_delta(
     repo: CodeRepo, cfg: RepoConfig, watermark: str, target: str, path: Path
 ) -> DeltaFile:
     """`open_delta` for the tier's run at `target`. A refusal the same run would meet
-    again (over a cap, a link, not a regular file) holds the tier (`refusal_held`);
-    a delta that changed while it was read does not."""
+    again (over a cap, a link, not a regular file) holds the tier (`refusal_held`)
+    under the caps that open read, not the ones in effect once it failed; a delta
+    that changed while it was read holds nothing."""
     import asyncio
 
-    from server.code.app.index.delta_file import open_delta
+    from server.code.app.index.delta_file import delta_caps, open_delta
 
+    caps = delta_caps()
     try:
-        return await asyncio.to_thread(open_delta, path)
+        return await asyncio.to_thread(open_delta, path, caps)
     except FileRefused as e:
         if not e.changed:
             check_held()
             await repo.set_state(
-                cfg.org, cfg.namespace, f"{watermark}_refused", _refusal_hold(target)
+                cfg.org, cfg.namespace, f"{watermark}_refused", _refusal_hold(target, caps)
             )
         raise
 
