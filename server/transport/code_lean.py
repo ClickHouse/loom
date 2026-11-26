@@ -27,7 +27,11 @@ from typing import Any, NamedTuple
 from pydantic import ValidationError
 
 from server.code.api.models_common import _safe_path
-from server.code.api.models_read import CODE_READ_MAX_RANGES, CodeReadRangeInput
+from server.code.api.models_read import (
+    CODE_READ_MAX_RANGES,
+    CODE_READ_RANGE_TEXT_MAX_CHARS,
+    CodeReadRangeInput,
+)
 from server.code.api.models_symbol import EDIT_CONTEXT_MAX_NAMES, CodeEditContextInput
 from server.code.app.symbol.resolve import _parse_file_symbol, _parse_location
 from server.code.domain.extract.py_notebooks import is_notebook_path
@@ -338,6 +342,13 @@ def _grep_edit_names(items: list[_GrepFollowup]) -> list[str]:
         return []
 
 
+def _grep_read_range(span: CodeReadRangeInput) -> str | dict[str, Any]:
+    last = span.end_line if span.end_line is not None else span.start_line
+    location = f"{span.path}:{span.start_line}-{last}"
+    # The object form can hold a path whose suffix would exceed the string field's limit.
+    return location if len(location) <= CODE_READ_RANGE_TEXT_MAX_CHARS else span.model_dump()
+
+
 def _grep_continuation(
     out: dict[str, Any],
     arguments: dict[str, Any],
@@ -411,8 +422,10 @@ def _grep_continuation(
         }
     elif not exact_read:
         return
-    params = {"ranges": [item.span.model_dump() for item in selected], **options}
-    out["next"] = "For the full source, call loom_code_read with " + json.dumps(params)
+    params = {"ranges": [_grep_read_range(item.span) for item in selected], **options}
+    out["next"] = "For the full source, call loom_code_read with " + json.dumps(
+        params, separators=(",", ":")
+    )
 
 
 class _GrepBody(NamedTuple):

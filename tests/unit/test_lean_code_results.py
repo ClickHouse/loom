@@ -8,6 +8,8 @@ import json
 from typing import Any
 
 import server.transport.lean_results as lr
+from server.code.api.models_read import CodeReadInput
+from server.code.app.read import _request_ranges
 from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.settings import settings
 from server.transport.code_lean import lean_code
@@ -415,7 +417,8 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
         "scope_start_line": 2,
         "scope_end_line": 3,
     }
-    unusual = ["src/plugins v2/routes.py", "scripts/bootstrap", "docs/overview.md"]
+    long_path = "src/" + "a" * 1016 + ".py"
+    unusual = ["src/plugins v2/routes.py", "scripts/bootstrap", "src/sub:routes.py", long_path]
     more = [{**long, "path": path} for path in (*unusual, "examples/demo.IPYNB", "a" * 1025)]
     async_def = {**long, "path": "src/support.py", "text": "async def first(value):"}
     payload = {
@@ -446,23 +449,28 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
     label, _, params = suggestion.partition(" with ")
     assert label == "For the full source, call loom_code_read"
     assert json.loads(params) == {
-        "ranges": [
-            {"path": path, "start_line": 5, "end_line": 16}
-            for path in ("src/a.py", "src/support.py")
-        ],
+        "ranges": ["src/a.py:5-16", "src/support.py:5-16"],
         **options,
     }
     with_read = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
     assert "edit_context_next" not in with_read
     label, _, params = with_read.pop("next").partition(" with ")
     assert label == "For the full source, call loom_code_read"
-    assert json.loads(params) == {
+    arguments_from_hint = json.loads(params)
+    assert arguments_from_hint == {
         "ranges": [
-            {"path": path, "start_line": 5, "end_line": 16}
-            for path in ("src/a.py", "src/support.py", *unusual)
+            "src/a.py:5-16",
+            "src/support.py:5-16",
+            "src/plugins v2/routes.py:5-16",
+            "scripts/bootstrap:5-16",
+            "src/sub:routes.py:5-16",
+            {"path": long_path, "start_line": 5, "end_line": 16},
         ],
         **options,
     }
+    assert _request_ranges(CodeReadInput.model_validate(arguments_from_hint)) == [
+        (path, 5, 16) for path in ("src/a.py", "src/support.py", *unusual)
+    ]
     assert with_read == lr.mcp_op_result("code.grep", payload, arguments, None, toolset="all")
     assert result == lr.mcp_op_result("code.grep", edit_payload, {"include_body": True}, None)
     assert "next" not in lr.mcp_op_result(
@@ -502,9 +510,7 @@ def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lo
         assert "edit_context_next" not in result
         label, _, params = result["next"].partition(" with ")
         assert label == "For the full source, call loom_code_read"
-        assert json.loads(params) == {
-            "ranges": [{"path": hit["path"], "start_line": 1, "end_line": 12} for hit in matches]
-        }
+        assert json.loads(params) == {"ranges": [f"{hit['path']}:1-12" for hit in matches]}
 
 
 def test_grep_offers_edit_context_for_declarations_without_context_windows(monkeypatch) -> None:
@@ -524,7 +530,7 @@ def test_grep_offers_edit_context_for_declarations_without_context_windows(monke
         "arguments": {"names": ["src/a.py:5"]},
     }
     assert json.loads(result["next"].partition(" with ")[2]) == {
-        "ranges": [{"path": "src/a.py", "start_line": 5, "end_line": 12}],
+        "ranges": ["src/a.py:5-12"],
     }
     token = set_code_scope("attached/repo")
     try:
@@ -584,10 +590,7 @@ def test_grep_follows_matches_inside_an_indexed_scope() -> None:
         "names": [f"{path}:22", f"{path}:src.config::Config::load"],
     }
     assert json.loads(result["next"].partition(" with ")[2]) == {
-        "ranges": [
-            {"path": path, "start_line": 22, "end_line": 26},
-            {"path": path, "start_line": 9, "end_line": 16},
-        ],
+        "ranges": [f"{path}:22-26", f"{path}:9-16"],
     }
     body_hits = [
         {**inside, "path": f"src/file{i}.py", "scope": f"src.file{i}::Config::load"}
@@ -597,7 +600,7 @@ def test_grep_follows_matches_inside_an_indexed_scope() -> None:
     result = lr.mcp_op_result("code.grep", wide, {"include_body": False}, None, toolset="coding")
     assert result["edit_context_next"]["arguments"] == {"names": [f"{path}:22"]}
     assert json.loads(result["next"].partition(" with ")[2]) == {
-        "ranges": [{"path": path, "start_line": 22, "end_line": 26}],
+        "ranges": [f"{path}:22-26"],
     }
 
 
@@ -648,7 +651,7 @@ def test_grep_offers_the_exact_range_when_the_scope_cannot_be_named() -> None:
         )
         assert "edit_context_next" not in result
         assert json.loads(result["next"].partition(" with ")[2]) == {
-            "ranges": [{"path": path, "start_line": 5, "end_line": 8}],
+            "ranges": [f"{path}:5-8"],
         }
 
 
