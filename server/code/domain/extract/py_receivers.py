@@ -120,17 +120,18 @@ def callee_text(value: Any, source: bytes) -> str:
     if node.type != "call":
         return ""
     fn = node.child_by_field_name("function")
-    return _chain_text(fn, source)
+    return receiver_chain(fn, source)
 
 
-def _chain_text(fn: Any, source: bytes) -> str:
+def receiver_chain(fn: Any, source: bytes) -> str:
+    fn = unwrap_parentheses(fn)
     if fn is None:
         return ""
     if fn.type == "identifier":
         text = node_text(fn, source)
         return text if _NAME_RE.match(text) else ""
     if fn.type == "attribute":
-        obj = fn.child_by_field_name("object")
+        obj = unwrap_parentheses(fn.child_by_field_name("object"))
         attr = fn.child_by_field_name("attribute")
         if obj is None or attr is None:
             return ""
@@ -138,7 +139,7 @@ def _chain_text(fn: Any, source: bytes) -> str:
         if not _NAME_RE.match(attr_text):
             return ""
         if obj.type in {"identifier", "attribute"}:
-            head = _chain_text(obj, source)
+            head = receiver_chain(obj, source)
         elif obj.type in {"call", "await"}:
             inner = callee_text(obj, source)
             head = inner + "()" if inner else ""
@@ -256,9 +257,17 @@ def _body_bindings(
         _body_bindings(child, source, into, fields=fields, params=params)
 
 
+def unwrap_parentheses(node: Any) -> Any:
+    while node is not None and node.type == "parenthesized_expression":
+        expressions = [child for child in node.named_children if child.type != "comment"]
+        if len(expressions) != 1:
+            return node
+        node = expressions[0]
+    return node
+
+
 def _scalar_literal(node: Any) -> bool:
-    if node.type == "parenthesized_expression" and node.named_child_count == 1:
-        return _scalar_literal(node.named_children[0])
+    node = unwrap_parentheses(node)
     if node.type == "unary_operator":
         operator = node.child_by_field_name("operator")
         argument = node.child_by_field_name("argument")
@@ -314,7 +323,7 @@ def _module_invalidations(
 def _preserve_module_receivers(node: Any, source: bytes, writes: dict[str, int]) -> None:
     """Keep earlier receiver evidence when a use or a later binding is possible."""
     if node.type == "attribute":
-        receiver = node.child_by_field_name("object")
+        receiver = unwrap_parentheses(node.child_by_field_name("object"))
         if receiver is not None and receiver.type == "identifier":
             name = node_text(receiver, source)
             if node.start_byte < writes.get(name, -1):

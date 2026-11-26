@@ -189,7 +189,8 @@ def test_module_receiver_types_follow_assignment_and_deletion(statement, owner):
 
 
 @pytest.mark.parametrize(
-    "earlier", ["before = target.send()", "def wrap(\n    arg=target.send(),\n):\n    return arg"]
+    "earlier",
+    ["before = (target).send()", "def wrap(\n    arg=target.send(),\n):\n    return arg"],
 )
 def test_module_receiver_keeps_calls_before_a_write(earlier):
     files = {
@@ -206,7 +207,8 @@ def test_module_receiver_keeps_calls_before_a_write(earlier):
     assert any(target == "svc.clients::Client::send" for _, target, _ in calls)
 
 
-def test_module_literal_receiver_declines_unrelated_calls_and_callee_returns():
+@pytest.mark.parametrize("receiver", ["target", "((target))"])
+def test_module_literal_receiver_declines_unrelated_calls_and_callee_returns(receiver):
     files = {
         "svc/__init__.py": b"",
         "svc/clients.py": (
@@ -215,14 +217,14 @@ def test_module_literal_receiver_declines_unrelated_calls_and_callee_returns():
             b"class Other:\n    def flush_reply(self) -> Reply:\n        return Reply()\n"
         ),
         "svc/service.py": (
-            b"from .clients import Client, Other, Reply\ntarget = Client()\ntarget = 0\n"
-            b"def submit():\n    target.send()\n    reply = target.flush_reply()\n"
-            b"    reply.close_reply()\n    target.unknown()\n"
-        ),
+            "from .clients import Client, Other, Reply\ntarget = Client()\ntarget = 0\n"
+            f"def submit():\n    {receiver}.send()\n    reply = {receiver}.flush_reply()\n"
+            f"    reply.close_reply()\n    {receiver}.unknown()\n"
+        ).encode(),
     }
     calls, misses = _edges(files, "svc/service.py")
     assert not any(line in {5, 6, 8} for line, _, _ in calls)
-    assert not any(miss.call_text.startswith("target.") for miss in misses)
+    assert not any(miss.line in {5, 6, 8} for miss in misses)
     assert not any(line == 7 and confidence == 0.9 for line, _, confidence in calls)
 
 
