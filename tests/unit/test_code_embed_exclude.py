@@ -161,3 +161,76 @@ def test_recovery_and_coverage_match_every_unembedded_marker() -> None:
     asyncio.run(repo.chunk_embed_coverage("o", "n"))
     assert ch.params[0]["unembedded"] == lr.UNEMBEDDED_PREFIX
     assert ch.params[-1]["unembedded"] == lr.UNEMBEDDED_PREFIX
+
+
+def test_reembed_copies_unembedded_rows_without_a_vector() -> None:
+    from server.code.app.index import reembed_model as rm
+    from server.code.store.index import CodeRepo
+
+    def row(path: str, err: str) -> dict[str, Any]:
+        return {
+            **{c: "" for c in rm._COPY_COLS},
+            "path": path,
+            "chunk_id": f"{path}#0",
+            "start_line": 1,
+            "end_line": 2,
+            "content": f"content of {path}",
+            "context_text": f"text of {path}",
+            "symbol_ids": [],
+            "embed_last_error": err,
+        }
+
+    source = [
+        row("src/a.py", ""),
+        row("src/a_test.py", lr.UNEMBEDDED_EMBED_EXCLUDE),
+        row("tests/q.reference", lr.UNEMBEDDED_BY_DESIGN),
+    ]
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            if "SELECT path, chunk_id FROM" in sql:
+                return []
+            return [r for r in source if r["path"] > params["after"]]
+
+    class _Repo(CodeRepo):
+        def __init__(self) -> None:
+            super().__init__(_CH())  # type: ignore[arg-type]
+            self.written: list[dict[str, Any]] = []
+
+        async def insert_rows(self, table: str, rows: list[dict[str, Any]]) -> None:
+            self.written.extend(rows)
+
+    class _Embedder:
+        model_name = "second-model"
+        dim = 2
+
+        def __init__(self) -> None:
+            self.texts: list[str] = []
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            self.texts.extend(texts)
+            return [[0.1, 0.2] for _ in texts]
+
+    repo, emb = _Repo(), _Embedder()
+    stats = asyncio.run(
+        rm.reembed_namespace(
+            repo,
+            "o",
+            "n",
+            source_model="served-model",
+            embedder=emb,
+        )
+    )
+    assert emb.texts == ["text of src/a.py"]
+    by_path = {r["path"]: r for r in repo.written}
+    assert set(by_path) == {r["path"] for r in source}
+    assert by_path["src/a.py"]["embedding_dim"] == 2
+    assert by_path["src/a.py"]["embed_last_error"] == ""
+    for path, marker in (
+        ("src/a_test.py", lr.UNEMBEDDED_EMBED_EXCLUDE),
+        ("tests/q.reference", lr.UNEMBEDDED_BY_DESIGN),
+    ):
+        assert by_path[path]["embedding_dim"] == 0 and by_path[path]["embedding"] == []
+        assert by_path[path]["embed_last_error"] == marker
+        assert by_path[path]["embedding_model"] == "second-model"
+    assert stats.rows_written == 3 and stats.rows_unembedded == 2
