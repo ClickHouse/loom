@@ -1793,3 +1793,43 @@ async def test_native_resource_uri_profile(monkeypatch: pytest.MonkeyPatch, iden
             evidence = await remote.read(identity)
             assert evidence.resource_id == identity and evidence.receipt is not None
     assert fixture.reads == (0 if identity.startswith("https:") else 1)
+
+
+@pytest.mark.asyncio
+async def test_catalog_change_during_transport_access_prevents_tool_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HTTPFixture("tools", block=False)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    dispatch_task: asyncio.Task[Any] | None = None
+    original_aread = httpx.Request.aread
+
+    async def mark_tool_request(request: httpx.Request) -> bytes:
+        nonlocal dispatch_task
+        data = await original_aread(request)
+        if request.method == "POST" and json.loads(data)["method"] == "tools/call":
+            dispatch_task = asyncio.current_task()
+        return data
+
+    async def authority() -> None:
+        if asyncio.current_task() is dispatch_task and not entered.is_set():
+            entered.set()
+            await release.wait()
+
+    monkeypatch.setattr(httpx.Request, "aread", mark_tool_request)
+    async with source.MCPSourceClient(
+        fixture.config(), None, validate_access=authority, _transport=FixtureTransport(fixture)
+    ) as remote:
+        operation = asyncio.create_task(remote.read(IDENTITY))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await remote._message_handler(
+                source.types.ServerNotification(source.types.ToolListChangedNotification())
+            )
+        finally:
+            release.set()
+        with pytest.raises(source.MCPSourceError, match="schema"):
+            await operation
+    assert fixture.reads == 0

@@ -406,7 +406,9 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         validate_access: Callable[[], Awaitable[None]],
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        guard_tool_dispatch: Callable[[], None] | None = None,
     ) -> None:
+        self.guard_tool_dispatch = guard_tool_dispatch
         self.endpoint = _endpoint_url(config.endpoint)
         self.credential, self.deadline, self.limits = credential, deadline, config.limits
         self.validate_access = validate_access
@@ -434,6 +436,12 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         except Exception as error:  # noqa: BLE001 — HTTP exceptions may contain upstream credentials
             self.failure = self.failure or _error_code(error)
             raise MCPSourceError(self.failure) from None
+
+    def _check_tool_dispatch(self, method: str, body: bytes) -> None:
+        if method == "POST" and body and self.guard_tool_dispatch is not None:
+            message = types.JSONRPCMessage.model_validate_json(body).root
+            if isinstance(message, types.JSONRPCRequest) and message.method == "tools/call":
+                self.guard_tool_dispatch()
 
     async def _handle(self, request: httpx.Request) -> httpx.Response:
         response: httpx.Response | None = None
@@ -495,6 +503,7 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                     },
                 )
                 await self._authorize()
+                self._check_tool_dispatch(request.method, body)
                 response = await self.inner.handle_async_request(outgoing)
                 await self._authorize()
                 _check_response(request.method, response, body)
@@ -612,6 +621,8 @@ class MCPSourceClient:
         self._discovery: MCPDiscovery | None = None
         self._tools_supported = False
         self._tool_catalog_generation = 0
+        self._tool_dispatch_lock = asyncio.Lock()
+        self._tool_dispatch_generation: int | None = None
         self._pages, self._results = 0, 0
         self._issued_cursors: set[tuple[tuple[str, str], str]] = set()
         self._used_cursors: set[tuple[tuple[str, str], str]] = set()
@@ -748,6 +759,7 @@ class MCPSourceClient:
             self._deadline,
             self._transport_authorize,
             transport=self._test_transport,
+            guard_tool_dispatch=self._check_tool_generation,
         )
         self._transport = transport
         client = await stack.enter_async_context(
@@ -972,6 +984,10 @@ class MCPSourceClient:
 
         return await self._run(action)
 
+    def _check_tool_generation(self) -> None:
+        if self._tool_dispatch_generation != self._tool_catalog_generation:
+            raise MCPSourceError("schema")
+
     async def _tool(
         self, session: ClientSession, mapping: MCPToolMapping, value: str, cursor: str | None = None
     ) -> Any:
@@ -986,7 +1002,14 @@ class MCPSourceClient:
                 raise MCPSourceError("unsupported")
             arguments[mapping.cursor_argument] = cursor
         _validate(mapping.input_schema, arguments, 32_768)
-        result = await session.call_tool(mapping.name, arguments)
+        async with self._tool_dispatch_lock:
+            self._check_state(require_session=True)
+            self._tool_dispatch_generation = generation
+            try:
+                self._check_tool_generation()
+                result = await session.call_tool(mapping.name, arguments)
+            finally:
+                self._tool_dispatch_generation = None
         if generation != self._tool_catalog_generation:
             raise MCPSourceError("schema")
         if result.isError or result.structuredContent is None:
