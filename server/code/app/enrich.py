@@ -328,8 +328,9 @@ async def _attach_caller_source(
         body = await symbol_body(
             repo, org, ns, {**caller, "_extent_commit": revision}, expected_commit=revision
         )
-        span_attrs(sp, results=int(bool(body)))
-    if body:
+        fits = bool(body) and len(body) <= settings.code_chunk_max_chars
+        span_attrs(sp, results=int(fits))
+    if fits:
         example["via"] = {
             **via,
             "context": {

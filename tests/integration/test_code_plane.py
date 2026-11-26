@@ -754,6 +754,7 @@ async def test_edit_context_prefers_distinct_test_source_windows(
         "indirect",
         "crowded",
         "long_caller",
+        "wide_caller",
         "fixture",
         "different_test_revision",
         "different_caller_revision",
@@ -778,6 +779,8 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
     caller_source += b"def run():\n"
     if case == "long_caller":
         caller_source += b"    prepare()\n" * 24
+    if case == "wide_caller":
+        caller_source += (b'    prepare("' + b"value" * 160 + b'")\n') * 12
     caller_source += b"    return value()\n"
     await _ingest(
         repo,
@@ -831,7 +834,7 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
         context = example["context"]
         lines = tests.decode().splitlines(keepends=True)
         assert context["text"] == "".join(lines[context["start_line"] - 1 : context["end_line"]])
-        if case == "long_caller":
+        if case in {"long_caller", "wide_caller"}:
             assert "context" not in via
         if case != "indirect":
             return
