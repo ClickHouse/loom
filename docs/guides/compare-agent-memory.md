@@ -137,7 +137,7 @@ It does not compare the named tools surveyed here.
 [serena]: https://github.com/oraios/serena/blob/7f7d6245bf96b60fdf4e752a779917372fd1ee6e/README.md
 [chunkhound]: https://github.com/chunkhound/chunkhound/blob/70c1cac3d11b286a515660e518cabc60ea8918b1/README.md
 [codanna]: https://github.com/bartolli/codanna/blob/639917d868eda7dc789774c9c9d69b3753dd1b75/README.md
-[sourcegraph]: https://sourcegraph.com/docs/getting-started
+[sourcegraph]: https://7.6.sourcegraph.com/getting-started
 [coding-results]: ../benchmarks/results.md#with-and-without-loom
 [memory-results]: ../benchmarks/results.md#with-and-without-loom
 [work-raw]: https://github.com/ClickHouse/loom/blob/5b63495c10b313662b43d9538f669129b1137abd/bench/results/agent_clickhouse_work.jsonl
