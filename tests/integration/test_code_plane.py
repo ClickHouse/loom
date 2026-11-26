@@ -591,6 +591,52 @@ async def test_edit_context_batches_definitions_and_their_tests(code_env, monkey
         await handle_code_edit_context(query.model_copy(update={"name": names[0]}))
 
 
+async def test_edit_context_batch_returns_shared_member_source_at_its_revision(
+    code_env, monkeypatch
+) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    member_path = "src/options.py"
+    member = b'class Options:\n    @property\n    def label(self):\n        return "one"\n'
+    caller_path = "src/handlers.py"
+    callers = (
+        b"from .options import Options\n\n"
+        b"def first(options: Options):\n    return options.label\n\n"
+        b"def second(options: Options):\n    return options.label.upper()\n"
+    )
+    await _ingest(repo, org, ns, source=member, path=member_path)
+    await _ingest(repo, org, ns, source=callers, path=caller_path)
+    names = [f"{caller_path}:first", f"{caller_path}:second"]
+    request = CodeEditContextInput(org=org, namespace=ns, names=names, include_lessons=False)
+    result = await handle_code_edit_context(request)
+    assert result.read_sources is not None
+    (source,) = result.read_sources
+    assert source.path == member_path
+    assert source.qualified_name == "src.options::Options::label"
+    assert source.commit == "a" * 40
+    assert source.body.strip() == 'def label(self):\n        return "one"'
+    assert [(site.path, site.line) for site in source.sites] == [(caller_path, 4), (caller_path, 7)]
+
+    explicit = await handle_code_edit_context(
+        request.model_copy(update={"names": [*names, f"{member_path}:Options.label"]})
+    )
+    assert source.qualified_name in {unit.symbol for unit in explicit.definitions}
+    assert "read_sources" not in explicit.model_dump()
+
+    await _ingest(
+        repo, org, ns, source=member.replace(b"one", b"two"), sha="b" * 40, path=member_path
+    )
+    stale = await handle_code_edit_context(request)
+    assert len(stale.definitions) == 2
+    assert "read_sources" not in stale.model_dump()
+
+
 @pytest.mark.parametrize(
     "clue_shape",
     [

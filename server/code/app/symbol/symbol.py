@@ -634,6 +634,7 @@ async def _batched_edit_context(
         deduplicate_indirect_caller_sources,
         merge_indirect_caller_sources,
     )
+    from server.code.app.symbol.edit_reads import batch_read_sources
     from server.code.domain.units import CodeUnit, estimate_json_tokens, estimate_unit_tokens
 
     if started is None:
@@ -702,6 +703,8 @@ async def _batched_edit_context(
     if candidates:
         tokens += estimate_json_tokens(candidates)
     org, ns = resolve_code_identity(input.org, input.namespace)
+    read_sources = await batch_read_sources(org, ns, definitions, targets)
+    tokens += estimate_json_tokens([source.model_dump() for source in read_sources])
     route = f"edit_context_{shape}"
     trace_id = _symbol_trace(
         input,
@@ -725,6 +728,7 @@ async def _batched_edit_context(
     return CodeSymbolOutput(
         definitions=definitions,
         edit_targets=targets,
+        read_sources=read_sources or None,
         ambiguous=located is not None,
         candidates=candidates,
         tokens_returned=tokens,

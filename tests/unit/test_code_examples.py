@@ -17,6 +17,8 @@ from server.code.app.enrich import (
     usage_examples,
 )
 from server.code.app.symbol import examples as h
+from server.code.app.symbol.edit_reads import _read_candidates
+from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.core.errors import NotFoundError, PreconditionFailedError
 from server.settings import settings
@@ -185,6 +187,51 @@ def test_edit_examples_prefer_a_test_named_for_the_related_target() -> None:
 
     assert [site["line"] for site in examples] == [10, 5, 30]
     assert examples[0]["caller"] == "test_routes::test_blueprint_url_processors::index"
+
+
+def test_edit_read_target_requires_one_member_within_the_returned_definition() -> None:
+    path, symbol = "src/handlers.py", "src.handlers::render"
+    revision = "a" * 40
+    unit = CodeUnit(path=path, symbol=symbol, start_line=4, end_line=9)
+    edge = {
+        "path": path,
+        "line": 6,
+        "from_qualified_name": symbol,
+        "tier": "treesitter",
+        "to_qualified_name": "src.options::Options::label",
+        "to_symbol_id": "label",
+        "indexed_commit": revision,
+    }
+    anchors = {(path, symbol): unit}
+    targets = _read_candidates(anchors, [edge, {**edge, "line": 7}, {**edge, "line": 12}])
+    assert [site.line for site in targets["label", "src.options::Options::label", revision]] == [
+        6,
+        7,
+    ]
+
+    alternate = {
+        **edge,
+        "to_qualified_name": "src.options::Options::style",
+        "to_symbol_id": "style",
+    }
+    assert not _read_candidates(anchors, [edge, alternate])
+    other = unit.model_copy(
+        update={"symbol": "src.handlers::render_summary", "start_line": 10, "end_line": 16}
+    )
+    anchors[path, other.symbol] = other
+    shared = _read_candidates(
+        anchors,
+        [
+            edge,
+            alternate,
+            {**edge, "line": 7},
+            {**edge, "from_qualified_name": other.symbol, "line": 12},
+        ],
+    )
+    assert [site.line for site in shared["label", "src.options::Options::label", revision]] == [
+        7,
+        12,
+    ]
 
 
 @pytest.mark.asyncio

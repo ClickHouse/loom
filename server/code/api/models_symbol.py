@@ -193,6 +193,23 @@ class CodeEditContextTarget(BaseModel):
     trace_run_id: str = ""
 
 
+class CodeEditReadSite(BaseModel):
+    path: str
+    symbol: str
+    line: int
+
+
+class CodeEditReadSource(BaseModel):
+    # A member resolved from the receiver's declared type, with retained source.
+    qualified_name: str
+    path: str
+    start_line: int
+    end_line: int
+    commit: str
+    body: str
+    sites: list[CodeEditReadSite]
+
+
 class CodeSymbolOutput(BaseModel):
     @model_serializer(mode="wrap")
     def _drop_empty_presence(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -205,6 +222,8 @@ class CodeSymbolOutput(BaseModel):
             data.pop("lessons_left_out", None)
         if not data.get("edit_targets"):
             data.pop("edit_targets", None)
+        if not data.get("read_sources"):
+            data.pop("read_sources", None)
         return data
 
     # Up to 10 name matches, or the members matched by file clues, fitted to
@@ -271,6 +290,8 @@ class CodeSymbolOutput(BaseModel):
     summary: dict[str, list[str]] = Field(default_factory=dict)
     # Per-requested-name resolution for batched edit context only. Definitions are shared.
     edit_targets: list[CodeEditContextTarget] = Field(default_factory=list)
+    # Batched edit context only. Cross-file member reads grouped by retained definition.
+    read_sources: list[CodeEditReadSource] | None = None
 
 
 # ============================================================
