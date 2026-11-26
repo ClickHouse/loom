@@ -2168,8 +2168,8 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`uses_brief: true` summarizes callers. Check freshness and source elision."
     ),
     "code.grep": (
-        "Batch exact code and test literals with path_globs. Matches include bodies by default. "
-        "For source excerpts, set `include_body: false` and `context_lines`. "
+        "Batch exact code and test literals with path_globs. Keep default bodies for edits. "
+        "For excerpts, set `include_body: false` and `context_lines`. "
         "Use mode=files for paths only and regex=true for RE2.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
         "For locations, set `include_body: false`, `context_lines: 0`. "

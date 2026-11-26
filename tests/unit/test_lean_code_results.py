@@ -422,9 +422,21 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations() -> None:
         ],
     }
     arguments = {"include_body": False, "org": "secondary", "namespace": "repo"}
-    result = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
+    edit_payload = {
+        **payload,
+        "matches": [hit for hit in payload["matches"] if hit["path"] not in unusual[:2]],
+    }
+    result = lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset="coding")
     suggestion = result.pop("next")
     label, _, params = suggestion.partition(" with ")
+    assert label == "For the definitions and relevant tests, call loom_code_edit_context"
+    assert json.loads(params) == {
+        "names": ["src/a.py:5", "docs/overview.md:5"],
+        "org": "secondary",
+        "namespace": "repo",
+    }
+    with_read = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
+    label, _, params = with_read.pop("next").partition(" with ")
     assert label == "For the full source, call loom_code_read"
     assert json.loads(params) == {
         "ranges": [
@@ -433,7 +445,8 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations() -> None:
         "org": "secondary",
         "namespace": "repo",
     }
-    assert result == lr.mcp_op_result("code.grep", payload, {"include_body": True}, None)
+    assert with_read == lr.mcp_op_result("code.grep", payload, arguments, None, toolset="all")
+    assert result == lr.mcp_op_result("code.grep", edit_payload, {"include_body": True}, None)
     assert "next" not in lr.mcp_op_result(
         "code.grep", {**payload, "contexts": []}, arguments, None, toolset="coding"
     )

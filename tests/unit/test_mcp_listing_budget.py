@@ -399,11 +399,11 @@ def test_the_compact_profile_keeps_the_tool_names():
 def test_compact_coding_grep_advertises_full_definitions_and_batch_scope():
     compact = {t["name"]: t for t in _listing("coding", True, "compact")}
     description = compact["loom_code_grep"]["description"]
-    assert "Matches include bodies by default" in description
+    assert "Keep default bodies for edits" in description
     assert "Batch exact code and test literals with path_globs" in description
     assert "mode=files for paths only" in description
     assert "regex=true for RE2" in description
-    assert "For source excerpts" in description
+    assert "For excerpts" in description
     assert "`include_body: false`" in description and "`context_lines`" in description
 
     full = {t["name"]: t for t in _listing("coding", True, "full")}

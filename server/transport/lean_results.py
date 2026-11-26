@@ -252,12 +252,13 @@ def mcp_op_result(
         from server.transport.code_lean import lean_code
         from server.transport.mcp_tools import listed_tool_names
 
-        offer_read = (
-            op_name == "code.grep"
-            and (arguments or {}).get("include_body") is False
-            and "loom_code_read" in listed_tool_names(toolset)
-        )
-        out = lean_code(op_name, out, arguments if offer_read else None)
+        followups: frozenset[str] = frozenset()
+        if op_name == "code.grep" and (arguments or {}).get("include_body") is False:
+            candidates = {"loom_code_read"}
+            if toolset == "coding":
+                candidates.add("loom_code_edit_context")
+            followups = frozenset(candidates.intersection(listed_tool_names(toolset)))
+        out = lean_code(op_name, out, arguments, followups=followups)
     out = _with_ignored_args(op_name, out, arguments)
     if hint is not None and isinstance(out, dict):
         if hint[1] not in str(out.get("rendered") or ""):
