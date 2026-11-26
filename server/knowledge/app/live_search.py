@@ -96,8 +96,15 @@ async def search(org: str, namespaces: list[str], query: str, *, top_k: int) -> 
                 # Real opt-in work activates the same durable protection as mirrored sources.
                 await session_admission.require(auth)
                 contributions = []
-                remaining = min(top_k, settings.knowledge_live_search_max_hits)
+                total_budget = min(top_k, settings.knowledge_live_search_max_hits)
+                # Anti-starvation: allocate fair per-source hit quota so early sources
+                # do not greedily exhaust the hit budget and starve subsequent sources.
+                per_source_quota = max(1, (total_budget + len(selected) - 1) // len(selected))
+
                 for source in selected:
+                    if total_budget <= 0 or time.monotonic() >= deadline:
+                        break
+
                     authority = await connected_accounts.resolve(
                         org,
                         source.namespace,
@@ -108,21 +115,21 @@ async def search(org: str, namespaces: list[str], query: str, *, top_k: int) -> 
                     if authority.source != source:
                         continue  # a changed registration cannot widen the discovered corpus
 
+                    fetch_limit = min(per_source_quota, total_budget)
+
                     async def native(
                         access: CheckedAccess,
                         authority: connected_accounts.SourceAuthority = authority,
-                        remaining: int = remaining,
+                        limit: int = fetch_limit,
                     ) -> list[live_provider_search.LiveProviderHit]:
                         return await live_provider_search.search(
-                            authority.source, access, query, top_k=remaining, deadline=deadline
+                            authority.source, access, query, top_k=limit, deadline=deadline
                         )
 
-                    hits = tuple(await authority.run(native))[:remaining]
+                    hits = tuple(await authority.run(native))[:fetch_limit]
                     if hits:
                         contributions.append(Contribution(authority, hits))
-                        remaining -= len(hits)
-                    if not remaining:
-                        break
+                        total_budget -= len(hits)
                 return LiveResult(tuple(contributions), deadline) if contributions else None
         except Exception:  # noqa: BLE001 — optional private search never exposes account/provider detail
             return None
