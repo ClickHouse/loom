@@ -258,7 +258,12 @@ def _grep_continuation(
 ) -> None:
     """Give excerpt callers a batch of declarations they can retrieve next."""
     contexts = out.get("contexts") or []
-    if arguments.get("include_body") is not False or not contexts or out.get("definitions"):
+    if (
+        arguments.get("include_body") is not False
+        or "loom_code_read" not in followups
+        or not contexts
+        or out.get("definitions")
+    ):
         return
     selections: dict[tuple[str, int, int], tuple[CodeReadRangeInput, bool]] = {}
     for hit in out.get("matches") or []:
@@ -292,7 +297,14 @@ def _grep_continuation(
             break
     if not selections:
         return
-    scope = {key: arguments[key] for key in ("org", "namespace") if arguments.get(key)}
+    options = {key: arguments[key] for key in ("org", "namespace") if arguments.get(key)}
+    options.update(
+        {
+            key: arguments[key]
+            for key in ("include_lessons", "lesson_namespaces")
+            if key in arguments
+        }
+    )
     spans = [span for span, _ in selections.values()]
     if (
         "loom_code_edit_context" in followups
@@ -309,14 +321,12 @@ def _grep_continuation(
             except ValidationError:
                 pass
             else:
-                out["next"] = (
-                    "For the definitions and relevant tests, call loom_code_edit_context with "
-                    + json.dumps({"names": names, **scope})
-                )
-                return
-    if "loom_code_read" in followups:
-        params = {"ranges": [span.model_dump() for span in spans], **scope}
-        out["next"] = "For the full source, call loom_code_read with " + json.dumps(params)
+                out["edit_context_next"] = {
+                    "tool": "loom_code_edit_context",
+                    "arguments": {"names": names, **options},
+                }
+    params = {"ranges": [span.model_dump() for span in spans], **options}
+    out["next"] = "For the full source, call loom_code_read with " + json.dumps(params)
 
 
 class _GrepBody(NamedTuple):

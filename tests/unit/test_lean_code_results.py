@@ -424,21 +424,35 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
             {"path": "src/b.py", "start_line": 1, "end_line": 4, "text": "complete"},
         ],
     }
-    arguments = {"include_body": False, "org": "secondary", "namespace": "repo"}
+    options = {
+        "org": "secondary",
+        "namespace": "repo",
+        "include_lessons": False,
+        "lesson_namespaces": ["history"],
+    }
+    arguments = {"include_body": False, **options}
     edit_payload = {
         **payload,
         "matches": [hit for hit in payload["matches"] if hit["path"] not in unusual],
     }
     result = lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset="coding")
+    edit_step = result.pop("edit_context_next")
+    assert edit_step == {
+        "tool": "loom_code_edit_context",
+        "arguments": {"names": ["src/a.py:5", "src/support.py:5"], **options},
+    }
     suggestion = result.pop("next")
     label, _, params = suggestion.partition(" with ")
-    assert label == "For the definitions and relevant tests, call loom_code_edit_context"
+    assert label == "For the full source, call loom_code_read"
     assert json.loads(params) == {
-        "names": ["src/a.py:5", "src/support.py:5"],
-        "org": "secondary",
-        "namespace": "repo",
+        "ranges": [
+            {"path": path, "start_line": 5, "end_line": 16}
+            for path in ("src/a.py", "src/support.py")
+        ],
+        **options,
     }
     with_read = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
+    assert "edit_context_next" not in with_read
     label, _, params = with_read.pop("next").partition(" with ")
     assert label == "For the full source, call loom_code_read"
     assert json.loads(params) == {
@@ -446,8 +460,7 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
             {"path": path, "start_line": 5, "end_line": 16}
             for path in ("src/a.py", "src/support.py", *unusual)
         ],
-        "org": "secondary",
-        "namespace": "repo",
+        **options,
     }
     assert with_read == lr.mcp_op_result("code.grep", payload, arguments, None, toolset="all")
     assert result == lr.mcp_op_result("code.grep", edit_payload, {"include_body": True}, None)
@@ -459,6 +472,7 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
     for toolset in (None, "Coding", "coding+tracker"):
         assert lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset=toolset) == {
             **result,
+            "edit_context_next": edit_step,
             "next": suggestion,
         }
 
@@ -483,6 +497,7 @@ def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lo
         result = lr.mcp_op_result(
             "code.grep", payload, {"include_body": False}, None, toolset="coding"
         )
+        assert "edit_context_next" not in result
         label, _, params = result["next"].partition(" with ")
         assert label == "For the full source, call loom_code_read"
         assert json.loads(params) == {
