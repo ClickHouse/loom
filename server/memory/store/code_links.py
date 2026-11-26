@@ -10,10 +10,13 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, TypedDict, cast, get_origin, get_type_hints
 
-from server.core.ch_params import chunks
+from server.core.ch_params import chunks, fitting
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, QueuePosition
+from server.memory.domain.temporal_sql import served_status_sql
+from server.memory.store.sql import FILE_LISTING_VISIBLE
+from server.settings import settings
 
 TABLE = "loom.memory_code_links"
 
@@ -324,6 +327,77 @@ async def in_code_namespace(
     return await _for_code(ch or _default_client(), org, [code_namespace], {})
 
 
+async def _path_hint_rows(sql: str, params: dict[str, Any], until: float) -> list[dict[str, Any]]:
+    remaining = until - time.monotonic()
+    if remaining <= 0:
+        return []
+    limit = settings.code_result_path_hint_rows
+    rows = await _default_client().query_all(
+        sql,
+        params | {"lim": limit + 1},
+        settings={
+            "max_execution_time": remaining,
+            "timeout_before_checking_execution_speed": 0,
+            "timeout_overflow_mode": "throw",
+        },
+    )
+    return rows if len(rows) <= limit else []
+
+
+async def path_hint_links(
+    org: str,
+    namespaces: Sequence[str],
+    trunk: str,
+    revisions: list[tuple[str, str]],
+    *,
+    until: float,
+) -> list[dict[str, Any]]:
+    """Current-revision link metadata for the files in one source response."""
+    if not revisions or fitting(revisions) != revisions:
+        return []
+    return await _path_hint_rows(
+        f"""
+        SELECT path, qualified_name, namespace, toString(memory_id) AS mid, inputs_hash,
+               checked_commit, start_line, end_line
+        {_LIVE} AND org = {{org:String}} AND code_namespace = {{trunk:String}}
+          AND path IN {{paths:Array(String)}}
+          AND (path, checked_commit) IN {{revisions:Array(Tuple(String, String))}}
+          AND namespace IN {{nss:Array(String)}}
+          AND complete AND qualified_name != '' AND state IN ('fresh', 'moved')
+        LIMIT {{lim:UInt32}}
+        """,
+        {
+            "org": org,
+            "trunk": trunk,
+            "paths": [path for path, _ in revisions],
+            "revisions": revisions,
+            "nss": list(namespaces),
+        },
+        until,
+    )
+
+
+async def path_hint_heads(
+    org: str, candidates: list[tuple[str, str]], *, until: float
+) -> list[dict[str, Any]]:
+    """Eligible memory heads for the hint, without reading their values."""
+    if not candidates or fitting(candidates) != candidates:
+        return []
+    return await _path_hint_rows(
+        f"""
+        SELECT namespace, user_id, toString(memory_id) AS mid,
+               toString(content_sha256) AS sha, tags, files
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
+          AND (namespace, memory_id) IN {{candidates:Array(Tuple(String, UUID))}}
+          AND ({FILE_LISTING_VISIBLE}) AND {served_status_sql()}
+        LIMIT {{lim:UInt32}}
+        """,
+        {"org": org, "nss": sorted({ns for ns, _ in candidates}), "candidates": candidates},
+        until,
+    )
+
+
 async def for_commits(
     org: str, code_namespaces: Sequence[str], commits: Sequence[str], *, ch: _CHClient | None = None
 ) -> list[LinkRow]:
@@ -336,6 +410,10 @@ def _key(r: LinkRow) -> tuple[str, ...]:
     """The table's sort key of link `r`."""
     row = cast(Mapping[str, str], r)
     return tuple(row[c] for c in _KEY_COLUMNS)
+
+
+# Columns a read narrows by a bloom filter alone: none is in the sort key.
+_OFF_KEY = frozenset({"former_paths", "anchored_path"})
 
 
 async def _for_code(
@@ -361,7 +439,14 @@ async def _for_code(
             params[column] = list(values)
             if column in ("path", "former_paths", "anchored_path", "checked_commit"):
                 long = column
-    sql = f"SELECT * {_LIVE} AND {' AND '.join(where)}"
+    filters = " AND ".join(where)
+    sql = f"SELECT * {_LIVE} AND {filters}"
+    if _OFF_KEY.intersection(narrow):
+        # Under FINAL, ClickHouse widens a skip index's granules to every granule of
+        # every part whose sort-key range overlaps them, most of the table here. The
+        # keys of every version that matches come from the index alone, then FINAL
+        # reads only those keys and judges each by its newest version.
+        sql += f" AND ({_KEY}) IN (SELECT {_KEY} FROM {TABLE} WHERE {filters})"
     return _links(
         await query_all_sliced(ch, sql, params, long) if long else await ch.query_all(sql, params)
     )
@@ -636,6 +721,40 @@ async def memory_heads(
         _HEADS + "WHERE org = {org:String} AND memory_id IN {ids:Array(UUID)}",
         {"org": org, "ids": sorted(set(memory_ids))},
         "ids",
+    )
+
+
+# A memory as a link names it: its identity without the org, then its memory_id.
+LinkedMemory = tuple[str, str, str, str, str, str]
+
+
+def linked_memory(a: LinkRow) -> LinkedMemory:
+    """The memory link `a` was made from, as `heads_by_identity` reads it."""
+    return (
+        a["namespace"],
+        a["agent"],
+        a["user_id"],
+        a["session_id"],
+        a["memory_key"],
+        a["memory_id"],
+    )
+
+
+async def heads_by_identity(
+    org: str, memories: Sequence[LinkedMemory], *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The head rows of these memories, each named by its identity without the org and
+    then its memory_id, as `memory_heads` returns them: read by the identity, the
+    table's sort key, and kept only while it still holds that memory_id."""
+    if not memories:
+        return []
+    return await query_all_sliced(
+        ch or _default_client(),
+        _HEADS + "WHERE org = {org:String} "
+        "AND (namespace, agent, user_id, session_id, memory_key, memory_id) "
+        "IN {memories:Array(Tuple(String, String, String, String, String, UUID))}",
+        {"org": org, "memories": sorted(set(memories))},
+        "memories",
     )
 
 

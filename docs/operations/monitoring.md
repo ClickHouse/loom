@@ -475,7 +475,8 @@ The hook transport declares hook origin even without a prompt ID. Known hook
 entrypoints also identify detached requests without borrowing another turn's
 identity. Optional supplied IDs never change stored session scope, tenant
 identity, authorization, or capture consent. Raw prompts, results and
-credentials are not trace metadata.
+credentials are not trace metadata. The supplied conversation ID is
+correlation metadata, not the resolved session used to group traces.
 
 Call observations cover HTTP operation refusals and MCP catalog, protocol,
 and authorization-screening outcomes after the HTTP bearer gate. Invalid
@@ -484,8 +485,9 @@ refusals can precede MCP call observations. Private-work diagnostics are
 suppressed by the existing export boundary. Trace sampling and span filters
 still apply, so missing observations do not prove zero calls.
 
-Count only observations marked `loom.call.root`, excluding HTTP envelopes,
-batch entries and nested stages. Received retries have distinct attempt IDs.
+Count only observations marked `loom.call.root`, including tool calls inside
+a batch. Do not count wrappers such as `mcp.batch.entry`, HTTP envelopes, or
+nested stages. Received retries have distinct attempt IDs.
 A host tool-call ID can correlate several separate Loom requests from hook
 fanout. Grouping attempts requires a caller guarantee that the supplied ID
 identifies one logical Loom request within the caller's scope and remains
@@ -495,8 +497,11 @@ grouping or an answer-quality gain.
 
 Sum call durations for accumulated call time. Concurrent requests overlap,
 so this sum differs from elapsed wall time. A host prompt lifecycle is not
-required for Loom invocation tracing. Valid supplied parent context can link
-Loom calls to an external trace; absent context leaves an independent request.
+required for Loom invocation tracing. Each invocation starts a separate trace
+because erasure deletes whole traces. Valid supplied context adds an
+OpenTelemetry span link, not a parent; Langfuse keeps the supplied trace ID
+as `loom_parent_trace_id` metadata rather than a span link. Without supplied
+context, a link can point to the enclosing transport span instead.
 Sum actual generation and embedding usage once on those observations, without
 copying cost to the call parent. Missing usage or price stays unknown. Loom
 provider usage is separate from external agent-host billing. Output length is

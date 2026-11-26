@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/index.md blob=8be60892b839f6ffb2e7ba732e3f70bad9178f68 model=claude-sonnet-5-5 -->
+<!-- i18n: source=docs/index.md blob=173314858f057f518abf314eb98af3afff03c87b model=claude-sonnet-5-5 -->
 > 本页由机器从[英文原文](https://github.com/ClickHouse/loom/blob/main/docs/index.md)翻译，内容以英文原文为准。
 > Machine-translated from the [English page](https://github.com/ClickHouse/loom/blob/main/docs/index.md), which is authoritative.
 
@@ -211,4 +211,4 @@ Loom 是面向 AI agent 的记忆、文档和代码索引服务器，数据存�
 
 ## 另请参阅
 
-[术语表](https://github.com/ClickHouse/loom/blob/main/docs/glossary.md)：Loom 的术语，每个只定义一次。[常见问题](faq.md)：最先会遇到的问题，每个问题一段回答。[`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt)：为 agent 生成的文档索引；[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt) 将说明 Loom 是什么以及如何开始使用的页面合并在一个文件中。
+[术语表](https://github.com/ClickHouse/loom/blob/main/docs/glossary.md)：Loom 的术语，每个只定义一次。[常见问题](faq.md)：最先会遇到的问题，每个问题一段回答。[`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt)：为 agent 生成的文档索引；[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt) 将说明 Loom 是什么以及如何开始使用的页面合并在一个文件中。

@@ -13,15 +13,18 @@ import os
 import re
 import uuid
 from collections.abc import AsyncIterator
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from functools import partial
 from typing import Any
 
 import pytest
 
+from server import __version__
 from server.core.ch import CHClient, get_client
 from server.core.paths import REPO_ROOT
 from server.insights.app.analytics_export import name_hash_key
+from server.insights.store.adoption_telemetry import window_report
 from server.insights.store.analytics_export import (
     ENTITIES,
     NAME_COLUMNS,
@@ -103,8 +106,12 @@ def _event(org: str, ts: str, **kw: Any) -> dict[str, Any]:
         "transport": "http",
         "status_class": "ok",
         "slo_class": "write",
+        "traffic_class": "",
         "budget_ms": 100,
         "input_tokens": 0,
+        "output_tokens": 0,
+        "embedding_tokens": 0,
+        "llm_calls": 0,
         "upstream_cost_usd": Decimal(0),
     }
     return {**row, **kw}
@@ -193,6 +200,117 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
         assert by_op[("memory.get", "request")]["ops"] == 1
     shipped = {r["operation"] for r in await _file_rows(ch, "usage")}
     assert "me" in shipped and not [op for op in shipped if op.startswith("me.")]
+
+
+async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> None:
+    start = datetime(2001, 10, 9, tzinfo=UTC)
+    end = start + timedelta(hours=12)
+    day = start.date()
+    org = unique_org("adoption")
+    stamp = f"{day} 06:00:00"
+    event = partial(_event, org, namespace="duplicate-one")
+    await ch.insert(
+        "loom.agent_events",
+        [
+            event(stamp, llm_calls=1, input_tokens=7, output_tokens=3, embedding_tokens=5),
+            event(stamp, operation="code.ask", transport="mcp", agent="b"),
+            event(stamp, success=False, status_class="server"),
+            event(stamp, traffic_class="bench"),
+            event(stamp, traffic_class="background"),
+            _event(org, stamp, kind="worker"),
+            _event(org, stamp, slo_class=""),
+            event(f"{day} 00:00:00", traffic_class="production", operation="knowledge.get"),
+            _event(org, "2001-10-08 23:59:59.999"),
+            _event(org, f"{day} 12:00:00"),
+        ],
+    )
+    await ch.insert(
+        "loom.agent_events_private",
+        [_event(org, stamp, namespace="acl-" + "a" * 24, mirror_marked=1, input_tokens=100)],
+    )
+    installation_id = uuid.uuid4()
+    domain = f"{org}.example.test"
+    idn = f"{org}.xn--p1ai"
+    namespace = {
+        "org": org,
+        "owner_email": f"account@{domain}",
+        "contact_email": f"account@{domain}",
+        "tags": ["oidc-jit"],
+        "classification": "standard",
+        "password_hash": "",
+    }
+    await ch.insert(
+        "loom.namespaces",
+        [
+            {**namespace, "namespace": "duplicate-one"},
+            {**namespace, "namespace": "duplicate-two"},
+            {**namespace, "namespace": "second", "contact_email": f"second@{domain}"},
+            {**namespace, "namespace": "idn", "contact_email": f"second@{idn}"},
+            {
+                **namespace,
+                "namespace": "configured-restricted",
+                "contact_email": f"excluded@{domain}",
+            },
+            {
+                **namespace,
+                "namespace": "unverified",
+                "contact_email": f"other@{domain}",
+                "password_hash": "password",
+            },
+            {
+                **namespace,
+                "namespace": "restricted",
+                "contact_email": f"hidden@{domain}",
+                "classification": "restricted",
+            },
+        ],
+    )
+    report = await window_report(
+        start, end, installation_id, restricted={(org, "configured-restricted")}, ch=ch
+    )
+    domains = report.pop("user_domains")
+    assert {"domain": domain, "user_count": 2, "successful_requests": 3} in domains
+    assert {"domain": idn, "user_count": 1, "successful_requests": 0} in domains
+    assert report.pop("total_namespaces") >= 5
+    version = await ch.query_one("SELECT version() AS version")
+    assert version is not None
+    assert report == {
+        "schema_version": 1,
+        "installation_id": str(installation_id),
+        "day": day.isoformat(),
+        "window_start": start.isoformat(),
+        "window_end": end.isoformat(),
+        "loom_version": __version__,
+        "clickhouse_version": version["version"],
+        "requests": 4,
+        "successful_requests": 3,
+        "server_errors": 1,
+        "active_orgs": 1,
+        "active_namespaces": 1,
+        "active_agents": 2,
+        "active_sessions": 1,
+        "memory_requests": 1,
+        "code_requests": 1,
+        "knowledge_requests": 1,
+        "conversation_requests": 0,
+        "tracker_requests": 0,
+        "task_requests": 0,
+        "mcp_requests": 1,
+        "http_requests": 2,
+        "llm_calls": 1,
+        "input_tokens": 7,
+        "output_tokens": 3,
+        "embedding_tokens": 5,
+    }
+    idle = await window_report(
+        end + timedelta(days=2),
+        end + timedelta(days=2, hours=12),
+        installation_id,
+        restricted=None,
+        ch=ch,
+    )
+    assert idle["requests"] == 0
+    assert idle["user_domains"] == []
 
 
 async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient) -> None:

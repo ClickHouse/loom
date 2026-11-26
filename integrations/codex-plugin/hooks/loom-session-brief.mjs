@@ -35,7 +35,14 @@ import { readRecording } from "../lib/recording.mjs";
 import { readCursor, sessionStatePath, writeCursor } from "../lib/tmp-state.mjs";
 import { completeLines, fileSize, parseLines, readLinesFrom, readRange } from "../lib/transcript.mjs";
 import { readJournal } from "../lib/turn-journal.mjs";
-import { briefBody, briefEnabled, journalEvents, transcriptEvents, worthSaving } from "../lib/session-brief.mjs";
+import {
+  briefBody,
+  briefCheckout,
+  briefEnabled,
+  journalEvents,
+  transcriptEvents,
+  worthSaving,
+} from "../lib/session-brief.mjs";
 
 const TRIGGERS = { PreCompact: "precompact", SessionEnd: "session_end", Stop: "stop" };
 // A revision is up to four model calls server-side; the flusher waits for it.
@@ -108,10 +115,12 @@ async function main() {
     writeCursor(cp, next);
     return scheduleExit(0);
   }
+  const head = git(["rev-parse", "--verify", "HEAD"], cwd);
   const body = briefBody(scope, {
     sessionId,
     branch: git(["rev-parse", "--abbrev-ref", "HEAD"], cwd),
-    head: git(["rev-parse", "HEAD"], cwd),
+    head,
+    checkout: briefCheckout(cwd, head),
     trigger: TRIGGERS[event] || "manual",
     events,
     cursor: next,

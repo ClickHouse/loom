@@ -1,5 +1,4 @@
-"""Budget-adaptive granularity: cards floor, escalation pointers, and the
-route-aware default. Whole-file expansion is unit-tested at the helper."""
+"""Budget-adaptive granularity: cards, escalation pointers and whole-file expansion."""
 
 from __future__ import annotations
 

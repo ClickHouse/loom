@@ -38,7 +38,7 @@ def metadata(prompt="prompt-a"):
     }
 
 
-def test_mcp_restores_explicit_parent_and_stamps_provider_children(spans):
+def test_mcp_links_supplied_context_and_stamps_provider_children(spans):
     meta = {
         "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
         "loom": metadata(),
@@ -52,15 +52,46 @@ def test_mcp_restores_explicit_parent_and_stamps_provider_children(spans):
             genai.stamp_identity(child)
         prompt_context.outcome(call, {"result": {"isError": False}})
     child, root = spans.get_finished_spans()
-    assert root.context.trace_id == int("1" * 32, 16)
-    assert root.parent.span_id == int("2" * 16, 16)
+    assert root.parent is None
+    assert root.context.trace_id != int("1" * 32, 16)
+    assert len(root.links) == 1
+    assert root.links[0].context.trace_id == int("1" * 32, 16)
+    assert root.links[0].context.span_id == int("2" * 16, 16)
+    assert root.attributes["langfuse.trace.metadata.loom_parent_trace_id"] == "1" * 32
     assert child.parent.span_id == root.context.span_id
+    assert child.context.trace_id == root.context.trace_id
     assert child.attributes["loom.prompt.prompt_id"] == "prompt-a"
-    assert child.attributes["langfuse.session.id"] == "conversation"
+    assert child.attributes["loom.prompt.conversation_id"] == "conversation"
+    assert child.attributes["langfuse.session.id"] == "stored-session"
     assert child.attributes["loom.org"] == "org"
+    assert root.attributes["langfuse.session.id"] == "stored-session"
     assert root.attributes["loom.call.root"] is True
     assert root.attributes["loom.call.success"] is True
     assert not any(key.startswith("gen_ai.usage") for key in root.attributes)
+
+
+@pytest.mark.parametrize("transport", ["http", "mcp"])
+def test_call_traces_do_not_share_the_transport_trace(spans, transport):
+    with trace.get_tracer("test").start_as_current_span("request-envelope") as envelope:
+        envelope_context = envelope.get_span_context()
+        for namespace in ("first", "second"):
+            invocation = (
+                prompt_context.http_call({}, "memory.get")
+                if transport == "http"
+                else prompt_context.mcp_call({})
+            )
+            with invocation as call:
+                genai.set_identity(org="org", namespace=namespace, operation="memory.get")
+                genai.stamp_identity(call)
+
+    first, second, envelope_span = spans.get_finished_spans()
+    assert first.context.trace_id != second.context.trace_id
+    for call, namespace in ((first, "first"), (second, "second")):
+        assert call.parent is None
+        assert call.context.trace_id != envelope_span.context.trace_id
+        assert [link.context for link in call.links] == [envelope_context]
+        assert "langfuse.trace.metadata.loom_parent_trace_id" not in call.attributes
+        assert call.attributes["loom.namespace"] == namespace
 
 
 def test_errors_and_retries_have_one_span_per_attempt(spans):
@@ -106,6 +137,7 @@ async def test_concurrent_turns_and_unattributed_call_do_not_share_context(spans
     assert by_name["a"].attributes["loom.prompt.prompt_id"] == "a"
     assert by_name["b"].attributes["loom.prompt.prompt_id"] == "b"
     assert "loom.prompt.prompt_id" not in by_name["mcp.tool"].attributes
+    assert "langfuse.trace.metadata.loom_parent_trace_id" not in by_name["mcp.tool"].attributes
 
 
 def test_optional_ids_are_independent_and_reject_content():
@@ -458,6 +490,39 @@ def test_invocation_catalog_and_unknown_tool_each_have_one_received_attempt(monk
     assert roots[1].attributes["loom.call.outcome"] == "refusal"
 
 
+def test_public_mcp_refuses_unsupported_protocol_before_routing_catalog(monkeypatch, spans):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.settings import settings
+    from server.transport import mcp
+    from server.transport.mcp_config import META_PROTOCOL_VERSION, UNSUPPORTED_PROTOCOL_VERSION
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    app = FastAPI()
+    mcp.attach(app)
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "loom_op",
+                    "arguments": {"op": "help"},
+                    "_meta": {META_PROTOCOL_VERSION: "9999-01-01"},
+                },
+            },
+        )
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == UNSUPPORTED_PROTOCOL_VERSION
+    roots = [span for span in spans.get_finished_spans() if span.attributes.get("loom.call.root")]
+    assert len(roots) == 1
+    assert roots[0].attributes["loom.operation"] == "loom_op.help"
+    assert roots[0].attributes["loom.call.outcome"] == "refusal"
+
+
 def test_invocation_worker_origin_is_scoped_without_counting_a_received_call(spans):
     from server.observability import otel
 
@@ -662,6 +727,7 @@ def test_review_authenticated_early_refusal_uses_token_identity(
     monkeypatch.setattr(jwt, "authenticate_token", bearer.authenticate_token)
     headers = {"Authorization": "Bearer alice", "X-Loom-Tool-Call-Id": "logical-refusal"}
     if transport == "http":
+        headers["X-Request-Id"] = "early-refusal"
         result = http_client.post(
             "/v1/memory.unlock", json={"org": "forged", "namespace": "forged"}, headers=headers
         )
@@ -693,6 +759,8 @@ def test_review_authenticated_early_refusal_uses_token_identity(
     assert "forged" not in str(attributes)
     assert attributes["loom.prompt.tool_call_id"] == "logical-refusal"
     assert attributes["loom.call.outcome"] == "refusal"
+    if transport == "http":
+        assert result.headers["X-Request-Id"] == attributes["loom.request_id"] == "early-refusal"
 
 
 def test_review_authenticated_http_replay_retains_identity(client, spans):

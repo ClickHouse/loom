@@ -85,6 +85,81 @@ def test_lines_scope_and_window_dedupe() -> None:
     assert out.coverage_floor is True
 
 
+def test_literal_call_prefix_adds_other_uses_without_widening_matches() -> None:
+    path = "src/worker.py"
+    exact = {
+        "path": path,
+        "scope": "consume",
+        "start_line": 1,
+        "end_line": 2,
+        "content": "def consume():\n    return process(job.value, 0)\n",
+        "indexed_commit": "a" * 40,
+    }
+    other = {
+        **exact,
+        "scope": "keep",
+        "start_line": 6,
+        "end_line": 9,
+        "content": "def keep():\n    # Keep job.value.\n    seen = job.values\n    return job.value\n",
+    }
+    window = {
+        **exact,
+        "start_line": 3,
+        "end_line": 4,
+        "content": "    return job.value\n\n",
+    }
+    stale = {
+        **other,
+        "path": "src/stale.py",
+        "start_line": 11,
+        "end_line": 14,
+        "indexed_commit": "b" * 40,
+    }
+
+    async def literal_chunks(repo, _org, _ns, pattern, **_kwargs):
+        return [chunk for chunk in repo._chunks if pattern in chunk["content"]]
+
+    with patch.object(_FakeRepo, "grep_chunks", new=literal_chunks):
+        out = _run(
+            [exact, window, other, stale, {**other, "path": stale["path"]}],
+            pattern="process(job.value",
+            related_on_prefix=True,
+            include_body=False,
+            context_lines=0,
+        )
+    assert [hit["line"] for hit in out.matches] == [2]
+    assert out.related is not None and out.related.pattern == "job.value"
+    assert [hit["line"] for hit in out.related.matches] == [7, 9]
+    assert out.partial and "revision" in out.partial_reason
+    assert out.related.truncated
+    assert not out.related.contexts
+    assert not out.next_cursor
+
+
+def test_failed_call_prefix_excerpts_preserve_exact_grep() -> None:
+    from server.core.errors import BackendUnavailableError
+
+    chunk = {
+        "path": "src/worker.py",
+        "scope": "consume",
+        "start_line": 1,
+        "end_line": 2,
+        "content": "def consume():\n    return process(job.value, 0)\n",
+        "indexed_commit": "a" * 40,
+    }
+
+    async def literal_chunks(_repo, _org, _ns, pattern, **_kwargs):
+        if pattern == "job.value":
+            raise BackendUnavailableError("read unavailable")
+        return [chunk]
+
+    with patch.object(_FakeRepo, "grep_chunks", new=literal_chunks):
+        out = _run([chunk], pattern="process(job.value", related_on_prefix=True, include_body=False)
+    assert [hit["line"] for hit in out.matches] == [2]
+    assert out.related is None
+    assert out.partial and out.partial_reason == "related call prefix scan failed"
+
+
 def test_unmapped_skeleton_is_disclosed_without_a_guessed_line() -> None:
     chunks = [
         {
@@ -231,6 +306,37 @@ def test_case_insensitive_and_regex() -> None:
     assert _run([chunk], pattern=r"Magic\w+", regex=True).matches
     with pytest.raises(ValidationError):
         _run([chunk], pattern="[unclosed", regex=True)
+
+
+def test_literal_alternatives_match_punctuation_and_deduplicate_lines() -> None:
+    chunk = {
+        "path": "app.py",
+        "scope": "",
+        "start_line": 1,
+        "end_line": 5,
+        "content": (
+            "REVERSED(item.parts)\nchain(names, item.parts)\nchain(other)\n'pair|value'\nCAFÉ\n"
+        ),
+    }
+    out = _run(
+        [chunk],
+        pattern=["reversed(", "item.parts", "chain(names", "pair|value", "café"],
+        case_sensitive=False,
+    )
+    assert [hit["line"] for hit in out.matches] == [1, 2, 4]
+    assert out.note == ""
+
+
+def test_literal_alternatives_without_hits_remain_literal() -> None:
+    out = _run([], pattern=["missing(", "left|right"])
+    assert out.matches == []
+    assert "pattern list" in out.note and "code.search" in out.note
+
+
+@pytest.mark.parametrize("fields", [{"regex": True}, {"mode": "message"}])
+def test_a_list_requires_literal_text_mode(fields: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError, match="require one pattern string"):
+        _run([], pattern=["reversed(", "chain(names"], **fields)
 
 
 def test_limit_marks_truncated() -> None:

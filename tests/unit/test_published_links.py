@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CLAUDE = ROOT / "integrations" / "claude-code-plugin"
 CODEX = ROOT / "integrations" / "codex-plugin"
 
-SITE = "https://clickhouse.github.io/loom/"
+SITE = "https://loom.clickhouse.com/docs/"
 
 
 def _site_anchors(page: Path) -> set[str]:

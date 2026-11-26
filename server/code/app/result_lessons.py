@@ -7,8 +7,10 @@ no memory call of its own. The read is bounded (`code_enrich_timeout_s`, as code
 lessons are); a slow or failed file leaves completed files' lessons intact. A token
 narrowed below its namespaces reads none (the memory rows are not filtered by user),
 as code.symbol's lessons do.
-`include_lessons: false` or `code_result_lessons` off skips the read. These are
-file-level; code.symbol's own `lessons` are the memories linked to the one symbol."""
+`include_lessons: false` or `code_result_lessons` off skips the read. Search and
+grep can focus a file's lessons on returned definitions, and code.read on returned
+source windows. `code.symbol` reads the
+lessons linked to the requested symbol itself."""
 
 from __future__ import annotations
 
@@ -18,11 +20,16 @@ import time
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
-from server.code.api.models_search import CodeSearchInput
+from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput, GrepDependency
+from server.code.api.models_navigation import CodeEnclosingInput
+from server.code.api.models_read import CodeReadInput, CodeReadOutput
+from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import common, enrich, memory_links
 from server.code.app.search_legs import resolve_deadline_ms
-from server.code.app.spans import code_span
+from server.code.app.spans import code_span, span_attrs
 from server.code.domain import deadline as code_deadline
+from server.code.domain.anchor import local_name
+from server.core.ch import caller_shaped
 from server.identity.app import request_scope
 from server.memory.app import code_plane_reads, path_lessons
 from server.settings import settings
@@ -32,11 +39,35 @@ PathsOf = Callable[[Any, Any], Iterable[str]]
 logger = logging.getLogger(__name__)
 
 
-def _top_paths(paths: Iterable[str]) -> list[str]:
-    """The answer's first distinct files, in its order, as many as the setting reads,
-    spelled as the index stores them (code.impact passes the caller's `files` as given)."""
-    distinct = dict.fromkeys(filter(None, map(common.repo_relative, paths)))
-    return list(distinct)[: settings.code_result_lessons_paths]
+def _result_paths(paths: Iterable[str]) -> list[str]:
+    """Distinct result paths in order, spelled as the index stores them."""
+    return list(dict.fromkeys(filter(None, map(common.repo_relative, paths))))
+
+
+async def _scoped_lesson_paths(
+    org: str,
+    namespaces: list[str],
+    trunk: str,
+    paths: list[str],
+    symbols: dict[str, set[str]],
+    source: path_lessons.SourceSpans,
+    remaining: float,
+) -> list[str]:
+    limit = settings.code_result_lessons_paths
+    if not trunk or not namespaces or not any(path in symbols for path in paths[limit:]):
+        return paths[:limit]
+    # Keep most of the shared deadline for reading the actual lessons.
+    timeout_s = remaining / 3
+    with code_span("enrich.lesson_paths", seeds=len(paths)) as sp, caller_shaped():
+        linked = await enrich.bounded(
+            path_lessons.paths_with_matched_links(
+                org, namespaces, trunk, paths, symbols, source, timeout_s=timeout_s
+            ),
+            set(),
+            seconds=timeout_s,
+        )
+        span_attrs(sp, results=len(linked))
+    return sorted(paths, key=lambda path: path not in linked)[:limit]
 
 
 def _searched_namespace(input: Any) -> str:
@@ -48,32 +79,44 @@ def _searched_namespace(input: Any) -> str:
 
 def _bound_s(input: Any, started: float) -> float:
     """Seconds the read may take: `code_enrich_timeout_s`, and no more than what is left
-    of code.search's own `deadline_ms`, read as the search reads it."""
+    of the operation's own `deadline_ms`."""
     bound = settings.code_enrich_timeout_s
-    if isinstance(input, CodeSearchInput):  # the one wrapped op with a deadline
+    if isinstance(input, CodeSearchInput):
         budget = code_deadline.start(resolve_deadline_ms(input.deadline_ms), started=started)
+        if budget is not None:
+            bound = min(bound, budget.left_ms() / 1000)
+    elif isinstance(input, CodeGrepInput):
+        budget = code_deadline.start(input.deadline_ms, started=started)
         if budget is not None:
             bound = min(bound, budget.left_ms() / 1000)
     return bound
 
 
-async def lessons_for(input: Any, paths: Iterable[str], started: float) -> path_lessons.Lessons:
+async def lessons_for(
+    input: Any,
+    paths: Iterable[str],
+    started: float,
+    *,
+    query: str = "",
+    matched_symbols: dict[str, set[str]] | None = None,
+    source: path_lessons.SourceSpans | None = None,
+) -> path_lessons.Lessons:
     """The completed lessons for the answer's top `paths`; none when off, narrowed,
     past the call's deadline, or unable to read the scope. `started` is the call's
     monotonic start."""
-    top = _top_paths(paths)
-    if not (input.include_lessons and settings.code_result_lessons and top):
+    offered_paths = _result_paths(paths)
+    if not (input.include_lessons and settings.code_result_lessons and offered_paths):
         return path_lessons.Lessons([])
     if request_scope.request_narrowed():
         return path_lessons.Lessons([])  # a token that may not read every user's memories
 
-    async def scope() -> tuple[str, list[str], str]:
+    async def scope() -> tuple[str, list[str], str, bool]:
         org, ns = common.resolve_code_identity(input.org, _searched_namespace(input))
         trunk = memory_links.trunk_namespace(org, ns) or ns
         nss = await code_plane_reads.lesson_namespaces(org, ns, input.lesson_namespaces)
         # another repository's code namespace would bring its links to a same-named file
         nss = [n for n in nss if memory_links.trunk_namespace(org, n) in ("", trunk)]
-        return org, nss, trunk if trunk in nss else ""
+        return org, nss, trunk if trunk in nss else "", ns == trunk
 
     bound = _bound_s(input, started)
     if bound <= 0:
@@ -84,7 +127,19 @@ async def lessons_for(input: Any, paths: Iterable[str], started: float) -> path_
         remaining = bound - (time.monotonic() - read_started)
         if resolved is None or remaining <= 0:
             return path_lessons.Lessons([])
-        org, nss, trunk = resolved
+        org, nss, trunk, on_trunk = resolved
+        top = offered_paths[: settings.code_result_lessons_paths]
+        if on_trunk and source is not None and matched_symbols:
+            top = await _scoped_lesson_paths(
+                org, nss, trunk, offered_paths, matched_symbols, source, remaining
+            )
+            remaining = bound - (time.monotonic() - read_started)
+            if remaining <= 0:
+                return path_lessons.Lessons([])
+        if isinstance(input, CodeSearchInput):
+            query = input.query
+        elif isinstance(input, CodeGrepInput):
+            query = " ".join(input.pattern) if isinstance(input.pattern, list) else input.pattern
         try:
             return await path_lessons.lessons_for_paths(
                 org,
@@ -93,6 +148,9 @@ async def lessons_for(input: Any, paths: Iterable[str], started: float) -> path_
                 top,
                 token_budget=settings.code_result_lessons_tokens,
                 timeout_s=remaining,
+                matched_symbols=matched_symbols if on_trunk else None,
+                source=source,
+                query=query,
             )
         except Exception as e:  # noqa: BLE001 — lesson enrichment must not fail the code answer
             logger.debug("code lessons skipped: %s", e)
@@ -111,12 +169,112 @@ class WithLessons:
     async def __call__(self, input: Any) -> Any:
         started = time.monotonic()
         out = await self.handler(input)
-        found = await lessons_for(input, self.paths_of(input, out), started)
+        query = _enclosing_query(out) if isinstance(input, CodeEnclosingInput) else ""
+        symbols = None
+        source = None
+        if isinstance(input, CodeGrepInput) and input.mode == "matches":
+            dependencies = out.related.dependencies if out.related is not None else ()
+            symbols, source = _grep_match_scopes(
+                _grep_matches(out), out._match_commits, dependencies
+            )
+        elif isinstance(input, CodeReadInput):
+            symbols, source = _read_match_scopes(out)
+        elif isinstance(input, CodeSearchInput):
+            symbols = _search_match_symbols(out)
+        found = await lessons_for(
+            input,
+            self.paths_of(input, out),
+            started,
+            query=query,
+            matched_symbols=symbols,
+            source=source,
+        )
         out.lessons, out.lessons_left_out = found.rows, found.left_out
         return out
 
 
+def _grep_match_scopes(
+    matches: Iterable[dict[str, Any]],
+    commits: dict[tuple[str, int], str],
+    dependencies: Iterable[GrepDependency],
+) -> tuple[dict[str, set[str]], path_lessons.SourceSpans]:
+    """Retain the scopes and revisions of hits and their verified dependencies."""
+    symbols: dict[str, set[str]] = {}
+    lines: dict[str, set[int]] = {}
+    revisions: dict[str, set[str]] = {}
+    for row in matches:
+        path = str(row.get("path") or "")
+        if not path:
+            continue
+        line = int(row.get("line") or 0)
+        revisions.setdefault(path, set()).add(commits.get((path, line), ""))
+        scope = local_name(str(row.get("scope") or ""), path) if row.get("scope_start_line") else ""
+        if scope:
+            symbols.setdefault(path, set()).add(scope)
+        else:
+            lines.setdefault(path, set()).add(line)
+    for dependency in dependencies:
+        if dependency._indexed_commit:
+            scope = local_name(dependency.qualified_name, dependency.path)
+            symbols.setdefault(dependency.path, set()).add(scope)
+            revisions.setdefault(dependency.path, set()).add(dependency._indexed_commit)
+    return symbols, path_lessons.SourceSpans(lines, revisions)
+
+
+def _read_match_scopes(out: CodeReadOutput) -> tuple[dict[str, set[str]], path_lessons.SourceSpans]:
+    revisions: dict[str, set[str]] = {}
+    windows: dict[str, list[tuple[int, int]]] = {}
+    for result in out.results:
+        if result.windows:
+            revisions.setdefault(result.path, set()).add(result.indexed_commit)
+            windows.setdefault(result.path, []).extend(
+                (window.start_line, window.end_line) for window in result.windows
+            )
+    return {path: set() for path in windows}, path_lessons.SourceSpans({}, revisions, windows)
+
+
+def _search_match_symbols(out: CodeSearchOutput) -> dict[str, set[str]]:
+    """File-level hits grant wider scope than the same answer's named units."""
+    return _symbols_by_path(
+        (
+            unit.path,
+            unit.symbol
+            if unit.start_line > 0
+            and unit.symbol != unit.path
+            and unit.kind in ("function", "symbol", "class_skeleton")
+            and unit.granularity != "file"
+            else "",
+        )
+        for unit in out.results
+    )
+
+
+def _symbols_by_path(rows: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
+    symbols: dict[str, set[str]] = {}
+    for path, scope in rows:
+        symbols.setdefault(path, set()).add(local_name(scope, path) if scope else "")
+    return {path: names for path, names in symbols.items() if path and "" not in names}
+
+
 # The files each code answer returns, best first.
+
+
+def read_paths(_input: CodeReadInput, out: CodeReadOutput) -> list[str]:
+    return [result.path for result in out.results if result.windows]
+
+
+def _grep_matches(out: CodeGrepOutput) -> list[dict[str, Any]]:
+    return [*out.matches, *out.related.matches] if out.related is not None else out.matches
+
+
+def grep_paths(input: CodeGrepInput, out: CodeGrepOutput) -> list[str]:
+    if input.mode == "presence" or out.not_covered:
+        return []
+    rows = out.files if input.mode == "files" else _grep_matches(out)
+    paths = [str(row.get("path") or "") for row in rows]
+    if input.mode == "matches" and out.related is not None:
+        paths.extend(d.path for d in out.related.dependencies if d._indexed_commit)
+    return paths
 
 
 def search_paths(input: Any, out: Any) -> list[str]:
@@ -141,6 +299,22 @@ def impact_paths(_input: Any, out: Any) -> list[str]:
 
 def outline_paths(_input: Any, out: Any) -> list[str]:
     return [out.path]
+
+
+def enclosing_paths(_input: Any, out: Any) -> list[str]:
+    # Unresolved locations are echoed by the handler; they are not indexed evidence.
+    return [str(row.get("path") or "") for row in out.results if row.get("start_line")]
+
+
+def _enclosing_query(out: Any) -> str:
+    # Resolved names distinguish the code being read from other code in the same file.
+    return " ".join(
+        dict.fromkeys(
+            str(row.get("symbol") or row.get("qualified_name") or "")
+            for row in out.results
+            if row.get("start_line")
+        )
+    )
 
 
 def pack_paths(_input: Any, out: Any) -> list[str]:

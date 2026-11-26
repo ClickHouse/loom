@@ -580,7 +580,6 @@ server/transport/action_schema.py::_MAX_DEPTH
 server/transport/arg_feedback.py::_MAX_ERRORS
 server/transport/arg_feedback.py::_MAX_EXAMPLE_CHARS
 server/transport/arg_feedback.py::_MAX_OPTIONAL
-server/transport/code_lean.py::_BODY_MAX_CHARS
 server/transport/mcp_config.py::LIST_TTL_MS
 server/transport/mcp_config.py::PRIMER_TTL_MS
 server/transport/mcp_config.py::_MCP_SESSION_AGENT_CAP

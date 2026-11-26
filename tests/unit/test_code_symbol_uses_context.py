@@ -802,3 +802,12 @@ def test_prefer_scip_edges_folds_the_tiers_differing_spellings() -> None:
         ("scip", "svc/kms/aws.go"),
         ("treesitter", "svc/kms/gcp.go"),
     ]
+
+
+def test_a_compact_uses_block_can_be_withheld_by_an_explicit_token_cap():
+    limited = _run(_FakeRepo(ONE), name="DB::Foo::bar", token_budget=1)
+    assert limited.tokens_returned <= 1
+    assert limited.uses == [] and limited.uses_tokens == 0 and limited.uses_truncated
+    unlimited = _run(_FakeRepo(ONE), name="DB::Foo::bar", token_budget=0)
+    assert isinstance(unlimited.uses, dict) and unlimited.uses_tokens > 1
+    assert unlimited.definitions and all(not unit.elided for unit in unlimited.definitions)

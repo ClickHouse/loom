@@ -88,10 +88,13 @@ async def test_one_complete_chunk_remains_a_complete_definition() -> None:
     assert unit.body == FULL and not unit.elided
 
 
-async def test_a_character_limit_never_silently_cuts_a_definition() -> None:
+async def test_a_large_retained_definition_has_no_implicit_character_limit() -> None:
     text = "def f():\n    return '" + "x" * 12000 + "'\n"
     unit = await _unit(_Repo([_row(text, 10, 11)]), row={**SYM, "end_line": 11})
-    assert unit.body == "" and unit.elided and unit.next
+    assert unit.body == text and not unit.elided
+    mcp = lean_code("code.symbol", {"definitions": [unit.model_dump()]})
+    assert mcp["definitions"][0]["body"] == text
+    assert not mcp["definitions"][0].get("elided")
 
 
 async def test_a_deliberate_pointer_request_reads_no_source() -> None:
@@ -102,8 +105,14 @@ async def test_a_deliberate_pointer_request_reads_no_source() -> None:
 
 @pytest.mark.parametrize(
     ("reader_failed", "budget"),
-    [(False, 2500), (True, 2500), (False, 200)],
-    ids=["missing-skeleton", "failed-reader", "paged-outline"],
+    [(False, 2500), (True, 2500), (False, 200), (False, 0), (True, 0)],
+    ids=[
+        "missing-skeleton",
+        "failed-reader",
+        "paged-outline",
+        "unlimited-outline",
+        "unlimited-failed-reader",
+    ],
 )
 async def test_a_large_container_without_source_discloses_omission_and_keeps_outline(
     reader_failed: bool,
@@ -135,7 +144,7 @@ async def test_a_large_container_without_source_discloses_omission_and_keeps_out
         assert unit.next == "code.outline path=module.py"
     else:
         assert unit.next == "Read module.py offset=10 limit=300"
-    if budget == 2500:
+    if budget in (0, 2500):
         assert len(unit.outline) == (0 if reader_failed else 8)
     wire = lean_code("code.symbol", {"definitions": [unit.model_dump()]})["definitions"][0]
     assert wire["elided"] and wire["next"] == unit.next
@@ -201,3 +210,10 @@ def test_retained_unchanged_pieces_can_have_different_introduction_commits() -> 
         _row("".join(lines[4:]), 14, 18, indexed_commit="b" * 40),
     ]
     assert complete_source_span(rows, 10, 18, max_chars=12000) == FULL
+
+
+async def test_unlimited_large_class_returns_retained_source_instead_of_a_skeleton() -> None:
+    text = "class Large:\n" + "    member = 1\n" * 300
+    symbol = {**SYM, "kind": "class", "start_line": 1, "end_line": 301}
+    unit = await _unit(_Repo([_row(text, 1, 301)]), row=symbol)
+    assert unit.body == text and not unit.elided and unit.granularity == "unit"

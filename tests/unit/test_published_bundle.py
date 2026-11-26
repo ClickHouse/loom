@@ -89,6 +89,6 @@ def test_the_release_never_replaces_a_published_bundle() -> None:
         "github-release"
     ]["steps"]
     keep = next(i for i, s in enumerate(steps) if "published_bundle.sh" in s.get("run", ""))
-    upload = next(i for i, s in enumerate(steps) if "action-gh-release" in s.get("uses", ""))
+    upload = next(i for i, s in enumerate(steps) if s.get("id") == "publish-release")
     assert keep < upload
     assert "rm release/stack/loom-stack.tar.gz" in steps[keep]["run"]

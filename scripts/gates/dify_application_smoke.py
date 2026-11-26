@@ -90,7 +90,7 @@ def birth(pid):
     try:
         fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
         return int(fields[19]), int(fields[2]), int(fields[3])
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
 
 
@@ -180,7 +180,7 @@ def read_session(pid):
             if int(item.name) == pid or identity[2] == pid:
                 try:
                     snapshot[int(item.name)] = (*identity, item.stat().st_uid)
-                except FileNotFoundError:
+                except (FileNotFoundError, ProcessLookupError):
                     pass
     return snapshot
 
@@ -590,7 +590,7 @@ class Runtime:
                                         )
                                         * 1024
                                     )
-                                except (FileNotFoundError, StopIteration):
+                                except (FileNotFoundError, ProcessLookupError, StopIteration):
                                     pass
                     require(rss <= 2 * GIB, "Owned Loom RSS cap crossed")
             except Exception as error:  # noqa: BLE001 — Stop owned work on a failed resource observation.

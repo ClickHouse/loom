@@ -1,3 +1,8 @@
+---
+seo:
+  title: Code intelligence by language
+---
+
 # Code intelligence for C++, Python, TypeScript, Go, Rust, Java and infrastructure code
 
 Loom's code index answers a coding agent's structure questions in the languages a

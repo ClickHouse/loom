@@ -284,6 +284,7 @@ def _hints(seed: _Seed) -> dict[str, Any]:
         "pr_number": 0,
         "line": 5,
         "locations": [f"{seed.path}:5"],
+        "ranges": [f"{seed.path}:5"],
         "frames": [f"{seed.symbol}"],
         "trace": seed.symbol,
         "claims": [],

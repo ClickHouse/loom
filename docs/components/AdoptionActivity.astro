@@ -1,0 +1,114 @@
+---
+import { periodOffset } from "../lib/adoption-view.mjs";
+
+interface Props {
+  rows: {
+    period: string;
+    operations: number;
+    active: number;
+    reporting: number;
+    estimate: number | null;
+    days_reported: number;
+    current: boolean;
+  }[];
+  grain: "day" | "week" | "month";
+}
+
+const { rows, grain } = Astro.props;
+const start = rows[0].period;
+const end = rows.at(-1)!.period;
+const maxOperations = Math.max(1, ...rows.map((row) => row.estimate ?? row.operations));
+const maxActive = Math.max(1, ...rows.map(({ active }) => active));
+const position = (day: string) => periodOffset(start, day, grain) + 1;
+const number = new Intl.NumberFormat("en-US");
+const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const hasEstimate = rows.some(({ estimate }) => estimate !== null);
+---
+
+<figure>
+  <ul class="legend">
+    <li><span class="actual-key"></span>Successful requests</li>
+    {hasEstimate && <li><span class="estimate-key"></span>Projected remainder</li>}
+    <li><span class="active-key"></span>Active installations</li>
+  </ul>
+  <div class="plot" style={`--periods:${position(end)}`} aria-hidden="true">
+    <div class="scale requests"><span>{compact.format(maxOperations)}</span><span>0</span></div>
+    <div class="columns">
+      {rows.map((row) => {
+        const projected = (row.estimate ?? row.operations) - row.operations;
+        const label = `${row.period}${row.current ? " to date" : ""} · ${number.format(row.operations)} requests · ${number.format(row.active)} active${row.estimate === null ? "" : ` · ${number.format(row.estimate)} projected total`}`;
+        return <div class="column" style={`grid-column:${position(row.period)}`} title={label}>
+          <div class="volume" style={`height:${row.operations / maxOperations * 100}%`}></div>
+          {projected > 0 && <div class="volume projection" style={`height:${projected / maxOperations * 100}%`}></div>}
+          <span class:list={["point", { current: row.current }]} style={`bottom:${row.active / maxActive * 100}%`}></span>
+        </div>;
+      })}
+    </div>
+    <div class="scale active"><span>{compact.format(maxActive)}</span><span>0</span></div>
+  </div>
+  <figcaption><time datetime={start}>{start}</time><time datetime={end}>{end}</time></figcaption>
+  <details>
+    <summary>View activity data</summary>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th scope="col">Period start (UTC)</th><th scope="col">Reporting</th><th scope="col">Active</th>
+          <th scope="col">Requests</th><th scope="col">Projected total</th><th scope="col">Days reported</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((row) => <tr>
+            <th scope="row">{row.period}{row.current ? " to date" : ""}</th>
+            <td>{number.format(row.reporting)}</td><td>{number.format(row.active)}</td>
+            <td>{number.format(row.operations)}</td><td>{row.estimate === null ? "—" : number.format(row.estimate)}</td>
+            <td>{row.days_reported}</td>
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</figure>
+
+<style>
+  figure { margin: 1rem 0 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem; list-style: none; margin: 0 0 1rem; padding: 0; }
+  .legend li { display: flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; }
+  .legend li span { width: 0.9rem; height: 0.65rem; border-radius: 2px; }
+  .actual-key, .volume { background: var(--accent); }
+  .estimate-key, .volume.projection {
+    background: repeating-linear-gradient(-50deg, #716331 0 2px, #332e20 2px 5px);
+    border: 1px solid #877121;
+  }
+  .legend li .active-key { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: #a5c1ff; }
+  .plot { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.55rem; }
+  .scale { display: flex; flex-direction: column; justify-content: space-between; font-size: 0.78rem; }
+  .scale.requests { color: var(--accent); }
+  .scale.active { color: #a5c1ff; }
+  .columns {
+    display: grid;
+    grid-template-columns: repeat(var(--periods), minmax(0, 1fr));
+    height: clamp(9rem, 24vw, 15rem);
+    gap: min(0.5rem, calc(20% / var(--periods)));
+    border-bottom: 1px solid var(--line);
+    background: repeating-linear-gradient(to top, transparent 0 calc(25% - 1px), var(--line) calc(25% - 1px) 25%);
+  }
+  .column { grid-row: 1; min-width: 0; display: flex; flex-direction: column-reverse; position: relative; }
+  .volume { width: 100%; max-width: 3.5rem; margin-inline: auto; border-radius: 2px 2px 0 0; }
+  .point {
+    position: absolute;
+    left: 50%;
+    width: clamp(2px, calc(60vw / var(--periods)), 8px);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: #a5c1ff;
+    outline: 1px solid #141413;
+    transform: translate(-50%, 50%);
+  }
+  .point.current { border: 1px solid #a5c1ff; background: #141413; }
+  figcaption { display: flex; justify-content: space-between; margin-top: 0.5rem; color: var(--muted); font-size: 0.82rem; }
+  details { margin-top: 0.9rem; }
+  summary { cursor: pointer; font-size: 0.88rem; }
+  .table-scroll { overflow: auto; }
+  table { width: 100%; margin-top: 0.65rem; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { padding: 0.5rem 0.35rem; border-bottom: 1px solid var(--line); text-align: right; }
+  th:first-child { text-align: left; }
+</style>

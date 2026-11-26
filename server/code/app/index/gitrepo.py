@@ -1275,3 +1275,17 @@ async def ls_tree(git_dir: str, sha: str, prefixes: tuple[str, ...] = ()) -> lis
     if prefixes:
         paths = [p for p in paths if p.startswith(prefixes)]
     return paths
+
+
+async def blob_paths_at(git_dir: str, sha: str, paths: set[str]) -> set[str]:
+    """Exact blob paths present at a pinned revision, with no blob reads."""
+    wanted = sorted(path for path in paths if "\n" not in path and "\r" not in path)
+    if not wanted:
+        return set()
+    revision = _rev(sha)
+    payload = "".join(f"{revision}:{path}\n" for path in wanted).encode()
+    out = await _git(git_dir, "cat-file", "--batch-check=%(objecttype)", stdin=payload)
+    lines = out.splitlines()
+    if len(lines) != len(wanted):
+        return set()
+    return {path for path, kind in zip(wanted, lines, strict=True) if kind == "blob"}

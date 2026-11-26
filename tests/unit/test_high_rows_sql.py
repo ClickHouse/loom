@@ -781,7 +781,9 @@ async def test_a_distill_pass_reads_only_observations_the_authority_serves(monke
 
 
 @pytest.mark.asyncio
-async def test_memory_digests_never_serves_a_stored_credential_key_fact(monkeypatch) -> None:
+async def test_memory_digests_never_serves_a_stored_credential_key_fact(
+    monkeypatch, no_blacklisted_values
+) -> None:
     # One unsafe source withholds the whole digest; a proven neighbor remains available.
     from server.memory.api.models_temporal import MemoryDigestsInput
     from server.memory.app import curation

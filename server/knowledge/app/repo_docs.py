@@ -379,7 +379,7 @@ def docs_section(ns: str, docs: list[RepoDoc], max_tokens: int) -> str:
     """The context pack's `Repository docs` section: one line per document
     — what it is and where to read it — within `max_tokens` (the pack's
     estimate, 4 characters a token); "" when there are none."""
-    if not ns or not docs or max_tokens <= 0:
+    if not ns or not docs or max_tokens < 0:
         return ""
     head = (
         f"## Repository docs ({ns})\n"
@@ -392,7 +392,7 @@ def docs_section(ns: str, docs: list[RepoDoc], max_tokens: int) -> str:
         title = d.get("title") or d.get("source_uri") or ""
         desc = (d.get("description") or "").replace("\n", " ").strip()
         line = f"- {title} — {d.get('source_uri')}" + (f": {desc[:160]}" if desc else "")
-        if budget - len(line) - 1 < 0:
+        if max_tokens and budget - len(line) - 1 < 0:
             lines.append(f"- … {len(docs) - len(lines)} more (knowledge.list on {ns})")
             break
         budget -= len(line) + 1

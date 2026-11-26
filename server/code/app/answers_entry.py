@@ -219,15 +219,15 @@ def prompt_version() -> str:
 
 def token_budget_bucket(budget: Any) -> int:
     try:
-        n = int(budget or 0)
+        n = int(settings.code_ask_token_budget if budget is None else budget)
     except (TypeError, ValueError):
         n = 0
     if n <= 0:
-        n = int(settings.code_ask_token_budget)
+        return 0
     for b in _BUDGET_BUCKETS:
         if n <= b:
             return b
-    return _BUDGET_BUCKETS[-1]
+    return n
 
 
 @dataclass(frozen=True)

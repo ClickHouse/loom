@@ -1,0 +1,97 @@
+---
+import SiteFrame from "./SiteFrame.astro";
+import { documentationLink } from "./documentation-link";
+import { enterpriseCopy } from "./enterprise-copy";
+import { enterpriseAlternates, enterpriseLink } from "./site-locales";
+
+interface Props {
+  locale: keyof typeof enterpriseCopy;
+}
+
+const { locale } = Astro.props;
+const copy = enterpriseCopy[locale];
+const { href: path } = enterpriseLink(locale);
+function guide(path: string, label: string) {
+  const link = documentationLink(locale, path);
+  return { ...link, label: link.hreflang === locale ? label : `${label} (${copy.englishLabel})` };
+}
+
+const plan = guide("/operations/deployment", copy.plan);
+const security = guide("/architecture/security", copy.security);
+const deployment = [
+  { ...copy.docker, ...guide("/getting-started/quickstart", copy.docker.label) },
+  { ...copy.kubernetes, ...guide("/operations/kubernetes", copy.kubernetes.label) },
+];
+const controls = [
+  { ...copy.identity, ...guide("/operations/sso", copy.identity.label) },
+  { ...copy.audit, ...guide("/features/observability/audit", copy.audit.label) },
+  { ...copy.erasure, ...guide("/features/memory/retention-and-erasure", copy.erasure.label) },
+  { ...copy.backup, ...guide("/operations/backup-and-recovery", copy.backup.label) },
+];
+const evaluation = [
+  { ...guide("/getting-started/evaluate", copy.evaluate), className: "primary" },
+  { ...guide("/benchmarks/results", copy.benchmarks), className: "text-link" },
+  {
+    ...guide("/use-cases/self-hosted-clickhouse#choose-self-hosted-memory-for-coding-agents", copy.boundary),
+    className: "text-link",
+  },
+  { ...guide("/operations/monitoring", copy.monitoring), className: "text-link" },
+];
+---
+
+<SiteFrame title={copy.title} description={copy.description} path={path} locale={locale} alternates={enterpriseAlternates}>
+  <h1>{copy.heading}</h1>
+  <p class="lead">{copy.lead}</p>
+  <div class="site-actions">
+    <a class="primary" href={plan.href} hreflang={plan.hreflang}>{plan.label}</a>
+    <a class="secondary" href={security.href} hreflang={security.hreflang}>{security.label}</a>
+  </div>
+
+  <section class="site-section" aria-labelledby="deploy-title">
+    <div class="section-copy">
+      <h2 id="deploy-title">{copy.deploymentHeading}</h2>
+      <p>{copy.deploymentIntro}</p>
+    </div>
+    <div class="site-grid">
+      {deployment.map(({ title, detail, href, hreflang, label }) => (
+        <article class="site-panel">
+          <h3>{title}</h3>
+          <p>{detail}</p>
+          <a href={href} hreflang={hreflang}>{label} <span aria-hidden="true">↗</span></a>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="site-section" aria-labelledby="controls-title">
+    <div class="section-copy">
+      <h2 id="controls-title">{copy.controlsHeading}</h2>
+      <p>{copy.controlsIntro}</p>
+    </div>
+    <div class="site-grid">
+      {controls.map(({ title, detail, href, hreflang, label }) => (
+        <article class="site-panel">
+          <h3>{title}</h3>
+          <p>{detail}</p>
+          <a href={href} hreflang={hreflang}>{label} <span aria-hidden="true">↗</span></a>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="site-section" aria-labelledby="evaluate-title">
+    <div class="section-copy">
+      <h2 id="evaluate-title">{copy.evaluateHeading}</h2>
+      <p>{copy.evaluateIntro}</p>
+    </div>
+    <div class="site-actions">
+      {evaluation.map(({ href, hreflang, label, className }) => (
+        <a class={className} href={href} hreflang={hreflang}>{label}</a>
+      ))}
+    </div>
+  </section>
+</SiteFrame>
+
+<style>
+  h1 { text-wrap: balance; overflow-wrap: anywhere; }
+</style>

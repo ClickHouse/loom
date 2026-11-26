@@ -87,7 +87,7 @@ class _TextFormatter(logging.Formatter):
         rid = request_id_var.get()
         if rid:
             base = f"[req={rid}] {base}"
-        return base
+        return base.replace("\r", r"\r").replace("\n", r"\n")
 
 
 _configured = False

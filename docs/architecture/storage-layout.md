@@ -1,3 +1,8 @@
+---
+seo:
+  title: Table layout in Postgres and ClickHouse
+---
+
 # Storage layout: which store holds each table, and why
 
 Each Loom table belongs in Postgres or ClickHouse by how it is read and written; this

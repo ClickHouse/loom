@@ -5,9 +5,10 @@ require_relative "lib/clickhouse/loom/version"
 Gem::Specification.new do |spec|
   spec.name = "clickhouse-loom"
   spec.version = ClickHouse::Loom::VERSION
-  spec.summary = "A minimal Ruby client for ClickHouse Loom's memory operations."
-  spec.description = "Saves, reads, searches and deletes agent memories over Loom's HTTP API, " \
-                     "with the standard library only."
+  spec.summary = "A Ruby client for ClickHouse Loom: every operation as a method, generated from the server."
+  spec.description = "Calls every Loom operation over its HTTP API (client.memory.set, client.task.create, ...) " \
+                     "with the other SDKs' retry and idempotency rules and an error class per server code, " \
+                     "using the standard library only."
   spec.authors = ["ClickHouse"]
   spec.homepage = "https://github.com/ClickHouse/loom/tree/main/sdk/ruby"
   spec.license = "Apache-2.0"

@@ -44,7 +44,14 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
-| 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'code.search,code.symbol'` | `''` | Leave tool loading to the host so sessions do not need unused code schemas upfront. Set an explicit operation list to request eager loading. |
+| 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | `'auto'` | Keep source lookups upfront on the coding toolset. General search and the dispatcher are available through discovery. Other toolsets retain their entrypoints. Explicit lists and empty values retain their meaning. |
+| 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,loom_op'` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | Make literal code search callable without a preliminary tool lookup. An explicit list still replaces the defaults; an empty value leaves loading to the host. |
+| 1.3.1 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `250` | `0` | Return selected review rationale without an implicit token cap. |
+| 1.3.1 | `LOOM_MEMORY_ASK_CODE_SEARCH_TOKEN_BUDGET` | `1400` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
+| 1.3.1 | `LOOM_MEMORY_ASK_CODE_SYMBOL_TOKEN_BUDGET` | `400` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
+| 1.3.1 | `LOOM_CODE_RESULT_LESSONS_TOKENS` | `250` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
+| 1.3.1 | `LOOM_CODE_ASK_TOKEN_BUDGET` | `4000` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
+| 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'code.search,code.symbol'` | `'search.query,code.search,code.symbol,loom_op'` | Expose search and operation discovery without a preliminary tool lookup; other schemas stay under client discovery. An explicit list selects entrypoints, and an empty value leaves loading to the host. |
 | 1.2.0 | `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | `2` | `0` | The ingest worker takes the next job as soon as one ends instead of waiting 2 s after every job, so a queue of small documents drains at the speed of its jobs; a pass that finds no job still waits `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS`. |
 | 1.2.0 | `LOOM_CLICKSTACK_USER_ID_KEYS` | `'user_id,user.id,enduser.id'` | `'user_id,user.id,enduser.id,loom.user_id,langfuse.user.id'` | A user-scoped ClickStack erasure also matches the user-id keys Loom's own child spans carry, so they are erased with the request span. A deployment that sets the variable keeps its own list and should add both keys. |
 | 1.0.0 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `3` | `8` | A failed replay now waits 15 s, 1, 5, then 30 minutes before the next attempt, and an unreachable provider spends none: eight attempts span about two hours instead of three back to back. |
@@ -156,7 +163,6 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TELEMETRY_DATABASE` | `str` | `'loom_telemetry'` |  | The database the telemetry Loom derives from its own tables lives in (`sli_minute`), outside the schema so a reader can be granted it alone. A schema outside `loom` names its own: two schemas never share one. |
 | `LOOM_CH_CLUSTER` | `str` | `'default'` |  | The cluster `clusterAllReplicas` reads to find a stopped Loom process's queries on every node (`default` on ClickHouse Cloud). A server without it answers for itself; '' reads only the connected server. |
 | `LOOM_CH_SECURE` | `bool \| None` | `None` |  | Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off). |
-| `LOOM_CH_ANALYSIS_OBSERVER_URLS` | `list[str]` | `[]` |  | Extra trusted HTTP origins if the service endpoint cannot reach every writer. Analyst setup discovers checked replica sessions with the service credentials. |
 | `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` | `bool` | `False` |  | Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` ("<op> <request_id>"), so query_log rows group by shape. A statement that carries a secret, or one run as the analyst, gets its shape alone. Off by default: readers that split log_comment on spaces gain tokens. |
 | `LOOM_CH_CAPTURE_STATEMENTS` | `str` | `''` |  | A file path: append one JSON line (`digest`, `sql`) per executed statement, to collect the shapes an acceptance run executes for the analyzer corpus. '' = off; never set it in production. |
 | `LOOM_CH_POOL_MAXSIZE` | `int` | `64` |  | HTTP connection pool size: request concurrency plus 3 x the batched-insert bound (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts). |
@@ -242,7 +248,7 @@ The code plane: ingest, indexes, search, ask, review.
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_INTEL_ENABLED` | `bool` | `True` |  | Master kill switch, checked at the top of every code.* handler but the retirement (code.repo.remove), which only deletes. |
 | `LOOM_CODE_TEST_GATE_RUN_TEMPLATES` | `str` | `''` |  | code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of {"pattern": <regex over the repo-relative test path>, "run": <template>}, tried before the built-ins. Templates may use {path} {dir} {stem} {name} {parent}. A path no recipe matches is reported run_unknown, never guessed. |
-| `LOOM_CODE_ASK_TOKEN_BUDGET` | `int` | `4000` |  | Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget. |
+| `LOOM_CODE_ASK_TOKEN_BUDGET` | `int` | `0` |  | Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget; 0 means unlimited. |
 | `LOOM_CODE_ASK_CACHE_THRESHOLD` | `float` | `0.0` |  | The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in code/app/answers_entry.py; a value in (0, 1] pins one threshold for every model. |
 | `LOOM_CODE_ASK_CACHE_MAX_AGE_DAYS` | `int` | `14` |  | A cached code.ask answer older than this many days is a miss (checked and tombstoned at read time; no table TTL). 0 = no bound. |
 | `LOOM_CODE_ASK_NEGATIVE_CACHE_TTL_S` | `int` | `3600` |  | Seconds an abstain stays cached for its exact normalised question under the index head it abstained at. 0 = off. |
@@ -270,8 +276,9 @@ One code namespace indexes one repository. No repository is configured by defaul
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_RESULT_LESSONS` | `bool` | `True` | live | Whether the code ops that return files carry `lessons`, the readable memories about their top files. |
-| `LOOM_CODE_RESULT_LESSONS_TOKENS` | `int` | `250` | live | Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4 characters a token. |
+| `LOOM_CODE_RESULT_LESSONS_TOKENS` | `int` | `0` | live | Estimated-token cap on file or symbol `lessons`, counted on serialized rows at 4 characters a token; 0 means unlimited. Rows are whole or left out. |
 | `LOOM_CODE_RESULT_LESSONS_PATHS` | `int` | `3` | live | How many of an answer's files, in rank order, its `lessons` are read for. |
+| `LOOM_CODE_RESULT_PATH_HINT_ROWS` | `int` | `512` | live | Maximum metadata rows per read when reordering source results by linked lessons. If a read exceeds this bound, the source results keep their original order. |
 
 ### Repository access
 
@@ -647,6 +654,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_RISK_ANNOTATIONS` | `bool` | `True` |  | Per-result risk annotations (churn/amp/tested) and one-hop callee context on code.search results; reserves part of the token budget. Kill switch. |
 | `LOOM_CODE_UNIT_RISK_MAX_AGE_S` | `int` | `864000` |  | Age (seconds) past which a risk row is stale and annotated live; must exceed the weekly pass interval. |
 | `LOOM_CODE_SEARCH_BODIES_DEFAULT` | `'auto' \| 'none'` | `'auto'` |  | code.search `bodies` when the request omits it: "auto" fills bodies into the budget; "none" serves handles only. |
+| `LOOM_CODE_SEARCH_TOKEN_BUDGET` | `int` | `0` |  | code.search response budget in tokens when the request omits token_budget; 0 = unlimited. An explicit request budget overrides this default. |
 | `LOOM_CODE_SEARCH_MEMO_ENABLED` | `bool` | `True` |  | Memoise served code.search responses per (org, namespace, request shape) in loom.code_search_memo and replay within the TTL (route "+memo"); `fresh=true` bypasses it. |
 | `LOOM_CODE_SEARCH_MEMO_TTL_S` | `int` | `1800` |  | Seconds a memoised response, and a cursor's stored pool, stay replayable. |
 | `LOOM_CODE_SEARCH_MEMO_MAX_PAYLOAD_BYTES` | `int` | `200000` |  | Max bytes of a response the memo stores; a larger one is not memoised. 0 = no cap. |
@@ -771,7 +779,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_REVIEW_BRIEF_MIRROR_MISS_TTL_S` | `float` | `600.0` | live | Seconds before the review brief reads a mirror again for an object it did not have (the mirror may have fetched it); a hit is kept. |
 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` | `int` | `10` | live | Changed paths the `rationale` section reads, source paths first; paths past it make `rationale` say `unknown` (`paths_not_read`). |
 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` | `int` | `8` | live | Decision and constraint rows the `rationale` section serves. |
-| `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `int` | `250` | live | The `rationale` section's own token budget; its first row is served even past it. |
+| `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `int` | `0` | live | The `rationale` section's own token budget; 0 means unlimited. |
 
 ## Context
 
@@ -1049,7 +1057,7 @@ The MCP transport: tool listing, lean results, session runs.
 | `LOOM_MCP_AUTH_MODE` | `'required' \| 'discovery_only' \| 'open'` | `'required'` |  | MCP transport auth mode (the endpoint exposes one tool per wire op, so an anonymous prober could otherwise enumerate every tool): "required"        — every JSON-RPC method requires a bearer. "discovery_only"  — initialize/tools/list/ping open; tools/call needs auth. "open"            — no auth on any method; a non-loopback bind refuses it. Any other value fails at load: a mistyped mode must not boot as some mode. |
 | `LOOM_MCP_TOOLSET` | `str` | `'core'` |  | Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on "assistant"); on every toolset but "assistant" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes read ops only. "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. "tracker", "tasks" — the tracker plane and the task inbox rosters. "atomic"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. "readonly"  — the "all" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. "assistant" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. "all"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops under mcp_code_upload_tools aside. An unknown value is "core". |
 | `LOOM_MCP_SCHEMA_PROFILE` | `'standard' \| 'full' \| 'compact'` | `'standard'` |  | tools/list schema profile: "standard" (curated prose + inputSchema), "full" (+ outputSchema) or "compact" (first paragraph, argument tree). Per request: `?schema_profile=`. |
-| `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `str` | `''` |  | Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected tools upfront. |
+| `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `str` | `'auto'` |  | "auto" loads source lookups upfront for the coding toolset. A comma-separated list overrides the toolset defaults. Empty leaves loading to the host. |
 | `LOOM_MCP_SESSION_RUN_IDLE_SECONDS` | `int` | `1800` |  | Seconds without a tool call after which the mcp_session_run_sweep worker closes an MCP session's implicit run (one per token and `Mcp-Session-Id`, begun on the first run-scoped tool call); with no background workers anywhere, idle runs stay open. At least 60: each web process re-checks its cached run once a minute (mcp_runs.CHECK_INTERVAL_S), so a shorter window would close runs a process still treats as open. |
 | `LOOM_MCP_RATELIMIT_RETRY_MAX_WAIT_S` | `float` | `2.0` |  | A rate-limited tool call waits out its Retry-After once and re-checks before returning RATE_LIMITED (MCP clients don't retry). This is the longest Retry-After, seconds, that one retry waits out; a longer hint is refused at once, and 0 refuses every limited call at once. |
 | `LOOM_MCP_CODE_TOOLS` | `bool` | `False` |  | List code.* tools on the MCP surface (core toolset union). Off = code ops are HTTP/SDK-only. |
@@ -1411,8 +1419,8 @@ memory.ask: evidence assembly and answer synthesis.
 | `LOOM_MEMORY_ASK_COUNT_WINDOW` | `int` | `30` | live | Synthesis window for count-shaped questions ("how many X", op=count), whose answer set is scattered across sessions (a missed item sat at rank 18). 0 = no widening. |
 | `LOOM_MEMORY_ASK_CODE_ENRICHMENT` | `bool` | `True` | live | Kill-switch for code-plane enrichment: when a query names code-shaped identifiers (a symbol, a File.cpp, a snake_case setting), fuse the bound code index's file:line, symbol and recent PRs into the grounding pool. Additive and fail-open. The opt-in is the code namespace binding (_resolve_code_target): with no per-request override and no memory_ask_code_namespace, enrichment is skipped, hence default on. |
 | `LOOM_MEMORY_ASK_CODE_HOP_SYMBOLS` | `int` | `4` | live | Symbols the retrieved window names (not only the question) are looked up in the bound code index too, up to this many, one code.symbol definition each, appended after the question's own grounding rows. 0 = off. |
-| `LOOM_MEMORY_ASK_CODE_SYMBOL_TOKEN_BUDGET` | `int` | `400` | live | Token budget of the code.symbol read that grounds a code-entity question in the code plane. |
-| `LOOM_MEMORY_ASK_CODE_SEARCH_TOKEN_BUDGET` | `int` | `1400` | live | Token budget of the code.search read that grounds a code-entity question. |
+| `LOOM_MEMORY_ASK_CODE_SYMBOL_TOKEN_BUDGET` | `int` | `0` | live | Token budget of the code.symbol read that grounds a code-entity question in the code plane; 0 means unlimited. |
+| `LOOM_MEMORY_ASK_CODE_SEARCH_TOKEN_BUDGET` | `int` | `0` | live | Token budget of the grounding code.search read; 0 means unlimited. |
 | `LOOM_MEMORY_ASK_PR_GROUNDING` | `bool` | `True` | live | For each PR the query or grounding references, inject its authoritative code_pr_history record (author, merged_at, title) as a high-trust grounding fact; the synthesizer prefers it over a memory's older claim (_PR_RECORD_NOTE). Gated by the code binding (_resolve_code_target); additive, fail-open, as-of aware. See _inject_pr_facts. A judged arm shows fewer control regressions with it on than off. |
 | `LOOM_MEMORY_ASK_PR_TEMPORAL_GATE` | `bool` | `True` | live | For an as_of query, drop grounding memories that cite a PR opened after the anchor (an under-dated bulk ingest can name a later PR). Open dates come from code_pr_history.opened_at; a no-op without as_of or a bound code index; a PR with an unknown open date is never gated. See _gate_future_prs. |
 | `LOOM_MEMORY_ASK_CODE_STALENESS` | `bool` | `True` | live | Check the code locations a retrieved memory asserts against the live index and flag rotted ones (symbol moved or renamed) so synthesis prefers the current site. Read-time, additive, gated by the code binding; ambiguous symbols are skipped (code_anchor), never false-flagged. |
@@ -1571,12 +1579,13 @@ Models: which model does each job.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1). |
+| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-sonnet-5-5 / qwen2.5:3b / fake-echo-1). |
 | `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant agent's model, which Loom writes into the agent definition at boot. "" = the definition's own (integrations/librechat/agent.yaml), not llm_model. |
 | `LOOM_ASSISTANT_PROVIDER` | `'' \| 'anthropic' \| 'local'` | `''` |  | The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local" = LibreChat's local endpoint (a model server the operator runs; needs assistant_model). |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
 | `LOOM_LOCAL_EMBEDDING_MODEL_DIR` | `str` | `'var/models'` |  | Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env. |
+| `LOOM_LOCAL_EMBEDDING_BATCH_SIZE` | `int` | `16` |  | Texts per local ONNX inference batch; smaller values reduce peak memory. Every input is still embedded, in order; this does not limit input count or length. |
 
 ### Memory
 
@@ -1692,6 +1701,9 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_LATENCY_BUDGET_OVERRIDES` | `str` | `''` |  | JSON map {op: ms \| "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS in server/settings/catalog.py): an integer replaces that op's budget, "3x" multiplies it. Checked after the per-consumer overrides and `admin/budget.set`; a value that is neither ms nor "<n>x" stops startup, an op this build lacks is logged and ignored. '' = the table as declared. |
 | `LOOM_LATENCY_BUDGET_OVERRIDES_BY_CONSUMER` | `str` | `''` |  | JSON map {consumer: {op \| "*": ms \| "<n>x"}}: an integer is a budget in ms, "3x" multiplies the op's declared budget. Checked after runtime `admin/budget.set` overrides, before per-op ones; malformed = logged once and ignored. '' = none. |
 | `LOOM_WORKER_LEDGER_ROWS` | `bool` | `True` |  | One agent_events row per worker pass that spent something or failed (operation worker.<name>.pass, kind='worker'); loom.worker_status records every pass. |
+| `LOOM_ADOPTION_TELEMETRY_ENABLED` | `bool` | `True` |  | Self-hosted adoption reports. Set false to stop all adoption reporting. |
+| `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `bool` | `False` |  | Share verified email domain counts in adoption reports. Off by default. |
+| `LOOM_ADOPTION_TELEMETRY_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between adoption checks and retries. A report covers 12 hours. |
 | `LOOM_OTEL_ENABLED` | `bool` | `True` |  | Master switch for OTel emission. `init_otel()` also refuses under pytest regardless: server/main.py calls it at import, and a test run must never ship rows into production observability tables. |
 | `LOOM_LANGFUSE_URL` | `str` | `''` |  | Langfuse: with both set, OTel spans are forwarded to Langfuse's OTLP endpoint as a second span processor beside the ClickHouse exporter, retrieval scores are posted, and the erasure saga makes real HTTP DELETE calls (empty = log intent only). The token is `pk-lf-…:sk-lf-…`. |
 | `LOOM_LANGFUSE_ADMIN_TOKEN` | `str` | *(unset)* |  | Langfuse `pk-lf-…:sk-lf-…` key pair for erasure, scores and the OTLP forward. |
@@ -1724,7 +1736,7 @@ Embedding and LLM providers.
 | `LOOM_EMBEDDING_SEND_DIMENSIONS` | `bool` | `False` |  | Send the optional dimensions request parameter to a compatible endpoint. False uses its native output width; responses must still match embedding_dim. |
 | `LOOM_EMBEDDING_RETRY_ATTEMPTS` | `int` | `3` | live | Attempts an embedding call makes on a retryable failure. |
 | `LOOM_EMBEDDING_RETRY_MAX_WAIT_S` | `float` | `10.0` | live | Longest backoff, in seconds, between two attempts of an embedding call. |
-| `LOOM_OPENAI_BASE_URL` | `str` | `'https://api.openai.com/v1'` |  | OpenAI's API root, for chat and embeddings: point it at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root). |
+| `LOOM_OPENAI_BASE_URL` | `str` | `'https://api.openai.com/v1'` |  | OpenAI's API root, for the Responses API (<root>/responses) and embeddings: point it at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root). |
 | `LOOM_ANTHROPIC_BASE_URL` | `str` | `'https://api.anthropic.com'` |  | Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway in front of Anthropic. Off the default, the key also goes as a bearer, the scheme gateways take. |
 | `LOOM_BEDROCK_REGION` | `str` | `''` |  | Region for native Bedrock model requests; empty uses the AWS SDK's region chain. AWS credentials use the SDK's role, profile or environment credential chain. |
 | `LOOM_LOCAL_LLM_BASE_URL` | `str` | `'http://localhost:11434/v1'` |  | LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's <host>:11434/v1, llama.cpp's server <host>:8080/v1). |
@@ -1759,7 +1771,7 @@ Embedding and LLM providers.
 | `LOOM_CALIBRATION_REFRESH_SECONDS` | `float` | `60.0` |  | Seconds between each replica's re-read of the shared calibration (loom.embedder_calibration), so every replica serves the same gates. |
 | `LOOM_LLM_PROVIDER` | `str` | `''` |  | "openai" \| "anthropic" \| "bedrock" \| "local" (LOOM_LOCAL_LLM_BASE_URL, no key) \| "fake"; "" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Bedrock requires llm_model and the SDK credential chain. Run `make bench-quick` before making anthropic a default. |
 | `LOOM_REQUIRE_REAL_PROVIDERS` | `bool` | `False` |  | A fake or key-less provider is a `warn` in /v1/health `problems`; true (production) makes it an `error` and `status: degraded`, which preflight and monitors catch. Never changes the HTTP code (503 is ClickHouse-only). |
-| `LOOM_LLM_OPENAI_REASONING_EFFORT` | `str` | `''` |  | Reasoning effort sent to OpenAI models. "" = the lowest the model accepts (learned from its refusals, see server/llm/traits.py); set to pin one value for every call. |
+| `LOOM_LLM_OPENAI_REASONING_EFFORT` | `str` | `''` |  | Reasoning effort sent to OpenAI models. "" = the lowest the model accepts (learned from its refusals, see server/llm/traits.py); set to pin one value for every call, raised to that lowest; a refused pin above it sends no effort. |
 | `LOOM_LLM_ANTHROPIC_EFFORT` | `str` | `''` |  | Thinking effort sent to Claude models as `output_config.effort`: "low" \| "medium" \| "high"; "" = send none (the model's own default). A model that does not take it refuses it once and is not sent it again. |
 | `LOOM_LLM_HIDDEN_REASONING_RESERVE_MAX` | `int` | `16384` |  | Most output tokens a call adds over the caller's cap for a model's hidden reasoning. The reserve per model is learned from the reasoning tokens its replies report (twice the most it has spent) and capped here. |
 | `LOOM_LLM_REQUEST_TIMEOUT_S` | `float` | `300.0` |  | Seconds an LLM call waits for its reply before the client retries. Generous for hosted models, where only a hung connection reaches it; a model server on a CPU can need longer (the local preset sets 900). Calls that must be fast set their own, shorter deadline (HyDE, search budgets). |

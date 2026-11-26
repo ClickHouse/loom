@@ -751,6 +751,39 @@ async def _finish_success(
     return response_body
 
 
+def _with_error_headers(
+    endpoint: Callable[[Request, Response], Awaitable[Any]],
+) -> Callable[[Request, Response], Awaitable[Any]]:
+    async def respond(request: Request, response: Response) -> Any:
+        try:
+            return await endpoint(request, response)
+        except (HTTPException, LoomServerError) as error:
+            detail: Any
+            if isinstance(error, HTTPException):
+                status, detail, headers = error.status_code, error.detail, dict(error.headers or {})
+            else:
+                status, detail, headers = (
+                    error.status_code,
+                    error.to_detail(),
+                    dict(error.headers() or {}),
+                )
+            # FastAPI replaces the injected response on errors. Copy only
+            # diagnostic metadata, never body framing or cookies.
+            for name in (
+                "X-Request-Id",
+                "X-Schema-Version",
+                "X-Trace-Id",
+                "X-RateLimit-Limit",
+                "X-RateLimit-Remaining",
+                "X-RateLimit-Reset",
+            ):
+                if value := response.headers.get(name):
+                    headers[name] = value
+            raise HTTPException(status, detail=detail, headers=headers) from error
+
+    return respond
+
+
 def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any]]:
     async def endpoint(request: Request, response: Response, span: Any) -> Any:
         # The phases run in this order and each refusal raises its own HTTP
@@ -823,7 +856,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
             )
             return result
 
-    return with_prompt
+    return _with_error_headers(with_prompt)
 
 
 def _success_headers(

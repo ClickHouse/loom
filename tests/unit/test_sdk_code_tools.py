@@ -78,13 +78,13 @@ async def test_code_lookup_preserves_scope_on_authorization_refusal_without_fall
             "symbol",
             "src.flask.blueprints::Blueprint::__init__",
             None,
-            {"name": "src.flask.blueprints::Blueprint::__init__", "token_budget": 2500},
+            {"name": "src.flask.blueprints::Blueprint::__init__"},
         ),
         (
             "search",
             "How are nested blueprints registered?",
             None,
-            {"query": "How are nested blueprints registered?", "top_k": 3, "token_budget": 2500},
+            {"query": "How are nested blueprints registered?", "top_k": 3},
         ),
         (
             "callers",

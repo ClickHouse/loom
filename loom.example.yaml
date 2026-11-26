@@ -61,11 +61,6 @@ settings:
   # [restart]
   # ch_secure: null
 
-  # Extra trusted HTTP origins if the service endpoint cannot reach every writer.
-  # Analyst setup discovers checked replica sessions with the service credentials.
-  # [restart]
-  # ch_analysis_observer_urls: []
-
   # Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment`
   # ("<op> <request_id>"), so query_log rows group by shape. A statement that carries a
   # secret, or one run as the analyst, gets its shape alone. Off by default: readers
@@ -268,7 +263,7 @@ settings:
 
   # The deployment's LLM: memory extraction, rerank and every job whose own model
   # setting (the other *_model settings) is left "". Empty takes the resolved provider's
-  # default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1). [restart]
+  # default model (gpt-6-luna / claude-sonnet-5-5 / qwen2.5:3b / fake-echo-1). [restart]
   # llm_model: ""
 
   # The assistant agent's model, which Loom writes into the agent definition at boot. ""
@@ -295,6 +290,10 @@ settings:
   # alias and revision; a missing file is fetched there. The image sets it by env.
   # [restart]
   # local_embedding_model_dir: "var/models"
+
+  # Texts per local ONNX inference batch; smaller values reduce peak memory. Every input
+  # is still embedded, in order; this does not limit input count or length. [restart]
+  # local_embedding_batch_size: 16
 
   # --- memory ---
 
@@ -405,8 +404,9 @@ settings:
   # Longest backoff, in seconds, between two attempts of an embedding call. [live]
   # embedding_retry_max_wait_s: 10.0
 
-  # OpenAI's API root, for chat and embeddings: point it at an OpenAI-compatible
-  # inference gateway in front of OpenAI (its /v1 root). [restart]
+  # OpenAI's API root, for the Responses API (<root>/responses) and embeddings: point it
+  # at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
+  # [restart]
   # openai_base_url: "https://api.openai.com/v1"
 
   # Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway
@@ -577,8 +577,8 @@ settings:
   # require_real_providers: false
 
   # Reasoning effort sent to OpenAI models. "" = the lowest the model accepts (learned
-  # from its refusals, see server/llm/traits.py); set to pin one value for every call.
-  # [restart]
+  # from its refusals, see server/llm/traits.py); set to pin one value for every call,
+  # raised to that lowest; a refused pin above it sends no effort. [restart]
   # llm_openai_reasoning_effort: ""
 
   # Thinking effort sent to Claude models as `output_config.effort`: "low" | "medium" |
@@ -983,8 +983,8 @@ settings:
   # code_test_gate_run_templates: ""
 
   # Retrieval context (tokens) code.ask hands to synthesis when the caller passes no
-  # token_budget. [restart]
-  # code_ask_token_budget: 4000
+  # token_budget; 0 means unlimited. [restart]
+  # code_ask_token_budget: 0
 
   # The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in
   # code/app/answers_entry.py; a value in (0, 1] pins one threshold for every model.
@@ -1038,12 +1038,16 @@ settings:
   # their top files. [live]
   # code_result_lessons: true
 
-  # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4
-  # characters a token. [live]
-  # code_result_lessons_tokens: 250
+  # Estimated-token cap on file or symbol `lessons`, counted on serialized rows at 4
+  # characters a token; 0 means unlimited. Rows are whole or left out. [live]
+  # code_result_lessons_tokens: 0
 
   # How many of an answer's files, in rank order, its `lessons` are read for. [live]
   # code_result_lessons_paths: 3
+
+  # Maximum metadata rows per read when reordering source results by linked lessons. If
+  # a read exceeds this bound, the source results keep their original order. [live]
+  # code_result_path_hint_rows: 512
 
   # --- repository access ---
 
@@ -1972,6 +1976,10 @@ settings:
   # "none" serves handles only. [restart]
   # code_search_bodies_default: "auto"
 
+  # code.search response budget in tokens when the request omits token_budget; 0 =
+  # unlimited. An explicit request budget overrides this default. [restart]
+  # code_search_token_budget: 0
+
   # Memoise served code.search responses per (org, namespace, request shape) in
   # loom.code_search_memo and replay within the TTL (route "+memo"); `fresh=true`
   # bypasses it. [restart]
@@ -2404,9 +2412,8 @@ settings:
   # Decision and constraint rows the `rationale` section serves. [live]
   # code_review_brief_rationale_rows: 8
 
-  # The `rationale` section's own token budget; its first row is served even past it.
-  # [live]
-  # code_review_brief_rationale_tokens: 250
+  # The `rationale` section's own token budget; 0 means unlimited. [live]
+  # code_review_brief_rationale_tokens: 0
 
   # ===== context.pack, context offload, session briefs and the mentor's hints =====
 
@@ -3134,10 +3141,9 @@ settings:
   # `?schema_profile=`. [restart]
   # mcp_schema_profile: "standard"
 
-  # Comma-separated ops whose MCP descriptors request eager loading with
-  # anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected
-  # tools upfront. [restart]
-  # mcp_always_load_tools: ""
+  # "auto" loads source lookups upfront for the coding toolset. A comma-separated list
+  # overrides the toolset defaults. Empty leaves loading to the host. [restart]
+  # mcp_always_load_tools: "auto"
 
   # Seconds without a tool call after which the mcp_session_run_sweep worker closes an
   # MCP session's implicit run (one per token and `Mcp-Session-Id`, begun on the first
@@ -4135,11 +4141,11 @@ settings:
   # memory_ask_code_hop_symbols: 4
 
   # Token budget of the code.symbol read that grounds a code-entity question in the code
-  # plane. [live]
-  # memory_ask_code_symbol_token_budget: 400
+  # plane; 0 means unlimited. [live]
+  # memory_ask_code_symbol_token_budget: 0
 
-  # Token budget of the code.search read that grounds a code-entity question. [live]
-  # memory_ask_code_search_token_budget: 1400
+  # Token budget of the grounding code.search read; 0 means unlimited. [live]
+  # memory_ask_code_search_token_budget: 0
 
   # For each PR the query or grounding references, inject its authoritative
   # code_pr_history record (author, merged_at, title) as a high-trust grounding fact;
@@ -4962,6 +4968,15 @@ settings:
   # One agent_events row per worker pass that spent something or failed (operation
   # worker.<name>.pass, kind='worker'); loom.worker_status records every pass. [restart]
   # worker_ledger_rows: true
+
+  # Self-hosted adoption reports. Set false to stop all adoption reporting. [restart]
+  # adoption_telemetry_enabled: true
+
+  # Share verified email domain counts in adoption reports. Off by default. [restart]
+  # adoption_telemetry_share_domains: false
+
+  # Seconds between adoption checks and retries. A report covers 12 hours. [restart]
+  # adoption_telemetry_interval_seconds: 3600
 
   # Master switch for OTel emission. `init_otel()` also refuses under pytest regardless:
   # server/main.py calls it at import, and a test run must never ship rows into

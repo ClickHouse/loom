@@ -64,8 +64,6 @@ def bind(value: Any, *, transport: str = "") -> Iterator[None]:
 
 def stamp(span: Any) -> None:
     values = _current.get() or {}
-    if values.get("conversation_id"):
-        span.set_attribute("langfuse.session.id", values["conversation_id"])
     for key, value in values.items():
         if key.startswith("benchmark_"):
             attr = "loom.benchmark." + key.removeprefix("benchmark_")
@@ -163,7 +161,7 @@ def _call_span(name: str, carrier: Mapping[str, Any], operation: str) -> Iterato
 @contextlib.contextmanager
 def _optional_span(name: str, meta: Mapping[str, Any]) -> Iterator[Any]:
     try:
-        from opentelemetry import trace
+        from opentelemetry import context, trace
         from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
         carrier = {
@@ -172,17 +170,23 @@ def _optional_span(name: str, meta: Mapping[str, Any]) -> Iterator[Any]:
             if isinstance(meta.get(key), str) and len(meta[key]) <= 512
         }
         remote = TraceContextTextMapPropagator().extract(carrier)
-        context = remote if trace.get_current_span(remote).get_span_context().is_valid else None
+        upstream = trace.get_current_span(remote).get_span_context()
+        attributes: dict[str, str | bool] = {
+            "loom.call.root": True,
+            "loom.call.attempt_id": str(uuid.uuid4()),
+            "langfuse.observation.type": "tool",
+        }
+        if upstream.is_valid:
+            attributes["langfuse.trace.metadata.loom_parent_trace_id"] = f"{upstream.trace_id:032x}"
+        else:
+            upstream = trace.get_current_span().get_span_context()
         manager = trace.get_tracer("loom.handlers").start_as_current_span(
             name,
-            context=context,
+            context=context.Context(),
+            links=[trace.Link(upstream)] if upstream.is_valid else [],
             record_exception=False,
             set_status_on_exception=False,
-            attributes={
-                "loom.call.root": True,
-                "loom.call.attempt_id": str(uuid.uuid4()),
-                "langfuse.observation.type": "tool",
-            },
+            attributes=attributes,
         )
         span = manager.__enter__()
     except Exception:  # noqa: BLE001 — optional tracing must not fail a call

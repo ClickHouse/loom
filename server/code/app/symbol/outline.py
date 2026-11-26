@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from typing import Any
 
@@ -62,21 +61,14 @@ def _is_large_container(row: dict[str, Any]) -> bool:
     return hi - lo + 1 >= AUTO_OUTLINE_MIN_LINES
 
 
-_SCIP_PLACEHOLDER_SIG = re.compile(r"^\(scip:[0-9a-f]+\)$")
-
-
 def outline_entry(row: dict[str, Any]) -> dict[str, Any]:
-    """The wire shape of one outline row: what a reader needs to choose a
-    span, nothing that needs the body. The compiler tier stores an overload
-    hash as its signature (`(scip:49f6e7a0…)`); that is an identity, not a
-    signature, and blanking it saves ~10 tokens on every such row."""
-    sig = str(row.get("signature") or "")[:300]
-    if _SCIP_PLACEHOLDER_SIG.match(sig):
-        sig = ""
+    """A declaration's source location and readable metadata."""
+    from server.code.domain.units import symbol_signature
+
     return {
         "kind": str(row.get("kind") or "function"),
         "qualified_name": str(row.get("qualified_name") or ""),
-        "signature": sig,
+        "signature": symbol_signature(row),
         "start_line": int(row.get("start_line") or 0),
         "end_line": int(row.get("end_line") or 0),
         "tier": str(row.get("tier") or ""),
@@ -96,7 +88,7 @@ def budget_outline(
     for r in rows:
         e = outline_entry(r)
         cost = estimate_json_tokens(e)
-        if used + cost > token_budget:
+        if token_budget and used + cost > token_budget:
             return out, used, f"code.symbol name={e['qualified_name']}"
         out.append(e)
         used += cost
@@ -112,7 +104,11 @@ async def _container_skeleton(
     members did not fit. Fail-soft to the joined body when the skeleton
     chunk or the outline read is unavailable, so a repo without the readers
     (tests) or a chunker version that emitted no skeleton still answers."""
-    from server.code.domain.units import estimate_unit_tokens, unit_from_symbol
+    from server.code.domain.units import (
+        estimate_unit_tokens,
+        remaining_token_budget,
+        unit_from_symbol,
+    )
 
     path, qn = str(sym["path"]), str(sym["qualified_name"])
     lo, hi = int(sym.get("start_line") or 0), int(sym.get("end_line") or 0)
@@ -131,7 +127,9 @@ async def _container_skeleton(
         if lo <= int(r.get("start_line") or 0) <= hi and str(r.get("qualified_name") or "") != qn
     ]
     spent = estimate_unit_tokens(unit_from_symbol(sym, body=body))
-    entries, _tokens, nxt = budget_outline(members, max(0, token_budget - spent - 40))
+    entries, _tokens, nxt = budget_outline(
+        members, remaining_token_budget(token_budget, spent + 40)
+    )
     if nxt or (members and not entries):
         nxt = f"code.outline path={path}"
     return body, entries, nxt

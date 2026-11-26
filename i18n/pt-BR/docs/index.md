@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/index.md blob=8be60892b839f6ffb2e7ba732e3f70bad9178f68 model=claude-sonnet-5-5 -->
+<!-- i18n: source=docs/index.md blob=173314858f057f518abf314eb98af3afff03c87b model=claude-sonnet-5-5 -->
 > Esta página é uma tradução automática da [página em inglês](https://github.com/ClickHouse/loom/blob/main/docs/index.md), que prevalece.
 > Machine-translated from the [English page](https://github.com/ClickHouse/loom/blob/main/docs/index.md), which is authoritative.
 
@@ -229,5 +229,5 @@ O [CONTRIBUTING.md](https://github.com/ClickHouse/loom/blob/main/CONTRIBUTING.md
 
 [Glossário](https://github.com/ClickHouse/loom/blob/main/docs/glossary.md): os termos do Loom, definidos uma única vez. [Perguntas frequentes](faq.md): as primeiras perguntas, um
 parágrafo para cada. [`llms.txt`](https://github.com/ClickHouse/loom/blob/main/llms.txt): um índice gerado da documentação para agentes;
-[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt) reúne, em um único arquivo, as
+[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt) reúne, em um único arquivo, as
 páginas que explicam o que é o Loom e como começar.

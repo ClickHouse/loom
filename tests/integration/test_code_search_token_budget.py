@@ -1,0 +1,154 @@
+"""Search real indexed bodies with unlimited, deployment and request budgets."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from typing import Any
+
+import pytest
+
+from tests.integration._resources import unique_org
+
+pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture
+async def code_repo(ch_client: Any) -> AsyncIterator[Any]:
+    from server.code.store.index import CodeRepo
+    from server.core.ch import get_client
+
+    client = get_client()
+    await client.connect()
+    try:
+        yield CodeRepo()
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.parametrize("annotate", [False, True])
+async def test_search_keeps_full_bodies_unless_a_budget_is_supplied(
+    code_repo: Any, monkeypatch: pytest.MonkeyPatch, annotate: bool
+) -> None:
+    from server.code.api.models_search import CodeSearchInput
+    from server.code.app.index.ingest import ingest_file
+    from server.code.app.search.handler import handle_code_search
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.settings import settings
+
+    org, ns = unique_org("code-budget"), "code-budget"
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    for i in range(5):
+        source = (
+            f"void retry_transport_{i}() {{\n"
+            + "// retry operation after transient transport failure in connection pool\n" * 70
+            + "}\n"
+        ).encode()
+        await ingest_file(
+            code_repo,
+            org,
+            ns,
+            path=f"src/retry{i}.cpp",
+            source=source,
+            commit_sha="a" * 40,
+            embedding_model=embedder.model_name,
+            embedder=embedder,
+        )
+
+    monkeypatch.setattr(settings, "code_search_token_budget", 0)
+    request = CodeSearchInput(
+        org=org,
+        namespace=ns,
+        query="retry transient transport connection",
+        top_k=5,
+        bodies="auto",
+        legs="lexical",
+        fresh=True,
+        annotate=annotate,
+        include_lessons=False,
+        deadline_ms=0,
+        rerank="none",
+        embedding_model=embedder.model_name,
+    )
+    unlimited = await handle_code_search(request)
+    assert not unlimited.abstain and len(unlimited.results) == 5
+    assert unlimited.tokens_returned > 3000
+    assert all(u.body and not u.elided for u in unlimited.results)
+    # Equal lexical scores can change order across independent requests.
+    expected_bodies = {u.unit_id: u.body for u in unlimited.results}
+    assert len(expected_bodies) == 5
+
+    for budget in (300, 1000):
+        monkeypatch.setattr(settings, "code_search_token_budget", budget)
+        bounded = await handle_code_search(request)
+        assert bounded.results and bounded.tokens_returned <= budget
+        assert any(u.elided for u in bounded.results)
+    for budget in (0, 20000):
+        overridden = await handle_code_search(request.model_copy(update={"token_budget": budget}))
+        assert len(overridden.results) == len(expected_bodies)
+        assert {u.unit_id: u.body for u in overridden.results} == expected_bodies
+        assert all(not u.elided for u in overridden.results)
+        assert overridden.tokens_returned == unlimited.tokens_returned
+
+
+async def test_symbol_and_enclosing_keep_large_retained_bodies(
+    code_repo: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.api.models_navigation import CodeEnclosingInput
+    from server.code.api.models_symbol import CodeSymbolInput
+    from server.code.app.index.ingest import ingest_file
+    from server.code.app.symbol.enclosing import handle_code_enclosing
+    from server.code.app.symbol.symbol import handle_code_symbol
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.settings import settings
+
+    org, ns = unique_org("code-bodies"), "code-bodies"
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    source = (
+        "def retained_large_body():\n    total = 0\n"
+        + "    total += 1\n" * 1000
+        + "    return total\n"
+    )
+    await ingest_file(
+        code_repo,
+        org,
+        ns,
+        path="src/large.py",
+        source=source.encode(),
+        commit_sha="a" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    result = await handle_code_symbol(
+        CodeSymbolInput(
+            org=org,
+            namespace=ns,
+            name="retained_large_body",
+            include_lessons=False,
+            include_history=False,
+            include_examples=False,
+        )
+    )
+    assert result.definitions and result.definitions[0].body == source
+    bounded = await handle_code_symbol(
+        CodeSymbolInput(
+            org=org,
+            namespace=ns,
+            name="retained_large_body",
+            token_budget=200,
+            include_lessons=False,
+            include_history=False,
+            include_examples=False,
+        )
+    )
+    assert all(not unit.body for unit in bounded.definitions)
+    enclosing = await handle_code_enclosing(
+        CodeEnclosingInput(
+            org=org,
+            namespace=ns,
+            locations=["src/large.py:10"],
+            include_body=True,
+            include_lessons=False,
+        )
+    )
+    assert enclosing.results[0]["body"] == source and enclosing.bodies_elided == 0

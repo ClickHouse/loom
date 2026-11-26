@@ -24,9 +24,9 @@ def wire() -> None:
     from server.erasure.store.consent import ConsentPolicy, use_policy
     from server.identity.app.directory import IdentityDirectory
     from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
-    from server.memory.app import provenance, recent_writes
+    from server.memory.app import blacklist_guard, provenance, recent_writes
     from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
-    from server.memory.store import pg_publish, refusals
+    from server.memory.store import blacklist_policy, pg_publish, refusals
     from server.memory.store.usage import AGENT_LABEL_EVENT_TYPES
     from server.observability.budget_notifications import use_observer
     from server.observability.state_inputs import StateInputs, use_state_inputs
@@ -37,6 +37,13 @@ def wire() -> None:
     use_observer(schedule)
     pg_publish.use_writer(provenance.writer_actor)
     refusals.use_writer(provenance.writer_actor)
+    blacklist_policy.use_policy(
+        blacklist_policy.BlacklistPolicy(
+            capture=lambda org: blacklist_guard.capture_policy(org),
+            enforce=lambda *args, **kwargs: blacklist_guard.enforce_rows(*args, **kwargs),
+            matches=lambda **kwargs: blacklist_guard.find_match(**kwargs),
+        )
+    )
     use_policy(
         ConsentPolicy(
             fence_names=lambda org, kind, value: refusals.erasure_fence_names(org, kind, value),

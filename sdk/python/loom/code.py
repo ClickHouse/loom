@@ -66,8 +66,8 @@ class CodeClient:
         `retrieval_risk`, and `as_of.stale` (index trails master by more
         than the configured commits — treat spans as approximate). Keep
         `trace_run_id` and call `outcome(...)`. `token_budget` / `bodies`
-        unset take the server's defaults (a route-aware budget, the
-        deployment's bodies setting); `bodies="none"` returns
+        unset take the deployment's budget and bodies settings;
+        `bodies="none"` returns
         spans and signatures only (cheapest); `annotate=False` drops the
         churn/amp/tested risk annotations. `pattern` (literal, or RE2 with
         `regex=True`) constrains BOTH legs to chunks containing it — one call
@@ -109,6 +109,11 @@ class CodeClient:
         regex: bool = False,
         path_prefix: str = "",
         limit: int | None = None,
+        context_lines: int | None = None,
+        include_body: bool | None = None,
+        related_on_miss: bool = False,
+        related_on_prefix: bool = False,
+        include_dependencies: bool = False,
         mode: str = "matches",
         path_globs: list[str] | None = None,
         exclude_globs: list[str] | None = None,
@@ -119,7 +124,18 @@ class CodeClient:
         carries its enclosing symbol (`scope`) and that unit's span
         (`scope_start_line` / `scope_end_line`, 0 outside any unit), so a
         caller can skip `enclosing()` for a hit inside a function it has
-        already shown. `mode="files"` answers "which files
+        already shown. Matches include distinct enclosing bodies by default.
+        Pass `include_body=False` to omit enclosing bodies.
+        `context_lines` adds nearby retained source in matches mode.
+        Pass `related_on_miss=True` to find the qualified argument of a missing
+        call expression under `related`. Those hits include excerpts when
+        bodies are disabled and `context_lines` is omitted. Set it to 0 for
+        matching lines only.
+        Pass `related_on_prefix=True` to see excerpts for other uses of a
+        literal call prefix's qualified argument alongside exact matches.
+        With `related_on_miss` or `related_on_prefix`, `include_dependencies=True`
+        returns retained definitions for a uniquely bound argument and its direct helper.
+        `mode="files"` answers "which files
         mention X" (no line text) — use it for coverage questions. `limit`
         defaults per mode: 20 lines, or the 500-file ceiling, so a files
         answer is complete unless `truncated` says otherwise. `not_covered:
@@ -143,6 +159,16 @@ class CodeClient:
             body["namespaces"] = list(namespaces)
         if limit is not None:
             body["limit"] = limit
+        if context_lines is not None:
+            body["context_lines"] = context_lines
+        if include_body is not None:
+            body["include_body"] = include_body
+        if related_on_miss:
+            body["related_on_miss"] = True
+        if related_on_prefix:
+            body["related_on_prefix"] = True
+        if include_dependencies:
+            body["include_dependencies"] = True
         if path_globs:
             body["path_globs"] = list(path_globs)
         if exclude_globs:
@@ -180,7 +206,7 @@ class CodeClient:
         locations: list[str],
         *,
         include_body: bool = False,
-        token_budget: int = 4000,
+        token_budget: int = 0,
         neighbours: bool | None = None,
         neighbour_k: int = 5,
     ) -> dict[str, Any]:
@@ -211,7 +237,7 @@ class CodeClient:
         path: str,
         *,
         kinds: list[str] | None = None,
-        token_budget: int = 1500,
+        token_budget: int = 0,
         include_lessons: bool = True,
     ) -> dict[str, Any]:
         """One file's declarations with line spans, in source order
@@ -236,8 +262,9 @@ class CodeClient:
         include_body: bool = True,
         include_history: bool = True,
         include_examples: bool = True,
+        example_context_lines: int = 0,
         include_lessons: bool = True,
-        token_budget: int = 2500,
+        token_budget: int = 0,
         uses: bool | None = None,
         uses_limit: int = 50,
         uses_brief: bool = False,
@@ -250,6 +277,8 @@ class CodeClient:
         ("src/Foo.cpp:123"), which returns the innermost function containing
         that line — compiler-grade where available, enriched with recent
         PRs, tested usage examples, and lessons from the memory plane.
+
+        Set `example_context_lines` to include retained source around usage examples.
 
         `uses_brief=True` makes a lookup that resolves to
         one definition carry a compact `uses` block: `count`, `files`, the
@@ -291,6 +320,8 @@ class CodeClient:
                 body["uses_limit"] = uses_limit
         if uses_brief:
             body["uses_brief"] = True
+        if example_context_lines:
+            body["example_context_lines"] = example_context_lines
         if near_paths:
             body["near_paths"] = list(near_paths)
         if pr_number:
@@ -444,7 +475,7 @@ class CodeClient:
         trace: str,
         *,
         max_frames: int = 15,
-        token_budget: int = 3000,
+        token_budget: int = 0,
     ) -> dict[str, Any]:
         """Stack trace → each frame resolved to its definition, order kept."""
         return await self._agent.transport.post(
@@ -505,7 +536,7 @@ class CodeClient:
         self,
         *,
         pr_number: int = 0,
-        token_budget: int = 2500,
+        token_budget: int = 0,
         sections: list[str] | None = None,
     ) -> dict[str, Any]:
         """Precomputed briefing for a merged PR (or a repo orientation map
@@ -772,7 +803,7 @@ class CodeClient:
                 body[key] = value
         return await self._agent.transport.post("/v1/code.conventions", body)
 
-    async def map(self, *, token_budget: int = 1000, module_prefix: str = "") -> dict[str, Any]:
+    async def map(self, *, token_budget: int = 0, module_prefix: str = "") -> dict[str, Any]:
         return await self._agent.transport.post(
             "/v1/code.map",
             {"token_budget": token_budget, "module_prefix": module_prefix},

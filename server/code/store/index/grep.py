@@ -14,8 +14,14 @@ from server.code.domain.index.grep_plan import (
     content_predicate,
 )
 from server.code.domain.search_scope import SearchScope
+from server.code.domain.symbol_body import (
+    CONTINUED_LINE_PREFIX,
+    CONTINUED_LINE_SUFFIX,
+    UNMAPPABLE_SOURCE_ENDINGS,
+)
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched, _scope_path_sql
+from server.core.ch_params import chunks
 
 # A raising or logging statement carries one of these; the message grep's
 # chunk pre-filter, mirrored by the ranker in
@@ -29,14 +35,49 @@ _MESSAGE_STATEMENT_KEYWORDS: tuple[str, ...] = (
 )
 
 
+def _scan_predicate(
+    pattern: str | list[str], *, regex: bool, case_sensitive: bool
+) -> tuple[str, dict[str, Any]]:
+    if isinstance(pattern, str):
+        return content_predicate(
+            pattern, regex=regex, case_sensitive=case_sensitive, index_guard=False
+        )
+    search = "multiSearchAny" if case_sensitive else "multiSearchAnyCaseInsensitive"
+    # Keep each HTTP form field small while matching all alternatives in one scan.
+    bound = {f"literals_{i}": part for i, part in enumerate(chunks(pattern))}
+    terms = [f"{search}(content, {{{key}:Array(String)}})" for key in bound]
+    return "(" + " OR ".join(terms) + ")", bound
+
+
 class GrepMixin(CodeRepoBase):
     """Content matches over live chunks."""
+
+    async def grep_source_chunks_for_span(
+        self, org: str, ns: str, path: str, start: int, end: int, model: str
+    ) -> list[dict[str, Any]]:
+        """Raw source behind a matched summary, retaining each chunk's enclosing symbol.
+
+        The extra row detects a capped read; it cannot establish complete coverage.
+        """
+        return await self._ch.query_all(
+            """
+            SELECT DISTINCT scope, symbol_ids, kind, start_line, end_line, content,
+                   toString(indexed_commit) AS indexed_commit
+            FROM loom.code_chunks FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND path = {path:String} AND embedding_model = {model:String}
+              AND start_line <= {end:UInt32} AND end_line >= {start:UInt32}
+              AND kind != 'class_skeleton' AND tombstoned_at IS NULL
+            ORDER BY start_line, end_line LIMIT 401
+            """,
+            {"org": org, "ns": ns, "path": path, "model": model, "start": start, "end": end},
+        )
 
     async def grep_files(
         self,
         org: str,
         ns: str,
-        pattern: str,
+        pattern: str | list[str],
         *,
         regex: bool = False,
         case_sensitive: bool = True,
@@ -51,9 +92,7 @@ class GrepMixin(CodeRepoBase):
 
         One FINAL-free scan statement carrying the total as a window.
         `max_execution_s` stops the scan there and returns what it read."""
-        cond, cond_params = content_predicate(
-            pattern, regex=regex, case_sensitive=case_sensitive, index_guard=False
-        )
+        cond, cond_params = _scan_predicate(pattern, regex=regex, case_sensitive=case_sensitive)
         prefix_clause = "AND startsWith(path, {prefix:String})" if path_prefix else ""
         path_sql, path_params = _scope_path_sql(scope)
         params = {
@@ -157,7 +196,7 @@ class GrepMixin(CodeRepoBase):
         self,
         org: str,
         ns: str,
-        pattern: str,
+        pattern: str | list[str],
         *,
         regex: bool = False,
         case_sensitive: bool = True,
@@ -166,21 +205,26 @@ class GrepMixin(CodeRepoBase):
         scope: SearchScope | None = None,
         max_execution_s: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Chunks whose content matches a literal (default) or RE2 regex.
+        """Chunks whose content matches any supplied literal or one RE2 regex.
 
         Powers code.grep — the exact-literal lookup, in place of shell grep.
         Returns whole chunk rows (content + scope + span + symbol_ids); the
         handler extracts matching lines and attaches the enclosing unit's
         span to each. Chunk coverage is not
         byte-complete for a file, so results are a floor."""
-        cond, cond_params = content_predicate(
-            pattern, regex=regex, case_sensitive=case_sensitive, index_guard=False
-        )
+        cond, cond_params = _scan_predicate(pattern, regex=regex, case_sensitive=case_sensitive)
         prefix_clause = "AND startsWith(path, {prefix:String})" if path_prefix else ""
         path_sql, path_params = _scope_path_sql(scope)
+        literals = [pattern] if isinstance(pattern, str) else pattern
+        endings = [literal for literal in literals if not regex and literal.endswith("\n")]
         return await self._ch.query_all(
             grep_sql.grep_chunks_sql(
-                cond, prefix_clause, path_sql, code_deadline.break_settings(max_execution_s)
+                cond,
+                prefix_clause,
+                path_sql,
+                code_deadline.break_settings(max_execution_s),
+                with_endings=bool(endings),
+                endings_only=bool(endings) and len(endings) == len(literals),
             ),
             {
                 "org": org,
@@ -188,6 +232,56 @@ class GrepMixin(CodeRepoBase):
                 **cond_params,
                 "prefix": path_prefix,
                 "limit": limit,
+                **path_params,
+            },
+        )
+
+    async def grep_pattern_chunks(
+        self,
+        org: str,
+        ns: str,
+        patterns: list[str],
+        *,
+        case_sensitive: bool,
+        path_prefix: str,
+        scope: SearchScope,
+        exclude_paths: list[str],
+        limit: int,
+        max_execution_s: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Recover uncovered alternatives after the path-ordered chunk pool fills."""
+        cond, literals = _scan_predicate(patterns, regex=False, case_sensitive=case_sensitive)
+        parts = ", ".join(f"{{{name}:Array(String)}}" for name in literals)
+        pattern_expr = f"arrayConcat({parts})" if len(literals) > 1 else parts
+        position = "position" if case_sensitive else "positionCaseInsensitive"
+        prefix_clause = "AND startsWith(path, {prefix:String})" if path_prefix else ""
+        path_sql, path_params = _scope_path_sql(scope)
+        excluded_params = {
+            f"excluded_paths_{i}": batch for i, batch in enumerate(chunks(exclude_paths))
+        }
+        exclude_sql = "".join(
+            f" AND path NOT IN {{{name}:Array(String)}}" for name in excluded_params
+        )
+        return await self._ch.query_all(
+            grep_sql.grep_pattern_chunks_sql(
+                cond,
+                prefix_clause,
+                path_sql + exclude_sql,
+                pattern_expr,
+                position,
+                code_deadline.break_settings(max_execution_s),
+                with_endings=any(pattern.endswith("\n") for pattern in patterns),
+            ),
+            {
+                "org": org,
+                "ns": ns,
+                **literals,
+                "prefix": path_prefix,
+                "limit": limit,
+                "unmappable_endings": list(UNMAPPABLE_SOURCE_ENDINGS),
+                "continued_line_prefix": CONTINUED_LINE_PREFIX,
+                "continued_line_suffix": CONTINUED_LINE_SUFFIX,
+                **excluded_params,
                 **path_params,
             },
         )

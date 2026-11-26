@@ -109,7 +109,7 @@ async def handle_code_review_brief(input: Any) -> Any:
 
     tier = str(input.tier or rb.DEFAULT_TIER)
     sections: dict[str, dict[str, Any]] = {}
-    tokens_used, budget = 0, rb.TIER_BUDGET_TOKENS.get(tier, rb.TIER_BUDGET_TOKENS[rb.DEFAULT_TIER])
+    tokens_used, budget = 0, int(input.token_budget)
     decisions: dict[str, bool] = {}
     if payload is not None:
         served = payload

@@ -223,6 +223,9 @@ export interface MemoryListEntry {
   char_limit?: number | null;
   // "" | low | medium | high. A high row's value is not in the list: memory.get reads it.
   sensitivity?: string;
+  // This row's status (`active`, `conflicted`, ...): another row under the same key, an
+  // other agent's or user's, has its own.
+  status?: string;
 }
 
 /** human | process: attested and unchanged since. stale: attested, then
@@ -462,6 +465,10 @@ export async function listMemories(
     tags?: string[];
     // Only rows this agent wrote; every agent's rows when unset.
     agent?: string;
+    // Only pinned rows.
+    pinnedOnly?: boolean;
+    // Only rows whose status is `conflicted`.
+    conflictedOnly?: boolean;
   } & RequestOpts = {},
 ): Promise<MemoryListResponse> {
   // Without an agent the Memories view shows every agent's rows, so it sends `agent=*` to
@@ -482,6 +489,8 @@ export async function listMemories(
       ...(opts.fields ? { fields: opts.fields } : {}),
       ...(opts.previewChars ? { preview_chars: opts.previewChars } : {}),
       ...(opts.contains ? { contains: opts.contains } : {}),
+      ...(opts.pinnedOnly ? { pinned_only: true } : {}),
+      ...(opts.conflictedOnly ? { conflicted_only: true } : {}),
       // Tags as typed; the server matches them in any case. Two or more must all match (a
       // build that predates `tags_every` matches any one, and the page then requires every tag
       // itself).

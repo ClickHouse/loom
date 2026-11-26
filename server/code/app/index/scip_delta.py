@@ -341,6 +341,17 @@ async def _apply_round(
         await _publish(repo, "code_edges", sink.edges)
 
 
+def _symbol_metadata(symbol: ScipSymbol) -> dict[str, Any]:
+    """Serving fields; the raw producer token changes only when the row is rewritten."""
+    return {
+        "name": symbol.name or symbol.qualified_name.split("::")[-1],
+        "kind": symbol.kind,
+        "signature": symbol.signature,
+        "decl_paths": list(symbol.decl_paths),
+        "doc_comment": symbol.doc[:2000],
+    }
+
+
 async def _apply_file(
     repo: CodeRepo,
     org: str,
@@ -372,12 +383,13 @@ async def _apply_file(
                 continue
             new_keys.add(key)
             live = existing_keys.get(key)
+            metadata = _symbol_metadata(s)
             if live is not None and (
                 int(live.get("start_line") or 0) == int(s.line_start)
                 and int(live.get("end_line") or 0) == int(s.line_end)
-                and str(live.get("kind") or s.kind) == s.kind  # a row with no kind read is unmoved
+                and all(live.get(field) == value for field, value in metadata.items())
             ):
-                continue  # unchanged AND unmoved — keep live row
+                continue
             # new symbol, the same symbol at a new line (an edit above it), or the same
             # symbol under a new kind (the id is name|signature, so a converter that
             # re-reads `const` as `function` changes nothing the key sees): write the
@@ -390,14 +402,10 @@ async def _apply_file(
                     tier="scip",
                     qualified_name=s.qualified_name,
                     symbol_id=sid,
-                    name=s.name or s.qualified_name.split("::")[-1],
-                    kind=s.kind,
-                    signature=s.signature,
+                    **metadata,
                     path=f.path,
                     start_line=s.line_start,
                     end_line=s.line_end,
-                    decl_paths=list(s.decl_paths),
-                    doc_comment=s.doc[:2000],
                     scip_symbol=s.scip_symbol,
                     indexed_commit=commit,
                 )

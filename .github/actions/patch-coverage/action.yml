@@ -1,0 +1,44 @@
+name: Changed-line coverage
+description: Report coverage of lines changed by a pull request
+inputs:
+  component:
+    description: Component name for the job summary
+    required: true
+  report:
+    description: Absolute or repository-relative coverage report path
+    required: true
+  working-directory:
+    description: Directory the tests ran in
+    default: "."
+  source-root:
+    description: Source directory for reports with package-relative paths
+    default: "."
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        version: "0.12.19"
+        enable-cache: false
+    - shell: bash
+      env:
+        COMPONENT: ${{ inputs.component }}
+        COVERAGE_REPORT: ${{ inputs.report }}
+        TEST_DIRECTORY: ${{ inputs.working-directory }}
+        SOURCE_ROOT: ${{ inputs.source-root }}
+      run: |
+        cd "$GITHUB_WORKSPACE/$TEST_DIRECTORY"
+        # The tested pull request merge commit's first parent is the tested base.
+        base=$(git rev-parse --verify HEAD^1)
+        report="$COVERAGE_REPORT"
+        [[ "$report" = /* ]] || report="$GITHUB_WORKSPACE/$report"
+        if [[ ! -s "$report" ]]; then
+          echo "Coverage report is missing or empty: $report" >&2
+          exit 1
+        fi
+        summary="$RUNNER_TEMP/patch-coverage.md"
+        uvx --python 3.12 --from diff-cover==11.0.4 diff-cover \
+          "$report" --compare-branch "$base" --src-roots "$SOURCE_ROOT" \
+          --format "markdown:$summary"
+        printf '## %s changed-line coverage\n\n' "$COMPONENT" >> "$GITHUB_STEP_SUMMARY"
+        cat "$summary" >> "$GITHUB_STEP_SUMMARY"

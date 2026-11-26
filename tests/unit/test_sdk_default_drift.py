@@ -1,7 +1,6 @@
 """A value the SDK's domain clients put on the wire by default equals the
 server Input model's default for that field, so an unset SDK kwarg never
-overrides what the server would choose (a route-aware budget, a deployment
-setting). Each client method is called with only its required arguments
+overrides the deployment's settings. Each client method is called with only its required arguments
 against a recording transport; a server field without a default is skipped
 (there is nothing to drift from)."""
 

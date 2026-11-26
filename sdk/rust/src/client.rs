@@ -14,12 +14,32 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
-    ApiError, DeleteResponse, Error, GetResponse, RetryPolicy, SearchRequest, SearchResponse,
-    SetRequest, SetResponse,
+    ApiError, CallFailure, CallMetadata, CallOptions, CallResult, DeleteResponse, Error,
+    GetResponse, RetryPolicy, SearchRequest, SearchResponse, SetRequest, SetResponse,
 };
 use tokio::sync::Mutex;
 
 const DEFAULT_URL: &str = "http://localhost:7777";
+
+macro_rules! typed_call {
+    ($method:ident, $with_options:ident, $request:ty, $response:ty, $op:literal) => {
+        pub async fn $method(&self, request: $request) -> Result<$response, Error> {
+            self.$with_options(request, CallOptions::default())
+                .await
+                .map(|result| result.data)
+                .map_err(|failure| failure.error)
+        }
+
+        /// Call with per-request controls and final-attempt metadata.
+        pub async fn $with_options(
+            &self,
+            request: $request,
+            options: CallOptions,
+        ) -> Result<CallResult<$response>, CallFailure> {
+            self.call($op, &request, options).await
+        }
+    };
+}
 
 /// A client for ClickHouse Loom, bound to one identity.
 ///
@@ -48,6 +68,21 @@ pub struct ClientBuilder {
 }
 
 impl Client {
+    typed_call!(
+        health,
+        health_with_options,
+        crate::OpsHealthInput,
+        crate::OpsHealthOutput,
+        "ops.health"
+    );
+    typed_call!(
+        capabilities,
+        capabilities_with_options,
+        crate::OpsCapabilitiesInput,
+        crate::OpsCapabilitiesOutput,
+        "ops.capabilities"
+    );
+
     pub fn builder(
         org: impl Into<String>,
         namespace: impl Into<String>,
@@ -64,25 +99,103 @@ impl Client {
         }
     }
 
+    /// Fetch capabilities and report missing operations and request fields.
+    ///
+    /// Each probe fetches a fresh report. Only call failures return an error.
+    pub async fn probe(&self, request: crate::ProbeRequest) -> Result<crate::ProbeReport, Error> {
+        self.probe_with_options(request, CallOptions::default())
+            .await
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+
+    /// Probe with per-request controls and final-attempt metadata.
+    pub async fn probe_with_options(
+        &self,
+        request: crate::ProbeRequest,
+        options: CallOptions,
+    ) -> Result<CallResult<crate::ProbeReport>, CallFailure> {
+        let result = self
+            .capabilities_with_options(crate::OpsCapabilitiesInput::new(), options)
+            .await?;
+        Ok(CallResult {
+            data: crate::capabilities::compare(request, result.data),
+            metadata: result.metadata,
+        })
+    }
+
     pub async fn set(&self, request: SetRequest) -> Result<SetResponse, Error> {
-        if request.value.is_null() {
-            return Err(Error::Input("memory.set value cannot be null".into()));
-        }
-        self.call("memory.set", &request).await
+        self.set_with_options(request, CallOptions::default())
+            .await
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+
+    /// Save memory with per-call options and response or failure metadata.
+    pub async fn set_with_options(
+        &self,
+        request: SetRequest,
+        options: CallOptions,
+    ) -> Result<CallResult<SetResponse>, CallFailure> {
+        self.call("memory.set", &request, options).await
     }
 
     pub async fn get(&self, memory_key: &str) -> Result<GetResponse, Error> {
-        self.call("memory.get", &json!({"memory_key": memory_key}))
+        self.get_with_options(memory_key, CallOptions::default())
             .await
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+
+    /// Read memory with per-call options and response or failure metadata.
+    pub async fn get_with_options(
+        &self,
+        memory_key: &str,
+        options: CallOptions,
+    ) -> Result<CallResult<GetResponse>, CallFailure> {
+        self.call(
+            "memory.get",
+            &crate::MemoryGetInput::new(memory_key),
+            options,
+        )
+        .await
     }
 
     pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse, Error> {
-        self.call("memory.search", &request).await
+        self.search_with_options(request, CallOptions::default())
+            .await
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+
+    /// Search memory with per-call options and response or failure metadata.
+    pub async fn search_with_options(
+        &self,
+        request: SearchRequest,
+        options: CallOptions,
+    ) -> Result<CallResult<SearchResponse>, CallFailure> {
+        self.call("memory.search", &request, options).await
     }
 
     pub async fn delete(&self, memory_key: &str) -> Result<DeleteResponse, Error> {
-        self.call("memory.delete", &json!({"memory_key": memory_key}))
+        self.delete_with_options(memory_key, CallOptions::default())
             .await
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+
+    /// Delete memory with per-call options and response or failure metadata.
+    pub async fn delete_with_options(
+        &self,
+        memory_key: &str,
+        options: CallOptions,
+    ) -> Result<CallResult<DeleteResponse>, CallFailure> {
+        self.call(
+            "memory.delete",
+            &crate::MemoryDeleteInput::new(memory_key),
+            options,
+        )
+        .await
     }
 
     /// Return a client with another policy, sharing the pool and rate-limit state.
@@ -95,38 +208,73 @@ impl Client {
         })
     }
 
-    async fn call<T: DeserializeOwned>(
+    /// Call any dotted wire operation, decoding its response as `T`.
+    ///
+    /// Known operations use generated identity and retry policies. Unknown operations
+    /// receive bound org/namespace and retry only failures before connection.
+    pub async fn call<T: DeserializeOwned>(
         &self,
         op: &str,
         request: &impl Serialize,
-    ) -> Result<T, Error> {
+        options: CallOptions,
+    ) -> Result<CallResult<T>, CallFailure> {
+        if !valid_operation(op) {
+            return Err(Error::Input("operation must be a dotted identifier".into()).into());
+        }
+        let policy = crate::wire_models::OP_POLICIES
+            .iter()
+            .find(|(name, _, _, _, _)| *name == op);
+        let idempotent = policy.is_some_and(|(_, idempotent, _, _, _)| *idempotent);
+        let replayable = policy.is_some_and(|(_, idem, read_only, _, _)| *idem && !*read_only);
+        options.validate(replayable)?;
+        let retry = options.retry.as_ref().unwrap_or(&self.retry);
         let mut body = serde_json::to_value(request)
             .map_err(|e| Error::Input(format!("cannot encode request: {e}")))?;
         let fields = body
             .as_object_mut()
             .ok_or_else(|| Error::Input("request must be an object".into()))?;
+        if op == "memory.set" && fields.get("value").is_some_and(Value::is_null) {
+            return Err(Error::Input("memory.set value cannot be null".into()).into());
+        }
+        if op == "collection.delete"
+            && fields
+                .get("namespace")
+                .and_then(Value::as_str)
+                .is_none_or(|target| target.trim().is_empty())
+        {
+            return Err(
+                Error::Input("collection.delete requires a target namespace".into()).into(),
+            );
+        }
         if op == "memory.search" {
             // Search identity fields are filters; write authorship must not narrow recall.
             fields.entry("agent").or_insert_with(|| json!("*"));
             for key in ["org", "namespace"] {
                 fields.insert(key.into(), self.identity[key].clone());
             }
-        } else {
-            // Apply bound identity last so request fields cannot replace the caller.
-            fields.extend(
-                self.identity
-                    .as_object()
-                    .expect("builder creates an object")
-                    .clone(),
-            );
+        }
+        // Only declared identity fields are stamped; optional reader filters survive.
+        let identity_fields = policy.map_or(&["org", "namespace"][..], |(_, _, _, keys, _)| *keys);
+        for key in identity_fields {
+            if let Some(value) = self.identity.get(*key) {
+                fields.insert((*key).into(), value.clone());
+            }
+        }
+        if let Some((_, _, _, _, defaults)) = policy {
+            for key in *defaults {
+                if let Some(value) = self.identity.get(*key) {
+                    fields.entry(*key).or_insert_with(|| value.clone());
+                }
+            }
         }
         let url = self
             .base_url
             .join(&format!("v1/{op}"))
             .map_err(|_| Error::Configuration("cannot construct operation URL".into()))?;
-        let replayable = matches!(op, "memory.set" | "memory.delete");
-        let idempotency_key = replayable.then(request_id);
-        let request_id = request_id();
+        let idempotency_key = options
+            .idempotency_key
+            .or_else(|| replayable.then(request_id));
+        let request_id = options.request_id.unwrap_or_else(request_id);
         if self.pacing {
             let delay = self
                 .rate_state
@@ -168,22 +316,32 @@ impl Client {
             if let Some(key) = &idempotency_key {
                 request = request.header("idempotency-key", key);
             }
+            if let Some(run_id) = self.identity.get("run_id").and_then(Value::as_str) {
+                request = request.header("x-loom-run-id", run_id);
+            }
+            if let Some(timeout) = options.timeout {
+                request = request.timeout(timeout);
+            }
             if let Some(authorization) = &self.authorization {
                 request = request.header(AUTHORIZATION, authorization);
             }
             sent += 1;
+            let mut metadata = CallMetadata::new(&request_id, sent);
             log::debug!(target: "clickhouse_loom", "{op} attempt={attempt} sent={sent} rid={request_id}");
             let received = async {
                 let response = request.send().await?;
                 let status = response.status();
                 let headers = response.headers().clone();
+                // Keep received headers even if reading the response body fails.
+                metadata.record_response(status.as_u16(), &headers);
                 let bytes = response.bytes().await?;
                 Ok::<_, reqwest::Error>((status, headers, bytes))
             }
             .await;
             let (error, allowed, hint) = match received {
                 Err(error) => {
-                    let allowed = self.retry.retries_transport(&error, replayable);
+                    let allowed = retry.retries_transport(&error, replayable)
+                        && (error.is_connect() || idempotent);
                     (Error::Transport(error.without_url()), allowed, None)
                 }
                 Ok((status, headers, bytes)) => {
@@ -199,11 +357,17 @@ impl Client {
                         } else {
                             log::error!(target: "clickhouse_loom", "{op} invalid_response status={} attempts={sent} rid={request_id}", status.as_u16());
                         }
-                        return result;
+                        return match result {
+                            Ok(data) => Ok(CallResult { data, metadata }),
+                            Err(error) => Err(CallFailure {
+                                error,
+                                metadata: Some(Box::new(metadata)),
+                            }),
+                        };
                     }
                     let mut error = ApiError::from_response(status.as_u16(), &headers, &bytes);
                     error.request_id.get_or_insert_with(|| request_id.clone());
-                    if status.as_u16() == 429 && self.pacing {
+                    if status.as_u16() == 429 && self.pacing && idempotent {
                         let delay = pacing_delay(
                             error.retry_after_s,
                             self.ratelimit_max_wait.saturating_sub(paced),
@@ -217,27 +381,30 @@ impl Client {
                             continue;
                         }
                     }
-                    let allowed = status.as_u16() != 429
-                        && self.retry.statuses.contains(&status.as_u16())
+                    let allowed = idempotent
+                        && status.as_u16() != 429
+                        && retry.statuses.contains(&status.as_u16())
                         && !error.forbids_retry();
                     let hint = error.retry_after_s;
                     (Error::Api(Box::new(error)), allowed, hint)
                 }
             };
-            let delay = self.retry.delay(attempt, hint);
+            let delay = retry.delay(attempt, hint);
             let status = match &error {
                 Error::Api(api) => api.status,
                 _ => 0,
             };
             if !allowed
-                || attempt >= self.retry.max_attempts
-                || self
-                    .retry
+                || attempt >= retry.max_attempts
+                || retry
                     .total_backoff_budget
                     .is_some_and(|budget| delay > budget.saturating_sub(slept))
             {
                 log::error!(target: "clickhouse_loom", "{op} failed status={status} elapsed_ms={} attempts={sent} rid={request_id}", started.elapsed().as_millis());
-                return Err(error);
+                return Err(CallFailure {
+                    error,
+                    metadata: Some(Box::new(metadata)),
+                });
             }
             log::warn!(target: "clickhouse_loom", "{op} retry status={status} attempt={attempt} wait_ms={} rid={request_id}", delay.as_millis());
             tokio::time::sleep(delay).await;
@@ -246,14 +413,11 @@ impl Client {
     }
 
     async fn record_rate_state(&self, op: &str, headers: &HeaderMap) {
-        let number = |key| headers.get(key)?.to_str().ok()?.parse::<i64>().ok();
-        if let (Some(limit), Some(remaining), Some(reset)) = (
-            number("x-ratelimit-limit"),
-            number("x-ratelimit-remaining"),
-            number("x-ratelimit-reset"),
-        ) {
-            let delay = if remaining < 1 {
-                Duration::from_secs_f64((reset as f64 / limit.max(1) as f64).clamp(0.0, 5.0))
+        if let Some(rate) = crate::call::rate_limit(headers) {
+            let delay = if rate.remaining < 1 {
+                Duration::from_secs_f64(
+                    (rate.reset_s as f64 / rate.limit.max(1) as f64).clamp(0.0, 5.0),
+                )
             } else {
                 Duration::ZERO
             };
@@ -281,6 +445,11 @@ impl ClientBuilder {
 
     pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
         self.identity["session_id"] = json!(session_id.into());
+        self
+    }
+
+    pub fn run_id(mut self, run_id: impl Into<String>) -> Self {
+        self.identity["run_id"] = json!(run_id.into());
         self
     }
 
@@ -315,6 +484,10 @@ impl ClientBuilder {
         }
         if self.timeout.is_zero() {
             return Err(Error::Configuration("timeout must be positive".into()));
+        }
+        if let Some(run_id) = self.identity.get("run_id").and_then(Value::as_str) {
+            HeaderValue::from_str(run_id)
+                .map_err(|_| Error::Configuration("invalid run ID header".into()))?;
         }
         let endpoint = self
             .base_url
@@ -368,6 +541,14 @@ impl ClientBuilder {
 
 fn request_id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+fn valid_operation(op: &str) -> bool {
+    op.contains('.')
+        && op.split('.').all(|part| {
+            part.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+                && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        })
 }
 
 fn pacing_delay(hint: Option<f64>, budget: Duration) -> Duration {

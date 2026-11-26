@@ -14,6 +14,8 @@
 //         --transcript  + every recorded turn of the brief's sessions (full
 //                       restoration), and `claude --resume <sid>` when the
 //                       session's transcript is on this machine
+//   node loom-brief.mjs get --handoff URL
+//       read the revision named by a dashboard handoff link
 //   node loom-brief.mjs save [KEY] < sections.json
 //       save sections you wrote (goal, status, decisions, …)
 
@@ -22,7 +24,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { git as gitIn, postBounded, resolveScope, resolveServerUrl, resolveToken } from "../lib/loom-client.mjs";
-import { ago, autoBriefKey } from "../lib/session-brief.mjs";
+import { ago, autoBriefKey, briefCheckout } from "../lib/session-brief.mjs";
+import { recalledDataBlock } from "../lib/prompt-recall.mjs";
 
 const TIMEOUT_MS = 30000;
 const LIST_LIMIT = 20;
@@ -44,6 +47,7 @@ export function parseArgs(argv) {
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--revision") out.revision = Number(argv[++i]) || 0;
+    else if (a === "--handoff") out.handoff = String(argv[++i] || "");
     else if (a === "--all") out.all = true;
     else if (a === "--transcript") out.transcript = true;
     else if (a === "--session") out.session = String(argv[++i] || "");
@@ -157,6 +161,40 @@ async function transcriptBlock(post, sessions, turns) {
   return out.join("\n\n");
 }
 
+export function parseHandoffLink(link, serverUrl, org) {
+  let url;
+  let server;
+  try {
+    url = new URL(link);
+    server = new URL(serverUrl);
+  } catch {
+    return null;
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.origin !== server.origin || url.username || url.password) {
+    return null;
+  }
+  const p = url.searchParams;
+  const namespace = p.get("namespace") || "";
+  const key = p.get("brief") || "";
+  const revision = Number(p.get("revision"));
+  const snapshot = p.get("snapshot") || "";
+  const commit = p.get("commit") || "";
+  const validKey = /^(?:~[A-Za-z0-9_.%-]+~(?:[A-Za-z0-9_.%-]+~)?)?[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,159}$/;
+  if (
+    url.pathname !== "/conversations" ||
+    p.get("org") !== org ||
+    !/^[a-z0-9][a-z0-9-]{0,127}$/.test(namespace) ||
+    key.length > 600 ||
+    !validKey.test(key) ||
+    !/^[1-9][0-9]*$/.test(p.get("revision") || "") ||
+    revision >= 2 ** 32 ||
+    !/^[1-9][0-9]{0,19}\.[0-9a-f]{64}$/.test(snapshot) ||
+    !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(commit)
+  )
+    return null;
+  return { namespace, key, revision, snapshot, commit };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const token = resolveToken();
@@ -165,9 +203,18 @@ async function main() {
     return;
   }
   const scope = resolveScope(process.cwd());
-  const base = { org: scope.org, namespace: scope.namespace, agent: scope.agent };
-  const post = (op, body) =>
-    postBounded(op, { ...base, ...body }, { token, serverUrl: resolveServerUrl(), timeoutMs: TIMEOUT_MS });
+  const serverUrl = resolveServerUrl();
+  const handoff = args.handoff === undefined ? null : parseHandoffLink(args.handoff, serverUrl, scope.org);
+  if (
+    args.handoff !== undefined &&
+    (!handoff || args.cmd !== "get" || args.key || args.session || args.transcript || args.revision)
+  ) {
+    process.stdout.write("Use get --handoff with a Loom handoff link for the configured server and organization.\n");
+    process.exitCode = 2;
+    return;
+  }
+  const base = { org: scope.org, namespace: handoff?.namespace || scope.namespace, agent: scope.agent };
+  const post = (op, body) => postBounded(op, { ...base, ...body }, { token, serverUrl, timeoutMs: TIMEOUT_MS });
   const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
 
   if (args.cmd === "list") {
@@ -187,11 +234,13 @@ async function main() {
       process.exitCode = 2;
       return;
     }
+    const head = git(["rev-parse", "--verify", "HEAD"]);
     const r = await post("session.brief_save", {
       brief_key: args.key || autoBriefKey(scope.project, branch),
       project: scope.project,
       branch,
-      head_sha: git(["rev-parse", "HEAD"]),
+      head_sha: head,
+      checkout: briefCheckout(process.cwd(), head),
       repo: scope.repo ? scope.repo.slug : "",
       trigger: "model",
       sections,
@@ -201,28 +250,52 @@ async function main() {
     return;
   }
 
-  const sel = await resolveKey(args, post, scope, branch);
+  const sel = handoff ?? (await resolveKey(args, post, scope, branch));
   if (sel.error) return void process.stdout.write(`${sel.error}\n`);
   const r = await post("session.brief_get", {
     brief_key: sel.key || "",
     from_session: sel.fromSession || "",
-    revision: args.revision,
-    // The brief and the client's compaction summary together recall more of a
-    // session than either alone, so a restore always loads both.
-    full: true,
+    revision: handoff?.revision ?? args.revision,
+    ...(handoff ? { snapshot_id: handoff.snapshot } : {}),
+    full: !handoff,
   });
-  if (!r) return void process.stdout.write("Loom did not answer (run the loom-status skill).\n");
+  if (!r) {
+    if (handoff) {
+      process.stdout.write("Could not read the handoff. Check access to its Loom namespace.\n");
+      process.exitCode = 1;
+    } else process.stdout.write("Loom did not answer (run the loom-status skill).\n");
+    return;
+  }
   if (!r.found) {
     const what = sel.key || `from session ${sel.fromSession}`;
     const why = r.deleted ? " (it was deleted)" : "";
-    process.stdout.write(`No session brief ${what}${why}. \`list --all\` shows the saved ones.\n`);
+    if (handoff) {
+      process.stdout.write("This session handoff is unavailable.\n");
+      process.exitCode = 1;
+    } else process.stdout.write(`No session brief ${what}${why}. \`list --all\` shows the saved ones.\n`);
+    return;
+  }
+  if (
+    handoff &&
+    (r.snapshot_id !== handoff.snapshot ||
+      r.revision !== handoff.revision ||
+      r.head_sha !== handoff.commit ||
+      r.snapshot_key !== handoff.key)
+  ) {
+    process.stdout.write("The server did not return the snapshot named by this handoff.\n");
+    process.exitCode = 1;
     return;
   }
   const head = String(r.head_sha || "");
   const known = head ? git(["rev-parse", "--verify", "--quiet", `${head}^{commit}`]) : "";
   const log = !head ? "" : known ? git(["log", "--oneline", `${head}..HEAD`]) : null;
   const since = sinceLines(head, { log, status: git(["status", "--short"], { raw: true }) });
-  let out = `${r.rendered}\n${since.length ? `\n${since.join("\n")}\n` : ""}`;
+  const current = handoff ? git(["rev-parse", "--verify", "HEAD"]) : "";
+  if (current && current !== head) {
+    since.unshift(`Current HEAD is ${current.slice(0, 12)}. The handoff was saved at ${head.slice(0, 12)}.`);
+  }
+  const brief = handoff ? recalledDataBlock(r.rendered) : r.rendered;
+  let out = `${brief}\n${since.length ? `\n${since.join("\n")}\n` : ""}`;
   if (args.transcript) {
     const sessions = args.session ? [args.session] : (r.source_sessions || []).slice(-3);
     out += `\n# Full restoration: the recorded turns of ${sessions.length} session${sessions.length === 1 ? "" : "s"}\n\n`;

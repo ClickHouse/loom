@@ -159,7 +159,7 @@ def _input(call: dict[str, Any]) -> Any:
         "mode": call["m"],
         "path_prefix": call["path_prefix"] or "",
     }
-    for k in ("regex", "case_sensitive", "limit", "neighbours"):
+    for k in ("regex", "case_sensitive", "limit", "neighbours", "include_body"):
         if k in args and args[k] is not None:
             kw[k] = args[k]
     return CodeGrepInput(**kw)

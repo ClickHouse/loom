@@ -172,7 +172,7 @@ def _wire_writer(monkeypatch, ch):
 
 
 @pytest.mark.asyncio
-async def test_digest_insert_then_chain_edges(monkeypatch) -> None:
+async def test_digest_insert_then_chain_edges(monkeypatch, no_blacklisted_values) -> None:
     from server.memory.app.session_summary import _write_session_summary
 
     ch = _WriterCH(answers=[[{"session_id": "s1"}], []])
@@ -192,7 +192,7 @@ async def test_digest_insert_then_chain_edges(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_chain_failure_leaves_the_digest(monkeypatch) -> None:
+async def test_chain_failure_leaves_the_digest(monkeypatch, no_blacklisted_values) -> None:
     from server.memory.app.session_summary import _write_session_summary
 
     class _ChainUnavailable:

@@ -75,6 +75,7 @@ def no_blacklisted_values(monkeypatch):
 
     monkeypatch.setattr(blacklist_guard, "capture_policy", capture)
     monkeypatch.setattr(blacklist_guard, "enforce_rows", allow)
+    monkeypatch.setattr(blacklist_guard, "find_match", unittest.mock.AsyncMock(return_value=None))
 
     async def no_refusal(ch, rows):
         return None

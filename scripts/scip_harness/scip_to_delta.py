@@ -466,6 +466,25 @@ def _go_definition_modules(data: bytes, scip_pb2) -> set[str]:
     return out
 
 
+def _parse_python_symbol(descriptor: str) -> tuple[str, str, str] | None:
+    matches = list(_TS_DESC_RE.finditer(descriptor))
+    if not matches or "".join(match[0] for match in matches) != descriptor:
+        return None
+    if any(
+        match.group("param") is not None or match.group("tparam") is not None for match in matches
+    ):
+        return None
+    last = matches[-1]
+    if last.group("disamb") is not None:
+        kind, signature = "function", "()"
+    elif last.group("term") == "#":
+        kind, signature = "class", ""
+    else:
+        return None  # A field or local value does not inherit its owner's kind.
+    names = [match.group("quoted") or match.group("plain") for match in matches]
+    return "::".join(names), kind, signature
+
+
 def _parse_symbol(symbol: str) -> tuple[str, str, str] | None:
     """(qualified_name, kind, signature_hint) or None for skip-worthy
     symbols (namespaces, file pseudo-symbols, locals)."""
@@ -476,6 +495,8 @@ def _parse_symbol(symbol: str) -> tuple[str, str, str] | None:
     parts = symbol.split(" ", 4)
     if len(parts) < 5:
         return None
+    if parts[0] == "scip-python":
+        return _parse_python_symbol(parts[4])
     names: list[str] = []
     kind = ""
     sig = ""
@@ -923,10 +944,13 @@ class _Run:
         ctors: dict[str, list[str]],
         ancestors: dict[str, set[str]],
         exclude_generated: bool,
+        *,
+        is_python: bool = False,
     ) -> None:
         self.src = src
         self.is_ts = is_ts
         self.is_cxx = is_cxx
+        self.is_python = is_python
         self.ctors = ctors
         self.ancestors = ancestors
         self.exclude_generated = exclude_generated
@@ -969,7 +993,9 @@ def _prepare(
     if src.available and is_cxx:
         ctors = _ctor_overloads(_top_level_records(data), scip_pb2)
     ancestors = _implementation_targets(data, scip_pb2)
-    return _Run(src, is_ts, is_cxx, ctors, ancestors, exclude_generated)
+    return _Run(
+        src, is_ts, is_cxx, ctors, ancestors, exclude_generated, is_python=scheme == "scip-python"
+    )
 
 
 def _edge(kind: str, encl: tuple[str, str], to_q: str, to_sig: str, line: int) -> dict:
@@ -1106,7 +1132,7 @@ def _convert_document(doc, run: _Run) -> dict | None:
                 encl = (dq, dsig)  # innermost wins
             elif s_start > line:
                 break
-        if encl is None and not is_ts:
+        if encl is None and not is_ts and not run.is_python:
             # the nearest-preceding fallback is scip-clang's regime
             # (no enclosing_range); scip-typescript has spans, and an
             # import line between two functions must bind to neither

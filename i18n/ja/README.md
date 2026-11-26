@@ -22,7 +22,7 @@
   <!-- languages -->
   <a href="../../README.md">English</a> · <a href="../zh-CN/README.md">简体中文</a> · 日本語 · <a href="../ko/README.md">한국어</a> · <a href="../pt-BR/README.md">Português (Brasil)</a> · <a href="../es/README.md">Español</a>
   <br>
-  <a href="https://clickhouse.github.io/loom/ja/">ドキュメント</a>
+  <a href="https://loom.clickhouse.com/docs/ja/">ドキュメント</a>
   <!-- /languages -->
 </p>
 
@@ -32,7 +32,7 @@
   <a href="#get-started">はじめに</a> ·
   <a href="#why-loom">機能</a> ·
   <a href="#integrations">連携</a> ·
-  <a href="https://clickhouse.github.io/loom/">ドキュメント</a>
+  <a href="https://loom.clickhouse.com/docs/">ドキュメント</a>
 </p>
 
 <p>
@@ -234,11 +234,11 @@ Langfuse と ClickStack はオプションのインテグレーションであ�
 
 ## ドキュメントとコントリビューション
 
-共有エージェントコンテキスト、コードインテリジェンス、権限付きリトリーバルについては、まず[ドキュメント](https://clickhouse.github.io/loom/)を参照してください。デプロイの要件については、[前提条件](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites)を参照してください。
+共有エージェントコンテキスト、コードインテリジェンス、権限付きリトリーバルについては、まず[ドキュメント](https://loom.clickhouse.com/docs/)を参照してください。デプロイの要件については、[前提条件](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites)を参照してください。
 
 [デプロイ](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md) · [よくある質問](https://github.com/ClickHouse/loom/blob/main/docs/faq.md) ·
 [コントリビューション](https://github.com/ClickHouse/loom/blob/main/CONTRIBUTING.md) · [セキュリティの報告](https://github.com/ClickHouse/loom/blob/main/SECURITY.md) ·
-[`llms.txt`](https://clickhouse.github.io/loom/llms.txt) ·
-[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt)
+[`llms.txt`](https://loom.clickhouse.com/docs/llms.txt) ·
+[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt)
 
 Apache-2.0 · [ライセンス](https://github.com/ClickHouse/loom/blob/main/LICENSE) · [NOTICE](https://github.com/ClickHouse/loom/blob/main/NOTICE)

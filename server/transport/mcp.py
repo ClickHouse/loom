@@ -155,15 +155,25 @@ async def _observe_call(
 ) -> dict[str, Any] | None:
     from server.observability import prompt_context
 
-    if not isinstance(payload, dict) or payload.get("method") != "tools/call":
+    if not isinstance(payload, dict):
         return await dispatch(payload)
+    method = payload.get("method")
+    version = requested_meta_version(payload)
+    refusal = (
+        unsupported_version_error(payload.get("id"), version)
+        if version is not None
+        and method != "server/discover"
+        and not protocol_version_supported(version)
+        else None
+    )
+    if method != "tools/call":
+        return refusal if refusal is not None else await dispatch(payload)
     params = payload.get("params")
     params = params if isinstance(params, dict) else {}
-    with prompt_context.mcp_call(
-        params, headers=headers, operation=_call_operation(params)
-    ) as span:
-        prompt_context.authenticated(span, auth, _call_operation(params))
-        result = await dispatch(payload)
+    operation = _call_operation(params)
+    with prompt_context.mcp_call(params, headers=headers, operation=operation) as span:
+        prompt_context.authenticated(span, auth, operation)
+        result = refusal if refusal is not None else await dispatch(payload)
         if result is not None:
             prompt_context.outcome(span, result, protocol_refusals=(UNSUPPORTED_PROTOCOL_VERSION,))
         return result
@@ -216,20 +226,8 @@ async def _dispatch_request(
     elif not isinstance(params, dict):
         return _err(req_id, INVALID_PARAMS, f"{method} 'params' must be an object")
 
-    # A 2026-07-28 client declares its version on every request. One this
-    # transport does not serve gets the recognised modern error naming the
-    # versions it can retry with — except `server/discover`, which exists to
-    # be answered before the client has picked a version.
-    meta_version = requested_meta_version(payload)
-    if (
-        meta_version is not None
-        and method != "server/discover"
-        and not protocol_version_supported(meta_version)
-    ):
-        return unsupported_version_error(req_id, meta_version)
-
     if method == "server/discover":
-        return _ok(req_id, await _discover_result(auth, toolset))
+        return _ok(req_id, await _discover_result(auth, toolset, schema_profile=schema_profile))
 
     if method == "initialize":
         result: dict[str, Any] = {
@@ -244,7 +242,9 @@ async def _dispatch_request(
             "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
         }
         try:
-            instructions = await _initialize_instructions(auth, toolset)
+            instructions = await _initialize_instructions(
+                auth, toolset, schema_profile=schema_profile
+            )
         except Exception as e:  # noqa: BLE001 — the handshake must not fail on a primer render
             # Enhancement only — the handshake must not fail on a render hiccup.
             log.warning("initialize instructions render failed (non-fatal): %s", e)
@@ -320,7 +320,9 @@ async def _dispatch_request(
     return _err(req_id, METHOD_NOT_FOUND, f"Method not found: {method!r}")
 
 
-async def _discover_result(auth: Any, toolset: str | None = None) -> dict[str, Any]:
+async def _discover_result(
+    auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+) -> dict[str, Any]:
     """`server/discover` (2026-07-28): the versions this
     transport serves, its capabilities and identity, and the same primer the
     `initialize` result carries — so a client that probes before choosing a
@@ -335,7 +337,7 @@ async def _discover_result(auth: Any, toolset: str | None = None) -> dict[str, A
         **cache_hints(LIST_TTL_MS, "private"),
     }
     try:
-        instructions = await _initialize_instructions(auth, toolset)
+        instructions = await _initialize_instructions(auth, toolset, schema_profile=schema_profile)
     except Exception as e:  # noqa: BLE001 — discover must not fail on a primer render
         log.warning("discover instructions render failed (non-fatal): %s", e)
         instructions = ""

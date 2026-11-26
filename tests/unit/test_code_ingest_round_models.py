@@ -10,12 +10,13 @@ write buffer flushes before any read that could see a buffered row."""
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 import pytest
 
 from server.code.app.index import ingest, ingest_resolve
-from server.code.app.index.round_models import prefetch_models
+from server.code.app.index.round_models import _plans, prefetch_models
 from server.code.app.index.round_reads import RoundReads
 from server.settings import settings
 from tests.unit.test_code_ingest_pass_budget import _A, _B, _ReadRepo, _rows
@@ -66,6 +67,17 @@ class _Emb:
 
 
 _FILES = (("src/a.cpp", _A), ("src/b.cpp", _B))
+
+
+@pytest.mark.asyncio
+async def test_python_prefetch_does_not_fail_facet_extraction(caplog) -> None:
+    sources = {"src/cli.py": b"def main():\n    return 1\n"}
+    reads = RoundReads(_Repo(), "o", "code-ns")
+    await reads.prefetch(sources)
+    with caplog.at_level(logging.DEBUG, logger="loom.code_index.ingest"):
+        plans = await _plans(reads, "o", "code-ns", sources, "m", 6000)
+    assert len(plans) == 1 and plans[0].chunks
+    assert "layout facets failed" not in caplog.text
 
 
 @pytest.fixture(autouse=True)

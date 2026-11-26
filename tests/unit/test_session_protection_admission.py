@@ -115,7 +115,7 @@ async def test_cancellation_during_durable_repair_is_not_an_admission(monkeypatc
 async def test_http_protection_runs_after_authentication_before_body_or_validation(
     monkeypatch, declared
 ):
-    from fastapi import Request, Response
+    from fastapi import HTTPException, Request, Response
 
     from server.transport import http
 
@@ -139,8 +139,11 @@ async def test_http_protection_runs_after_authentication_before_body_or_validati
     endpoint = http._make_endpoint(OPERATIONS_BY_NAME["conversation.create"])
     headers = [(b"x-loom-session-protection", b"v1")] if declared else []
     with request_declaration({"headers": headers}):
-        with pytest.raises(ReachedBody if declared else SessionProtectionRequiredError):
+        with pytest.raises(ReachedBody if declared else HTTPException) as refused:
             await endpoint(Request(scope), Response())
+    if not declared:
+        assert refused.value.status_code == 409
+        assert refused.value.detail["code"] == "SESSION_PROTECTION_REQUIRED"
     assert phases == (["authenticated", "body"] if declared else ["authenticated"])
 
 
@@ -209,7 +212,7 @@ async def test_unit_store_seam_runs_real_absence_proofs_and_observes_later_enabl
 
 
 async def test_unit_store_unreadability_refuses_before_http_body(monkeypatch, mirror_latch_world):
-    from fastapi import Request, Response
+    from fastapi import HTTPException, Request, Response
 
     from server.transport import http
 
@@ -220,8 +223,10 @@ async def test_unit_store_unreadability_refuses_before_http_body(monkeypatch, mi
     monkeypatch.setattr(http, "_read_body", body)
     endpoint = http._make_endpoint(OPERATIONS_BY_NAME["conversation.create"])
     with request_declaration({"headers": []}):
-        with pytest.raises(SessionProtectionRequiredError):
+        with pytest.raises(HTTPException) as refused:
             await endpoint(Request({"type": "http", "headers": []}), Response())
+    assert refused.value.status_code == 409
+    assert refused.value.detail["code"] == "SESSION_PROTECTION_REQUIRED"
     body.assert_not_awaited()
     assert world.calls == ["engines"]
 

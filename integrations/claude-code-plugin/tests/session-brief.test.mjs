@@ -10,7 +10,8 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { writeRecording } from "../lib/recording.mjs";
@@ -18,6 +19,7 @@ import {
   MAX_EVENTS,
   autoBriefKey,
   briefBody,
+  briefCheckout,
   briefEnabled,
   briefPrimerEnabled,
   journalEvents,
@@ -216,6 +218,52 @@ test("a Codex rollout becomes the same kinds of events", () => {
   assert.equal(ev[3].path, "server/x.py");
 });
 
+test("both transcripts keep the check summary without copying its raw output", () => {
+  const output = "private diagnostic output\n====== 9 passed in 0.12s ======\n";
+  const claude = [
+    {
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "pytest -q" } }] },
+    },
+    {
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "t1", content: output }] },
+    },
+  ];
+  const codex = [
+    {
+      type: "response_item",
+      payload: { type: "function_call", call_id: "t1", name: "exec_command", arguments: '{"cmd":"pytest -q"}' },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: "t1",
+        output: "Process exited with code 0\nOutput:\n" + output,
+      },
+    },
+  ];
+  for (const input of [claude, codex]) {
+    const events = transcriptEvents(input);
+    assert.deepEqual(
+      events.map((event) => event.kind),
+      ["command", "note"],
+    );
+    assert.equal(events[1].text, "verification: pytest -q — 9 passed in 0.12s");
+    assert.doesNotMatch(JSON.stringify(events), /private diagnostic output/);
+  }
+
+  const command = "pytest " + "tests/integration/test_feature.py ".repeat(30);
+  claude[0].message.content[0].input.command = command;
+  codex[0].payload.arguments = JSON.stringify({ cmd: command });
+  for (const input of [claude, codex]) {
+    const note = transcriptEvents(input)[1].text;
+    assert.ok(note.length <= 400);
+    assert.match(note, / — 9 passed in 0\.12s$/);
+  }
+});
+
 test("a window over the cap keeps its head and tail", () => {
   const many = Array.from({ length: MAX_EVENTS + 500 }, (_, i) => ({
     type: "assistant",
@@ -367,7 +415,7 @@ function fakeToken() {
   return `${b64({ alg: "none" })}.${b64({ org: "o", namespaces: ["coding"], sub: "t" })}.sig`;
 }
 
-async function withServer(status, fn) {
+async function withServer(status, fn, response = { brief_key: "auto/x/main", revision: 1, changed: true }) {
   const posts = [];
   const server = http.createServer((req, res) => {
     let body = "";
@@ -377,9 +425,7 @@ async function withServer(status, fn) {
     req.on("end", () => {
       posts.push({ url: req.url, body: body ? JSON.parse(body) : null });
       res.writeHead(status, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify(status === 200 ? { brief_key: "auto/x/main", revision: 1, changed: true } : { error: "x" }),
-      );
+      res.end(JSON.stringify(status === 200 ? response : { error: "x" }));
     });
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -389,6 +435,90 @@ async function withServer(status, fn) {
     server.close();
   }
 }
+
+test("handoff restore uses the link's namespace and pinned snapshot on both plugins", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loom-handoff-"));
+  const exec = promisify(execFile);
+  const commit = "a".repeat(40);
+  const snapshot = `9007199254740997.${"e".repeat(64)}`;
+  const key = "~alice~handoff/feat+x";
+  try {
+    await withServer(
+      200,
+      async (url, posts) => {
+        const params = new URLSearchParams({
+          org: "o",
+          namespace: "team",
+          brief: key,
+          revision: "1",
+          snapshot,
+          commit,
+        });
+        const link = `${url}/conversations?${params}`;
+        const opts = {
+          cwd: tmp,
+          env: hostEnv({ ...process.env, LOOM_BASE_URL: url, LOOM_API_KEY: fakeToken(), LOOM_NAMESPACE: "coding" }),
+        };
+        for (const plugin of ["claude-code-plugin", "codex-plugin"]) {
+          const bin = path.join(here, "../..", plugin, "bin/loom-brief.mjs");
+          const { stdout } = await exec(process.execPath, [bin, "get", "--handoff", link], opts);
+          assert.match(stdout, /<loom-recalled-data id=/);
+          assert.match(stdout, /Last recorded verification/);
+          assert.match(stdout, /which this checkout does not have/);
+          await assert.rejects(
+            exec(process.execPath, [bin, "get", "--handoff", link.replace("127.0.0.1", "localhost")], opts),
+          );
+        }
+        assert.equal(posts.length, 2);
+        for (const { url: route, body } of posts) {
+          assert.equal(route, "/v1/session.brief_get");
+          assert.deepEqual(
+            {
+              namespace: body.namespace,
+              key: body.brief_key,
+              revision: body.revision,
+              snapshot: body.snapshot_id,
+              full: body.full,
+            },
+            { namespace: "team", key, revision: 1, snapshot, full: false },
+          );
+        }
+      },
+      {
+        found: true,
+        brief_key: "handoff/feat+x",
+        revision: 1,
+        snapshot_id: snapshot,
+        snapshot_key: key,
+        head_sha: commit,
+        rendered: "Last recorded verification: pytest passed",
+      },
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("checkout observations distinguish local changes from commits known to a remote ref", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loom-handoff-git-"));
+  const git = (...args) =>
+    execFileSync("git", args, { cwd: tmp, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  try {
+    git("init");
+    fs.writeFileSync(path.join(tmp, "tracked"), "initial");
+    git("add", "tracked");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "initial");
+    const head = git("rev-parse", "HEAD");
+    assert.deepEqual(briefCheckout(tmp, head), { dirty: false, head_in_remote_refs: false });
+    git("update-ref", "refs/remotes/origin/test", head);
+    git("config", "status.showUntrackedFiles", "no");
+    fs.writeFileSync(path.join(tmp, "untracked"), "local");
+    assert.deepEqual(briefCheckout(tmp, head), { dirty: true, head_in_remote_refs: true });
+    assert.deepEqual(briefCheckout(path.join(tmp, "missing"), head), { dirty: null, head_in_remote_refs: null });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 function runHook(env, payload) {
   return new Promise((resolve) => {

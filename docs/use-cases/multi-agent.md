@@ -1,23 +1,27 @@
 ---
-title: Shared memory for a software factory and multi-agent workflows
-description: Evaluate software-factory memory for coding-agent handoffs, source-linked lessons and reported outcomes, with a runnable evidence-handoff reference.
+title: Shared memory for AI software factories
+description: Choose shared agent memory for a software factory. Test one coding-agent handoff for source freshness, scoped access and evidence a reviewer can reuse.
+seo:
+  title: Agent memory for a software factory
 ---
 
 # Shared memory for a software factory and multi-agent workflows
 
 <a id="shared-context-for-multi-agent-workflows"></a>
 
-Loom is a self-hosted MCP server for multi-agent memory, with namespace-scoped tokens and
-separate read and write roles. Agents share context through memory, task inboxes and
-decision records within the namespaces they can access. Your agents and orchestrator run
-the workflow; Loom keeps what they learn and hand over.
+Choose shared agent memory when implementation and review run in separate sessions or tools.
+The review agent should be able to recover the implementer's lesson, issue and source revision
+with its own credentials. Start with a [pilot on one repository](#choosing-memory-for-a-software-factory).
+
+Loom is a self-hosted MCP server. Agents share memory, task inboxes and decision records through
+namespaces with separate read and write roles. Your agents and orchestrator run the workflow.
 
 ## What you get
 
 - **Shared memory with provenance.** Every row records which agent wrote it, and under the
   default `auto_reinforce` policy a contradiction between two agents is flagged for review
   instead of silently overwritten. [Namespaces and sharing](../features/namespaces-and-sharing.md) ·
-  [Namespace conflict policy](../features/memory/conflicts-and-refusal.md#namespace-conflict-policy)
+  [Test a conflict](#test-a-conflict-in-shared-agent-memory)
 - **Task inboxes.** Each agent has a durable queue with leases, retries and review rules;
   a claimed task has one owner at a time. [Tasks, decisions and policies](../features/tasks-and-decisions.md)
 - **Decisions.** What was decided in a case like this, why, and whether it worked.
@@ -87,17 +91,34 @@ before relying on the deployment for team work.
 
 The [Python software-factory reference](https://github.com/ClickHouse/loom/tree/main/sdk/python/examples#software_factory_memorypy)
 implements this evidence handoff with separate implementation and review credentials.
-Start with its indexed public repository and review-inbox setup. It compares the served
-function body and reports operation receipts; it does not generate a patch, decide whether
-a lesson is true or run code review. The example documents cleanup limits and supplies
-no captured live output.
+Start with its indexed public repository and review-inbox setup.
+
+### Check the handoff output
+
+In a run against an authenticated Loom server with [development providers](../development/local-development.md#fake-providers),
+the implementation and review agents use separate credentials to read the same
+[indexed source revision](https://github.com/pallets/itsdangerous/blob/672971d66a2ef9f85151e53283113f33d642dabd/src/itsdangerous/serializer.py#L309-L320).
+The reviewer retrieves the implementation agent's lesson, compares the returned function
+body with the saved digest, and completes the handoff. The run emits these JSON lines
+among its operation receipts.
+
+```jsonl
+{"source_recheck": "unchanged_body", "claim_truth": "not_verified", "merge_ready": false, "source_tier": "treesitter"}
+{"cleanup": "generated_memory_missing", "history": "retained"}
+```
+
+`unchanged_body` records a matching path, symbol, and function-body digest. Use the
+repository's review and CI results to decide whether to merge. The cleanup step
+removes the example's generated memory from live reads and retains its history.
 
 ### Choosing memory for a software factory
 
-The best memory tool for a software factory depends on the evidence each stage needs.
-An issue, a conversation transcript, a reusable lesson and a test result serve different
-purposes. Keep the source revision and check results with the handoff so the next agent
-can distinguish a stored claim from a verified result.
+Pick an issue that an implementer and reviewer already handle in your repository. Record the
+starting commit. Save one source-linked lesson during implementation, then start a fresh review
+session with its own token. Push a change to an expression in the cited definition on the
+indexed trunk. Keep the lesson as written. After the index and link worker process the commit,
+have the reviewer read the same lesson again and check its link state. Keep the issue, revision
+and check results with each handoff so the reviewer can reproduce what the implementer saw.
 
 | Question                           | Evidence to collect                                                                                                                                               |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -114,6 +135,33 @@ For a single coding assistant, start with [coding-agent memory](agent-memory.md#
 and its cross-session check. For architecture trade-offs, read [Choosing memory for a software factory](https://github.com/ClickHouse/loom/discussions/939).
 Use the [code-linked lesson example](memory-linked-to-code.md#check-a-lesson-after-a-code-edit)
 to evaluate source freshness separately from recall.
+To evaluate the full toolchain, use the [software factory tools pilot](../guides/software-factory-tools.md)
+to check planning, execution, review and release on one repository.
+
+## Test a conflict in shared agent memory
+
+Use a disposable team namespace to check how two agents report different values for the
+same rule. Set its [conflict policy](../features/memory/conflicts-and-refusal.md#namespace-conflict-policy)
+to `manual_review` and give each writer its own [token](../guides/tokens-and-grants.md).
+Use a sample runbook that fixes a service's retry timeout at 30 seconds. Keep its revision
+handy so the reviewer can verify the value against the source.
+
+1. **Check shared recall.** Have the first writer save “The retry timeout for this service
+   is 30 seconds.” with `memory.set` as a `semantic` memory. Leave `user_id` unset for a
+   namespace-wide fact. Wait until the second writer finds its key with `memory.search`
+   using `agent="*"` and `search_mode="semantic"`.
+2. **Check the review queue.** Have the second writer save the same statement with
+   60 seconds under a different key, with `dry_run=true` first. Look for
+   `conflict_verdict="conflict"` and the first memory among the peers. Repeat the write
+   without `dry_run`, then confirm both rows appear in the Review queue or `conflicts.list`.
+   If the dry run returns another [verdict](../features/memory/conflicts-and-refusal.md#verdicts),
+   check the type, scope and namespace policy before evaluating the resolution step.
+3. **Check the correction.** Have a namespace admin check the runbook revision and
+   [keep the supported row](../features/memory/conflicts-and-refusal.md#resolving-conflicts)
+   with `conflicts.resolve`, `decision="revise"` and the source revision in `reason`.
+   Check the resolution in `audit.list`. Have a fresh authorized reader use `memory.get`
+   on both keys. The supported value should be active, the other key should return
+   `found=false`, and the pair should be gone from `conflicts.list`.
 
 ## Start
 

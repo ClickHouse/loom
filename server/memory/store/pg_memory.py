@@ -638,10 +638,10 @@ def _cols(rows: Sequence[Mapping[str, Any]], *names: str) -> list[list[Any]]:
     return [[r[n] for r in rows] for n in names]
 
 
-async def _check_policy(conn: Any, admission: Admission, per_scope: Mapping[Any, int]) -> None:
+async def check_policy(conn: Any, generations: Mapping[tuple[str, str], int]) -> None:
     """Hold the admission's policy scopes shared to the commit, and refuse it
     (AdmissionMoved) when one moved since its capture."""
-    policy = sorted(s for s in admission.generations if s not in per_scope)
+    policy = sorted(generations)
     if policy:
         # Shared with every writer of the scope; `pg.bump_policy` takes it exclusively.
         # The read is its own statement, after the wait.
@@ -659,7 +659,7 @@ async def _check_policy(conn: Any, admission: Admission, per_scope: Mapping[Any,
             [s[1] for s in policy],
         )
         now = {(g["org"], g["scope"]): int(g["generation"]) for g in got}
-        moved = {s: now.get(s, 0) for s in policy if now.get(s, 0) != admission.generations[s]}
+        moved = {s: now.get(s, 0) for s in policy if now.get(s, 0) != generations[s]}
         if moved:
             raise AdmissionMoved(moved)
 
@@ -729,7 +729,9 @@ async def commit_versions(
 
         await refusals.lock_postgres(conn, stored, forgetting=refuse_values)
         if admission is not None:
-            await _check_policy(conn, admission, per_scope)
+            await check_policy(
+                conn, {s: g for s, g in admission.generations.items() if s not in per_scope}
+            )
         bumped = await conn.fetch(
             _BUMP, [s[0] for s in scopes], [s[1] for s in scopes], [per_scope[s] for s in scopes]
         )

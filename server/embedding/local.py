@@ -34,7 +34,7 @@ class _Vector(Protocol):
 class _TextEmbedding(Protocol):
     """The part of `fastembed.TextEmbedding` this module calls."""
 
-    def embed(self, documents: list[str]) -> Iterable[_Vector]: ...
+    def embed(self, documents: list[str], *, batch_size: int) -> Iterable[_Vector]: ...
 
 
 def _alias(spec: str) -> str:
@@ -115,6 +115,7 @@ class LocalEmbedder:
 
     async def _embed(self, texts: list[str]) -> list[list[float]]:
         from server.llm import customer
+        from server.settings import settings
 
         # In-process, nothing is sent; checked as a provider is, so a switched-off
         # org gets no vector here either, and a path naming no customer shows.
@@ -128,7 +129,9 @@ class LocalEmbedder:
         assert embedder is not None  # _ensure_loaded set it or raised
 
         def _run() -> None:
-            vectors = embedder.embed([texts[i] for i in live])
+            vectors = embedder.embed(
+                [texts[i] for i in live], batch_size=settings.local_embedding_batch_size
+            )
             for i, v in zip(live, vectors, strict=True):
                 vec = v.tolist()
                 # fastembed models are mostly unit-norm already; make it certain.
