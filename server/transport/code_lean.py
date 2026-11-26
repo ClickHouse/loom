@@ -268,7 +268,7 @@ def _grep_edit_selector(hit: dict[str, Any], span: CodeReadRangeInput) -> str:
     if not (
         span.path.endswith((".py", ".pyi"))
         and "." in module
-        and all(part.isidentifier() for part in (*module.split("."), *member.split("::")))
+        and all(part.isidentifier() for part in member.split("::"))
         and not str(hit.get("text") or "").lstrip().startswith("@")
     ):
         return ""
@@ -351,19 +351,21 @@ def _grep_continuation(
     )
     selected = list(selections.values())
     names: list[str] = []
-    if "loom_code_edit_context" in followups:
+    has_edit_context = "loom_code_edit_context" in followups
+    exact_read = bool(contexts) or (has_edit_context and len(selected) == 1)
+    if has_edit_context:
         names = _grep_edit_names(selected)
         if not names:
             declarations = [item for item in selected if item.declaration_hit]
             names = _grep_edit_names(declarations)
-            if not contexts:
+            if not exact_read:
                 selected = declarations
     if names:
         out["edit_context_next"] = {
             "tool": "loom_code_edit_context",
             "arguments": {"names": names, **options},
         }
-    elif not contexts:
+    elif not exact_read:
         return
     params = {"ranges": [item.span.model_dump() for item in selected], **options}
     out["next"] = "For the full source, call loom_code_read with " + json.dumps(params)

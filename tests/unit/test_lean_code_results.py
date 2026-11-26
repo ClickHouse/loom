@@ -605,6 +605,7 @@ def test_grep_edit_followup_keeps_the_indexed_python_module() -> None:
     for path, scope, display in (
         ("src/demo.py", "src.demo::run", "run"),
         ("src/demo.pyi", "src.demo.__stub__::run", "src.demo.__stub__::run"),
+        ("src/build-doc.py", "src.build-doc::run", "run"),
     ):
         payload = {
             "matches": [
@@ -623,6 +624,32 @@ def test_grep_edit_followup_keeps_the_indexed_python_module() -> None:
         )
         assert result["matches"][0]["scope"] == display
         assert result["edit_context_next"]["arguments"] == {"names": [f"{path}:{scope}"]}
+
+
+def test_grep_offers_the_exact_range_when_the_scope_cannot_be_named() -> None:
+    for path, scope, text in (
+        ("demo.py", "demo::run", "return value"),
+        ("src/demo.py", "src.demo::run", "@marker"),
+    ):
+        payload = {
+            "matches": [
+                {
+                    "path": path,
+                    "line": 7,
+                    "text": text,
+                    "scope": scope,
+                    "scope_start_line": 5,
+                    "scope_end_line": 8,
+                },
+            ],
+        }
+        result = lr.mcp_op_result(
+            "code.grep", payload, {"include_body": False}, None, toolset="coding"
+        )
+        assert "edit_context_next" not in result
+        assert json.loads(result["next"].partition(" with ")[2]) == {
+            "ranges": [{"path": path, "start_line": 5, "end_line": 8}],
+        }
 
 
 def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:
