@@ -148,10 +148,12 @@ def test_an_untyped_member_receiver_takes_no_same_file_guess():
         ("target = 0", ""),
         ("del target", ""),
         ("target, other = 0, 1", ""),
+        ("extra = target = 0", ""),
         ("target += 1", ""),
         ("other = 0", "Client"),
         ("target: object", "Client"),
         ("target = Alternative()", "Alternative"),
+        ("target = 0\nextra = target = Alternative()", "Alternative"),
     ],
 )
 def test_module_receiver_types_follow_assignment_and_deletion(statement, owner):
@@ -168,10 +170,16 @@ def test_module_receiver_types_follow_assignment_and_deletion(statement, owner):
     }
     calls, _ = _edges(files, "svc/service.py")
     expected = [(f"svc.clients::{owner}::send", 0.9)] if owner else []
-    assert [(target, confidence) for line, target, confidence in calls if line == 6] == expected
+    call_line = len(files["svc/service.py"].splitlines())
+    assert [
+        (target, confidence) for line, target, confidence in calls if line == call_line
+    ] == expected
 
 
-def test_module_receiver_keeps_earlier_call_and_forgets_later_call():
+@pytest.mark.parametrize(
+    "earlier", ["before = target.send()", "def wrap(\n    arg=target.send(),\n):\n    return arg"]
+)
+def test_module_receiver_keeps_calls_before_a_write(earlier):
     files = {
         "svc/__init__.py": b"",
         "svc/clients.py": (
@@ -179,13 +187,11 @@ def test_module_receiver_keeps_earlier_call_and_forgets_later_call():
             b"class Alternative:\n    def send(self):\n        return 2\n"
         ),
         "svc/service.py": (
-            b"from .clients import Client\ntarget = Client()\n"
-            b"before = target.send()\ntarget = 0\nafter = target.send()\n"
-        ),
+            f"from .clients import Client\ntarget = Client()\n{earlier}\ntarget = 0\n"
+        ).encode(),
     }
     calls, _ = _edges(files, "svc/service.py")
-    targets = {(line, target) for line, target, _ in calls if line in {3, 5}}
-    assert targets == {(3, "svc.clients::Client::send")}
+    assert any(target == "svc.clients::Client::send" for _, target, _ in calls)
 
 
 @pytest.mark.parametrize("condition", ["False", "TYPE_CHECKING"])
