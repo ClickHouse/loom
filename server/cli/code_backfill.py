@@ -467,8 +467,8 @@ async def _republish_counts(repo: Any, org: str, ns: str) -> None:
     """The shared counts and coverage rows, as the ingest pass publishes them after it
     moves rows; a CLI phase moves rows outside that pass. A reader serves the counts
     row whatever watermarks it was computed at, the coverage row while they match, and
-    embedding moves none. Every phase end republishes: a resumed phase may find its
-    rows written by a process that died before it got here."""
+    embedding moves none. Every phase end that declared its org republishes: a resumed
+    phase may find its rows written by a process that died before it got here."""
     try:
         await repo.refresh_table_counts(org, ns)
     except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
@@ -635,11 +635,13 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
     total = 0
     started = time.monotonic()
     result = CodeEmbedRecoveryResult()
+    declared = False
 
     async def _finish(code: int) -> int:
         _note(phase="embed", embedded=total, failed=result.failed, poisoned=result.poisoned)
         await _compact_after_bulk(total, embedder.model_name)
-        await _republish_counts(repo, org, ns)
+        if declared:
+            await _republish_counts(repo, org, ns)
         await _record_manual_pass(
             "code_embed_recovery",
             org,
@@ -668,9 +670,12 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
 
     # The first page is read before the org is declared (on the client `code_run`
     # connected): a mistyped --org has none, so a `recording` cell records nothing,
-    # and the pass's status row, keyed by namespace, needs no org.
+    # and the pass's status row, keyed by namespace, needs no org. With nothing pending,
+    # a namespace that has a counts row still declares and republishes: its last page
+    # may have landed in a process that died before `_finish`.
     rows = await _pending()
-    if rows:
+    declared = bool(rows) or await repo.get_state_or_none(org, ns, "table_counts") is not None
+    if declared:
         from server.core.ch import get_client
 
         await connect_code_plane(get_client(), args)  # declares the org it now writes
