@@ -603,7 +603,7 @@ def _coding_instructions(
             ("code.impact", "for change effects"),
             ("code.context_pack", "for a task briefing"),
         )
-        if tool[name] and (not compact or name in {"code.search", "code.grep"})
+        if tool[name] and (not compact or name in {"code.search", "code.grep", "code.read"})
     ]
     definition_hint = (
         f"Before editing, use {tool['code.edit_context']} with a definition or literal clues. "
@@ -617,8 +617,9 @@ def _coding_instructions(
         lead = "\n\nUse Loom first for unchanged indexed code and tests. "
         follow = (
             "Batch lookups, check revision and `code_state`, and reuse source and notes. "
-            "Use local tools for edits, tests, Git, working-copy changes, explicit requests, "
-            "and evidence missing from Loom. Find deferred tools with ToolSearch."
+            "Find deferred tools with ToolSearch. Use local tools for edits, tests, Git, "
+            "working-copy changes, unindexed paths, explicit requests, "
+            "and evidence Loom cannot supply."
         )
     else:
         lead = "\n\nUse Loom first to search and read unchanged indexed source, including tests. "

@@ -98,6 +98,8 @@ def test_compact_coding_primer_preserves_scope_and_profile() -> None:
     assert "repository bound to this connection" in rules
     assert "`loom_code_edit_context`" in rules
     assert "`loom_code_grep`" in rules
+    assert "`loom_code_read` to read known line ranges together" in rules
+    assert "unindexed paths" in rules
     assert "ToolSearch" in rules
     assert "code_state" in rules
     assert "loom_code_callers" not in rules
