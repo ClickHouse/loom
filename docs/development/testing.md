@@ -54,8 +54,8 @@ failure introduced by the diff.
 ### CI failure locations
 
 Python CI jobs that load the worker-status plugin annotate failed test modules. The
-[failure-location helper](../../tests/_failure_annotations.py) includes the module path
-and an optional source line, without test names or captured values. Repeated failures
+[`tests/_failure_annotations.py`](../../tests/_failure_annotations.py) (`emit_failed_module`)
+includes the module path and an optional source line, without test names or captured values. Repeated failures
 from the same module share one annotation.
 
 Use the location to choose a module, then follow the
