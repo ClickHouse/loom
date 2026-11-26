@@ -342,7 +342,12 @@ def test_loom_search_output_schema_declares_all_returned_sections() -> None:
     schema = loom_search["outputSchema"]
     sections = {"memory", "knowledge", "profile", "conversations"}
     # Strict clients must also accept the optional connected-source section.
-    assert set(schema["properties"]) == sections | {"live"}
+    assert set(schema["properties"]) == sections | {
+        "live",
+        "tracker",
+        "withheld",
+        "namespaces_skipped",
+    }
     assert schema["properties"]["live"]["type"] == "object"
     assert "live" not in schema.get("required", [])
 

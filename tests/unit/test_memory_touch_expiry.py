@@ -46,8 +46,13 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     ch = _CH()
     calls: dict[str, Any] = {"many": [], "one": [], "reemit_many": [], "reemit_one": []}
     rows = {
-        k: _row(k, entities=["mergetree"], reinforcement_count=4, content_sha256=k * 64)
-        for k in ("a", "b")
+        k: _row(
+            k,
+            entities=["mergetree"],
+            reinforcement_count=4,
+            content_sha256=k * 64 if k != "c" else "",
+        )
+        for k in ("a", "b", "c")
     }
     ch.heads = {identity_key(row): row for row in rows.values()}
 
@@ -205,3 +210,15 @@ async def test_the_heads_a_touch_writes_from_are_whole_rows() -> None:
     ch = _SQLCapture()
     await mr.get_many_by_keys(ident, ["k"], ch=ch, scope=WHOLE_NAMESPACE)  # type: ignore[arg-type]
     assert "last_reinforced_at" not in ch.sql[1].split("FROM loom.memory", 1)[0]
+
+
+@pytest.mark.asyncio
+async def test_hashless_touch_updates_embedding_expiry_without_pinning_its_version(stubs):
+    out = await mem_handlers.handle_memory_touch(
+        MemoryTouchInput(org="o", namespace="n", agent="a", memory_key="c", clear_expiry=True)
+    )
+    assert out.touched and out.expires_at is None
+    ([(key, overrides)],) = stubs["calls"]["reemit_many"]
+    assert key[-1] == "c"
+    assert overrides == {"expires_at": None}
+    assert stubs["calls"]["content_hashes"] == {}

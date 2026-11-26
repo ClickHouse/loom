@@ -1226,7 +1226,7 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
                 for kw in call.keywords:
                     if kw.arg != "hides_answer":
                         continue
-                    rel = str(path.relative_to(REPO_ROOT))
+                    rel = path.relative_to(REPO_ROOT).as_posix()
                     if isinstance(kw.value, ast.Name) and kw.value.id == "hides_answer":
                         continue  # a gate passing its caller's choice through
                     if not isinstance(kw.value, ast.Constant):
@@ -1240,6 +1240,8 @@ def test_only_answers_whole_without_the_namespace_leave_an_unverified_refusal_un
         ("server/code/app/answers_cache.py", "reuse_allowed", never),
         ("server/code/app/search_fanout.py", "readable_subset", never),
         ("server/memory/app/code_link_reads.py", "readable_namespaces", never),
+        # The memory is readable without guidance about its supporting source.
+        ("server/memory/app/use_guidance.py", "_readable_documents", never),
         ("server/memory/app/code_grounding.py", "_authorized_code_target", never),
         ("server/code/app/repo_scope.py", "readable_repo_namespace", never),
         # The wording of a refusal another check decided.

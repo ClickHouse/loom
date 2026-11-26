@@ -1864,8 +1864,10 @@ async def test_a_parked_page_reads_on_past_stale_rows_and_resumes_after_the_last
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("historical_expiry", ["2000-01-01T00:00:00", "2098-01-01T00:00:00"])
 async def test_an_as_of_replay_page_returns_since_edited_hits_without_live_guidance(
     monkeypatch: pytest.MonkeyPatch,
+    historical_expiry: str,
 ) -> None:
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app import search_pages
@@ -1887,6 +1889,7 @@ async def test_an_as_of_replay_page_returns_since_edited_hits_without_live_guida
             key: {
                 "version": 8 if key[-1] == "edited" else 5,
                 "status": "active",
+                "expires_at": "2099-01-01T00:00:00",
                 "memory_id": key[-1],
                 "verified_by": "human:reviewer",
                 "content_sha256": "a" * 64,
@@ -1907,6 +1910,7 @@ async def test_an_as_of_replay_page_returns_since_edited_hits_without_live_guida
             version=version,
             memory_id=memory_id,
             content_sha256="b" * 64,
+            expires_at=historical_expiry,
         )
 
     async def _load(*a: Any, **kw: Any) -> dict[str, Any]:
@@ -1925,9 +1929,13 @@ async def test_an_as_of_replay_page_returns_since_edited_hits_without_live_guida
         page=search_pages.make_handle("page/" + "b" * 16, 0),
     )
     out = await output._serve_parked_page(page)
-    assert [h.memory_key for h in out.results] == ["edited", "unchanged"]
-    assert out.results[0].content_excerpt == "historical text from the search cut"
-    assert out.stale_dropped == 0
+    expired = historical_expiry.startswith("2000")
+    assert [h.memory_key for h in out.results] == (
+        ["unchanged"] if expired else ["edited", "unchanged"]
+    )
+    if not expired:
+        assert out.results[0].content_excerpt == "historical text from the search cut"
+    assert out.stale_dropped == int(expired)
     assert all(
         h.use_guidance is not None and h.use_guidance.review == "unknown" for h in out.results
     )
@@ -3285,12 +3293,19 @@ async def test_a_redaction_finds_a_version_clickhouse_does_not_hold_yet(
     async def _fetchrow(sql: str, *args: Any) -> dict[str, Any]:
         asked.append(args)
         assert "coalesce(redacted_at, row->>'redacted_at') AS redacted_at" in sql
-        return {**head, "content_sha256": "", "redacted_at": "2026-01-01T00:00:00"}
+        assert "row->>'expires_at' AS expires_at" in sql
+        return {
+            **head,
+            "content_sha256": "",
+            "redacted_at": "2026-01-01T00:00:00",
+            "expires_at": "2026-02-01T00:00:00",
+        }
 
     monkeypatch.setattr(pg, "fetchrow", _fetchrow)
     target = await history.find_history_target("o", mid, 7, ch=object())
     assert target is not None and (target.namespace, target.version) == ("n", 7)
     assert target.redacted_at == "2026-01-01T00:00:00"
+    assert target.expires_at == "2026-02-01T00:00:00"
     assert asked == [("o", uuid.UUID(mid), 7)]
 
 

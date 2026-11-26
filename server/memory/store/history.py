@@ -101,6 +101,7 @@ class HistoryTarget:
     content_sha256: str  # the hash of the version's text, which its search rows carry too
     tags: tuple[str, ...] = ()
     redacted_at: str | None = None
+    expires_at: str | None = None
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> HistoryTarget:
@@ -116,6 +117,7 @@ class HistoryTarget:
             content_sha256=str(r.get("content_sha256") or ""),
             tags=tuple(r.get("tags") or ()),
             redacted_at=str(r["redacted_at"]) if r.get("redacted_at") else None,
+            expires_at=str(r["expires_at"]) if r.get("expires_at") is not None else None,
         )
 
 
@@ -248,14 +250,14 @@ async def find_history_target(
     ch = ch or _default_client()
     cols = (
         "org, memory_id, namespace, agent, user_id, session_id, memory_key, version, "
-        "toStringCutToZero(content_sha256) AS content_sha256, tags, redacted_at"
+        "toStringCutToZero(content_sha256) AS content_sha256, tags, redacted_at, expires_at"
     )
     at = "org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}"
     with sequential_reads():
         r = await ch.query_one(
             f"""
         SELECT org, toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-               memory_key, version, content_sha256, tags, redacted_at
+               memory_key, version, content_sha256, tags, redacted_at, expires_at
         FROM (
             SELECT {cols} FROM loom.memory_versions WHERE {at}
             UNION ALL

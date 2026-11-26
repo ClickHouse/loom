@@ -146,6 +146,10 @@ async def _replay_evidence(
         )
         if target is None or target.redacted_at is not None:
             return False
+        if target.expires_at is not None:
+            expiry = parse_iso_dt(target.expires_at)
+            if expiry is None or expiry <= naive_utc_now():
+                return False
         return (
             target.org,
             target.namespace,
