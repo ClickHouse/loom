@@ -732,8 +732,9 @@ with fresh authorized input and confirm a new embedding call. To check the LLM, 
 [repository Q&A](../guides/repository-questions.md) on a readable indexed namespace with
 `synthesize: true` and `no_cache: true`. An abstention can skip synthesis. Use the
 response's `X-Trace-Id` to find a successful [generation span](../features/observability/telemetry.md#traces-and-logs)
-for the intended provider and model, or verify a provider success attributable to the
-probe. A request span alone does not prove the model ran. Without that evidence, leave
-inference unverified; returned prose alone can come from cache. These probes make model
-calls and can incur charges. For a stored memory missing from search, also check the
-embedding backlog described in the smoke guide.
+for the intended provider and model. Check `loom.llm.stage` to distinguish answer
+synthesis from model calls made before synthesis. A request span alone does not prove
+the model ran, and a successful call before synthesis verifies provider access only.
+Without a successful synthesis span, leave answer synthesis unverified. These probes
+make model calls and can incur charges. For a stored memory missing from search, also
+check the embedding backlog described in the smoke guide.
