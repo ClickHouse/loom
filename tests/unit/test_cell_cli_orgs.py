@@ -1342,6 +1342,9 @@ def test_the_embed_phase_declares_its_org_only_once_it_has_chunks_to_embed(
         async def pending_embed_chunks(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
             return [{"org": "acme", "namespace": "code-x", "content": "x"}] if pending else []
 
+        async def get_state_or_none(self, *_a: Any) -> str | None:
+            return None  # a mistyped --org has no counts row
+
     class _Embedder:
         model_name = "m"
 

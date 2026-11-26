@@ -553,6 +553,73 @@ def test_grep_offers_scoped_reads_for_related_only_evidence() -> None:
     )
 
 
+def test_grep_offers_one_read_for_exact_and_related_source() -> None:
+    test_hit = {
+        "path": "tests/test_app.py",
+        "line": 20,
+        "text": "def test_handle():",
+        "scope": "test_handle",
+        "scope_start_line": 20,
+        "scope_end_line": 28,
+    }
+    related_hit = {
+        "path": "src/app.py",
+        "line": 7,
+        "scope": "src.app::handle",
+        "scope_start_line": 5,
+        "scope_end_line": 12,
+    }
+    payload = {
+        "matches": [test_hit],
+        "related": {
+            "pattern": "request.context",
+            "matches": [related_hit, test_hit],
+            "contexts": [{"path": "src/app.py", "start_line": 6, "end_line": 8, "text": "excerpt"}],
+        },
+    }
+    scope = {"org": "secondary", "namespace": "repo", "include_lessons": False}
+
+    result = lr.mcp_op_result(
+        "code.grep", payload, {"include_body": False, **scope}, None, toolset="coding"
+    )
+
+    hint = json.loads(result["next"].partition(" with ")[2])
+    assert hint == {"ranges": ["tests/test_app.py:20-28", "src/app.py:5-12"], **scope}
+    assert result["matches"] == [test_hit]
+    assert result["related"]["pattern"] == "request.context"
+    assert len(result["related"]["matches"]) == 2
+    assert "next" not in result["related"]
+
+
+def test_grep_offers_a_read_for_mixed_locations_without_excerpts() -> None:
+    implementations = [
+        ("src/main.ts", 6, 3, 11, "main::handler"),
+        ("src/helper.ts", 8, 4, 13, "helper::resolve"),
+    ]
+    exact, related = [
+        {
+            "path": path,
+            "line": line,
+            "scope": scope,
+            "scope_start_line": start,
+            "scope_end_line": end,
+        }
+        for path, line, start, end, scope in implementations
+    ]
+    result = lr.mcp_op_result(
+        "code.grep",
+        {"matches": [exact], "related": {"pattern": "req.context", "matches": [related]}},
+        {"include_body": False, "context_lines": 0},
+        None,
+        toolset="coding",
+    )
+
+    assert json.loads(result["next"].partition(" with ")[2]) == {
+        "ranges": ["src/main.ts:3-11", "src/helper.ts:4-13"]
+    }
+    assert "edit_context_next" not in result
+
+
 def test_grep_offers_edit_context_for_declarations_without_context_windows(monkeypatch) -> None:
     declaration = {
         "path": "src/a.py",

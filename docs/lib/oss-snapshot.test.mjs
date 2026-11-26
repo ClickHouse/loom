@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { snapshotOss } from "./api/oss-snapshot.mjs";
+import { snapshotOss } from "./oss-snapshot.mjs";
 
 const endpoint = "https://telemetry.example.test/api/oss-snapshot";
 const env = {

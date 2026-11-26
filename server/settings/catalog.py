@@ -1077,6 +1077,10 @@ class CodeSettings(BaseModel):
     code_git_fetch_pr_heads: bool = True
     # Max PR heads fetched per shared mirror per ingest pass.
     code_git_pr_head_batch: int = 200
+    # PEM bundle git verifies https remotes with, in place of its default roots (a server
+    # under a private authority); under /etc/ssl, which the job sandbox mounts.
+    # code_git_proxy_ca_file takes its place through the proxy. Empty = default roots.
+    code_git_ca_file: str = ""
     # The code index's network git (clone, fetch, ls-remote, submodule update) through
     # an operator's forward proxy (code/app/index/git_proxy.py). With the proxy set, such
     # a git job connects through it or is refused: never directly.
@@ -1911,6 +1915,12 @@ class CodeSettings(BaseModel):
     code_egress_connect_timeout_s: Annotated[float, LIVE] = Field(default=15.0, gt=0)
     # Seconds one enrichment of a code result may take before it is left empty.
     code_enrich_timeout_s: Annotated[float, LIVE] = Field(default=0.5, gt=0)
+    # Incoming call sites read before ranking usage examples. The coverage lookup
+    # accepts up to 50 paths.
+    code_enrich_example_candidate_limit: int = Field(default=50, ge=1, le=50)
+    # Indirect test callers ranked as backups. The edge query reads up to twice
+    # this many call sites, within its 60-site work limit.
+    code_enrich_indirect_test_caller_limit: int = Field(default=30, ge=1, le=30)
     # A full pass waits this long for a delta on its entry (past any delta's harness
     # timeout).
     code_entry_lock_wait_s: Annotated[float, LIVE] = Field(default=4 * 3600.0, gt=0)
@@ -4423,8 +4433,8 @@ class ObservabilitySettings(BaseModel):
 
     # Self-hosted adoption reports. Set false to stop all adoption reporting.
     adoption_telemetry_enabled: bool = True
-    # Share verified email domain counts in adoption reports. Off by default.
-    adoption_telemetry_share_domains: bool = False
+    # Share namespace contact domains and counts in adoption reports. Set false to omit them.
+    adoption_telemetry_share_domains: bool = True
     # Seconds between adoption checks and retries. A report covers 12 hours.
     adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 

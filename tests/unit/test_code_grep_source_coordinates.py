@@ -156,6 +156,116 @@ async def test_grep_excerpt_uses_retained_lines_to_complete_a_short_definition(
     }
 
 
+@pytest.mark.parametrize("verified", [True, False])
+async def test_requested_grep_context_crosses_declaration_boundaries(
+    monkeypatch: pytest.MonkeyPatch, verified: bool
+) -> None:
+    from server.code.app import grep, read
+
+    revision = "a" * 40
+    path = "tests/test_blueprints.py"
+    source = "# previous test\n\ndef test_blueprint():\n    setup()\n    check()\n"
+    chunk = {
+        "path": path,
+        "start_line": 3,
+        "end_line": 4,
+        "content": "def test_blueprint():\n    setup()\n",
+        "indexed_commit": revision,
+    }
+    match = {"path": path, "line": 3}
+    scan = grep._GrepLineScan([chunk], [match], {(path, 3): revision}, 1, False, "", "", "")
+    calls = []
+
+    async def paths(org, ns, wanted):
+        assert (org, ns, wanted) == ("org", "ns", [path])
+        return {
+            path: {
+                "indexed_commit": revision if verified else "b" * 40,
+                "blob_sha": "blob",
+                "chunk_count": 1,
+                "lang": "python",
+            }
+        }
+
+    async def present(_):
+        return "verified-mirror"
+
+    async def blob(git_dir, blob_path, commit, digest, *, max_bytes):
+        calls.append((git_dir, blob_path, commit, digest, max_bytes))
+        raw = source.encode()
+        return raw, len(raw)
+
+    monkeypatch.setattr(read, "repo_for_namespace", lambda *_: SimpleNamespace(path_prefixes=()))
+    monkeypatch.setattr(read, "present_dir", present)
+    monkeypatch.setattr(read, "_verified_blob", blob)
+    reply, _, _, _ = await grep._grep_page_context(
+        cast(CodeRepo, SimpleNamespace(file_rows_for_paths=paths)),
+        "org",
+        "ns",
+        CodeGrepInput(pattern="def test_blueprint", context_lines=3, include_body=False),
+        scan,
+        [match],
+        None,
+    )
+
+    assert len(calls) == int(verified)
+    assert reply["contexts_partial"] is not verified
+    window = reply["contexts"][0]
+    assert window["start_line"] == (1 if verified else 3)
+    assert window["end_line"] == (5 if verified else 4)
+    assert window["text"] == (source if verified else chunk["content"])
+
+
+async def test_cursor_does_not_recover_across_mixed_source_revisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app import grep, grep_source, search_cursor
+
+    path = "tests/test_blueprints.py"
+    hits = [{"path": path, "line": 10}, {"path": path, "line": 12}]
+    commits = {(path, 10): "b" * 40, (path, 12): "a" * 40}
+    scan = grep._GrepLineScan([], hits, commits, 2, False, "", "", "")
+    query = CodeGrepInput(pattern="target", context_lines=2, include_body=False, limit=1)
+    repo = cast(CodeRepo, object())
+    calls = []
+
+    async def unexpected(*_, **__):
+        calls.append("file read")
+
+    monkeypatch.setattr(grep_source, "fill_verified_ranges", unexpected)
+    first, source, _, _ = await grep._grep_page_context(
+        repo, "org", "ns", query, scan, hits[:1], None
+    )
+    assert first == {"contexts": [], "contexts_partial": True}
+
+    async def pool(*_):
+        return {
+            "payload": {
+                "line_mapping": grep._GREP_LINE_MAPPING_VERSION,
+                "matches": hits,
+                "match_commits": list(commits.values()),
+                "context_source": source,
+            }
+        }
+
+    async def empty(*_, **__):
+        return {}
+
+    monkeypatch.setattr(search_cursor, "decode", lambda *_, **__: {"o": 1, "r": "pool"})
+    monkeypatch.setattr(search_cursor, "expired", lambda _: False)
+    monkeypatch.setattr(grep, "_read_pool_settling", pool)
+    monkeypatch.setattr(grep, "definitions_for", empty)
+    monkeypatch.setattr(grep, "index_as_of", empty)
+    monkeypatch.setattr(grep, "schedule_code_trace", lambda **_: None)
+    second, _, offset = await grep._serve_grep_page(
+        query.model_copy(update={"cursor": "pool"}), "org", "ns", repo, "grep", 0
+    )
+    assert offset == 1
+    assert second is not None and second.matches == hits[1:]
+    assert second.contexts == [] and second.contexts_partial
+    assert not calls
+
+
 def test_grep_context_discloses_conflicting_lines_from_duplicate_hits() -> None:
     row = {
         "path": "app.py",

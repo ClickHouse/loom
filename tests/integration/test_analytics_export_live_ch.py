@@ -202,7 +202,7 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
     assert "me" in shipped and not [op for op in shipped if op.startswith("me.")]
 
 
-async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> None:
+async def test_adoption_report_contains_deployment_totals_and_contact_domains(ch: CHClient) -> None:
     start = datetime(2001, 10, 9, tzinfo=UTC)
     end = start + timedelta(hours=12)
     day = start.date()
@@ -215,6 +215,8 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
             event(stamp, llm_calls=1, input_tokens=7, output_tokens=3, embedding_tokens=5),
             event(stamp, operation="code.ask", transport="mcp", agent="b"),
             event(stamp, success=False, status_class="server"),
+            _event(org, stamp, namespace="password-account"),
+            _event(org, stamp, namespace="idn"),
             event(stamp, traffic_class="bench"),
             event(stamp, traffic_class="background"),
             _event(org, stamp, kind="worker"),
@@ -253,9 +255,10 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
             },
             {
                 **namespace,
-                "namespace": "unverified",
+                "namespace": "password-account",
                 "contact_email": f"other@{domain}",
                 "password_hash": "password",
+                "tags": [],
             },
             {
                 **namespace,
@@ -269,8 +272,8 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
         start, end, installation_id, restricted={(org, "configured-restricted")}, ch=ch
     )
     domains = report.pop("user_domains")
-    assert {"domain": domain, "user_count": 2, "successful_requests": 3} in domains
-    assert {"domain": idn, "user_count": 1, "successful_requests": 0} in domains
+    assert {"domain": domain, "user_count": 3, "successful_requests": 4} in domains
+    assert {"domain": idn, "user_count": 1, "successful_requests": 1} in domains
     assert report.pop("total_namespaces") >= 5
     version = await ch.query_one("SELECT version() AS version")
     assert version is not None
@@ -282,21 +285,21 @@ async def test_adoption_report_contains_only_deployment_totals(ch: CHClient) -> 
         "window_end": end.isoformat(),
         "loom_version": __version__,
         "clickhouse_version": version["version"],
-        "requests": 4,
-        "successful_requests": 3,
+        "requests": 6,
+        "successful_requests": 5,
         "server_errors": 1,
         "active_orgs": 1,
-        "active_namespaces": 1,
+        "active_namespaces": 3,
         "active_agents": 2,
-        "active_sessions": 1,
-        "memory_requests": 1,
+        "active_sessions": 3,
+        "memory_requests": 3,
         "code_requests": 1,
         "knowledge_requests": 1,
         "conversation_requests": 0,
         "tracker_requests": 0,
         "task_requests": 0,
         "mcp_requests": 1,
-        "http_requests": 2,
+        "http_requests": 4,
         "llm_calls": 1,
         "input_tokens": 7,
         "output_tokens": 3,

@@ -1,3 +1,9 @@
+---
+description: Extract durable facts from agent transcripts, keep links to their source turns, and apply the namespace’s write policies.
+seo:
+  title: Extract memories from agent conversations
+---
+
 # Extraction from transcripts
 
 `memory.set_from_messages` takes a transcript and the server decides what in it is

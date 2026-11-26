@@ -1,3 +1,9 @@
+---
+description: Find relationships between entities and trace each edge back to the agent memories that produced it.
+seo:
+  title: Entity graph for AI agent memory
+---
+
 # Entity graph
 
 Loom keeps an entity graph beside the memory rows, in the same ClickHouse database. Entities are nodes. Two

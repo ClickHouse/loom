@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 
 from server.code.api.models_common import _CodeIdentity, _LessonsOut, _ResultLessons
 
+# not a setting: the request schema publishes this string length.
 CODE_READ_RANGE_TEXT_MAX_CHARS = 1024
+# not a setting: the request schema publishes this batch size.
 CODE_READ_MAX_RANGES = 32
 
 _FilePath = Annotated[str, Field(min_length=1, max_length=1024)]

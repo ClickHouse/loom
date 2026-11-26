@@ -69,18 +69,31 @@ def _request_ranges(input: CodeReadInput) -> list[tuple[str, int, int]]:
     return [_parse_range(value) for value in input.ranges]
 
 
-async def _verified_blob(git_dir: str, path: str, commit: str, expected: str) -> bytes | None:
-    limit = min(
-        settings.code_ingest_max_file_bytes or _SOURCE_BYTES_PER_REQUEST, _SOURCE_BYTES_PER_REQUEST
-    )
+async def _verified_blob(
+    git_dir: str,
+    path: str,
+    commit: str,
+    expected: str,
+    *,
+    max_bytes: int = _SOURCE_BYTES_PER_REQUEST,
+) -> tuple[bytes | None, int]:
+    limit = min(settings.code_ingest_max_file_bytes or max_bytes, max_bytes)
     try:
         raw = await gitrepo.show_file(git_dir, commit, path, max_bytes=limit)
-        if raw is not None and gitrepo.blob_sha(raw) == expected:
-            raw.decode("utf-8")
-            return raw
-    except (gitrepo.BlobTooLarge, gitrepo.GitError, UnicodeDecodeError):
-        return None
-    return None
+    except gitrepo.BlobTooLarge as exc:
+        return None, len(exc.head)
+    except gitrepo.GitError:
+        return None, max(limit, gitrepo.OVERSIZE_HEAD_BYTES)
+    if raw is None:
+        return None, 0
+    spent = len(raw)
+    if gitrepo.blob_sha(raw) != expected:
+        return None, spent
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, spent
+    return raw, spent
 
 
 def _line_offsets(raw: bytes, lines: set[int]) -> dict[int, int]:
@@ -119,35 +132,45 @@ def _fill_ranges(raw: bytes, ranges: list[CodeReadRange], remaining: int) -> int
     return remaining
 
 
-async def handle_code_read(input: CodeReadInput) -> CodeReadOutput:
-    require_code_intel()
-    started = time.monotonic()
-    org, ns = resolve_code_identity(input.org, input.namespace)
-    requested = _request_ranges(input)
+async def fill_verified_ranges(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    results: list[CodeReadRange],
+    *,
+    expected_revisions: dict[str, str] | None = None,
+    max_source_bytes: int | None = None,
+) -> None:
+    """Fill source ranges after one file metadata lookup and one blob read per path."""
     cfg = repo_for_namespace(org, ns)
     prefixes = cfg.path_prefixes if cfg is not None else ()
-    results = [
-        CodeReadRange(path=path, start_line=start, end_line=end, status="not_indexed")
-        for path, start, end in requested
-    ]
     by_path: dict[str, list[CodeReadRange]] = defaultdict(list)
     for result in results:
-        if under_prefixes(prefixes, result.path):
+        if (
+            _safe_path(result.path)
+            and "\0" not in result.path
+            and under_prefixes(prefixes, result.path)
+        ):
             by_path[result.path].append(result)
-    repo = CodeRepo()
-    files, as_of, git_dir = await asyncio.gather(
-        repo.file_rows_for_paths(org, ns, list(by_path)),
-        index_as_of(repo, org, ns),
-        present_dir(cfg),
+    if not by_path:
+        return
+    files, git_dir = await asyncio.gather(
+        repo.file_rows_for_paths(org, ns, list(by_path)), present_dir(cfg)
     )
     remaining = _SOURCE_BYTES_PER_REQUEST
     for path, ranges in by_path.items():
+        # Git may read a short preview of an oversized blob before refusing it.
+        if max_source_bytes is not None and max_source_bytes < gitrepo.OVERSIZE_HEAD_BYTES:
+            break
         if (file := files.get(path)) is None:
             continue
         commit = file["indexed_commit"]
+        if expected_revisions is not None and commit != expected_revisions.get(path):
+            continue
         for result in ranges:
             result.indexed_commit = commit
             result.status = "unavailable"
+        blob_limit = _SOURCE_BYTES_PER_REQUEST if max_source_bytes is None else max_source_bytes
         if (
             git_dir
             and remaining
@@ -157,9 +180,27 @@ async def handle_code_read(input: CodeReadInput) -> CodeReadOutput:
             and file["lang"] != "reference"
             and not is_notebook_path(path)
         ):
-            raw = await _verified_blob(git_dir, path, commit, file["blob_sha"])
+            raw, spent = await _verified_blob(
+                git_dir, path, commit, file["blob_sha"], max_bytes=blob_limit
+            )
+            if max_source_bytes is not None:
+                max_source_bytes -= spent
             if raw is not None:
                 remaining = _fill_ranges(raw, ranges, remaining)
+
+
+async def handle_code_read(input: CodeReadInput) -> CodeReadOutput:
+    require_code_intel()
+    started = time.monotonic()
+    org, ns = resolve_code_identity(input.org, input.namespace)
+    results = [
+        CodeReadRange(path=path, start_line=start, end_line=end, status="not_indexed")
+        for path, start, end in _request_ranges(input)
+    ]
+    repo = CodeRepo()
+    as_of, _ = await asyncio.gather(
+        index_as_of(repo, org, ns), fill_verified_ranges(repo, org, ns, results)
+    )
 
     route = "verified_blob_ranges"
     served = [result for result in results if result.windows]

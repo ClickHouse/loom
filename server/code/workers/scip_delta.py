@@ -35,12 +35,13 @@ from server.code.app.index.compiler_tier import (
     compiler_target,
     git,
     harness_failure,
+    open_tier_delta,
+    refusal_held,
     resolve_binary,
     resolve_checkout,
     run_harness,
     run_tier,
 )
-from server.code.app.index.delta_file import open_delta
 from server.code.app.index.entry_lock import check_held
 from server.code.app.index.gitrepo import git_config_env
 from server.code.app.index.sandbox import tool_mounts
@@ -99,8 +100,8 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
         # code_scip_full seeds scip_commit with the entry's first full index
         result.skipped.append(f"{cfg.namespace}: watermarks not seeded")
         return
-    if target == scip_commit:
-        return  # compiler tier is current
+    if target == scip_commit or await refusal_held(repo, cfg, WATERMARK, target, result):
+        return  # compiler tier is current, or its delta at target was refused
 
     checkout, scip_clang_abs, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
@@ -156,7 +157,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
             raise harness_failure(returncode, out[-2000:])
 
         try:
-            delta = await asyncio.to_thread(open_delta, delta_path)
+            delta = await open_tier_delta(repo, cfg, WATERMARK, target, delta_path)
         except FileNotFoundError:
             # harness legitimately exits 0 with no delta when no C++ TU changed
             logger.info("code_scip_delta: %s no C++ changes in window", cfg.namespace)
