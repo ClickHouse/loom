@@ -42,7 +42,11 @@ PUBLIC_COPY_FILES = (
 COMPARISON_PAGE = "docs/guides/compare-agent-memory.md"
 COMPARISON_PAGES = frozenset(
     {COMPARISON_PAGE}
-    | {f"i18n/{locale}/{COMPARISON_PAGE}" for locale in ("zh-CN", "ja", "ko", "pt-BR", "es")}
+    | {
+        f"{root}/{locale}/{COMPARISON_PAGE}"
+        for root in ("i18n", "i18n/.pending")
+        for locale in ("zh-CN", "ja", "ko", "pt-BR", "es")
+    }
 )
 COMPARISON_NAME_DIGESTS = frozenset(
     {
@@ -408,6 +412,9 @@ def test_comparison_names_are_allowed_only_at_the_exact_page() -> None:
             assert _source_name_violation("docs/guides/other.md", citation) == "privatehost"
         assert _source_name_violation("docs/guides/other.md", "AcmeDB") == "acmedb"
         assert _source_name_violation("i18n/ja/docs/guides/other.md", "AcmeDB") == "acmedb"
+        assert _source_name_violation("i18n/.pending/ja/" + COMPARISON_PAGE, "AcmeDB") == ""
+        assert _source_name_violation("i18n/.pending/ja/docs/guides/other.md", "AcmeDB") == "acmedb"
+        assert _source_name_violation("i18n/.pending/fr/" + COMPARISON_PAGE, "AcmeDB") == "acmedb"
         assert _source_name_violation("i18n/fr/" + COMPARISON_PAGE, "AcmeDB") == "acmedb"
         assert _source_name_violation(COMPARISON_PAGE + ".bak", "AcmeDB") == "acmedb"
         assert _banned_in("AcmeDB architecture") == "acmedb"
