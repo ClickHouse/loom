@@ -1,6 +1,6 @@
 """A CLI backfill phase moves rows outside the ingest pass, which is what publishes
 the shared counts and coverage rows a status read serves: each phase republishes
-them once it has written something."""
+them at its end, a resumed phase with nothing left to write included."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class _Embedder:
 class _Repo:
     def __init__(self, pages: int) -> None:
         self.pages = pages
-        self.refreshed: list[tuple[str, str]] = []
+        self.refreshed: list[tuple[str, str, str]] = []
 
     async def pending_embed_chunks(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
         if not self.pages:
@@ -62,19 +62,21 @@ def test_a_phase_that_embedded_republishes_the_counts(quiet: None) -> None:
     assert repo.refreshed == [("table_counts", "acme", "code-a"), ("coverage", "acme", "code-a")]
 
 
-def test_a_phase_with_nothing_to_embed_reads_no_counts(quiet: None) -> None:
+def test_a_resumed_embed_phase_with_nothing_left_republishes(quiet: None) -> None:
+    # the last page landed and the process died before the phase end
     repo = _Repo(pages=0)
     rc = asyncio.run(code_backfill._backfill_embed(repo, "acme", "code-a", argparse.Namespace()))
     assert rc == 0
-    assert repo.refreshed == []
+    assert repo.refreshed == [("table_counts", "acme", "code-a"), ("coverage", "acme", "code-a")]
 
 
-@pytest.mark.parametrize(("files", "want"), [(3, 2), (0, 0)])
-def test_the_index_phase_republishes_what_it_wrote(quiet: None, files: int, want: int) -> None:
+@pytest.mark.parametrize("files", [3, 0])
+def test_the_index_phase_republishes_at_its_end(quiet: None, files: int) -> None:
+    # files=0: a resumed index whose cursor was already at the end
     repo = _Repo(pages=0)
     counters = {"files": files, "chunks": files, "symbols": 0, "edges": 0, "errors": 0}
     asyncio.run(code_backfill._close_index(repo, counters, "acme", "code-a", "m", 0.0, "h", "full"))
-    assert len(repo.refreshed) == want
+    assert len(repo.refreshed) == 2
 
 
 def test_a_failed_refresh_does_not_fail_the_phase(

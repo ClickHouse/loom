@@ -447,8 +447,7 @@ async def _close_index(
     """The index phase's end: compact what it wrote, republish its counts and record
     its pass."""
     await _compact_after_bulk(counters["chunks"] + counters.get("moved", 0), model_name)
-    if counters["files"]:
-        await _republish_counts(repo, org, ns)
+    await _republish_counts(repo, org, ns)
     await _record_manual_pass(
         "code_ingest",
         org,
@@ -468,7 +467,8 @@ async def _republish_counts(repo: Any, org: str, ns: str) -> None:
     """The shared counts and coverage rows, as the ingest pass publishes them after it
     moves rows; a CLI phase moves rows outside that pass. A reader serves the counts
     row whatever watermarks it was computed at, the coverage row while they match, and
-    embedding moves none."""
+    embedding moves none. Every phase end republishes: a resumed phase may find its
+    rows written by a process that died before it got here."""
     try:
         await repo.refresh_table_counts(org, ns)
     except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
@@ -639,8 +639,7 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
     async def _finish(code: int) -> int:
         _note(phase="embed", embedded=total, failed=result.failed, poisoned=result.poisoned)
         await _compact_after_bulk(total, embedder.model_name)
-        if total:
-            await _republish_counts(repo, org, ns)
+        await _republish_counts(repo, org, ns)
         await _record_manual_pass(
             "code_embed_recovery",
             org,
