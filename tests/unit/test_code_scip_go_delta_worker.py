@@ -237,6 +237,61 @@ async def test_no_go_change_in_window_advances_the_watermark_without_the_harness
     repo.set_state.assert_awaited_with("org", "code-go", "scip_commit_go", "b" * 40)
 
 
+@pytest.mark.asyncio
+async def test_a_changed_generated_rule_releases_a_refused_delta(monkeypatch, tmp_path: Path):
+    """A delta refused over the node cap holds the entry; turning `exclude_generated`
+    on, which shrinks the delta the harness writes, runs it again at the same commit."""
+    _host(monkeypatch, tmp_path)
+    monkeypatch.setattr(w.settings, "code_scip_delta_max_nodes", 10)
+    runs: list[bool] = []
+
+    async def fake_git(cwd, *args, **kw):
+        return None
+
+    async def fake_harness(co, base, head, out_dir, modules, cfg):
+        runs.append(cfg.exclude_generated)
+        n = 0 if cfg.exclude_generated else 5
+        files = [{"path": f"lib/z{i}.pb.go", "symbols": [], "edges": []} for i in range(n)]
+        (out_dir / "lib.json").write_text(
+            json.dumps({"delta_version": 1, "commit": head, "files": files})
+        )
+        return "done lib\n"
+
+    async def fake_apply(repo, org, ns, delta):
+        from server.code.app.index.scip_delta import ScipApplyStats
+
+        return ScipApplyStats(files=0)
+
+    monkeypatch.setattr(w, "git", fake_git)
+    monkeypatch.setattr(w, "_run_harness", fake_harness)
+    monkeypatch.setattr(w, "_module_dirs", AsyncMock(return_value=["lib"]))
+    monkeypatch.setattr("server.code.app.index.scip_delta.apply_delta", fake_apply)
+    state = {"git_head": "b" * 40}
+    repo = _repo("b" * 40, "")
+
+    async def get_state(org, ns, key):
+        return state.get(key, "")
+
+    async def set_state(org, ns, key, value, detail=""):
+        state[key] = value
+
+    repo.get_state.side_effect = get_state
+    repo.set_state.side_effect = set_state
+
+    async def run(cfg: Any) -> Any:
+        p1, p2 = _patched(repo, [cfg])
+        with p1, p2:
+            return await w.run_pass()
+
+    refused = await run(_Cfg(exclude_generated=False))
+    held = await run(_Cfg(exclude_generated=False))
+    excluded = await run(_Cfg(exclude_generated=True))
+    assert refused.errors and "FileRefused" in refused.errors[0]
+    assert held.skipped and runs[:1] == [False]
+    assert not excluded.errors and runs == [False, True]
+    assert state["scip_commit_go"] == "b" * 40
+
+
 def test_harness_env_carries_the_entrys_generated_rule_and_the_modules(monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", "/usr/local/go/bin:/host/go/bin:/usr/bin")
     monkeypatch.setattr(w.settings, "code_scip_go_bin_dir", str(tmp_path))
