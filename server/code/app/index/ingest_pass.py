@@ -26,6 +26,7 @@ from server.code.app.index.pass_budget import (
     CodeIngestResult,
     PassBudget,
     RepoPass,
+    cut_key,
     cut_points,
     git_text_source,
     pass_budget,
@@ -155,7 +156,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
     # of it, pass after pass.
     starts = cut_points(pass_context.resume_cursor())
     if not (org and namespace):
-        repos = rotate_to(repos, starts.get("commits", ""))
+        repos = rotate_to(repos, starts.get("commits", ""), key=cut_key)
     commit_budget = budget.phase(settings.code_ingest_walk_budget_share)
     await prefetch_mirrors(repos, result)  # One fetch per mirror
     plans: list[RepoPass] = []
@@ -199,7 +200,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
         rotate_to(
             [p for p in plans if p.bootstrap],
             starts.get("bootstrap", ""),
-            key=lambda p: p.cfg.namespace,
+            key=lambda p: cut_key(p.cfg),
         ),
         "bootstrap",
         _bootstrap_leg,
@@ -208,7 +209,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
         result,
         budget,
         rotate_to(
-            [p for p in plans if p.walk], starts.get("walk", ""), key=lambda p: p.cfg.namespace
+            [p for p in plans if p.walk], starts.get("walk", ""), key=lambda p: cut_key(p.cfg)
         ),
         "walk",
         _walk_leg,

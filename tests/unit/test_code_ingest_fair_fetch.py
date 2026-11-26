@@ -171,7 +171,7 @@ def test_the_pass_stops_between_commits_and_the_next_pass_continues_from_the_wat
     assert ingested == commits[:3]
     assert result.commits_planned == 4 and result.commits_done == 3
     assert repo.state["git_head"] == commits[2], "the watermark is the resume point"
-    assert result.partial and result.resume == "code-a:commits@c3+1"
+    assert result.partial and result.resume == "o/code-a:commits@c3+1"
 
     # the next pass: what the watermark says, with a fresh budget
     ingested.clear()
@@ -199,8 +199,8 @@ def test_at_the_budget_every_waiting_entry_is_cut_the_next_to_serve_first(
     )  # two start: 0, 100
     asyncio.run(ingest_stream.ingest_round_robin([a, b], result, budget))
     assert ingested == ["a1", "b1"]
-    assert result.resume == "code-a:commits@a1+1", "one each landed: entry order breaks the tie"
-    assert ingest_budget.cut_points(result.resume) == {"commits": "code-a"}
+    assert result.resume == "o/code-a:commits@a1+1", "one each landed: entry order breaks the tie"
+    assert ingest_budget.cut_points(result.resume) == {"commits": "o/code-a"}
 
 
 def test_a_two_commit_backlog_does_not_hold_another_entrys_one_commit_behind_it(

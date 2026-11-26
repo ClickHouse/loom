@@ -110,6 +110,9 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
    rows): N reads the old and the new format, and only N+1 writes the new one. Exception:
    a cursor for a request N-1 answers for `namespace` alone (a `knowledge.list` naming
    `namespaces`) is new in N, and each build refuses the one the other wrote (rule 12).
+   The `code_ingest` resume cursor names each cut as `org/namespace` in N; the other
+   build finds no entry of that name and serves its entries in configured order for
+   that pass.
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
    refresh interval (the command refuses less), so no process signs with a kid an N-1
    replica cannot verify yet.

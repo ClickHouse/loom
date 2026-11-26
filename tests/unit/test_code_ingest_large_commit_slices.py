@@ -202,4 +202,4 @@ def test_the_entry_a_sliced_round_did_not_reach_is_served_first_next_pass(monkey
     plans = [_plan(ns, repos[ns], pending[ns]) for ns in repos]
     asyncio.run(ingest_stream.ingest_round_robin(plans, result, budget))
     assert not any(sha == "sd" for sha, _ in done), "the budget ended before the small entry"
-    assert ingest_budget.cut_points(result.resume)["commits"] == "code-d", result.resume
+    assert ingest_budget.cut_points(result.resume)["commits"] == "o/code-d", result.resume

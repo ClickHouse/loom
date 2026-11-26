@@ -192,7 +192,7 @@ flowchart LR
    row, and a context pack and review brief for the merged PR the commit names. Then it
    advances `git_head`. A crash re-runs from the last complete commit. Across entries
    the pass takes one commit per entry per round, so a long backlog never holds another
-   entry's new commits; a round the budget ends resumes next pass at the entry it missed.
+   entry's new commits; a round the budget ends resumes next pass at the entry (org and namespace) it missed.
 3. **Walks** with the share `LOOM_CODE_INGEST_WALK_BUDGET_SHARE` leaves: reconciliation
    heals and extractor re-chunks (below).
 

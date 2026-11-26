@@ -99,13 +99,15 @@ def test_a_round_the_budget_ends_resumes_next_pass_at_the_entry_it_did_not_reach
     result = _run([a, b, c], clock, 150.0)  # starts at 0 and 100
     assert ingested == ["a1", "b1"]
     starts = ingest_budget.cut_points(result.resume)
-    assert starts == {"commits": "code-c"}, result.resume
+    assert starts == {"commits": "o/code-c"}, result.resume
 
     ingested.clear()
     a2, _ = _plan("code-a", ["a2"])
     b2, _ = _plan("code-b", ["b2"])
     c2, rc = _plan("code-c", ["c1"])
-    order = ingest_budget.rotate_to([a2, b2, c2], starts["commits"], key=lambda p: p.cfg.namespace)
+    order = ingest_budget.rotate_to(
+        [a2, b2, c2], starts["commits"], key=lambda p: ingest_budget.cut_key(p.cfg)
+    )
     _run(order, clock, 150.0)
     assert ingested == ["c1", "a2"] and rc.state["git_head"] == "c1"
 
