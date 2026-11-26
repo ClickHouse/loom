@@ -79,7 +79,13 @@ def _harness(
     from server.code.store import index
 
     store = _Store()
-    plan: dict[str, Any] = {"fail_batch": None, "fail_edges": False, "batches": [], "edges": 0}
+    plan: dict[str, Any] = {
+        "fail_batch": None,
+        "fail_edges": False,
+        "edge_errors": 0,
+        "batches": [],
+        "edges": 0,
+    }
     cfg = repo_config(org="acme", namespace="code-x", git_dir=str(tmp_path))
 
     async def _noop(*_a: object, **_k: object) -> None:
@@ -101,7 +107,7 @@ def _harness(
         if plan["fail_edges"]:
             raise _Interrupted("edge pass")
         plan["edges"] += 1
-        return {"files": len(paths), "edges": 0, "errors": 0}
+        return {"files": len(paths), "edges": 0, "errors": plan["edge_errors"]}
 
     monkeypatch.setattr(index, "CodeRepo", store)
     monkeypatch.setattr(code_backfill, "_repo_cfg", lambda _a: cfg)
@@ -178,4 +184,18 @@ def test_declining_the_pass_clears_what_an_earlier_run_owed(
     plan["fail_batch"] = None
     assert _backfill(no_edges_second_pass=True) == 0
     assert plan["edges"] == 0
+    assert store.state["backfill_edges_owed:index"] == ""
+
+
+def test_an_edge_pass_with_a_failed_file_write_stays_owed_until_a_rerun_finishes_clean(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    store, plan = _harness(monkeypatch, tmp_path, _PATHS)
+    plan["edge_errors"] = 1  # one file's edge write failed
+    _backfill()
+    assert plan["edges"] == 1
+    assert store.state["backfill_edges_owed:index"] == "first-backfill"
+    plan["edge_errors"] = 0
+    assert _backfill() == 0  # no batch left, the pass still owed
+    assert plan["edges"] == 2
     assert store.state["backfill_edges_owed:index"] == ""
