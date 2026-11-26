@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 import server.transport.lean_results as lr
+from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.settings import settings
 from server.transport.code_lean import lean_code
 
@@ -503,6 +504,42 @@ def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lo
         assert json.loads(params) == {
             "ranges": [{"path": hit["path"], "start_line": 1, "end_line": 12} for hit in matches]
         }
+
+
+def test_grep_offers_edit_context_for_declarations_without_context_windows() -> None:
+    declaration = {
+        "path": "src/a.py",
+        "line": 5,
+        "text": "def worker():",
+        "scope": "worker",
+        "scope_start_line": 5,
+        "scope_end_line": 12,
+    }
+    payload = {"matches": [declaration, {**declaration, "line": 8, "text": "    worker()"}]}
+    result = lr.mcp_op_result("code.grep", payload, {"include_body": False}, None, toolset="coding")
+    assert result["matches"] == payload["matches"]
+    assert result["edit_context_next"] == {
+        "tool": "loom_code_edit_context",
+        "arguments": {"names": ["src/a.py:5"]},
+    }
+    assert json.loads(result["next"].partition(" with ")[2]) == {
+        "ranges": [{"path": "src/a.py", "start_line": 5, "end_line": 12}],
+    }
+    token = set_code_scope("attached/repo")
+    try:
+        arguments = {"include_body": False, "org": "attached", "namespace": "repo"}
+        assert lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding") == result
+        override = lr.mcp_op_result(
+            "code.grep", payload, {**arguments, "namespace": "other"}, None, toolset="coding"
+        )
+        assert override["edit_context_next"]["arguments"] == {
+            "names": ["src/a.py:5"],
+            "org": "attached",
+            "namespace": "other",
+        }
+        assert json.loads(override["next"].partition(" with ")[2])["namespace"] == "other"
+    finally:
+        reset_code_scope(token)
 
 
 def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:
