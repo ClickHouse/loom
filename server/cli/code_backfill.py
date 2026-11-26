@@ -221,26 +221,24 @@ async def _backfill(args: argparse.Namespace) -> int:
     if getattr(args, "dialect_folder_pass", False):
         folder = await _dialect_folder_pass(repo, org, ns, head)
         counters["dialect_inherited"] = folder["inherited"]
-    # A full run republishes after its `git_head` write: the rows carry that watermark.
-    full = not paths_file and not suffix
-    await _close_index(repo, counters, org, ns, model_name, started, head, mode, republish=not full)
+    # A targeted repair proves nothing about the rest of the tree, and a twin label
+    # nothing about the live label's coverage: the per-merge watermark keeps walking
+    # every commit it has not seen, from where the live backfill left it.
+    if not paths_file and not suffix:
+        await repo.set_state(org, ns, "git_head", head, detail="backfill")
+        from server.code.app.index.bootstrap import record_backfill_stamps
+
+        await record_backfill_stamps(repo, org, ns)
+    await _close_index(repo, counters, org, ns, model_name, started, head, mode)
+    if not paths_file:
+        # Cleared once the phase has published: an interrupted run resumes at the end.
+        await repo.set_state(org, ns, cursor_key, "")
     if paths_file:
-        # a targeted repair proves nothing about the rest of the tree: the
-        # per-merge watermark must keep walking every commit it has not seen
         print(f"repair complete at {head[:12]} (watermark untouched): {counters}")
         return backfill_index_exit_code(counters["files"], counters["errors"])
     if suffix:
-        # a twin label proves nothing about the live label's coverage: the
-        # per-merge watermark stays where the live backfill left it
-        await repo.set_state(org, ns, cursor_key, "")
         print(f"twin backfill complete at {head[:12]} (watermark untouched): {counters}")
         return backfill_index_exit_code(counters["files"], counters["errors"])
-    await repo.set_state(org, ns, "git_head", head, detail="backfill")
-    await repo.set_state(org, ns, cursor_key, "")  # done; clear the cursor
-    from server.code.app.index.bootstrap import record_backfill_stamps
-
-    await record_backfill_stamps(repo, org, ns)
-    await _republish_counts(repo, org, ns)
     print(f"backfill index phase complete at {head[:12]}: {counters}")
     _note(phase="index", head=head[:12], total_paths=len(paths), **counters)
     if not args.embed:
@@ -446,15 +444,10 @@ async def _close_index(
     started: float,
     head: str,
     mode: str,
-    *,
-    republish: bool = True,
 ) -> None:
-    """The index phase's end: compact what it wrote, republish its counts and record
-    its pass. A full run passes `republish=False` and republishes once its watermark
-    is written."""
+    """The index phase's end, after its last watermark write: compact what it wrote,
+    record its pass and republish its counts."""
     await _compact_after_bulk(counters["chunks"] + counters.get("moved", 0), model_name)
-    if republish:
-        await _republish_counts(repo, org, ns)
     await _record_manual_pass(
         "code_ingest",
         org,
@@ -468,22 +461,30 @@ async def _close_index(
         head=head[:12],
         mode=mode,
     )
+    await _republish_counts(repo, org, ns)
 
 
 async def _republish_counts(repo: Any, org: str, ns: str) -> None:
-    """The shared counts and coverage rows, as the ingest pass publishes them after it
-    moves rows; a CLI phase moves rows outside that pass. A reader serves the counts
-    row whatever watermarks it was computed at, the coverage row while they match, and
-    embedding moves none. Every phase end that declared its org republishes: a resumed
-    phase may find its rows written by a process that died before it got here."""
-    try:
-        await repo.refresh_table_counts(org, ns)
-    except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
-        print(f"  table counts not republished: {type(e).__name__}: {e}", file=sys.stderr)
-    try:
-        await repo.refresh_coverage(org, ns)
-    except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
-        print(f"  coverage not republished: {type(e).__name__}: {e}", file=sys.stderr)
+    """The shared coverage and counts rows the ingest pass publishes after it moves
+    rows. They are read with sequential consistency, because the run's own writes,
+    the `git_head` the fingerprint carries included, may not have reached the
+    replica that serves the read. The counts row is written last and only once the
+    coverage row is: while it trails the chunk table, the next embed phase
+    republishes both."""
+    from server.core.ch import sequential_reads
+
+    with sequential_reads():
+        try:
+            await repo.refresh_coverage(org, ns)
+        except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
+            print(
+                f"  coverage and counts not republished: {type(e).__name__}: {e}", file=sys.stderr
+            )
+            return
+        try:
+            await repo.refresh_table_counts(org, ns)
+        except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
+            print(f"  table counts not republished: {type(e).__name__}: {e}", file=sys.stderr)
 
 
 async def _held_batch(
@@ -675,13 +676,12 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
         )
         return rows
 
-    # The first page is read before the org is declared (on the client `code_run`
-    # connected): a mistyped --org has none, so a `recording` cell records nothing,
-    # and the pass's status row, keyed by namespace, needs no org. With nothing pending,
-    # a namespace that has a counts row still declares and republishes: its last page
-    # may have landed in a process that died before `_finish`.
+    # The first page and the published chunk counts are read before the org is
+    # declared (on the client `code_run` connected): a mistyped --org has neither
+    # pending rows nor chunks, so a `recording` cell records nothing, and the pass's
+    # status row, keyed by namespace, needs no org.
     rows = await _pending()
-    declared = bool(rows) or await repo.get_state_or_none(org, ns, "table_counts") is not None
+    declared = bool(rows) or await repo.published_chunks_behind(org, ns)
     if declared:
         from server.core.ch import get_client
 

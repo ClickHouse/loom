@@ -275,6 +275,21 @@ class StatusMixin(CodeRepoBase):
         )
         return rows, int((total or {}).get("n") or 0)
 
+    async def published_chunks_behind(self, org: str, ns: str) -> bool:
+        """Whether the chunk figures readers serve trail the chunk table, as they do
+        when an embed backfill's last page landed in a process that died before it
+        republished. False with no counts row (its first reader computes all of it)
+        or one that matches the table, such as the zeros a read writes for a
+        namespace with no chunks. One point read and one chunk aggregate."""
+        published = await self._shared_counts(org, ns)
+        if published is None:
+            return False
+        embeddable, embedded = await self.chunk_embed_coverage(org, ns)
+        return (
+            published.get("code_chunks_embeddable", 0),
+            published.get("code_chunks_embedded", 0),
+        ) != (embeddable, embedded)
+
     async def recent_indexed_commits(
         self, org: str, ns: str, *, limit: int
     ) -> list[dict[str, Any]]:
