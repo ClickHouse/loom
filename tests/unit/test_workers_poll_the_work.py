@@ -193,6 +193,12 @@ class _FakeCodeRepo:
     def tombstone_of(table, live_row):
         return _RealCodeRepo.tombstone_of(table, live_row)
 
+    async def refresh_coverage(self, org, ns, *, must_land=False):
+        self.calls.append(("coverage", ns))
+
+    async def refresh_table_counts(self, org, ns, *, must_land=False):
+        self.calls.append(("table_counts", ns))
+
 
 class _Embedder:
     model_name = "fake-ngram-8"
@@ -249,6 +255,7 @@ def cer(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "code_embed_recovery_full_scan_seconds", 1800)
     monkeypatch.setattr(w, "_watermark", {})
     monkeypatch.setattr(w, "_full_scan_at", 0.0)
+    monkeypatch.setattr(w, "_unpublished", set())
     return w
 
 
