@@ -237,6 +237,19 @@ def _forbidden_result(
     return {"content": [{"type": "text", "text": msg}], "isError": True, "structuredContent": body}
 
 
+async def _apply_capture_consent(span_identity: dict[str, Any]) -> None:
+    try:
+        from server.observability import capture_consent, otel
+
+        capture_level = await capture_consent.resolve(
+            str(span_identity.get("org") or ""), str(span_identity.get("namespace") or "")
+        )
+        if capture_level != "off":
+            otel.set_loom_attributes(**span_identity, capture_level=capture_level)
+    except Exception:  # noqa: BLE001 — keep capture off if consent cannot be resolved
+        pass
+
+
 async def _call_tool(
     req_id: Any,
     params: dict[str, Any],
@@ -321,31 +334,26 @@ async def _call_tool(
     # Replays need the admitted tenant's tags for trace discovery and erasure.
     # Provider children also read this identity before the handler returns.
     try:
-        from server.observability import capture_consent as _consent
         from server.observability import otel as _otel_pre
 
-        _ident = _span_identity(
+        span_identity = _span_identity(
             op, input_obj, auth, request_id, mcp_session_id, org=rl_org, namespace=rl_ns
         )
-        # Same per-namespace consent resolution as the HTTP path: once per
-        # request, from a 60s cache, never inside the provider call.
-        try:
-            _ident["capture_level"] = await _consent.resolve(
-                str(_ident.get("org") or ""), str(_ident.get("namespace") or "")
-            )
-        except Exception:  # noqa: BLE001 — fail closed
-            _ident["capture_level"] = "off"
-        _otel_pre.set_loom_attributes(**_ident)
+        _otel_pre.set_loom_attributes(**span_identity, capture_level="off")
     except Exception:  # noqa: BLE001 — identity stamping must not fail a tool call
         # The identity could not be built: capture nothing, and name the op so its
         # spans stay findable. Its model calls name no org, so they skip the model
         # caches and refuse.
+        span_identity = None
         genai.set_identity(operation=op.name, capture_level="off")
 
     # The replay cache is read only for an admitted caller.
     replay, idem_scope, idem_body_hash = await _idempotency_gate(call, name, client_idem_key)
     if replay is not None:
         return replay  # IDEMPOTENT_CONFLICT refusal, or the cached result replayed
+
+    if span_identity is not None:
+        await _apply_capture_consent(span_identity)
 
     with required_call_exit(
         op_name=op.name,

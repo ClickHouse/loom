@@ -544,9 +544,10 @@ def _record_failure(
         pass
 
 
-async def _start_telemetry(op: Operation, response: Response, call: _HttpCall) -> None:
-    """The OTel span's Loom attributes (with the namespace's capture consent)
-    and the X-Trace-Id header."""
+def _start_telemetry(
+    op: Operation, response: Response, call: _HttpCall, *, capture_level: str = "off"
+) -> None:
+    """Set the OTel span's Loom attributes and the X-Trace-Id header."""
     request_id, auth, identity = call.request_id, call.auth, call.identity
     # Tag the OTel span with Loom-specific attributes for tenant/op
     # filtering; no-op when OTel is disabled. Prefer the payload's
@@ -563,16 +564,6 @@ async def _start_telemetry(op: Operation, response: Response, call: _HttpCall) -
     if not span_session_id or span_session_id == SENTINEL:
         span_session_id = None
 
-    # Per-namespace consent for capturing prompt/completion text. Resolved
-    # here, once, from a 60s cache — never inside the provider call, which
-    # would put a ClickHouse round trip on every generation.
-    try:
-        from server.observability import capture_consent as _consent
-
-        _capture_level = await _consent.resolve(identity["org"], identity["namespace"])
-    except Exception:  # noqa: BLE001 — fail closed, not open
-        _capture_level = "off"
-
     _otel.set_loom_attributes(
         op_name=op.name,
         org=identity["org"],
@@ -581,7 +572,7 @@ async def _start_telemetry(op: Operation, response: Response, call: _HttpCall) -
         user_id=effective_user_id,
         request_id=request_id,
         session_id=span_session_id,
-        capture_level=_capture_level,
+        capture_level=capture_level,
     )
 
     # Hand the caller its trace id. It is the same 32-char hex Langfuse uses
@@ -827,10 +818,21 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         payload = gates.with_target(op, payload, target)
         payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
-        await _start_telemetry(op, response, call)
+        _start_telemetry(op, response, call)
         replay = await _idempotency_gate(op, request, response, call, target, payload)
         if replay.hit is not None:
             return replay.hit.body
+
+        try:
+            from server.observability import capture_consent
+
+            capture_level = await capture_consent.resolve(
+                call.identity["org"], call.identity["namespace"]
+            )
+        except Exception:  # noqa: BLE001 — fail closed, not open
+            capture_level = "off"
+        if capture_level != "off":
+            _start_telemetry(op, response, call, capture_level=capture_level)
 
         with required_call_exit(
             op_name=op.name,

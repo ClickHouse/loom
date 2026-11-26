@@ -423,10 +423,12 @@ way. Bucket fill itself stays per host.
 
 ## Loom invocation observability
 
-Loom observes actual HTTP operations and MCP tool calls through its existing
-OpenTelemetry exporters. Each call observation has `loom.call.root=true`, a
-unique `loom.call.attempt_id`, the operation, transport, outcome, and duration
-in milliseconds. Provider and retrieval stages remain children of that call.
+Loom observes registered HTTP operations under `/v1/{op}` and MCP tool calls
+through its existing OpenTelemetry exporters. The HTTP account routes under
+`/v1/me/*` do not contribute to these call counts. Each call observation has
+`loom.call.root=true`, a unique `loom.call.attempt_id`, the operation, transport,
+outcome, and duration in milliseconds. Provider and retrieval stages remain
+children of that call.
 
 Transport and origin answer different questions. `loom.call.transport` is
 `http` or `mcp`. `loom.call.origin` is the caller-reported `tool`, `hook`,

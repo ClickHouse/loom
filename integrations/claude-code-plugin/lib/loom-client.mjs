@@ -737,6 +737,7 @@ export async function requestJson(
   try {
     const res = await fetchImpl(url, {
       method,
+      redirect: Object.keys(_hookPromptHeaders).length ? "error" : "follow",
       headers: {
         ...(body === undefined ? {} : { "content-type": "application/json" }),
         ...(token ? { authorization: `Bearer ${token}` } : {}),

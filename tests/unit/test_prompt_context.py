@@ -763,7 +763,19 @@ def test_review_authenticated_early_refusal_uses_token_identity(
         assert result.headers["X-Request-Id"] == attributes["loom.request_id"] == "early-refusal"
 
 
-def test_review_authenticated_http_replay_retains_identity(client, spans):
+@pytest.fixture
+def capture_lookups(monkeypatch):
+    lookups = []
+
+    async def resolve(org, namespace):
+        lookups.append((org, namespace))
+        return "query"
+
+    monkeypatch.setattr("server.observability.capture_consent.resolve", resolve)
+    return lookups
+
+
+def test_review_authenticated_http_replay_retains_identity(client, spans, capture_lookups):
     from tests.unit.test_http_idempotency_after_auth import BODY
 
     http_client, rows, ran = client
@@ -778,13 +790,16 @@ def test_review_authenticated_http_replay_retains_identity(client, spans):
     assert first.status_code == replay.status_code == 200
     assert replay.headers["X-Idempotent-Replay"] == "true"
     assert ran == ["k"] and len(rows) == 1
+    assert capture_lookups == [("o", "n")]
     _assert_authenticated_replay_roots(
         [s for s in spans.get_finished_spans() if s.attributes.get("loom.call.root")]
     )
 
 
 @pytest.mark.asyncio
-async def test_review_authenticated_mcp_replay_retains_identity(monkeypatch, gated, spans):
+async def test_review_authenticated_mcp_replay_retains_identity(
+    monkeypatch, gated, spans, capture_lookups
+):
     from dataclasses import replace
 
     from pydantic import BaseModel
@@ -827,6 +842,7 @@ async def test_review_authenticated_mcp_replay_retains_identity(monkeypatch, gat
     assert results[1]["result"]["_meta"] == {"idempotentReplay": True}
     store, ran = gated
     assert ran == ["safe fixture"] and len(store.rows) == 1
+    assert capture_lookups == [("o", "n")]
     _assert_authenticated_replay_roots(
         [s for s in spans.get_finished_spans() if s.attributes.get("loom.call.root")]
     )

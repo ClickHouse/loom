@@ -52,7 +52,7 @@ test("the shared HTTP transport carries only the event's explicit prompt context
     await requestJson("http://127.0.0.1:1/v1/memory.get", {
       body: { memory_key: "example" },
       fetchImpl: async (url, options) => {
-        console.log(JSON.stringify({ headers: options.headers, body: options.body }));
+        console.log(JSON.stringify({ headers: options.headers, body: options.body, redirect: options.redirect }));
         return { status: 200, json: async () => ({}) };
       }
     });
@@ -82,6 +82,7 @@ test("the shared HTTP transport carries only the event's explicit prompt context
   assert.equal(b.headers["x-loom-prompt-id"], "b");
   assert.equal(absent.headers["x-loom-prompt-id"], undefined);
   assert.equal(secret.headers["x-loom-prompt-id"], undefined);
+  assert.equal(a.redirect, "error");
   assert.deepEqual(JSON.parse(a.body), { memory_key: "example" });
   assert.equal(JSON.stringify(a).includes("private prompt"), false);
 });
