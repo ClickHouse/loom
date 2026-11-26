@@ -13,6 +13,7 @@ from server.core import pg
 from server.knowledge.app.mcp_worker_route_config import load_worker_routes
 from server.knowledge.app.mcp_worker_routes import open_worker_routes
 from server.knowledge.app.mcp_worker_runtime import current_directory, source_worker_runtime
+from server.settings import Settings
 
 _ROUTE = {
     "worker_id": "d59962ea-a918-497a-a284-984c5ddc7dfd",
@@ -62,7 +63,8 @@ async def test_provision_operator_pins_trust_and_loads_only_loom_keys(
     async with open_worker_routes((route,)) as routes:
         assert routes.permits(route.worker_id, "org", "f" * 64, "live", False)
     assert current_directory() is None
-    async with source_worker_runtime(str(path)):
+    monkeypatch.setenv("LOOM_KNOWLEDGE_SOURCE_WORKER_ROUTES_FILE", str(path))
+    async with source_worker_runtime(Settings().knowledge_source_worker_routes_file):
         directory = current_directory()
         if pg_authority:
             assert directory is not None

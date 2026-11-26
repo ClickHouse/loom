@@ -10,6 +10,7 @@ from server.auth.context import current_auth
 from server.auth.jwt import AuthInfo
 from server.auth.session_protection import protected_for
 from server.core import request_tail, request_work
+from server.core.ch import sequential_reads
 from server.core.diagnostics import private_work
 from server.identity.domain.read_scope import effective_read_scope
 from server.knowledge.app import connected_accounts, session_admission
@@ -29,6 +30,7 @@ from server.settings import settings
 
 Deliver = Callable[[], Awaitable[None]]
 FenceDelivery = Callable[[WorkerReadScope, Deliver, float], Awaitable[None]]
+_PUBLICATION_BUDGET_SECONDS = 2
 
 
 @dataclass(frozen=True, repr=False)
@@ -112,11 +114,26 @@ async def protected_live_read(
             "live",
         )
 
-        async def retain(scope: WorkerReadScope, check: Deliver, retain_until: float) -> None:
+        async def retain(scope: WorkerReadScope, check: Deliver, read_until: float) -> None:
+            # A completed worker read gets its own bounded time for accounting and send.
+            loop = asyncio.get_running_loop()
+            retain_until = min(read_until, loop.time()) + _PUBLICATION_BUDGET_SECONDS
+
             async def fence(deliver: Deliver) -> None:
                 _require_context(scope.org, auth)
+                from server.knowledge.app.sources import sources_lease
+
+                # Source retirement holds this lease. Take it before the Postgres
+                # fence so the source cannot change between validation and handoff.
                 with private_work():
-                    await fence_delivery(scope, deliver, retain_until)
+                    end = min(retain_until, loop.time() + 1)
+                    async with (
+                        asyncio.timeout_at(end),
+                        sources_lease(scope.org, scope.namespace, wait_s=0),
+                    ):
+                        with sequential_reads():
+                            await check()
+                        await fence_delivery(scope, deliver, end)
 
             await _retain(auth, check, fence, retain_until)
 

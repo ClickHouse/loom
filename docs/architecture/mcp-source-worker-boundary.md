@@ -66,19 +66,20 @@ realm before the reader can request access to the selected identity.
 
 The worker validates the current connection before upstream use and before
 return. Loom checks current source, selection, connection and reader standing
-again before delivering a result. It locks the exact approval, account and team
-link rows for the bounded handoff of each response frame. A revocation that has
-committed before the handoff prevents that frame; revocation cannot recall bytes
-already handed off. No upstream call happens while these locks are held.
+again before delivering a result. During each frame handoff, Loom holds the same
+lease used to retire or update the source and locks the exact approval, account
+and team link rows. Retirement or revocation that commits before the handoff
+withholds the frame. No upstream call happens while these locks are held.
 
 `knowledge.source.live` is experimental. It requires a protected session with a
 namespace-scoped token, an approved route, and a current source selection. It
 refuses tokens restricted to one user or session. Registration remains disabled,
 so this prerequisite does not enable user setup on its own.
-A live request lives with its API request;
-it has a separate deadline and admission limit from refresh work and no durable
-payload queue. Denial, reconnect, saturation, unavailable and timeout are distinct
-outcomes. An authorized stored copy can be offered after timeout or worker outage
+A live request lives with its API request. It has a separate read deadline and
+admission limit from refresh work, a bounded delivery budget after the read,
+and no durable payload queue. Denial, reconnect, saturation, unavailable and timeout are distinct
+outcomes. Team viewers without current source enrollment see the same denial for
+selected and unselected IDs. An authorized stored copy can be offered after timeout or worker outage
 with its own age and provenance. Denial never falls back to a stored result.
 The initial live read returns the explicit error without a stored substitute.
 

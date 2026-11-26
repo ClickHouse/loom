@@ -3,6 +3,7 @@ import hashlib
 import json
 import time
 import unittest
+from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
 from uuid import UUID, uuid4
 
@@ -149,15 +150,15 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         self.standing = ReaderStanding("org", "bob", "collection")
         original = self.bob_enrollment
         assert original is not None
-        for enrollment, refusal in (
-            (None, "reconnect"),
-            (replace(original, connection_id=uuid4()), "reconnect"),
-            (replace(original, selection_generation=2), "reconnect"),
-            (replace(original, source_id=uuid4()), "denied"),
-            (replace(original, requester="alice"), "denied"),
+        for enrollment in (
+            None,
+            replace(original, connection_id=uuid4()),
+            replace(original, selection_generation=2),
+            replace(original, source_id=uuid4()),
+            replace(original, requester="alice"),
         ):
             self.bob_enrollment = enrollment
-            with self.assertRaisesRegex(WorkerReadRefused, f"^{refusal}$"):
+            with self.assertRaisesRegex(WorkerReadRefused, "^denied$"):
                 await self._authority().resolve()
 
     async def test_team_refuses_unknown_or_mismatched_resource_space(self) -> None:
@@ -177,8 +178,10 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
             replace(prior, binding=replace(prior.binding, connection_generation=3)),
         ):
             self.connections["alice"] = current
-            with self.assertRaisesRegex(WorkerReadRefused, "^reconnect$"):
-                await authority.resolve()
+            for viewer, status in (("bob", "denied"), ("alice", "reconnect")):
+                self.standing = ReaderStanding("org", viewer, "collection")
+                with self.assertRaisesRegex(WorkerReadRefused, f"^{status}$"):
+                    await authority.resolve()
 
     async def test_scope_changes_even_if_selection_returns_to_the_same_item(self) -> None:
         authority = self._authority()
@@ -280,7 +283,13 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
             )
 
     async def _live_publication(
-        self, *, revoke_for_publication: bool = False, unlink_during_body: bool = False
+        self,
+        *,
+        revoke_for_publication: bool = False,
+        unlink_during_body: bool = False,
+        retire_during_body: bool = False,
+        retire_during_delivery: bool = False,
+        settle_past_read_deadline: bool = False,
     ) -> tuple[list, list]:
         from unittest.mock import AsyncMock, patch
 
@@ -342,15 +351,29 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(channel.close)
 
         body = False
+        holds_source_lease = False
+
+        @asynccontextmanager
+        async def source_lease(org, namespace, *, wait_s):
+            nonlocal holds_source_lease
+            assert (org, namespace, wait_s) == ("org", "collection", 0)
+            holds_source_lease = True
+            try:
+                yield
+            finally:
+                holds_source_lease = False
 
         async def connection(org, owner, worker_id, connection_id):
             record = await self._connection(org, owner, worker_id, connection_id)
             if body and unlink_during_body and owner == "bob":
                 # The ordinary check already read the link and now sees a valid account.
                 self.bob_enrollment = None
+            if body and retire_during_body and owner == "bob" and not holds_source_lease:
+                self.row = None
             return record
 
         async def fence_delivery(scope, deliver, deadline) -> None:
+            assert holds_source_lease
             assert scope.requester == "bob"
             assert deadline > asyncio.get_running_loop().time()
             link = await self._enrollment(
@@ -382,10 +405,14 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
                 set_current_auth(auth)
                 try:
                     request_work.begin()
+                    loop = asyncio.get_running_loop()
+                    deadline = loop.time() + (0.8 if settle_past_read_deadline else 5)
                     result = await protected.protected_live_read(
-                        self.request, directory, deadline=asyncio.get_running_loop().time() + 5
+                        self.request, directory, deadline=deadline
                     )
                     assert result.text == text
+                    if settle_past_read_deadline:
+                        await asyncio.sleep(max(0, deadline - loop.time()) + 0.01)
                     if revoke_for_publication:
                         self.connections["bob"] = replace(self.connections["bob"], active=False)
                     await send({"type": "http.response.start", "status": 200, "headers": []})
@@ -400,6 +427,8 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
                     set_current_auth(None)
 
         async def send(message) -> None:
+            if message["type"] == "http.response.body" and retire_during_delivery:
+                self.assertTrue(holds_source_lease)
             published.append(message)
 
         middleware = request_tail.RequestTailMiddleware(downstream)
@@ -407,13 +436,14 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(type(protected.settings), "auth_actually_required", return_value=True),
             patch.object(protected.settings, "knowledge_mirrored_sources_enabled", True),
+            patch("server.knowledge.app.sources.sources_lease", source_lease),
             patch.object(protected.session_admission, "require", AsyncMock()),
             patch.object(protected.authz, "row_in_scope", AsyncMock(return_value=True)),
             patch.object(
                 protected.connected_accounts, "own_subject", AsyncMock(return_value=("org", "bob"))
             ),
         ):
-            if revoke_for_publication or unlink_during_body:
+            if revoke_for_publication or unlink_during_body or retire_during_body:
                 with self.assertRaises(request_tail.RequiredTailError):
                     await middleware(scope, None, send)
             else:
@@ -421,7 +451,7 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         return attempts, published
 
     async def test_authorized_live_document_passes_publication_with_bobs_connection(self) -> None:
-        attempts, published = await self._live_publication(revoke_for_publication=False)
+        attempts, published = await self._live_publication(retire_during_delivery=True)
         self.assertEqual(len(attempts), 1)
         self.assertEqual(attempts[0]["binding"]["requester"], "bob")
         self.assertEqual(
@@ -441,3 +471,73 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("source_owner", attempts[0]["binding"])
         self.assertIsNone(self.bob_enrollment)
         self.assertEqual([frame["type"] for frame in published], ["http.response.start"])
+
+    async def test_source_retirement_after_ordinary_body_recheck_withholds_document(self) -> None:
+        attempts, published = await self._live_publication(retire_during_body=True)
+        self.assertEqual(len(attempts), 1)
+        self.assertIsNone(self.row)
+        self.assertEqual([frame["type"] for frame in published], ["http.response.start"])
+
+    async def test_live_document_remains_deliverable_after_read_budget_ends(self) -> None:
+        attempts, published = await self._live_publication(settle_past_read_deadline=True)
+        self.assertEqual(len(attempts), 1)
+        self.assertIn(b"synthetic live canary", published[-1]["body"])
+
+    async def test_unenrolled_team_viewer_cannot_distinguish_selected_ids(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from server.auth.context import set_current_auth
+        from server.auth.jwt import AuthInfo
+        from server.auth.session_protection import request_declaration
+        from server.core import request_tail, request_work
+        from server.knowledge.api.models_source_live import KnowledgeSourceLiveInput
+        from server.knowledge.app import mcp_worker_protected as protected
+        from server.knowledge.app.mcp_worker_live_op import read_source_live
+        from server.operations.base import Role
+
+        self.bob_enrollment = None
+        worker = unittest.mock.Mock()
+        directory = protected.LiveSourceDirectory(
+            self._source, self._connection, self._enrollment, worker, self._approval, AsyncMock()
+        )
+        auth = AuthInfo(
+            subject="bob",
+            org="org",
+            namespaces=("collection",),
+            roles=(Role.VIEWER,),
+            is_service_account=False,
+        )
+        scope = {"type": "http", "headers": [(b"x-loom-session-protection", b"v1")]}
+
+        async def downstream(scope, _receive, _send) -> None:
+            with request_declaration(scope), request_work.http_owner(scope):
+                set_current_auth(auth)
+                try:
+                    request_work.begin()
+                    for resource in ("urn:other", self.request.resource_id):
+                        result = await read_source_live(
+                            KnowledgeSourceLiveInput(
+                                org="org",
+                                namespace="collection",
+                                source="documents",
+                                resource_id=resource,
+                            ),
+                            directory,
+                        )
+                        self.assertEqual(
+                            result.model_dump(), {"status": "denied", "document": None}
+                        )
+                finally:
+                    set_current_auth(None)
+
+        with (
+            patch.object(type(protected.settings), "auth_actually_required", return_value=True),
+            patch.object(protected.settings, "knowledge_mirrored_sources_enabled", True),
+            patch.object(protected.session_admission, "require", AsyncMock()),
+            patch.object(protected.authz, "row_in_scope", AsyncMock(return_value=True)),
+            patch.object(
+                protected.connected_accounts, "own_subject", AsyncMock(return_value=("org", "bob"))
+            ),
+        ):
+            await request_tail.RequestTailMiddleware(downstream)(scope, None, AsyncMock())
+        worker.assert_not_called()

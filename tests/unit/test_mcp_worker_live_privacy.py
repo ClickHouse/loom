@@ -64,7 +64,7 @@ async def test_registered_live_operation_is_read_only_and_disabled_without_a_dir
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport.http import build_router
 
-    operation = OPERATIONS_BY_NAME[KNOWLEDGE_SOURCE_LIVE]
+    operation = OPERATIONS_BY_NAME["knowledge.source.live"]
     assert operation.read_only
     assert operation.http_path in {route.path for route in build_router().routes}
     response = await operation.handler(

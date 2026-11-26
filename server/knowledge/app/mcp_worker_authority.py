@@ -99,7 +99,13 @@ class CurrentRead:
         return source, config, standing.subject
 
     async def _current_connection(
-        self, config: WorkerSourceConfig, owner: str, connection_id: UUID, generation: int
+        self,
+        config: WorkerSourceConfig,
+        owner: str,
+        connection_id: UUID,
+        generation: int,
+        *,
+        refusal: Literal["denied", "reconnect"],
     ) -> CurrentConnection:
         org = self.request.org
         record = await self.connection(org, owner, config.worker_id, connection_id)
@@ -113,7 +119,7 @@ class CurrentRead:
             or record.binding.worker_id != config.worker_id
             or record.binding.profile_digest != config.profile_digest
         ):
-            raise WorkerReadRefused("reconnect")
+            raise WorkerReadRefused(refusal)
         return record
 
     async def _team_reader(
@@ -125,21 +131,23 @@ class CurrentRead:
     ) -> tuple[CurrentConnection, int]:
         requested = self.request
         enrollment = await self.enrollment(requested.org, requested.namespace, source_id, requester)
-        if enrollment is None:
-            raise WorkerReadRefused("reconnect")
         if (
-            enrollment.org != requested.org
+            enrollment is None
+            or enrollment.org != requested.org
             or enrollment.namespace != requested.namespace
             or enrollment.source_id != source_id
             or enrollment.requester != requester
+            or enrollment.selection_generation != config.selection_generation
             or type(enrollment.link_generation) is not int
             or enrollment.link_generation <= 0
         ):
             raise WorkerReadRefused("denied")
-        if enrollment.selection_generation != config.selection_generation:
-            raise WorkerReadRefused("reconnect")
         reader = await self._current_connection(
-            config, requester, enrollment.connection_id, enrollment.connection_generation
+            config,
+            requester,
+            enrollment.connection_id,
+            enrollment.connection_generation,
+            refusal="denied",
         )
         if not reader.resource_space or reader.resource_space != owner_account.resource_space:
             raise WorkerReadRefused("denied")
@@ -170,6 +178,7 @@ class CurrentRead:
             source.owner_subject,
             config.owner_connection_id,
             config.owner_connection_generation,
+            refusal="reconnect" if is_owner else "denied",
         )
         reader, enrollment_generation = owner_account, 0
         if not is_owner:
