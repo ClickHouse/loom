@@ -227,10 +227,12 @@ both the token's own role and a live direct grant, with literal namespace naming
 Keep repositories with different readers in different code namespaces. For example,
 index a billing repository as `code-billing` and an operations repository as
 `code-operations`, both `classification: "restricted"` with `join_policy: "approval"`.
-Use the [operator-configured entry format](../../operations/code-index-operations.md)
-or the [self-service access controls](#self-service-repositories) for your deployment.
-Bootstrap maintainer grants before restricting an existing namespace, following the
-[restricted-namespace procedure](../../guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted).
+For a fresh operator-configured repository, start with a standard namespace that is
+neither public nor org-readable. Initialize it, adopt it for its maintainer, restrict it,
+and only then run the first backfill. An entry that starts restricted cannot be adopted
+to install its first direct grant. Follow the [bootstrap procedure](../../operations/code-index-operations.md#configure-the-entry),
+or use the [self-service access controls](#self-service-repositories) for a registered
+repository.
 
 Give a billing service a live viewer grant and a token explicitly naming only
 `code-billing`. Its expected read behavior is:
