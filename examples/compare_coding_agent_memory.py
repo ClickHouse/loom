@@ -35,6 +35,7 @@ from server.memory.workers import code_links
 from server.settings import settings
 
 NAMESPACE = "retry-policy"
+RELEASE_NAMESPACE = "retry-policy-release"
 KEY = "decision/retry-policy"
 PATH = "retry.py"
 WRITER = "fixture-writer"
@@ -141,10 +142,16 @@ def graph_tool(script: Path, storage: Path, client: str, name: str, **arguments:
 
 class Loom:
     def __init__(
-        self, origin: str, org: str, name: str, role: str, *, namespace: str = NAMESPACE
+        self,
+        origin: str,
+        org: str,
+        name: str,
+        role: str,
+        *,
+        namespaces: tuple[str, ...] = (NAMESPACE,),
     ) -> None:
         token = mint_token(
-            subject=name, org=org, namespaces=[namespace], roles=[role], ttl_seconds=600
+            subject=name, org=org, namespaces=list(namespaces), roles=[role], ttl_seconds=600
         )
         self.client = httpx.Client(
             base_url=origin,
@@ -174,11 +181,11 @@ class Loom:
             self.client.close()
 
 
-async def index(org: str, head: str) -> None:
+async def index(org: str, namespace: str, head: str) -> None:
     for _ in range(35):
         result = await ingest.run_pass()
         assert not result.errors, result.errors
-        if await CodeRepo().get_state(org, NAMESPACE, "git_head") == head:
+        if await CodeRepo().get_state(org, namespace, "git_head") == head:
             return
         await asyncio.sleep(1)
     raise TimeoutError("The disposable repository head was not indexed")
@@ -222,11 +229,67 @@ async def sql_history(org: str) -> list[tuple[Any, ...]]:
         await revoke(user)
 
 
+async def index_branch(org: str, repo: Path, branch: str, namespace: str) -> str:
+    head = git(repo, "rev-parse", branch)
+    await _register(
+        org=org,
+        namespace=namespace,
+        repo="example/retry",
+        git_remote=str(repo),
+        provider="local",
+        branch=branch,
+        classification="standard",
+        join_policy="open",
+        github_token="",
+        path_prefixes=[""],
+        exclude=[],
+        remote_head=head,
+        scip_producer="python",
+        exclude_generated=False,
+    )
+    await refresh_db_repos(force=True)
+    await index(org, namespace, head)
+    return head
+
+
+def read_source_lesson(
+    loom: Loom, org: str, namespace: str, repo: Path, revision: str, expected_state: str
+) -> dict[str, str]:
+    response = loom.client.post(
+        "/v1/code.symbol",
+        json={
+            "org": org,
+            "namespace": namespace,
+            "name": f"{PATH}:should_retry",
+            "include_body": False,
+            "include_history": False,
+            "include_examples": False,
+            "lesson_namespaces": [NAMESPACE],
+        },
+    )
+    response.raise_for_status()
+    (definition,) = response.json()["definitions"]
+    (lesson,) = definition.get("lessons", [])
+    assert definition["path"] == PATH, definition
+    assert (lesson["namespace"], lesson["memory_key"], lesson["code_state"]) == (
+        NAMESPACE,
+        KEY,
+        expected_state,
+    ), lesson
+    return {
+        "code": git(repo, "show", f"{revision}:{PATH}"),
+        "indexed_commit": revision,
+        "code_state": lesson["code_state"],
+        "changed_since": lesson.get("changed_since") or "",
+    }
+
+
 async def compare(origin: str, graph: Path, directory: Path) -> dict[str, Any]:
     repo = directory / "source"
     repo.mkdir()
     git(repo, "init", "-qb", "main")
     first = source(repo, 503)
+    git(repo, "branch", "release", first)
     note = f"{ORIGINAL} Check {PATH} at `{first}`."
     save(repo, "AGENTS.md", note, WRITER)
     clone = directory / "review"
@@ -245,30 +308,14 @@ async def compare(origin: str, graph: Path, directory: Path) -> dict[str, Any]:
     ] == [note]
     org = "comparison-" + secrets.token_hex(5)
     await refresh_db_repos(force=True)
-    await _register(
-        org=org,
-        namespace=NAMESPACE,
-        repo="example/retry",
-        git_remote=str(repo),
-        provider="local",
-        branch="main",
-        classification="standard",
-        join_policy="open",
-        github_token="",
-        path_prefixes=[""],
-        exclude=[],
-        remote_head=git(repo, "rev-parse", "HEAD"),
-        scip_producer="python",
-        exclude_generated=False,
-    )
-    await refresh_db_repos(force=True)
-    await index(org, git(repo, "rev-parse", "HEAD"))
+    initial_head = await index_branch(org, repo, "main", NAMESPACE)
+    await index_branch(org, repo, "release", RELEASE_NAMESPACE)
     writer = Loom(origin, org, WRITER, "writer")
     try:
         memory = writer.mcp.tool("loom_memory_set", namespace=NAMESPACE, memory_key=KEY, value=note)
     finally:
         writer.close()
-    reviewer = Loom(origin, org, REVIEWER, "writer")
+    reviewer = Loom(origin, org, REVIEWER, "writer", namespaces=(NAMESPACE, RELEASE_NAMESPACE))
     try:
         read = reviewer.mcp.tool("loom_memory_get", namespace=NAMESPACE, memory_key=KEY)
         assert (
@@ -276,6 +323,7 @@ async def compare(origin: str, graph: Path, directory: Path) -> dict[str, Any]:
         ), read
         check_project_boundary(origin, org, reviewer, memory["memory_id"])
         await code_state(reviewer, "fresh")
+        before = read_source_lesson(reviewer, org, NAMESPACE, repo, initial_head, "fresh")
         second = source(repo, 429)
         git(clone, "pull", "-q", "--ff-only")
         assert (clone / "AGENTS.md").read_text().strip() == note and git(
@@ -283,9 +331,12 @@ async def compare(origin: str, graph: Path, directory: Path) -> dict[str, Any]:
         )
         graph_note = graph_tool(graph, storage, REVIEWER, "open_nodes", names=[KEY])["entities"][0]
         assert graph_note["observations"] == [note]
-        await index(org, second)
+        await index(org, NAMESPACE, second)
         changed = await code_state(reviewer, "changed")
         assert changed["changed_since"] == second, changed
+        after = read_source_lesson(reviewer, org, NAMESPACE, repo, second, "changed")
+        assert after["changed_since"] == second, after
+        release = read_source_lesson(reviewer, org, RELEASE_NAMESPACE, repo, first, "fresh")
         revised = f"{UPDATED} Check {PATH} at `{second}`."
         result = reviewer.mcp.tool(
             "loom_op",
@@ -333,6 +384,14 @@ async def compare(origin: str, graph: Path, directory: Path) -> dict[str, Any]:
         "graph_fields": sorted(observations),
         "loom_denied_other_project": True,
         "loom_changed_since": changed["changed_since"],
+        "source_change_replay": {
+            "path": PATH,
+            "memory_key": KEY,
+            "saved_value": note,
+            "before": before,
+            "after": after,
+            "release": release,
+        },
         "loom_sql_versions": [[row[0], row[1]] for row in rows],
         "portable_copies": {
             "git_note_versions": 2,
@@ -348,7 +407,7 @@ def check_project_boundary(origin: str, org: str, reviewer: Loom, memory_id: str
     authorized.raise_for_status()
     assert authorized.json()["memory_id"] == memory_id
 
-    other = Loom(origin, org, "other-project-reader", "viewer", namespace="other-project")
+    other = Loom(origin, org, "other-project-reader", "viewer", namespaces=("other-project",))
     try:
         response = other.client.post("/v1/memory.get", json=arguments)
         assert response.status_code == 403, response.status_code
@@ -381,7 +440,7 @@ def run_okf(origin: str, org: str, namespace: str, name: str, role: str, *argume
 def check_loom_portability(origin: str, org: str, bundle: Path, expected: str) -> str:
     target = "restored-memory"
     importer = "fixture-importer"
-    reader = Loom(origin, org, "restored-reader", "viewer", namespace=target)
+    reader = Loom(origin, org, "restored-reader", "viewer", namespaces=(target,))
     try:
         assert not reader.mcp.tool("loom_memory_get", namespace=target, memory_key=KEY)["found"]
         run_okf(
@@ -437,9 +496,9 @@ async def main() -> None:
     await ch.connect()
     try:
         with tempfile.TemporaryDirectory(prefix="loom-coding-agent-comparison-") as path:
-            print(
-                json.dumps(await compare(origin, args.graph_memory.resolve(), Path(path)), indent=2)
-            )
+            result = await compare(origin, args.graph_memory.resolve(), Path(path))
+            result["source_change_replay"]["loom_revision"] = health["build_commit"]
+            print(json.dumps(result, indent=2))
     finally:
         await ch.disconnect()
 
