@@ -17,15 +17,18 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from itertools import pairwise
 from pathlib import PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from server.code.app.spans import code_span
+from server.code.app.spans import code_span, span_attrs
 from server.code.domain.extract.treesitter import lang_for_path
 from server.code.domain.index.test_conventions import is_test_unit_path, sibling_test_paths, snake
 from server.code.domain.symbol_body import retained_source_window
 from server.code.store.index import CodeRepo
 from server.embedding.embedder import served_model_label
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.code.domain.units import CodeUnit
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +269,93 @@ async def indirect_test_examples(
         for example in examples
     ):
         examples.append(reference)
+    if ready is not None:
+        ready[:] = examples
+    if bridge["path"] != definition["path"]:
+        await bounded(_attach_caller_source(repo, org, ns, bridge, revision, examples), None)
     return examples
+
+
+async def _attach_caller_source(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    bridge: dict[str, Any],
+    revision: str,
+    examples: list[dict[str, Any]],
+) -> None:
+    """Return the source for the same-revision caller one test reaches."""
+    from server.code.app.symbol.resolve import _indexed_commit, symbol_body
+
+    via = _via_caller(bridge)
+    example = next(
+        (
+            site
+            for site in examples
+            if site.get("evidence") == "indirect_call"
+            and site.get("via") == via
+            and (site.get("context") or {}).get("commit") == revision
+        ),
+        None,
+    )
+    if example is None:
+        return
+    path = via["path"]
+    with code_span("enrich.indirect_caller_source") as sp:
+        rows, files = await asyncio.gather(
+            repo.symbols_by_ids(org, ns, [str(bridge["from_symbol_id"])]),
+            repo.file_rows_for_paths(org, ns, [path]),
+        )
+        if _indexed_commit(files.get(path, {}).get("indexed_commit")) != revision:
+            return
+        callers = [
+            row
+            for row in rows
+            if row["path"] == path
+            and row["qualified_name"] == via["symbol"]
+            and row["kind"] in {"function", "method"}
+            and row["start_line"] <= via["line"] <= row["end_line"]
+            and _indexed_commit(row.get("extent_commit") or row.get("indexed_commit")) == revision
+        ]
+        if len(callers) != 1:
+            return
+        (caller,) = callers
+        body = await symbol_body(
+            repo, org, ns, {**caller, "_extent_commit": revision}, expected_commit=revision
+        )
+        span_attrs(sp, results=int(bool(body)), source_chars=len(body))
+    if body:
+        example["via"] = {
+            **via,
+            "context": {
+                "start_line": caller["start_line"],
+                "end_line": caller["end_line"],
+                "commit": revision,
+                "text": body,
+            },
+        }
+
+
+def deduplicate_indirect_caller_sources(definitions: list[CodeUnit]) -> None:
+    """Keep the caller body once, with its definition or with its first test."""
+    covered = {
+        (unit.path, unit.symbol, unit.start_line, unit.end_line, unit.body)
+        for unit in definitions
+        if unit.body and not unit.elided and unit.granularity == "unit"
+    }
+    attached = set()
+    for unit in definitions:
+        for example in unit.examples:
+            via = example.get("via") or {}
+            if context := via.get("context"):
+                key = (via["path"], via["symbol"])
+                start, end = context["start_line"], context["end_line"]
+                tag = (*key, context["commit"], start, end)
+                if tag in attached or (*key, start, end, context["text"]) in covered:
+                    example["via"] = {
+                        field: value for field, value in via.items() if field != "context"
+                    }
+                attached.add(tag)
 
 
 async def _verified_indirect_examples(

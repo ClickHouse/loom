@@ -818,10 +818,31 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
         assert example["line"] == 5
         assert example["evidence"] == "indirect_call"
         line = caller_source.splitlines().index(b"    return value()") + 1
-        assert example["via"] == {"symbol": "src.action::run", "path": caller_path, "line": line}
+        via = example["via"]
+        assert {key: value for key, value in via.items() if key != "context"} == {
+            "symbol": "src.action::run",
+            "path": caller_path,
+            "line": line,
+        }
         context = example["context"]
         lines = tests.decode().splitlines(keepends=True)
         assert context["text"] == "".join(lines[context["start_line"] - 1 : context["end_line"]])
+        if case != "indirect":
+            return
+        caller_context = via["context"]
+        assert (caller_context["start_line"], caller_context["end_line"]) == (line - 1, line)
+        assert caller_context["commit"] == "a" * 40
+        assert caller_context["text"].rstrip("\n") == "def run():\n    return value()"
+        batch = await handle_code_edit_context(
+            CodeEditContextInput(
+                org=org,
+                namespace=ns,
+                names=[f"{source_path}:value", f"{caller_path}:run"],
+                include_lessons=False,
+            )
+        )
+        assert batch.definitions[1].body == caller_context["text"]
+        assert "context" not in batch.definitions[0].examples[0]["via"]
 
 
 @pytest.mark.parametrize(

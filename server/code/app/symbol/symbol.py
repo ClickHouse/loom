@@ -630,6 +630,7 @@ async def _batched_edit_context(
     located: EditTarget | None = None,
     started: float | None = None,
 ) -> CodeSymbolOutput:
+    from server.code.app.enrich import deduplicate_indirect_caller_sources
     from server.code.domain.units import CodeUnit, estimate_json_tokens, estimate_unit_tokens
 
     if started is None:
@@ -685,6 +686,7 @@ async def _batched_edit_context(
                 trace_run_id=result.trace_run_id,
             )
         )
+    deduplicate_indirect_caller_sources(definitions)
     shape = "declaration_batch" if located else "named_batch"
     note_budget_shape(shape)
     candidates = located.candidates if located else []
