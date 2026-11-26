@@ -1,0 +1,188 @@
+---
+import SiteFrame from "../components/SiteFrame.astro";
+
+type Requirement = "credentials" | "code-changes" | "audit";
+type Check = { text: string; requirement?: Requirement };
+type Guide = { label: string; href: string; requirement?: Requirement };
+type Plan = { id: string; name: string; fit: string; tradeoff: string; checks: Check[]; links: Guide[] };
+
+const plans: Plan[] = [
+  {
+    id: "git",
+    name: "Repository instructions",
+    fit: "Start with a Git-tracked AGENTS.md when the memory is a set of reviewed project rules that applies to each checkout.",
+    tradeoff: "Rule updates go through your normal Git review. Readers need a checkout of the revision that contains the rule.",
+    checks: [
+      { text: "Commit a rule with a concrete example to AGENTS.md." },
+      { text: "Start a coding agent in a fresh checkout and ask it to apply the rule to the example." },
+      { text: "Change the rule in a second commit. Start a fresh session at that revision and check which rule the agent follows." },
+    ],
+    links: [
+      { label: "See the repository-instructions comparison", href: "/docs/guides/compare-coding-agent-memory#three-setups-on-the-same-repository" },
+    ],
+  },
+  {
+    id: "file",
+    name: "File-backed MCP memory",
+    fit: "Start with a file-backed MCP server when sessions on one host need to read and write observations as they work.",
+    tradeoff: "Give the server a persistent storage path and decide who can read it. Verify cross-machine access separately if your workflow needs it.",
+    checks: [
+      { text: "Start the MCP server with a persistent storage path and save a distinctive observation." },
+      { text: "Start a separate client process and check that it reads the exact observation." },
+      { text: "Back up the store, restore it to a fresh path and verify that a fresh client still reads the observation." },
+    ],
+    links: [
+      { label: "See the file-backed portability check", href: "/docs/guides/compare-coding-agent-memory#move-a-saved-decision-to-a-fresh-setup" },
+    ],
+  },
+  {
+    id: "service",
+    name: "Self-hosted memory service",
+    fit: "Use a shared service when agents need separate credentials, a record of who changed a decision, or a warning after the source behind a lesson changes.",
+    tradeoff: "With Loom, operate the server and its stores, issue credentials, and index the repository if you need code-change checks.",
+    checks: [
+      { text: "Save a test decision with one client. Read the same value and memory ID in a fresh client with its own credential." },
+      { text: "Try the same read from a credential scoped to another namespace and record the denial.", requirement: "credentials" },
+      { text: "Change the linked source, wait for indexing and check that the lesson reports the changed commit.", requirement: "code-changes" },
+      { text: "On an authenticated deployment, correct the decision and use a scoped SQL reader to check both versions and the token subject for each write.", requirement: "audit" },
+    ],
+    links: [
+      { label: "Verify a handoff between coding agents", href: "/docs/getting-started/connect-a-coding-agent#verify-shared-memory-between-claude-code-and-codex" },
+      { label: "Check access across projects", href: "/docs/guides/compare-coding-agent-memory#check-access-across-projects", requirement: "credentials" },
+      { label: "Check a lesson after a source edit", href: "/docs/use-cases/memory-linked-to-code#check-a-lesson-after-a-code-edit", requirement: "code-changes" },
+      { label: "Audit a decision with SQL", href: "/docs/use-cases/self-hosted-clickhouse#audit-a-changed-decision-with-sql", requirement: "audit" },
+    ],
+  },
+];
+---
+
+<SiteFrame
+  title="Coding-agent memory selector | ClickHouse Loom"
+  description="Choose a memory setup for coding agents and copy a test checklist for your repository. Compare Git instructions, file-backed MCP, and a self-hosted service."
+  path="/agent-memory-selector"
+>
+  <h1>Choose memory for your coding agents</h1>
+  <p class="lead">Find a starting setup and test it on one repository before giving it real project data.</p>
+
+  <div class="selector">
+    <form id="memory-input" class="site-panel memory-input" hidden>
+      <fieldset>
+        <legend>What needs to carry across sessions?</legend>
+        <label><input type="radio" name="purpose" value="rules" checked /> Reviewed project rules</label>
+        <label><input type="radio" name="purpose" value="observations" /> Observations saved during work</label>
+      </fieldset>
+      <fieldset>
+        <legend>What must the setup support?</legend>
+        <label><input type="checkbox" name="requirement" value="credentials" /> Scope each agent's access to a memory namespace</label>
+        <label><input type="checkbox" name="requirement" value="code-changes" /> Flag changes to the source linked to a lesson</label>
+        <label><input type="checkbox" name="requirement" value="audit" /> Query decision history and writer identity in SQL</label>
+      </fieldset>
+    </form>
+
+    <div class="recommendations">
+      <p id="recommendation-status" class="visually-hidden" role="status"></p>
+      {plans.map(({ id, name, fit, tradeoff, checks, links }) => (
+        <section class="site-panel memory-plan" data-memory-plan={id} aria-labelledby={`${id}-title`}>
+          <h2 id={`${id}-title`}>{name}</h2>
+          <p>{fit}</p>
+          <p>{tradeoff}</p>
+          <h3>Test it on your repository</h3>
+          <ol>
+            {checks.map(({ text, requirement }) => <li data-requirement={requirement}>{text}</li>)}
+          </ol>
+          <div class="verification-links">
+            {links.map(({ label, href, requirement }) => <a href={href} data-requirement={requirement}>{label}</a>)}
+          </div>
+        </section>
+      ))}
+      <div class="selector-actions" id="selector-actions" hidden>
+        <button class="primary" id="copy-checklist" type="button">Copy evaluation checklist</button>
+        <p id="copy-status" role="status"></p>
+      </div>
+    </div>
+  </div>
+
+  <p class="comparison-link">
+    <a class="text-link" href="/docs/guides/compare-coding-agent-memory">Compare the three setups on the same repository</a>
+  </p>
+</SiteFrame>
+
+<script>
+  const form = document.querySelector<HTMLFormElement>("#memory-input");
+  const plans = Array.from(document.querySelectorAll<HTMLElement>("[data-memory-plan]"));
+  const actions = document.querySelector<HTMLElement>("#selector-actions");
+  const copy = document.querySelector<HTMLButtonElement>("#copy-checklist");
+  const status = document.querySelector<HTMLElement>("#copy-status");
+  const recommendation = document.querySelector<HTMLElement>("#recommendation-status");
+  const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+
+  if (form && actions && copy && status && recommendation && canonical) {
+    const update = () => {
+      const choices = new FormData(form);
+      const requirements = new Set(choices.getAll("requirement"));
+      const personal = choices.get("purpose") === "observations" ? "file" : "git";
+      const planId = requirements.size ? "service" : personal;
+      for (const plan of plans) plan.hidden = plan.dataset.memoryPlan !== planId;
+      for (const item of document.querySelectorAll<HTMLElement>("[data-requirement]")) {
+        item.hidden = !requirements.has(item.dataset.requirement ?? "");
+      }
+      const title = plans.find((plan) => !plan.hidden)?.querySelector("h2")?.textContent?.trim();
+      recommendation.textContent = title ? `Recommended setup is ${title}` : "";
+      status.textContent = "";
+    };
+
+    form.addEventListener("submit", (event) => event.preventDefault());
+    form.addEventListener("change", update);
+    copy.addEventListener("click", async () => {
+      const plan = plans.find((item) => !item.hidden);
+      const title = plan?.querySelector("h2")?.textContent?.trim();
+      if (!plan || !title) return;
+
+      const lines = Array.from(plan.querySelectorAll("ol li:not([hidden])"), (step) => `- [ ] ${step.textContent?.trim()}`);
+      const sources = Array.from(plan.querySelectorAll<HTMLAnchorElement>(".verification-links a:not([hidden])"), (link) => `- ${link.href}`);
+      const checklist = [
+        `## Evaluate ${title.toLowerCase()} for a coding agent`,
+        "",
+        ...lines,
+        "",
+        ...sources,
+        "",
+        `Memory selector — ${canonical.href}`,
+      ].join("\n");
+
+      try {
+        await navigator.clipboard.writeText(checklist);
+        status.textContent = "Checklist copied";
+      } catch {
+        status.textContent = "Select the checklist text above to copy it.";
+      }
+    });
+
+    update();
+    form.hidden = false;
+    actions.hidden = false;
+  }
+</script>
+
+<style>
+  h1 { max-width: min(22ch, 100%); font-size: clamp(2.25rem, 5vw, 4.9rem); text-wrap: balance; }
+  .selector { display: grid; grid-template-columns: minmax(16rem, 0.9fr) minmax(0, 1.35fr); align-items: start; gap: 1rem; margin-top: 2rem; }
+  .selector:has(.memory-input[hidden]) { grid-template-columns: minmax(0, 1fr); }
+  .recommendations, .verification-links { display: grid; gap: 0.75rem; min-width: 0; }
+  .memory-input fieldset { display: grid; gap: 0.25rem; padding: 0; margin: 0; min-width: 0; border: 0; }
+  .memory-input fieldset + fieldset { margin-top: 1.1rem; padding-top: 0.35rem; }
+  legend { font-weight: 650; margin-bottom: 0.4rem; padding: 0; }
+  label { display: flex; align-items: center; gap: 0.65rem; min-height: 2.75rem; cursor: pointer; }
+  input { flex: 0 0 auto; width: 1.1rem; height: 1.1rem; accent-color: var(--accent); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+  button { cursor: pointer; font: inherit; min-height: 2.75rem; }
+  .memory-plan h3 { margin-top: 1.15rem; }
+  .memory-plan p, .memory-plan ol { max-width: 60ch; }
+  ol { padding-inline-start: 1.35rem; }
+  li + li { margin-top: 0.35rem; }
+  .selector-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
+  .selector-actions[hidden] { display: none; }
+  .comparison-link { margin-top: 1.65rem; }
+  .visually-hidden { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; white-space: nowrap; }
+  @media (max-width: 50rem) { .selector { grid-template-columns: minmax(0, 1fr); } }
+</style>

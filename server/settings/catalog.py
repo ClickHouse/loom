@@ -1077,6 +1077,10 @@ class CodeSettings(BaseModel):
     code_git_fetch_pr_heads: bool = True
     # Max PR heads fetched per shared mirror per ingest pass.
     code_git_pr_head_batch: int = 200
+    # PEM bundle git verifies https remotes with, in place of its default roots (a server
+    # under a private authority); under /etc/ssl, which the job sandbox mounts.
+    # code_git_proxy_ca_file takes its place through the proxy. Empty = default roots.
+    code_git_ca_file: str = ""
     # The code index's network git (clone, fetch, ls-remote, submodule update) through
     # an operator's forward proxy (code/app/index/git_proxy.py). With the proxy set, such
     # a git job connects through it or is refused: never directly.
@@ -4432,8 +4436,8 @@ class ObservabilitySettings(BaseModel):
 
     # Self-hosted adoption reports. Set false to stop all adoption reporting.
     adoption_telemetry_enabled: bool = True
-    # Share verified email domain counts in adoption reports. Off by default.
-    adoption_telemetry_share_domains: bool = False
+    # Share namespace contact domains and counts in adoption reports. Set false to omit them.
+    adoption_telemetry_share_domains: bool = True
     # Seconds between adoption checks and retries. A report covers 12 hours.
     adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 

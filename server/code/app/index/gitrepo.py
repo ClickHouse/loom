@@ -123,6 +123,10 @@ def auth_env(token: str = "", remote: str = "https://github.com/") -> dict[str, 
     add_git_config(env, "protocol.ssh.allow", "always")
     if is_local_remote(remote):
         add_git_config(env, "protocol.file.allow", "always")
+    if settings.code_git_ca_file:
+        # The system config this replaces is where a host trusts a private authority;
+        # the proxy's bundle, appended later, wins (git keeps a key's last value).
+        add_git_config(env, "http.sslCAInfo", settings.code_git_ca_file)
     if not token or not remote.startswith(("https://", "http://")):
         return env
     parts = remote.split("/")

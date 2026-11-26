@@ -77,7 +77,7 @@ the selected filters. CSV links export aggregate activity, lifecycle, download,
 and star data for that selection.
 
 Grant the restricted `loom_adoption_top_domains_30d` view only to authorized
-analytics staff. Its rows contain opt-in domain names and attributed counts.
+analytics staff. Its rows contain reported contact domains and attributed counts.
 
 ## Edit the public site
 

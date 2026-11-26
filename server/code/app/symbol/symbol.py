@@ -35,6 +35,7 @@ from server.code.app.spans import (
     span_attrs,
     start_stage_wall,
 )
+from server.code.app.symbol.edit_lessons import attach_verified_caller_lessons
 from server.code.app.symbol.hierarchy import _symbol_hierarchy
 from server.code.app.symbol.named_examples import named_test_examples, owning_type
 from server.code.app.symbol.neighbours import (
@@ -573,7 +574,7 @@ async def _single_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
 
 
 async def _edit_context_for_target(
-    input: CodeEditContextInput, target: EditTarget
+    input: CodeEditContextInput, target: EditTarget, *, in_batch: bool = False
 ) -> CodeSymbolOutput:
     if not target.name:
         return CodeSymbolOutput(
@@ -593,6 +594,7 @@ async def _edit_context_for_target(
         matched_members=target.grouped,
         match_witnesses=target.matches,
         related_test_names=_edit_batch_names(input.names),
+        include_indirect_lessons=not in_batch,
     )
     if target.revision is not None:
         if not out.definitions:
@@ -636,6 +638,7 @@ async def _batched_edit_context(
         merge_indirect_caller_sources,
     )
     from server.code.app.symbol.edit_reads import batch_read_sources
+    from server.code.app.symbol.edit_target import EditTarget
     from server.code.domain.units import CodeUnit, estimate_json_tokens, estimate_unit_tokens
 
     if started is None:
@@ -647,9 +650,9 @@ async def _batched_edit_context(
 
     async def read_target(name: str) -> CodeSymbolOutput:
         with code_span("edit_context.target"):
-            if name in declarations:
-                return await _edit_context_for_target(input, declarations[name])
-            return await _single_edit_context(input.model_copy(update={"name": name}))
+            return await _edit_context_for_target(
+                input, declarations.get(name) or EditTarget(name=name), in_batch=True
+            )
 
     with code_span("edit_context.batch", seeds=len(names)):
         results = await asyncio.gather(
@@ -695,15 +698,15 @@ async def _batched_edit_context(
             )
         )
     deduplicate_indirect_caller_sources(definitions)
+    org, ns = resolve_code_identity(input.org, input.namespace)
+    await attach_verified_caller_lessons(input, org, ns, definitions, started=started)
     shape = "declaration_batch" if located else "named_batch"
     note_budget_shape(shape)
     candidates = located.candidates if located else []
     tokens = sum(estimate_unit_tokens(unit) for unit in definitions) + estimate_json_tokens(
         [target.model_dump() for target in targets]
     )
-    if candidates:
-        tokens += estimate_json_tokens(candidates)
-    org, ns = resolve_code_identity(input.org, input.namespace)
+    tokens += estimate_json_tokens(candidates)
     read_sources = await batch_read_sources(org, ns, definitions, targets)
     tokens += estimate_json_tokens([source.model_dump() for source in read_sources])
     route = f"edit_context_{shape}"
@@ -802,6 +805,7 @@ async def handle_code_symbol(
     matched_members: bool = False,
     match_witnesses: list[dict[str, Any]] | None = None,
     related_test_names: tuple[str, ...] = (),
+    include_indirect_lessons: bool = False,
 ) -> CodeSymbolOutput:
     from server.code.app import fan_in as code_fan_in
 
@@ -897,6 +901,9 @@ async def handle_code_symbol(
     except BaseException:
         legs.cancel()
         raise
+
+    if include_indirect_lessons:
+        await attach_verified_caller_lessons(input, org, ns, units, started=started)
 
     from server.code.domain.units import estimate_json_tokens, remaining_token_budget
 

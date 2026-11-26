@@ -1,3 +1,9 @@
+---
+description: Use namespaces, roles and scoped credentials to give each AI agent access to the shared memories it needs.
+seo:
+  title: Access controls for shared agent memory
+---
+
 # Namespaces and sharing
 
 A namespace is the unit of isolation and sharing inside an org. Every read is scoped to `(org, namespace)`, every

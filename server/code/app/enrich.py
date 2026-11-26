@@ -256,9 +256,15 @@ async def indirect_test_examples(
         ready,
         related_names=related_names,
     )
-    if len(bridges) != 1:
+    aliases = list(bridges.values())
+    bridge = aliases[0]
+    # Keep every ID for incoming test edges. Both tiers can index one call site.
+    if len(aliases) > 1 and (
+        len(aliases) != 2
+        or {edge["tier"] for edge in aliases} != {"treesitter", "scip"}
+        or _via_caller(bridge) != _via_caller(aliases[1])
+    ):
         return await verified
-    bridge = next(iter(bridges.values()))
     if lang_for_path(str(bridge["path"])) != "python":
         return await verified
     reference_lookup = bounded(
@@ -663,6 +669,8 @@ async def lessons_for_symbol(
     paths: list[str],
     extra_namespaces: list[str],
     limit: int = 3,
+    fresh_at_commit: str = "",
+    seconds: float | None = None,
 ) -> list[dict[str, Any]] | None:
     """The memories linked to the symbol, from the caller's lesson scope: the readable
     `extra_namespaces` the call names (over MCP its memory home) and the repository's
@@ -681,6 +689,7 @@ async def lessons_for_symbol(
             paths=paths,
             namespaces=nss,
             limit=limit,
+            fresh_at_commit=fresh_at_commit,
         )
 
-    return await bounded(read(), None)
+    return await bounded(read(), None, seconds)

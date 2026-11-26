@@ -12,6 +12,10 @@ from server.workers import pass_context
 from server.workers.registry import enabled_workers
 
 
+def test_domain_sharing_is_enabled_by_default() -> None:
+    assert Settings.model_fields["adoption_telemetry_share_domains"].default is True
+
+
 async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Settings.model_fields["adoption_telemetry_enabled"].default is True
     monkeypatch.setattr(settings, "adoption_telemetry_enabled", False)

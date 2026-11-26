@@ -32,7 +32,8 @@ import SiteFrame from "../components/SiteFrame.astro";
       <h2>Control sharing</h2>
       <p>Set this on every server and worker replica to disable adoption reports.</p>
       <pre><code>LOOM_ADOPTION_TELEMETRY_ENABLED=false</code></pre>
-      <p>Verified email domains, account counts, and the number of successful requests in their verified namespaces are shared only when an operator enables domain sharing.</p>
+      <p>Reports include namespace contact domains and aggregate counts by default. Set this on every server and worker replica to omit domains while sending usage totals.</p>
+      <pre><code>LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false</code></pre>
     </section>
   </div>
   <a href="/docs/features/observability/telemetry#self-hosted-adoption">Read the telemetry field reference</a>

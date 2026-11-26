@@ -13,6 +13,9 @@ deployment can choose Postgres at first boot for live memory and knowledge state
 stores and model providers are separate deployment choices. What your agents remember
 is queryable with SQL.
 
+To see what a SQL reader can inspect, [save and correct a decision, then query its
+version history](#audit-a-changed-decision-with-sql).
+
 ## What you get
 
 - **Docker or Kubernetes.** The one-line installer starts the local stack; the Helm chart
@@ -216,3 +219,7 @@ until they merge.
 
 [Quickstart](../getting-started/quickstart.md) · [Prerequisites](../getting-started/overview.md#prerequisites) ·
 [Upgrades](../operations/upgrades.md) · [Backup and recovery](../operations/backup-and-recovery.md)
+
+If you self-host Loom, share a deployment write-up in
+[Show and tell](https://github.com/ClickHouse/loom/discussions/categories/show-and-tell).
+Describe the workflow, what changed for the team and what you still operate yourself.

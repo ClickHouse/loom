@@ -12,6 +12,9 @@ Choose memory by what the next coding session needs. Put reviewed rules in a Git
 shared store of observations. Use Loom when readers need separately issued credentials,
 warnings tied to indexed source changes, or a SQL audit of who changed a decision.
 
+Use the [coding-agent memory selector](https://loom.clickhouse.com/agent-memory-selector)
+to choose a setup and copy a checklist for your repository.
+
 ## Three setups on the same repository
 
 The fixture contains a Python retry function. A writer saves that `should_retry`
@@ -52,6 +55,10 @@ to test semantic search, lookup by memory ID, and expired credentials as separat
   the repository index if you need code-change checks. Back up the stores you operate.
   A code change is surfaced after indexing. The reviewer still validates the current
   behavior before using the lesson.
+
+To try the Loom workflow yourself, [pass a decision between coding clients](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex),
+[check what happens after its code changes](../use-cases/memory-linked-to-code.md#check-a-lesson-after-a-code-edit),
+or [read a correction's version history in SQL](../use-cases/self-hosted-clickhouse.md#audit-a-changed-decision-with-sql).
 
 If the team is deciding between options, run a small pilot on a repository it maintains.
 Keep the same tasks, starting revisions, and acceptance tests. Count model use, indexing,

@@ -262,6 +262,28 @@ Small finite budgets prioritize result heads over optional risk annotations.
 For a Compose installation, put the variable in the `.env` file beside `compose.yaml`
 and recreate the server container after changing it.
 
+### Read caller lessons before editing a dependency
+
+Suppose an indexed Python test calls `App.mount`, a short method that forwards
+to `Receiver.register` in a different file. A lesson attached to `App.mount`
+says that mounts can repeat. Read the lesson before editing `Receiver.register`
+so the change preserves that behavior.
+
+1. In the repository's code namespace, call `code.edit_context` with the indexed
+   name or `path:line` of `Receiver.register` as `name` and set
+   `include_lessons: true`. Caller lessons require namespace-wide read access.
+   If the lesson is in another readable namespace, name it in `lesson_namespaces`.
+2. In the definition's `examples`, look for `evidence: "indirect_call"` and
+   the indexed name for `App.mount` in `via.symbol`. When Loom returns the
+   caller's verified source, `via.context` carries the excerpt and indexed commit.
+3. In the same definition's `lessons`, look for `code_state: "fresh"` and the
+   returned `via.symbol` in `linked_symbols`. Read the caller excerpt before
+   applying the lesson.
+
+Caller lessons must match the returned indexed revision and fit the time and
+token limits. Use `code.symbol` to inspect the caller directly when edit
+context omits its lessons.
+
 ## Follow a specification to code and back
 
 Repository Markdown and imported knowledge documents take different paths. An indexed
@@ -371,7 +393,8 @@ on the answer ([overview.md](overview.md#reading-an-answer)).
 On the Python parser tier, `edge_kinds: ["reads"]` can follow member access
 through a top-level function's typed parameter or an imported value with a
 declared type.
-The graph records those accesses separately from function calls.
+The graph records those accesses separately from function calls. It prefers
+parser definitions for the same qualified name and can follow compiler-only definitions.
 
 **Example: impact of a diff.**
 
