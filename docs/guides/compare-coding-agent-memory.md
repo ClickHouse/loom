@@ -118,8 +118,9 @@ value and writer identity as well as the agent's final answer.
 
 The [source-change playground](https://loom.clickhouse.com/playground/source-change)
 replays the code and memory states recorded by the comparison. To run the full
-evaluation on GitHub, fork the repository, open **Actions**, select **Coding-agent
-memory evaluation**, then choose **Run workflow**. The run page shows the results
+evaluation on GitHub, fork the repository and open **Actions** in the fork. Enable
+workflows if prompted, select **Coding-agent memory evaluation**, then choose
+**Run workflow**. The run page shows the results
 and offers the JSON artifact. The workflow uses a temporary ClickHouse container
 on the hosted runner and needs no credentials from you.
 

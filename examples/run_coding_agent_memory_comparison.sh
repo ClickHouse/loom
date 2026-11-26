@@ -27,12 +27,13 @@ server_pid=''
 started_db=''
 cleanup() {
   if [ -n "$server_pid" ]; then
-    kill "$server_pid" 2>/dev/null || true
+    # Signal the shell's job so an exited server's PID cannot target another process.
+    kill '%?uvicorn' 2>/dev/null || true
     for _ in $(seq 1 10); do
-      kill -0 "$server_pid" 2>/dev/null || break
+      kill -0 '%?uvicorn' 2>/dev/null || break
       sleep 1
     done
-    kill -KILL "$server_pid" 2>/dev/null || true
+    kill -KILL '%?uvicorn' 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
   if [ -n "$started_db" ]; then docker rm -fv "$container" >/dev/null 2>&1 || true; fi
