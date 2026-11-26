@@ -15,8 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 from server.knowledge.app.mcp_worker_routes import WorkerProfile, WorkerRoute
 from server.knowledge.domain.mcp_worker_setup import WorkerMode
 
-_MAX_CONFIG_BYTES = 262_144
-_MAX_KEY_BYTES = 8192
+_MAX_CONFIG_BYTES = 262_144  # not a setting: bounds input to the routes file parser
+_MAX_KEY_BYTES = 8192  # not a setting: bounds input to the signing key parser
 _Org = Annotated[str, StringConstraints(min_length=1, max_length=255)]
 _Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 

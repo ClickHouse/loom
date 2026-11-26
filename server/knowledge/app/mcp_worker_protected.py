@@ -30,7 +30,6 @@ from server.settings import settings
 
 Deliver = Callable[[], Awaitable[None]]
 FenceDelivery = Callable[[WorkerReadScope, Deliver, float], Awaitable[None]]
-_PUBLICATION_BUDGET_SECONDS = 2
 
 
 @dataclass(frozen=True, repr=False)
@@ -117,7 +116,10 @@ async def protected_live_read(
         async def retain(scope: WorkerReadScope, check: Deliver, read_until: float) -> None:
             # A completed worker read gets its own bounded time for accounting and send.
             loop = asyncio.get_running_loop()
-            retain_until = min(read_until, loop.time()) + _PUBLICATION_BUDGET_SECONDS
+            retain_until = (
+                min(read_until, loop.time())
+                + settings.knowledge_source_worker_publication_timeout_s
+            )
 
             async def fence(deliver: Deliver) -> None:
                 _require_context(scope.org, auth)
@@ -126,10 +128,15 @@ async def protected_live_read(
                 # Source retirement holds this lease. Take it before the Postgres
                 # fence so the source cannot change between validation and handoff.
                 with private_work():
-                    end = min(retain_until, loop.time() + 1)
+                    start = loop.time()
+                    end = min(
+                        retain_until, start + settings.knowledge_source_worker_frame_timeout_s
+                    )
+                    if start >= end:
+                        raise WorkerReadRefused("timeout")
                     async with (
                         asyncio.timeout_at(end),
-                        sources_lease(scope.org, scope.namespace, wait_s=0),
+                        sources_lease(scope.org, scope.namespace, wait_s=end - start),
                     ):
                         with sequential_reads():
                             await check()

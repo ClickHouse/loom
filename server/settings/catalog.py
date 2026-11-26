@@ -2488,6 +2488,15 @@ class KnowledgeSettings(BaseModel):
 
     # Path to the operator's source worker routes file. Empty disables the worker directory.
     knowledge_source_worker_routes_file: str = ""
+    # Seconds a live read may spend on authority checks and its worker request.
+    knowledge_source_worker_live_timeout_s: float = Field(default=8.0, gt=0, le=8.0)
+    # Seconds reserved after a live read for accounting and delivery.
+    knowledge_source_worker_publication_timeout_s: float = Field(default=2.0, gt=0, le=2.0)
+    # Seconds one response frame may spend acquiring authority locks and sending.
+    # The remaining publication deadline can shorten this bound.
+    knowledge_source_worker_frame_timeout_s: float = Field(default=1.0, gt=0, le=1.0)
+    # Concurrent worker access checks when proving a selection for setup.
+    knowledge_source_worker_selection_parallelism: int = Field(default=2, ge=1, le=2)
     # Mirrored reads require a complete listing and group observation within this
     # many seconds; missing or older evidence admits nobody.
     knowledge_source_acl_stale_seconds: int = Field(default=3600, ge=1)

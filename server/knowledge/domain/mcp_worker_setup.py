@@ -11,9 +11,10 @@ from server.knowledge.domain.mcp_identity import ResourceIdentity, selection_sha
 from server.knowledge.domain.mcp_worker_permissions import ReaderConnection
 from server.knowledge.domain.mcp_worker_source import WORKER_SOURCE_VERSION, WorkerSourceConfig
 
-MAX_SETUP_RESOURCES = 1000
-_MAX_SETUP_ID_BYTES = 1024
-MAX_SETUP_SELECTION_BYTES = 128 * 1024
+MAX_SETUP_RESOURCES = 1000  # not a setting: bounds one source selection across modes
+_MAX_SETUP_ID_BYTES = 1024  # not a setting: bounds the encoded identity in a selection
+MAX_SETUP_SELECTION_BYTES = 128 * 1024  # not a setting: bounds the stored selection payload
+# not a setting: the verifier never accepts a setup proof older than this
 MAX_SELECTION_GRANT_AGE_SECONDS = 300
 
 type WorkerMode = Literal["live", "snapshot", "selected_refresh"]

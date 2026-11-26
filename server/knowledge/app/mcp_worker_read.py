@@ -24,6 +24,7 @@ WorkerFailure = Literal[
     "denied", "reconnect", "overloaded", "timeout", "unavailable", "unsupported"
 ]
 _ENROLLMENT_PATH = "/v1/enroll"
+# not a setting: bounds the signed enrollment response and its JSON envelope
 _MAX_ENROLLMENT_BODY = 8192 + 64
 _ENROLLMENT_CAPACITY = 2
 _Paths: dict[WorkerOperation, str] = {"live": "/v1/live", "check_access": "/v1/check-access"}

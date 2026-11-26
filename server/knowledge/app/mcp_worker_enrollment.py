@@ -21,6 +21,7 @@ from server.knowledge.domain.mcp_worker_permissions import ReaderConnection
 _Identity = Annotated[str, StringConstraints(min_length=1, max_length=255)]
 _Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 _Counter = Annotated[int, Field(ge=1, le=2**63 - 1)]
+# not a setting: the maximum age of an enrollment challenge across core and worker
 _MAX_LIFETIME = 120
 
 

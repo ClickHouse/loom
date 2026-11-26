@@ -23,8 +23,8 @@ if TYPE_CHECKING:
 
     from server.knowledge.domain.mcp_worker_setup import WorkerMode
 
-_MAX_WORKERS = 256
-_MAX_PROFILES_PER_WORKER = 4096
+_MAX_WORKERS = 256  # not a setting: bounds the in-memory route directory
+_MAX_PROFILES_PER_WORKER = 4096  # not a setting: bounds profile lookup for one worker
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 
 

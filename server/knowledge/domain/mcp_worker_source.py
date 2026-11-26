@@ -12,8 +12,8 @@ from server.knowledge.domain.sources import MIRRORED_ACCESS, KnowledgeSource
 
 WORKER_SOURCE_VERSION = 2
 WORKER_REGISTRATION = "worker_registration"
-_MAX_CONFIG_BYTES = 16_384
-_MAX_SELECTION_BYTES = 131_072
+_MAX_CONFIG_BYTES = 16_384  # not a setting: bounds a stored worker source registration
+_MAX_SELECTION_BYTES = 131_072  # not a setting: bounds a stored worker source selection
 _Generation = Annotated[int, Field(ge=1, le=2**63 - 1)]
 _Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 _Items: TypeAdapter[tuple[ResourceIdentity, ...]] = TypeAdapter(

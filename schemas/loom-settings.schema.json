@@ -3615,10 +3615,38 @@
           "type": "integer",
           "description": "Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline."
         },
+        "knowledge_source_worker_frame_timeout_s": {
+          "default": 1.0,
+          "exclusiveMinimum": 0,
+          "maximum": 1.0,
+          "type": "number",
+          "description": "Seconds one response frame may spend acquiring authority locks and sending. The remaining publication deadline can shorten this bound."
+        },
+        "knowledge_source_worker_live_timeout_s": {
+          "default": 8.0,
+          "exclusiveMinimum": 0,
+          "maximum": 8.0,
+          "type": "number",
+          "description": "Seconds a live read may spend on authority checks and its worker request."
+        },
+        "knowledge_source_worker_publication_timeout_s": {
+          "default": 2.0,
+          "exclusiveMinimum": 0,
+          "maximum": 2.0,
+          "type": "number",
+          "description": "Seconds reserved after a live read for accounting and delivery."
+        },
         "knowledge_source_worker_routes_file": {
           "default": "",
           "type": "string",
           "description": "Path to the operator's source worker routes file. Empty disables the worker directory."
+        },
+        "knowledge_source_worker_selection_parallelism": {
+          "default": 2,
+          "maximum": 2,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Concurrent worker access checks when proving a selection for setup."
         },
         "knowledge_sources_max_per_namespace": {
           "default": 8,

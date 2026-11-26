@@ -19,11 +19,12 @@ from server.knowledge.domain.mcp_worker_setup import (
     WorkerSetupRejected,
     checked_worker_selection,
 )
+from server.settings import settings
 
 if TYPE_CHECKING:
     from server.knowledge.app.mcp_worker_read import WorkerReadChannel
 
-_MAX_PARALLEL = 2
+# not a setting: a selection proof can authorize setup only in its issuance window
 _EVIDENCE_SECONDS = 30
 
 
@@ -106,10 +107,9 @@ async def _check_all(
 
         await channel.run(scope, "check_access", require_current=require_current)
 
-    for start in range(0, len(items), _MAX_PARALLEL):
-        pending = [
-            asyncio.create_task(verify(item)) for item in items[start : start + _MAX_PARALLEL]
-        ]
+    parallelism = settings.knowledge_source_worker_selection_parallelism
+    for start in range(0, len(items), parallelism):
+        pending = [asyncio.create_task(verify(item)) for item in items[start : start + parallelism]]
         try:
             await asyncio.gather(*pending)
         finally:

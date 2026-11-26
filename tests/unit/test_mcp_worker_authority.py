@@ -289,6 +289,7 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         unlink_during_body: bool = False,
         retire_during_body: bool = False,
         retire_during_delivery: bool = False,
+        concurrent_publication: bool = False,
         settle_past_read_deadline: bool = False,
         retain_past_read_deadline: bool = False,
     ) -> tuple[list, list]:
@@ -352,29 +353,33 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(channel.close)
 
         body = False
-        holds_source_lease = False
+        first_body = asyncio.Event()
+        second_claim = asyncio.Event()
+        lease = asyncio.Lock()
 
         @asynccontextmanager
         async def source_lease(org, namespace, *, wait_s):
-            nonlocal holds_source_lease
-            assert (org, namespace, wait_s) == ("org", "collection", 0)
-            holds_source_lease = True
-            try:
+            from server.core.errors import OverloadedError
+
+            assert (org, namespace) == ("org", "collection")
+            if lease.locked():
+                second_claim.set()
+                if not wait_s:
+                    raise OverloadedError("source lease busy")
+            async with lease:
                 yield
-            finally:
-                holds_source_lease = False
 
         async def connection(org, owner, worker_id, connection_id):
             record = await self._connection(org, owner, worker_id, connection_id)
             if body and unlink_during_body and owner == "bob":
                 # The ordinary check already read the link and now sees a valid account.
                 self.bob_enrollment = None
-            if body and retire_during_body and owner == "bob" and not holds_source_lease:
+            if body and retire_during_body and owner == "bob" and not lease.locked():
                 self.row = None
             return record
 
         async def fence_delivery(scope, deliver, deadline) -> None:
-            assert holds_source_lease
+            assert lease.locked()
             assert scope.requester == "bob"
             assert deadline > asyncio.get_running_loop().time()
             link = await self._enrollment(
@@ -447,11 +452,19 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
 
         async def send(message) -> None:
             if message["type"] == "http.response.body" and retire_during_delivery:
-                self.assertTrue(holds_source_lease)
+                self.assertTrue(lease.locked())
+            if concurrent_publication and message["type"] == "http.response.body":
+                if not first_body.is_set():
+                    first_body.set()
+                    await second_claim.wait()
             published.append(message)
 
         middleware = request_tail.RequestTailMiddleware(downstream)
-        scope = {"type": "http", "headers": [(b"x-loom-session-protection", b"v1")]}
+
+        async def publish() -> None:
+            scope = {"type": "http", "headers": [(b"x-loom-session-protection", b"v1")]}
+            await middleware(scope, None, send)
+
         with (
             patch.object(type(protected.settings), "auth_actually_required", return_value=True),
             patch.object(protected.settings, "knowledge_mirrored_sources_enabled", True),
@@ -465,10 +478,22 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         ):
             if revoke_for_publication or unlink_during_body or retire_during_body:
                 with self.assertRaises(request_tail.RequiredTailError):
-                    await middleware(scope, None, send)
+                    await publish()
+            elif concurrent_publication:
+                async with asyncio.TaskGroup() as group:
+                    group.create_task(publish())
+                    await first_body.wait()
+                    group.create_task(publish())
             else:
-                await middleware(scope, None, send)
+                await publish()
         return attempts, published
+
+    async def test_two_live_reads_deliver_while_sharing_the_source_lease(self) -> None:
+        attempts, published = await self._live_publication(concurrent_publication=True)
+        self.assertEqual(len(attempts), 2)
+        bodies = [frame["body"] for frame in published if frame["type"] == "http.response.body"]
+        self.assertEqual(len(bodies), 2)
+        self.assertTrue(all(b"synthetic live canary" in body for body in bodies))
 
     async def test_authorized_live_document_passes_publication_with_bobs_connection(self) -> None:
         attempts, published = await self._live_publication(retire_during_delivery=True)

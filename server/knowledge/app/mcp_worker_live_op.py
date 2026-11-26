@@ -12,8 +12,7 @@ from server.knowledge.app.mcp_worker_authority import RequestedResource
 from server.knowledge.app.mcp_worker_protected import LiveSourceDirectory, protected_live_read
 from server.knowledge.app.mcp_worker_read import WorkerReadRefused
 from server.knowledge.app.mcp_worker_runtime import current_directory
-
-_LIVE_DEADLINE_SECONDS = 8
+from server.settings import settings
 
 
 async def read_source_live(
@@ -22,7 +21,9 @@ async def read_source_live(
     with private_work():
         try:
             target = RequestedResource(input.org, input.namespace, input.source, input.resource_id)
-            deadline = asyncio.get_running_loop().time() + _LIVE_DEADLINE_SECONDS
+            deadline = (
+                asyncio.get_running_loop().time() + settings.knowledge_source_worker_live_timeout_s
+            )
             document = await protected_live_read(target, directory, deadline=deadline)
         except WorkerReadRefused as error:
             return KnowledgeSourceLiveOutput(status=error.reason)
