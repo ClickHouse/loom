@@ -289,6 +289,14 @@ class CodeOps:
             await self._agent.call("code.coverage_claim", body, **options),
         )
 
+    async def edit_context(
+        self, body: _ops.CodeEditContextBody | None = None, /, **options: Any
+    ) -> _ops.CodeSymbolOutput:
+        """`code.edit_context`."""
+        return cast(
+            "_ops.CodeSymbolOutput", await self._agent.call("code.edit_context", body, **options)
+        )
+
     async def enclosing(
         self, body: _ops.CodeEnclosingBody | None = None, /, **options: Any
     ) -> _ops.CodeEnclosingOutput:

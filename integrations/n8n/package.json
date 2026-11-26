@@ -7,7 +7,7 @@
     "name": "ClickHouse, Inc.",
     "email": "security@clickhouse.com"
   },
-  "homepage": "https://clickhouse.github.io/loom/features/integrations/frameworks/",
+  "homepage": "https://loom.clickhouse.com/docs/features/integrations/frameworks/",
   "repository": {
     "type": "git",
     "url": "https://github.com/ClickHouse/loom.git",

@@ -54,6 +54,7 @@
  "code_result_lessons",
  "code_result_lessons_paths",
  "code_result_lessons_tokens",
+ "code_result_path_hint_rows",
  "code_review_brief_mirror_miss_ttl_s",
  "code_review_brief_rationale_paths",
  "code_review_brief_rationale_rows",

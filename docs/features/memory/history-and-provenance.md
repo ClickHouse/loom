@@ -1,3 +1,9 @@
+---
+description: Read earlier versions of a memory, see who wrote each version, and trace extracted facts to the turns that support them.
+seo:
+  title: Agent memory history and provenance
+---
+
 # History and provenance
 
 Every write to memory makes a new version; nothing is edited in place. Versions are kept
@@ -71,6 +77,10 @@ on every row from the token and the operation. The `source_class` values are in
 
 Search hits carry `source_class` and `verified`, which the optional trust term
 (`LOOM_MEMORY_SEARCH_TRUST_WEIGHT`) reads.
+
+The [knowledge factory walkthrough](../../use-cases/knowledge-factory.md#revise-the-lesson-and-verify-its-history)
+shows how to revise a saved lesson after its source changes and check the new
+citation alongside the old wording.
 
 ## Evidence: which turns a fact came from
 

@@ -678,6 +678,9 @@ curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $END_USER
   `loom revoke-token --subject <org>/user:<id>`, since `user:<id>` names one person per
   org. Collections, their tree and the read cost are in
   [Sharing knowledge](../architecture/sharing.md).
+- An end-user token reads everything its user reads. When a reply goes to more people
+  than the user, name the collections each search may read:
+  [Choose retrieval scope from the audience](audience-scoped-retrieval.md).
 
 ## Revoke and rotate
 

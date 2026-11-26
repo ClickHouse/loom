@@ -56,6 +56,7 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "code.blame_range",
             "code.conventions",
             "code.coverage_claim",
+            "code.edit_context",
             "code.enclosing",
             "code.examples",
             "code.files",

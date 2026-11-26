@@ -358,7 +358,7 @@ class _MemCH:
         out: dict[str, dict[str, Any]] = {}
         for r in self.rows:
             k = r["brief_key"]
-            if k not in out or r["version"] > out[k]["version"]:
+            if k not in out or r["version"] >= out[k]["version"]:
                 out[k] = r
         return out
 
@@ -372,10 +372,27 @@ class _MemCH:
         if "uniqExact(revision)" in sql:
             return {"n": len({r["revision"] for r in self.revisions if r["brief_key"] == p["key"]})}
         if "FROM loom.session_brief_revisions" in sql:
-            hits = [
+            assert "version > (" in sql
+            history = [
                 r
                 for r in self.revisions
-                if r["brief_key"] == p["key"] and r["revision"] == p["rev"]
+                if (r["org"], r["namespace"], r["brief_key"]) == (p["org"], p["ns"], p["key"])
+            ]
+            last_delete = max(
+                (r["version"] for r in history if r["tombstoned_at"] is not None), default=0
+            )
+            hits = [
+                r
+                for r in history
+                if r["revision"] == p["rev"]
+                and r["version"] > last_delete
+                and (
+                    "snapshot" not in p
+                    or (
+                        r["version"] == p["snapshot"]
+                        and repo.snapshot_id(r).split(".", 1)[1] == p["digest"]
+                    )
+                )
             ]
             return max(hits, key=lambda r: r["version"]) if hits else None
         raise AssertionError(sql)
@@ -1182,6 +1199,205 @@ def test_under_a_policy_a_save_held_by_an_unread_switch_is_refused(mem, monkeypa
     with pytest.raises(BackendUnavailableError):
         _save(brief_key="k", events=[E(kind="user", text=_CARD)], event_cursor="c2")
     assert len(mem.rows) == rows
+
+
+def test_handoff_pins_a_write_even_if_two_saves_share_its_revision(mem) -> None:
+    first = _save(
+        brief_key="handoff/x",
+        head_sha="a" * 40,
+        checkout={"dirty": True, "head_in_remote_refs": False},
+        sections={"goal": "Track the revision", "verification": "pytest passed"},
+    )
+    assert first.revision == 1
+    snapshot = mem.rows[-1]
+    competing = repo.build_brief_row(snapshot, rendered="Competing save")
+    asyncio.run(mem.insert(repo.TABLE, [competing]))
+
+    def read(snapshot_id: str):
+        return asyncio.run(
+            h.handle_session_brief_get(
+                SessionBriefGetInput(
+                    **IDENT, brief_key="handoff/x", revision=1, snapshot_id=snapshot_id
+                )
+            )
+        )
+
+    assert read("").rendered == "Competing save"
+    pinned = read(repo.snapshot_id(snapshot))
+    assert pinned.found and pinned.snapshot_id == repo.snapshot_id(snapshot)
+    assert pinned.rendered == first.rendered
+    assert "pytest passed" in pinned.rendered
+    assert "uncommitted changes" in pinned.rendered
+    assert "absent from the sender" in pinned.rendered
+    assert not read(f"1.{'0' * 64}").found
+    assert not read(f"{2**64}.{'0' * 64}").found
+
+
+def test_handoff_pins_content_when_saves_share_a_version(mem):
+    key = "handoff/same-version"
+
+    def get(**options):
+        return asyncio.run(
+            h.handle_session_brief_get(SessionBriefGetInput(**IDENT, brief_key=key, **options))
+        )
+
+    _save(brief_key=key, head_sha="a" * 40, sections={"goal": "Original content"})
+    original = get()
+    competing = {**mem.rows[-1], "rendered": "Another save with the same version"}
+    asyncio.run(mem.insert(repo.TABLE, [competing]))
+
+    latest = get()
+    assert latest.rendered == competing["rendered"]
+    assert latest.snapshot_id != original.snapshot_id
+    pinned = get(revision=original.revision, snapshot_id=original.snapshot_id)
+    assert pinned.rendered == original.rendered
+
+
+def test_deleted_handoff_stays_unavailable_after_same_millisecond_recreation(mem, monkeypatch):
+    stamp = h.naive_utc_now().replace(microsecond=123_000)
+    monkeypatch.setattr(h, "naive_utc_now", lambda: stamp)
+    key = "handoff/reuse"
+    first = _save(brief_key=key, sections={"goal": "Deleted goal"})
+    snapshot = repo.snapshot_id(mem.rows[-1])
+
+    def read(revision: int, snapshot_id: str):
+        return asyncio.run(
+            h.handle_session_brief_get(
+                SessionBriefGetInput(
+                    **IDENT, brief_key=key, revision=revision, snapshot_id=snapshot_id
+                )
+            )
+        )
+
+    assert read(first.revision, snapshot).found
+    deleted = asyncio.run(
+        h.handle_session_brief_delete(SessionBriefDeleteInput(**IDENT, brief_key=key))
+    )
+    assert deleted.deleted
+    assert not read(first.revision, snapshot).found
+    replacement = _save(brief_key=key, sections={"goal": "Replacement"})
+    assert replacement.revision > first.revision
+    assert read(replacement.revision, repo.snapshot_id(mem.rows[-1])).found
+    assert not read(first.revision, snapshot).found
+    assert not read(first.revision, "").found
+
+
+def test_a_late_save_with_a_lower_revision_cannot_restore_deleted_content(mem):
+    key = "handoff/late"
+    _save(brief_key=key, sections={"goal": "First"})
+    _save(brief_key=key, sections={"goal": "Second"})
+    before = _save(brief_key=key, sections={"goal": "Before deletion"})
+    old_snapshot = repo.snapshot_id(mem.rows[-1])
+
+    # A slower save read revision 1 and wrote its revision 2 after revision 3.
+    late = repo.build_brief_row(mem.rows[1])
+    asyncio.run(mem.insert(repo.TABLE, [late]))
+    deleted = asyncio.run(
+        h.handle_session_brief_delete(SessionBriefDeleteInput(**IDENT, brief_key=key))
+    )
+    assert deleted.revision == 2
+    replacement = _save(brief_key=key, sections={"goal": "After deletion"})
+    assert before.revision == replacement.revision == 3
+
+    pinned = asyncio.run(
+        h.handle_session_brief_get(
+            SessionBriefGetInput(**IDENT, brief_key=key, revision=3, snapshot_id=old_snapshot)
+        )
+    )
+
+    assert not pinned.found
+
+
+def test_snapshot_delete_and_recreation_outrank_the_observed_head_under_clock_skew(
+    mem, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from server.memory.store import rows
+
+    stamp = 3000
+    monkeypatch.setattr(rows, "time", SimpleNamespace(time_ns=lambda: stamp))
+    key = "handoff/skew"
+
+    def get(**options):
+        return asyncio.run(
+            h.handle_session_brief_get(SessionBriefGetInput(**IDENT, brief_key=key, **options))
+        )
+
+    _save(brief_key=key, sections={"goal": "Before deletion"})
+    source = get()
+    pinned = {"revision": source.revision, "snapshot_id": source.snapshot_id}
+
+    stamp = 2500
+    deleted = asyncio.run(
+        h.handle_session_brief_delete(SessionBriefDeleteInput(**IDENT, brief_key=key))
+    )
+    assert deleted.deleted and not get(**pinned).found
+    tombstone = mem.rows[-1]["version"]
+    assert tombstone > 3000
+
+    stamp = 2000
+    _save(brief_key=key, sections={"goal": "After deletion"})
+    assert mem.rows[-1]["version"] > tombstone
+    assert "After deletion" in get().rendered
+    assert not get(**pinned).found
+
+
+def test_scoped_handoff_has_the_same_locator_for_its_owner_and_namespace_viewers(mem):
+    from server.identity.domain.read_scope import ReadFilters, bind_request_read_filters
+    from tests.unit.principals import acting_as, principal
+
+    key = "handoff/owner"
+
+    def get(**options):
+        return asyncio.run(h.handle_session_brief_get(SessionBriefGetInput(**{**IDENT, **options})))
+
+    alice = principal("writer", org="o", namespaces=("ns",), read_user_id="alice")
+    with acting_as(alice):
+        _save(brief_key=key, user_id="alice", sections={"goal": "Owner's handoff"})
+        source = get(brief_key=key)
+        assert source.brief_key == key
+        assert source.snapshot_key == "~alice~handoff/owner"
+        link = {
+            "brief_key": source.snapshot_key,
+            "revision": source.revision,
+            "snapshot_id": source.snapshot_id,
+        }
+        assert get(**link).rendered == source.rendered
+
+    assert get(**link).rendered == source.rendered
+    bob = principal("viewer", org="o", namespaces=("ns",), read_user_id="bob")
+    with acting_as(bob):
+        assert not get(**link).found
+
+    session_token = principal("writer", org="o", namespaces=("ns",), read_scope="own_session")
+    with acting_as(session_token) as auth:
+        bind_request_read_filters(auth, ReadFilters("own_session", "alice", "s1"))
+        _save(brief_key=key, user_id="alice", sections={"goal": "Session's handoff"})
+        session = get(brief_key=key)
+        session_link = {
+            "brief_key": session.snapshot_key,
+            "revision": session.revision,
+            "snapshot_id": session.snapshot_id,
+        }
+        assert get(**session_link).found
+
+    with acting_as(alice):
+        assert not get(**session_link).found
+    assert get(**session_link).found
+
+
+def test_deterministic_revision_uses_the_latest_recorded_verification():
+    events = [
+        E(kind="note", text="verification: pytest -q — 1 failed"),
+        E(kind="command", text="$ pytest -q"),
+        E(kind="note", text="verification: pytest -q — 9 passed"),
+        E(kind="note", text="output: commit 0123456789"),
+    ]
+
+    state = sb.deterministic_revision(events).state
+
+    assert state.verification == "pytest -q — 9 passed"
 
 
 def test_under_a_policy_a_revised_brief_takes_no_summary_from_the_events(mem, monkeypatch) -> None:

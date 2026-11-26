@@ -510,5 +510,6 @@ def compile_fallback(pattern: str, *, case_sensitive: bool = True) -> Any:
 REGEX_FALLBACK_NOTE = "pattern read as a regex; pass regex=true to make this explicit"
 REGEX_INVALID_NOTE = (
     "pattern looks like a regex but is not a valid one; it was matched literally. "
-    "Search a shorter literal fragment, or escape literal punctuation and pass regex=true"
+    "Pass a list of literals for alternatives. Search a shorter literal fragment, "
+    "or escape literal punctuation and pass regex=true"
 )

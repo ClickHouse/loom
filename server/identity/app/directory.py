@@ -15,6 +15,14 @@ from server.identity.store import namespace_census
 from server.tracker.domain.namespaces import tracker_namespace
 
 
+def configured_restricted_pairs() -> set[tuple[str, str]]:
+    return {
+        (cfg.org, cfg.namespace)
+        for cfg in repos.config_entries()
+        if cfg.classification == "restricted"
+    }
+
+
 class IdentityDirectory:
     async def is_restricted(self, org: str, namespace: str) -> bool:
         return await namespace_classification.is_restricted(org, namespace)
@@ -33,9 +41,7 @@ class IdentityDirectory:
 
     def restricted_code_namespaces(self, org: str) -> set[str]:
         return {
-            cfg.namespace
-            for cfg in repos.config_entries()
-            if cfg.org == org and cfg.classification == "restricted"
+            namespace for entry_org, namespace in configured_restricted_pairs() if entry_org == org
         }
 
     async def fanout_namespaces(

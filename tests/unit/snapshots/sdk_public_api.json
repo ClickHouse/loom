@@ -363,6 +363,10 @@
               "body",
               "options"
             ],
+            "edit_context": [
+              "body",
+              "options"
+            ],
             "enclosing": [
               "body",
               "options"
@@ -2078,6 +2082,9 @@
           "limit",
           "context_lines",
           "include_body",
+          "related_on_miss",
+          "related_on_prefix",
+          "include_dependencies",
           "mode",
           "path_globs",
           "exclude_globs",

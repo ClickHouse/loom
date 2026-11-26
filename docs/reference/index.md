@@ -2,7 +2,7 @@
 
 Reference pages say what exists and what each option means. The reasons behind a design are in
 [Concepts](../concepts/memory.md) and [Architecture](../architecture/system-overview.md).
-Procedures are in the [guides](../guides/agent-integration.md) and
+Procedures are in the [guides](../guides/index.md) and
 [operations](../operations/deployment.md) sections.
 
 ## Generated from the code
@@ -36,6 +36,8 @@ around them is hand-written. The op tables inside the SDK packages (`sdk/python/
 | [MCP](./mcp.md)                               | The `/mcp` endpoint, authentication and OAuth, sessions and identity, the tool list and toolsets, results, errors, the action-schema export.                       |
 | [Python SDK](./python-sdk.md)                 | Install, construction, calling ops, typed shapes, sessions and tools, framework adapters, errors, retries.                                                         |
 | [TypeScript SDK](./typescript-sdk.md)         | Install, clients and options, typed ops, sessions and tools, pagination, the Strands adapter, errors, retries.                                                     |
+| [Go SDK](./go-sdk.md)                         | Install, save and recall agent memory, configure a team connection, and handle timeouts and errors.                                                                |
+| [Rust SDK](./rust-sdk.md)                     | Install, async and blocking clients, generated contracts, identity, call options, errors and retries.                                                              |
 | [Environment variables](./environment.md)     | Variables read outside the settings model: provider keys, the image, compose files, the CLI, the SDKs and the operator scripts.                                    |
 | [SQL surface](./sql-surface.md)               | The read-only `sql_v1_*` views over a tenant's data: columns, compatibility rule, what they withhold, freshness, `loom sql-access`.                                |
 | [Extractor contract](./extractor-contract.md) | Version 1 of the HTTP contract an extractor service serves: capabilities, extraction, error codes, the artifact's fields and rules.                                |

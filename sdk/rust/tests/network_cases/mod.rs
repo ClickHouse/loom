@@ -102,7 +102,10 @@ async fn retries_writes_with_one_key_and_counts_every_send() {
         second.headers["x-request-id"],
         first.headers["x-request-id"]
     );
-    assert_eq!(second.headers["x-loom-sdk"], "loom-rust/0.1.0");
+    assert_eq!(
+        second.headers["x-loom-sdk"],
+        concat!("loom-rust/", env!("CARGO_PKG_VERSION"))
+    );
 }
 
 #[tokio::test]

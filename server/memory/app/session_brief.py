@@ -399,6 +399,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
         project=inp.project or (live or {}).get("project", ""),
         branch=inp.branch or (live or {}).get("branch", ""),
         head_sha=inp.head_sha or (live or {}).get("head_sha", ""),
+        checkout=inp.checkout if inp.head_sha else None,
         sessions=len(sessions),
         events_total=events_total,
         source_chars=source_chars,
@@ -408,6 +409,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     user_id, session_id = _row_owner(inp, key, live)
     new_row = repo.build_brief_row(
         live,
+        version_after=int(row["version"]) if row else 0,
         org=inp.org,
         namespace=inp.namespace,
         brief_key=stored_key,
@@ -466,7 +468,12 @@ async def _find(inp: SessionBriefGetInput) -> dict[str, Any] | None:
     ch = get_client()
     scope = request_scope()
     if inp.brief_key:
-        key = _stored_key(inp.brief_key, scope)
+        if inp.snapshot_id and inp.brief_key.startswith("~"):
+            key = inp.brief_key
+            if scope.narrowed and not sb.brief_key_ok(_shown_key(key, scope)):
+                return None
+        else:
+            key = _stored_key(inp.brief_key, scope)
         return await repo.current(ch, inp.org, inp.namespace, key, scope=scope)
     rows = await repo.listing(
         ch,
@@ -491,6 +498,13 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
                 "shows the briefs this namespace holds)",
             },
         )
+    snapshot: tuple[int, str] | None = None
+    if inp.snapshot_id:
+        version_text, digest = inp.snapshot_id.split(".", 1)
+        version = int(version_text)
+        if not inp.brief_key or not 0 < inp.revision < 2**32 or version >= 2**64:
+            return SessionBriefGetOutput(found=False)
+        snapshot = version, digest
     row = await _find(inp)
     if row is None:
         return SessionBriefGetOutput(found=False, brief_key=inp.brief_key)
@@ -520,13 +534,9 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
             key,
             inp.revision,
             scope=scope,
+            snapshot=snapshot,
         )
-        # A revision from before a delete belongs to the forgotten brief: the
-        # current life of the key started at its `created_at`.
-        born = row.get("created_at")
-        if past is None or (
-            born is not None and past.get("updated_at") is not None and past["updated_at"] < born
-        ):
+        if past is None:
             return SessionBriefGetOutput(found=False, **base)
         row = {**row, **past}
     deleted = False
@@ -535,6 +545,8 @@ async def handle_session_brief_get(inp: SessionBriefGetInput) -> SessionBriefGet
     return SessionBriefGetOutput(
         found=True,
         revision=int(row.get("revision") or 0),
+        snapshot_id=repo.snapshot_id(row),
+        snapshot_key=key,
         rendered=sb_render.with_client_summary(rendered, sections) if inp.full else rendered,
         sections=sections if inp.include_sections else None,
         head_sha=str(row.get("head_sha") or ""),

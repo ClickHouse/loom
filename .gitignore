@@ -24,6 +24,7 @@ docs/node_modules/
 docs/.blume/
 docs/.blume-content/
 docs/.vercel/
+docs/public/docs-media/
 frontend/dist/
 frontend/.vite/
 frontend/*.log
@@ -65,6 +66,9 @@ htmlcov/
 nosetests.xml
 coverage.xml
 coverage.json
+/frontend/coverage/
+/sdk/ruby/coverage/
+/sdk/typescript/coverage/
 *.cover
 *.py,cover
 .tox/

@@ -1,4 +1,4 @@
-// Pure helpers for the session brief hook (unit-tested, no I/O).
+// Helpers for capturing and restoring session briefs.
 //
 // The working-memory note says where the last session stopped:
 // its first prompt, the tree, the files it edited, its last reply. What the
@@ -20,6 +20,7 @@ import {
   contentText,
   envSwitch,
   extractFiles,
+  git,
   normalizeToolName,
   redactHead,
   resolveToken,
@@ -79,6 +80,23 @@ export function outputPointers(text) {
     }
   }
   return out;
+}
+
+// Keep only recognizable runner summaries. Full shell output can contain unrelated data.
+const CHECK_SUMMARY =
+  /^(?:(?:Tests\s+)?\d+ (?:passed|failed|skipped)(?:, \d+ (?:passed|failed|skipped|deselected|xfailed|xpassed|warnings?|errors?))*(?: \(\d+\))?(?: in [\d.]+s)?|All checks passed[.!]?|Success: no issues found in \d+ source files?)$/i;
+
+function recordVerification(call, text, ts, ref, out) {
+  if (!call.command) return;
+  const summary = text
+    .slice(-4000)
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^=+\s*|\s*=+$/g, ""))
+    .findLast((line) => CHECK_SUMMARY.test(line));
+  if (summary) {
+    const verification = `verification: ${clip(call.command, 220)} — ${clip(summary, 160)}`;
+    out.push({ kind: "note", text: verification, ts, ref });
+  }
 }
 
 function todoNote(input) {
@@ -164,6 +182,7 @@ function claudeEvents(o, calls, out) {
           const ptrs = outputPointers(text);
           if (ptrs.length) out.push({ kind: "note", text: `output: ${ptrs.join(" ")}`, ts, ref });
         }
+        recordVerification(call, text, ts, ref, out);
       }
       return;
     }
@@ -183,7 +202,7 @@ function claudeEvents(o, calls, out) {
     if (!b || b.type !== "tool_use") continue;
     const name = normalizeToolName(b.name);
     const files = extractFiles(b.input);
-    calls.set(b.id, { name, path: files[0] || "" });
+    calls.set(b.id, { name, path: files[0] || "", command: name === "Bash" ? commandText(b.input) : "" });
     out.push(...toolEvent(b.name, b.input, ts, ref));
   }
 }
@@ -225,8 +244,9 @@ function codexEvents(o, calls, out) {
       return;
     }
     const obj = typeof input === "object" && input ? input : { command: String(input || "") };
-    calls.set(p.call_id, { name: normalizeToolName(name) });
-    out.push(...toolEvent(["exec", "exec_command", "shell"].includes(name) ? "Bash" : name, obj, ts, ref));
+    const tool = name === "exec" ? "Bash" : normalizeToolName(name);
+    calls.set(p.call_id, { name: tool, command: tool === "Bash" ? commandText(obj) : "" });
+    out.push(...toolEvent(tool, obj, ts, ref));
     return;
   }
   if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
@@ -238,6 +258,7 @@ function codexEvents(o, calls, out) {
       const ptrs = outputPointers(text);
       if (ptrs.length) out.push({ kind: "note", text: `output: ${ptrs.join(" ")}`, ts, ref });
     }
+    recordVerification(call, text, ts, ref, out);
   }
 }
 
@@ -286,9 +307,24 @@ export function worthSaving(events, { firstSave = true } = {}) {
   return users + edits >= 1 || evs.length >= 5;
 }
 
+/** Record only Git facts. The remote-tracking refs are local and may lag. */
+export function briefCheckout(cwd, head) {
+  if (!head) return undefined;
+  const opts = { timeoutMs: 750, fallback: null };
+  const status = git(["--no-optional-locks", "status", "--porcelain", "--untracked-files=normal"], cwd, opts);
+  const remote = git(["for-each-ref", "--count=1", `--contains=${head}`, "refs/remotes/"], cwd, opts);
+  return {
+    dirty: status === null ? null : Boolean(status),
+    head_in_remote_refs: remote === null ? null : Boolean(remote),
+  };
+}
+
 /** The session.brief_save body. brief_key is left to the server
  *  (auto/<project>/<branch>) unless LOOM_SESSION_BRIEF_KEY names one. */
-export function briefBody(scope, { sessionId, branch, head, trigger, events, cursor, repo, env = process.env }) {
+export function briefBody(
+  scope,
+  { sessionId, branch, head, checkout, trigger, events, cursor, repo, env = process.env },
+) {
   const key = String(env.LOOM_SESSION_BRIEF_KEY || "").trim();
   const body = {
     org: scope.org,
@@ -299,6 +335,7 @@ export function briefBody(scope, { sessionId, branch, head, trigger, events, cur
     repo: String(repo || (scope.repo && scope.repo.slug) || "").slice(0, 300),
     branch: String(branch || "").slice(0, 200),
     head_sha: String(head || "").slice(0, 64),
+    ...(checkout ? { checkout } : {}),
     trigger,
     events,
     event_cursor: String(cursor),

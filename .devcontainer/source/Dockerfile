@@ -2,7 +2,7 @@ FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0
 COPY --from=ghcr.io/astral-sh/uv:0.12.2@sha256:069a51314a7bb6031777a9273205fe1b0b19e914ef418207d1338b268df641dd /uv /usr/local/bin/uv
 
 ARG CONTRIBUTOR_UID=1000
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates git \
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential ca-certificates git rustfmt \
     && useradd --create-home --uid "$CONTRIBUTOR_UID" developer \
     && mkdir /venv && chown developer:developer /venv
 

@@ -12,6 +12,10 @@ This page sets up a checkout for working on Loom's code. To evaluate Loom withou
 - **Docker** with Compose 2.34 or later (the dev compose file pulls ClickHouse daily),
   for ClickHouse and the stacks.
 - **Node 22** (the version CI uses) for the dashboard and the TypeScript SDK.
+- **rustfmt** on `PATH` for the Rust SDK generator checks in `make lint`.
+  Install with `sudo apt-get install rustfmt` on Debian/Ubuntu. With rustup,
+  use `rustup toolchain install 1.84.1 --profile minimal --component rustfmt`
+  and `rustup override set 1.84.1` in the checkout to match CI.
 - **Bash 5 or later** on `PATH` for the shell scripts and their unit tests. On macOS,
   `brew install bash` and `export PATH="$(brew --prefix)/bin:$PATH"`; check
   `bash --version` before running the tests. The system Bash 3.2 lacks associative

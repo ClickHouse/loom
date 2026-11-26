@@ -3,7 +3,8 @@
 Use a task-specific checkout to investigate a small defect, write its regression and
 send a reviewable contribution. This configuration builds a Python source environment
 with pinned base and installer images, the repository's dependency lock and a private
-virtualenv. It installs compiler dependencies and runs a focused unit check. It starts
+virtualenv. It installs compiler dependencies and `rustfmt` for the Rust SDK generator
+checks in `make lint`, and runs a focused unit check. It starts
 no Loom service, database or provider, and exposes no port.
 
 Select **Loom source contribution** when reopening the checkout in a development

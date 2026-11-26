@@ -11,6 +11,11 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     exclude: ["e2e/**", "node_modules/**", "dist/**"],
     setupFiles: ["src/test/setup.ts"],
+    coverage: {
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/test/**"],
+      reporter: ["lcovonly"],
+    },
     css: false,
     // Click UI's ESM imports its CSS; inlined, Vite transforms those imports (and `css: false`
     // empties them) instead of Node failing on a `.css` file.

@@ -40,7 +40,10 @@ concurrency:
 jobs:
   update:
     name: update
-    if: github.ref == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && vars.LOOM_I18N_RUNNER != ''
+    needs: finalize
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main' && vars.LOOM_I18N_RUNNER != '' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     runs-on: ${{ fromJSON(vars.LOOM_I18N_RUNNER) }}
     timeout-minutes: 45
     # Environment and runner-group restrictions admit this main-only workflow.
@@ -52,14 +55,20 @@ jobs:
     env:
       LOOM_I18N_LANGUAGES: ${{ vars.LOOM_I18N_LANGUAGES }}
       LOOM_I18N_BATCH_LANGUAGES: ${{ inputs.languages }}
+      GIT_CONFIG_COUNT: "2"
+      GIT_CONFIG_KEY_0: credential.https://github.com.helper
+      GIT_CONFIG_VALUE_0: ""
+      GIT_CONFIG_KEY_1: credential.https://github.com.helper
+      GIT_CONFIG_VALUE_1: "!gh auth git-credential"
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
@@ -69,30 +78,38 @@ jobs:
           python -m venv "$RUNNER_TEMP/i18n"
           "$RUNNER_TEMP/i18n/bin/python" -m pip install --quiet --require-hashes --no-deps \
             --only-binary=:all: -r scripts/i18n/requirements.txt
-          echo "$RUNNER_TEMP/i18n/bin" >> "$GITHUB_PATH"
       - name: Preserve verified pending pages
         id: prepare
-        run: python -m scripts.i18n.automation prepare
+        run: |
+          "$RUNNER_TEMP/i18n/bin/python" -m scripts.i18n.automation prepare
       - name: Translate a bounded batch
         id: translate
         env:
+          GH_TOKEN: ${{ github.token }} # Write the budget ledger before calling the provider.
           LOOM_I18N_TOTAL_USD: ${{ vars.LOOM_I18N_TOTAL_USD || '0' }}
           ALL: ${{ inputs.all }}
         run: |
           export AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
           args=()
           if [ "$ALL" = "true" ]; then args+=(--all); fi
-          python -m scripts.i18n.automation update "${args[@]}" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          "$RUNNER_TEMP/i18n/bin/python" -m scripts.i18n.automation update "${args[@]}" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Validate and publish for hosted CI
         if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.translate.outcome != 'skipped' }}
         env:
           GH_TOKEN: ${{ github.token }}
           LOOM_I18N_PENDING_SHA: ${{ steps.prepare.outputs.pending_sha }}
-        run: python -m scripts.i18n.automation publish
+        run: |
+          "$RUNNER_TEMP/i18n/bin/python" -m scripts.i18n.automation publish
 
   finalize:
     name: merge validated translations
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'workflow_dispatch'))
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

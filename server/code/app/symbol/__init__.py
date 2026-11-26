@@ -44,7 +44,7 @@ from server.code.app.symbol.resolve import (
     _innermost,
     _resolve_symbols,
 )
-from server.code.app.symbol.symbol import handle_code_symbol
+from server.code.app.symbol.symbol import handle_code_edit_context, handle_code_symbol
 from server.code.app.symbol.trace import handle_code_trace
 from server.code.app.symbol.verify import (
     _normalize_claim_name,
@@ -72,6 +72,7 @@ __all__ = [
     "handle_code_history",
     "handle_code_impact",
     "handle_code_outline",
+    "handle_code_edit_context",
     "handle_code_symbol",
     "handle_code_test_gate",
     "handle_code_trace",

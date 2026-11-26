@@ -97,6 +97,7 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
         "code.pr_check",
         "code.impact",
         "code.read",
+        "code.edit_context",
     }
     # The QA-plane ops a coding session asks for are
     # listed on coding without joining core
@@ -108,7 +109,10 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
     }
     # the scratchpad is coding's own; the memory verbs are core's
     assert (
-        _MCP_CODING_OPS - tracker_on_coding - {"working_memory.set", "code.read"} <= _MCP_CORE_OPS
+        _MCP_CODING_OPS
+        - tracker_on_coding
+        - {"working_memory.set", "code.read", "code.edit_context"}
+        <= _MCP_CORE_OPS
     )
     assert not (_MCP_CODING_OPS & _MCP_HIDDEN_OPS)
     assert len(_MCP_CODE_CORE_OPS) == 8
@@ -140,7 +144,7 @@ def test_coding_listing_is_its_roster_plus_the_code_tools_regardless_of_the_flag
     for code in (False, True):
         tools = _listing("coding", code)
         names = _names(tools)
-        assert len(tools) == len(_MCP_CODING_OPS | _MCP_CODE_CORE_OPS) + len(SYNTHETIC) == 22
+        assert len(tools) == len(_MCP_CODING_OPS | _MCP_CODE_CORE_OPS) + len(SYNTHETIC) == 23
         assert "loom_code_read" in names
         assert SYNTHETIC <= names
         assert {TOOL_TO_OP[n] for n in names - SYNTHETIC} == _MCP_CODING_OPS | _MCP_CODE_CORE_OPS
@@ -180,7 +184,7 @@ def test_toolset_is_selectable_per_deployment_and_per_request():
     assert resolve_toolset(None, "bogus") == "core", "an unknown configured value is core"
     assert resolve_toolset("", None) == "core"
     # the per-request override on a `core` deployment is the coding listing
-    assert len(_listing("core", True, requested="coding")) == 22
+    assert len(_listing("core", True, requested="coding")) == 23
     assert (
         len(_listing("core", True, requested="bogus"))
         == len(_MCP_CORE_OPS | _MCP_CODE_CORE_OPS) + 3
@@ -389,14 +393,30 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
-def test_coding_search_and_definition_tools_load_upfront_by_default(monkeypatch, profile) -> None:
+def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None:
     default = Settings.model_fields["mcp_always_load_tools"].get_default()
     monkeypatch.setattr(settings, "mcp_always_load_tools", default)
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
-    assert len(tools) == 22
+    assert len(tools) == 23
     flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
-    assert flagged == {"loom_code_search", "loom_code_symbol", "loom_code_grep"}
-    assert {"loom_op", "loom_search"} <= {tool["name"] for tool in tools}
+    expected = (
+        {"loom_code_edit_context", "loom_code_grep"}
+        if profile == "compact"
+        else {"loom_code_symbol", "loom_code_grep", "loom_code_search"}
+    )
+    assert flagged == expected
+    assert {"loom_op", "loom_search", "loom_code_search"} <= {tool["name"] for tool in tools}
+    edit = next(tool for tool in tools if tool["name"] == "loom_code_edit_context")
+    schema = edit["inputSchema"]
+    assert "name" not in schema.get("required", [])
+    assert {"name", "names", "clues"} <= schema["properties"].keys()
+    assert "Batch exact `names` or declaration `clues`" in edit["description"]
+    assert edit["annotations"]["readOnlyHint"]
+    grep = next(tool for tool in tools if tool["name"] == "loom_code_grep")
+    assert "Keep default bodies for edits" in grep["description"]
+    assert {"include_body", "context_lines"} <= grep["inputSchema"]["properties"].keys()
+    if profile != "compact":
+        assert "loom_code_edit_context for a known definition" in grep["description"]
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding+tracker"])
@@ -515,9 +535,8 @@ def test_the_primers_drop_the_collections_clause_when_search_does_not_span_them(
     assert "and the collections you can read" in full
 
 
-def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -> None:
-    """A default memory workspace enables the task pack; the full primer and the
-    generated tool summary keep the hook exception and the one-fact search."""
+def test_memory_scoped_primers_set_the_task_pack_order() -> None:
+    """The primer owns session order, and both discovery surfaces describe the task pack."""
     from scripts.codegen.page_summary import first_sentence  # the docs generator, kept lazy
 
     coding = mcp_primer._coding_instructions("coding", {"namespace": "project"})
@@ -531,35 +550,32 @@ def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -
     assert f"Skip it when {FIRST_STEP_HOOK}." in rules
     assert "For one fact, rule 2's search alone is enough." in rules
     summary = first_sentence(TOOL_DESCRIPTIONS["context.pack"])
-    assert summary.startswith("Task context: call first with a default memory namespace")
-    # loom_op's help catalog shows its own cut of the same sentence
-    assert mcp_op._purpose(OPERATIONS_BY_NAME["context.pack"]).endswith(
-        f"unless {FIRST_STEP_HOOK}."
-    )
-    assert summary.endswith(f"unless {FIRST_STEP_HOOK}.")
+    assert summary == "Retrieve task context by passing the task as `query`."
+    assert mcp_op._purpose(OPERATIONS_BY_NAME["context.pack"]) == summary
 
 
 def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     coding = mcp_primer._coding_instructions("coding")
-    assert "Use Loom first to search and read unchanged indexed source" in coding
+    assert "Use Loom first to search and read unchanged indexed source, including tests" in coding
+    assert "use `loom_code_edit_context` with a definition or literal clues" in coding
+    assert "Inspect a definition with `loom_code_symbol`" in coding
     for name, purpose in (
-        ("loom_code_symbol", "for a named definition"),
-        ("loom_code_search", "for an issue, task or conceptual question"),
+        ("loom_code_search", "for behavior or an issue"),
         ("loom_code_grep", "for exact text or an error"),
+        ("loom_code_read", "to read known line ranges together"),
         ("loom_code_callers", "for callers"),
         ("loom_code_impact", "for change effects"),
         ("loom_code_context_pack", "for a task briefing"),
     ):
         assert f"`{name}` {purpose}" in coding
-    assert "ToolSearch" in coding
+    assert "In Claude Code, find deferred tools with ToolSearch" in coding
     assert "linked lessons" in coding
     assert "`code_state`" in coding
-    assert "`uses_brief: true`" in coding
-    assert "before a local lookup for the same evidence" in coding
-    assert "use Bash, Grep, Read or Glob only for uncommitted or unindexed code" in coding
-    assert "uncommitted or unindexed" in coding
+    assert "Batch related matches or ranges" in coding
+    assert "Use local tools to edit, run tests, and inspect Git" in coding
+    assert "Read locally for working-copy changes, unindexed paths, explicit requests" in coding
     assert "evidence Loom cannot supply" in coding
-    assert "current context already answers" in coding
+    assert "Reuse source and linked lessons already in context" in coding
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact"])
@@ -594,12 +610,12 @@ def test_coding_connections_without_a_memory_home_do_not_request_a_memory_pack(d
     assert "Recall before answering from memory" in coding
 
 
-def test_coding_tool_listing_conditions_the_memory_pack_on_a_default_workspace() -> None:
+def test_coding_tool_listing_describes_task_pack_inputs_and_results() -> None:
     tools = asyncio.run(mt._tools_descriptor(toolset="coding"))
     description = next(t["description"] for t in tools if t["name"] == "loom_context_pack")
-    assert "call first with a default memory namespace" in description
-    assert "call it first in each task" not in description
-    assert "Pass the task as `query`" in description
+    assert description.startswith("Retrieve task context by passing the task as `query`.")
+    assert "memories, decisions, procedures, working memory and the profile" in description
+    assert "`include_runs=true` lists recent sessions and runs" in description
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding", "tasks", "tracker", "atomic", "readonly"])

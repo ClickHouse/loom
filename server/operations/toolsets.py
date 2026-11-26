@@ -203,6 +203,7 @@ _MCP_CODING_OPS: frozenset[str] = frozenset(
         "code.pr_check",
         "code.impact",
         "code.read",
+        "code.edit_context",
     }
 )
 

@@ -218,10 +218,9 @@ def test_the_image_and_the_release_ask_for_latest_when_they_apply_it() -> None:
     assert "latest" not in meta["with"]["tags"]
     (tag,) = [s for s in jobs["docker-tag"]["steps"] if s.get("name") == "Tag the scanned images"]
     assert tag["env"]["LATEST"] == "${{ steps.latest.outputs.latest }}"
-    (publish,) = [
-        s for s in jobs["github-release"]["steps"] if "action-gh-release" in s.get("uses", "")
-    ]
-    assert publish["with"]["make_latest"] == "${{ steps.latest.outputs.latest }}"
+    (publish,) = [s for s in jobs["github-release"]["steps"] if s.get("id") == "publish-release"]
+    assert publish["env"]["LATEST"] == "${{ steps.latest.outputs.latest }}"
+    assert '--latest="$LATEST"' in publish["run"]
     assert "latest" not in jobs["version"].get("outputs", {})
 
 

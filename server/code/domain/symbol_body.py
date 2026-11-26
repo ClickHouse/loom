@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+UNMAPPABLE_SOURCE_ENDINGS = ("\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\u0085", "\u2028", "\u2029")
+CONTINUED_LINE_PREFIX = "… continued at line "
+CONTINUED_LINE_SUFFIX = " … line continues"
+
 
 def retained_source_lines(row: dict[str, Any]) -> list[str] | None:
     """Physical source lines, excluding presentation prefixes and unmappable skeletons."""
@@ -11,7 +15,7 @@ def retained_source_lines(row: dict[str, Any]) -> list[str] | None:
         return None
     text = str(row.get("content") or "")
     # A trailing non-LF separator can be a truncated physical line.
-    if text.endswith(("\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\u0085", "\u2028", "\u2029")):
+    if text.endswith(UNMAPPABLE_SOURCE_ENDINGS):
         return None
     # Index spans count LF boundaries; Unicode separators inside strings are text.
     parts = text.split("\n")
@@ -19,8 +23,8 @@ def retained_source_lines(row: dict[str, Any]) -> list[str] | None:
     if parts[-1]:
         lines.append(parts[-1])
     if any(
-        line.rstrip().endswith(" … line continues")
-        or line.lstrip().startswith("… continued at line ")
+        line.rstrip().endswith(CONTINUED_LINE_SUFFIX)
+        or line.lstrip().startswith(CONTINUED_LINE_PREFIX)
         for line in lines
     ):
         return None
