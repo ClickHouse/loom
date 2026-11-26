@@ -177,6 +177,8 @@
  "code_embed_recovery_full_scan_seconds": 1800,
  "code_embed_recovery_idle_interval_seconds": 120,
  "code_embed_recovery_interval_seconds": 30,
+ "code_enrich_example_candidate_limit": 50,
+ "code_enrich_indirect_test_caller_limit": 30,
  "code_enrich_timeout_s": 0.5,
  "code_entry_lock_wait_s": 14400.0,
  "code_extractor_rechunk_concurrency": 4,

@@ -752,6 +752,8 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_CONVENTIONS_DIFF_TIMEOUT_S` | `float` | `25.0` | live | Seconds the git diff behind code.conventions may run. |
 | `LOOM_CODE_EGRESS_CONNECT_TIMEOUT_S` | `float` | `15.0` | live | Seconds a repository job's egress tunnel waits to connect to its upstream host. |
 | `LOOM_CODE_ENRICH_TIMEOUT_S` | `float` | `0.5` | live | Seconds one enrichment of a code result may take before it is left empty. |
+| `LOOM_CODE_ENRICH_EXAMPLE_CANDIDATE_LIMIT` | `int` | `50` |  | Incoming call sites read before ranking usage examples. The coverage lookup accepts up to 50 paths. |
+| `LOOM_CODE_ENRICH_INDIRECT_TEST_CALLER_LIMIT` | `int` | `30` |  | Indirect test callers ranked as backups. The edge query reads up to twice this many call sites, within its 60-site work limit. |
 | `LOOM_CODE_ENTRY_LOCK_WAIT_S` | `float` | `14400.0` | live | A full pass waits this long for a delta on its entry (past any delta's harness timeout). |
 | `LOOM_CODE_FORK_UPSTREAM_MISS_TTL_S` | `float` | `600.0` | live | Seconds a failed fork-upstream lookup is remembered as "not a known fork". |
 | `LOOM_CODE_MERGE_SHAS_LOG_TIMEOUT_S` | `float` | `8.0` | live | Seconds the mirror's git log may run when it searches for merge commits. |

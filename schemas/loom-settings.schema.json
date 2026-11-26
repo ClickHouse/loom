@@ -1035,6 +1035,20 @@
           "type": "integer",
           "description": "Seconds between recovery passes while stubs are pending."
         },
+        "code_enrich_example_candidate_limit": {
+          "default": 50,
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Incoming call sites read before ranking usage examples. The coverage lookup accepts up to 50 paths."
+        },
+        "code_enrich_indirect_test_caller_limit": {
+          "default": 30,
+          "maximum": 30,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Indirect test callers ranked as backups. The edge query reads up to twice this many call sites, within its 60-site work limit."
+        },
         "code_enrich_timeout_s": {
           "default": 0.5,
           "exclusiveMinimum": 0,

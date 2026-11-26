@@ -1911,6 +1911,12 @@ class CodeSettings(BaseModel):
     code_egress_connect_timeout_s: Annotated[float, LIVE] = Field(default=15.0, gt=0)
     # Seconds one enrichment of a code result may take before it is left empty.
     code_enrich_timeout_s: Annotated[float, LIVE] = Field(default=0.5, gt=0)
+    # Incoming call sites read before ranking usage examples. The coverage lookup
+    # accepts up to 50 paths.
+    code_enrich_example_candidate_limit: int = Field(default=50, ge=1, le=50)
+    # Indirect test callers ranked as backups. The edge query reads up to twice
+    # this many call sites, within its 60-site work limit.
+    code_enrich_indirect_test_caller_limit: int = Field(default=30, ge=1, le=30)
     # A full pass waits this long for a delta on its entry (past any delta's harness
     # timeout).
     code_entry_lock_wait_s: Annotated[float, LIVE] = Field(default=4 * 3600.0, gt=0)

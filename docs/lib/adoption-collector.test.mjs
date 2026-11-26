@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handleAdoption } from "./collector.mjs";
+import { handleAdoption } from "./adoption-collector.mjs";
 
 const report = {
   schema_version: 1,

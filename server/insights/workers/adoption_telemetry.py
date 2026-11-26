@@ -17,7 +17,7 @@ from server.insights.store.adoption_telemetry import window_report
 from server.settings import settings
 from server.workers import pass_context
 
-_COLLECTOR_URL = "https://telemetry.loom.clickhouse.com/api/v1/adoption"
+_COLLECTOR_URL = "https://loom.clickhouse.com/api/v1/adoption"
 _WINDOW = timedelta(hours=12)
 # not a setting: bounds reads of the collector acknowledgement record.
 _MAX_ACK_BYTES = 4096

@@ -20,7 +20,7 @@ and sends one event per completed 12-hour UTC window.
 ### Where telemetry is sent
 
 The background worker posts to
-`https://telemetry.loom.clickhouse.com/api/v1/adoption`. The collector validates
+`https://loom.clickhouse.com/api/v1/adoption`. The endpoint validates
 the report and acknowledges the installation UUID and window after writing to
 the analytics ClickHouse service. The warehouse deduplicates retries and expires
 reports 400 days after receipt.

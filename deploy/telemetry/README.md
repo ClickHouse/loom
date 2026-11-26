@@ -1,9 +1,11 @@
 # Adoption telemetry collector
 
-Self-hosted servers send one versioned JSON report per completed 12-hour UTC window.
-The receiver validates the shape and writes the report to the analytics ClickHouse
-service. It returns the installation UUID and window start after a synchronous insert
-succeeds. The insert token and warehouse view deduplicate retries.
+Self-hosted servers send one versioned JSON report per completed 12-hour UTC window
+to `POST https://loom.clickhouse.com/api/v1/adoption`. The endpoint validates and
+writes reports to the analytics ClickHouse service. It returns the installation UUID
+and window start after a synchronous insert succeeds. The insert token and warehouse
+view deduplicate retries. The same Vercel project serves the aggregate dashboard at
+`/adoption`.
 
 ## Provision the warehouse
 
@@ -19,34 +21,34 @@ succeeds. The insert token and warehouse view deduplicate retries.
    into `oss_metrics`. The collector records self-reported installation activity.
    Keep company account verification in the enrollment workflow.
 
-## Deploy the collector
+## Configure the site
 
-Create a Vercel project rooted at `deploy/telemetry`. Use the warehouse's approved
-runtime region and set these server-side environment variables:
+The site's Vercel project is rooted at `docs`. Use the warehouse's approved runtime
+region and set these server-side environment variables in Production.
 
 | Setting                              | Value                                             |
 | ------------------------------------ | ------------------------------------------------- |
 | `LOOM_TELEMETRY_CLICKHOUSE_URL`      | HTTPS address of the analytics ClickHouse service |
 | `LOOM_TELEMETRY_CLICKHOUSE_USER`     | Collector's insert-only user                      |
 | `LOOM_TELEMETRY_CLICKHOUSE_PASSWORD` | Credential for that user                          |
+| `CRON_SECRET`                        | Secret for the daily snapshot job                 |
 
-Attach `telemetry.loom.clickhouse.com` to the collector project. Set `CRON_SECRET` in the
-collector project's production environment. Vercel calls `/api/oss-snapshot`
-daily to save GitHub star and fork counts. The metric row key makes repeated
-runs on the same UTC day replace that day's snapshot. Set a request rate
-limit on `/api/v1/adoption` in the deployment firewall. Send a synthetic report to
-the deployed receiver, confirm that the matching acknowledgement follows a warehouse
-write, then resend it and confirm a single row in `loom_adoption_windows`. Do this
-before releasing the worker that sends to the collector.
+Vercel calls `/api/oss-snapshot` daily to save GitHub star and fork counts. The metric
+row key makes repeated runs on the same UTC day replace that day's snapshot. Set a
+request rate limit on `/api/v1/adoption` in the deployment firewall. Before releasing
+the reporting worker, send a synthetic report to a deployment configured with a test
+warehouse. Check the acknowledgement, then resend the report and confirm that
+`loom_adoption_windows` contains one row for its installation and window.
 
-Run `npm --prefix deploy/telemetry test` to exercise the receiver locally.
+Run `node --test docs/lib/adoption-collector.test.mjs docs/lib/oss-snapshot.test.mjs`
+to exercise the two endpoints locally.
 
 ## Publish adoption metrics
 
-The Loom site's Vercel project serves the Self-hosted and OSS tabs at
-`/adoption`. Save [public-adoption.sql](public-adoption.sql) in the ClickHouse
-Cloud SQL console and create a Query API endpoint for it. Give the endpoint's
-database role `SELECT` on these views in `loom_product_analytics`:
+The dashboard reads aggregates with a dedicated ClickHouse Cloud Query API key.
+Save [public-adoption.sql](public-adoption.sql) in the SQL console and create a Query
+API endpoint for it. Give the endpoint's database role `SELECT` on these views in
+`loom_product_analytics`:
 
 - `public_adoption_totals`
 - `public_adoption_versions`

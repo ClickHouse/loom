@@ -120,7 +120,7 @@ async def test_delivery_retries_without_recounting_after_ack(
 
     assert len(requests) == 2 and aggregate.await_count == 2
     assert all(request.method == "POST" for request in requests)
-    assert all(request.url.host == "telemetry.loom.clickhouse.com" for request in requests)
+    assert all(request.url.host == "loom.clickhouse.com" for request in requests)
     assert all(request.url.path == "/api/v1/adoption" for request in requests)
     assert requests[0].content == requests[1].content
     payload = json.loads(requests[0].content)
