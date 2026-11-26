@@ -361,7 +361,7 @@ jobs:
           done
           uvx --python "$PYTHON_VERSION" --from "$coverage_package" coverage lcov -o "$RUNNER_TEMP/python.lcov"
       - name: Report Python changed-line coverage
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Python server and SDK
           report: ${{ runner.temp }}/python.lcov
@@ -707,7 +707,7 @@ jobs:
       - name: Collect dashboard unit coverage
         run: npm run test -- --coverage --testTimeout=10000
       - name: Report dashboard changed-line coverage
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Dashboard
           working-directory: frontend
@@ -1439,7 +1439,7 @@ jobs:
       - name: Report Rust SDK changed-line coverage
         if: steps.rust-coverage.outcome == 'success'
         continue-on-error: true
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Rust SDK
           working-directory: sdk/rust
@@ -1504,7 +1504,7 @@ jobs:
       - name: Report TypeScript SDK changed-line coverage
         if: github.event_name == 'pull_request'
         continue-on-error: true
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: TypeScript SDK
           working-directory: sdk/typescript

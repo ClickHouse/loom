@@ -182,6 +182,7 @@ test("preserves repository source links, images and examples", () => {
     `[Missing page](${github}docs/missing.md)`,
     `[Source lines](${github}docs/index.md#L3-L7)`,
     `[Plain source](${github}docs/index.md?plain=1)`,
+    "[External reference](https://example.org/ClickHouse/loom/blob/main/docs/index.md)",
     `![Image](${github}docs/index.md)`,
     `\`[Doc](${github}docs/index.md)\``,
     `~~~md\n[Doc](${github}docs/index.md)\n~~~`,

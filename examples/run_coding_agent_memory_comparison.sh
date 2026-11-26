@@ -51,7 +51,9 @@ export LOOM_BACKGROUND_WORKERS=off LOOM_ADOPTION_TELEMETRY_ENABLED=false LOOM_ME
 LOOM_JWT_SECRET=$(python -c 'import secrets; print(secrets.token_hex(32))')
 export LOOM_JWT_SECRET
 
-npm install --prefix "$scratch/deps" --ignore-scripts --no-audit --no-fund @modelcontextprotocol/server-memory@2.2.1 >&2
+mkdir "$scratch/deps"
+cp examples/coding-agent-memory-comparison/{package.json,package-lock.json} "$scratch/deps/"
+npm ci --prefix "$scratch/deps" --ignore-scripts --no-audit --no-fund >&2
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost"
 export no_proxy="${no_proxy:+$no_proxy,}127.0.0.1,localhost"
 started_db=1

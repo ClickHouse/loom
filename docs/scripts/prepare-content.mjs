@@ -15,7 +15,8 @@ const repository = dirname(root);
 const content = join(root, ".blume-content");
 const docsMedia = join(root, "public", "docs-media");
 const locales = ["es", "ja", "ko", "pt-BR", "zh-CN"];
-const docsBlob = "https://github.com/ClickHouse/loom/blob/main/docs/";
+const docsBlobPath = "/ClickHouse/loom/blob/main/docs/";
+const docsBlob = `https://github.com${docsBlobPath}`;
 const docsSite = "https://loom.clickhouse.com/docs";
 const localizedSeo = {
   "architecture/storage-authority.md": {
@@ -442,7 +443,7 @@ function publishedDocUrl(url, englishSources) {
 
 /** Keep the translator's choice of English fallback and send it to the published page. */
 export function rewritePublishedDocLinks(text, englishSources) {
-  if (!text.includes(docsBlob)) return text;
+  if (!text.includes(docsBlobPath)) return text;
   const pending = [fromMarkdown(text)];
   const replacements = [];
   for (const node of pending) {

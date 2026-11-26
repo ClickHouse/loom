@@ -1,0 +1,8 @@
+{
+  "name": "loom-coding-agent-memory-comparison",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@modelcontextprotocol/server-memory": "2.2.1"
+  }
+}
