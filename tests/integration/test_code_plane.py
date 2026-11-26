@@ -95,10 +95,13 @@ async def test_ingest_lifecycle(code_env) -> None:
 async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
     from server.code.api.models_read import CodeReadInput
     from server.code.app import read
+    from server.core.ch import get_client
     from server.settings import settings
+    from tests.integration._eventually import eventually
 
     repo, org, ns = code_env
     monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_trace_log_enabled", True)
     await _ingest(repo, org, ns)
 
     async def mirror(_cfg):
@@ -146,6 +149,20 @@ async def test_read_returns_exact_indexed_ranges(code_env, monkeypatch) -> None:
         )
     )
     assert mixed.results == response.results[:3]
+    assert response.trace_run_id
+
+    async def trace_rows():
+        return (
+            await get_client().client.query(
+                "SELECT op, route, result_count, top_k, returned_paths FROM loom.code_search_trace "
+                "WHERE org = {org:String} AND namespace = {ns:String} AND trace_run_id = {id:String}",
+                parameters={"org": org, "ns": ns, "id": response.trace_run_id},
+            )
+        ).result_rows
+
+    assert await eventually(trace_rows, description="the indexed read trace") == [
+        ("code.read", "verified_blob_ranges", 2, 4, ["src/S.cpp", "src/S.cpp"])
+    ]
 
 
 async def test_read_verifies_mirror_blob_after_incremental_ingest(code_env, monkeypatch) -> None:

@@ -957,63 +957,29 @@ unreachable; CI passes `--require`, which fails there instead.
 
 ### Analyst event storage cutover
 
-The CHECK proof requires ClickHouse with `system.constraints`, as supplied by the
-pinned deployment release. Upgrade the database before provisioning the event catalog;
-a server without that metadata refuses the cutover.
+The ordinary `agent_events` table keeps the `ordinary_events_only` CHECK. It rejects
+marked rows and reserved mirror namespaces. Marked requests and mirror workers write
+to `agent_events_private`. Readers for trusted cost, budget and history-policy queries
+cover both stores.
 
-`agent_events` retains ordinary event rows, its columns and the analyst's signed,
-namespace-scoped grant. Both builds can insert and query ordinary events while the
-entity catalog advances to version 5. The `ordinary_events_only` CHECK rejects marked
-rows and reserved mirror namespaces. Ordinary namespaces matching the reserved
-mirror spelling are refused too; they cannot be used as an alternate private sink.
+The analyst reads `analysis_ordinary_agent_events` for ordinary requests and worker
+events. The signed view excludes marked rows and reserved namespaces. The
+`analysis_agent_events` view combines both stores and masks marked fields before
+returning rows. With column grants only on these views, the analyst cannot inspect
+the physical event tables or their storage metadata.
 
-Marked requests and mirror workers write `agent_events_private`, which has no analyst
-grant. The typed, signed `analysis_agent_events` view unions both stores and masks
-private fields before predicates run. Trusted cost, budget and history-policy reads
-also cover both stores. A row policy on a shared physical table cannot replace this
-split: table metadata could disclose private rows even when a SELECT returns none.
+Deploy Loom v1.3.0 or later to each serving replica before installing these views.
+During setup, Loom revokes legacy grants on the physical event tables before
+granting the views. Both versions keep the same analyst login and signed canary.
+Once the new version writes its entities, a query that names `loom.agent_events`
+must use `loom.analysis_ordinary_agent_events`. A replica still serving the previous
+build can report the old catalog until it is upgraded.
 
-Before granting access, provisioning verifies the exact CHECK and both table UUIDs
-on every configured writer, freezes the identities of all running INSERTs, waits
-for that finite set to finish, and counts forbidden ordinary rows. Internal async
-flushes participate even after their submitting client disconnects. Queued requests
-that have not prepared a pipeline encounter the installed CHECK when they execute.
-An ALTER alone does not settle old pipelines. Missing writers, changed topology,
-unknown metadata, a deadline or any surviving forbidden row refuses provisioning;
-existing rows remain untouched. Writers continue accepting valid ordinary inserts.
-
-Negative observations use one checked administrative HTTP session per writer UUID.
-Loom opens independent sessions through the configured service origin until it
-reaches every expected replica. A shared endpoint does not need separate replica
-addresses. A successful session that reaches an already covered replica is closed;
-its bootstrap is never replayed. Discovery is bounded by five seconds and eight
-times the larger of the writer and configured origin counts in additional attempts,
-within the complete proof deadline. An endpoint
-that cannot reach every replica refuses provisioning.
-
-`LOOM_CH_ANALYSIS_OBSERVER_URLS` can add explicit trusted HTTP origins using the
-same existing service credentials. Missing or unexpected writer UUIDs, redirects,
-backend changes and incomplete replies refuse. Each checked session must stay on
-its original backend, and routes must preserve non-replaying POST semantics,
-including any intermediary. HTTPS cannot downgrade. The proof never discovers
-another credential or derives HTTP ports from native cluster addresses.
-
-Each writer supplies its complete native `SHOW CREATE ROW POLICIES` catalog. A
-SELECT from `system.row_policies` cannot establish visibility because policies can
-filter that catalog too. Policies on process, topology or CHECK metadata sources,
-database-wide policies and unknown event policies refuse. Generated analyst event
-policies require their matching unrestricted policy for other users: an analyst-only
-policy can implicitly hide every row from another user. The observer cannot be the
-analyst user or hold its enabled role. Catalog, backend, principal and table identities
-remain fixed through the drain and census. The complete proof has a ten-second
-deadline; exact owned sessions close concurrently with one bounded cleanup interval.
-
-Run `loom ch-setup --apply-analyst-sql` with explicitly configured existing
-access-management credentials to apply only the analyst boundary. It uses the same
-live proof and lease without rebuilding the reader user. `--print-analyst-sql` refuses
-with a nonzero result and prints no grants or secrets: an unchecked SQL file cannot
-enforce the native policy-catalog observation. General `--print-sql` still prints
-database and reader preparation with a password placeholder.
+The provisioner checks native `SHOW CREATE ROW POLICIES ON <loom_database>.*` before
+writing Loom's policies and grants. This requires policy visibility in Loom's
+database. The views filter data at read time and the analyst has no storage grants,
+so setup needs no global policy catalog or per-writer proof of the ordinary table's
+contents. `loom ch-setup --apply-analyst-sql` runs the same live checks.
 
 Mirrored creation remains disabled until the fleet, read and session protections
 and enablement procedure are complete. Before an older build serves after enablement,

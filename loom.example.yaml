@@ -61,11 +61,6 @@ settings:
   # [restart]
   # ch_secure: null
 
-  # Extra trusted HTTP origins if the service endpoint cannot reach every writer.
-  # Analyst setup discovers checked replica sessions with the service credentials.
-  # [restart]
-  # ch_analysis_observer_urls: []
-
   # Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment`
   # ("<op> <request_id>"), so query_log rows group by shape. A statement that carries a
   # secret, or one run as the analyst, gets its shape alone. Off by default: readers

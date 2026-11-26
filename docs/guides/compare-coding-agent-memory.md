@@ -1,8 +1,8 @@
 ---
 title: Compare self-hosted memory tools for coding agents
-description: Compare Git instructions, file-backed MCP memory, and Loom. See which setups share decisions, track source changes, and support project access controls.
+description: Compare Git instructions, file-backed MCP memory, and Loom on one coding example. Check cross-session recall, project access, source changes, and portability.
 seo:
-  title: Compare coding-agent memory tools
+  title: Memory tools for coding agents compared
 ---
 
 # Compare self-hosted memory tools for coding agents
@@ -58,6 +58,38 @@ Keep the same tasks, starting revisions, and acceptance tests. Count model use, 
 maintenance, and human review time before assigning a budget. See the
 [paired coding-task scorecard](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory).
 
+## What changed in a paired coding-agent test?
+
+Claude Code answered 36 file-location questions on the ClickHouse repository in ten
+pairs of runs per question. Both setups had the same local tools. The Loom setup
+also had the plugin and indexed code tools. The correct file appeared among the
+first three named files in 96.4% of Loom runs and 91.4% of baseline runs.
+
+Mean session model cost fell from $0.096 to $0.076 per question. Mean elapsed time
+rose from 19.7 to 25.0 seconds. The cost covers the agent's model bill. Include
+server model calls, indexing, and hosting when estimating the full cost of a deployment.
+The test scored file identification. Use your repository's acceptance tests to
+measure whether the resulting patches pass review and CI.
+
+The [paired benchmark](../benchmarks/results.md#with-and-without-loom) includes the
+setup, raw runs, and answer-quality results for other repository questions.
+
+## Move a saved decision to a fresh setup
+
+The fixture copies the corrected retry decision into fresh storage, then reads it
+with a new checkout or client. This checks what a team can take when it moves its
+memory setup.
+
+| Setup                            | What the new reader recovered                                                                                                                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Git-tracked `AGENTS.md`          | A fresh checkout contained the corrected rule. Its Git history still contained the earlier rule.                                                                                                                       |
+| File-backed MCP reference server | A new server read both observations from a copy of the JSONL file. A reader still had to decide which one applied.                                                                                                     |
+| Loom                             | A source viewer exported the corrected rule as Markdown. A separate writer imported the bundle into an empty namespace. A viewer there read the corrected value under the same key and saw the importer as its writer. |
+
+The Loom test moves the current decision within one deployment. A Markdown export
+omits the source namespace's grants and full version history. Use the [portability walkthrough](../features/integrations/okf.md#test-agent-memory-portability)
+to repeat the check with different deployments.
+
 ## Shared memory between Claude Code and Codex
 
 In two local trials, Claude Code stored a different value over MCP and a fresh Codex
@@ -88,13 +120,14 @@ bash examples/run_coding_agent_memory_comparison.sh
 The runner creates a temporary repository, storage file, local server, and ClickHouse
 container. It installs `@modelcontextprotocol/server-memory@2.2.1` as the MCP reference
 arm and prints the two source revisions, the fields returned by the graph, the
-project-access check, and the observed author and version records. If a default port is taken, set
+project-access and portability results, and the observed author and version records.
+If a default port is taken, set
 `COMPARISON_CH_HTTP_PORT`, `COMPARISON_CH_NATIVE_PORT`, or `COMPARISON_API_PORT` to
 unused ports before running it.
 
-The comparison runner checks the protocol and storage for one fixture. It exercises
-separate MCP sessions without a coding model. The comparison gives no estimates of model
-accuracy, semantic recall, latency, throughput, or hosted cost.
+The runner uses separate MCP sessions to check exact-key reads, project access, source
+changes, and portability in one storage fixture. The [paired coding-agent test](#what-changed-in-a-paired-coding-agent-test)
+measures file identification, session model cost, and elapsed time separately.
 
 [Read how Loom tracks code-linked decisions](../use-cases/memory-linked-to-code.md) or
 [query memory history with SQL](../use-cases/self-hosted-clickhouse.md#audit-a-changed-decision-with-sql).

@@ -1029,6 +1029,8 @@ export interface CodeGrepInput {
   case_sensitive?: boolean;
   /** Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. */
   context_lines?: number;
+  /** Use the same excerpt width to complete a short declaration. Default false. */
+  prefer_complete_context?: boolean;
   path_prefix?: string;
   /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. */
   cursor?: string;
@@ -1450,6 +1452,7 @@ export interface CodeReadOutput {
   lessons_left_out?: number;
   results: CodeReadRange[];
   as_of: Record<string, unknown>;
+  trace_run_id?: string;
 }
 
 export interface CodeRecentCommitsInput {

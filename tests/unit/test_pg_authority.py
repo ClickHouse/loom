@@ -3247,11 +3247,13 @@ async def test_a_redaction_finds_a_version_clickhouse_does_not_hold_yet(
 
     async def _fetchrow(sql: str, *args: Any) -> dict[str, Any]:
         asked.append(args)
-        return {**head, "content_sha256": ""}
+        assert "coalesce(redacted_at, row->>'redacted_at') AS redacted_at" in sql
+        return {**head, "content_sha256": "", "redacted_at": "2026-01-01T00:00:00"}
 
     monkeypatch.setattr(pg, "fetchrow", _fetchrow)
     target = await history.find_history_target("o", mid, 7, ch=object())
     assert target is not None and (target.namespace, target.version) == ("n", 7)
+    assert target.redacted_at == "2026-01-01T00:00:00"
     assert asked == [("o", uuid.UUID(mid), 7)]
 
 

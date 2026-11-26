@@ -152,6 +152,10 @@ count says what that result contained; it does not explain why a lesson was abse
 The [telemetry field definitions](../features/observability/telemetry.md#the-ledger)
 name the measured containers and character units.
 
+For an MCP result that carries `trace_run_id`, including `code.read`, use that
+value with the same organization and namespace in `loom.code_search_trace.trace_run_id`
+and `loom.agent_events.args['out_trace_run_id']`.
+
 For grep in matches mode, compare line and body counts to see what the response
 returned. Check coverage and partial-result flags before interpreting zero lines.
 The ledger stage timings include inline lesson work with the exporter disabled.

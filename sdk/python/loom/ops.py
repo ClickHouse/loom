@@ -6776,6 +6776,7 @@ class CodeGrepInput(TypedDict, total=False):
     include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
+    prefer_complete_context: NotRequired[bool]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
@@ -6809,6 +6810,7 @@ class CodeGrepBody(TypedDict, total=False):
     include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
+    prefer_complete_context: NotRequired[bool]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
@@ -7380,6 +7382,7 @@ class CodeReadOutput(TypedDict, total=False):
     lessons_left_out: NotRequired[int]
     results: Required[list["CodeReadRange"]]
     as_of: Required[dict[str, Any]]
+    trace_run_id: NotRequired[str]
 
 
 class CodeReadRange(TypedDict, total=False):

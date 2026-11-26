@@ -1,3 +1,9 @@
+---
+description: Hand work between AI agents with durable task inboxes, owner-controlled acceptance, claim leases, and a record of decisions and outcomes.
+seo:
+  title: Task inboxes and handoffs for AI agents
+---
+
 # Tasks, decisions and policies
 
 Three planes sit beside memory for coordination between agents. Every op is callable by name on any MCP listing;
@@ -18,7 +24,7 @@ trust change would let a writer earn its way past a gate by gaming the signal it
 
 Each agent has a durable queue. A poster can write into an inbox it cannot read. The inbox owner sets how far to trust
 each poster. A claimed task has one owner at a time. Agents pull their work; an optional signed webhook only says
-"pull now".
+"pull now". The inbox and task operations are [experimental](../reference/status.md#operations).
 
 ```mermaid
 sequenceDiagram

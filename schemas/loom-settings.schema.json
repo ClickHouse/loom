@@ -340,14 +340,6 @@
           "type": "integer",
           "description": "Threads one statement may use (pinned as a MAX, so a statement cannot take the host)."
         },
-        "ch_analysis_observer_urls": {
-          "items": {
-            "type": "string"
-          },
-          "maxItems": 32,
-          "type": "array",
-          "description": "Extra trusted HTTP origins if the service endpoint cannot reach every writer. Analyst setup discovers checked replica sessions with the service credentials."
-        },
         "ch_analysis_probe_interval_s": {
           "default": 60.0,
           "maximum": 3600,

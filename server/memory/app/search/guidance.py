@@ -52,9 +52,8 @@ def _status_kept(
 def _current(row: dict[str, Any], now: datetime, *, replay: bool = False) -> bool:
     if row.get("tombstoned_at") is not None or row.get("sensitivity") == "high":
         return False
-    if replay:
-        return True
-    for field in ("expires_at", "valid_to"):
+    fields = ("expires_at",) if replay else ("expires_at", "valid_to")
+    for field in fields:
         if (value := row.get(field)) is not None:
             until = parse_iso_dt(value)
             if until is None or until <= now:
@@ -101,10 +100,11 @@ def _memory_evidence(
     for i, key in keys.items():
         row = rows.get(key)
         hit = hits[i]
+        version = doc_version(hit)
         if (
             row is None
             or not _current(row, now, replay=replay)
-            or row.get("redacted_at") is not None
+            or (row.get("redacted_at") is not None and (not replay or row["version"] == version))
             or (
                 not replay
                 and not _status_kept(str(row.get("status") or ""), hit, input, parked=parked)
@@ -113,7 +113,7 @@ def _memory_evidence(
             denied.add(i)
             continue
         digest = hash_text(row.get("content_sha256"))
-        if int(row.get("version") or 0) == doc_version(hit) or (
+        if int(row.get("version") or 0) == version or (
             parked
             and not replay
             and is_content_hash(digest)
@@ -238,13 +238,14 @@ async def attach_search_guidance(
         input, hits, keys, rows, replay=replay, parked=parked
     )
     if parked and replay and rows is not None:
-        replay_keys = {i: key for i, key in keys.items() if i not in denied_memory}
-        evidence = (
-            await _read_heads(
+        replay_keys = {
+            i: key for i, key in keys.items() if i not in denied_memory and i not in evidence
+        }
+        if replay_keys:
+            historical = await _read_heads(
                 _replay_evidence(replay_keys, rows, hits), timeout_s=timeout_s, parked=True
             )
-            or {}
-        )
+            evidence.update(historical or {})
     denied_shared, shared_evidence = _shared_evidence(hits, shared_keys, shared)
     denied |= denied_memory | denied_shared
     evidence.update(shared_evidence)

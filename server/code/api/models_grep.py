@@ -94,6 +94,11 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
             "without bodies, or 0 for match lines only."
         ),
     )
+    prefer_complete_context: bool = Field(
+        default=False,
+        description="Use the same excerpt width to complete a short declaration. Default false.",
+        json_schema_extra=MCP_HIDDEN,
+    )
     # Only paths under this repo-relative prefix; '' = the whole index. A prefix outside
     # the indexed ones answers `not_covered`.
     path_prefix: str = ""

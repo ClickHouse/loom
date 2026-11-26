@@ -8,7 +8,7 @@ This crate connects to a separately deployed Loom server backed by ClickHouse.
 The server image is `ghcr.io/clickhouse/loom`. Use a local single-user installation
 or connect to a team deployment managed by your operator.
 
-The source checkout's `Client` provides typed calls for every operation in the server registry.
+`Client` provides typed calls for every operation in the server registry.
 Calls are async and use the application's Tokio runtime. The optional `blocking`
 feature provides the same operations through a synchronous client.
 
@@ -91,8 +91,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-This starter supports the published 0.1.0 crate. The generated operation methods,
-request builders and runnable examples below require the source checkout.
+The crates.io package includes the generated operation methods, request builders
+and examples. The [Rust SDK reference](https://loom.clickhouse.com/docs/reference/rust-sdk/)
+covers installation, identity, calls and errors. Run the examples from a checkout
+as described in the [examples guide](examples/README.md).
 
 For a team deployment, use your account's org and namespace with a writer token.
 Set the server address through `.base_url(...)` or `LOOM_BASE_URL`, and the token

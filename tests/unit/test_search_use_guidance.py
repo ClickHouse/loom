@@ -153,11 +153,14 @@ async def test_unavailable_current_evidence_cannot_reuse_a_parked_approval(
 
 
 @pytest.mark.asyncio
-async def test_replay_keeps_edited_history_and_withholds_a_redacted_version(monkeypatch):
+@pytest.mark.parametrize("head_redacted", [False, True])
+async def test_replay_keeps_edited_history_and_withholds_a_redacted_version(
+    monkeypatch, head_redacted
+):
     from server.memory.store.history import HistoryTarget
 
     async def heads(keys):
-        return {_KEY: _head(memory_id="m")}
+        return {_KEY: _head(memory_id="m", redacted_at="now" if head_redacted else None)}
 
     async def history(org, memory_id, version):
         assert memory_id == "m"
@@ -179,7 +182,7 @@ async def test_replay_keeps_edited_history_and_withholds_a_redacted_version(monk
     current, historical, redacted = _hit(), _hit(version=41), _hit(version=40)
     assert await guidance.attach_search_guidance(
         _INPUT, [current, historical, redacted], parked=True, replay=True
-    ) == [current, historical]
+    ) == ([historical] if head_redacted else [current, historical])
     assert historical.use_guidance is not None and historical.use_guidance.review == "unknown"
 
 
@@ -288,3 +291,41 @@ async def test_parked_hit_keeps_review_when_a_metadata_write_advances_the_versio
     head["version"] += 2
     assert await guidance.attach_search_guidance(_INPUT, [parked], parked=True) == [parked]
     assert parked.use_guidance is not None and parked.use_guidance.review == "human"
+
+
+@pytest.mark.parametrize("history_fails", [False, True])
+async def test_replay_rechecks_ttl_and_keeps_confirmed_hits(monkeypatch, history_fails):
+    from server.memory.store.history import HistoryTarget
+
+    expired_key = (*_KEY[:-1], "expired")
+
+    async def heads(keys):
+        return {
+            _KEY: _head(memory_id="m", valid_to="2000-01-01T00:00:00"),
+            expired_key: _head(memory_id="expired", expires_at="2000-01-01T00:00:00"),
+        }
+
+    async def history(org, memory_id, version):
+        assert (memory_id, version) == ("m", 41)
+        if history_fails:
+            raise TimeoutError
+        return HistoryTarget(
+            org=org,
+            namespace="n",
+            agent="a",
+            user_id="u",
+            session_id="s",
+            memory_key=_KEY[-1],
+            version=version,
+            memory_id=memory_id,
+            content_sha256="a" * 64,
+        )
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    monkeypatch.setattr(guidance, "find_history_target", history)
+    current, edited, expired = _hit(), _hit(version=41), _hit()
+    expired.memory_key = "expired"
+    kept = await guidance.attach_search_guidance(
+        _INPUT, [current, edited, expired], parked=True, replay=True
+    )
+    assert kept == ([current] if history_fails else [current, edited])

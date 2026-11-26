@@ -105,6 +105,66 @@ async def test_stored_chunks_retain_kind_and_physical_source_lines(ch_client: An
 
 
 @pytest.mark.asyncio
+async def test_grep_completes_an_indexed_declaration_within_its_excerpt_width(
+    ch_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org, ns = unique_org("grep-declaration-excerpt"), "source"
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_search_cursor_enabled", True)
+    monkeypatch.setattr(settings, "jwt_secret", "grep-test-cursor-signing-value")
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    await get_client().connect()
+    path = "src/example.py"
+    source = b"""def preceding():
+    first = 1
+    second = first + 1
+    third = second + 1
+    return third
+def target():
+    first = 2
+    second = first + 2
+    third = second + 2
+    return third
+"""
+    await ingest_file(
+        CodeRepo(),
+        org,
+        ns,
+        path=path,
+        source=source,
+        commit_sha="a" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    request = CodeGrepInput(
+        org=org,
+        namespace=ns,
+        pattern=["def preceding", "def target"],
+        context_lines=3,
+        include_body=False,
+        prefer_complete_context=True,
+        limit=1,
+    )
+    first = await handle_code_grep(request)
+    assert first.next_cursor and first.matches[0]["scope"] == "src.example::preceding"
+    next_page = request.model_copy(update={"cursor": first.next_cursor})
+    preferred = await handle_code_grep(next_page)
+    ordinary = await handle_code_grep(
+        next_page.model_copy(update={"prefer_complete_context": False})
+    )
+    assert preferred.matches == ordinary.matches
+    assert preferred.matches[0]["scope"] == "src.example::target"
+    lines = source.decode().splitlines(keepends=True)
+    assert preferred.contexts == [
+        {"path": path, "start_line": 4, "end_line": 10, "text": "".join(lines[3:10])}
+    ]
+    assert ordinary.contexts == [
+        {"path": path, "start_line": 3, "end_line": 9, "text": "".join(lines[2:9])}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_related_grep_returns_the_bound_argument_and_helper(ch_client, monkeypatch) -> None:
     org, ns = unique_org("grep-dependencies"), "source"
     monkeypatch.setattr(settings, "code_intel_enabled", True)

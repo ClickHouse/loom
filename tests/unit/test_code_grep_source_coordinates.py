@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import cast
+
 import pytest
 
 from server.code.api.models_grep import CodeGrepInput
 from server.code.app.grep import _line_coverage_fields, _matching_lines
-from server.code.app.grep_source import collect_contexts, match_revisions, page_contexts
+from server.code.app.grep_source import (
+    collect_contexts,
+    match_revisions,
+    page_contexts,
+    verify_complete_contexts,
+)
 from server.code.app.symbol.uses import _uses_lines
+from server.code.store.index import CodeRepo
 
 
 @pytest.mark.parametrize(
@@ -74,6 +83,77 @@ def test_grep_context_unions_overlapping_windows_on_the_served_page() -> None:
     next_page = page_contexts(pool, matches[1:], request.context_lines)
     assert next_page["contexts"][0]["start_line"] == 21
     assert not combined["contexts_partial"]
+
+
+@pytest.mark.parametrize(
+    ("suffix_revision", "symbol_end", "symbol_revision"),
+    [
+        ("a" * 40, 9, "a" * 40),
+        ("b" * 40, 9, "a" * 40),
+        ("a" * 40, 13, "a" * 40),
+        ("a" * 40, 9, "b" * 40),
+    ],
+)
+async def test_grep_excerpt_uses_retained_lines_to_complete_a_short_definition(
+    suffix_revision: str,
+    symbol_end: int,
+    symbol_revision: str,
+) -> None:
+    path, revision = "cli.py", "a" * 40
+    preceding = "# Previous function\nbefore()\n\n"
+    declaration = "def target():\n    first()\n    second()\n    third()\n"
+    suffix = "    return done\n"
+    chunks = [
+        {
+            "path": path,
+            "start_line": 2,
+            "end_line": 8,
+            "content": preceding + declaration,
+            "indexed_commit": revision,
+            "scope": "target",
+            "symbol_ids": ["target-id"],
+        },
+        {
+            "path": path,
+            "start_line": 9,
+            "end_line": 9,
+            "content": suffix,
+            "indexed_commit": suffix_revision,
+        },
+    ]
+    match = {"path": path, "line": 5, "scope": "target", "scope_start_line": 5, "scope_end_line": 9}
+    commits = {(path, 5): revision}
+
+    async def spans(org, ns, ids, *, source_only):
+        assert (org, ns, ids, source_only) == ("org", "ns", ["target-id"], True)
+        return [
+            {
+                "path": path,
+                "qualified_name": "target",
+                "start_line": 5,
+                "end_line": symbol_end,
+                "extent_commit": symbol_revision,
+            }
+        ]
+
+    repo = cast(CodeRepo, SimpleNamespace(symbol_spans_by_ids=spans))
+    proof = await verify_complete_contexts(repo, "org", "ns", chunks, [match], commits, 3, None)
+    pool = collect_contexts(
+        chunks, [match], 3, 1000, match_commits=commits, complete_contexts=proof
+    )
+    ordinary = {"path": path, "start_line": 2, "end_line": 8, "text": preceding + declaration}
+    completed = {
+        "path": path,
+        "start_line": 3,
+        "end_line": 9,
+        "text": "before()\n\n" + declaration + suffix,
+    }
+    assert page_contexts(pool, [match], 3)["contexts"] == [ordinary]
+    eligible = suffix_revision == symbol_revision == revision and symbol_end == 9
+    assert page_contexts(pool, [match], 3, complete_contexts=proof) == {
+        "contexts": [completed if eligible else ordinary],
+        "contexts_partial": False,
+    }
 
 
 def test_grep_context_discloses_conflicting_lines_from_duplicate_hits() -> None:

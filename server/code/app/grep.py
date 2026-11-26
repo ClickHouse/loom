@@ -31,11 +31,13 @@ from server.code.app.grep_bodies import definitions_for, definitions_tokens
 from server.code.app.grep_dependencies import add_dependencies, forwarded_dependency
 from server.code.app.grep_source import (
     GREP_MATCH_TEXT_CHARS,
+    CompleteContexts,
     ContextSource,
     collect_contexts,
     match_revisions,
     page_contexts,
     recover_source_chunks,
+    verify_complete_contexts,
 )
 from server.code.app.search.shared import (
     _not_covered_output,
@@ -451,6 +453,45 @@ async def _scan_grep_lines(
     )
 
 
+async def _grep_page_context(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    input: CodeGrepInput,
+    scan: _GrepLineScan,
+    matches: list[dict[str, Any]],
+    budget: code_deadline.Budget | None,
+) -> tuple[dict[str, Any], ContextSource, int, CompleteContexts]:
+    context_lines = input.context_lines
+    if (
+        scan.related_pattern
+        and matches
+        and not input.include_body
+        and "context_lines" not in input.model_fields_set
+    ):
+        context_lines = RELATED_GREP_CONTEXT_LINES
+    if not context_lines:
+        return {}, {}, 0, frozenset()
+    complete_contexts: CompleteContexts = frozenset()
+    if input.prefer_complete_context and not input.include_body:
+        with code_span("grep.declaration_extents") as span:
+            complete_contexts = await verify_complete_contexts(
+                repo, org, ns, scan.chunks, scan.matches, scan.match_commits, context_lines, budget
+            )
+            span_attrs(span, verified=len(complete_contexts))
+    source = await asyncio.to_thread(
+        collect_contexts,
+        scan.chunks,
+        scan.matches,
+        context_lines,
+        _LINE_SCAN_MAX_CHARS,
+        match_commits=scan.match_commits,
+        complete_contexts=complete_contexts,
+    )
+    page = page_contexts(source, matches, context_lines, complete_contexts=complete_contexts)
+    return page, source, context_lines, complete_contexts
+
+
 async def _grep_lines(
     repo: CodeRepo,
     org: str,
@@ -485,26 +526,9 @@ async def _grep_lines(
     route, related_pattern, note = scan.route, scan.related_pattern, scan.note
     trace_run_id = new_trace_run_id()
     matches = scan.matches[offset : offset + served_limit]
-    context: dict[str, Any] = {}
-    context_source: ContextSource = {}
-    context_lines = input.context_lines
-    if (
-        related_pattern
-        and matches
-        and not input.include_body
-        and "context_lines" not in input.model_fields_set
-    ):
-        context_lines = RELATED_GREP_CONTEXT_LINES
-    if context_lines:
-        context_source = await asyncio.to_thread(
-            collect_contexts,
-            scan.chunks,
-            scan.matches,
-            context_lines,
-            _LINE_SCAN_MAX_CHARS,
-            match_commits=scan.match_commits,
-        )
-        context = page_contexts(context_source, matches, context_lines)
+    context, context_source, context_lines, complete_contexts = await _grep_page_context(
+        repo, org, ns, input, scan, matches, budget
+    )
     bodies = await definitions_for(input, matches, budget, match_commits=scan.match_commits)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
         repo, org, ns, input, matches, route, budget=budget
@@ -569,6 +593,7 @@ async def _grep_lines(
             partial=bool(exact_coverage.get("partial")),
             partial_reason=str(exact_coverage.get("partial_reason") or ""),
             context_source=context_source,
+            complete_contexts=complete_contexts,
             match_commits=scan.match_commits,
         )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
@@ -1269,6 +1294,7 @@ def _grep_trace_args(input: CodeGrepInput, *, context_lines: int | None = None) 
         "related_on_prefix",
         "include_dependencies",
         "context_lines",
+        "prefer_complete_context",
         context_lines=context_lines,
         paged=bool(input.cursor) or None,
     )
@@ -1303,6 +1329,7 @@ def _issue_grep_cursor(
     partial: bool = False,
     partial_reason: str = "",
     context_source: ContextSource | None = None,
+    complete_contexts: CompleteContexts = frozenset(),
     match_commits: dict[tuple[str, int], str],
 ) -> str:
     """Store every extracted line (served ones included, so offsets are
@@ -1329,6 +1356,7 @@ def _issue_grep_cursor(
             "partial": partial,
             "partial_reason": partial_reason,
             **({"context_source": context_source} if context_source else {}),
+            **({"complete_contexts": sorted(complete_contexts)} if complete_contexts else {}),
         },
         indexed_commit="",
         route="grep",
@@ -1387,7 +1415,19 @@ async def _serve_grep_page(
     files = list(dict.fromkeys(m["path"] for m in page))
     context: dict[str, Any] = {}
     if input.context_lines:
-        context = page_contexts(payload.get("context_source") or {}, page, input.context_lines)
+        complete_contexts = (
+            frozenset(
+                (str(path), int(line)) for path, line in (payload.get("complete_contexts") or ())
+            )
+            if input.prefer_complete_context and not input.include_body
+            else frozenset()
+        )
+        context = page_contexts(
+            payload.get("context_source") or {},
+            page,
+            input.context_lines,
+            complete_contexts=complete_contexts,
+        )
     trace_run_id = new_trace_run_id()
     route = route + "+page"
     bodies = await definitions_for(

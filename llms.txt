@@ -90,6 +90,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 - [Guides](docs/guides/index.md)
 - [Integrate Loom into an agent](docs/guides/agent-integration.md): This guide covers what an agent sends to Loom and how it reads the answers: the client surface, the identity, what to write, and how to read.
+- [Choose retrieval scope from the audience](docs/guides/audience-scoped-retrieval.md): Needs an end-user issuer (`LOOM_JWT_END_USER_ISSUERS_JSON`): an agent host signs each request as the person who asked, and picks the collections a reply may draw on from who will read it.
 - [Code tools for model integrations](docs/guides/code-tools.md): An indexed code namespace and a token with read access let an SDK tool loop investigate definitions, behavior and relationships with `loom_code_lookup`.
 - [Compare self-hosted memory tools for coding agents](docs/guides/compare-coding-agent-memory.md): Choose memory by what the next coding session needs.
 - [Debug a request](docs/guides/debugging.md): Loom tags everything one request does with the same id, so tracing a request is a join.
@@ -142,6 +143,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [MCP reference](docs/reference/mcp.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
 - [Operations reference](docs/reference/operations.md): An operation (op) is one named unit of work on the Loom wire, such as `memory.set` or `code.search`.
 - [Python SDK reference](docs/reference/python-sdk.md): The Python SDK (`clickhouse-loom`, source in `sdk/python/loom/`) is an async client over the HTTP API.
+- [Rust SDK](docs/reference/rust-sdk.md): The `clickhouse-loom` crate provides typed async and blocking calls for every registered Loom operation.
 - [Schema reference](docs/reference/schema.md): Loom keeps its ClickHouse state in the `loom` and `loom_telemetry` databases.
 - [SQL surface](docs/reference/sql-surface.md): The SQL surface is a set of read-only ClickHouse views over a tenant's memories, memory history, conversations and request ledger.
 - [Status of Loom's surfaces](docs/reference/status.md): This page counts each op group's stable ops, names its experimental ones, and lists every boolean setting that loads false, so a caller can tell, before relying on an op or a switch, whether it is stable and whether it is on by default.

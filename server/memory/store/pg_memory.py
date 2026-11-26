@@ -1832,7 +1832,7 @@ async def history_target(org: str, memory_id: str, version: int) -> dict[str, An
     r = await pg.fetchrow(
         f"SELECT org, memory_id::text AS memory_id, namespace, {_meta('agent')} AS agent, "
         f"user_id, {_meta('session_id')} AS session_id, {_meta('memory_key')} AS memory_key, "
-        "version, content_sha256, redacted_at, row->'tags' AS tags "
+        f"version, content_sha256, {_meta('redacted_at')} AS redacted_at, row->'tags' AS tags "
         "FROM loom.memory_revisions WHERE org = $1 AND memory_id = $2 AND version = $3 LIMIT 1",
         org,
         mid,

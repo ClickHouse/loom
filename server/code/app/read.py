@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import defaultdict
 
 from server.code.api.models_common import _safe_path
@@ -15,8 +16,10 @@ from server.code.api.models_read import (
 )
 from server.code.app.common import (
     index_as_of,
+    new_trace_run_id,
     require_code_intel,
     resolve_code_identity,
+    schedule_code_trace,
 )
 from server.code.app.index import gitrepo
 from server.code.app.index.denylist import under_prefixes
@@ -24,8 +27,10 @@ from server.code.app.index.mirrors import present_dir
 from server.code.app.spans import set_code_span_attributes
 from server.code.domain.extract.py_notebooks import is_notebook_path
 from server.code.domain.index.repos import repo_for_namespace
+from server.code.domain.units import estimate_tokens
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
+from server.core.hashing import sha256_value
 from server.settings import settings
 
 # Bound byte buffering independently of whether an index limits ingest size.
@@ -116,6 +121,7 @@ def _fill_ranges(raw: bytes, ranges: list[CodeReadRange], remaining: int) -> int
 
 async def handle_code_read(input: CodeReadInput) -> CodeReadOutput:
     require_code_intel()
+    started = time.monotonic()
     org, ns = resolve_code_identity(input.org, input.namespace)
     requested = _request_ranges(input)
     cfg = repo_for_namespace(org, ns)
@@ -155,10 +161,43 @@ async def handle_code_read(input: CodeReadInput) -> CodeReadOutput:
             if raw is not None:
                 remaining = _fill_ranges(raw, ranges, remaining)
 
+    route = "verified_blob_ranges"
+    served = [result for result in results if result.windows]
+    tokens = sum(
+        estimate_tokens(window.text, result.path) for result in served for window in result.windows
+    )
+    trace_run_id = new_trace_run_id()
+    schedule_code_trace(
+        org=org,
+        ns=ns,
+        op="code.read",
+        query="",
+        route=route,
+        returned_ids=[
+            sha256_value((result.path, result.indexed_commit, window.start_line, window.end_line))
+            for result in served
+            for window in result.windows
+        ],
+        returned_paths=[result.path for result in served],
+        returned_scores=[],
+        top_k=len(results),
+        tokens_returned=tokens,
+        abstain=not served,
+        retrieval_risk="low" if served else "abstain",
+        embedding_model="",
+        started_monotonic=started,
+        trace_run_id=trace_run_id,
+        as_of=as_of,
+        consumer=input.consumer,
+        agent=input.agent,
+        user_id=input.user_id,
+    )
     set_code_span_attributes(
-        route="verified_blob_ranges",
-        results=sum(bool(result.windows) for result in results),
-        partial=any(result.status == "partial" for result in results),
+        route=route,
+        results=len(served),
+        tokens_returned=tokens,
+        abstain=not served,
+        truncated=any(result.status == "partial" for result in results),
         consumer=input.consumer,
     )
-    return CodeReadOutput(results=results, as_of=as_of)
+    return CodeReadOutput(results=results, as_of=as_of, trace_run_id=trace_run_id)

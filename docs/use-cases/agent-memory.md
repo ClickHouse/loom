@@ -64,13 +64,13 @@ definition that implements the change. When the policy comes from a document, us
 
 Check these requirements before choosing Loom:
 
-| Requirement                    | What to check                                                                                                                                  |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Recall after a fresh session   | Save a fact, start another session and require the stored value and writer in the tool response.                                               |
-| Shared context across tools    | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript. |
-| Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false.    |
-| Access and operations          | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers.           |
-| Data portability               | [Export a decision as Markdown and check it in a fresh namespace](../features/integrations/okf.md#test-agent-memory-portability).              |
+| Requirement                    | What to check                                                                                                                                                              |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recall after a fresh session   | Save a fact, start another session and require the stored value and writer in the tool response.                                                                           |
+| Shared context across tools    | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript.                             |
+| Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false.                                |
+| Access and operations          | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers.                                       |
+| Data portability               | [Compare what a fresh reader recovers](../guides/compare-coding-agent-memory.md#move-a-saved-decision-to-a-fresh-setup) after copying the files or importing the decision. |
 
 Follow [coding-agent setup](../getting-started/connect-a-coding-agent.md) for the plugin
 or MCP connection your client supports. Read its capture settings before using private
