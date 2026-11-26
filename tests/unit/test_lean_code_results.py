@@ -506,7 +506,7 @@ def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lo
         }
 
 
-def test_grep_offers_edit_context_for_declarations_without_context_windows() -> None:
+def test_grep_offers_edit_context_for_declarations_without_context_windows(monkeypatch) -> None:
     declaration = {
         "path": "src/a.py",
         "line": 5,
@@ -528,6 +528,7 @@ def test_grep_offers_edit_context_for_declarations_without_context_windows() -> 
     token = set_code_scope("attached/repo")
     try:
         arguments = {"include_body": False, "org": "attached", "namespace": "repo"}
+        monkeypatch.setattr(settings, "cell", "")
         assert lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding") == result
         override = lr.mcp_op_result(
             "code.grep", payload, {**arguments, "namespace": "other"}, None, toolset="coding"
@@ -538,6 +539,14 @@ def test_grep_offers_edit_context_for_declarations_without_context_windows() -> 
             "namespace": "other",
         }
         assert json.loads(override["next"].partition(" with ")[2])["namespace"] == "other"
+        monkeypatch.setattr(settings, "cell", "local-cell")
+        on_cell = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
+        assert on_cell["edit_context_next"]["arguments"] == {
+            "names": ["src/a.py:5"],
+            "org": "attached",
+            "namespace": "repo",
+        }
+        assert json.loads(on_cell["next"].partition(" with ")[2])["org"] == "attached"
     finally:
         reset_code_scope(token)
 

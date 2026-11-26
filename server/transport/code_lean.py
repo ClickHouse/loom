@@ -33,6 +33,7 @@ from server.code.app.symbol.resolve import _parse_location
 from server.code.domain.extract.py_notebooks import is_notebook_path
 from server.code.domain.scope import current_code_scope
 from server.code.domain.symbol_documentation import description_repeats_body
+from server.settings import settings
 
 # Accounting counters and ranking internals no agent acts on.
 _DROP_KEYS: frozenset[str] = frozenset(
@@ -298,9 +299,10 @@ def _grep_continuation(
     if not selections:
         return
     scope = (arguments.get("org"), arguments.get("namespace"))
+    # A cell checks the organization before applying the connection's scope.
     options = (
         {}
-        if scope == current_code_scope()
+        if not settings.cell and scope == current_code_scope()
         else {key: arguments[key] for key in ("org", "namespace") if arguments.get(key)}
     )
     options.update(
