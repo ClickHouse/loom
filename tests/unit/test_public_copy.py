@@ -171,10 +171,12 @@ def _banned_in(line: str, *, allowed: frozenset[str] = frozenset()) -> str:
 
 
 def _source_name_violation(rel: str, line: str) -> str:
-    if rel in COMPARISON_PAGES and line.strip() in COMPARISON_PRIMARY_CITATIONS:
+    if rel not in COMPARISON_PAGES:
+        return _banned_in(line)
+    citation = re.sub(r"(?<=\]:)[ \t]+", " ", line.strip(), count=1)
+    if citation in COMPARISON_PRIMARY_CITATIONS:
         return ""
-    allowed = COMPARISON_NAME_DIGESTS if rel in COMPARISON_PAGES else frozenset()
-    return _banned_in(line, allowed=allowed)
+    return _banned_in(line, allowed=COMPARISON_NAME_DIGESTS)
 
 
 PATTERNS = {
@@ -407,6 +409,12 @@ def test_comparison_names_are_allowed_only_at_the_exact_page() -> None:
             assert _source_name_violation(path, "AcmeDB at privatehost") == "privatehost"
             citation = "[source]: https://privatehost/acmedb/README.md"
             assert _source_name_violation(path, citation) == ""
+            assert _source_name_violation(path, citation.replace("]: ", "]:  ")) == ""
+            assert _source_name_violation(path, citation.replace("]: ", "]:\t")) == ""
+            assert (
+                _source_name_violation(path, citation.replace("[source]", "[other]"))
+                == "privatehost"
+            )
             assert _source_name_violation(path, citation + " privatehost") == "privatehost"
             assert _source_name_violation(path, citation.replace("README.md", "other.md"))
             assert _source_name_violation("docs/guides/other.md", citation) == "privatehost"
