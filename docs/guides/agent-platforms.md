@@ -33,8 +33,11 @@ plugin hooks and model choices; no particular factory controller is required.
 ## Call Loom explicitly from an SDK
 
 Install the [Python SDK](../reference/python-sdk.md) and set `LOOM_BASE_URL` to the
-deployment and `LOOM_API_KEY` to a token with read access to `team-context`. Replace
-the example organization and namespace with scopes that token permits:
+deployment and `LOOM_API_KEY` to a token with namespace-wide read access to
+`team-context`. Replace the example organization and namespace with scopes that token
+permits. For a user- or session-scoped integration, supply the required identity;
+`agent="*"` matches writers but does not widen the token's
+[read scope](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace):
 
 ```python
 import asyncio

@@ -3,9 +3,9 @@
 This page covers how to configure code index workers and repositories and keep the
 index current. Workers run when the supervisor is admitted and their settings and
 repository prerequisites permit it. Some compiler workers are enabled by default;
-they still need a configured repository, its first indexed revision, sandbox admission
-and the required checkout and toolchain. Check each worker's defaults in the
-[workers reference](../reference/workers.md) and the
+they still need a configured repository, its first indexed revision and the required
+checkout and toolchain. Repository jobs follow the sandbox policy. Check each worker's
+defaults in the [workers reference](../reference/workers.md) and the
 [configuration reference](../reference/configuration.md#code).
 What the `code.*` operations answer is in the
 [code index overview](../features/code-index/overview.md); how the index is built is in

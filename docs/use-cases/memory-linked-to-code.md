@@ -100,9 +100,9 @@ completion. Once trunk is indexed, read `code.symbol` on the definition and chec
 ### Save and retrieve a linked team decision
 
 Replace the repository tag, symbol and claim with a real, verified lesson from your
-indexed repository. The token needs write access to `team-context` and read access to
-`code-example`. This example saves a memory outside the code namespace, so the symbol
-read explicitly names its memory namespace:
+indexed repository. Use a token with write access to `team-context` and namespace-wide
+read access to both `team-context` and `code-example`. This example saves a memory
+outside the code namespace, so the symbol read explicitly names its memory namespace:
 
 ```sh
 curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/memory.set" \

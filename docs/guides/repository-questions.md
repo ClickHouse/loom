@@ -52,6 +52,13 @@ curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/code.ask" \
   --data '{"org":"example","namespace":"code-example","question":"Where are incoming requests authorized?","synthesize":true}'
 ```
 
+To verify a model call, first enable tracing and verify that your exporter receives
+spans. Add `--include` to show the `X-Trace-Id` response header and `"no_cache":true`
+to the JSON body. In that trace, look for a successful generation span with
+`loom.llm.stage=code_answer` and the intended provider and model. An abstention can
+skip synthesis, and a successful generation at another stage is not proof of answer
+synthesis. This probe can incur model charges.
+
 A grounded answer returns `answer` and `citations`; an unanswerable question can return
 `abstain` and `abstain_reason`. With cache lookup enabled, a matching cached synthesized
 answer can still be returned. Set `synthesize: false` and `no_cache: true` to retrieve

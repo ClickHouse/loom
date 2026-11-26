@@ -33,9 +33,10 @@ unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
 
 Every op, grouped by task, is on [operations.md](operations.md).
 
-For shared memory, use `memory.search` to find decisions and lessons in a namespace
-the caller can read. Use `memory.set` to record a verified reusable lesson in a
-namespace the caller can write. See [how to save and retrieve a linked team decision](../../use-cases/memory-linked-to-code.md#save-and-retrieve-a-linked-team-decision)
+Use `memory.search` to find decisions and lessons in a namespace the caller can read.
+The default scope searches per-agent rows; use `scope: "shared"` for memories promoted
+to the namespace's shared scope. Use `memory.set` to record a verified reusable lesson
+in a namespace the caller can write. See [how to save and retrieve a linked team decision](../../use-cases/memory-linked-to-code.md#save-and-retrieve-a-linked-team-decision)
 for the write and a follow-up lookup by symbol.
 
 Python symbol lookups accept dotted import names such as `package.encoder.dumps`

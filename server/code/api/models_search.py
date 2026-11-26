@@ -328,8 +328,8 @@ class CodeAskInput(_CodeIdentity):
     # (LOOM_CODE_SEARCH_RERANK_DEFAULT), "none" = off for this request, "builtin:openai" /
     # "builtin:cohere", or the name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON (not a URL).
     rerank: RerankName = ""
-    # Skip answer and pre-synthesis prompt-cache lookups; fresh synthesis, when
-    # enabled, still refreshes the answer cache.
+    # Skip answer and pre-synthesis prompt-cache lookups without disabling writes
+    # to the answer cache for eligible results.
     no_cache: bool = False
     # Retrieval context handed to synthesis, in tokens. None = the
     # deployment default (settings.code_ask_token_budget).

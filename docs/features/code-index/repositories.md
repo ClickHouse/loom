@@ -272,12 +272,13 @@ association; they are not access boundaries.
 
 ### Check indexing isolation separately from read access
 
-Repository read grants do not sandbox indexing jobs. Self-service indexing requires
-the sandbox unless an operator explicitly enables its restricted unsandboxed mode;
-operator-configured repositories can run without it. To require isolation for every
-repository job, set `LOOM_CODE_SANDBOX_REQUIRED=true` and satisfy the host requirements.
-When the sandbox is unavailable, jobs are refused or skipped rather than silently run
-outside it. The [sandbox runbook](../../operations/code-index-operations.md#repository-job-sandbox)
+Repository read grants do not sandbox indexing jobs. Set `LOOM_CODE_SANDBOX_REQUIRED=true`
+to require isolation for every repository job. In that mode, jobs are refused or skipped
+if the sandbox is unavailable. Otherwise, operator-configured jobs can run without the
+sandbox. Existing self-registered local repositories keep parser and static compiler
+tiers, but not build-based tiers. Self-service registration and indexing of
+self-registered network remotes require the sandbox or the restricted unsandboxed mode.
+The [sandbox runbook](../../operations/code-index-operations.md#repository-job-sandbox)
 describes namespaces, mounts, egress, process limits, supported stacks and remaining
 container/host responsibilities; Loom's per-process limits do not impose a job cgroup.
 
