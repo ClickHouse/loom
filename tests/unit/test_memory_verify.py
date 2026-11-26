@@ -453,9 +453,9 @@ async def test_a_failing_mirror_never_fails_the_verify(monkeypatch: pytest.Monke
 async def test_the_mirror_re_emits_every_live_row_of_the_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """One row per (scope, embedding model): each is re-emitted whole with `verified` set,
+    """One private row per embedding model is re-emitted whole with `verified` set,
     keeping the columns the verify input never carried (reinforcement, mention times)."""
-    from server.memory.store import EMBEDDING_PERSISTED_COLS
+    from server.memory.store import EMBEDDING_PERSISTED_COLS, build_memory_version_row
 
     row = _row()
     stored = [
@@ -467,6 +467,7 @@ async def test_the_mirror_re_emits_every_live_row_of_the_key(
             "user_id": row.user_id,
             "session_id": row.session_id,
             "memory_key": row.memory_key,
+            "content_sha256": _sha(row.value),
             "scope": scope,
             "embedding_model": model,
             "embedding_dim": 2,
@@ -475,12 +476,16 @@ async def test_the_mirror_re_emits_every_live_row_of_the_key(
             "mentioned_at": datetime(2026, 1, 3),
             "version": 7,
         }
-        for scope, model in (("private", "m1"), ("shared", "m2"))
+        for scope, model in (("private", "m1"), ("private", "m2"))
     ]
     inserted: list[dict[str, Any]] = []
 
     class _CH:
         async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+            if "FROM loom.memory_refusals" in sql:
+                return []
+            if "FROM loom.memory FINAL" in sql:
+                return [build_memory_version_row(row)]
             assert "FROM loom.memory_embeddings FINAL" in sql
             return [dict(r) for r in stored]
 
@@ -492,7 +497,7 @@ async def test_the_mirror_re_emits_every_live_row_of_the_key(
     await mv._mirror_verified_to_embeddings(row, verified=True)
     assert [(r["scope"], r["embedding_model"]) for r in inserted] == [
         ("private", "m1"),
-        ("shared", "m2"),
+        ("private", "m2"),
     ]
     assert all(r["verified"] == 1 and r["version"] > 7 for r in inserted)
     assert all(r["mentioned_at"] == datetime(2026, 1, 3) for r in inserted)

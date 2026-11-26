@@ -60,6 +60,26 @@ def test_resolve_skips_a_homonym_it_cannot_tell_apart() -> None:
     assert resolve("a::Reader::read", defs, []) == defs[0]
 
 
+def test_package_import_spelling_resolves_a_memorys_symbol_anchor() -> None:
+    target = _d("src/pkg/json/__init__.py", "src.pkg.json.__init__::dumps", "before")
+    for name in ("pkg.json.dumps", "src.pkg.json::dumps", "json.dumps"):
+        assert resolve(name, [target], [target.path]) == target
+    link = Link(target.path, target.qualified_name, body_hash=target.body_hash)
+    edited = replace(target, body_hash="after")
+    assert recheck(link, path_now=target.path, here=[edited], head="b").state == "changed"
+
+
+def test_package_import_spelling_preserves_constructor_names_and_ambiguity() -> None:
+    target = _d("src/pkg/__init__.py", "src.pkg.__init__::Client::__init__")
+    assert resolve("pkg.Client.__init__", [target], [target.path]) == target
+    assert resolve("pkg.Client", [target], [target.path]) is None
+    other = _d("other/pkg/__init__.py", "other.pkg.__init__::Client::__init__")
+    assert resolve("pkg.Client.__init__", [target, other], []) is None
+    assert resolve("pkg.Client.__init__", [target, other], [target.path]) == target
+    directory = _d("src/__init__/client.py", "src.__init__.client::Client")
+    assert resolve("src.client.Client", [directory], [directory.path]) is None
+
+
 def test_resolve_takes_overloads_as_one_target() -> None:
     defs = [_d("src/io.cpp", "DB::write", line=30), _d("src/io.cpp", "DB::write", line=10)]
     assert resolve("DB::write", defs, []) == defs[1]

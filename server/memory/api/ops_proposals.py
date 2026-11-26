@@ -32,7 +32,7 @@ memory_proposal_decide = Operation(
     output_model=MemoryProposalDecideOutput,
     handler=handle_memory_proposal_decide,
     idempotent=True,
-    required_role=Role.WRITER,
+    required_role=Role.ADMIN,
     audit=True,
 )
 

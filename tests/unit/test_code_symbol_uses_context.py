@@ -541,14 +541,14 @@ TYPE_CHUNKS = [
         "symbol_ids": ["t1"],
         "start_line": 5,
         "end_line": 40,
-        "content": "class ChunkBuffer\n{\n    ChunkBuffer();\n};",
+        "content": "class ChunkBuffer\n{\n    ChunkBuffer();\n};\n" + "\n" * 32,
     },
     {
         "path": "src/Processors/Use.cpp",
         "scope": "DB::use",
         "symbol_ids": ["u1"],
         "start_line": 10,
-        "end_line": 13,
+        "end_line": 14,
         "content": "void use()\n{\n    ChunkBuffer buf;\n    // ChunkBuffer holds\n}",
     },
     {
@@ -802,3 +802,12 @@ def test_prefer_scip_edges_folds_the_tiers_differing_spellings() -> None:
         ("scip", "svc/kms/aws.go"),
         ("treesitter", "svc/kms/gcp.go"),
     ]
+
+
+def test_a_compact_uses_block_can_be_withheld_by_an_explicit_token_cap():
+    limited = _run(_FakeRepo(ONE), name="DB::Foo::bar", token_budget=1)
+    assert limited.tokens_returned <= 1
+    assert limited.uses == [] and limited.uses_tokens == 0 and limited.uses_truncated
+    unlimited = _run(_FakeRepo(ONE), name="DB::Foo::bar", token_budget=0)
+    assert isinstance(unlimited.uses, dict) and unlimited.uses_tokens > 1
+    assert unlimited.definitions and all(not unit.elided for unit in unlimited.definitions)

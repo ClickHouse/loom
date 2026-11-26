@@ -456,7 +456,6 @@ async def _project_extraction(
     msgs: list[dict[str, Any]],
     state: Any,
     evidence_ids: list[str],
-    summary_draft_task: asyncio.Task[Any] | None,
 ) -> int:
     """The projections of a pipeline write — evidence links, verbatim chunks,
     the session summary — run together; returns the belief-source links
@@ -535,32 +534,11 @@ async def _project_extraction(
                 payload={"message_count": len(msgs)},
             )
 
-    # Session-summary plane: one cheap LLM call per session emits a dense
-    # dated digest, embedded with the SAME model/dim as the fact plane so
-    # cosine is comparable. Awaited before the response so an immediate
-    # post-ingest read sees it. Fail-open — the facts already landed.
+    # The committed facts, rather than the raw transcript, determine the digest.
     async def _project_session_summary() -> None:
-        draft: Any = None
-        if summary_draft_task is not None:
-            try:
-                draft = await summary_draft_task
-            except Exception as e:  # noqa: BLE001 — a projection; the write stands
-                log.warning("session digest draft failed (non-fatal): %s", e)
-                await record_input_projection_failure(
-                    input,
-                    projection="session_summaries",
-                    error=e,
-                    memory_keys=written_memory_keys,
-                    payload={"message_count": len(msgs), "stage": "draft"},
-                )
-                return
-            if draft is None:
-                # The model returned nothing (or the embedder did): the same
-                # skip the inline path takes, without a second model call.
-                return
         try:
             with traced("extract.session_summary", messages=len(msgs)):
-                await _write_session_summary(input, msgs, state, draft=draft)
+                await _write_session_summary(input, state)
         except Exception as e:  # noqa: BLE001 — a projection; the write stands
             log.warning("session_summaries write failed (non-fatal): %s", e)
             await record_input_projection_failure(
@@ -625,7 +603,14 @@ async def _set_from_messages(
     detect_updates_override.set(input.detect_updates)
     last_value_updates_linked.set(0)
     from server.memory.app.extract import ExtractionError
+    from server.memory.domain.refusals import transcript_content
+    from server.memory.store.refusals import check_intake
 
+    await check_intake(
+        get_client(),
+        input.model_dump(),
+        transcript_content(input.model_dump()),
+    )
     if input.defer:
         return await _enqueue_deferred(input, rule_agent)
     if _deferred_by_allowlist(input):
@@ -705,28 +690,10 @@ async def _set_from_messages(
         agent_learnings=learnings_on,
         **_extract_request_pins(input),
     )
-    # The session digest is a function of the transcript, not of the extraction result, so
-    # its model call and embedding run WHILE the extractor runs; the row is written once the
-    # memory keys exist. A session that extracts nothing discards the draft (one cheap call,
-    # ~0.4% of sessions).
-    summary_draft_task: asyncio.Task[Any] | None = None
-    if msgs:
-
-        async def _draft_digest() -> Any:
-            with traced("extract.session_summary_draft", messages=len(msgs)):
-                return await _draft_session_summary(
-                    input, msgs, observation_date, operator_policy=operator_policy
-                )
-
-        summary_draft_task = create_deferred_task(_draft_digest())
-        summary_draft_task.add_done_callback(_observe_task_result)
     try:
         with traced("extract.pipeline", steps=len(steps)):
             state = await run_pipeline(steps, state)
     except BaseException as e:
-        # Any failure or cancel of the extraction also stops the digest draft's LLM call.
-        if summary_draft_task is not None:
-            summary_draft_task.cancel()
         if not isinstance(e, ExtractionError):
             raise
         raise HTTPException(
@@ -742,9 +709,7 @@ async def _set_from_messages(
         )
     evidence_ids = await evidence_task
     _ing_clock.mark("evidence_write")  # only what the pipeline did not cover
-    belief_source_links = await _project_extraction(
-        input, msgs, state, evidence_ids, summary_draft_task
-    )
+    belief_source_links = await _project_extraction(input, msgs, state, evidence_ids)
     _ing_clock.mark("projections")
 
     ontology_warnings = await _ontology_warnings(input, state)
@@ -817,16 +782,7 @@ from server.memory.app.extract.evidence import (  # noqa: E402  (re-export)
 from server.memory.app.inline_records import (  # noqa: E402  (re-export)
     _write_inline_record_projection,
 )
-from server.memory.app.session_summary import (  # noqa: E402, F401  (re-export)
-    _SESSION_SUMMARY_MAX_INPUT_CHARS,
-    _SESSION_SUMMARY_MAX_KEY_FACTS,
-    _SESSION_SUMMARY_PROMPT_VERSION,
-    _SESSION_SUMMARY_SYSTEM,
-    _build_session_summary_user_prompt,
-    _draft_session_summary,
-    _top_key_facts,
-    _write_session_summary,
-)
+from server.memory.app.session_summary import _write_session_summary  # noqa: E402 (re-export)
 
 __all__ = [
     "handle_memory_bulk_set",
@@ -839,12 +795,7 @@ __all__ = [
     "_link_written_memories_to_evidence",
     "_write_source_evidence",
     "_write_inline_record_projection",
-    "_build_session_summary_user_prompt",
-    "_top_key_facts",
-    "_draft_session_summary",
     "_write_session_summary",
-    "_SESSION_SUMMARY_MAX_INPUT_CHARS",
-    "_SESSION_SUMMARY_MAX_KEY_FACTS",
     # Patch points: the session-summary helpers read these through this module.
     "get_client",
     "get_embedder",

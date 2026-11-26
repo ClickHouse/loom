@@ -318,7 +318,16 @@ async def test_each_write_path_leaves_its_event_and_version(
     await ops("memory.bulk_set", entries=[{"memory_key": "k/two", "value": "bulk new"}], **a)
     by_id = await ops("memory.update_by_id", memory_id=first["memory_id"], value="by id")
     deleted = await ops("memory.delete", memory_key="k/one", **a)
-    restored = await ops("memory.restore", memory_key="k/one", **a)
+    refused = await ops("memory.restore", memory_key="k/one", expect=422, **a)
+    assert refused["detail"]["reason"] == "forgotten"
+    automatic = await ops("memory.set", memory_key="k/auto", value="automatic retirement", **a)
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from tests.integration._memory import retire_reversibly
+
+    await retire_reversibly(
+        MemoryDeleteInput(org=ORG, namespace=ops.ns, agent="assistant", memory_key="k/auto")
+    )
+    restored = await ops("memory.restore", memory_key="k/auto", **a)
     head = await ops("memory.get", memory_key="k/two", **a)
     dv = await ops("memory.delete_version", memory_key="k/two", version=head["version"], **a)
     redacted = await ops(
@@ -338,7 +347,8 @@ async def test_each_write_path_leaves_its_event_and_version(
         ("memory.revised", "k/one", versions["k/one"]),
         ("memory.revised", "k/one", by_id["new_version"]),
         ("memory.tombstoned", "k/one", deleted["version"]),
-        ("memory.restored", "k/one", restored["version"]),
+        ("memory.written", "k/auto", automatic["version"]),
+        ("memory.restored", "k/auto", restored["version"]),
         ("memory.tombstoned", "k/two", dv["version"]),
         ("memory.redacted", "k/one", first["version"]),
         # The restatement copies the redacted text, so the redaction scrubs it too.

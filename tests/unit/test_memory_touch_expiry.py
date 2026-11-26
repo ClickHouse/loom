@@ -14,12 +14,23 @@ from server.memory.api.models_crud import MemoryTouchInput
 from server.memory.app import handlers as mem_handlers
 from server.memory.app import restore as _restore_mod
 from server.memory.app import stack as _stack_mod
+from server.memory.store.rows import build_memory_version_row, identity_key
 from tests.unit.test_memory_write_path_mirror import _mk_row
 
 
 class _CH:
     def __init__(self) -> None:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
+        self.heads: dict[Any, Any] = {}
+
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        if "FROM loom.memory FINAL" in sql:
+            return [
+                build_memory_version_row(self.heads[key])
+                for key in params["keys"]
+                if key in self.heads
+            ]
+        return []
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserts.append((table, rows))
@@ -35,6 +46,7 @@ def stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     ch = _CH()
     calls: dict[str, Any] = {"many": [], "one": [], "reemit_many": [], "reemit_one": []}
     rows = {k: _row(k, entities=["mergetree"], reinforcement_count=4) for k in ("a", "b")}
+    ch.heads = {identity_key(row): row for row in rows.values()}
 
     async def _get_many(
         ident: Any, keys: list[str], *, ch: Any = None, strong: bool = False, scope: Any = None

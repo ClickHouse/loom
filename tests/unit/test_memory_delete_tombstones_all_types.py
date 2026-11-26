@@ -21,7 +21,12 @@ from server.memory.api.models_crud import MemoryDeleteInput
 from server.memory.app import handlers as mem_handlers
 from server.memory.app import restore as _restore_mod
 from server.memory.app import stack as _stack_mod
-from server.memory.store import EMBEDDING_PERSISTED_COLS, MemoryRow
+from server.memory.store import (
+    EMBEDDING_PERSISTED_COLS,
+    MemoryRow,
+    build_memory_version_row,
+    identity_key,
+)
 
 _NOW = datetime(2026, 9, 18, 12, 0, 0)
 
@@ -43,11 +48,11 @@ def _mk_row(**overrides: Any) -> MemoryRow:
         "created_at": _NOW - timedelta(days=1),
         "expires_at": None,
         "valid_at": None,
-        "run_id": "",
+        "run_id": "-",
         "tags": ["alert"],
         "entities": [],
         "temporal_anchor": None,
-        "reinforcement_count": 0,
+        "reinforcement_count": 1,
         "last_reinforced_at": None,
         "source_resource_id": "",
     }
@@ -98,6 +103,7 @@ class _StubCH:
         emb_rows: list[dict[str, Any]] | None = None,
         fail_inserts_into: tuple[str, ...] = (),
     ) -> None:
+        self.source: MemoryRow | None = None
         self.emb_rows = emb_rows or []
         self.fail_inserts_into = fail_inserts_into
         self.insert_calls: list[tuple[str, list[dict[str, Any]], dict[str, Any]]] = []
@@ -107,6 +113,9 @@ class _StubCH:
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         self.query_all_sqls.append(sql)
+        if params and "keys" in params and self.source is not None:
+            if identity_key(self.source) in params["keys"]:
+                return [build_memory_version_row(self.source)]
         if "FROM loom.memory_embeddings" in sql:
             return [dict(r) for r in self.emb_rows]
         return []
@@ -126,6 +135,7 @@ class _StubCH:
 
 
 async def _delete(monkeypatch: pytest.MonkeyPatch, existing: MemoryRow, ch: _StubCH) -> Any:
+    ch.source = existing
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
     monkeypatch.setattr(_restore_mod, "get_client", lambda: ch)

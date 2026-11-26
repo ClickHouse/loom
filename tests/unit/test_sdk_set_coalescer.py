@@ -483,12 +483,21 @@ async def test_coalescing_off_sends_every_set_alone() -> None:
     assert t.paths() == ["/v1/memory.set"] * 6
 
 
-async def test_a_failed_bulk_fails_every_set_it_carried(agent: Agent) -> None:
+async def test_a_failed_bulk_fails_every_set_it_carried(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     t: Any = agent.transport
     t.fail_bulk = RateLimited(retry_after_s=3)
-    outs = await asyncio.gather(
-        *[agent.memory.set(f"k{i}", i) for i in range(5)], return_exceptions=True
-    )
+    tasks = [asyncio.create_task(agent.memory.set(f"k{i}", i)) for i in range(5)]
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    await agent.memory.flush_sets()
+    outs = await asyncio.gather(*tasks, return_exceptions=True)
     assert [isinstance(o, RateLimited) for o in outs] == [False, False, True, True, True]
 
 

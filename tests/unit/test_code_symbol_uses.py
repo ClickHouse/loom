@@ -48,7 +48,8 @@ CHUNKS = [
         "symbol_ids": ["f1"],
         "start_line": 10,
         "end_line": 20,
-        "content": "void Foo::bar(int x)\n{\n    // bar does things\n    bar_impl(x);\n}",
+        "content": "void Foo::bar(int x)\n{\n    // bar does things\n    bar_impl(x);\n}\n"
+        + "\n" * 6,
     },
     # the declaration line in the header (scip span 5..5) and a use two lines below it
     {
@@ -65,7 +66,7 @@ CHUNKS = [
         "scope": "DB::use",
         "symbol_ids": ["u1"],
         "start_line": 40,
-        "end_line": 44,
+        "end_line": 45,
         "content": "void use(Foo& f)\n{\n    f.bar(2);\n    // calls bar twice\n    f.bar(3);\n}",
     },
     # an include line and a comment-only mention
@@ -174,7 +175,7 @@ def test_flag_on_returns_uses_with_scope_minus_definition_spans():
     by_key = {(u["path"], u["line"]): u for u in out.uses}
     assert by_key[("src/Use.cpp", 42)]["scope"] == "DB::use"
     assert by_key[("src/Use.cpp", 42)]["scope_start_line"] == 40
-    assert by_key[("src/Use.cpp", 42)]["scope_end_line"] == 44
+    assert by_key[("src/Use.cpp", 42)]["scope_end_line"] == 45
     assert by_key[("src/Use.cpp", 42)]["text"] == "f.bar(2);"
     assert out.uses_truncated is False
     assert out.definitions, "the definition still ships beside the uses"

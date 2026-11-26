@@ -24,6 +24,7 @@ _CONFIG = "shapes or refuses writes; holds no content and names no outside targe
 _TRANSIENT = "a short-lived claim or projection in Keeper"
 
 EXEMPT: dict[str, str] = {
+    "loom.memory_refusals": "hash-only refusal policy intentionally survives namespace reuse; no content or outside target",
     "loom.namespaces": "the registry row, which every path reads before the check",
     "loom.analysis_canary": "the analysis probe's one row, at org '' and namespace '', a scope no tenant uses",
     # derived
@@ -96,6 +97,7 @@ EXEMPT: dict[str, str] = {
 }
 
 PG_EXEMPT: dict[str, str] = {
+    "loom.memory_refusals": "hash-only refusal policy intentionally survives namespace reuse; no content or outside target",
     "loom.memory_deliveries": "which targets a revision still owes; beside its revision",
     "loom.erased_memories": "evidence that rows were erased; holds no content",
     "loom.erased_documents": "evidence that documents were erased; holds no content",

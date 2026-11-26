@@ -36,6 +36,22 @@
           "type": "boolean",
           "description": "Derive the similarity gates from this embedder's cosine distribution at boot (server/memory/app/embedder_calibration.py). False pins the scalar defaults (tuned for text-embedding-3-small) — re-bench after an embedder change. Fake embedders and probe failures always use the scalars."
         },
+        "adoption_telemetry_enabled": {
+          "default": true,
+          "type": "boolean",
+          "description": "Self-hosted adoption reports. Set false to stop all adoption reporting."
+        },
+        "adoption_telemetry_interval_seconds": {
+          "default": 3600,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Seconds between adoption checks and retries. A report covers 12 hours."
+        },
+        "adoption_telemetry_share_domains": {
+          "default": false,
+          "type": "boolean",
+          "description": "Share verified email domain counts in adoption reports. Off by default."
+        },
         "allow_insecure": {
           "default": false,
           "type": "boolean",
@@ -324,14 +340,6 @@
           "type": "integer",
           "description": "Threads one statement may use (pinned as a MAX, so a statement cannot take the host)."
         },
-        "ch_analysis_observer_urls": {
-          "items": {
-            "type": "string"
-          },
-          "maxItems": 32,
-          "type": "array",
-          "description": "Additional trusted writer HTTP origins for analyst setup policy observations. Uses the configured service credentials; missing or duplicate writers refuse."
-        },
         "ch_analysis_probe_interval_s": {
           "default": 60.0,
           "maximum": 3600,
@@ -563,9 +571,10 @@
           "description": "Seconds an abstain stays cached for its exact normalised question under the index head it abstained at. 0 = off."
         },
         "code_ask_token_budget": {
-          "default": 4000,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget."
+          "description": "Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget; 0 means unlimited."
         },
         "code_backport_gaps_budget_s": {
           "default": 1800.0,
@@ -1603,11 +1612,17 @@
           "description": "How many of an answer's files, in rank order, its `lessons` are read for."
         },
         "code_result_lessons_tokens": {
-          "default": 250,
-          "maximum": 2000,
-          "minimum": 50,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4 characters a token."
+          "description": "Estimated-token cap on file or symbol `lessons`, counted on serialized rows at 4 characters a token; 0 means unlimited. Rows are whole or left out."
+        },
+        "code_result_path_hint_rows": {
+          "default": 512,
+          "maximum": 4294967294,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum metadata rows per read when reordering source results by linked lessons. If a read exceeds this bound, the source results keep their original order."
         },
         "code_review_brief_mirror_miss_ttl_s": {
           "default": 600.0,
@@ -1630,10 +1645,10 @@
           "description": "Decision and constraint rows the `rationale` section serves."
         },
         "code_review_brief_rationale_tokens": {
-          "default": 250,
-          "minimum": 50,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "The `rationale` section's own token budget; its first row is served even past it."
+          "description": "The `rationale` section's own token budget; 0 means unlimited."
         },
         "code_risk_annotations": {
           "default": true,
@@ -2163,6 +2178,12 @@
           "default": 1.0,
           "type": "number",
           "description": "Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal weights."
+        },
+        "code_search_token_budget": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer",
+          "description": "code.search response budget in tokens when the request omits token_budget; 0 = unlimited. An explicit request budget overrides this default."
         },
         "code_search_vector_model_default": {
           "default": "",
@@ -3606,7 +3627,7 @@
             "all"
           ],
           "type": "string",
-          "description": "How much LLM prompt and completion text is recorded, by what the prompt holds: \"off\" records none (the default; consent is given, not withdrawn); \"query\" only the legs whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …); \"all\" also the legs carrying retrieved memories or conversation turns (inline_rerank, iterative_judge, extract, session_summary, …). A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token counts, cost, latency and quality scores are never gated."
+          "description": "How much LLM prompt and completion text is recorded, by what the prompt holds: \"off\" records none (the default; consent is given, not withdrawn); \"query\" only the legs whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …); \"all\" also the legs carrying retrieved memories or conversation turns (inline_rerank, iterative_judge, extract, …). A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token counts, cost, latency and quality scores are never gated."
         },
         "langfuse_circuit_cooldown_s": {
           "default": 30.0,
@@ -3684,12 +3705,12 @@
         "llm_model": {
           "default": "",
           "type": "string",
-          "description": "The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1)."
+          "description": "The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-sonnet-5-5 / qwen2.5:3b / fake-echo-1)."
         },
         "llm_openai_reasoning_effort": {
           "default": "",
           "type": "string",
-          "description": "Reasoning effort sent to OpenAI models. \"\" = the lowest the model accepts (learned from its refusals, see server/llm/traits.py); set to pin one value for every call."
+          "description": "Reasoning effort sent to OpenAI models. \"\" = the lowest the model accepts (learned from its refusals, see server/llm/traits.py); set to pin one value for every call, raised to that lowest; a refused pin above it sends no effort."
         },
         "llm_policy_by_traffic_class": {
           "default": "{\"bench\": {\"llm_cache\": true}}",
@@ -3729,6 +3750,12 @@
           "type": "number",
           "description": "Longest backoff, in seconds, between two attempts of an LLM call."
         },
+        "local_embedding_batch_size": {
+          "default": 16,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Texts per local ONNX inference batch; smaller values reduce peak memory. Every input is still embedded, in order; this does not limit input count or length."
+        },
         "local_embedding_model_dir": {
           "default": "var/models",
           "type": "string",
@@ -3766,9 +3793,9 @@
           "description": "Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables."
         },
         "mcp_always_load_tools": {
-          "default": "",
+          "default": "auto",
           "type": "string",
-          "description": "Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected tools upfront."
+          "description": "\"auto\" loads source lookups upfront for the coding toolset. A comma-separated list overrides the toolset defaults. Empty leaves loading to the host."
         },
         "mcp_auth_mode": {
           "default": "required",
@@ -3915,11 +3942,10 @@
           "description": "Org of memory_ask_code_namespace; \"\" = code_org, then the ask's own org."
         },
         "memory_ask_code_search_token_budget": {
-          "default": 1400,
-          "maximum": 12000,
-          "minimum": 200,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "Token budget of the code.search read that grounds a code-entity question."
+          "description": "Token budget of the grounding code.search read; 0 means unlimited."
         },
         "memory_ask_code_staleness": {
           "default": true,
@@ -3927,11 +3953,10 @@
           "description": "Check the code locations a retrieved memory asserts against the live index and flag rotted ones (symbol moved or renamed) so synthesis prefers the current site. Read-time, additive, gated by the code binding; ambiguous symbols are skipped (code_anchor), never false-flagged."
         },
         "memory_ask_code_symbol_token_budget": {
-          "default": 400,
-          "maximum": 12000,
-          "minimum": 200,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "Token budget of the code.symbol read that grounds a code-entity question in the code plane."
+          "description": "Token budget of the code.symbol read that grounds a code-entity question in the code plane; 0 means unlimited."
         },
         "memory_ask_consistency_check": {
           "default": false,
@@ -4592,6 +4617,19 @@
           "minimum": 500,
           "type": "integer",
           "description": "Characters one extraction read takes: a shorter document is read whole, a longer one in windows of whole sections. Sized so a dense window's reply fits the decision_extract cap."
+        },
+        "memory_digest_listing_max_pages": {
+          "default": 256,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Queries allowed to find enough proven digests; exhaustion answers BACKEND_UNAVAILABLE."
+        },
+        "memory_digest_listing_page_size": {
+          "default": 256,
+          "maximum": 2000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Raw digest candidates per query while filling listing, outline and export rows."
         },
         "memory_durability_verifier_max_facts_per_call": {
           "default": 60,
@@ -5347,7 +5385,7 @@
         "memory_session_digest_max_input_chars": {
           "default": 3000,
           "type": "integer",
-          "description": "Transcript characters the session-digest call reads (~4 chars a token); 0 = the built-in 3000."
+          "description": "Characters of complete source facts included in an extractive session digest; 0 = the built-in 3000. Facts are never clipped to fit."
         },
         "memory_set_chunk_max_chunks": {
           "default": 48,
@@ -5788,7 +5826,7 @@
         "openai_base_url": {
           "default": "https://api.openai.com/v1",
           "type": "string",
-          "description": "OpenAI's API root, for chat and embeddings: point it at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root)."
+          "description": "OpenAI's API root, for the Responses API (<root>/responses) and embeddings: point it at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root)."
         },
         "ops_op_mix_min_writes": {
           "default": 500,

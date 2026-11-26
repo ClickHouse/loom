@@ -1,5 +1,10 @@
 package com.clickhouse.loom;
 
+import com.clickhouse.loom.Results.ConversationAppendResult;
+import com.clickhouse.loom.Results.ConversationCreateResult;
+import com.clickhouse.loom.Results.ConversationDeleteResult;
+import com.clickhouse.loom.Results.ConversationGetResult;
+import com.clickhouse.loom.Results.ConversationThreadsResult;
 import com.clickhouse.loom.Results.DeleteResult;
 import com.clickhouse.loom.Results.GetResult;
 import com.clickhouse.loom.Results.SearchResult;
@@ -20,8 +25,9 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * A minimal Loom client for the memory ops: {@code memory.set}, {@code memory.get}, {@code
- * memory.search} and {@code memory.delete}.
+ * A minimal Loom client for the memory ops ({@code memory.set}, {@code get}, {@code search} and
+ * {@code delete}) and the conversation ops a chat memory needs ({@code conversation.append},
+ * {@code get}, {@code create}, {@code delete}, {@code threads} and {@code set_logging}).
  *
  * <p>Every op is {@code POST <baseUrl>/v1/<op>} with a JSON body and, when a token is set,
  * {@code Authorization: Bearer <token>}. The identity {@code (org, namespace, agent)} is bound
@@ -120,6 +126,104 @@ public final class LoomClient {
     ObjectNode body = body(extra);
     body.put("memory_key", Objects.requireNonNull(memoryKey, "memoryKey"));
     return DeleteResult.of(call("memory.delete", body));
+  }
+
+  /** Log one chat turn; {@code role} is {@code user}, {@code assistant}, {@code system} or {@code tool}. */
+  public ConversationAppendResult conversationAppend(String threadId, String role, String content) {
+    return conversationAppend(threadId, role, content, Map.of());
+  }
+
+  /**
+   * {@code conversation.append} with more input fields ({@code msg_id}, {@code metadata}, {@code
+   * reasoning}, {@code user_id}, …), named as docs/reference/operations/conversation.md names
+   * them. A turn the server did not keep is not an error: check {@link
+   * ConversationAppendResult#stored()}, or call {@link ConversationAppendResult#requireStored()}.
+   */
+  public ConversationAppendResult conversationAppend(
+      String threadId, String role, String content, Map<String, ?> extra) {
+    ObjectNode body = body(extra);
+    body.put("thread_id", Objects.requireNonNull(threadId, "threadId"));
+    body.put("role", Objects.requireNonNull(role, "role"));
+    body.put("content", Objects.requireNonNull(content, "content"));
+    return ConversationAppendResult.of(call("conversation.append", body));
+  }
+
+  /** A thread's title, metadata and live message count, without its messages. */
+  public ConversationGetResult conversationGet(String threadId) {
+    return conversationGet(threadId, Map.of());
+  }
+
+  /**
+   * A thread with one page of its messages, oldest first: at most {@code limit} (1-1000) after
+   * skipping {@code offset}.
+   */
+  public ConversationGetResult conversationGet(String threadId, int limit, int offset) {
+    return conversationGet(
+        threadId, Map.of("include_messages", true, "limit", limit, "offset", offset));
+  }
+
+  /** {@code conversation.get} with more input fields ({@code include_messages}, {@code order}, …). */
+  public ConversationGetResult conversationGet(String threadId, Map<String, ?> extra) {
+    ObjectNode body = body(extra);
+    body.put("thread_id", Objects.requireNonNull(threadId, "threadId"));
+    return ConversationGetResult.of(call("conversation.get", body));
+  }
+
+  /** Open a thread; re-creating the same id replaces its title, metadata and run. */
+  public ConversationCreateResult conversationCreate(String threadId) {
+    return conversationCreate(threadId, Map.of());
+  }
+
+  /**
+   * {@code conversation.create} with more input fields ({@code title}, {@code metadata}, {@code
+   * run_id}, {@code user_id}).
+   */
+  public ConversationCreateResult conversationCreate(String threadId, Map<String, ?> extra) {
+    ObjectNode body = body(extra);
+    body.put("thread_id", Objects.requireNonNull(threadId, "threadId"));
+    return ConversationCreateResult.of(call("conversation.create", body));
+  }
+
+  /**
+   * Soft-delete a thread: its messages, its thread row and their embeddings. Needs the {@code
+   * admin} role. The call sends {@code confirm_thread_id} equal to {@code threadId}.
+   */
+  public ConversationDeleteResult conversationDelete(String threadId) {
+    return conversationDelete(threadId, Map.of());
+  }
+
+  public ConversationDeleteResult conversationDelete(String threadId, Map<String, ?> extra) {
+    ObjectNode body = body(extra);
+    body.put("thread_id", Objects.requireNonNull(threadId, "threadId"));
+    body.put("confirm_thread_id", threadId);
+    return ConversationDeleteResult.of(call("conversation.delete", body));
+  }
+
+  /**
+   * This agent's threads with a live message in the last {@code windowDays} days (1-365), most
+   * recently active first: at most {@code limit} (1-200) after skipping {@code offset}.
+   */
+  public ConversationThreadsResult conversationThreads(int windowDays, int limit, int offset) {
+    return conversationThreads(
+        Map.of("window_days", windowDays, "limit", limit, "offset", offset));
+  }
+
+  /** {@code conversation.threads} with its input fields. */
+  public ConversationThreadsResult conversationThreads(Map<String, ?> extra) {
+    return ConversationThreadsResult.of(call("conversation.threads", body(extra)));
+  }
+
+  /**
+   * Turn transcript recording on or off for this client's namespace; returns the switch as it now
+   * stands. Needs the {@code admin} role. While it is off, {@code conversation.append} answers
+   * {@code stored: false}.
+   */
+  public boolean conversationSetLogging(boolean enabled) {
+    ObjectNode body = JSON.createObjectNode();
+    body.put("org", org);
+    body.put("namespace", namespace);
+    body.put("enabled", enabled);
+    return call("conversation.set_logging", body).path("enabled").asBoolean(false);
   }
 
   private ObjectNode body(Map<String, ?> extra) {

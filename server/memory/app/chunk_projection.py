@@ -11,7 +11,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.embedding.documents import document_vector, document_vectors
 from server.llm import customer
@@ -392,11 +391,9 @@ async def write_memory_chunks(
     # write must find them; a fire-and-forget insert would break that. Committed,
     # not batched: a mis-sized vector fails the shared part of a batched flush,
     # and with it every other insert in that flush.
-    await ch.insert(
-        "loom.memory_chunks",
-        rows,
-        settings=committed_insert_settings(),
-    )
+    from server.memory.store.refusals import insert_content_rows
+
+    await insert_content_rows(ch, "loom.memory_chunks", rows)
     if provenance_rows:
         try:
             await ch.insert(

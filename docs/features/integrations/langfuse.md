@@ -53,6 +53,12 @@ Each search stage (`search.<stage>`) is a `retriever` observation, one of the ty
 Langfuse's agent-graph view is drawn from. With OTel disabled (`LOOM_OTEL_ENABLED=false`)
 no traces reach Langfuse.
 
+Successful code calls add numeric source-body, elision and linked-lesson counts as
+`loom.response.code.*` span attributes. These are the same counts as the ledger's
+`out_*` fields; [telemetry](../observability/telemetry.md#the-ledger) defines them.
+They capture no source or lesson text. They describe the handler's result, not the
+calling agent's model turns, tool decisions or successful use of that context.
+
 | Setting                                                                       | Default                                             | Effect                                                                                                   |
 | ----------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `LOOM_LANGFUSE_SAMPLE_RATE`                                                   | `1.0`                                               | fraction of traces forwarded, sampled by trace id so a trace arrives whole                               |

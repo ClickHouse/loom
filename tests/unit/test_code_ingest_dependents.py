@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -16,6 +17,7 @@ import pytest
 
 from server.code.app.index import dependents as d
 from server.code.app.index import ingest, ingest_parse
+from server.code.app.index.denylist import Denylist
 from server.settings import settings
 from tests.unit.code_fixtures import repo_config
 
@@ -285,8 +287,22 @@ def test_dependents_follow_tombstoned_targets_and_ambiguous_names() -> None:
     ]
     # (b) any grade, every dependent edge kind; (d) only the repo-wide grade
     kinds = {c[2]: c[3] for c in repo.calls if c[0] == "edges_to"}
-    assert kinds[("calls", "inherits", "fixture_use")] is None and kinds[("calls",)] == 0.65
+    assert kinds[("calls", "inherits", "fixture_use", "reads", "uses_type")] is None
+    assert kinds[("calls",)] == 0.65
     assert not repo.state, "nothing queued under the cap"
+
+
+def test_python_type_module_change_repairs_reader_without_symbol_tombstone() -> None:
+    from server.code.domain.extract.treesitter import file_symbol_id
+
+    provider = "src/pkg/provider.py"
+    reader = "src/pkg/reader.py"
+    provider_id = file_symbol_id(provider)
+    repo = _Repo(edges_to={provider_id: [_edge(reader, provider_id, 1.0, kind="uses_type")]})
+    delta = d.CommitDelta(touched_paths={provider})
+    (closure, deps), seen = _run(repo, delta, closure_enabled=False)
+    assert delta.empty and closure is None and deps.reingested == 1
+    assert [path for path, _ in seen] == [reader]
 
 
 def test_cap_queues_overflow_merges_and_bounds_the_pending_queue() -> None:
@@ -367,6 +383,76 @@ def test_drain_pending_respects_budget_and_writes_the_rest_back() -> None:
         )
     )
     assert res0.files == 0 and res0.remaining == 1
+
+
+def test_reader_repairs_defer_ready_work_at_the_pass_budget(monkeypatch) -> None:
+    import time
+
+    started: list[str] = []
+    now = 0.0
+    monkeypatch.setattr(d, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
+    monkeypatch.setattr(settings, "code_ingest_dependents_concurrency", 1)
+    _, show_file, _ = _fakes()
+
+    async def ingest_file(*_args, path, **_kwargs):
+        nonlocal now
+        started.append(path)
+        now += 1
+        return SimpleNamespace()
+
+    result = asyncio.run(
+        d.reextract_paths(
+            _Repo(),
+            "o",
+            "n",
+            ["a.py", "b.py", "c.py"],
+            commit_sha=SHA,
+            git_dir="/g",
+            show_file=show_file,
+            ingest_file=ingest_file,
+            embedding_model="m",
+            stop_after=0.5,
+        )
+    )
+    assert started == ["a.py"]
+    assert result.reingested == 1 and result.retry_paths == ["b.py", "c.py"]
+
+
+def test_pending_repairs_keep_policy_and_retry_transient_errors() -> None:
+    repo = _Repo()
+    path = "contrib/pkg/reader.py"
+    rules = Denylist(builtin=True, include_contrib=True)
+    _, show_file, _ = _fakes()
+    seen: list[str] = []
+
+    async def load_rules():
+        return rules
+
+    async def ingest_file(*_args, path, denylist, **_kwargs):
+        assert denylist is rules and not rules.refusal(path, b"x = 1")
+        seen.append(path)
+        if len(seen) == 1:
+            raise ConnectionError("transient write failure")
+        return SimpleNamespace()
+
+    async def replay():
+        await d.write_pending(repo, "o", "n", [path], head=SHA)
+        options = dict(
+            head=SHA,
+            git_dir="/g",
+            budget=1,
+            show_file=show_file,
+            ingest_file=ingest_file,
+            embedding_model="m",
+            load_rules=load_rules,
+        )
+        first = await d.drain_pending(repo, "o", "n", **options)
+        assert first.errors == 1 and first.remaining == 1
+        second = await d.drain_pending(repo, "o", "n", **options)
+        assert second.files == 1 and not second.remaining
+
+    asyncio.run(replay())
+    assert seen == [path, path]
 
 
 # ---- ingest_file(edges_only=True) ------------------------------------------------
@@ -692,6 +778,7 @@ async def test_worker_skips_dependents_when_both_settings_are_off(monkeypatch) -
             embedding_model="m",
             gitrepo=object(),
             ingest_file=object(),
+            denylist=Denylist(),
             result=result,
         )
     assert called == [] and result.errors == []
@@ -706,6 +793,7 @@ async def test_worker_counts_dependents_and_records_failures(monkeypatch) -> Non
     monkeypatch.setattr(settings, "code_closure_repair_enabled", True)
     monkeypatch.setattr(settings, "code_ingest_dependents_max_files", 7)
     result = ingest_budget.CodeIngestResult()
+    rules = Denylist(builtin=True, include_contrib=True)
     got: dict[str, Any] = {}
 
     async def fake_run(repo, org, ns, **kw):
@@ -730,9 +818,11 @@ async def test_worker_counts_dependents_and_records_failures(monkeypatch) -> Non
             embedding_model="m",
             gitrepo=_Git,
             ingest_file=object(),
+            denylist=rules,
             result=result,
         )
     assert got["max_files"] == 7 and got["delta"].names_added == {"x"}
+    assert got["denylist"] is rules
     assert got["delta"].touched_paths == {"src/t.cpp"} and got["show_file"] is _Git.show_file
     assert (
         result.closure_resolved,
@@ -757,6 +847,7 @@ async def test_worker_counts_dependents_and_records_failures(monkeypatch) -> Non
             embedding_model="m",
             gitrepo=_Git,
             ingest_file=object(),
+            denylist=rules,
             result=result,
         )
     assert result.errors == [f"{SHA[:12]} dependents: RuntimeError: ch down"]
@@ -799,8 +890,8 @@ async def test_reconcile_drains_the_queue_inside_the_heal_budget(monkeypatch) ->
         healed_paths.extend(paths)
         return _Healed()
 
-    async def drain(repo_, cfg, head, *, budget, embedding_model):
-        drain_kw.update(budget=budget, model=embedding_model)
+    async def drain(repo_, cfg, head, *, budget, embedding_model, stop_after):
+        drain_kw.update(budget=budget, model=embedding_model, stop_after=stop_after)
         return d.DrainResult(files=3, remaining=4)
 
     class _Emb:
@@ -813,7 +904,7 @@ async def test_reconcile_drains_the_queue_inside_the_heal_budget(monkeypatch) ->
         patch("server.embedding.embedder.get_embedder", new=lambda: _Emb()),
     ):
         await w._maybe_reconcile(repo, _Cfg(), SHA, result)
-    assert drain_kw == {"budget": 5, "model": "m"}
+    assert drain_kw == {"budget": 5, "model": "m", "stop_after": None}
     assert healed_paths == ["src/0.cpp", "src/1.cpp"], "heal gets the budget the drain left"
     assert result.dependents_drained == 3
     detail = json.loads(repo.state["reconcile"]["detail"])

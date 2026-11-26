@@ -43,6 +43,16 @@ Before reading a single score, check from the run's own output or the server's l
 - recall@K and judged QA accuracy are separate axes; never set one beside the other ([recall and answer accuracy](../../../docs/benchmarks/methodology.md#recall-and-answer-accuracy-are-separate-axes)).
 - Report every category, including the one that went down.
 
+### Native coding-agent comparisons
+
+- Freeze the issue, source, model, instructions and graders across arms. Keep native tool choice. Record advertised tools, actual calls, historical facts delivered before edits and independent verifier outcomes. A one-issue quality tie cannot measure historical memory lift.
+- For a cache-disabled comparison, disable provider prompt caching for every arm and verify zero reads and writes on every model request. With caching enabled, verify each planned starting state from provider usage. If the protocol calls for a cold start, use provider-supported isolation and check the first request for zero cache reads. If it calls for warm reuse, verify the reads on the same arm. A fresh session and an elapsed TTL are setup details. Cache state comes from the receipts. Track Loom-local caching and index preparation separately. See [provider usage fields](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#tracking-cache-performance).
+- Compare like cache states. Split first-request usage from later turns and retain uncached input, cache reads, writes by TTL and output. Use the reported solver cost. Show separately tracked Loom provider charges alongside it. Report agent time and full end-to-end time.
+- Check cost and time targets for the same arm and matched baseline within each cache state. Leave the cost target unresolved when only fallback estimates or incomplete upstream charges are available. Compare memory cost, time and quality with the same index tier alone. Report linked facts delivered alongside hidden tests and the blind judge.
+- Compare complete sessions for the same task, repeat and cache start. Join model usage and tool replies by tool call ID. Inspect the request and available source after a miss. For a hidden-test failure, check the submitted edit against the verifier and inspect the source and lesson states delivered before the edit.
+- Count model responses as well as tools. Check the next model response before crediting a smaller payload or a batched lookup with saving a turn. See [coding-agent overhead](../../../docs/guides/debugging.md#diagnose-coding-agent-overhead).
+- When literal `code.grep` excerpts lead to separate implementation and test reads, replay the original clues with default bodies and the test-name clue in one batch. Scope both roots with globs and omit `path_prefix`. Compare the evidence and size with all original responses. Check the working revision before counting an edited-file read as replaceable.
+
 ## 5. Write it up
 
 - The PR body carries the numbers, the command that reproduces them, the model and judge, and the item count.

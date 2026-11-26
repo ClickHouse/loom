@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -51,6 +52,22 @@ def sha256_value_json(value_json: str) -> str:
 def served_content_sha256(value: Any) -> str:
     """The content hash memory.get serves for a decoded value: '' for none."""
     return "" if value is None else sha256_value_json(json.dumps(value, default=str))
+
+
+def served_row_value(row: Mapping[str, Any]) -> Any:
+    """The full persisted JSON value, never a display excerpt or stored hash."""
+    encoded = row.get("value_json") or "{}"
+    if isinstance(encoded, dict):
+        encoded = json.dumps(encoded)
+    # Matches the authoritative SERVED_VALUE projection: the native JSON column holds
+    # objects, while strings and other scalar values live in the text column.
+    raw = str(encoded) if len(str(encoded)) > 2 else row.get("value")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return raw
 
 
 def canonical_document_text(text: str) -> str:

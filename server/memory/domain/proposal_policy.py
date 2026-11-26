@@ -13,7 +13,7 @@ class ProposalPolicy(BaseModel):
     `loom.namespaces.proposal_policy`; '' = the defaults, manual)."""
 
     mode: Literal["manual", "auto"] = "manual"
-    # Accept once this many graded runs that used the proposal passed ...
+    # Mark ready for human approval once this many graded runs passed ...
     min_passes: int = Field(default=2, ge=1, le=1000)
     # ... and no more than this many failed.
     max_fails: int = Field(default=0, ge=0, le=1000)

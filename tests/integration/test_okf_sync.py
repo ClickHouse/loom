@@ -199,12 +199,12 @@ def test_reimport_writes_nothing_and_prune_removes_deleted_copies(
     assert get("okf-sync", keys[0])["found"]
     assert get("bot", "bot-note")["found"]
     assert get("okf-sync", "bot-as-sync")["found"]
-    # A prune is a tombstone: memory.restore brings the copy back.
-    restored = _op(
-        url,
-        writer,
-        DST_ORG,
-        "memory.restore",
-        {"namespace": ns, "agent": "okf-sync", "memory_key": keys[2]},
+    # Pruning explicitly refuses the removed copy, including restoration.
+    restored = httpx.post(
+        f"{url}/v1/memory.restore",
+        headers={"Authorization": f"Bearer {writer}"},
+        json={"org": DST_ORG, "namespace": ns, "agent": "okf-sync", "memory_key": keys[2]},
     )
-    assert restored["restored"] and get("okf-sync", keys[2])["found"]
+    assert restored.status_code == 422, restored.text
+    assert restored.json()["detail"]["reason"] == "forgotten"
+    assert not get("okf-sync", keys[2])["found"]

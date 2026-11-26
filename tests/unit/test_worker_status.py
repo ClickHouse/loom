@@ -211,3 +211,63 @@ def test_plugin_preserves_real_pytest_failures_and_junit(pytester, monkeypatch):
     assert [r["stage"] for r in statuses] == ["node_down", "before_teardown", "after_teardown"]
     assert statuses[-1]["os_returncode"] == 0
     assert statuses[-1]["pytest_exitstatus"] == 1
+
+
+def test_native_refusal_metadata_reaches_pytest_cli_without_starting_tests(pytester, monkeypatch):
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2]))
+    monkeypatch.setenv("PYTEST_ADDOPTS", "")
+    pytester.makeconftest(
+        """
+        import os
+        import resource
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        original = Path.read_text
+        def policy(path, *args, **kwargs):
+            if path == Path("/proc/sys/kernel/core_pattern"):
+                return "|/private/core-pattern-canary %p"
+            return original(path, *args, **kwargs)
+
+        def pytest_configure(config):
+            Path.read_text = policy
+            resource.getrlimit = lambda _: (0, 0)
+            os.uname = lambda: SimpleNamespace(release="6.8.0-1022-azure", machine="x86_64")
+        """
+    )
+    pytester.makepyfile("def test_must_not_start(): assert False, 'worker-started-canary'")
+    result = pytester.runpytest_subprocess(
+        "-p", "tests._worker_status", "--native-worker-signatures", "-q"
+    )
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    output = result.stdout.str() + result.stderr.str()
+    assert "native diagnostics refuse piped core dumps" in output
+    assert '"event":"native_prerequisite_refused"' in output.replace(" ", "")
+    assert "6.8.0-1022-azure" in output
+    assert "core-pattern-canary" not in output
+    assert "worker-started-canary" not in output
+    files = list((pytester.path / w.ARTIFACT_ROOT).glob("*/status.jsonl"))
+    assert len(files) == 1
+    observed = [json.loads(line) for line in files[0].read_text().splitlines()]
+    assert len(observed) == 1
+    assert observed[0]["reason"] == "piped_core_handler"
+    assert not list((pytester.path / w.ARTIFACT_ROOT).glob("*/native"))
+
+
+def test_refusal_output_failure_preserves_usage_error(tmp_path, monkeypatch):
+    message = "native diagnostics refuse piped core dumps"
+
+    def refuse(_root):
+        raise ValueError(message)
+
+    def output_unavailable(*_args):
+        raise RuntimeError("private-output-error-canary")
+
+    monkeypatch.setattr(w, "NativeSession", refuse)
+    monkeypatch.setattr(w.WorkerStatus, "emit", output_unavailable)
+    config = SimpleNamespace(rootpath=tmp_path, getoption=lambda *_args, **_kwargs: True)
+    with pytest.raises(pytest.UsageError) as refused:
+        w.WorkerStatus(config)
+    assert refused.value.args == (message,)
+    assert not list((tmp_path / w.ARTIFACT_ROOT).glob("*/native"))

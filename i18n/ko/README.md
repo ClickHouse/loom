@@ -22,7 +22,7 @@
   <!-- languages -->
   <a href="../../README.md">English</a> · <a href="../zh-CN/README.md">简体中文</a> · <a href="../ja/README.md">日本語</a> · 한국어 · <a href="../pt-BR/README.md">Português (Brasil)</a> · <a href="../es/README.md">Español</a>
   <br>
-  <a href="https://clickhouse.github.io/loom/ko/">문서</a>
+  <a href="https://loom.clickhouse.com/docs/ko/">문서</a>
   <!-- /languages -->
 </p>
 
@@ -32,7 +32,7 @@
   <a href="#get-started">시작하기</a> ·
   <a href="#why-loom">기능</a> ·
   <a href="#integrations">통합</a> ·
-  <a href="https://clickhouse.github.io/loom/">문서</a>
+  <a href="https://loom.clickhouse.com/docs/">문서</a>
 </p>
 
 <p>
@@ -286,12 +286,12 @@ Langfuse와 ClickStack은 선택적 통합이며, Docker 스택에 포함된 서
 ## 문서 및 기여
 
 공유 에이전트 컨텍스트, 코드 인텔리전스, 권한 기반 검색을 시작하려면
-[문서](https://clickhouse.github.io/loom/)를 참고하세요. 배포 요구 사항은
+[문서](https://loom.clickhouse.com/docs/)를 참고하세요. 배포 요구 사항은
 [사전 요구 사항](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites)을 참고하세요.
 
 [배포](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md) · [자주 묻는 질문](https://github.com/ClickHouse/loom/blob/main/docs/faq.md) ·
 [기여하기](https://github.com/ClickHouse/loom/blob/main/CONTRIBUTING.md) · [보안 문제 신고](https://github.com/ClickHouse/loom/blob/main/SECURITY.md) ·
-[`llms.txt`](https://clickhouse.github.io/loom/llms.txt) ·
-[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt)
+[`llms.txt`](https://loom.clickhouse.com/docs/llms.txt) ·
+[`llms-full.txt`](https://loom.clickhouse.com/docs/llms-full.txt)
 
 Apache-2.0 · [라이선스](https://github.com/ClickHouse/loom/blob/main/LICENSE) · [고지 사항](https://github.com/ClickHouse/loom/blob/main/NOTICE)

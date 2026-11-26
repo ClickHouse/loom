@@ -41,11 +41,8 @@ tokens, truncated}`:
                 token check against the diff; read on every call and never stored
                 (`rationale_section`).
 
-Tiers select sections and a token budget — trivial 700 (paths + symbols),
-standard 2,500 (+ tests, settings, history, risk, rationale), full 4,000 (+ blame,
-qa) — and
-the budget is applied across the tier's sections by WHOLE rows, largest
-section first; a trimmed section keeps its verdict and says `truncated`.
+Tiers select sections; a positive request budget trims whole rows, largest section
+first. A trimmed section keeps its verdict and says `truncated`.
 
 Pure helpers (diff parsing, section verdicts, tiering, canonical JSON) are
 module functions; the reads go through the caller's `call(op, body)` — the op
@@ -102,7 +99,6 @@ TIERS: dict[str, tuple[str, ...]] = {
 # Sections a stored payload may lack (built before the section existed, or never stored):
 # a read serves them only from a payload that has them, or when asked for by name.
 OPTIONAL_SECTIONS: tuple[str, ...] = ("risk", RATIONALE)
-TIER_BUDGET_TOKENS: dict[str, int] = {"trivial": 700, "standard": 2500, "full": 4000}
 DEFAULT_TIER = "standard"
 
 # Section statuses.
@@ -449,7 +445,7 @@ def apply_budget(
         out[n] = {**sec, "rows": list(sec.get("rows") or [])}
         out[n]["tokens"] = estimate_tokens(out[n]["rows"])
     total = sum(int(s["tokens"]) for s in out.values())
-    while total > budget:
+    while budget and total > budget:
         biggest = max(
             (n for n in names if out[n]["rows"]),
             key=lambda n: (int(out[n]["tokens"]), -names.index(n)),
@@ -665,8 +661,8 @@ def rationale_section(
 ) -> dict[str, Any]:
     """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
     (None: it could not be read): each row's token check (`_checked_row`), `check` rows
-    first, then constraints, then the rest, whole rows up to `budget_tokens` (the first
-    always). The verdict reads every row: check | unknown | clear | none (no row has
+    first, then constraints, then the rest, whole rows within a positive `budget_tokens`
+    (0 is unlimited). The verdict reads every row: check | unknown | clear | none (no row has
     anything to check). It is `clear` or `none` only when every changed path and every
     matching row was checked; otherwise `unknown`, each flag and count naming its cause
     (the causes are listed under `rationale` in docs/features/code-index/history-and-prs.md)."""
@@ -706,9 +702,9 @@ def rationale_section(
         causes.append(f"paths_at_row_ceiling:{paths_full}")
     if links_skipped > 0:
         causes.append(f"links_not_read:{links_skipped}")
-    kept = rows[:1]
-    for r in rows[1:]:
-        if estimate_tokens([*kept, r]) > budget_tokens:
+    kept: list[dict[str, Any]] = []
+    for r in rows:
+        if budget_tokens and estimate_tokens([*kept, r]) > budget_tokens:
             break
         kept.append(r)
     out = section(SERVED, verdict=verdict, epistemic="lower_bound", causes=causes, rows=kept)
@@ -751,7 +747,7 @@ def serve(
 ) -> tuple[dict[str, dict[str, Any]], int, int]:
     """(sections, tokens_used, budget) for one read of a stored payload."""
     tier = tier if tier in TIERS else DEFAULT_TIER
-    budget = budget or TIER_BUDGET_TOKENS[tier]
+
     stored = dict(payload.get("sections") or {})
     names = tier_sections(tier, requested, present=set(stored))
     out, used = apply_budget(stored, names, budget)
@@ -772,7 +768,6 @@ __all__ = [
     "SERVED",
     "SERVED_ORDER",
     "TIERS",
-    "TIER_BUDGET_TOKENS",
     "BriefInputs",
     "DiffFacts",
     "added_text",

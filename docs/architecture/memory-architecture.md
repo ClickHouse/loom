@@ -89,6 +89,13 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
    row stays attached to the write, so its locks and pin still hold and Postgres
    admission checks that row's exact version before replacing it. Lifecycle status and
    `valid_to` do not make an exact-key-readable row absent.
+   Pending proposals carry `requires_review` through revisions, rejection, deletion and
+   snapshots. The storage commit checks the locked current head before activating it or
+   clearing that bit. Only `memory.proposal_decide` can grant a permit for the exact
+   source and destination revisions, after an independent authenticated human
+   administrator supplies the hash of the content reviewed. Linked subjects count as
+   the same reviewer. Unknown proposer identity and failed alias reads refuse approval.
+   Automatic grading can reject or mark a proposal ready, but never accepts one.
 7. **Build the version row** (`_set_build_memory_row`). Over a live row,
    `build_revision_row` carries the other columns forward and resets those that describe
    the old value (`REVISION_RESETS` in `memory/store/rows.py`). `actor` comes from the
@@ -100,9 +107,10 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 8. **Non-embedded rows stop here.** A type in `NON_SEARCHABLE_TYPES` (`episodic`,
    `profile`) or a `high`-sensitivity row gets one insert and no embedding row
    (`server/memory/domain/memory_types.py`, `is_embedded`). No embedding row means no search leg sees
-   it. A confirmed ClickHouse insert attempts the same hash-only audit receipt as an
-   embedded write; audit failures do not fail the write. Under Postgres, the commit
-   already includes the audit row.
+   it. A successful ClickHouse insert requires the same acknowledged hash-only audit
+   receipt as an embedded insert. Receipt failure returns `BACKEND_UNAVAILABLE` after
+   the committed row's safety follow-ups finish; the memory remains written. Under
+   Postgres, the commit already includes the revision audit row.
 9. **Embed** (`_set_embed`) the value and, when the key carries words, the key, in one
    batched call where the embedder supports it.
 10. **Conflict verdict** (`_set_conflict_verdict`, `memory/app/conflicts.py`
@@ -717,10 +725,10 @@ is left. Its triples close as for a row that holds none.
 
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and
-an Undo of a retirement or of a delete opens again those the restored row's current value
+an Undo of reversible retirement opens again those the restored row's current value
 holds by the same rule (another row's claim keeps a fact from closing, but never reopens
 one); either, when it fails, is recorded for `projection_repair` as `triples_reconcile`.
-A delete closes none of its row's facts, so the only facts a delete's Undo opens again
+A tombstone closes none of its row's facts, so the only facts a reversible restore opens again
 are ones another row's revision or retirement closed while the row was gone.
 
 A dropped fact still valid later ("until Dec 1") ends now, and so does one a retired row
@@ -997,14 +1005,15 @@ session, agent or run identity. A read bounded on one of those axes omits the ag
 graph signals, including hub pruning and graph paths. Its fact legs retain their scoped
 cosine and query-entity ranking. Namespace-wide reads use the graph aggregates.
 
-Session digests carry the keys they compressed in `derived_from`. Before deduplication,
-the summary leg checks those known sources under the digest's full identity. A source
-that is missing, unserved, deleted, expired, outside its validity, high-sensitivity or at a newer
-version withholds the digest. An unreadable source check withholds all unchecked digests.
-Without source revision hashes, a later source version conservatively withholds a digest
-during replay too. Lineage covers extracted facts, not every sentence of the transcript:
-a digest without a known source remains session evidence, and does not prove that its
-statements are current facts.
+Session digests contain whole committed source values joined by newlines. Their ordered
+`derived_from` and `key_facts` reconstruct every byte of `summary_text`; raw transcript
+text and model-generated additions cannot contribute. Every digest reader verifies that
+proof against the authoritative heads under the digest's exact agent, user and session.
+Missing, changed, unserved, expired, truncated, sensitive or unreviewed sources withhold
+the digest. A pin or touch that leaves the same eligible content does not invalidate it.
+Legacy digests without complete proof are withheld. Source-read failures fail closed.
+A digest hit cannot open unrelated raw turns from its session. Model-generated period
+lessons and contrast reflections enter proposed state for independent review.
 
 `memory.list` excludes rejected rows from both sort orders and counts. A key lookup can
 inspect a rejected row. `memory.for_file` also checks `valid_to` before adding a fact to
@@ -1294,7 +1303,7 @@ and marks it done once the check has run; if its insert fails, the call answers 
 the worker finishes the delete. If the tombstone's insert or the read after it fails, the
 delete answers 503 and retires nothing. The transport audits only a call that succeeds, so
 a 503 writes the op's audit row itself, outcome `deferred`, after the key lock is released
-and best effort like every audit row; the worker that finishes the delete writes none, and
+on a best-effort basis; the worker that finishes the delete writes none, and
 a retry is its own call with its own row.
 
 A check whose tombstone is not in the key's history (its insert failed) runs against a
@@ -1379,7 +1388,10 @@ place; retrying the restore writes the snapshot again.
 An Undo checks before recording its acceptance. Tombstone-only copies remain allowed.
 
 Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head
-at T is the largest version at or before T. Triples, records, summaries and aggregates
+at T is the largest version at or before T. The cutoff is computed with integer
+epoch arithmetic, preserving each datetime microsecond without floating-point rounding.
+Naive datetimes are UTC; equivalent timezone representations have the same cutoff.
+Triples, records, summaries and aggregates
 are rebuilt by their workers (`memory/domain/rollback.py` plans the rollback,
 `memory/app/namespace_rollback.py` applies it, `identity/app/namespace_rollback.py` is the handler).
 
@@ -1576,6 +1588,11 @@ Every write that creates or changes memory leaves one hash-only row in `loom.aud
 (`server/observability/audit.py`): no value, only identity, actor, key, id, content
 hash, source class and verdict. The row hash and the checkpoint chain are described in
 [audit](../features/observability/audit.md).
+
+A successful ClickHouse `memory.set` insert requires an acknowledged receipt. Receipt storage
+failure reports that the memory was written and returns `BACKEND_UNAVAILABLE`; safety
+follow-ups still finish. The separate memory and audit inserts do not form an atomic
+transaction. Postgres keeps the revision receipt and delivery obligation in its commit.
 
 ## Change webhooks
 

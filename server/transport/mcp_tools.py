@@ -40,6 +40,7 @@ from server.transport.mcp_config import (
     _LOOM_SEARCH_TOOL_NAME,
     _READ_SHAPED_VERBS,
 )
+from server.transport.mcp_defaults import mcp_argument_defaults
 from server.transport.mcp_descriptions import (
     ASSISTANT_TOOL_DESCRIPTIONS as _ASSISTANT_TOOL_DESCRIPTIONS,
 )
@@ -112,6 +113,11 @@ def _synthetic_tool_descriptors(
         d["inputSchema"] = collapse_nullable(d["inputSchema"])
         if d["name"] == LOOM_OP_TOOL_NAME:  # its text names what this listing leaves out
             d["description"] = loom_op_description(listed, writes=writes)
+            d["annotations"] = {
+                **d["annotations"],
+                "readOnlyHint": not writes,
+                "destructiveHint": writes,
+            }
     if "coding" in toolset_parts(toolset):
         # The coding tier's activation text (same triggers,
         # one line, no persona-tone clause) and search text (derived).
@@ -302,7 +308,7 @@ def _tool_annotations(op: Operation) -> dict[str, bool]:
       the VIEWER floor, not audited, not marked ``writes``. An audited or
       ``writes`` op a viewer may call (namespace.join, tracker.source.remove,
       code.outcome) changes state and is never advertised as read-only.
-    - ``destructiveHint``: the op name carries a delete/erase-shaped
+    - ``destructiveHint``: the op name carries a delete/erase/clear-shaped
       token and the verb isn't itself a read. Per spec it's only
       meaningful when readOnlyHint is false, so read-only ops always
       report False.
@@ -355,8 +361,7 @@ def _with_identity(schema: dict[str, Any], op: Operation) -> dict[str, Any]:
 
 
 def _without(schema: dict[str, Any], names: set[str]) -> dict[str, Any]:
-    """`schema` without the properties the assistant connection overwrites or drops: a
-    model is not offered an argument the connection sets or discards."""
+    """Omit optional properties from a tool listing."""
     if not isinstance(schema.get("properties"), dict):
         return schema
     # Each has a default, so it is never in `required`.
@@ -497,6 +502,37 @@ def listed_ops(toolset: str | None) -> list[Operation]:
     return out
 
 
+def _upfront_tools(configured: str, toolset: str, profile: str) -> set[str]:
+    if configured.strip().casefold() != "auto":
+        return {name.strip() for name in configured.split(",") if name.strip()}
+    if toolset == "coding" and profile == "compact":
+        return {"code.edit_context", "code.grep"}
+    names = {"code.search", "code.symbol", "code.grep"}
+    if toolset != "coding":
+        names.update({"search.query", LOOM_OP_TOOL_NAME})
+    return names
+
+
+def _with_loading_hints(descriptors: list[dict[str, Any]], requested: set[str]) -> None:
+    """Apply one loading policy to registry and synthetic descriptors alike."""
+    names = {op.mcp_tool_name for op in ALL_OPERATIONS if op.name in requested}
+    names.update(requested & SYNTHETIC_TOOL_NAMES)
+    for descriptor in descriptors:
+        if descriptor["name"] in names:
+            descriptor.setdefault("_meta", {})["anthropic/alwaysLoad"] = True
+
+
+_COMPACT_CODING_GREP_OMITTED_ARGS = {
+    "prioritize_patterns",
+    "related_on_miss",
+    "related_on_prefix",
+    "include_dependencies",
+    "neighbours",
+    "neighbour_k",
+    "deadline_ms",
+}
+
+
 async def _tools_descriptor(
     *, schema_profile: str | None = None, toolset: str | None = None
 ) -> list[dict[str, Any]]:
@@ -511,9 +547,10 @@ async def _tools_descriptor(
     override.
     """
     from server.settings import settings
+    from server.transport.mcp_schemas import apply_schema_profile, resolve_schema_profile
 
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
-    always_load = {n.strip() for n in settings.mcp_always_load_tools.split(",") if n.strip()}
+    profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
     descriptors: list[dict[str, Any]] = []
     ops = listed_ops(toolset)
     listed = _tool_names(ops, toolset)
@@ -544,6 +581,13 @@ async def _tools_descriptor(
                 input_schema, set(ASSISTANT_FORCED_ARGS.get(op.name, {})) | ASSISTANT_DROPPED_ARGS
             )
             input_schema = _with_identity(input_schema, op)
+        if profile == "compact" and toolset == "coding" and op.name == "code.grep":
+            input_schema = _without(input_schema, _COMPACT_CODING_GREP_OMITTED_ARGS)
+        if defaults := mcp_argument_defaults(op.name, toolset):
+            fields = input_schema.get("properties", {})
+            for field, value in defaults.items():
+                if field in fields:
+                    fields[field] = {**fields[field], "default": value}
         descriptor: dict[str, Any] = {
             "name": op.mcp_tool_name,
             "description": desc,
@@ -551,23 +595,12 @@ async def _tools_descriptor(
             "inputSchema": input_schema,
             "outputSchema": _shape_schema(model_schema(op.output_model)),
         }
-        if op.name in always_load:
-            descriptor["_meta"] = {"anthropic/alwaysLoad": True}
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
-    from server.transport.mcp_schemas import (
-        DEFAULT_SCHEMA_PROFILE,
-        SCHEMA_PROFILES,
-        apply_schema_profile,
+    _with_loading_hints(
+        descriptors, _upfront_tools(settings.mcp_always_load_tools, toolset, profile)
     )
-
-    default = str(settings.mcp_schema_profile or DEFAULT_SCHEMA_PROFILE).lower()
-    if default not in SCHEMA_PROFILES:
-        default = DEFAULT_SCHEMA_PROFILE
-    profile = str(schema_profile or default).lower()
-    if profile not in SCHEMA_PROFILES:
-        profile = default  # an unknown request value never widens or narrows silently
     # only the full profile sends output schemas
     schemas = ("inputSchema", "outputSchema") if profile == "full" else ("inputSchema",)
     for d in descriptors:

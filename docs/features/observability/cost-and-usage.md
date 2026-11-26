@@ -1,3 +1,9 @@
+---
+description: Track coding-agent token usage, cache activity, and estimated model cost by session. Check for unpriced turns and view Loom's server-side spend separately.
+seo:
+  title: Track coding-agent token usage and cost by session
+---
+
 # Cost and usage
 
 Loom records every upstream dollar it spends on embedding and LLM calls against the
@@ -175,6 +181,41 @@ stored with `cost_usd=0`, `priced=false`: read that as unknown, not free.
 `cost.agent_summary` reads the series over a date window, grouped by `namespace`,
 `agent`, `day`, `model` (default), `consumer` or `session_id`. Rows carry turns, sessions,
 token classes, `cost_usd` and `unpriced_turns`.
+
+### Track token usage and cost by session
+
+Connect a coding client with writer access to the reporting namespace and finish a turn.
+The [Claude Code plugin](../integrations/claude-code.md#what-the-hooks-do) reports usage by
+default when the turn stops. For the report, use a viewer token with `read_scope: namespace`
+and access to the same namespace. Replace `acme` and `support` with your org and namespace.
+This request reads today's UTC turns and groups them by session.
+
+```bash
+usage_day="$(date -u +%F)"
+curl -fsS "$LOOM_BASE_URL/v1/cost.agent_summary" \
+  -H "Authorization: Bearer $LOOM_API_KEY" -H 'Content-Type: application/json' \
+  --data-binary @- <<JSON
+{
+  "org": "acme",
+  "namespace": "support",
+  "from_date": "$usage_day",
+  "to_date": "$usage_day",
+  "group_by": ["session_id"]
+}
+JSON
+```
+
+Read each row's `session_id`, `turns`, `input_tokens`, `output_tokens`, `cache_read_tokens`
+and `cache_write_tokens` to see where tokens went. `cost_usd` uses Loom's model price
+table. If `unpriced_turns` is positive, label the dollar amount as the priced portion and
+keep those turns in the token totals. Add `model` to `group_by` to identify the unpriced
+model in each session.
+
+If a session spans UTC days, extend the date range to include its turns. For a daily view,
+group by `day`. The server buffers incoming turns, so retry a report for a turn that just
+finished. If it stays empty, check the client's namespace, writer access, and `LOOM_USAGE`
+setting. Large reports can hit the [row limit](../../reference/operations/cost.md#costagent_summary),
+so use smaller date windows when you need the full set of sessions.
 
 ## Which agents are talking to Loom
 

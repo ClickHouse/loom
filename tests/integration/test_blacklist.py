@@ -63,6 +63,8 @@ async def test_matching_write_rejected_with_422(
     from loom import Agent
     from loom.errors import LoomError
 
+    from tests.integration._eventually import eventually
+
     ns = f"bl-match-{uuid.uuid4().hex[:6]}"
     tok = mint_test_token(org=ORG, namespaces=[ns], roles=["admin"])
     async with Agent(
@@ -90,9 +92,14 @@ async def test_matching_write_rejected_with_422(
         ok = await a.memory.set("other", "unrelated content", memory_type="semantic")
         assert ok["content_sha256"]
 
-        # List reports the hit_count incremented
-        rows = await a.blacklist.list()
-        ours = [r for r in rows if r["pattern_id"] == added["pattern_id"]]
+        # The hit counter is an asynchronous mutation.
+        async def counted():
+            rows = await a.blacklist.list()
+            ours = [r for r in rows if r["pattern_id"] == added["pattern_id"]]
+            assert len(ours) == 1
+            return ours if int(ours[0]["hit_count"]) >= 1 else None
+
+        ours = await eventually(counted, description="blacklist hit count to be published")
         assert len(ours) == 1
         assert int(ours[0]["hit_count"]) >= 1
 
@@ -173,6 +180,16 @@ async def test_restore_cannot_revive_a_value_blacklisted_after_delete(
         after = [await persisted(table) for table in ("memory", "memory_embeddings")]
         assert after == before, "a refusal changes no persisted memory or search field"
         await agent.memory.set("allowed", "unrelated value", memory_type="semantic")
-        await agent.memory.delete("allowed")
+        from server.memory.api.models_crud import MemoryDeleteInput
+        from tests.integration._memory import retire_reversibly
+
+        await retire_reversibly(
+            MemoryDeleteInput(
+                org=ORG,
+                namespace=ns,
+                agent="t",
+                memory_key="allowed",
+            )
+        )
         restored = await agent.memory.restore("allowed")
         assert restored["restored"] is True

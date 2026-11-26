@@ -19,7 +19,7 @@ CHUNKS = [
         "start_line": 10,
         "end_line": 40,
         "symbol_ids": ["a"],
-        "content": "int x;\nthrow MAGIC_ERR;\nint y;",
+        "content": "int x;\nthrow MAGIC_ERR;\nint y;\n" + "\n" * 28,
     },
     {
         "path": "src/Other.cpp",
@@ -27,7 +27,7 @@ CHUNKS = [
         "start_line": 1,
         "end_line": 5,
         "symbol_ids": ["c"],
-        "content": "MAGIC_ERR();",
+        "content": "MAGIC_ERR();\n" + "\n" * 4,
     },
     # a hit in a class body: no enclosing FUNCTION -> not an anchor
     {
@@ -36,7 +36,7 @@ CHUNKS = [
         "start_line": 800,
         "end_line": 830,
         "symbol_ids": ["t"],
-        "content": "int MAGIC_ERR;",
+        "content": "int MAGIC_ERR;\n" + "\n" * 30,
     },
 ]
 FUNCTIONS = [

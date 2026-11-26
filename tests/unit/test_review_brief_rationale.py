@@ -777,3 +777,11 @@ async def test_a_typed_untagged_or_conflicted_decision_is_read_and_checked(
     assert [(r["memory_key"], r["status"]) for r in read.served] == [("design/spill", status)]
     sec = _section(read.served, DIFF)
     assert sec["verdict"] == "check" and sec["rows"][0]["names"] == ["DB::SpillingHashSet"]
+
+
+def test_rationale_is_unlimited_by_default_but_honors_a_positive_cap():
+    rows = [_row(f"design/{i}", "Decided Z.", ["decision"], line="x" * 300) for i in range(8)]
+    unlimited = rb.rationale_section(rows, DIFF, budget_tokens=0)
+    assert len(unlimited["rows"]) == len(rows) and not unlimited["truncated"]
+    bounded = rb.rationale_section(rows, DIFF, budget_tokens=1)
+    assert bounded["rows"] == [] and bounded["truncated"]

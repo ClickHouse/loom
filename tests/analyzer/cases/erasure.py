@@ -170,6 +170,14 @@ async def _exports(ch: RecordingCH, c: dict[str, Any]) -> None:
     await erasure_exports.export_audit_by_subject_substring(ORG, "alice", limit=100, ch=ch)
 
 
+async def _consent_capture(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.erasure.store import refusals
+
+    for kind, value in (("namespace", "n"), ("user_id", "alice")):
+        for table, projection in refusals._sources():
+            await refusals._capture_source(ch, table, projection, ORG, kind, value)
+
+
 def cases() -> list[Case]:
     steps: list[Case] = []
     for module in STEP_MODULES:
@@ -199,6 +207,7 @@ def cases() -> list[Case]:
         ]
     return [
         *steps,
+        Case("erasure.consent_capture", "server.erasure.store.refusals", _consent_capture, {}),
         Case(
             "erasure.census_and_ledger",
             CENSUS_MODULE,

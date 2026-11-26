@@ -9,44 +9,70 @@ a large repository, where the brief one carries the
 watermarks, lags and tiers. So over MCP the op defaults to `brief: true`,
 and a model that wants the rest passes `brief: false`.
 
-`code.search` over MCP answers within 1,500 tokens: every ranked unit's path, lines,
-symbol and description, and a body only where it fits. Every token a tool returns is
-re-read on each later turn of the session, and an agent opens the one unit it needs
-with a ranged read; the HTTP default (3,000) fills bodies first. Over MCP it
-returns pointers and descriptions, no bodies: an agent reads the range it picks,
-and a body it did not pick is paid for on every later turn.
+`code.search` uses the same body mode and token budget over MCP and HTTP:
+automatic bodies by default, with no token cap unless configured or supplied by the caller.
 
 `code.symbol` over MCP leaves out the recent PRs (about a third of a definition's
 tokens): they serve a review, not a where/how lookup, and a model that wants them
-passes `include_history`. The lessons stay: up to three memories linked to that
-symbol, each cut to its first 200 characters. `code.search`, `code.callers`,
+passes `include_history`. The lessons stay: up to three complete memories linked to that
+symbol within `code_result_lessons_tokens` (unlimited by default). `code.search`, `code.callers`,
 `code.callees`, `code.impact`, `code.outline` and a task's `code.context_pack` carry
 the memories of their top files (`server.code.app.result_lessons`): as many as fit in
-`code_result_lessons_tokens`, a decision or constraint whole, any other cut at 200
-characters.
+`code_result_lessons_tokens` (unlimited by default), each whole or left out.
+Coding connections also default to indexed tests with source excerpts at the definition.
 
 `code.grep` over MCP answers ten matches a page (each with its enclosing
 function), the cursor for the rest: in paired runs an agent's grep through the
 index cost about three times the shell grep it stood in for.
+Coding connections give distinct literal patterns a first-page slot and ask for related
+source on a call expression miss or a call prefix. An excerpt can use its line budget
+for a complete short declaration when the indexed source covers it.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from server.code.api.models_symbol import EDIT_TEST_CONTEXT_LINES
+from server.operations.toolsets import resolve_toolset, toolset_parts
+
 MCP_DEFAULT_ARGUMENTS: dict[str, dict[str, Any]] = {
     "code.index_status": {"brief": True},
-    "code.search": {"token_budget": 1500, "bodies": "none"},
     "code.symbol": {"include_history": False},
     "code.grep": {"limit": 10},
 }
 
+_CODING_ARGUMENT_DEFAULTS: dict[str, dict[str, Any]] = {
+    "code.symbol": {
+        "test_examples_only": True,
+        "example_context_lines": EDIT_TEST_CONTEXT_LINES,
+    },
+    "code.grep": {
+        "prioritize_patterns": True,
+        "related_on_miss": True,
+        "related_on_prefix": True,
+        "include_dependencies": True,
+        "prefer_complete_context": True,
+    },
+}
 
-def mcp_default_arguments(op_name: str, arguments: Any) -> Any:
+
+def mcp_argument_defaults(op_name: str, toolset: str | None = None) -> dict[str, Any]:
+    defaults = MCP_DEFAULT_ARGUMENTS.get(op_name, {})
+    coding_defaults = _CODING_ARGUMENT_DEFAULTS.get(op_name)
+    if coding_defaults:
+        from server.settings import settings
+
+        if "coding" in toolset_parts(resolve_toolset(toolset, settings.mcp_toolset)):
+            return {**defaults, **coding_defaults}
+    return defaults
+
+
+def mcp_default_arguments(op_name: str, arguments: Any, *, toolset: str | None = None) -> Any:
     """`arguments` with the op's MCP defaults filled in where the caller gave
     none; anything that is not a dict is returned untouched for the
     validator to reject."""
-    defaults = MCP_DEFAULT_ARGUMENTS.get(op_name)
+    defaults = mcp_argument_defaults(op_name, toolset)
     if not defaults or not isinstance(arguments, dict):
         return arguments
     return {**defaults, **arguments}

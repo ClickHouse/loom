@@ -158,6 +158,7 @@ export async function retireDocumentDuplicate(id: Scope, canonicalUri: string, d
 
 /** The fields of `server/memory/api/models_proposals.py::MemoryProposal` the tab reads. */
 export interface MemoryProposal {
+  content_sha256: string;
   memory_key: string;
   memory_id: string;
   agent: string;
@@ -189,8 +190,15 @@ export async function decideProposals(
   id: Scope,
   keys: string[],
   decision: "accept" | "reject",
+  approvedSha256: Record<string, string> = {},
 ): Promise<{ decided: number; results: { memory_key: string; decided: boolean; status: string; reason: string }[] }> {
-  return post("/v1/memory.proposal_decide", { org: id.org, namespace: id.namespace, memory_keys: keys, decision });
+  return post("/v1/memory.proposal_decide", {
+    org: id.org,
+    namespace: id.namespace,
+    memory_keys: keys,
+    decision,
+    ...(decision === "accept" ? { approved_sha256: approvedSha256 } : {}),
+  });
 }
 
 // ===== Revision suggestions for a conflict =====

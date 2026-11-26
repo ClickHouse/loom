@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.hashing import hash_text
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_proposals import (
@@ -45,7 +46,7 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
     where.extend(scope_where(request_scope(), params))
     rows = await ch.query_all(
         f"""
-        SELECT memory_key, toString(memory_id) AS mid, agent, memory_type,
+        SELECT memory_key, toString(memory_id) AS mid, content_sha256, agent, memory_type,
                -- a high value is readable by key only
                if(sensitivity = 'high', '', substring(value, 1, 400)) AS preview, sensitivity,
                tags, toString(created_at) AS created,
@@ -73,6 +74,7 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
             MemoryProposal(
                 memory_key=key,
                 memory_id=mid,
+                content_sha256=hash_text(r.get("content_sha256")),
                 agent=str(r.get("agent") or ""),
                 memory_type=str(r.get("memory_type") or ""),
                 value_preview=str(r.get("preview") or ""),
@@ -132,6 +134,7 @@ async def handle_memory_proposal_decide(
         input.decision,
         actor=writer_actor() or "-",
         reason=input.reason,
+        approved_sha256=input.approved_sha256,
     )
     return MemoryProposalDecideOutput(
         decided=sum(1 for r in results if r.decided),

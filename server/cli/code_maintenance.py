@@ -373,7 +373,7 @@ async def _warm(args: argparse.Namespace) -> int:
             llm=llm,
             search_kwargs={
                 "top_k": 10,
-                "token_budget": 8000,
+                "token_budget": settings.code_ask_token_budget,
                 "abstain_threshold": abstain_threshold,
                 "noise_floor": noise_floor,
             },

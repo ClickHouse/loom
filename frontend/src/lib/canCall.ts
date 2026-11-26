@@ -154,9 +154,9 @@ export const OP_MIN_ROLE = {
   // The Review queue's Duplicates tab.
   "memory.dedup_list": ADMIN,
   "knowledge.dedup_list": ADMIN,
-  // The Review queue's Proposals tab: read by a viewer, decided by a writer.
+  // Proposal acceptance requires an authenticated human administrator.
   "memory.proposals": VIEWER,
-  "memory.proposal_decide": WRITER,
+  "memory.proposal_decide": ADMIN,
   // Settings → Structure.
   "memory_schema.list": VIEWER,
   "memory_schema.register": ADMIN,

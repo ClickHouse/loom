@@ -12,11 +12,18 @@ CH-free: every projection leg is stubbed.
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 
 from server.memory.api.models_bulk import REFUSED, MemorySetFromMessagesInput, _BulkSetResult
+
+
+@pytest.fixture(autouse=True)
+def _no_refused_intake(monkeypatch):
+    # Pipeline and projection cases; actual refusal admission is tested separately.
+    monkeypatch.setattr("server.memory.store.refusals.check_intake", AsyncMock())
 
 
 def _stub_projections(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -36,7 +43,6 @@ def _stub_projections(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mx, "_link_written_memories_to_evidence", _zero)
     monkeypatch.setattr(mx, "write_memory_chunks", _none)
     monkeypatch.setattr(mx, "_write_session_summary", _none)
-    monkeypatch.setattr(mx, "_draft_session_summary", _none)
     monkeypatch.setattr(mx, "record_input_projection_failure", _none)
     monkeypatch.setattr(_bulk_set_mod, "record_input_projection_failure", _none)
 
@@ -153,37 +159,25 @@ async def test_schema_mode_surfaces_stubbed_fields(
     assert bool(out.degraded) is not projected
 
 
-@pytest.mark.asyncio
-async def test_any_pipeline_failure_stops_the_digest_draft(
+async def test_any_pipeline_failure_prevents_digest_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The digest draft (an LLM call and an embed) runs beside the extractor; a pipeline
-    failure that is not an ExtractionError must stop it too, not leave it spending."""
-    import asyncio
+    from unittest.mock import AsyncMock
 
     import server.memory.app.extract.handler as mx
     import server.memory.app.pipeline as pipe
 
     _stub_projections(monkeypatch)
-    cancelled: list[bool] = []
+    summary = AsyncMock()
 
-    async def _slow_draft(*args, **kwargs):
-        try:
-            await asyncio.sleep(30)
-        except asyncio.CancelledError:
-            cancelled.append(True)
-            raise
-
-    async def _pipeline_raises(steps, state):
-        await asyncio.sleep(0)  # the draft has started
+    async def fail(*args, **kwargs):
         raise RuntimeError("bulk write refused")
 
-    monkeypatch.setattr(mx, "_draft_session_summary", _slow_draft)
-    monkeypatch.setattr(pipe, "run_pipeline", _pipeline_raises)
+    monkeypatch.setattr(mx, "_write_session_summary", summary)
+    monkeypatch.setattr(pipe, "run_pipeline", fail)
     with pytest.raises(RuntimeError, match="bulk write refused"):
         await mx.handle_memory_set_from_messages(_input())
-    await asyncio.sleep(0)
-    assert cancelled == [True]
+    summary.assert_not_awaited()
 
 
 @pytest.mark.asyncio

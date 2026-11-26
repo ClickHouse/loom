@@ -1,0 +1,17 @@
+services:
+  nginx:
+    ports: !override
+      - target: 80
+        published: "17881"
+        host_ip: "127.0.0.1"
+        protocol: tcp
+      - target: 443
+        published: "17882"
+        host_ip: "127.0.0.1"
+        protocol: tcp
+  plugin_daemon:
+    ports: !override
+      - target: 5003
+        published: "17883"
+        host_ip: "127.0.0.1"
+        protocol: tcp

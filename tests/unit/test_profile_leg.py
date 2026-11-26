@@ -230,8 +230,9 @@ def test_the_stub_embeds_label_and_value_where_the_old_vector_lives() -> None:
     class _Repo:
         pass
 
-    async def _insert(rows: list, ch: Any = None) -> None:
+    async def _insert(rows: list, ch: Any = None) -> list:
         written.extend(rows)
+        return rows
 
     import server.memory.store as mr
 

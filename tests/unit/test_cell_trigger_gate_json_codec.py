@@ -125,7 +125,7 @@ async def test_actual_verify_keeps_full_proof_with_native_json(monkeypatch, faul
     monkeypatch.setattr(server.embedding, "get_embedder", lambda: FakeNGramEmbedder(dim=16))
     block = await gate._build_block(args(), 1)
     block.seqs = [("org", "ns", i + 1) for i in range(5)]
-    assert len(MEMORY_PERSISTED_COLS) == 61
+    assert len(MEMORY_PERSISTED_COLS) == 62
     assert all(set(row) == set(MEMORY_PERSISTED_COLS) for row in block.rows)
     records = [
         {
@@ -167,7 +167,7 @@ async def test_actual_verify_keeps_full_proof_with_native_json(monkeypatch, faul
 
     def full_compare(expected, actual, fields, phase):
         if phase == "full memory projection":
-            assert set(fields) == set(block.rows[0]) and len(fields) == 61
+            assert set(fields) == set(block.rows[0]) and len(fields) == 62
         phases.append(phase)
         return compare(expected, actual, fields, phase)
 

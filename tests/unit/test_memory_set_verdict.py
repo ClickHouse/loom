@@ -25,6 +25,7 @@ from server.memory.app import stack as _stack_mod
 from server.memory.app import write as write_mod
 from server.memory.domain.conflicts import ConflictPeer, ConflictResult
 from server.memory.store import MemoryRow
+from server.memory.store.rows import identity_key
 from server.observability.event_args import project_result
 
 _NOW = datetime(2026, 9, 14, 12, 0, 0)
@@ -34,16 +35,21 @@ _PEER_ID = "33333333-3333-3333-3333-333333333333"
 class _CH:
     def __init__(self) -> None:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
+        self.heads = {}
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         """The graph-write marks a scheduled projection flushes are not the write under test."""
         if table not in ("loom.namespace_write_marks", "loom.graph_projections"):
             self.inserts.append((table, rows))
+        if table == "loom.memory":
+            self.heads.update({identity_key(row): dict(row) for row in rows})
 
     async def query_one(self, *_: Any, **__: Any) -> dict[str, Any] | None:
         return None
 
-    async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
+    async def query_all(self, sql: str, params: Any = None, **__: Any) -> list[dict[str, Any]]:
+        if "FROM loom.memory FINAL" in sql and "keys" in (params or {}):
+            return [self.heads[key] for key in params["keys"] if key in self.heads]
         return []
 
     async def execute(self, *_: Any, **__: Any) -> None:
@@ -153,6 +159,7 @@ def _wire(
         return "hash"
 
     monkeypatch.setattr("server.observability.audit.emit", _audit)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _audit)
 
     async def _usage(**kw: Any) -> None:
         calls.usage.append(kw)

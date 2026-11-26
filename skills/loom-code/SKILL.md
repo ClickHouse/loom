@@ -54,8 +54,9 @@ read is one function instead of one file. Reading the whole file after a
 
 ## Budgets
 
-Every op takes `token_budget`. Defaults are tuned per op (search 4k,
-context_pack 2.5k, impact 3k). Ask for `bodies: "none"` on the first call
+`code.search` has no token cap by default. `LOOM_CODE_SEARCH_TOKEN_BUDGET`
+sets a deployment default; an explicit `token_budget` overrides it, and `0`
+means unlimited. Other ops keep their own defaults. Ask for `bodies: "none"` on the first call
 and expand one unit rather than raising the budget. `code.ask` returns a
 grounded prose answer with citations; use it for "how does X work"
 questions, not for locating code.

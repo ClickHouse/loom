@@ -33,6 +33,9 @@ async def test_a_merged_row_that_reads_as_high_gets_no_vector(
     fenced: list[tuple[Any, int]] = []
 
     class _CH:
+        async def query_all(self, *args, **kwargs):
+            return []
+
         async def insert(self, table: str, rows: Any, **_: Any) -> None:
             inserted.append(table)
 

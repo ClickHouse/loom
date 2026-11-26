@@ -18,7 +18,7 @@ merge, duplicate, conflict or rejected. The verdicts and conflict policies are i
 | Correct a fact you found through search or ask        | `memory.update`                 | Resolves the key namespace-wide; keeps a pin.                                   |
 | Correct one exact row by id                           | `memory.update_by_id`           | Addressed by `(org, memory_id)`.                                                |
 | Change only the expiry                                | `memory.touch`                  | One key or up to 1,000 `memory_keys`; value untouched.                          |
-| Retire a fact                                         | `memory.delete`                 | Tombstone; `memory.restore` revives it within 14 days.                          |
+| Retire a fact                                         | `memory.delete`                 | Tombstone and permanent refusal of the removed value.                           |
 | Rename a key and keep the old one readable            | `memory.move`                   | `keep_redirect` (default true) leaves a redirect.                               |
 | Guard a row against edits or deletion                 | `memory.lock` / `memory.unlock` | Unlock is admin.                                                                |
 | Apply one change to many existing rows                | `memory.apply`                  | Dry run by default.                                                             |
@@ -178,14 +178,14 @@ key then answers `conflict_verdict: "conflict"`, `peers[0].memory_key:
 
 ## Changing and retiring facts
 
-| Op                    | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.update`       | Resolves `memory_key` across the namespace when no identity is given (`"-"` counts as none, and `"*"` for `agent`). One live row: updated. None: `updated=false, reason="not_found"`. Several: 409 `AMBIGUOUS_KEY` with `candidates`. Runs the conflict check and keeps a pin. An expired row answers 409 `EXPIRED` unless `revive=true`.                                                                                                                              |
-| `memory.update_by_id` | One row by `(org, memory_id)`. The namespace is resolved and checked before the read; a refusal answers `updated=false`, not 403.                                                                                                                                                                                                                                                                                                                                      |
-| `memory.delete`       | Writes a tombstone, looking past the caller's identity for the key (`found=false` when no live row exists). `memory.delete_version` instead reads only the caller's exact identity (a concrete agent) and, under the key's write lock, deletes only the version it names, else `tombstoned=false, reason="version_changed"`. Consolidated summaries lose the row: retired when no source survives, else `conflicted`. `memory.restore` revives the key within 14 days. |
-| `memory.move`         | Renames a key, carrying value, type, tags, entities, validity and provenance. The source becomes a redirect (`canonical_key`, `follow=true`) or, with `keep_redirect=false`, a tombstone. See [optimize a namespace](../../guides/optimize-namespace.md).                                                                                                                                                                                                              |
-| `memory.lock`         | `read_only` refuses value, expiry and deletion changes; `no_delete` refuses tombstone, redact, clear and consolidation. Both refuse `memory.reject` (423 `LOCKED`); a negative-outcome quarantine leaves a locked row as it is, while its negatives keep counting. A writer may lock or tighten (`until`, `ttl_seconds`); `memory.unlock` is admin. `locked=false, reason="not_found"` is not a lock.                                                                  |
-| `memory.apply`        | A `target` (keys, a filter or a search; filter and search need `limit` ≤ 1,000), an `action` (`delete`, `expire`, `lock`, `label`, `demote`), a `reason`, `dry_run` on by default. Each row goes through the single-row path; refusals come back as `refused` rows. Refuses `agent="*"`.                                                                                                                                                                               |
+| Op                    | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.update`       | Resolves `memory_key` across the namespace when no identity is given (`"-"` counts as none, and `"*"` for `agent`). One live row: updated. None: `updated=false, reason="not_found"`. Several: 409 `AMBIGUOUS_KEY` with `candidates`. Runs the conflict check and keeps a pin. An expired row answers 409 `EXPIRED` unless `revive=true`.                                                                                                                                                           |
+| `memory.update_by_id` | One row by `(org, memory_id)`. The namespace is resolved and checked before the read; a refusal answers `updated=false`, not 403.                                                                                                                                                                                                                                                                                                                                                                   |
+| `memory.delete`       | Writes a tombstone, looking past the caller's identity for the key (`found=false` when no live row exists). `memory.delete_version` instead reads only the caller's exact identity (a concrete agent) and, under the key's write lock, deletes only the version it names, else `tombstoned=false, reason="version_changed"`. Consolidated summaries lose the row: retired when no source survives, else `conflicted`. Permanent refusal blocks restoration and later intake of the removed content. |
+| `memory.move`         | Renames a key, carrying value, type, tags, entities, validity and provenance. The source becomes a redirect (`canonical_key`, `follow=true`) or, with `keep_redirect=false`, a tombstone. See [optimize a namespace](../../guides/optimize-namespace.md).                                                                                                                                                                                                                                           |
+| `memory.lock`         | `read_only` refuses value, expiry and deletion changes; `no_delete` refuses tombstone, redact, clear and consolidation. Both refuse `memory.reject` (423 `LOCKED`); a negative-outcome quarantine leaves a locked row as it is, while its negatives keep counting. A writer may lock or tighten (`until`, `ttl_seconds`); `memory.unlock` is admin. `locked=false, reason="not_found"` is not a lock.                                                                                               |
+| `memory.apply`        | A `target` (keys, a filter or a search; filter and search need `limit` ≤ 1,000), an `action` (`delete`, `expire`, `lock`, `label`, `demote`), a `reason`, `dry_run` on by default. Each row goes through the single-row path; refusals come back as `refused` rows. Refuses `agent="*"`.                                                                                                                                                                                                            |
 
 ## Provenance fields
 
@@ -278,14 +278,12 @@ extraction path (`LOOM_MEMORY_EXTRACT_VALUE_UPDATES`) never runs for an import.
   (`on_expire=anonymize`) and comes back `skipped` (`revised`), before the bulk write's own
   pin and lock guards. A status the import does not recognise leaves the key as it is too,
   as `skipped` (`unknown`). The read and the write are not atomic: a delete that lands
-  between them is written over. Text deleted, retired or rejected under another key is
-  imported again under its `import:` key: the bulk write's dedup sees live rows only.
-- **A tombstone has no way back through the import:** `memory.delete`, `memory.clear` and
-  an expiry with `on_expire=tombstone` all write one, so clearing an agent and importing
-  from the source again answers `skipped` (`deleted`) for every such item. Bring the keys
-  back with `memory.restore` within 14 days of the delete (a re-import then answers
-  `unchanged`), or remove the scope's rows with `erasure.request` and `purge=true`: a key
-  with no rows left is imported as new.
+  between them must still pass the committed write's policy checks. Refused content is
+  blocked under another key too; ordinary retirement does not record permanent refusal.
+- **Import does not reverse a tombstone:** explicit deletion and clearing also refuse
+  the removed content. `memory.restore` can reverse an automatic tombstone within
+  14 days when no refusal exists. Erasure and purge preserve consent fingerprints,
+  so removing stored rows does not grant permission to import their content again.
 - **Provenance:** every row is `source_class=imported`, `valid_at` is the source's time
   and `created_at` the import's. An entry with no `source_trace` is traced by its key.
 - **Categories:** a `category` the namespace registered (`namespace.register_category`) is
@@ -340,16 +338,21 @@ fact. The `relations` it names stay out of the fact graph, and accepting it does
 them: state them again once it is established. A key that already holds a fact answers 409
 `KEY_HOLDS_FACT`. `memory.proposals` lists proposals with the graded runs that relied on
 each. A run in the proposal's namespace counts toward its trial when it names the key in
-`run.complete(memories_used=…)` and is graded with `run.grade`. Loom decides only when the
-owner set `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`,
-`reject_after_fails`). See [runs](../runs.md).
+`run.complete(memories_used=…)` and is graded with `run.grade`. Pass thresholds mark a
+proposal ready for review. With `proposal_policy.mode="auto"`, `reject_after_fails` can
+reject a proposal; automatic acceptance is refused. See [runs](../runs.md).
 
-Any writer, the proposing agent's own token included, accepts or rejects a proposal under
-either policy mode, with `memory.proposal_decide` or on the **Proposals** tab of the
-**Review queue** at `/admin/review_queue`. The admin drawer never lists the Review queue for
-a proposal ([dashboard](../dashboard.md#the-admin-drawer)): open `/admin/review_queue`
-directly. A decision names a key and decides its newest row, so the tab offers no decision
-for a key that more than one listed proposal holds. Accepting a proposal that recorded a
+`memory.proposal_decide` requires an administrator. Acceptance also requires an
+authenticated human whose subject, including linked aliases, differs from the proposer.
+Service accounts and anonymous callers cannot approve. Acceptance supplies
+`approved_sha256`, a map from each key to the canonical `content_sha256` that the reviewer
+read. Missing hashes or changed content leave that key undecided. The approved revision
+records the reviewer's identity and content hash. Pending review survives rejection,
+metadata changes, tombstones and snapshot restoration; ordinary writes cannot activate it.
+A pending row cannot be moved to another key. The **Proposals** tab of the **Review queue**
+at `/admin/review_queue` supplies the displayed hashes when an administrator accepts.
+A decision names a key and decides its newest row, so the tab offers no decision for a key
+that more than one listed proposal holds. Accepting a proposal that recorded a
 contradiction while on trial stores it `conflicted`, and it waits on the **Conflicts** tab.
 Learnings have a review of their own:
 [learnings review queue](./procedures-and-learnings.md#learnings-review-queue).
@@ -470,8 +473,7 @@ These writes send no event:
 A receiver that mirrors what Loom serves reads `memory.auto_retirements` for the rows the
 supersessions above retired: a write's own and the conflict resolver's.
 
-Accepting a proposal, by `memory.proposal_decide` or the namespace's `auto` proposal
-policy, sends `memory.written`.
+Accepting a proposal with `memory.proposal_decide` sends `memory.written`.
 
 ```json
 {

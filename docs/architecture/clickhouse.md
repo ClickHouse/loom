@@ -652,8 +652,9 @@ on `valid_to`, `invalid_at`, `version`; `set` on `status` and `memory_type`.
 
 Loom deletes memory by writing a tombstone version (`tombstoned_at` set, every other column
 carried). It is visible to the next `FINAL` read, keeps prior versions in
-`memory_versions` and leaves `memory.restore` a window. Physical removal is for erasure
-with `purge=true`, runner state, and the supersession rows `knowledge.restore` removes.
+`memory_versions`. Only automatic retirement without permanent refusal has a restore window. Physical removal is for erasure
+with `purge=true`, stale vector caches, runner state, and the supersession rows
+`knowledge.restore` removes.
 
 - **`knowledge.restore`** runs a lightweight `DELETE FROM loom.chunk_supersessions` for the
   rows one delete wrote: the document's `source_uri`, the ingestions of its revision and
@@ -705,6 +706,18 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
   candidate review lease. An invalidated model attempt instead removes only its own
   candidate versions through a lightweight `DELETE FROM`, bounded by the claim version,
   so it cannot remove a later review decision.
+- **Orphaned vector retirement** deletes cache versions below the caller's cutoff by
+  the complete vector sort key, across all creation partitions. A missing authoritative
+  source or matching erasure policy cannot be represented by a newly inserted marker:
+  even an empty marker would recreate residue after a purge. Admission fences stay held
+  until the synchronous lightweight delete is acknowledged; equal and newer versions stay.
+- **Shared canonical retirement** uses the same bounded lightweight deletion when its
+  shared head is absent, source identities are unproven or erasure policy matches. The
+  cutoff preserves a later promotion and avoids writing a tombstone after a purge.
+- **Refused extraction jobs** end through a control-only `ALTER TABLE … UPDATE` on the
+  exact identity, queue id, source version and payload hash. It writes a fixed reason and
+  terminal status without copying transcript bytes or creating a row. Unrelated jobs in
+  the same claim batch can still run.
 - **Extraction retries** (`memory.extraction_retry_mine`) update failed queue rows in
   place, asynchronously. The update targets the exact identity and version observed, with
   the caller's namespace, principal and read scope. Copying the transcript into a new

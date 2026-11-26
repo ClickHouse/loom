@@ -83,6 +83,8 @@ the [tokens and grants guide](../guides/tokens-and-grants.md).
 
 ## Sharing facts across agents and namespaces
 
+For repository agents that share reviewed team rules, see the [repository sharing exercise](../use-cases/agent-memory.md#share-memory-across-repositories).
+
 Inside a namespace every writer's rows are visible to every reader by default
 (`agent="*"`). Crossing a boundary is always a copy with lineage, never a shared row:
 

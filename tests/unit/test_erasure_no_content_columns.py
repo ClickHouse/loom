@@ -24,6 +24,9 @@ _CONTENT_SHAPED = re.compile(
 
 # table -> {column: why it is not subject content}
 _REVIEWED: dict[str, dict[str, str]] = {
+    "loom.memory_refusals": {
+        "scope_value": "the namespace or user id whose deletion consent the hash guards"
+    },
     "loom.blacklist": {"reason": "the admin's reason for a refusal pattern"},
     "loom.org_model_calls": {"reason": "the org admin's note on switching model calls off"},
     "loom.runtime_overrides": {"value": "a rate limit or latency budget as JSON numbers"},

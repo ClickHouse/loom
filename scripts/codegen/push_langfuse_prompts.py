@@ -61,7 +61,6 @@ def registry() -> dict[str, str]:
     from server.memory.app import extract as extract_svc
     from server.memory.app import period_digest as _period_digest
     from server.memory.app import rerank
-    from server.memory.app import session_summary as sess
     from server.memory.domain import extraction_prompts as extract
     from server.memory.domain import search_prompts
     from server.memory.workers import entity_extractor, profile_consolidation
@@ -88,7 +87,6 @@ def registry() -> dict[str, str]:
         # relation backfill, sent bare
         "loom-extract-relations": extract_svc._RELATION_BACKFILL_SYSTEM_PROMPT,
         # summarisation / workers
-        "loom-session-summary": sess._SESSION_SUMMARY_SYSTEM,
         "loom-period-digest": _period_digest._PERIOD_DIGEST_SYSTEM,
         "loom-conversation-title": conversation_titler._TITLE_SYSTEM,
         "loom-profile-fold": profile_consolidation._FOLD_SYSTEM,

@@ -272,7 +272,8 @@ on the same line of work revises the same brief, or `session/<session_id>` when 
 is known. Keys match `^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,159}$`. A token bounded to one
 user (or session) stores its briefs as `~<user>~<key>` (or `~<user>~<session>~<key>`) and
 sees them as `<key>`; a namespace-wide token lists them with that prefix and can get or
-delete them by it. A bounded token can't send a `~` key.
+delete them by it. An owner-scoped token uses its short key for ordinary reads and writes
+and can use its own stored key when reading a handoff snapshot.
 
 **Revising.** A save with `events` (kinds `user`, `assistant`, `edit`, `command`,
 `error`, `read`, `search`, `tool`, `note`, `summary`; up to 4,000 per call) is condensed
@@ -305,6 +306,23 @@ names the saved briefs. Loading one happens when the person asks, through the
 `loom-session` skill or the briefs section of the dashboard's Conversations page.
 `brief_get(full=true)` appends the client's own last compaction summary verbatim below
 the brief. Briefs never load on their own: only the person knows which line of work they are resuming.
+
+### Hand off a revision
+
+On the Conversations page, open a session brief, select the revision, and
+choose **Copy handoff link**. The link identifies one saved revision and its
+Git commit. Paste it into a pull request or issue. A teammate with viewer
+access to the namespace can open the brief, read what was tried and what to
+do next, and choose **Copy restore prompt** to continue in a coding agent.
+The plugins read the link through the configured Loom server and use the
+recipient's credentials.
+
+The handoff includes the latest verification result recorded in the brief.
+The plugin records whether the sender had uncommitted changes and whether
+the saved commit appeared in local remote-tracking refs. Those refs can
+lag the remote. Commit and push changes a teammate needs before sharing.
+The link still selects its original revision after later saves. Deleting
+the brief makes its handoff links unavailable.
 
 ## Example
 

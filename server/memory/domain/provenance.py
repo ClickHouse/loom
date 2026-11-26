@@ -110,6 +110,8 @@ def cli_actor(command: str) -> str:
 # server/ is one of these, or a `loom` command's (tests/unit/test_model_call_writers.py).
 PIPELINE_ACTORS: Final = frozenset(
     {
+        "process:memory_refusal",
+        "process:session_contrast",
         EXTRACTION_WORKER_ACTOR,
         "process:budget_warning",
         "process:code_coverage_notify",

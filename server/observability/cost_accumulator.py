@@ -44,6 +44,7 @@ PRICE_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
     "gpt-6-astra": (0.010, 0.050),
     "claude-haiku-4-5": (0.001, 0.005),
     "claude-haiku-4-5-20251001": (0.001, 0.005),
+    "claude-haiku-5-5": (0.0001, 0.0005),
     "claude-sonnet-4-6": (0.003, 0.015),
     "claude-opus-4-8": (0.005, 0.025),
     # Claude 5 family, Anthropic first-party list prices (per 1k tokens:
@@ -93,6 +94,14 @@ def _note_unpriced(model: str) -> None:
     )
 
 
+def _llm_rates(model: str, input_tokens: int) -> tuple[float, float]:
+    incoming, outgoing = PRICE_PER_1K_TOKENS.get(model, (0.0, 0.0))
+    # Haiku's long-context rate applies to the whole request, including cached input.
+    if model == "claude-haiku-5-5" and input_tokens > 100000:
+        return incoming * 5, outgoing * 5
+    return incoming, outgoing
+
+
 def llm_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     """USD for one LLM call. Pure — shared with the GenAI span emitter.
 
@@ -102,7 +111,7 @@ def llm_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     of putting cost on the span is that an operator can trust both.
     """
     _note_unpriced(model)
-    in_price, out_price = PRICE_PER_1K_TOKENS.get(model, (0.0, 0.0))
+    in_price, out_price = _llm_rates(model, input_tokens)
     return (max(0, input_tokens) / 1000.0) * in_price + (max(0, output_tokens) / 1000.0) * out_price
 
 
@@ -148,13 +157,13 @@ def is_openai_model(model: str) -> bool:
     return str(model or "").startswith(_OPENAI_PREFIXES)
 
 
-def cache_read_price_per_1k(model: str) -> float:
+def cache_read_price_per_1k(model: str, *, input_tokens: int = 0) -> float:
     """USD per 1k cached prompt tokens read: the flat override, else the
     provider's multiplier on the input rate."""
     override = CACHE_READ_PER_1K_OVERRIDE.get(model)
     if override is not None:
         return override
-    in_price, _ = PRICE_PER_1K_TOKENS.get(model, (0.0, 0.0))
+    in_price, _ = _llm_rates(model, input_tokens)
     mult = OPENAI_CACHE_READ_MULT if is_openai_model(model) else CACHE_READ_MULT
     return in_price * mult
 
@@ -174,8 +183,17 @@ def turn_cost_usd(
     agent-side series and loom's own upstream series price alike. $0 for an
     unlisted model — callers check `is_priced` and record that separately."""
     _note_unpriced(model)
-    in_price, out_price = PRICE_PER_1K_TOKENS.get(model, (0.0, 0.0))
-    read_price = cache_read_price_per_1k(model)
+    total_input = sum(
+        max(0, value)
+        for value in (
+            input_tokens,
+            cache_read_tokens,
+            cache_creation_5m_tokens,
+            cache_creation_1h_tokens,
+        )
+    )
+    in_price, out_price = _llm_rates(model, total_input)
+    read_price = cache_read_price_per_1k(model, input_tokens=total_input)
     return (
         max(0, input_tokens) / 1000.0 * in_price
         + max(0, cache_read_tokens) / 1000.0 * read_price

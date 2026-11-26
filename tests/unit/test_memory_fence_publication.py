@@ -44,6 +44,11 @@ async def test_contended_value_write_publishes_no_embedding(
     monkeypatch.setattr(bulk_set, "_bulk_announce", announce)
 
     class CH:
+        async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
+            return [_row().model_dump()]
+
         async def insert(self, table, rows, **kw):
             inserted.setdefault(table, []).extend(rows)
 
@@ -55,7 +60,9 @@ async def test_contended_value_write_publishes_no_embedding(
                 SimpleNamespace(memory_row=memory, embedder=SimpleNamespace(dim=4)), ch, embedding
             )
         elif operation == "set_high":
-            await set_commit._land_plain_row(SimpleNamespace(memory_row=memory), ch, high=True)
+            await set_commit._land_plain_row(
+                SimpleNamespace(memory_row=memory, inserted=False), ch, high=True
+            )
         elif operation == "bulk_high":
             await bulk_set._land_batch(
                 ch, SimpleNamespace(memory_rows=[memory], embedding_rows=[]), None, {}
@@ -125,6 +132,11 @@ async def test_unanswered_high_memory_send_still_fences_search(monkeypatch):
     memory = store.build_memory_version_row(source, sensitivity="high")
 
     class LostAnswer:
+        async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
+            return []
+
         async def insert(self, *args, **kw):
             raise TimeoutError("the memory insert may have committed")
 
@@ -160,6 +172,11 @@ async def test_high_write_cancelled_during_holder_release_still_fences_search(
     inserted = []
 
     class CH:
+        async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
+            return [_row().model_dump()]
+
         async def insert(self, table, batch, **kw):
             inserted.extend(batch)
 
@@ -204,13 +221,20 @@ async def test_cancelled_high_send_fences_and_preserves_the_cancellation(monkeyp
     memory = store.build_memory_version_row(_row(), sensitivity="high")
 
     class CH:
+        async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
+            return []
+
         async def insert(self, *args, **kw):
             raise original
 
     ch = CH()
     with pytest.raises(asyncio.CancelledError) as caught:
         if operation == "set":
-            await set_commit._land_plain_row(SimpleNamespace(memory_row=memory), ch, high=True)
+            await set_commit._land_plain_row(
+                SimpleNamespace(memory_row=memory, inserted=False), ch, high=True
+            )
         else:
             await bulk_set._land_batch(
                 ch, SimpleNamespace(memory_rows=[memory], embedding_rows=[]), None, {}
@@ -232,6 +256,11 @@ async def test_copy_commit_mark_and_followups_survive_holder_release_cancellatio
     memory = store.build_memory_version_row(_row())
 
     class CH:
+        async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
+            return [_row().model_dump()]
+
         async def insert(self, *args, **kw):
             return None
 
@@ -318,6 +347,11 @@ async def test_acknowledged_point_write_records_after_release_cancellation(
     release = leases.release_shielded
 
     class CH:
+        async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
+            return [_row().model_dump()]
+
         async def insert(self, table, batch, **kw):
             assert table == "loom.memory"
 
@@ -379,6 +413,10 @@ async def test_unacknowledged_restore_leaves_its_mirror_for_retry(monkeypatch):
             raise RuntimeError("the server's insert answer was lost")
 
         async def query_all(self, sql, params):
+            if "FROM loom.memory_refusals" in sql:
+                return []
+            if "PREWHERE (org, namespace" in sql:
+                return [source.model_dump()]
             assert "AS search_deleted" in sql
             return [{"history": [(200, False), (100, True)], "search_deleted": self.search_deleted}]
 
@@ -439,6 +477,11 @@ async def test_acknowledged_copy_finishes_followups_under_repeated_cancellation(
     insert = lifecycle.insert_memory_versions
 
     class CH:
+        async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
+            return [_row().model_dump()]
+
         async def insert(self, *args, **kw):
             return None
 
@@ -492,6 +535,11 @@ async def test_bulk_embedding_failure_still_announces_acknowledged_memory(monkey
     inserted = []
 
     class CH:
+        async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
+            return [_row().model_dump()]
+
         async def insert(self, table, rows, **kw):
             assert table == "loom.memory"
             inserted.extend(rows)
@@ -518,6 +566,11 @@ async def test_bulk_followup_finishes_under_repeated_cancellation(monkeypatch, c
     completed = []
 
     class CH:
+        async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
+            return [_row().model_dump()]
+
         async def insert(self, *args, **kw):
             return None
 

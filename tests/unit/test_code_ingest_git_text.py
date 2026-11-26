@@ -153,7 +153,7 @@ def test_an_empty_manifest_is_read_once_and_the_python_layout_kept(tmp_path, mon
     real = pl.layout_from_texts
     monkeypatch.setattr(pl, "layout_from_texts", lambda *a: built.append(1) or real(*a))
     monkeypatch.setitem(ingest_resolve._LIVE_PATHS_CACHE, ("o", "n"), (0.0, set()))
-    monkeypatch.setattr(ingest_resolve, "_PY_LAYOUT_CACHE", {})
+    ingest_resolve._PY_LAYOUT_CACHE.clear()
     present = {"setup.cfg", "pyproject.toml", "a.py"}
     with ingest_resolve.git_text_source(git_dir, sha):
         for _ in range(3):  # one per Python file of a pass
@@ -197,7 +197,10 @@ def test_a_registry_empty_for_an_oversize_root_manifest_is_cached(tmp_path) -> N
     try:
         with ingest_resolve.git_text_source(git_dir, sha):
             got = asyncio.run(ingest_resolve._workspace_registry(_Repo(), "o", "n", present))  # type: ignore[arg-type]
-        assert got == {} and ingest_resolve._WORKSPACE_CACHE.get(("o", "n")) == {}
+            assert (
+                got == {}
+                and ingest_resolve._WORKSPACE_CACHE.get(ingest_resolve._source_key("o", "n")) == {}
+            )
     finally:
         ingest_resolve._LIVE_PATHS_CACHE.pop(("o", "n"), None)
 
@@ -217,7 +220,7 @@ def test_the_manifest_cache_is_bounded_by_the_characters_it_holds() -> None:
     assert cache.weight == 0
     bounded = ingest_resolve._PACKAGE_JSON_CACHE
     assert bounded.maxweight == ingest_resolve.PACKAGE_JSON_CACHE_BYTES
-    bounded.put(("o", "n", "package.json", 1), "a" * 1000 + "\U0001f600")  # 4 bytes a char held
+    bounded.put((("o", "n"), "package.json", 1), "a" * 1000 + "\U0001f600")  # 4 bytes a char held
     assert bounded.weight >= 4 * 1001
 
 

@@ -3,8 +3,8 @@
 `memory.ask` synthesizes from fact excerpts (loom.memory, ≤2,000 chars each).
 A fact is a compression of the turns it came from, and some questions need
 the turns: the exact wording, the number the extractor rounded, the second
-clause it dropped. The deep path recalls summaries, lets one LLM call pick the
-relevant ones, follows the summary→event link to the raw text and answers again.
+clause it dropped. The deep path selects relevant facts, follows their evidence
+links to the supporting raw text and answers again.
 Loom stores the two tiers as `loom.memory` and `loom.memory_evidence`, linked by
 `loom.memory_belief_sources`; this module is the read that follows the link.
 
@@ -358,145 +358,6 @@ async def fetch_raw_evidence(
 
 
 SUMMARY_KEY_PREFIX = "summary:"
-_TOKEN_RE = re.compile(r"[a-z0-9]{4,}")
-
-
-def _tokens(text: str) -> set[str]:
-    return set(_TOKEN_RE.findall((text or "").lower()))
-
-
-def session_ids_of(memory_keys: list[str]) -> list[str]:
-    """Session ids behind `summary:<session_id>` hits (the session-summary
-    leg, fetch_session_summaries), in order, de-duplicated."""
-
-    out: list[str] = []
-    for key in memory_keys:
-        if key.startswith(SUMMARY_KEY_PREFIX):
-            sid = key[len(SUMMARY_KEY_PREFIX) :]
-            if sid and sid not in out:
-                out.append(sid)
-    return out
-
-
-def window_turns_by_question(
-    rows: list[dict[str, Any]],
-    question: str,
-    *,
-    max_chars: int,
-    context_turns: int = 1,
-) -> list[dict[str, Any]]:
-    """The turns of a session worth opening for `question`, bounded.
-
-    A session summary is one hit for a whole session (tens of thousands of
-    characters), so it cannot be opened whole. Score each turn by the
-    distinct question tokens (4+ chars) it contains, keep the best-scoring
-    turns plus `context_turns` neighbours on each side for coherence, in
-    chronological order, until `max_chars` is spent. Zero-score turns are
-    only kept as neighbours.
-    """
-
-    if not rows or max_chars <= 0:
-        return []
-    q = _tokens(question)
-    scored = [(len(q & _tokens(str(r.get("content") or ""))), i) for i, r in enumerate(rows)]
-    keep: set[int] = set()
-    spent = 0
-    for score, i in sorted(scored, key=lambda p: (-p[0], p[1])):
-        if score <= 0:
-            break
-        block = range(max(0, i - context_turns), min(len(rows), i + context_turns + 1))
-        cost = sum(len(str(rows[j].get("content") or "")) for j in block if j not in keep)
-        if spent + cost > max_chars:
-            # Take the scoring turn alone if it fits; otherwise stop.
-            solo = len(str(rows[i].get("content") or ""))
-            if i not in keep and spent + solo <= max_chars:
-                keep.add(i)
-                spent += solo
-            continue
-        for j in block:
-            keep.add(j)
-        spent += cost
-    return [rows[i] for i in sorted(keep)]
-
-
-async def fetch_session_turns(
-    *,
-    org: str,
-    namespace: str,
-    session_ids: list[str],
-    question: str,
-    max_chars_per_session: int,
-    max_chars_total: int,
-    ch: Any | None = None,
-) -> list[EvidenceTurn]:
-    """Open the sessions behind session-summary hits, windowed by the question.
-
-    The summary leg ranks a whole session; this reads that session's turns
-    from `loom.memory_evidence` (a key-prefix read on org, namespace, then
-    session_id) and keeps the question-relevant window per session, capped
-    per session and in total. Labelled with the `summary:<sid>` key so the
-    synthesizer's citation points back at the hit.
-    """
-
-    if not session_ids:
-        return []
-    from server.core.ch import get_client
-
-    client = ch or get_client()
-    # Session ids repeat across users: a narrowed read opens only its own.
-    params: dict[str, Any] = {"org": org, "ns": namespace, "sids": list(session_ids)}
-    in_scope = scope_and(request_scope(), params)
-    # Versioned, not FINAL: an evidence row's id is minted per
-    # insert, so the only re-insert is a tombstone; the latest version by
-    # `created_at` decides, as FINAL would, without the query-time merge
-    # (same rows, a fraction of the read).
-    sql = f"""
-        SELECT session_id, role, toString(observed_at) AS observed_at, content
-        FROM (
-            SELECT session_id, role, observed_at, content, evidence_id, tombstoned_at
-            FROM loom.memory_evidence
-            WHERE org = {{org:String}}
-              AND namespace = {{ns:String}}
-              AND session_id IN {{sids:Array(String)}}
-              AND content != ''{in_scope}
-            ORDER BY evidence_id, created_at DESC
-            LIMIT 1 BY evidence_id
-        )
-        WHERE tombstoned_at IS NULL
-        ORDER BY session_id, observed_at ASC, evidence_id
-        LIMIT 2000
-    """
-    try:
-        rows = await client.query_all(sql, params=params)
-    except Exception as e:  # noqa: BLE001 — fail-open
-        log.warning("deep-evidence session fetch failed (fail-open): %s", e)
-        return []
-    # A turn that reads as high never reaches the synthesis prompt.
-    rows = await asyncio.to_thread(without_high, rows, lambda r: str(r.get("content") or ""))
-    by_sid: dict[str, list[dict[str, Any]]] = {}
-    for r in rows:
-        by_sid.setdefault(str(r.get("session_id") or ""), []).append(r)
-    out: list[EvidenceTurn] = []
-    total = 0
-    for sid in session_ids:
-        budget = min(max_chars_per_session, max_chars_total - total)
-        if budget <= 0:
-            break
-        for r in window_turns_by_question(by_sid.get(sid, []), question, max_chars=budget):
-            content = str(r.get("content") or "").strip()
-            if not content:
-                continue
-            total += len(content)
-            out.append(
-                EvidenceTurn(
-                    memory_key=f"{SUMMARY_KEY_PREFIX}{sid}",
-                    role=str(r.get("role") or ""),
-                    observed_at=str(r.get("observed_at") or "")[:19],
-                    content=content,
-                    support_type="session",
-                )
-            )
-    return out
 
 
 def render_raw_evidence(turns: list[EvidenceTurn]) -> str:
@@ -541,22 +402,7 @@ async def deep_evidence_pass(
         max_chars_total=max_chars_total,
         ch=ch,
     )
-    # A picked session-summary hit opens its session, windowed by the
-    # question, with whatever budget the fact evidence left.
-    sids = session_ids_of(keys)
-    if sids:
-        left = max_chars_total - sum(len(t.content) for t in turns)
-        if left > 0:
-            turns = turns + await fetch_session_turns(
-                org=org,
-                namespace=namespace,
-                session_ids=sids,
-                question=question,
-                max_chars_per_session=max_chars_per_memory,
-                max_chars_total=left,
-                ch=ch,
-            )
-            turns.sort(key=lambda t: (t.observed_at, t.memory_key))
+    # A digest proves its source facts, not every raw turn from their session.
     block = render_raw_evidence(turns)
     return DeepEvidence(
         selected_keys=keys,
@@ -575,10 +421,7 @@ __all__ = [
     "candidate_lines",
     "deep_evidence_pass",
     "fetch_raw_evidence",
-    "fetch_session_turns",
     "parse_picks",
     "render_raw_evidence",
     "select_candidates",
-    "session_ids_of",
-    "window_turns_by_question",
 ]

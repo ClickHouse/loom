@@ -1386,8 +1386,10 @@ class MemoryClient:
         if_superseded_by: str | None = None,
         only_if_superseded: bool = False,
     ) -> dict[str, Any]:
-        """Bring back a deleted memory (within the 14-day grace window) or one
-        Loom retired on its own (status `superseded`).
+        """Reverse an automatic tombstone within its 14-day grace window, or
+        an automatic supersession. Explicit deletion and clearing record a
+        permanent refusal: restoring that content raises VALIDATION_FAILED
+        with reason `forgotten`.
 
         `if_superseded_by` restores the row only while it is still retired
         behind that memory id (as a `memory.auto_supersede` record names it);
@@ -1399,13 +1401,12 @@ class MemoryClient:
           - `memory_id: str | None` — UUID of the restored row.
           - `version: int | None` — new version assigned.
           - `expired: bool` — True when the tombstone aged past the 14d
-            grace window. The data is being GC'd; restoration is no longer
-            possible.
-          - `from_status: str` — `"tombstoned"` (a delete undone) or
+            grace window; restoration is no longer available.
+          - `from_status: str` — `"tombstoned"` (automatic expiry reversed) or
             `"superseded"` (a retirement reversed); empty on a no-op.
 
         Preserves the original char_limit, pinned, tags, and entities
-        across the restore. An undone delete clears `expires_at`, so the row
+        across the restore. Reversing an automatic tombstone clears `expires_at`, so the row
         gets a fresh lease (its old expiry may have passed, which would
         tombstone it again at once); an undone retirement keeps it.
         """
@@ -1434,9 +1435,8 @@ class MemoryClient:
 
         Returns `{cleared_at, rows_affected: {table: count}, total, locked_skipped}`;
         locked rows stay and are counted in `locked_skipped`.
-        Tombstone-not-hard-delete: cleared rows are recoverable for the
-        14-day grace window by re-writing the same key. For
-        cross-system erasure use `erasure.request_user_id` or
+        History remains, but restoration and re-writing refused content are
+        blocked. For physical erasure across stores use `erasure.request_user_id` or
         `erasure.request_namespace`.
         """
         payload: dict[str, Any] = {

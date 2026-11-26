@@ -370,9 +370,9 @@ function dirOf(cwd) {
 }
 
 /** One bounded git call's stdout, trimmed unless `raw` (a diff or porcelain
- *  output keeps its bytes); "" when git is missing, the directory is not a
+ *  output keeps its bytes); `fallback` when git is missing, the directory is not a
  *  repository, or the call fails, times out or writes past `maxBuffer`. */
-export function git(args, cwd, { timeoutMs = 1500, raw = false, maxBuffer = 16 * 1024 * 1024 } = {}) {
+export function git(args, cwd, { timeoutMs = 1500, raw = false, maxBuffer = 16 * 1024 * 1024, fallback = "" } = {}) {
   try {
     const out = execFileSync("git", args, {
       cwd: dirOf(cwd),
@@ -384,7 +384,7 @@ export function git(args, cwd, { timeoutMs = 1500, raw = false, maxBuffer = 16 *
     });
     return raw ? out : out.trim();
   } catch {
-    return "";
+    return fallback;
   }
 }
 

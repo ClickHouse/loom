@@ -21,6 +21,7 @@ _DATA_TABLES = frozenset(
         "loom.analysis_canary",
         "loom.audit_log",
         "loom.blacklist",
+        "loom.memory_refusals",
         "loom.blob_uploads",
         "loom.categories",
         "loom.chunk_supersessions",

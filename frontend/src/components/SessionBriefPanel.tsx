@@ -3,15 +3,16 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Select } from "@clickhouse/click-ui/Select";
 import { getBrief, type BriefGetResponse } from "../api/briefs";
 import { CopyButton } from "./CopyButton";
+import { briefHandoffUrl } from "./SessionHandoff";
 import { relativeTime } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 
 /** What to say in Claude Code or Codex (the loom-session skill) to restore a
  *  brief: the brief with the client's compaction summary, or, asked for
  *  explicitly, with every recorded turn as well. */
-export function restorePhrase(key: string, depth: "restore" | "transcript" = "restore"): string {
-  if (depth === "transcript") return `Restore the session brief ${key} with its full transcript.`;
-  return `Restore the session brief ${key}.`;
+export function restorePhrase(key: string, depth: "restore" | "transcript" = "restore", revision = 0): string {
+  const target = revision ? `revision ${revision} of the session brief ${key}` : `the session brief ${key}`;
+  return `Restore ${target}${depth === "transcript" ? " with its full transcript" : ""}.`;
 }
 
 /**
@@ -58,11 +59,7 @@ export function SessionBriefPanel({
   // The text at the chosen revision, once opened: the brief with the client's
   // compaction summary, exactly what a restore loads.
   useEffect(() => {
-    if (!open || !head) return;
-    if (revision === 0) {
-      setBody(head);
-      return;
-    }
+    if (!open || !head || revision === 0) return;
     let live = true;
     setError(null);
     getBrief({ org, namespace }, head.brief_key, { revision, full: true })
@@ -74,6 +71,9 @@ export function SessionBriefPanel({
   }, [open, head, revision, org, namespace]);
 
   if (!head) return null;
+  const shown = revision ? (body?.revision === revision ? body : null) : head;
+  const handoff = shown && briefHandoffUrl({ org, namespace }, shown);
+  const prompt = shown && restorePhrase(shown.brief_key, "restore", revision);
   return (
     <div className="mb-4 rounded-sm bg-surface-2 border border-border">
       <button
@@ -95,7 +95,15 @@ export function SessionBriefPanel({
         <div className="px-3 pb-3 space-y-2">
           {head.revisions > 1 && (
             <div className="flex justify-end">
-              <Select label="Revision" value={String(revision)} onSelect={(v) => setRevision(Number(v))}>
+              <Select
+                label="Revision"
+                value={String(revision)}
+                onSelect={(value) => {
+                  setBody(null);
+                  setError(null);
+                  setRevision(Number(value));
+                }}
+              >
                 <Select.Item value="0">latest (rev {head.revision})</Select.Item>
                 {Array.from({ length: head.revisions }, (_, i) => head.revisions - i).map((r) => (
                   <Select.Item key={r} value={String(r)}>
@@ -105,20 +113,18 @@ export function SessionBriefPanel({
               </Select>
             </div>
           )}
-          <div className="flex items-center gap-2 rounded-sm bg-surface border border-border px-2 py-1.5">
-            <span className="text-xs text-text-muted shrink-0">Say in Claude Code or Codex:</span>
-            <code className="text-xs flex-1 min-w-0 break-all">{restorePhrase(head.brief_key)}</code>
-            <CopyButton
-              text={() => restorePhrase(head.brief_key)}
-              label="Copy"
-              ariaLabel="Copy the restore phrase"
-              className="shrink-0"
-            />
-          </div>
+          {prompt && (
+            <div className="flex flex-wrap items-center gap-2 rounded-sm bg-surface border border-border px-2 py-1.5">
+              <span className="text-xs text-text-muted shrink-0">Say in Claude Code or Codex:</span>
+              <code className="text-xs flex-1 min-w-0 break-all">{prompt}</code>
+              <CopyButton text={prompt} label="Copy" ariaLabel="Copy the restore phrase" className="shrink-0" />
+            </div>
+          )}
+          {handoff && <CopyButton text={handoff} label="Copy handoff link" className="shrink-0" />}
           {error && <div className="text-xs text-danger">{error}</div>}
-          {body && (
+          {shown && (
             <pre className="max-h-[40vh] overflow-auto text-xs whitespace-pre-wrap break-words font-mono">
-              {body.rendered}
+              {shown.rendered}
             </pre>
           )}
         </div>

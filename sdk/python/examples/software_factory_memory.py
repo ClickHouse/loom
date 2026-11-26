@@ -55,7 +55,6 @@ async def source(bot: Agent, args: argparse.Namespace) -> dict[str, str]:
         include_history=False,
         include_examples=False,
         include_lessons=False,
-        token_budget=4000,
     )
     definitions = result.get("definitions", [])
     require(not result.get("ambiguous") and len(definitions) == 1, "Resolve one definition")

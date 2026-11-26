@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
-import { decideProposals, listProposals, type MemoryProposal } from "../../api";
+import { decideProposals, getMemoryById, listProposals, type MemoryProposal, type MemoryById } from "../../api";
 import { useIdentity, useStore } from "../../lib/state";
 import { useNamespaceRoleRead } from "../../lib/namespaceRole";
 import { callReason } from "../../lib/callReason";
@@ -13,6 +13,7 @@ import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { RowMenu } from "../../components/ui/RowMenu";
 import { Unavailable } from "../../components/ui/Unavailable";
+import { Modal, ModalFooter } from "../../components/ui/Modal";
 import { TableSkeleton } from "../../components/Skeleton";
 
 const HEADERS = [
@@ -37,10 +38,45 @@ export function ProposalsPanel() {
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [review, setReview] = useState<{ proposal: MemoryProposal; row?: MemoryById; error?: string } | null>(null);
   const whoami = useStore((s) => s.whoami);
   const roleRead = useNamespaceRoleRead(identity.namespace);
   // Accept and Reject stay in view for a role that cannot decide, with the role it needs.
   const decideReason = callReason("memory.proposal_decide", roleRead, whoami, identity.namespace);
+
+  const acceptReason =
+    decideReason ??
+    (!whoami?.authenticated || !whoami.subject || whoami.is_service_account !== false
+      ? "Acceptance needs an authenticated human administrator."
+      : null);
+
+  const openReview = async (proposal: MemoryProposal) => {
+    setReview({ proposal });
+    try {
+      const row = await getMemoryById(identity.org, proposal.memory_id);
+      setReview((current) =>
+        current?.proposal === proposal
+          ? {
+              proposal,
+              row,
+              error:
+                !row.found ||
+                row.namespace !== identity.namespace ||
+                row.memory_key !== proposal.memory_key ||
+                !row.content_sha256
+                  ? "This proposal is no longer available. Refresh the list."
+                  : undefined,
+            }
+          : current,
+      );
+    } catch {
+      setReview((current) =>
+        current?.proposal === proposal
+          ? { proposal, error: "Could not read the full proposal. Close and try again." }
+          : current,
+      );
+    }
+  };
 
   // A decision holds every row until the list is read again.
   const [reading, setReading] = useState(false);
@@ -60,10 +96,12 @@ export function ProposalsPanel() {
     [identity.org, identity.namespace, reload],
   );
 
-  const decide = async (key: string, decision: "accept" | "reject") => {
+  const decide = async (key: string, decision: "accept" | "reject", approvedHash = "") => {
     setBusy(true);
     try {
-      const r = await decideProposals(scope, [key], decision);
+      const r = await decideProposals(scope, [key], decision, {
+        [key]: approvedHash,
+      });
       const result = r.results[0];
       if (r.decided === 0)
         // Not a proposal any more: decided by the policy or by someone else first.
@@ -75,6 +113,7 @@ export function ProposalsPanel() {
       toastError("Decision failed", e);
     } finally {
       setBusy(false);
+      setReview(null);
     }
     // The decided row unmounts; focus goes to the panel, and the list is read again.
     setReading(true);
@@ -90,6 +129,38 @@ export function ProposalsPanel() {
   // One wrapper in every state, so the focus a decision gives it survives an empty answer.
   return (
     <div ref={panel} tabIndex={-1} className="outline-none">
+      <Modal
+        open={review !== null}
+        onOpenChange={(open) => !open && !busy && setReview(null)}
+        title="Review proposal"
+        description="Read the complete fact before accepting it."
+        className="w-full max-w-[720px]"
+      >
+        {review?.error ? (
+          <p role="alert">{review.error}</p>
+        ) : !review?.row ? (
+          <p role="status">Loading full proposal…</p>
+        ) : (
+          <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words text-sm">
+            {typeof review.row.value === "string" ? review.row.value : JSON.stringify(review.row.value, null, 2)}
+          </pre>
+        )}
+        <ModalFooter>
+          <Button type="secondary" disabled={busy} onClick={() => setReview(null)}>
+            Cancel
+          </Button>
+          <Unavailable reason={acceptReason}>
+            <Button
+              disabled={busy || !review?.row || !!review.error}
+              onClick={() =>
+                review?.row && void decide(review.proposal.memory_key, "accept", review.row.content_sha256)
+              }
+            >
+              Accept reviewed fact
+            </Button>
+          </Unavailable>
+        </ModalFooter>
+      </Modal>
       {error ? (
         <ListState kind="error" things="proposals" error={error} onRetry={() => setReload((n) => n + 1)} />
       ) : rows?.length === 0 ? (
@@ -138,13 +209,13 @@ export function ProposalsPanel() {
                   {
                     label: (
                       <span className="inline-flex items-center gap-2">
-                        <Unavailable reason={decideReason ?? (lone ? null : SHARED_KEY)}>
+                        <Unavailable reason={acceptReason ?? (lone ? null : SHARED_KEY)}>
                           <Button
                             type="secondary"
                             htmlType="button"
                             disabled={held}
                             aria-label={`Accept ${p.memory_key}`}
-                            onClick={() => void decide(p.memory_key, "accept")}
+                            onClick={() => void openReview(p)}
                           >
                             Accept
                           </Button>

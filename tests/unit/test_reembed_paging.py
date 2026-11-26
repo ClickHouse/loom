@@ -10,7 +10,9 @@ from typing import Any
 import pytest
 
 from server.core.ch import sequential_reads_active
+from server.core.hashing import sha256_value
 from server.memory.app import reembed as rb
+from server.memory.store.rows import MemoryRow, build_memory_version_row
 from tests.unit._fake_credentials import OPENAI_KEY
 from tests.unit.clickhouse_local import CLICKHOUSE, EMBEDDINGS, VECTOR, run
 
@@ -20,6 +22,19 @@ class _Emb:
 
     async def embed_many(self, texts: list[str]) -> list[list[float]]:
         return [[0.1, 0.2] for _ in texts]
+
+
+def _canonical(row):
+    return build_memory_version_row(
+        MemoryRow.from_snapshot(
+            {
+                **row,
+                "memory_id": "11111111-1111-1111-1111-111111111111",
+                "memory_type": "fact",
+                "value": row["content_excerpt"],
+            }
+        )
+    )
 
 
 def key(r: dict[str, Any]) -> tuple[str, ...]:
@@ -137,6 +152,7 @@ async def test_a_memory_row_is_re_embedded_whatever_its_text() -> None:
         "embedding_model": "m1",
         "memory_key": "fixture_key",
         "content_excerpt": excerpt,
+        "content_sha256": sha256_value(excerpt),
         "tags": ["sensitivity:low"],
         "embedding": [0.0],
         "embedding_dim": 1,
@@ -147,6 +163,10 @@ async def test_a_memory_row_is_re_embedded_whatever_its_text() -> None:
 
     class _MemCH:
         async def query_all(self, sql: str, params: Any = None) -> list[dict]:
+            if "FROM loom.memory_refusals" in sql:
+                return []
+            if "FROM loom.memory FINAL" in sql:
+                return [_canonical(row)]
             if "system.columns" in sql:
                 return [{"name": c} for c in row]
             if "keys" in (params or {}):  # by the key the row was read with, not the new model's
@@ -324,6 +344,7 @@ _MEMORY_ROW = {
     "embedding_model": "m2",
     "memory_key": "k",
     "content_excerpt": "x",
+    "content_sha256": sha256_value("x"),
     "embedding": [0.0, 0.0],
     "embedding_dim": 2,
     "memory_key_embedding": [0.0, 0.0],
@@ -340,6 +361,10 @@ class _KeyOnlyCH:
         self.written: list[dict[str, Any]] = []
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict]:
+        if "FROM loom.memory_refusals" in sql:
+            return []
+        if "FROM loom.memory FINAL" in sql:
+            return [_canonical(self.stored_now)]
         if "system.columns" in sql:
             return [{"name": c} for c in _MEMORY_ROW]
         if "keys" in (params or {}):
@@ -407,3 +432,18 @@ async def test_a_key_only_rewrite_keeps_the_value_vector_stored_now() -> None:
     n = await rb.reembed_table(ch, _Emb(), "memory_embeddings", key_only=True, log=lambda *_: None)
     assert n == 1 and ch.written[0]["embedding"] == [0.5, 0.5] and ch.written[0]["version"] == 8
     assert ch.written[0]["memory_key_embedding"] == [0.1, 0.2]
+
+
+async def test_a_withheld_publication_is_not_counted_or_deleted_as_replaced(monkeypatch):
+    from server.memory import store
+
+    async def hold(rows, **kwargs):
+        return []
+
+    monkeypatch.setattr(store, "insert_embedding_rows", hold)
+    ch = _KeyOnlyCH(dict(_MEMORY_ROW))
+    held = set()
+    count = await rb.reembed_table(
+        ch, _Emb(), "memory_embeddings", key_only=True, left_orgs=held, log=lambda *_: None
+    )
+    assert count == 0 and held == {"o"} and ch.written == []

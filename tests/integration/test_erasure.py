@@ -93,6 +93,13 @@ async def test_user_id_erasure_tombstones_memory(admin_agent, ch_client) -> None
         # user_id filter). bob's True would merge into alice's row
         # and never reach loom.memory under bob's user_id.
         await a.memory.set("prefers_yaml", "yaml-please", memory_type="preference", user_id="bob")
+        # The ClickHouse tombstone assertions require the committed seeds to be published.
+        listed = await a.memory.list(user_id=target_user)
+        assert {"prefers_json", "favorite_table"} <= {
+            row["memory_key"] for row in listed["entries"]
+        }
+        control = await a.memory.list(user_id="bob")
+        assert "prefers_yaml" in {row["memory_key"] for row in control["entries"]}
 
     # Run erasure for alice
     result = await admin_agent.erasure.request_user_id(target_user, requester="ops@example.com")
@@ -340,6 +347,8 @@ async def test_namespace_erasure_tombstones_only_target(admin_agent, ch_client) 
                 source_uri=f"src://{ns}",
                 tags=["test"],
             )
+            listed = await a.memory.list()
+            assert any(row["memory_key"] == "k1" for row in listed["entries"])
 
     # Erase ns_target
     result = await admin_agent.erasure.request_namespace(ns_target, requester="ops@example.com")

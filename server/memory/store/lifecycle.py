@@ -316,6 +316,7 @@ async def _insert_clickhouse_copies(
     landed: Callable[[], Awaitable[None]] | None,
     on_commit: Callable[[], None] | None,
     exact: bool,
+    refuse_values: bool,
 ) -> int:
     inserted = not rows
     count = 0
@@ -337,7 +338,11 @@ async def _insert_clickhouse_copies(
                 {identity_key(r): h for r, h in zip(rows, read, strict=True)} if exact else None
             )
             await insert_memory_versions(
-                rows, ch=ch, expected_heads=expected, on_inserted=mark_inserted
+                rows,
+                ch=ch,
+                expected_heads=expected,
+                on_inserted=mark_inserted,
+                refuse_values=refuse_values,
             )
     finally:
         # A successful memory insert still owes its follow-ups when holder
@@ -355,12 +360,12 @@ async def insert_versions_over_heads(
     then: Callable[[], Awaitable[int | None]] | None = None,
     landed: Callable[[], Awaitable[None]] | None = None,
     documented: Sequence[bool] | None = None,
-    settle_held: bool = False,
     sources: Sequence[tuple[str, int]] = (),
     live_sources: bool = False,
     policy: Mapping[tuple[str, str], int] | None = None,
     on_commit: Callable[[], None] | None = None,
     exact: bool = False,
+    refuse_values: bool = False,
 ) -> int:
     """Write `rows`, each a copy of the authority's head beside it in `read`, drawn above
     it (`rows.version_over`) or, to yield to a write since, before the read: a copy below
@@ -376,16 +381,22 @@ async def insert_versions_over_heads(
     of it is raised once the commit is published. `landed` runs once the rows are in,
     outside the lease: on ClickHouse right after the insert, before `then`; under Postgres
     after the publish, whatever `then` did. `documented`: the rows that owe a live search
-    document, which `then` writes; under Postgres they are settled once `then` returns
-    (with `settle_held`, only those ClickHouse holds at their row's version, for a `then`
-    that copies what it finds), and the delivery worker builds one it did not.
+    document, which `then` writes; under Postgres only documents ClickHouse holds at
+    their row's version are settled, and the delivery worker builds one it did not.
     `sources`: the revisions the rows copy (`Admission.sources`), with `live_sources`
     each still its key's live head. `on_commit` is called once the rows are in, before
     holder cleanup or publication can fail. A commit whose
     publication is pending is done."""
     if not pg.enabled() or not rows:
         return await _insert_clickhouse_copies(
-            rows, read, ch=ch, then=then, landed=landed, on_commit=on_commit, exact=exact
+            rows,
+            read,
+            ch=ch,
+            then=then,
+            landed=landed,
+            on_commit=on_commit,
+            exact=exact,
+            refuse_values=refuse_values,
         )
     check_memory_rows(rows)
     heads = {identity_key(r): e for r, e in zip(rows, read, strict=True)}
@@ -398,7 +409,9 @@ async def insert_versions_over_heads(
     plain = pg_memory.MEMORY_ROW | pg_memory.AUDIT_ROW
     owed = [plain | (pg_memory.SEARCH_DOC if d else 0) for d in documented or [False] * len(rows)]
     try:
-        committed = await pg_publish.commit(rows, targets=owed, admission=admission)
+        committed = await pg_publish.commit(
+            rows, targets=owed, admission=admission, refuse_values=refuse_values
+        )
     except pg_memory.HeadMoved:
         raise pg_memory.AdmissionContendedError("the memory changed while it was read") from None
     except pg_memory.AdmissionMoved:
@@ -413,7 +426,7 @@ async def insert_versions_over_heads(
             with pg_lease.leased(committed.deadline), sequential_reads():
                 answer = await then() or 0
             if documented:
-                await _settle_documents(committed, documented, held=settle_held, ch=ch)
+                await _settle_documents(committed, documented, ch=ch)
         except pg_lease.PublicationPending:
             _log.warning("a copy's follow-up was left: its commit's lease ended first")
         except Exception as e:  # noqa: BLE001 — raised once the commit is published
@@ -430,7 +443,11 @@ async def insert_versions_over_heads(
 
 
 async def insert_documented_versions(
-    rows: list[dict[str, Any]], documents: list[dict[str, Any]], *, ch: _CHClient | None = None
+    rows: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
+    *,
+    ch: _CHClient | None = None,
+    policy: Mapping[tuple[str, str], int] | None = None,
 ) -> bool:
     """Write `rows` with their search documents (`documents`, one embedding row for each),
     rechecking no head. Whether the rows reached ClickHouse: False when their publication
@@ -442,7 +459,7 @@ async def insert_documented_versions(
     if len(documents) != len(rows):
         raise ValueError("one search document per row")
     if not pg.enabled():
-        await insert_memory_versions(rows, ch=ch)
+        await insert_memory_versions(rows, ch=ch, policy=policy)
         try:
             await insert_embedding_rows(documents, ch=ch)
         except Exception as e:  # noqa: BLE001 — the rows stand; the embedding worker stubs one
@@ -450,7 +467,8 @@ async def insert_documented_versions(
         return True
     check_memory_rows(rows)
     owed = pg_memory.MEMORY_ROW | pg_memory.SEARCH_DOC | pg_memory.AUDIT_ROW
-    committed = await pg_publish.commit(rows, targets=owed)
+    admission = pg_memory.Admission(generations=dict(policy)) if policy else None
+    committed = await pg_publish.commit(rows, targets=owed, admission=admission)
     try:
         await pg_publish.publish(committed, documents=documents, ch=ch)
     except pg_lease.PublicationPending:
@@ -460,30 +478,27 @@ async def insert_documented_versions(
 
 
 async def _settle_documents(
-    committed: Any, documented: Sequence[bool], *, held: bool = False, ch: _CHClient | None = None
+    committed: Any, documented: Sequence[bool], *, ch: _CHClient | None = None
 ) -> None:
-    """Clear the search documents written under the commit's lease; with `held`, only
-    those that ClickHouse holds at their row's version (`held_documents`). Failing that,
+    """Clear only documents ClickHouse holds at their row's version (`held_documents`).
+    Failing that,
     the delivery worker settles one it finds there and builds again one written below it
     (an Undo's rows, re-emitted at their own)."""
     owed = [(r, q) for r, q, d in zip(committed.rows, committed.seqs, documented, strict=True) if d]
     try:
-        if held:
-            client = ch or _default_client()
-            by_scope: dict[tuple[str, str], list[tuple[Any, ...]]] = {}
-            for r, _ in owed:
-                by_scope.setdefault((r["org"], r["namespace"]), []).append(
-                    pg_publish.document_id(r)
-                )
-            held_ids: set[tuple[Any, ...]] = set()
-            for (org, ns), ids in by_scope.items():
-                docs = await pg_publish.held_documents(org, ns, ids, ch=client)
-                held_ids |= {(org, ns, *d) for d in docs}
-            owed = [
-                (r, q)
-                for r, q in owed
-                if (r["org"], r["namespace"], *pg_publish.document_id(r)) in held_ids
-            ]
+        client = ch or _default_client()
+        by_scope: dict[tuple[str, str], list[tuple[Any, ...]]] = {}
+        for r, _ in owed:
+            by_scope.setdefault((r["org"], r["namespace"]), []).append(pg_publish.document_id(r))
+        held_ids: set[tuple[Any, ...]] = set()
+        for (org, ns), ids in by_scope.items():
+            docs = await pg_publish.held_documents(org, ns, ids, ch=client)
+            held_ids |= {(org, ns, *d) for d in docs}
+        owed = [
+            (r, q)
+            for r, q in owed
+            if (r["org"], r["namespace"], *pg_publish.document_id(r)) in held_ids
+        ]
         await pg_memory.complete([q for _, q in owed], pg_memory.SEARCH_DOC)
     except Exception as e:  # noqa: BLE001 — the commit stands; the worker settles or builds them
         _log.warning("documents left owed for the delivery worker: %s", error_summary(e))
@@ -884,7 +899,6 @@ async def _write_dependents(
                 ch=ch,
                 then=copy_vectors,
                 documented=documented,
-                settle_held=True,
                 on_commit=on_commit,
             )
     except pg_memory.AdmissionContendedError:
@@ -1037,8 +1051,24 @@ async def _tombstone_ch_heads(
             )
             for head in page
         ]
-        for block in partition_blocks(rows, created_month):
-            await insert_memory_versions(block, ch=ch)
+        blocks = [
+            block[start : start + 16]
+            for block in partition_blocks(rows, created_month)
+            for start in range(0, len(block), 16)
+        ]
+        for block in blocks:
+            expected = {
+                identity_key(h): _hydrate(h)
+                for h in page
+                if identity_key(h) in {identity_key(r) for r in block}
+            }
+            try:
+                await insert_memory_versions(
+                    block, ch=ch, expected_heads=expected, refuse_values=True
+                )
+            except pg_memory.AdmissionContendedError:
+                # Re-page at the original cutoff: a new value or lock is not ours to erase.
+                break
             heads = await memory_rows_by_identity_keys(
                 [identity_key(r) for r in block], ch=ch, include_tombstoned=True, sequential=True
             )
@@ -1066,7 +1096,8 @@ async def _tombstone_ch_heads(
                 ],
                 ch=ch,
             )
-        after = key_in_namespace(page[-1])
+        else:
+            after = key_in_namespace(page[-1])
 
 
 async def _tombstone_where(
@@ -1160,6 +1191,7 @@ async def _tombstone_heads(
             try:
                 committed = await pg_publish.commit(
                     rows,
+                    refuse_values=True,
                     admission=pg_memory.Admission(
                         recheck=pg_memory.heads_unchanged(heads, exact=True)
                     ),

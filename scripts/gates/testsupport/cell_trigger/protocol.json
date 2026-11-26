@@ -24,6 +24,7 @@
     "redacted_at",
     "redaction_reason",
     "status",
+    "requires_review",
     "conflict_with",
     "duplicate_of",
     "evidence_count",
@@ -125,7 +126,8 @@
     "version": "positive_int63_not_bool",
     "pinned": "uint8_0_or_1_not_bool",
     "char_limit": "nullable_uint32_not_bool",
-    "content_sha256": "hex64_fixedstring"
+    "content_sha256": "hex64_fixedstring",
+    "requires_review": "uint8_0_or_1_not_bool"
   },
   "sparse_defaults": {
     "status": "active",
@@ -170,7 +172,8 @@
     "locked_by": "",
     "locked_at": null,
     "on_expire": "",
-    "expire_reason": ""
+    "expire_reason": "",
+    "requires_review": 0
   },
   "audit_fields": [
     "ts",

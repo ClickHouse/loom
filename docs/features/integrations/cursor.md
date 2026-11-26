@@ -1,4 +1,14 @@
+---
+description: Connect Cursor to Loom over MCP. Share project decisions across sessions, use indexed code, and choose a local or team MCP setup.
+seo:
+  title: Shared agent memory for Cursor with MCP
+---
+
 # Cursor
+
+Connect Cursor to Loom to save decisions and reuse lessons from earlier sessions.
+Other clients connected to the same Loom server with access to that namespace
+can recall those lessons.
 
 Cursor gets Loom in three pieces:
 
@@ -16,7 +26,8 @@ hooks: no code shunt and no capture of tool calls, runs or working memory; the
 
 `.cursor-plugin/` at the repository root makes the repository a Cursor plugin marketplace
 with one plugin, `clickhouse-loom`: the `loom` MCP server and the root `skills/`. The
-plugin is not listed in Cursor's marketplace. Its local single-user connection and
+plugin has a [Cursor marketplace listing](https://cursor.com/marketplace/clickhouse/clickhouse-loom)
+and a [Loom MCP component](https://cursor.com/marketplace/mcp/loom). Its local single-user connection and
 read-only memory search are tested in Cursor. On a Teams or Enterprise plan, a team
 admin adds it under **Dashboard → Plugins & MCPs → Add Marketplace → Import from Repo**
 with `https://github.com/ClickHouse/loom`.
@@ -62,6 +73,8 @@ per-client file table are in [MCP clients](mcp-clients.md#wire-a-client-with-loo
 Then add `.cursor/rules/loom.mdc` from [agent instructions](agent-instructions.md), so
 the agent knows when to recall, save and use the code index, unless the repository's
 `AGENTS.md` already carries the block.
+Use the [shared-memory MCP check](mcp-clients.md#verify-shared-memory-through-mcp)
+to verify save and recall through separate authorized sessions.
 
 ### Connect an indexed checkout
 

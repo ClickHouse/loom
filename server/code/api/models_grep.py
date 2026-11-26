@@ -4,11 +4,12 @@ code.files (indexed files by name).
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
     Field,
+    PrivateAttr,
     SerializerFunctionWrapHandler,
     field_validator,
     model_serializer,
@@ -17,9 +18,12 @@ from pydantic import (
 
 from server.code.api.models_common import (
     _CodeIdentity,
+    _drop_empty_lessons,
     _drop_empty_presence_keys,
     _drop_unfired_symbol_blocks,
     _lead_namespaces,
+    _LessonsOut,
+    _ResultLessons,
     _trim_namespaces,
 )
 from server.operations.base import MCP_HIDDEN
@@ -29,26 +33,86 @@ from server.operations.base import MCP_HIDDEN
 # ============================================================
 
 
-class CodeGrepInput(_CodeIdentity):
-    """Exact-match lookup over the indexed corpus. Unlike shell grep, the
-    answer arrives WITH what raw grep can't attach: the
-    enclosing symbol per hit, one indexed round-trip, and a hit list that
-    distinguishes code from the repo's 14K .reference fixtures (unindexed
-    by design). Literal by default; regex=True switches to RE2."""
+GrepText = Annotated[str, Field(min_length=2, max_length=1000)]
+RELATED_GREP_CONTEXT_LINES = 6
 
-    # The text to find: a literal substring, or an RE2 expression with `regex`.
-    pattern: str = Field(min_length=2, max_length=1000)
-    # True reads `pattern` as RE2; an invalid expression is a 422.
-    regex: bool = False
+
+class CodeGrepInput(_CodeIdentity, _ResultLessons):
+    """Literal or regex search of indexed source with enclosing symbols and coverage.
+
+    Literal by default; regex=True switches to RE2.
+    """
+
+    # multiSearchAny accepts up to 255 alternatives in a scan.
+    pattern: GrepText | Annotated[list[GrepText], Field(min_length=1, max_length=255)] = Field(
+        description="Literal text, a list of alternatives, or one RE2 expression with regex=true.",
+    )
+    prioritize_patterns: bool = Field(
+        default=False,
+        description=(
+            "For a literal list, give distinct patterns a first-page slot before repeat hits "
+            "(default true on coding connections)."
+        ),
+    )
+    regex: bool = Field(
+        default=False,
+        description="Use RE2 syntax without lookaround or backreferences when true.",
+    )
+    related_on_miss: bool = Field(
+        default=False,
+        description=(
+            "Recover a missing call's qualified argument in a literal or batch, or one member "
+            "spelling in malformed call alternatives (default true on coding connections)."
+        ),
+    )
+    related_on_prefix: bool = Field(
+        default=False,
+        description=(
+            "Show other uses of a literal call prefix's qualified argument, including in a batch "
+            "with one argument. Default true on coding connections."
+        ),
+    )
+    include_dependencies: bool = Field(
+        default=False,
+        description="Include verified argument definitions, helpers, or forwarding call targets.",
+    )
     # False matches `pattern` regardless of letter case.
     case_sensitive: bool = True
+    include_lessons: bool = Field(
+        default=True,
+        description=(
+            "Include linked lessons (default true) or set false "
+            "when you already have the relevant notes."
+        ),
+    )
+    context_lines: int = Field(
+        default=0,
+        ge=0,
+        le=20,
+        description=(
+            f"Excerpt radius, {RELATED_GREP_CONTEXT_LINES} by default for related hits "
+            "without bodies, or 0 for match lines only."
+        ),
+    )
+    prefer_complete_context: bool = Field(
+        default=False,
+        description="Use the same excerpt width to complete a short declaration. Default false.",
+        json_schema_extra=MCP_HIDDEN,
+    )
     # Only paths under this repo-relative prefix; '' = the whole index. A prefix outside
     # the indexed ones answers `not_covered`.
     path_prefix: str = ""
     # Continuation (matches mode): the `next_cursor` of an earlier response to this
     # pattern; the next page of matching lines is one point read of what the first call
     # extracted.
-    cursor: str = Field(default="", max_length=1024)
+    cursor: str = Field(
+        default="",
+        max_length=1024,
+        description=(
+            "In matches mode, pass `next_cursor` with the original search arguments "
+            "and omit it to start a new search when a prioritized batch cursor is unavailable."
+        ),
+    )
     # The caller's seen-set. Grep serves no unit ids, so these are PATHS
     # (what its trace records as returned_ids): lines in them are skipped.
     exclude_unit_ids: list[str] = Field(
@@ -69,6 +133,10 @@ class CodeGrepInput(_CodeIdentity):
     # template matches (a code line, not a rendered message) is run once more as a plain
     # matches grep and says so in `fallback`.
     mode: Literal["matches", "files", "presence", "message"] = "matches"
+    include_body: bool = Field(
+        default_factory=lambda data: data["mode"] == "matches",
+        description="Return full enclosing bodies by default in matches mode.",
+    )
     # Default depends on mode: 20 lines, or the 500-file ceiling — a files
     # answer capped at 20 reads like a complete coverage answer to a caller
     # that did not know to send a limit. matches mode is clamped to 200 lines.
@@ -117,6 +185,8 @@ class CodeGrepInput(_CodeIdentity):
                 "neighbours on code.grep requires mode: 'matches' — the block hangs off "
                 "the hits' enclosing functions"
             )
+        if self.context_lines and self.mode != "matches":
+            raise ValueError("context_lines requires mode: 'matches'")
         self.namespaces = _lead_namespaces(self.namespace, self.namespaces)
         return self
 
@@ -129,26 +199,83 @@ class CodeGrepInput(_CodeIdentity):
         return min(self.limit or 20, 200)
 
 
-class CodeGrepOutput(BaseModel):
+class GrepDependency(BaseModel):
+    qualified_name: str
+    path: str
+    start_line: int
+    end_line: int
+    body: str
+    _indexed_commit: str = PrivateAttr(default="")
+
+
+class RelatedGrepEvidence(BaseModel):
+    """Verified lines for a qualified argument or member found by literal recovery."""
+
+    pattern: str
+    matches: list[dict[str, Any]]
+    contexts: list[dict[str, Any]] = Field(default_factory=list)
+    contexts_partial: bool = False
+    definitions: list[dict[str, Any]] = Field(default_factory=list)
+    definitions_partial: bool = False
+    definitions_note: str = ""
+    truncated: bool = False
+    dependencies: list[GrepDependency] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_dependencies(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not data.get("dependencies"):
+            data.pop("dependencies", None)
+        return data
+
+
+class CodeGrepOutput(_LessonsOut):
+    # File lessons omitted by symbol focus, a token budget, truncation or supersession.
+    lessons_left_out: int = 0
+    _match_commits: dict[tuple[str, int], str] = PrivateAttr(default_factory=dict)
+
     @model_serializer(mode="wrap")
     def _drop_unfired_mode_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # the presence block rides only when it fired, the neighbours block
         # only when it ran, and the message fields only with a verdict
         data = _drop_empty_presence_keys(handler(self))
         data = _drop_unfired_symbol_blocks(data)
+        if not data.get("definitions"):
+            data.pop("definitions", None)
+        if not data.get("definitions_partial"):
+            data.pop("definitions_partial", None)
+        if not data.get("definitions_note"):
+            data.pop("definitions_note", None)
+        for key in ("contexts", "contexts_partial"):
+            if not data.get(key):
+                data.pop(key, None)
         if not data.get("verdict"):
             for k in ("verdict", "template", "error_code", "coverage"):
                 data.pop(k, None)
         for k in ("partial", "partial_reason", "fallback"):
             if not data.get(k):
                 data.pop(k, None)
-        return data
+        if data.get("related") is None:
+            data.pop("related", None)
+        return _drop_empty_lessons(data)
 
     # {path, line, text, scope, scope_start_line, scope_end_line} per matching
-    # LINE, path/line ordered. scope_* is the span of the enclosing unit named
+    # LINE, path/line ordered except when prioritize_patterns gives different literals
+    # first-page slots. scope_* is the span of the enclosing unit named
     # by `scope` (0/0 when the line sits in no unit) — enough to decide whether
     # to fetch the body, or to skip it when that unit is already on screen.
     matches: list[dict[str, Any]]
+    # Related source for a qualified argument or member, separate from literal matches.
+    related: RelatedGrepEvidence | None = None
+    # Exact retained source windows for this page, with inclusive line bounds.
+    contexts: list[dict[str, Any]] = Field(default_factory=list)
+    contexts_partial: bool = False
+    # include_body: distinct enclosing units, in hit order; `lines` names the matching
+    # lines each definition covers. Unavailable bodies retain the enclosing result's
+    # disclosure and next lookup. Empty without include_body or without matches.
+    definitions: list[dict[str, Any]] = Field(default_factory=list)
+    definitions_partial: bool = False
+    definitions_note: str = ""
     # Continuation: cursor for the next page of matching lines, "" when the extracted
     # set is exhausted. has_more mirrors it.
     next_cursor: str = ""

@@ -87,6 +87,13 @@ The `usage_fold` worker folds the events into the reinforcement term that
 [memory search](memory/search-and-ask.md) ranks by. A `harm` event takes back earned boost, floored at the row's
 write-time base, so one bad run never pushes a row below its relevance and never deletes it.
 
+On a `memory.get` request ledger row, `out_memory_id` and `out_version` in `args`,
+when present, identify the revision the server answered with. An `if_version` poll
+can report that same revision without reading out the value. It records
+`out_unchanged = 'true'`. A regular get records `'false'`. An older row without the
+flag leaves the poll outcome unknown. A get can request only metadata, and an MCP
+client can receive a trimmed response. These fields do not establish use by the agent.
+
 A procedure key named in `memories_used` also gets a row in the procedure ledger (path
 empty, `ok` from the outcome); an agent that calls `procedure.record_run` itself should
 leave that key out of `memories_used` so the run is not counted twice. See
@@ -132,9 +139,10 @@ nothing. Active runs are skipped.
 
 Every memory in a graded run's `memories_used` is counted against the grade. Those
 counts are what `memory.proposals` shows beside each fact on trial (a
-`memory.set(proposed=true)` row). Loom decides a proposal on them only when the
-namespace owner set `proposal_policy.mode` to `auto`; any writer decides with
-`memory.proposal_decide` under either mode. See [writing memory](memory/writing.md).
+`memory.set(proposed=true)` row). Pass counts mark a proposal ready for independent human review. When the namespace owner
+sets `proposal_policy.mode` to `auto`, failed counts can reject a proposal. Acceptance
+requires an independent human administrator using `memory.proposal_decide` with the hash
+of the reviewed content. See [writing memory](memory/writing.md).
 
 `run.list(grade="ungraded")` lists the closed runs still owed a verdict.
 

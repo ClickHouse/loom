@@ -5,7 +5,7 @@ One user writes twelve sessions a week apart into a fresh `newest_wins`
 namespace: six attributes (home city, employer, manager, standup time, CI
 provider, diet) change once or twice, each change under a new key and in new
 words, among restated, elaborated and neighbouring facts, a pinned fact that is
-contradicted later, a fact deleted and brought back with Undo, and eighteen
+contradicted later, a permanently deleted fact, and eighteen
 unrelated ones (`bench/conflict_resolver_scenario.py`, the scenario and its
 ground truth; `tests/integration/test_conflict_resolver_long_session_ch.py`
 runs it with a scripted judge). The harness then waits for the server's
@@ -91,12 +91,13 @@ from bench.bench_namespaces import erase_on_exit_sync, register_body, remember_b
 from bench.conflict_resolver_scenario import (
     ATTRIBUTES,
     BY_KEY,
+    CHECK_DELETED_IN,
     CURRENT,
     DELETE_IN,
+    DELETED,
     FACTS,
     KEPT,
     OLDER,
-    RESTORE_IN,
     SESSIONS,
     dialogue,
     relation_of,
@@ -150,7 +151,7 @@ def _entry(start: datetime, session: int, i: int, key: str) -> dict[str, Any]:
 
 
 def write_set_session(post: Post, namespace: str, session: int, start: datetime) -> None:
-    """The session's facts under the scenario's keys, then its delete or Undo."""
+    """The session's facts under the scenario's keys, then its deletion or absence check."""
     keys = [f.key for f in FACTS if f.session == session]
     entries = [_entry(start, session, i, k) for i, k in enumerate(keys)]
     ident = _identity(namespace, session)
@@ -162,9 +163,12 @@ def write_set_session(post: Post, namespace: str, session: int, start: datetime)
     if session in DELETE_IN:
         key = DELETE_IN[session]
         post("memory.delete", {**_identity(namespace, BY_KEY[key].session), "memory_key": key})
-    if session in RESTORE_IN:
-        key = RESTORE_IN[session]
-        post("memory.restore", {**_identity(namespace, BY_KEY[key].session), "memory_key": key})
+    if session in CHECK_DELETED_IN:
+        key = CHECK_DELETED_IN[session]
+        absent = post(
+            "memory.get", {**_identity(namespace, BY_KEY[key].session), "memory_key": key}
+        )
+        assert absent["found"] is False, absent
 
 
 def write_messages_session(post: Post, namespace: str, session: int, start: datetime) -> None:
@@ -320,7 +324,8 @@ def score_by_key(rows: dict[str, dict[str, Any]], top: dict[str, str]) -> dict[s
         "flagged_current": sum(
             1 for k in CURRENT if k in rows and rows[k]["status"] == "conflicted"
         ),
-        "missing_rows": sorted({f.key for f in FACTS} - set(rows)),
+        "missing_rows": sorted({f.key for f in FACTS} - DELETED - set(rows)),
+        "deleted_returned": sorted(DELETED & set(rows)),
         "older_live": sorted(k for k in OLDER if k in rows and _live(rows[k])),
     }
 
@@ -480,7 +485,7 @@ def print_plan(servers: list[tuple[str, str]], variants: list[str]) -> None:
     for name, a in ATTRIBUTES.items():
         values = " -> ".join(f"{BY_KEY[k].value} (s{BY_KEY[k].session})" for k in a.keys)
         print(f"  {name}: {values}")
-    print(f"kept live: {len(KEPT)} facts; deleted+restored: {sorted(set(DELETE_IN.values()))}")
+    print(f"kept live: {len(KEPT)} facts; permanently deleted: {sorted(set(DELETE_IN.values()))}")
     for label, url in servers or [("on", "<url>"), ("off", "<url>")]:
         for v in variants:
             print(f"plan: {label} {url} variant={v}")

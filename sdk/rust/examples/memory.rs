@@ -15,7 +15,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let key = format!("rust-example-{}-{suffix}", std::process::id());
     let value = format!("Rust SDK memory demo: {key}");
     let outcome: Result<(), Box<dyn Error>> = async {
-        let saved = client.set(SetRequest::new(&key, value.clone())).await?;
+        let saved = client
+            .set(SetRequest::new(&key, value.clone()).memory_type("semantic"))
+            .await?;
         if saved.noop {
             return Err("set merged with an existing memory; use a fresh namespace".into());
         }
@@ -28,10 +30,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             return Err("get did not return the saved memory".into());
         }
         println!("get: found={} value={}", memory.found, memory.value);
-        let mut query = SearchRequest::new(&key);
-        query.search_mode = Some("lexical".into());
-        query.namespace_scope = Some("this".into());
-        query.agent_id = Some("rust-example".into());
+        let query = SearchRequest::new(&key)
+            .search_mode("lexical")
+            .namespace_scope("this")
+            .agent_id("rust-example");
         let hits = client.search(query).await?;
         if !hits.results.iter().any(|hit| hit.memory_key == key) {
             return Err("search did not return the saved memory".into());

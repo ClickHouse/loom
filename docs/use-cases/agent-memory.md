@@ -1,35 +1,81 @@
 ---
 title: Memory for coding agents across sessions and tools
-description: Choose and evaluate shared memory for coding agents with cross-session recall, scoped access, corrected facts and lessons linked to current code.
+description: Choose an AI agent memory tool for user preferences, project rules, or decisions shared across coding agents. Test recall, access, and source changes.
+seo:
+  title: Shared memory for coding agents
 ---
 
 # Memory for coding agents across sessions and tools
 
 <a id="long-term-and-shared-memory-for-ai-agents"></a>
 
-Loom is a self-hosted MCP server and HTTP API that gives AI agents long-term memory they
-share: a fact one agent saves in a session can be found by the next session, by another
-agent, or by a person at the dashboard. This page shows how that works and where to start.
+Loom is a self-hosted MCP memory server and HTTP API for coding agents that need to share
+project decisions, corrections and lessons across sessions and tools. A fact saved by
+one authorized agent can be retrieved by another; a lesson linked to indexed code can
+surface with that code and carry a changed-source warning.
+
+Use Loom when those agents need a shared service that your team operates. Keep rules
+that belong in every checkout in version control. Connecting an MCP client supplies
+operations; automatic session capture depends on the client's integration and settings.
+[Connect a coding agent](../getting-started/connect-a-coding-agent.md) describes both paths
+and shows how to [verify a memory handoff from Claude Code to Codex](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex).
+The [MCP memory check](../features/integrations/mcp-clients.md#verify-shared-memory-through-mcp)
+tests save and recall through separate client sessions.
+
+## What is agentic memory?
+
+Agentic memory is information an AI agent can retrieve and update as it works. It lets a
+new session reuse a tested workaround, respect an earlier decision, or correct a fact
+when the evidence changes. The agent's context window holds the text it has available
+for the current request. Persistent memory makes selected information available to
+future requests without loading the entire conversation.
+
+For example, an agent can save why a retry needs an idempotency key and link the lesson
+to the function that enforces it. A later agent can retrieve the lesson with the
+function and check the source before changing the retry. Use [memory history and provenance](../features/memory/history-and-provenance.md)
+to see who saved the lesson and how it changed.
+
+## Choose a memory tool for AI agents
+
+Start with who should be able to retrieve the information in a fresh session. For
+an assistant that remembers a person's preferences, test whether storage can scope
+recall and deletion to that user. For an agent that needs approved policy, test whether
+document search returns a passage from the current revision. For a team of agents,
+test whether a decision survives a client switch and whether a reader on another
+project is refused. The [self-hosted comparison](../guides/compare-coding-agent-memory.md)
+shows what a fresh reader could retrieve in one coding example.
 
 ## Choosing a memory tool for coding agents
 
-The best memory tool for a coding agent depends on what it needs to remember. Keep
-repository instructions in version control when every checkout needs the same rules.
-Use a shared memory service when a correction, project decision or past fix must be
-available across sessions, tools or teammates, with control over who can read it.
+Choose a source based on what the next agent needs to retrieve and who maintains it.
+
+| Source                                      | Use it for                                                              | What to verify                                                                      |
+| ------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Repository instructions such as `AGENTS.md` | Build commands and reviewed rules every checkout needs.                 | The client loads the expected instructions at the target revision.                  |
+| Session history                             | The exact command, tool output or discussion from a past session.       | The client can find the original event and respects its access and retention rules. |
+| [Document search](document-search.md)       | A passage from an approved runbook, policy or design document.          | The passage cites the source and revision that support the answer.                  |
+| Shared agent memory                         | A decision, correction or lesson another authorized client should find. | A fresh session retrieves the current claim and can check its writer and evidence.  |
+
+For a retry-policy change, keep the required test command in repository instructions.
+Keep a failed test's exact output in its session history or CI record. Save why
+the team changed the retry behavior as a shared lesson, and link it to the
+definition that implements the change. When the policy comes from a document, use
+[memory and document retrieval together](../concepts/memory.md#how-agent-memory-and-rag-work-together).
 
 Check these requirements before choosing Loom:
 
-| Requirement                    | What to check                                                                                                                                  |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Recall after a fresh session   | Save a fact, start another session and require the stored value and writer in the tool response.                                               |
-| Shared context across tools    | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript. |
-| Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false.    |
-| Access and operations          | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers.           |
+| Requirement                    | What to check                                                                                                                                                              |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recall after a fresh session   | Save a fact, start another session and require the stored value and writer in the tool response.                                                                           |
+| Shared context across tools    | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript.                             |
+| Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false.                                |
+| Access and operations          | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers.                                       |
+| Data portability               | [Compare what a fresh reader recovers](../guides/compare-coding-agent-memory.md#move-a-saved-decision-to-a-fresh-setup) after copying the files or importing the decision. |
 
 Follow [coding-agent setup](../getting-started/connect-a-coding-agent.md) for the plugin
 or MCP connection your client supports. Read its capture settings before using private
-code or conversations. For a pipeline with separate implementation and review agents,
+code or conversations. Use the [self-hosted memory checklist](self-hosted-clickhouse.md#choose-self-hosted-memory-for-coding-agents)
+to review storage and model destinations. For a pipeline with separate implementation and review agents,
 continue with [memory for a software factory](multi-agent.md#memory-for-a-software-factory).
 
 Compare [memory architectures](../guides/compare-agent-memory.md) by deployment,
@@ -55,8 +101,57 @@ Use a disposable example rather than a secret or an unverified project rule:
 
 An exact-key read checks storage and wiring. Evaluate semantic retrieval separately
 with questions that do not name the key, including questions the store cannot answer.
-Neither check establishes better code, fewer defects or lower total model cost. The
-[evaluation guide](../getting-started/evaluate.md) separates these outcomes.
+To measure the effect on completed work, [compare coding tasks with and without memory](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
+using the same acceptance tests.
+
+## Switch coding agents with shared project memory
+
+To switch from Claude Code to Codex or Cursor, connect the new client to the same Loom
+server and project namespace. The new session can retrieve decisions already saved there.
+
+1. Pick a reviewed decision the next agent needs, such as why a retry needs an idempotency
+   key. If it only exists in client-local notes or a transcript, check it against the
+   source, then explicitly save the decision in the shared namespace. Keep rules that
+   apply to every checkout in version control.
+2. On an authenticated server, give the new client its own token scoped to the project
+   namespace. Start a fresh session and give it the exact key and scope shown in the
+   saved memory. Compare the returned value and writer with the original. Check the
+   current source before applying a code-linked decision.
+3. For work in progress, include the branch, commit, and remaining checks in the task
+   handoff. Keep each client's local configuration and session history with that client.
+
+Use the [authenticated Claude Code-to-Codex check](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex)
+to verify the handoff on a disposable key before switching a project.
+
+## Share memory across repositories
+
+Give each repository its own memory namespace. Put reviewed rules that both teams
+can read in a shared namespace. Use a separate writer to maintain those rules.
+Use an [authenticated deployment](../getting-started/quickstart.md#start-in-multi-user-mode) for this
+exercise. Create three disposable memory namespaces in the same org and grant the roles
+below with repeatable `--namespace-role` options. [Tokens and grants](../guides/tokens-and-grants.md)
+
+| Token holder            | `web-app`      | `worker-app`   | `team-rules` |
+| ----------------------- | -------------- | -------------- | ------------ |
+| Web repository agent    | Writer         | Access refused | Viewer       |
+| Worker repository agent | Access refused | Writer         | Viewer       |
+| Rules maintainer        | Access refused | Access refused | Writer       |
+
+For plugin capture, set `LOOM_PROJECT_SCOPE=namespace` and match the project name to
+its repository namespace. Set `LOOM_PROJECT_NAME` when the checkout directory has a
+different name. In the default `tag` mode, project tags label rows in the configured
+namespace. Namespace roles enforce access. [Plugin configuration](../features/integrations/claude-code.md#configuration)
+
+Pass `namespace` and `memory_key` explicitly in each tool call. The org comes from the token.
+
+1. In each repository, use its writer token and `loom_memory_set` to save a different
+   local release check under `example/repo/release-review`. Use the maintainer's token to
+   write a rule for both teams under `example/team/release-review` in `team-rules`.
+2. Open a fresh session with each repository token and call `loom_memory_get` for its
+   local and shared rules. Each session should read its own local rule and the same team rule.
+3. Use each repository token to read the other repository's local key by naming that
+   namespace. Require an access refusal without the value. Try writing the shared key
+   with each repository token. Require a refusal and verify the shared rule's value.
 
 ## What you get
 
@@ -92,33 +187,84 @@ outside the team cannot read it.
 
 ## Measured
 
+### Coding tasks with and without Loom
+
+Paired sessions on the ClickHouse codebase used the same coding agent and local tools. The Loom
+sessions also used the plugin's hooks and code search. The benchmark measures that combined setup.
+
+| Task                                                         | Paired sample                     | Result without → with Loom                     | Session model cost per question |
+| ------------------------------------------------------------ | --------------------------------- | ---------------------------------------------- | ------------------------------- |
+| Explain behavior, assess change impact, or trace its history | 24 questions, 3 paired runs each  | Judged answer score 0.78 → 0.84                | $0.212 → $0.170                 |
+| Locate the file that implements a feature                    | 36 questions, 10 paired runs each | Correct file among the top three 91.4% → 96.4% | $0.096 → $0.076                 |
+| Trace bugs to fixes, find tests, or follow call chains       | 24 questions, 3 paired runs each  | Judged answer score 0.72 → 0.76                | $0.423 → $0.396                 |
+
+The score measures how well answers cover reference points verified in the code and penalizes
+contradictions. The measured cost covers the coding agent's model bill. Include Loom's server-side
+model calls, hosting and indexing when comparing total cost. Mean elapsed time rose from 61 to 62
+seconds for the answer-graded coding tasks, from 20 to 25 seconds for file lookup, and from 142 to
+164 seconds for multi-hop tasks. See the [paired results and run artifacts](../benchmarks/results.md#with-and-without-loom)
+and [run the paired task scorecard](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
+on your own repository.
+
+### Conversation recall
+
 On 100 paired LongMemEval-S questions with the same `gpt-5` reader, answers from Loom's
 retrieved memories scored 94% against 90% from the whole history, with 91% fewer reader
 prompt tokens (excluding the one-time cost of building the memory); the accuracy
 difference is not statistically established.
 [With and without Loom](../benchmarks/results.md#with-and-without-loom)
 
-## A research assistant that remembers your reading preferences
+## Pass a coding task's review rule to the next session
 
-After the [quickstart](../getting-started/quickstart.md), connect Claude Desktop or
-Cursor through the dashboard's [client setup](../getting-started/connect-a-coding-agent.md#how-do-i-give-cursor-or-another-mcp-client-shared-memory).
-The tools work with the stock LLM: your chat app supplies the model that calls them.
+Start the [single-user quickstart](../getting-started/quickstart.md#fast-path-released-image-no-clone).
+The calls below use its loopback HTTP endpoint with authentication off. They save a
+disposable example rule, not a claim about your repository's test policy. No model key
+is needed for this exact-key check. An authenticated deployment instead needs the
+[token and identity fields](../getting-started/quickstart.md#4-first-memory-over-http)
+for the caller's permitted namespace; do not expose the single-user endpoint to a team.
 
-1. Tell the assistant: “Use `loom_memory_set` to save my research preference under
-   `example/research/source-policy`: include peer-reviewed papers in my reading list.”
-2. Check that the tool response contains a `memory_id`. Open **Memories** in the
-   dashboard and confirm the value and writer. If the tool refuses the write, resolve
-   its reported problem before continuing.
-3. Start a fresh chat. Tell the assistant: “Use `loom_memory_get` to read
-   `example/research/source-policy`, then tell me which sources belong in my reading list.”
-   Check that the tool returns `found: true` and the preference you saved.
-4. Ask the assistant to delete that example key when finished, then confirm the
-   dashboard no longer lists it as a live memory.
+Save the review rule for an example coding task:
 
-The second chat reads a stored preference without the first chat's transcript. This
-checks persistence and client wiring; it does not test whether the assistant can judge
-papers or answer research questions. For searches over the papers themselves, use
-[document search](document-search.md).
+```bash
+curl --fail-with-body --silent --show-error \
+  http://localhost:7777/v1/memory.set \
+  -H 'Content-Type: application/json' \
+  -d '{"memory_key":"example/coding/review-policy","value":"Require the focused test result before marking the example coding task complete."}'
+```
+
+Check the successful response's `memory_id` and value in **Memories**. A refused write
+is not a saved rule. In a fresh shell, read it without the previous conversation:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  http://localhost:7777/v1/memory.get \
+  -H 'Content-Type: application/json' \
+  -d '{"memory_key":"example/coding/review-policy"}'
+```
+
+Require `found: true` and the stored rule. A connected coding agent can make the same
+read with `loom_memory_get` before planning its next step. Keep the actual test output
+as task evidence; recalling a rule does not run the tests or prove task completion.
+Delete the disposable key in the dashboard when finished.
+
+This checks persistence and wiring. It does not qualify semantic retrieval, a client's
+automatic tool selection, cross-user isolation or better code. Use the
+[evaluation checks](../getting-started/evaluate.md#shared-memory-across-clients) for team
+sharing and denied access, and test key-free questions and abstention separately.
+
+## Connect a remembered lesson to its evidence
+
+| Coding need                                                           | Use Loom for                                                                                                           | Prerequisite and proof                                                                                                                                                                                                          |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Another agent must reuse a project decision                           | Store the decision once and read it from an authorized session.                                                        | [Shared-memory evaluation](../getting-started/evaluate.md#shared-memory-across-clients) tests successful recall separately from denied access.                                                                                  |
+| A lesson concerns a function that can change                          | Attach the lesson to a definition in an indexed repository and inspect its link state before reuse.                    | The [code-linked walkthrough](memory-linked-to-code.md#check-a-lesson-after-a-code-edit) names the indexing and worker prerequisites, checks across commits and the limits of those checks.                                     |
+| The agent needs a feature's implementation or a change's dependencies | Query the centrally populated repository index instead of asking each agent to clone and search the entire repository. | [Code intelligence](code-intelligence.md) describes repository setup and supported lookups. An authorized, populated index is required; a registered repository alone is insufficient.                                          |
+| Repeated exploration or decision-making may waste model context       | Retrieve relevant source and prior lessons, then measure completed tasks with and without retrieval.                   | [Coding-agent cost](coding-agent-cost.md#compare-completed-tasks-including-overhead) separates task success, model bills, indexing, server costs and elapsed time. Fewer prompt tokens alone do not establish lower total cost. |
+
+A code link reports the source state, not whether a lesson is true. Uncommitted edits
+do not update it. Read changed code and recheck the claim before applying it. A working
+save/read example or a published integration does not establish independent adoption,
+answer quality or a performance advantage.
 
 ## Start
 

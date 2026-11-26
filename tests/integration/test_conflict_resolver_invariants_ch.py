@@ -4,7 +4,7 @@ and an erasure request hit the same keys. After each seed:
 
 - no user write or pin is lost: each key holds what its last user write left;
 - every retired row has a `memory.auto_supersede` record and can be undone;
-- no flag, clear or retirement below 0.90;
+- no model action below 0.90; dead flags clear without a model judgement;
 - no text of another user or another tenant reaches a prompt;
 - nothing is written in an org whose erasure was requested while a call was in flight;
 - once the writes stop and a pass drains, the next pass makes no call.
@@ -140,16 +140,33 @@ class _Writer:
                 self.wrote(key, session, out.version, ("value", value, False))
             elif op == "pin" and head is not None and head["tombstoned_at"] is None:
                 value = _text(head["value"])
-                out = await handle_memory_pin(
-                    MemorySetInput(**ident, session_id=session, memory_key=key, value=value)
-                )
-                self.wrote(key, session, out.version, ("value", value, True))
+                from server.core.errors import ValidationError
+
+                try:
+                    out = await handle_memory_pin(
+                        MemorySetInput(**ident, session_id=session, memory_key=key, value=value)
+                    )
+                except ValidationError as error:
+                    if error.extra.get("reason") != "forgotten":
+                        raise
+                else:
+                    self.wrote(key, session, out.version, ("value", value, True))
             elif op == "delete":
-                gone = await handle_memory_delete(
-                    MemoryDeleteInput(**ident, session_id=session, memory_key=key)
-                )
-                if gone.tombstoned:
-                    self.wrote(key, session, gone.version, ("deleted", None, False))
+                from server.memory.store.pg_memory import AdmissionContendedError
+
+                request = MemoryDeleteInput(**ident, session_id=session, memory_key=key)
+                for attempt in range(3):
+                    try:
+                        gone = await handle_memory_delete(request)
+                    except AdmissionContendedError:
+                        if attempt == 2:
+                            raise
+                        # Retry the same logical delete from a fresh head after its 503 hint.
+                        await asyncio.sleep(1)
+                    else:
+                        if gone.tombstoned:
+                            self.wrote(key, session, gone.version, ("deleted", None, False))
+                        break
             elif op == "undo" and head is not None and head["status"] == "superseded":
                 await handle_memory_restore(
                     MemoryRestoreInput(
@@ -172,6 +189,188 @@ class _Writer:
             self.spawn()
         while not all(t.done() for t in self.tasks):
             await asyncio.gather(*self.tasks)
+
+
+async def _settle_resolver(run_pass: Any, calls: list[str], max_attempts: int) -> None:
+    """Allow configured post-answer attempts, then require a quiet confirming pass."""
+    assert max_attempts >= 1
+    outcomes = []
+    for _ in range(max_attempts + 1):
+        before = len(calls)
+        outcomes.append(await run_pass())
+        if len(calls) == before:
+            return
+    raise AssertionError(f"resolver did not settle within {max_attempts} attempts: {outcomes}")
+
+
+class _DeleteBarrier:
+    """Pause the first tombstone after its read and observe only that delete task."""
+
+    def __init__(self, monkeypatch: Any) -> None:
+        from server.memory.app import handlers
+        from server.memory.store import refusals
+
+        self.read, self.resume = asyncio.Event(), asyncio.Event()
+        self.attempts = 0
+        self.refused = 0
+        self.recorded = 0
+        self.deleting: asyncio.Task[Any] | None = None
+        self._tombstone = handlers._write_tombstone_row
+        self._record = refusals.record_clickhouse
+        monkeypatch.setattr(handlers, "_write_tombstone_row", self.tombstone)
+        monkeypatch.setattr(refusals, "record_clickhouse", self.record)
+
+    async def tombstone(self, *args: Any, **kwargs: Any) -> None:
+        from server.memory.store.pg_memory import AdmissionContendedError
+
+        self.attempts += 1
+        if self.attempts == 1:
+            self.read.set()
+            await self.resume.wait()
+        try:
+            await self._tombstone(*args, **kwargs)
+        except AdmissionContendedError:
+            self.refused += 1
+            raise
+
+    async def record(self, *args: Any, **kwargs: Any) -> None:
+        if asyncio.current_task() is self.deleting:
+            self.recorded += 1
+        await self._record(*args, **kwargs)
+
+
+@pytest.mark.parametrize("retry", [False, True])
+async def test_delete_contention_refuses_stale_head_and_writer_retries(
+    ch, wired, monkeypatch, retry: bool
+) -> None:
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from server.memory.app.handlers import handle_memory_delete
+    from server.memory.store.pg_memory import AdmissionContendedError
+
+    org, _ = wired
+    key, session = "office_city", "s1"
+    await _set(org, session, key, "before competing write")
+    barrier = _DeleteBarrier(monkeypatch)
+    writer = _Writer(ch, org, 2)
+    monkeypatch.setattr(
+        writer.rng, "choice", lambda choices: "delete" if "delete" in choices else key
+    )
+    request = MemoryDeleteInput(
+        org=org, namespace=NS, agent="bot", user_id=USER, session_id=session, memory_key=key
+    )
+    deleting = barrier.deleting = asyncio.create_task(
+        writer.write([key]) if retry else handle_memory_delete(request)
+    )
+    try:
+        async with asyncio.timeout(20):
+            await barrier.read.wait()
+            await _set(org, session, key, "after competing write")
+            competing = (await _heads(ch, org))[(key, session)]
+            barrier.resume.set()
+            if retry:
+                await deleting
+            else:
+                with pytest.raises(AdmissionContendedError) as raised:
+                    await deleting
+                assert raised.value.code == "ADMISSION_CONTENDED"
+                assert raised.value.extra["retry_after_s"] == 1
+    finally:
+        barrier.resume.set()
+        if not deleting.done():
+            deleting.cancel()
+        await asyncio.gather(deleting, return_exceptions=True)
+    assert barrier.refused == 1
+    head = (await _heads(ch, org))[(key, session)]
+    if retry:
+        assert barrier.attempts == 2 and barrier.recorded == 1
+        assert head["tombstoned_at"] is not None and _text(head["value"]) == "after competing write"
+        assert head["version"] > competing["version"]
+        assert writer.steps == 1
+        assert writer.want == {(key, session): ("deleted", None, False)}
+        assert writer.versions == {(key, session): head["version"]}
+    else:
+        assert barrier.attempts == 1 and barrier.recorded == 0
+        assert head == competing
+        assert not writer.want and writer.steps == 0
+
+
+@pytest.mark.parametrize("stamp_mode", ["write", "raise", "no_write"])
+@pytest.mark.parametrize("limit", [1, 3])
+async def test_a_fixed_refused_answer_settles_only_after_its_terminal_stamp(
+    ch, wired, monkeypatch, stamp_mode: str, limit: int
+) -> None:
+    from types import SimpleNamespace
+
+    from server.core.errors import ValidationError
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers import conflict_resolver as worker
+    from server.settings import settings
+
+    org, llm = wired
+    monkeypatch.setattr(settings, "memory_conflict_resolver_max_attempts", limit)
+    calls: list[str] = []
+    attempts: list[int] = []
+    stamp_counts: list[int] = []
+    stamped: list[tuple[str, ...]] = []
+    real_stamp = queue.stamp_judged
+
+    async def judge(system: str, user: str, **kwargs: Any) -> Any:
+        calls.append(user)
+        peers = [
+            {
+                "peer_id": peer,
+                "reason": "scripted",
+                "same_entity": True,
+                "same_attribute": True,
+                "verdict": "update",
+                "confidence": 0.99,
+            }
+            for peer in re.findall(r"^\[(p\d+)\]", user, re.M)
+        ]
+        return SimpleNamespace(text=json.dumps({"peers": peers}))
+
+    async def refuse(*args: Any, **kwargs: Any) -> None:
+        # The real judge has answered; the unchanged row's action is refused.
+        raise ValidationError("The value is refused by a previous deletion", reason="forgotten")
+
+    async def observe_stamp(row: Any) -> None:
+        stamp_counts.append(worker._state.attempts[worker._attempt_key(row)][0])
+        if stamp_mode == "raise":
+            raise OSError("Synthetic terminal stamp refusal")
+        if stamp_mode == "write":
+            await real_stamp(row)
+            stamped.append(worker._attempt_key(row))
+
+    async def observed_pass() -> dict[str, Any]:
+        outcome = await worker.run_pass()
+        attempts.append(max((count for count, _ in worker._state.attempts.values()), default=0))
+        return outcome
+
+    monkeypatch.setattr(llm, "complete", judge)
+    monkeypatch.setattr(resolver, "_act_on_verdicts", refuse)
+    monkeypatch.setattr(queue, "stamp_judged", observe_stamp)
+    await _pair(ch, org, "refused_old", "refused_new", 140)
+    before = await _heads(ch, org)
+    if stamp_mode == "write":
+        await _settle_resolver(observed_pass, calls, limit)
+        assert len(calls) == limit and len(stamped) == 1
+        assert stamp_counts == [limit]
+        assert attempts == [*range(1, limit), 0, 0]
+        assert not await queue.owed_rows(limit=10)
+        drained = len(calls)
+        await worker.run_pass()
+        assert len(calls) == drained, "the terminal stamp stops further judge calls"
+    else:
+        with pytest.raises(AssertionError, match="did not settle"):
+            await _settle_resolver(observed_pass, calls, limit)
+        assert len(calls) == limit + 1
+        assert not stamped and await queue.owed_rows(limit=10)
+        expected_stamps = (
+            [limit, limit + 1] if stamp_mode == "raise" else [limit] * ((limit + 1) // limit)
+        )
+        assert stamp_counts == expected_stamps
+    assert await _heads(ch, org) == before, "the refused action must not change either head"
 
 
 # Every table a resolver write lands in.
@@ -206,6 +405,7 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     from server.memory.api.models_crud import MemoryRestoreInput
     from server.memory.app import after_write, write
     from server.memory.app.restore import handle_memory_restore
+    from server.memory.store import conflict_resolver as queue
     from server.memory.workers.conflict_resolver import run_pass
     from server.settings import settings
 
@@ -214,6 +414,22 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     writer = _Writer(ch, org, seed)
     erasing = seed % 3 == 0
     stored: dict[str, set[int]] = {}
+    dead_peers: set[str] = set()
+    read_dead_flags = queue.dead_flags
+
+    async def observed_dead_flags(
+        read_org: str,
+        namespace: str,
+        identity: tuple[str, str, str, str],
+        *,
+        ch: Any = None,
+    ) -> list[str]:
+        peers = await read_dead_flags(read_org, namespace, identity, ch=ch)
+        if (read_org, namespace) == (org, NS):
+            dead_peers.update(peers)
+        return peers
+
+    monkeypatch.setattr(queue, "dead_flags", observed_dead_flags)
 
     async def in_call(entries: list[dict[str, Any]]) -> None:
         acts = any(e["confidence"] >= 0.9 and e["same_entity"] for e in entries)
@@ -255,7 +471,7 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     await writer.run(0)
     writer.open = False
     want = writer.want
-    await run_pass()  # what the writes marked
+    await _settle_resolver(run_pass, calls, settings.memory_conflict_resolver_max_attempts)
     drained = len(calls)
     await run_pass()
     assert len(calls) == drained, "a pass after the queue drained makes no call"
@@ -276,7 +492,17 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
 
     assert not any(_SECRET in prompt for prompt in calls), "another user's or tenant's text"
     for record in await _audit(ch, org, "memory.conflict_resolver"):
-        assert all(p["confidence"] >= 0.90 for p in record["pairs"]), record
+        assert record["pairs"], record
+        if record["model"]:
+            assert all(p["confidence"] >= 0.90 for p in record["pairs"]), record
+        else:
+            for pair in record["pairs"]:
+                assert pair == {
+                    "peer_id": pair["peer_id"],
+                    "action": "clear",
+                    "reason": "peer_not_live",
+                }, record
+                assert pair["peer_id"] in dead_peers, record
 
     recorded = {
         e["memory_id"] for r in await _audit(ch, org, "memory.auto_supersede") for e in r["retired"]

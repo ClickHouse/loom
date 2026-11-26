@@ -22,7 +22,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import served_content_sha256
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
-from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
+from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_move import MemoryMoveInput, MemoryMoveOutput
 from server.memory.app import handlers as _mem
 from server.memory.app import set_chunks as _set_chunks
@@ -32,7 +32,9 @@ from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
 from server.memory.domain.delete_marks import carried_trace
 from server.memory.domain.memory_types import is_searchable_type
+from server.memory.domain.webhook_events import memory_change
 from server.memory.store.rows import version_over
+from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
     from server.memory.store import MemoryRow
@@ -96,6 +98,11 @@ def _destination_input(input: MemoryMoveInput, source: MemoryRow) -> Any:
     when the source's class is one a caller may declare (external / imported
     / derived); the server stamps every other class from the token and the
     op, so an `asserted` source lands `asserted` again."""
+    from server.core.errors import AuthInsufficientError
+    from server.memory.domain.proposal_review import pending_review
+
+    if pending_review(source):
+        raise AuthInsufficientError("An unreviewed proposal must be reviewed before it is moved")
     source_class = str(getattr(source, "source_class", "") or "")
     return MemorySetInput(
         org=source.org,
@@ -139,7 +146,7 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
         duplicate_of=dest_id,
         updated_at=now,
     )
-    await memory_repo.insert_versions_over_heads([row], [source], ch=ch)
+    await memory_repo.insert_versions_over_heads([row], [source], ch=ch, exact=True)
     # The source key now reads as a redirect to the destination.
     await webhooks.announce([("memory.revised", row)])
     try:
@@ -166,16 +173,13 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
 async def _tombstone_source(source: MemoryRow) -> None:
     """`keep_redirect: false` — the delete path, which carries the mirror and
     the chunk tombstones itself."""
-    await _mem.handle_memory_delete(
-        MemoryDeleteInput(
-            org=source.org,
-            namespace=source.namespace,
-            agent=source.agent,
-            user_id=source.user_id,
-            session_id=source.session_id,
-            memory_key=source.memory_key,
-        )
-    )
+    version = version_over(source)
+    await _mem._write_tombstone_row(source, version=version, exact=True)
+    try:
+        await _mem._retire_derived(source, version=version, op="memory.move")
+    finally:
+        if await webhooks.announce([("memory.tombstoned", memory_change(source, version))]):
+            note_budget_shape("webhook")
 
 
 async def _destination_id(set_out: Any, set_input: Any) -> str:

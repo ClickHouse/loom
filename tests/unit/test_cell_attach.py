@@ -1616,8 +1616,9 @@ async def test_trigger_try_clock_drains_and_rejects_an_orphan_task():
     real_short_phases = _short_phases
     with pytest.raises(AssertionError, match="leaves no task"):
         async with _trigger_try_idle_clock():
-            asyncio.create_task(orphan())
+            task = asyncio.create_task(orphan())
             await asyncio.sleep(0)
+    assert task.cancelled()
     assert cancelled == [True]
     assert loop.time == real_loop_clock
     assert cell_control.time is real_owner_clock and cell_control.pg.time is real_pg_clock

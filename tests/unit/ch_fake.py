@@ -88,7 +88,14 @@ class RecordingCH:
             raise AssertionError(f"unrouted {kind}: {head!r}; routes: {known}")
         return []
 
-    async def query_all(self, sql: str, params: dict[str, Any] | None = None, **_: Any) -> Rows:
+    async def query_all(
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
+        **_: Any,
+    ) -> Rows:
         return self._read("query_all", sql, params)
 
     async def query_one(

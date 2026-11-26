@@ -127,7 +127,7 @@ names its providers explicitly (the local embedder and the fake LLM).
 
 ```dotenv
 LOOM_LLM_PROVIDER=anthropic
-LOOM_LLM_MODEL=claude-haiku-4-5
+LOOM_LLM_MODEL=claude-sonnet-5-5
 ANTHROPIC_API_KEY=<your Anthropic API key>
 LOOM_REQUIRE_REAL_PROVIDERS=true
 ```
@@ -310,10 +310,12 @@ setting names the same model.
 A gateway that speaks the OpenAI or Anthropic API in front of the providers
 (for budgets, cost attribution or one key for many services) takes Loom's
 calls once its API roots point there; the model names stay what the gateway
-serves:
+serves. The `openai` provider calls OpenAI's Responses API, so the OpenAI root
+must serve `<root>/responses`; a server that speaks only chat completions runs
+under [`LOOM_LLM_PROVIDER=local`](#a-model-server-on-your-machine-no-api-key).
 
 ```bash
-LOOM_OPENAI_BASE_URL=https://gateway.example/v1   # chat and embeddings
+LOOM_OPENAI_BASE_URL=https://gateway.example/v1   # <root>/responses and <root>/embeddings
 LOOM_ANTHROPIC_BASE_URL=https://gateway.example   # Messages: <root>/v1/messages
 OPENAI_API_KEY=<the key the gateway issued for Loom>
 ```

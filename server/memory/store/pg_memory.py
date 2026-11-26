@@ -35,6 +35,7 @@ from server.core.numbers import FLOAT32_MAX, float32
 from server.core.pg_lease import lease_deadline
 from server.memory.domain import lock as _lock
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.proposal_review import enforce_review
 from server.memory.domain.redaction_lineage import (
     REDACTED_VALUE,
     Version,
@@ -120,8 +121,13 @@ SPARSE_DEFAULTS: Mapping[str, Any] = FIRST_VERSION_DEFAULTS
 
 def sparse_row(encoded: Mapping[str, Any]) -> dict[str, Any]:
     """An encoded row as it is stored: without the fields at their default
-    (`SPARSE_DEFAULTS`), which every reader fills back (`decode_row`)."""
-    return {c: v for c, v in encoded.items() if c not in SPARSE_DEFAULTS or v != SPARSE_DEFAULTS[c]}
+    (`SPARSE_DEFAULTS`). Review provenance stays explicit, including false, so a
+    missing legacy flag cannot turn a rejected proposal into an established fact."""
+    return {
+        c: v
+        for c, v in encoded.items()
+        if c == "requires_review" or c not in SPARSE_DEFAULTS or v != SPARSE_DEFAULTS[c]
+    }
 
 
 def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
@@ -129,6 +135,8 @@ def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
     default (`SPARSE_DEFAULTS`), as ClickHouse fills it."""
     out = {c: list(v) if isinstance(v, list) else v for c, v in SPARSE_DEFAULTS.items()}
     out.update(stored)
+    if "requires_review" not in stored:
+        out["requires_review"] = int(out.get("status") in {"proposed", "rejected"})
     for col in DATETIME_COLS:
         val = out.get(col)
         if isinstance(val, str):
@@ -630,10 +638,10 @@ def _cols(rows: Sequence[Mapping[str, Any]], *names: str) -> list[list[Any]]:
     return [[r[n] for r in rows] for n in names]
 
 
-async def _check_policy(conn: Any, admission: Admission, per_scope: Mapping[Any, int]) -> None:
+async def check_policy(conn: Any, generations: Mapping[tuple[str, str], int]) -> None:
     """Hold the admission's policy scopes shared to the commit, and refuse it
     (AdmissionMoved) when one moved since its capture."""
-    policy = sorted(s for s in admission.generations if s not in per_scope)
+    policy = sorted(generations)
     if policy:
         # Shared with every writer of the scope; `pg.bump_policy` takes it exclusively.
         # The read is its own statement, after the wait.
@@ -651,7 +659,7 @@ async def _check_policy(conn: Any, admission: Admission, per_scope: Mapping[Any,
             [s[1] for s in policy],
         )
         now = {(g["org"], g["scope"]): int(g["generation"]) for g in got}
-        moved = {s: now.get(s, 0) for s in policy if now.get(s, 0) != admission.generations[s]}
+        moved = {s: now.get(s, 0) for s in policy if now.get(s, 0) != generations[s]}
         if moved:
             raise AdmissionMoved(moved)
 
@@ -659,6 +667,27 @@ async def _check_policy(conn: Any, admission: Admission, per_scope: Mapping[Any,
 def deleted_decision(row: Mapping[str, Any]) -> bool:
     """A decision row's tombstone, whose record goes once it is visible."""
     return row.get("memory_type") == "decision" and row.get("tombstoned_at") is not None
+
+
+def _batch_indexes(
+    stored: list[dict[str, Any]],
+) -> tuple[
+    dict[tuple[str, str], int], list[tuple[str, str]], dict[IdentityKey, int], list[IdentityKey]
+]:
+    per_scope: dict[tuple[str, str], int] = {}
+    for r in stored:
+        s = (r["org"], r["namespace"])
+        per_scope[s] = per_scope.get(s, 0) + 1
+    scopes = sorted(per_scope)
+    # The newest version of each key is its head; a batch may carry a key twice.
+    # Each key's head, as its index in `stored`.
+    heads: dict[IdentityKey, int] = {}
+    for i, r in enumerate(stored):
+        k = identity_key(r)
+        if k not in heads or int(r["version"]) >= int(stored[heads[k]]["version"]):
+            heads[k] = i
+    keys = sorted(heads)
+    return per_scope, scopes, heads, keys
 
 
 async def commit_versions(
@@ -670,6 +699,7 @@ async def commit_versions(
     request_id: str = "",
     idempotency: tuple[str, str, int] | None = None,
     publisher_lease: bool = True,
+    refuse_values: bool = False,
 ) -> Committed:
     """Commit `rows` (full loom.memory version rows): heads, revisions with
     `audits[i]` (row i's hash-only loom.audit_log row), deliveries (`targets`: one
@@ -692,23 +722,16 @@ async def commit_versions(
         t | (DECISION_RECORD if deleted_decision(r) else 0)
         for t, r in zip(per_row, stored, strict=True)
     ]
-    per_scope: dict[tuple[str, str], int] = {}
-    for r in stored:
-        s = (r["org"], r["namespace"])
-        per_scope[s] = per_scope.get(s, 0) + 1
-    scopes = sorted(per_scope)
-    # The newest version of each key is its head; a batch may carry a key twice.
-    # Each key's head, as its index in `stored`.
-    heads: dict[IdentityKey, int] = {}
-    for i, r in enumerate(stored):
-        k = identity_key(r)
-        if k not in heads or int(r["version"]) >= int(stored[heads[k]]["version"]):
-            heads[k] = i
-    keys = sorted(heads)
+    per_scope, scopes, heads, keys = _batch_indexes(stored)
     async with pg.transaction() as conn:
         await _bound_lock_waits(conn)
+        from server.memory.store import refusals
+
+        await refusals.lock_postgres(conn, stored, forgetting=refuse_values)
         if admission is not None:
-            await _check_policy(conn, admission, per_scope)
+            await check_policy(
+                conn, {s: g for s, g in admission.generations.items() if s not in per_scope}
+            )
         bumped = await conn.fetch(
             _BUMP, [s[0] for s in scopes], [s[1] for s in scopes], [per_scope[s] for s in scopes]
         )
@@ -717,6 +740,7 @@ async def commit_versions(
         # runs, and before the head recheck: an erased memory is a 404, not a moved head.
         await _refuse_stale_rows(conn, stored, admission)
         await _refuse_moved_sources(conn, scopes, admission)
+        await refusals.check_postgres(conn, stored)
         if admission is not None:
             moved = {
                 s: last[s] - per_scope[s]
@@ -730,12 +754,15 @@ async def commit_versions(
         recheck = admission.recheck if admission is not None else None
         locked = await conn.fetch(_LOCK_HEADS, *_key_arrays(keys))
         current = {identity_key(h): decode_row(h["row"]) for h in locked}
+        enforce_review(stored, current)
         for k in keys:
             head = current.get(k)
             if recheck is not None:
                 recheck(k, head)
             if _replaces_vectors(stored[heads[k]], head):
                 per_row[heads[k]] |= OLD_VECTORS
+        if refuse_values:
+            await refusals.record_postgres(conn, stored)
         seqs: list[tuple[str, str, int]] = []
         next_seq = {s: last[s] - per_scope[s] for s in scopes}
         for r in stored:
@@ -1599,7 +1626,11 @@ async def settled_head_versions(keys: Sequence[IdentityKey]) -> dict[IdentityKey
 
 
 async def heads_by_keys(
-    keys: Sequence[IdentityKey], *, include_tombstoned: bool = False, durable: bool = False
+    keys: Sequence[IdentityKey],
+    *,
+    include_tombstoned: bool = False,
+    durable: bool = False,
+    max_value_chars: int | None = None,
 ) -> dict[IdentityKey, dict[str, Any]]:
     """The heads, expired ones included, of exact keys (a deleted one too with
     `include_tombstoned`); a key with none is absent. `durable`: read for ClickHouse
@@ -1610,7 +1641,40 @@ async def heads_by_keys(
     sql = _HEADS_BY_KEYS
     if not include_tombstoned:
         sql += " WHERE c.row->>'tombstoned_at' IS NULL"
-    rows = await _read(sql, *_key_arrays(keys), durable=durable)
+    args = _key_arrays(keys)
+    if max_value_chars is not None:
+        sql += (" AND " if " WHERE " in sql else " WHERE ") + (
+            "length(coalesce(c.row->>'value','')) <= $7 AND "
+            "length(coalesce(c.row->>'value_json','{}')) <= $7"
+        )
+        bound: list[Any] = [*args, max_value_chars]
+    else:
+        bound = list(args)
+    rows = await _read(sql, *bound, durable=durable)
+    return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
+
+
+async def heads_on_connection(
+    conn: Any,
+    keys: Sequence[IdentityKey],
+    *,
+    lock: bool = False,
+    max_value_chars: int | None = None,
+) -> dict[IdentityKey, dict[str, Any]]:
+    """Recheck heads while the caller holds scope locks on this connection."""
+    if not keys:
+        return {}
+    sql = _HEADS_BY_KEYS
+    args: list[Any] = list(_key_arrays(keys))
+    if max_value_chars is not None:
+        sql += (
+            " WHERE length(coalesce(c.row->>'value','')) <= $7 AND "
+            "length(coalesce(c.row->>'value_json','{}')) <= $7"
+        )
+        args.append(max_value_chars)
+    if lock:
+        sql += " " + _KEY_ORDER + " FOR UPDATE OF c"
+    rows = await conn.fetch(sql, *args)
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
 
 

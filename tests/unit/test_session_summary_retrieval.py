@@ -18,6 +18,15 @@ from server.memory.app.retrieval.summaries import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _qualified_sources(monkeypatch):
+    # These cases isolate ranking and hit mapping; source proof has its own suite.
+    async def qualified(ch, rows, **kwargs):
+        return rows
+
+    monkeypatch.setattr("server.memory.store.summary_sources.current_summary_sources", qualified)
+
+
 class StubCH:
     def __init__(self, returns: list[dict[str, Any]] | None = None, raise_on_query: bool = False):
         self.returns = returns or []

@@ -25,7 +25,9 @@ test("indexed code guidance starts with Loom and reuses answers supplied by hook
   assert.match(text, /loom_code_callers.*callers/);
   assert.match(text, /tool is deferred.*ToolSearch/);
   assert.match(text, /definition does not supply its callers/);
-  assert.match(text, /Explicit literal-search requests/);
+  assert.match(text, /loom_code_grep for exact text or errors/);
+  assert.match(text, /Explicit local-tool requests/);
+  assert.doesNotMatch(text, /Explicit literal-search requests/);
   assert.match(text, /quoting an identifier or error is still a code investigation/);
   assert.match(text, /hook already supplied.*do not repeat/);
   assert.match(text, /uncommitted.*local/);

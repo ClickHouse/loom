@@ -275,6 +275,38 @@ _CLUSTER_ROWS = rows_by_substring(
 )
 
 
+async def _summary_pages(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.store.summary_pages import verified_summary_page
+
+    await verified_summary_page(
+        ch,
+        org=ORG,
+        namespace=NS,
+        where="org={org:String} AND namespace={ns:String}",
+        params={"org": ORG, "ns": NS},
+        limit=1,
+        order=c["order"],
+    )
+
+
+def _summary_page_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    if params.get("after") is not None:
+        return []
+    return [
+        dict(
+            agent="bot",
+            user_id="alice",
+            session_id="s1",
+            embedding_model="fake",
+            created_at=datetime(2026, 1, 1),
+            d=datetime(2026, 1, 1),
+            summary_text="legacy",
+            key_facts=[],
+            derived_from=[],
+        )
+    ] * params["lim"]
+
+
 async def _period_sources(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The facts a period's digests compressed: their ids and entities."""
     from types import SimpleNamespace
@@ -292,7 +324,10 @@ async def _period_keys(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.app import period_digest
 
     ident = {"org": ORG, "namespace": NS, "agent": "bot", "user_id": "alice"}
-    await period_digest._skipped_period_keys(ch, ident, rewrite=False)
+    await period_digest._skipped_period_keys(ch, ident, ["period_digest_first_last"], rewrite=False)
+    for after in (None, (datetime(2026, 1, 1), "s1")):
+        async for _ in period_digest._fetch_digests(ch, ident, after=after):
+            pass
 
 
 async def _conflict_resolver(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -399,8 +434,60 @@ async def _source_retirements(ch: RecordingCH, c: dict[str, Any]) -> None:
     await queue.write(item, pending=False, ch=ch)
 
 
+async def _refusal_publication(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.app import extraction_queue as queue
+    from server.memory.domain.refusals import inspect
+    from server.memory.store import refusals
+
+    key = (ORG, NS, "alice")
+    await refusals._matches_clickhouse(ch, key, [inspect("a removed passage")])
+    await refusals._matches_clickhouse(ch, key, [inspect("a removed passage")], erasure_only=True)
+    await refusals._delete_old_vector(
+        ch,
+        {
+            "org": ORG,
+            "namespace": NS,
+            "agent": "a",
+            "user_id": "alice",
+            "session_id": "s",
+            "memory_key": "k",
+            "scope": "private",
+            "embedding_model": "m",
+            "version": 7,
+        },
+    )
+    await refusals._delete_old_shared(
+        ch, {"org": ORG, "namespace": NS, "memory_key": "k", "version": 7}
+    )
+    row = queue._mirror(
+        {
+            "org": ORG,
+            "namespace": NS,
+            "agent": "a",
+            "user_id": "alice",
+            "session_id": "s",
+            "queue_id": "q",
+            "payload": '{"messages":[]}',
+            "version": 6,
+        },
+        status="done",
+    )
+    await queue._source_present(ch, row)
+    await queue._drop_refused(ch, row)
+
+
 def cases() -> list[Case]:
     return [
+        Case(
+            "memory.summary_pages",
+            "server.memory.store.summary_pages",
+            _summary_pages,
+            {"order": ("oldest", "newest", "session")},
+            rows=_summary_page_rows,
+        ),
+        Case(
+            "memory.refusal_publication", "server.memory.store.refusals", _refusal_publication, {}
+        ),
         Case(
             "workers.source_retirements",
             "server.knowledge.store.source_retirements",

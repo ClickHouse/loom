@@ -132,19 +132,70 @@ async def test_in_database_statement_runs_through_the_client_with_its_settings(
         return {"n": 7}
 
     async def _all(sql, params=None):
-        return [{"name": n} for n in COLS]
+        return [
+            {"name": n}
+            for n in ("org", "entity_text", "entity_embedding", "embedding_model", "embedding_dim")
+        ]
 
     monkeypatch.setattr(c, "query_one", _one)
     monkeypatch.setattr(c, "query_all", _all)
     monkeypatch.setattr(ch_mod, "guard_pending_schema", lambda *a, **k: _noop())
     n = await rb.reembed_table_in_database(
-        c, "memory_embeddings", model="m2", dim=4, credentials="coll", log=lambda *_: None
+        c, "entity_vectors", model="m2", dim=4, credentials="coll", log=lambda *_: None
     )
     assert n == 7 and len(sent) == 1
     got = sent[0]
-    assert got["sql"].startswith("INSERT INTO loom.memory_embeddings")
+    assert got["sql"].startswith("INSERT INTO loom.entity_vectors")
     assert got["settings"]["allow_experimental_ai_functions"] == 1
     assert got["settings"]["ai_function_max_api_calls_per_query"] == 1000
+
+
+async def test_database_memory_vectors_publish_through_admission_and_count_only_acks(monkeypatch):
+    import server.memory.store as store
+
+    rows = [
+        {"org": org, "memory_key": "fact", "embedding_model": "m2", "_k": (org,) * 8}
+        for org in ("kept", "refused")
+    ]
+    queries = []
+
+    class CH:
+        async def query_one(self, sql, params=None):
+            return {"n": 2}
+
+        async def query_all(self, sql, params=None, *, settings=None):
+            if "system.columns" in sql:
+                return [{"name": name} for name in COLS]
+            queries.append(sql)
+            assert settings["allow_experimental_ai_functions"] == 1
+            assert params["page"] == 200
+            assert "AS embedding_model" in sql.split(" FROM (", 1)[0]
+            assert "embedding_model != 'm2'" in sql.split(" FROM (", 1)[1]
+            assert "LIMIT {page:UInt32}" in sql
+            return rows
+
+        async def execute(self, *args, **kwargs):
+            pytest.fail("A memory vector bypassed protected publication")
+
+    published = []
+
+    async def admit(out, *, ch):
+        published.extend(out)
+        return out[:1]
+
+    monkeypatch.setattr(store, "insert_embedding_rows", admit)
+    held = set()
+    written = await rb.reembed_table_in_database(
+        CH(),
+        "memory_embeddings",
+        model="m2",
+        dim=4,
+        credentials="coll",
+        left_orgs=held,
+        log=lambda *_: None,
+    )
+    assert written == 1 and held == {"refused"}
+    assert len(queries) == 1 and all("_k" not in row for row in published)
 
 
 async def _noop() -> None:

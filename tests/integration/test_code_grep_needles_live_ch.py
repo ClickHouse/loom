@@ -21,6 +21,7 @@ import pytest
 from server.code.domain.index import grep_sql
 from server.code.domain.index.grep_plan import GREP_FINAL_SETTINGS, content_predicate
 from server.code.domain.search_scope import build_scope
+from server.code.store.index.grep import _scan_predicate
 from tests.integration._resources import ch_client_from_env, unique_org
 
 CORPUS = [
@@ -123,6 +124,37 @@ def test_needles_return_exactly_what_the_exact_matcher_returns(
                 matched += bool(before)
     assert guarded >= 10  # the guard ran, the comparison is not vacuous
     assert matched >= 20
+
+
+@pytest.mark.parametrize("case_sensitive", [True, False])
+def test_literal_alternatives_match_the_union_of_exact_searches(
+    reader: Any, corpus: tuple[str, str], case_sensitive: bool
+) -> None:
+    org, ns = corpus
+    needles = ["gettOtals(", "setTotals(", "50% of", "a_b\\c", "CAFÉ", "café"]
+    cond, params = _scan_predicate(needles, regex=False, case_sensitive=case_sensitive)
+    params.update(org=org, ns=ns, limit=100, expected_patterns=needles)
+    position = "position" if case_sensitive else "positionCaseInsensitive"
+    expected = (
+        f"arrayExists(term -> {position}(content, term) > 0, {{expected_patterns:Array(String)}})"
+    )
+    for build in (grep_sql.grep_chunks_sql, grep_sql.grep_files_sql):
+        observed = _rows(reader, build(cond, "", ""), params)
+        assert observed
+        assert observed == _rows(reader, build(expected, "", ""), params)
+
+
+def test_large_literal_list_respects_scope_in_one_scan(
+    reader: Any, corpus: tuple[str, str]
+) -> None:
+    org, ns = corpus
+    needles = ["TODO"] + [f"{n:03d}" + "界" * 997 for n in range(253)] + ["setTotals("]
+    cond, params = _scan_predicate(needles, regex=False, case_sensitive=True)
+    assert len(params) > 1
+    params.update(org=org, ns=ns, limit=100, prefix="src/f1.cpp")
+    assert _rows(
+        reader, grep_sql.grep_files_sql(cond, "AND startsWith(path, {prefix:String})", ""), params
+    ) == [("src/f1.cpp", 1, 2, 1)]
 
 
 def test_search_like_guard_returns_exactly_what_the_exact_matcher_returns(

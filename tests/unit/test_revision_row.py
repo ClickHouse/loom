@@ -90,6 +90,10 @@ def test_first_version_defaults_are_the_ddl_defaults() -> None:
     now = datetime(2026, 9, 28, 12, 0, 0)
     for col, value in rows_mod.FIRST_VERSION_DEFAULTS.items():
         want = _ddl_default(col)
+        if col == "requires_review":
+            assert value == 0  # A first active row is reviewed by default.
+            assert want == "toUInt8(status IN ('proposed', 'rejected'))"
+            continue
         got = (
             "NULL"
             if value is None

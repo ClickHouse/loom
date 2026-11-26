@@ -1,0 +1,199 @@
+name: dependency review
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    name: introduced dependency vulnerabilities
+    if: github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Review dependency changes without checking out source
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64
+          import binascii
+          import http.client
+          import json
+          import os
+          import re
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          MAX_PAGES = 10
+          # Page size is a request hint; enforce the budget across all responses.
+          PAGE_SIZE = 100
+          MAX_CHANGES = 1000
+          MAX_BYTES = 1024 * 1024
+          MAX_FINDINGS = 20
+          SEVERITIES = {"low", "moderate", "high", "critical"}
+
+
+          class ReviewError(ValueError):
+              pass
+
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+
+          def snapshot_complete(value):
+              if not value:
+                  return
+              try:
+                  if len(value) > 8192:
+                      raise ReviewError("Snapshot warning header exceeds its limit")
+                  warnings = json.loads(base64.b64decode(value, validate=True))
+              except (ValueError, binascii.Error) as error:
+                  raise ReviewError("Invalid dependency snapshot warning header") from error
+              if warnings != []:
+                  raise ReviewError("Dependency snapshots are incomplete")
+
+
+          def next_page(value, endpoint, canonical_endpoint, page):
+              if len(value) > 4096:
+                  raise ReviewError("Pagination header exceeds its limit")
+              links = []
+              for item in value.split(",") if value else []:
+                  match = re.fullmatch(r'\s*<([^>]+)>;\s*rel="([^"]+)"\s*', item)
+                  if not match:
+                      raise ReviewError("Invalid dependency pagination header")
+                  if "next" in match[2].split():
+                      links.append(urllib.parse.urlsplit(match[1]))
+              if not links:
+                  return False
+              expected = {urllib.parse.urlsplit(endpoint), urllib.parse.urlsplit(canonical_endpoint)}
+              if len(links) != 1 or links[0]._replace(query="") not in expected:
+                  raise ReviewError("Unexpected dependency pagination destination")
+              query = urllib.parse.parse_qs(links[0].query, strict_parsing=True)
+              if query != {"per_page": [str(PAGE_SIZE)], "page": [str(page + 1)]}:
+                  raise ReviewError("Unexpected dependency pagination sequence")
+              return True
+
+
+          def read_page(opener, url, token):
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "Authorization": "Bearer " + token,
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              try:
+                  with opener.open(request, timeout=20) as response:
+                      if response.status != 200:
+                          raise ReviewError("Dependency review API did not return HTTP 200")
+                      snapshot_complete(
+                          response.headers.get("x-github-dependency-graph-snapshot-warnings", "")
+                      )
+                      body = response.read(MAX_BYTES + 1)
+                      link = response.headers.get("Link", "")
+              except urllib.error.HTTPError as error:
+                  raise ReviewError(f"Dependency review API returned HTTP {error.code}") from error
+              except (urllib.error.URLError, TimeoutError, http.client.HTTPException) as error:
+                  raise ReviewError("Dependency review API request failed") from error
+              if len(body) > MAX_BYTES:
+                  raise ReviewError("Dependency review response exceeds its limit")
+              changes = json.loads(body)
+              if not isinstance(changes, list):
+                  raise ReviewError("Invalid dependency review response")
+              return changes, link
+
+
+          def blocked_changes(change):
+              if not isinstance(change, dict) or change.get("change_type") not in {"added", "removed"}:
+                  raise ReviewError("Invalid dependency change")
+              for field in ("name", "version", "manifest"):
+                  if not isinstance(change.get(field), str) or not 0 < len(change[field]) <= 4096:
+                      raise ReviewError("Invalid dependency identity")
+              vulnerabilities = change.get("vulnerabilities")
+              if not isinstance(vulnerabilities, list) or len(vulnerabilities) > 100:
+                  raise ReviewError("Invalid dependency vulnerabilities")
+              findings = []
+              for vulnerability in vulnerabilities:
+                  if not isinstance(vulnerability, dict) or vulnerability.get("severity") not in SEVERITIES:
+                      raise ReviewError("Invalid dependency vulnerability severity")
+                  advisory = vulnerability.get("advisory_ghsa_id")
+                  if not isinstance(advisory, str) or not re.fullmatch(
+                      r"GHSA-[a-z0-9]{4}(?:-[a-z0-9]{4}){2}", advisory
+                  ):
+                      raise ReviewError("Invalid dependency advisory identity")
+                  if change["change_type"] == "added" and vulnerability["severity"] in {"high", "critical"}:
+                      findings.append(
+                          {
+                              **{key: change[key][:200] for key in ("name", "version", "manifest")},
+                              "severity": vulnerability["severity"],
+                              "advisory": advisory,
+                          }
+                      )
+              return findings
+
+
+          def review(repository, base, head, token, opener, repository_id):
+              if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+                  raise ReviewError("Invalid repository identity")
+              if type(repository_id) is not int or not 0 < repository_id < 2**63:
+                  raise ReviewError("Invalid numeric repository identity")
+              if not all(re.fullmatch(r"[0-9a-f]{40}", sha) for sha in (base, head)) or not token:
+                  raise ReviewError("Missing token or invalid commit identities")
+              comparison = f"/dependency-graph/compare/{base}...{head}"
+              endpoint = f"https://api.github.com/repos/{repository}{comparison}"
+              canonical_endpoint = f"https://api.github.com/repositories/{repository_id}{comparison}"
+              findings, blocked, total = [], 0, 0
+              for page in range(1, MAX_PAGES + 1):
+                  changes, link = read_page(opener, f"{endpoint}?per_page={PAGE_SIZE}&page={page}", token)
+                  total += len(changes)
+                  if total > MAX_CHANGES:
+                      raise ReviewError(
+                          "Dependency changes exceed the total record limit; review is incomplete"
+                      )
+                  for change in changes:
+                      matches = blocked_changes(change)
+                      blocked += len(matches)
+                      findings.extend(matches[: MAX_FINDINGS - len(findings)])
+                  if not next_page(link, endpoint, canonical_endpoint, page):
+                      return {"changes": total, "blocked_advisories": blocked, "findings": findings}
+              raise ReviewError("Dependency changes exceed the page limit; review is incomplete")
+
+
+          def main():
+              try:
+                  with open(os.environ["GITHUB_EVENT_PATH"]) as source:
+                      event = json.load(source)
+                  pull = event["pull_request"]
+                  result = review(
+                      os.environ["GITHUB_REPOSITORY"],
+                      pull["base"]["sha"],
+                      pull["head"]["sha"],
+                      os.environ["GITHUB_TOKEN"],
+                      urllib.request.build_opener(NoRedirect),
+                      event["repository"]["id"],
+                  )
+              except (ReviewError, OSError, ValueError, KeyError, TypeError) as error:
+                  reason = str(error) if isinstance(error, ReviewError) else type(error).__name__
+                  print("Dependency review could not complete:", reason)
+                  return 2
+              print(json.dumps(result, ensure_ascii=True))
+              return 1 if result["blocked_advisories"] else 0
+
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          PY

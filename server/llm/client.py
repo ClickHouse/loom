@@ -26,9 +26,10 @@ class LLMResult:
     # provider call (server/llm/cache.py). tokens_in/out are the
     # counts the original call reported; nothing was spent for this one.
     from_cache: bool = False
-    # Why the provider ended the reply, as it says it (OpenAI `finish_reason`,
-    # Anthropic `stop_reason`). "content_filter" / "refusal" mean the provider
-    # cut the reply, so its text is partial. "" when unreported.
+    # Why the provider ended the reply, as it says it (chat completions'
+    # `finish_reason`, Anthropic `stop_reason`; a Responses API status in chat
+    # completions' words). "content_filter" / "refusal" mean the provider cut
+    # the reply, so its text is partial. "" when unreported.
     stop_reason: str = ""
 
 
@@ -45,9 +46,9 @@ class LLMClient(Protocol):
         max_tokens: int = 1024,
         response_format: dict[str, str] | None = None,
     ) -> LLMResult:
-        """One-shot completion, no streaming or tools. `response_format`
-        passes through where supported (OpenAI `{"type": "json_object"}`);
-        providers that don't support it ignore the hint."""
+        """One-shot completion, no streaming or tools. `response_format`, in
+        chat completions' shape (`{"type": "json_object"}`), passes through where
+        supported; providers that don't support it ignore the hint."""
         ...
 
 

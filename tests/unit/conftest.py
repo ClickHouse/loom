@@ -75,6 +75,12 @@ def no_blacklisted_values(monkeypatch):
 
     monkeypatch.setattr(blacklist_guard, "capture_policy", capture)
     monkeypatch.setattr(blacklist_guard, "enforce_rows", allow)
+    monkeypatch.setattr(blacklist_guard, "find_match", unittest.mock.AsyncMock(return_value=None))
+
+    async def no_refusal(ch, rows):
+        return None
+
+    monkeypatch.setattr("server.memory.store.refusals.check_clickhouse", no_refusal)
 
 
 @pytest.fixture(autouse=True)
@@ -1210,11 +1216,13 @@ def memory_insert_keeper(monkeypatch):
     Business-domain ClickHouse fakes need no Keeper SQL implementation. Tests of
     contention and failure can change this store or replace the fence explicitly.
     """
-    from server.memory.store import write_fence
+    from server.memory.store import refusals, write_fence
     from tests.unit.claims_fake import FakeLockTable
 
     keeper = FakeLockTable()
     monkeypatch.setattr(write_fence, "_lease_client", lambda ch: keeper)
+    monkeypatch.setattr(refusals, "_lease_client", lambda ch: keeper)
+    monkeypatch.setattr(refusals, "_admission_wait_s", lambda: 0.0)
     # Domain tests fail fast on deliberate contention; waiting has explicit coverage.
     monkeypatch.setattr(write_fence, "_admission_wait_s", lambda: 0.0)
     return keeper

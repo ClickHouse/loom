@@ -7,9 +7,12 @@ delete_version_check worker runs it.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from server.core.hashing import sha256_text
 from server.core.repo_base import _CHClient, _default_client
+from server.memory.store.rows import MemoryRow, memory_head_state
 from server.memory.store.sql import _SEQUENTIAL, read_your_writes_enabled
 
 TABLE = "loom.delete_version_checks"
@@ -28,6 +31,11 @@ _CHECK_COLUMNS = (
 )
 
 
+def checked_state_sha256(row: MemoryRow) -> str:
+    """Bind recovery to the full checked state, including same-version collisions."""
+    return sha256_text(json.dumps(memory_head_state(row), sort_keys=True, default=str))
+
+
 async def record_delete_check(
     check: dict[str, Any], *, done: bool, ch: _CHClient | None = None
 ) -> None:
@@ -37,6 +45,7 @@ async def record_delete_check(
     row = {k: check[k] for k in _CHECK_COLUMNS}
     row["checked"], row["tombstone"] = int(row["checked"]), int(row["tombstone"])
     row["done"] = 1 if done else 0
+    row["checked_state_sha256"] = check.get("checked_state_sha256", "")
     await ch.insert(TABLE, [row], settings={"async_insert": 0, "wait_for_async_insert": 1})
 
 
@@ -56,7 +65,8 @@ async def find_delete_check(
     ch = ch or _default_client()
     rows = await ch.query_all(
         f"""
-        SELECT org, namespace, agent, user_id, session_id, memory_key, checked, tombstone, done
+        SELECT org, namespace, agent, user_id, session_id, memory_key, checked, tombstone,
+               checked_state_sha256, done
         FROM {TABLE} FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND agent = {{agent:String}}
           AND user_id = {{uid:String}} AND session_id = {{sid:String}}
@@ -86,7 +96,8 @@ async def pending_delete_checks(
     ch = ch or _default_client()
     return await ch.query_all(
         f"""
-        SELECT org, namespace, agent, user_id, session_id, memory_key, checked, tombstone
+        SELECT org, namespace, agent, user_id, session_id, memory_key, checked, tombstone,
+               checked_state_sha256
         FROM {TABLE} FINAL
         WHERE done = 0 AND created_at <= now() - toIntervalSecond({{age:UInt32}})
         ORDER BY created_at

@@ -16,6 +16,14 @@
     "should_trigger": true
   },
   {
+    "query": "rewrite these release highlights around what users can do and put upgrade actions first",
+    "should_trigger": true
+  },
+  {
+    "query": "shorten this release announcement and make shipped features distinct from roadmap plans",
+    "should_trigger": true
+  },
+  {
     "query": "fill in the issue form for this bug",
     "should_trigger": false
   },

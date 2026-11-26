@@ -781,7 +781,7 @@ def _cmd_import_clickgap(args: argparse.Namespace) -> int:
     from server.core.ch import get_client
     from server.embedding import get_embedder
     from server.memory.app.provenance import writer_actor
-    from server.memory.store import insert_memory_versions
+    from server.memory.store import insert_embedding_rows, insert_memory_versions
 
     async def _run() -> int:
         sqlite_path = args.sqlite
@@ -860,8 +860,8 @@ def _cmd_import_clickgap(args: argparse.Namespace) -> int:
                 await insert_memory_versions(mem_batch, ch=ch)
                 total_items += len(mem_batch)
             if emb_batch:
-                await ch.insert("loom.memory_embeddings", emb_batch)
-                total_emb += len(emb_batch)
+                admitted = await insert_embedding_rows(emb_batch, ch=ch)
+                total_emb += len(admitted)
         print(
             f"  ✓ {total_items} lessons → memory ({total_emb} embeddings, "
             f"{w.polarity_neg} suppression/polarity:negative, "

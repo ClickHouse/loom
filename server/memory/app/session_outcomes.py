@@ -239,7 +239,7 @@ async def record_outcome(ch: Any, **fields: Any) -> None:
 _UNLABELLED_SQL = """
     SELECT s.org AS org, s.namespace AS namespace, s.agent AS agent,
            s.user_id AS user_id, s.session_id AS session_id,
-           s.summary_text AS summary_text, s.key_facts AS key_facts
+           s.summary_text AS summary_text, s.key_facts AS key_facts, s.derived_from AS derived_from
     FROM loom.session_summaries AS s FINAL
     LEFT ANTI JOIN (
         SELECT org, namespace, agent, user_id, session_id FROM loom.session_outcomes_by_user FINAL
@@ -276,6 +276,9 @@ async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillR
             "off": sorted(await customer.switched_off_orgs()),
         },
     )
+    from server.memory.store.summary_sources import verified_summary_batch
+
+    rows = await verified_summary_batch(ch, rows)
     result.sessions_scanned = len(rows)
     # The judge's call is for the session's writer, else its namespace's agent.
     writers = await _writers(ch, rows)
@@ -331,11 +334,12 @@ _NEGATIVE_SQL = """
     SELECT o.org AS org, o.namespace AS namespace, o.agent AS agent,
            o.session_id AS session_id, o.reason AS reason, o.confidence AS confidence,
            s.summary_text AS summary_text, s.summary_embedding AS summary_embedding,
-           s.embedding_model AS embedding_model, s.user_id AS user_id
+           s.embedding_model AS embedding_model, s.user_id AS user_id,
+           s.key_facts AS key_facts, s.derived_from AS derived_from
     FROM loom.session_outcomes_by_user AS o FINAL
     INNER JOIN (
         SELECT org, namespace, agent, session_id, summary_text, summary_embedding,
-               embedding_model, user_id
+               embedding_model, user_id, key_facts, derived_from
         FROM loom.session_summaries FINAL
         WHERE tombstoned_at IS NULL AND embedding_dim > 0
     ) AS s ON s.org = o.org AND s.namespace = o.namespace AND s.agent = o.agent
@@ -356,7 +360,9 @@ _NEGATIVE_SQL = """
 """
 
 _NEAREST_POSITIVE_SQL = """
-    SELECT s.session_id AS session_id, s.summary_text AS summary_text,
+    SELECT s.org AS org, s.namespace AS namespace, s.agent AS agent, s.user_id AS user_id,
+           s.key_facts AS key_facts, s.derived_from AS derived_from,
+           s.session_id AS session_id, s.summary_text AS summary_text,
            1 - cosineDistance(s.summary_embedding, {q:Array(Float32)}) AS similarity
     FROM loom.session_summaries AS s FINAL
     INNER JOIN (
@@ -400,27 +406,32 @@ async def write_contrast_reflection(
         "contradicts": [neg_session],
         "pair_similarity": round(float(pair_similarity), 4),
     }
-    await handle_memory_set(
-        MemorySetInput(
-            org=org,
-            namespace=namespace,
-            agent=agent or "-",
-            user_id=user_id or "-",
-            session_id=neg_session,
-            memory_key=key,
-            memory_type="reflection",
-            value=value,
-            tags=[
-                "reflection",
-                "contrast",
-                f"session:{neg_session}",
-                f"session:{pos_session}",
-                "status:failed",
-            ],
-            confidence=float(max(0.0, min(1.0, confidence))),
-            source_trace=f"contrast:{neg_session}<{pos_session}",
+    from server.memory.domain.provenance import pipeline_actor
+
+    with pipeline_actor("process:session_contrast"):
+        await handle_memory_set(
+            MemorySetInput(
+                org=org,
+                namespace=namespace,
+                agent=agent or "-",
+                user_id=user_id or "-",
+                session_id=neg_session,
+                memory_key=key,
+                memory_type="reflection",
+                proposed=True,
+                source_class="derived",
+                value=value,
+                tags=[
+                    "reflection",
+                    "contrast",
+                    f"session:{neg_session}",
+                    f"session:{pos_session}",
+                    "status:failed",
+                ],
+                confidence=float(max(0.0, min(1.0, confidence))),
+                source_trace=f"contrast:{neg_session}<{pos_session}",
+            )
         )
-    )
     return key
 
 
@@ -439,6 +450,9 @@ async def distil_contrasts(
             "off": sorted(await customer.switched_off_orgs()),
         },
     )
+    from server.memory.store.summary_sources import verified_summary_batch
+
+    negatives = await verified_summary_batch(ch, negatives)
     result.contrast_candidates = len(negatives)
     writers = await _writers(ch, negatives)
     for neg in negatives:
@@ -483,12 +497,16 @@ async def _contrast_pair(ch: Any, llm: Any, cfg: DistillConfig, neg: Any, writer
             "uid": str(neg.get("user_id") or "-"),
         },
     )
+    from server.memory.store.summary_sources import verified_summary_batch
+
+    qualified = await verified_summary_batch(ch, [pos] if pos else [])
+    pos = qualified[0] if qualified else None
     sim = float((pos or {}).get("similarity") or 0.0)
     if not pos or sim < float(cfg.min_pair_similarity):
         return False
     system, user = contrast_prompt(
         str(neg.get("summary_text") or ""),
-        str(neg.get("reason") or ""),
+        "failed",
         str(pos.get("summary_text") or ""),
     )
     with llm_stage("session_contrast"):
@@ -509,7 +527,7 @@ async def _contrast_pair(ch: Any, llm: Any, cfg: DistillConfig, neg: Any, writer
         neg_session=sid,
         pos_session=str(pos.get("session_id") or ""),
         lessons=lessons,
-        what_failed=what_failed or str(neg.get("reason") or ""),
+        what_failed=what_failed,
         confidence=min(float(neg.get("confidence") or 0.0), sim),
         pair_similarity=sim,
     )

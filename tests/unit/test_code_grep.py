@@ -68,7 +68,7 @@ def test_lines_scope_and_window_dedupe() -> None:
         "scope": "DB::A::f",
         "start_line": 10,
         "end_line": 14,
-        "content": "int x;\nthrow MAGIC_ERR;\nint y;",
+        "content": "int x;\nthrow MAGIC_ERR;\nint y;\n\n\n",
     }
     overlap = dict(chunk)  # an oversized-unit window repeating the same span
     out = _run([chunk, overlap], pattern="MAGIC_ERR")
@@ -85,6 +85,127 @@ def test_lines_scope_and_window_dedupe() -> None:
     assert out.coverage_floor is True
 
 
+def test_literal_call_prefix_adds_other_uses_without_widening_matches() -> None:
+    path = "src/worker.py"
+    exact = {
+        "path": path,
+        "scope": "consume",
+        "start_line": 1,
+        "end_line": 2,
+        "content": "def consume():\n    return process(job.value, 0)\n",
+        "indexed_commit": "a" * 40,
+    }
+    other = {
+        **exact,
+        "scope": "keep",
+        "start_line": 6,
+        "end_line": 9,
+        "content": "def keep():\n    # Keep job.value.\n    seen = job.values\n    return job.value\n",
+    }
+    window = {
+        **exact,
+        "start_line": 3,
+        "end_line": 4,
+        "content": "    return job.value\n\n",
+    }
+    stale = {
+        **other,
+        "path": "src/stale.py",
+        "start_line": 11,
+        "end_line": 14,
+        "indexed_commit": "b" * 40,
+    }
+
+    async def literal_chunks(repo, _org, _ns, pattern, **_kwargs):
+        return [chunk for chunk in repo._chunks if pattern in chunk["content"]]
+
+    with patch.object(_FakeRepo, "grep_chunks", new=literal_chunks):
+        out = _run(
+            [exact, window, other, stale, {**other, "path": stale["path"]}],
+            pattern="process(job.value",
+            related_on_prefix=True,
+            include_body=False,
+            context_lines=0,
+        )
+    assert [hit["line"] for hit in out.matches] == [2]
+    assert out.related is not None and out.related.pattern == "job.value"
+    assert [hit["line"] for hit in out.related.matches] == [7, 9]
+    assert out.partial and "revision" in out.partial_reason
+    assert out.related.truncated
+    assert not out.related.contexts
+    assert not out.next_cursor
+
+
+def test_failed_call_prefix_excerpts_preserve_exact_grep() -> None:
+    from server.core.errors import BackendUnavailableError
+
+    chunk = {
+        "path": "src/worker.py",
+        "scope": "consume",
+        "start_line": 1,
+        "end_line": 2,
+        "content": "def consume():\n    return process(job.value, 0)\n",
+        "indexed_commit": "a" * 40,
+    }
+
+    async def literal_chunks(_repo, _org, _ns, pattern, **_kwargs):
+        if pattern == "job.value":
+            raise BackendUnavailableError("read unavailable")
+        return [chunk]
+
+    with patch.object(_FakeRepo, "grep_chunks", new=literal_chunks):
+        out = _run([chunk], pattern="process(job.value", related_on_prefix=True, include_body=False)
+    assert [hit["line"] for hit in out.matches] == [2]
+    assert out.related is None
+    assert out.partial and out.partial_reason == "related call prefix scan failed"
+
+
+def test_unmapped_skeleton_is_disclosed_without_a_guessed_line() -> None:
+    chunks = [
+        {
+            "path": "m.py",
+            "scope": "Container",
+            "kind": "class_skeleton",
+            "start_line": 1,
+            "end_line": 100,
+            "content": "class Container:\n    target = 1\n",
+        },
+        {
+            "path": "m.py",
+            "scope": "f",
+            "kind": "function",
+            "start_line": 101,
+            "end_line": 102,
+            "content": "def f():\n    return target()\n",
+        },
+    ]
+    out = _run(chunks, pattern="target")
+    assert [(hit["line"], hit["text"]) for hit in out.matches] == [(102, "return target()")]
+    assert out.partial
+    assert "no exact source line mapping" in out.partial_reason
+
+
+def test_source_coverage_validation_runs_off_the_event_loop(monkeypatch) -> None:
+    import threading
+
+    from server.code.app import grep
+
+    main_thread = threading.get_ident()
+    calls = []
+    validate = grep._line_coverage_fields
+
+    def tracked(*args, **kwargs):
+        calls.append(threading.get_ident())
+        return validate(*args, **kwargs)
+
+    monkeypatch.setattr(grep, "_line_coverage_fields", tracked)
+    _run(
+        [{"path": "m.py", "scope": "", "start_line": 1, "end_line": 1, "content": "target = 1\n"}],
+        pattern="target",
+    )
+    assert calls and all(thread != main_thread for thread in calls)
+
+
 def test_hit_carries_enclosing_unit_span_without_a_symbol_lookup() -> None:
     """ClickGap ask: a hit says how big the function around it is, so the
     client can decide about (or skip) code.enclosing. A chunk that IS the
@@ -97,7 +218,7 @@ def test_hit_carries_enclosing_unit_span_without_a_symbol_lookup() -> None:
             "start_line": 10,
             "end_line": 40,
             "symbol_ids": ["sym-f"],
-            "content": "int x;\nhit();",
+            "content": "int x;\nhit();\n" + "\n" * 29,
         },
         # a comment block outside any unit: no scope, so no span to claim
         {
@@ -106,7 +227,7 @@ def test_hit_carries_enclosing_unit_span_without_a_symbol_lookup() -> None:
             "start_line": 1,
             "end_line": 3,
             "symbol_ids": [],
-            "content": "// hit() is documented here",
+            "content": "// hit() is documented here\n\n\n",
         },
     ]
     out = _run(chunks, pattern="hit()", repo_out=repos)
@@ -156,7 +277,7 @@ def test_windowed_unit_falls_back_to_the_union_of_fetched_windows() -> None:
         "start_line": 4,
         "end_line": 6,
         "symbol_ids": ["sym-gone"],
-        "content": "// … continued from void bigFn()\n    b(); // hit",
+        "content": "// … continued from void bigFn()\n    b(); // hit\n\n\n",
     }
     w3 = {
         "path": "src/big.cpp",
@@ -164,7 +285,7 @@ def test_windowed_unit_falls_back_to_the_union_of_fetched_windows() -> None:
         "start_line": 7,
         "end_line": 9,
         "symbol_ids": ["sym-gone"],
-        "content": "// … continued from void bigFn()\n    c(); // hit",
+        "content": "// … continued from void bigFn()\n    c(); // hit\n\n\n",
     }
     out = _run([w2, w3], pattern="hit")  # symbol row tombstoned / not yet indexed
     assert [(m["line"], m["scope_start_line"], m["scope_end_line"]) for m in out.matches] == [
@@ -185,6 +306,37 @@ def test_case_insensitive_and_regex() -> None:
     assert _run([chunk], pattern=r"Magic\w+", regex=True).matches
     with pytest.raises(ValidationError):
         _run([chunk], pattern="[unclosed", regex=True)
+
+
+def test_literal_alternatives_match_punctuation_and_deduplicate_lines() -> None:
+    chunk = {
+        "path": "app.py",
+        "scope": "",
+        "start_line": 1,
+        "end_line": 5,
+        "content": (
+            "REVERSED(item.parts)\nchain(names, item.parts)\nchain(other)\n'pair|value'\nCAFÉ\n"
+        ),
+    }
+    out = _run(
+        [chunk],
+        pattern=["reversed(", "item.parts", "chain(names", "pair|value", "café"],
+        case_sensitive=False,
+    )
+    assert [hit["line"] for hit in out.matches] == [1, 2, 4]
+    assert out.note == ""
+
+
+def test_literal_alternatives_without_hits_remain_literal() -> None:
+    out = _run([], pattern=["missing(", "left|right"])
+    assert out.matches == []
+    assert "pattern list" in out.note and "code.search" in out.note
+
+
+@pytest.mark.parametrize("fields", [{"regex": True}, {"mode": "message"}])
+def test_a_list_requires_literal_text_mode(fields: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError, match="require one pattern string"):
+        _run([], pattern=["reversed(", "chain(names"], **fields)
 
 
 def test_limit_marks_truncated() -> None:

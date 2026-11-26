@@ -30,7 +30,6 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.embedding.documents import document_vector, document_vectors
 from server.memory.app.chunk_projection import chunk_text_with_ranges, chunk_text_with_truncation
@@ -218,11 +217,9 @@ def _chunk_state_row(
 async def _insert_chunk_states(ch: Any, rows: list[dict[str, Any]]) -> None:
     # Synchronous: the caller's next search must not lift the parent
     # through a chunk of the value it just replaced or deleted.
-    await ch.insert(
-        "loom.memory_chunks",
-        rows,
-        settings=committed_insert_settings(),
-    )
+    from server.memory.store.refusals import insert_content_rows
+
+    await insert_content_rows(ch, "loom.memory_chunks", rows)
 
 
 async def tombstone_set_chunks_fail_open(
@@ -497,11 +494,9 @@ async def write_set_chunks(
     # Synchronous for the reason the fact insert is: the chunk plane is read
     # on the default search path, and a query landing before the chunks embed
     # must not find the head of the value and miss its body.
-    await ch.insert(
-        "loom.memory_chunks",
-        rows,
-        settings=committed_insert_settings(),
-    )
+    from server.memory.store.refusals import insert_content_rows
+
+    await insert_content_rows(ch, "loom.memory_chunks", rows)
     # A newer write may have made the key 'high' (or unsearchable) or deleted it while
     # these chunks were embedding. It inserts its row before tombstoning the key's
     # chunks, so either its tombstone saw these or this strong read sees its row. A

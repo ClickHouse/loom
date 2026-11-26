@@ -202,8 +202,15 @@ async def test_link_value_updates_fails_open(monkeypatch: pytest.MonkeyPatch) ->
 def test_enabled_precedence_request_over_contextvar_over_setting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
     from server.memory.app import bulk_set as bulk_set
     from server.memory.app.extract import handler as hm
+
+    monkeypatch.setattr(
+        hm, "get_client", lambda: SimpleNamespace(query_all=AsyncMock(return_value=[]))
+    )
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_extract_value_updates", False)
@@ -242,12 +249,19 @@ async def test_set_from_messages_starts_its_link_count_at_zero(
 ) -> None:
     """A worker replays queued requests one after another in one task: a request that writes
     nothing must not report the previous request's value-update links."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
     from server.memory.api.models_bulk import (
         MemorySetFromMessagesInput,
         MemorySetFromMessagesOutput,
     )
     from server.memory.app import bulk_set as bulk_set
     from server.memory.app.extract import handler as hm
+
+    monkeypatch.setattr(
+        hm, "get_client", lambda: SimpleNamespace(query_all=AsyncMock(return_value=[]))
+    )
 
     async def _enqueued(_inp: object, _rule_agent: str) -> MemorySetFromMessagesOutput:
         return MemorySetFromMessagesOutput(written=[])

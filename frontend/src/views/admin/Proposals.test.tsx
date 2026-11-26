@@ -11,10 +11,16 @@ import { ProposalsPanel } from "./Proposals";
 vi.mock("../../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
-  return { ...actual, listProposals: vi.fn(), decideProposals: vi.fn(async () => ({ decided: 1, results: [] })) };
+  return {
+    ...actual,
+    getMemoryById: vi.fn(),
+    listProposals: vi.fn(),
+    decideProposals: vi.fn(async () => ({ decided: 1, results: [] })),
+  };
 });
 
 const P: MemoryProposal = {
+  content_sha256: "a".repeat(64),
   memory_key: "deploy_window",
   memory_id: "m1",
   agent: "claude-code",
@@ -26,17 +32,28 @@ const P: MemoryProposal = {
   ready: "accept",
 };
 
-function signIn(role: "viewer" | "writer") {
+function signIn(role: "viewer" | "writer" | "admin") {
   useStore.setState({
     identity: { org: "acme", namespace: "team", agent: "loom-ui" },
-    whoami: { authenticated: true, subject: "alice", org: "acme", roles: ["writer"] },
+    whoami: { authenticated: true, subject: "alice", org: "acme", roles: [role], is_service_account: false },
     myNamespaces: [{ namespace: "team", role, status: "active" } as never],
   });
 }
 
 beforeEach(() => {
   resetNamespaceRoleCache();
-  signIn("writer");
+  signIn("admin");
+  vi.mocked(api.getMemoryById).mockResolvedValue({
+    found: true,
+    memory_id: P.memory_id,
+    namespace: "team",
+    memory_key: P.memory_key,
+    content_sha256: P.content_sha256,
+    value: "The complete proposal text",
+    version: 1,
+    pinned: false,
+    created_at: null,
+  });
 });
 afterEach(() => {
   cleanup();
@@ -58,17 +75,66 @@ describe("ProposalsPanel", () => {
     expect(screen.getByText("ready to accept")).toBeInTheDocument();
     expect(api.listProposals).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
+    expect(api.decideProposals).not.toHaveBeenCalled();
+    await screen.findByText("The complete proposal text");
+    await userEvent.click(screen.getByRole("button", { name: "Accept reviewed fact" }));
     await waitFor(() =>
-      expect(api.decideProposals).toHaveBeenCalledWith({ org: "acme", namespace: "team" }, ["deploy_window"], "accept"),
+      expect(api.decideProposals).toHaveBeenCalledWith(
+        { org: "acme", namespace: "team" },
+        ["deploy_window"],
+        "accept",
+        { deploy_window: P.content_sha256 },
+      ),
     );
     expect(await screen.findByText("No proposals")).toBeInTheDocument();
+  });
+
+  it("a service administrator can reject but cannot accept", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "agent", roles: ["admin"], is_service_account: true },
+    });
+    await show([P]);
+    const accept = screen.getByRole("button", { name: "Accept deploy_window" });
+    expect(accept).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(accept);
+    expect(api.getMemoryById).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for deploy_window" }));
+    expect(await screen.findByRole("menuitem", { name: "Reject" })).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("accepts only the hash returned with the complete displayed value", async () => {
+    const currentHash = "b".repeat(64);
+    vi.mocked(api.getMemoryById).mockResolvedValueOnce({
+      found: true,
+      memory_id: P.memory_id,
+      namespace: "team",
+      memory_key: P.memory_key,
+      content_sha256: currentHash,
+      value: "Updated complete proposal text",
+      version: 2,
+      pinned: false,
+      created_at: null,
+    });
+    vi.mocked(api.decideProposals).mockResolvedValueOnce({
+      decided: 1,
+      results: [{ memory_key: P.memory_key, decided: true, status: "active", reason: "" }],
+    });
+    await show([P]);
+    await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
+    await screen.findByText("Updated complete proposal text");
+    await userEvent.click(screen.getByRole("button", { name: "Accept reviewed fact" }));
+    await waitFor(() =>
+      expect(api.decideProposals).toHaveBeenCalledWith({ org: "acme", namespace: "team" }, [P.memory_key], "accept", {
+        [P.memory_key]: currentHash,
+      }),
+    );
   });
 
   it("shows a viewer the proposals, and Accept and Reject unavailable with the role they need", async () => {
     signIn("viewer");
     await show([P]);
     expect(screen.getByText("Deploys run on Tuesdays")).toBeInTheDocument();
-    const needs = "Needs writer on team. An admin of it can grant that.";
+    const needs = "Needs admin on team. An admin of it can grant that.";
     const accept = screen.getByRole("button", { name: "Accept deploy_window" });
     expect(accept).toHaveAttribute("aria-disabled", "true");
     expect(accept).toHaveAccessibleDescription(needs);
@@ -117,6 +183,9 @@ describe("ProposalsPanel", () => {
     vi.mocked(api.listProposals).mockResolvedValue({ proposals: [], total: 0 });
     await show([P]);
     await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
+    expect(api.decideProposals).not.toHaveBeenCalled();
+    await screen.findByText("The complete proposal text");
+    await userEvent.click(screen.getByRole("button", { name: "Accept reviewed fact" }));
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith("Accepted; it contradicts another fact, so it waits in Conflicts", "ok"),
     );
@@ -128,6 +197,9 @@ describe("ProposalsPanel", () => {
     await show([P, lone]);
     vi.mocked(api.listProposals).mockImplementationOnce(() => new Promise((r) => (answer = r)));
     await userEvent.click(screen.getByRole("button", { name: "Accept deploy_window" }));
+    expect(api.decideProposals).not.toHaveBeenCalled();
+    await screen.findByText("The complete proposal text");
+    await userEvent.click(screen.getByRole("button", { name: "Accept reviewed fact" }));
     await waitFor(() => expect(api.listProposals).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("button", { name: "Accept standup_time" })).toBeDisabled();
     answer({ proposals: [lone], total: 1 });

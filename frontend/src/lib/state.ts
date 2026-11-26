@@ -3,6 +3,7 @@ import type { Identity, MyNamespaceEntry, WhoAmI } from "../api";
 import { hasToken, isAuthDisabled, isProxyMode } from "../api";
 import { sameIdentity } from "./boot";
 import { NAMESPACE_NAME, isCollectionName } from "./namespace";
+import { HANDOFF_QUERY_KEYS, readSessionHandoff, type SessionHandoffRef } from "./sessionHandoff";
 import { patchEntry, readPlace, rememberPlace, type InspectedOwner, type Place } from "./place";
 
 export type View =
@@ -102,7 +103,7 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   memories: ["memory"],
   // The Library also carries the place it shows (`?collection=`, or `?place=all`).
   knowledge: ["doc", "collection", "place"],
-  sessions: ["thread"],
+  sessions: ["thread", ...HANDOFF_QUERY_KEYS],
   // The Help view's page of the docs (`?page=features/knowledge.md`); its section is the
   // URL's anchor.
   help: ["page"],
@@ -256,7 +257,7 @@ function linkedAgent(key: string): string {
 }
 
 // The URL keys that name an object of one namespace: a switch drops them.
-const SWITCH_CLEARS = ["memory", "thread", "doc", "task"];
+const SWITCH_CLEARS = ["memory", "thread", "doc", "task", ...HANDOFF_QUERY_KEYS];
 // A collection is the org's, not a namespace's: an entry made in another namespace keeps it,
 // and only the person's own switch of namespace leaves it.
 const PICK_CLEARS = [...SWITCH_CLEARS, "collection"];
@@ -304,6 +305,12 @@ function stampFor(namespace: string | null): Record<string, unknown> {
     loomInspect: null,
     ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "", inspectedOwner: null } } : {}),
   };
+}
+
+function linkedSessionHandoff(v: View) {
+  return v === "sessions" && typeof window !== "undefined"
+    ? readSessionHandoff(new URLSearchParams(window.location.search), pageNamespace())
+    : null;
 }
 
 /** What the URL opens on view `v`: the memory, document or thread its query names. */
@@ -391,6 +398,7 @@ interface AppState {
   pendingDocSourceUri: string | null;
   /** A thread to open on Conversations. */
   pendingConversationThread: { threadId: string } | null;
+  sessionHandoff: SessionHandoffRef | "invalid" | null;
   // Header-search profile-section target; App.tsx opens ProfileSectionDialog.
   inspectedProfileLabel: string | null;
   // Profile section to open directly in edit mode after navigation.
@@ -490,6 +498,7 @@ export const useStore = create<AppState>((set, get) => ({
   memoryTagFilter: null,
   pendingDocSourceUri: null,
   pendingConversationThread: null,
+  sessionHandoff: null,
   inspectedProfileLabel: null,
   pendingEditProfileLabel: null,
   recallRunFilter: null,
@@ -516,6 +525,7 @@ export const useStore = create<AppState>((set, get) => ({
         linkOpened: null,
         inspectedMemoryKey: null,
         pendingConversationThread: null,
+        sessionHandoff: null,
         pendingDocSourceUri: null,
         recallRunFilter: null,
       });
@@ -541,6 +551,7 @@ export const useStore = create<AppState>((set, get) => ({
       view,
       inspectedMemoryKey: null,
       navSeq: s.navSeq + 1,
+      sessionHandoff: linkedSessionHandoff(view),
       navNote: opts.note ?? null,
       arriveFocus: opts.arriveFocus ?? null,
     }));
@@ -552,6 +563,7 @@ export const useStore = create<AppState>((set, get) => ({
     const here = !get().deniedNamespace && entryHere(get().identity?.namespace ?? null);
     set({
       view,
+      sessionHandoff: here ? linkedSessionHandoff(view) : null,
       ...(here ? openedByUrl(view) : { inspectedMemoryKey: null, inspectedAgent: "", inspectedOwner: null }),
     });
   },
@@ -564,6 +576,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       view,
       ...opened,
+      sessionHandoff: here ? linkedSessionHandoff(view) : null,
       inspectedMemoryKey: inspected ?? opened.inspectedMemoryKey ?? null,
       inspectedAgent: inspected ? (place?.inspectedAgent ?? "") : (opened.inspectedAgent ?? ""),
       inspectedOwner: inspected ? (place?.inspectedOwner ?? null) : null,

@@ -1,0 +1,188 @@
+name: HTTP schema contract
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, "release/**"]
+    paths:
+      - server/transport/**
+      - server/auth/**
+      - server/memory/api/models_blacklist.py
+      - server/memory/app/blacklist.py
+      - tests/contracts/**
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/http-contract.yml
+  push:
+    branches: [main]
+    paths:
+      - server/transport/**
+      - server/auth/**
+      - server/memory/api/models_blacklist.py
+      - server/memory/app/blacklist.py
+      - tests/contracts/**
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/http-contract.yml
+  schedule:
+    - cron: "47 5 * * 4"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: http-contract-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contract:
+    name: Bounded synthetic HTTP schema and authorization
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      LOOM_ENV_FILE: ""
+      LOOM_LLM_PROVIDER: fake
+      LOOM_EMBEDDING_MODEL: fake-ngram-1024
+      LOOM_BACKGROUND_WORKERS: "off"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out the transport and exact synthetic test inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /README.md
+            /LICENSE*
+            /NOTICE*
+            /pyproject.toml
+            /uv.lock
+            /.gitignore
+            /server/
+            /schemas/
+            /sdk/python/
+            /scripts/
+            /extractor/
+            /tests/__init__.py
+            /tests/_shards.py
+            /tests/conftest.py
+            /tests/unit/__init__.py
+            /tests/unit/conftest.py
+            /tests/unit/mirror_latch_fake.py
+            /tests/unit/claims_fake.py
+            /tests/unit/switch_state.py
+            /tests/contracts/
+            /.github/workflows/http-contract.yml
+      - name: Install the pinned dependency manager
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+          enable-cache: false
+      - name: Synchronize the locked test-only extra
+        run: uv sync --locked --python 3.12 --extra dev --extra code --extra contract
+      - name: Check the trusted publisher against a synthetic API
+        run: uv run --no-sync python tests/contracts/test_probe_publisher.py
+      - name: Check value-free contract diagnostics
+        run: python3 -m unittest tests.contracts.test_ci_diagnostics
+      - name: Generate bounded requests through the actual HTTP transport
+        run: |
+          timeout --signal=TERM --kill-after=10s 120s uv run --no-sync python -m pytest \
+            -p tests.unit.conftest -p tests.contracts.ci_diagnostics \
+            tests/contracts/test_http_schema.py -v \
+            -o cache_dir="$RUNNER_TEMP/http-contract-cache" \
+            --junitxml="$RUNNER_TEMP/http-contract.xml"
+      - name: Require actual test execution
+        if: always()
+        run: python3 tests/contracts/ci_diagnostics.py
+
+  maintenance:
+    name: Record trusted HTTP contract failures
+    needs: [contract]
+    if: >-
+      always() && github.repository == 'ClickHouse/loom' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'schedule')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # Record HTTP contract failures on trusted main runs only.
+    steps:
+      - name: Reconcile failure tasks without executing project code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTRACT_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from urllib.parse import urlencode
+          repo = "repos/ClickHouse/loom/issues"
+          bot = "github-actions[bot]"
+          marker = re.compile(r"<!-- loom-http-contract:v1 (contract) -->")
+          state = re.compile(r"<!-- loom-http-contract-state:v1 (failure|success) -->")
+          titles = {"contract": "[http-contract-ci] Restore the bounded HTTP contract checks"}
+          calls = 0
+          def api(method, endpoint, payload=None):
+              global calls
+              calls += 1
+              assert calls <= 40, "HTTP contract issue API budget exhausted"
+              command = ["gh", "api", "--method", method, endpoint, "--hostname", "github.com"]
+              if payload is not None:
+                  command += ["--input", "-"]
+              result = subprocess.run(command, input=None if payload is None else json.dumps(payload), text=True, capture_output=True, timeout=20, check=True)
+              assert len(result.stdout) <= 2 * 1024 * 1024, "HTTP contract issue response exceeds budget"
+              return json.loads(result.stdout)
+          managed = {}
+          for page in range(1, 11):
+              issues = api("GET", repo + "?" + urlencode({"state": "all", "creator": bot, "per_page": 100, "page": page}))
+              assert isinstance(issues, list)
+              for issue in issues:
+                  if "pull_request" in issue or issue.get("user", {}).get("login") != bot:
+                      continue
+                  keys = marker.findall(issue.get("body") or "")
+                  keys += [key for key, title in titles.items() if issue.get("title") == title]
+                  keys = set(keys)
+                  assert len(keys) <= 1, "Conflicting HTTP contract issue markers"
+                  if keys:
+                      key = keys.pop()
+                      assert key not in managed, "Duplicate HTTP contract task"
+                      managed[key] = issue
+              if len(issues) < 100:
+                  break
+          else:
+              raise RuntimeError("HTTP contract issue pagination budget exhausted")
+          results = json.loads(os.environ["CONTRACT_RESULTS"])
+          assert set(results) == set(titles)
+          run_id = os.environ["GITHUB_RUN_ID"]
+          assert run_id.isdecimal()
+          url = "https://github.com/ClickHouse/loom/actions/runs/" + run_id
+          changed = 0
+          for key in titles:
+              result = results[key]["result"]
+              assert result in {"success", "failure", "cancelled", "skipped"}
+              issue = managed.get(key)
+              if result not in {"success", "failure"} or (issue and issue["state"] == "closed"):
+                  continue
+              text = f"<!-- loom-http-contract:v1 {key} -->\n<!-- loom-http-contract-state:v1 {result} -->\n\n### Company or project name\n\nClickHouse\n\nThe bounded HTTP contract check reports **{result}** on trusted main. [Read the bounded synthetic HTTP transport logs]({url}).\n\nReproduce the HTTP contract workflow using synthetic data. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions for recognized tasks. Keep the original title or the tracking marker in the body so later runs can identify this task."
+              if issue is None:
+                  if result == "failure":
+                      api("POST", repo, {"title": titles[key], "body": text})
+                      changed += 1
+                  continue
+              number = issue["number"]
+              assert isinstance(number, int) and number > 0
+              comments = api("GET", f"{repo}/{number}/comments?per_page=100")
+              assert isinstance(comments, list) and len(comments) < 100, "HTTP contract comment history budget exhausted"
+              candidates = [issue] + sorted(comments, key=lambda row: (row["created_at"], row["id"]))
+              states = [state.findall(row.get("body") or "") for row in candidates if row.get("user", {}).get("login") == bot]
+              states = [value[-1] for value in states if value]
+              if not states or states[-1] != result:
+                  api("POST", f"{repo}/{number}/comments", {"body": text})
+                  changed += 1
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(f"HTTP contract task reconciliation: {changed} task or status writes; closed decisions preserved.\n")
+          PY

@@ -11,6 +11,14 @@ from typing import Any
 # The value memory.get serves: the native JSON column when populated, else the stored text.
 SERVED_VALUE = "if(length(toString(value_json)) > 2, toString(value_json), value)"
 
+# A high row is reachable by key, never pushed into a code or edit prompt.
+FILE_LISTING_VISIBLE = """
+    tombstoned_at IS NULL
+    AND (expires_at IS NULL OR expires_at > now())
+    AND (valid_to IS NULL OR valid_to > now())
+    AND sensitivity != 'high'
+"""
+
 # Full-row projection over loom.memory FINAL, shared by get_by_key/get_by_id.
 # Mirrors every column build_memory_version_row carries forward (single read
 # source of truth — keep in sync with the builder in `rows`).
@@ -26,7 +34,7 @@ _MEMORY_FINAL_PROJECTION = f"""
             toString(value_json) AS value_json,
             confidence, version, pinned,
             created_at, updated_at, expires_at, valid_at, valid_to, invalid_at,
-            status, run_id, source_trace,
+            status, requires_review, run_id, source_trace,
             tags, entities, recall_count, last_recalled_at, char_limit,
             tombstoned_at,
             redacted_at, redaction_reason,

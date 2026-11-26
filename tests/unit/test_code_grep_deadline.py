@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 from unittest.mock import patch
 
@@ -24,6 +25,7 @@ from server.code.app.ttl_cache import clear_all
 from server.code.domain import deadline as code_deadline
 from server.code.domain.index import grep_sql
 from server.settings import settings
+from tests.unit.clock_fake import ManualClock
 
 CONVERT_FIELD = """    if (!parsed)
         throw Exception(ErrorCodes::TYPE_MISMATCH, "Cannot convert string {} to type {}",
@@ -43,7 +45,7 @@ def _chunk(path: str, start: int, scope: str, content: str) -> dict[str, Any]:
     return {
         "path": path,
         "start_line": start,
-        "end_line": start + content.count("\n"),
+        "end_line": start + len(content.splitlines()) - 1,
         "scope": scope,
         "content": content,
         "symbol_ids": [],
@@ -158,6 +160,66 @@ def test_no_deadline_in_files_and_message_mode_is_unbounded_too() -> None:
     repo2 = _Repo(message=[CONVERT])
     _grep(repo2, pattern="Cannot convert string 'x' to type DateTime64(3)", mode="message")
     assert all(bound is None for *_, bound in repo.calls + repo2.calls)
+
+
+def test_call_prefix_span_read_obeys_the_remaining_deadline() -> None:
+    exact = _chunk("src/a.py", 1, "run", "def run():\n    return process(row.value, 0)\n")
+    first_window = _chunk("src/b.py", 5, "other", "def other():\n    value = row.value\n")
+    first_window["symbol_ids"] = ["other-id"]
+    last_window = _chunk("src/b.py", 7, "other", "    return row.value\n")
+
+    class SlowSpans(_Repo):
+        async def grep_chunks(self, org, ns, pattern, *, regex=False, **kw):
+            if pattern == "row.value":
+                return [first_window, last_window]
+            return [exact]
+
+        async def symbol_spans_by_ids(self, org, ns, ids):
+            await asyncio.sleep(0.8)
+            return []
+
+    out, _ = _grep(
+        SlowSpans(),
+        pattern="process(row.value",
+        related_on_prefix=True,
+        deadline_ms=500,
+        include_body=False,
+    )
+    assert [hit["path"] for hit in out.matches] == ["src/a.py"]
+    assert out.related is None
+    assert out.partial and out.partial_reason == "related call prefix scan timed out"
+
+
+def test_dependency_deadline_keeps_exact_and_related_source() -> None:
+    clock = ManualClock(t=time.monotonic())
+    exact = _chunk("src/a.py", 1, "run", "def run():\n    return process(row.value, 0)\n")
+    related = _chunk("src/b.py", 1, "read", "def read():\n    return row.value\n")
+    for chunk in (exact, related):
+        chunk.update(indexed_commit="a" * 40, kind="function")
+
+    class SlowDependencies(_Repo):
+        async def grep_chunks(self, org, ns, pattern, **kw):
+            return [related] if pattern == "row.value" else [exact]
+
+        async def member_edges_at_locations(self, org, ns, sites, member):
+            clock.advance(1)
+            # Yield for the event loop to run the expired timer and deliver cancellation.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            return []
+
+    with patch.object(time, "monotonic", new=clock.monotonic):
+        out, _ = _grep(
+            SlowDependencies(),
+            pattern="process(row.value",
+            related_on_prefix=True,
+            include_dependencies=True,
+            include_body=False,
+            deadline_ms=500,
+        )
+    assert [hit["path"] for hit in out.matches] == ["src/a.py"]
+    assert out.related and out.related.matches and not out.related.dependencies
+    assert out.partial and "related definition lookup timed out" in out.partial_reason
 
 
 # --------------------------------------------------------------- the bound

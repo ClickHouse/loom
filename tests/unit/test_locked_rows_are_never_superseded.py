@@ -11,7 +11,7 @@ import pytest
 
 import server.memory.store.lifecycle as lc
 from server.memory.domain.lock import refuses_cross_key_retirement, refuses_retirement
-from server.memory.store.rows import MemoryRow
+from server.memory.store.rows import MemoryRow, build_memory_version_row, identity_key
 
 
 def _row(mid: str, **kw: Any) -> MemoryRow:
@@ -35,8 +35,12 @@ def _row(mid: str, **kw: Any) -> MemoryRow:
 
 
 class _CH:
-    def __init__(self) -> None:
+    def __init__(self, heads=()) -> None:
         self.inserted: list[tuple[str, list[dict[str, Any]]]] = []
+        self.heads = {identity_key(row): build_memory_version_row(row) for row in heads}
+
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        return [self.heads[key] for key in (params or {}).get("keys", []) if key in self.heads]
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         self.inserted.append((table, rows))
@@ -86,7 +90,7 @@ async def test_supersede_leaves_a_locked_victim_live_in_both_tables(monkeypatch)
         }
         for mid in heads
     ]
-    ch = _CH()
+    ch = _CH(heads.values())
     n = await lc.supersede_duplicates("o", victims, ch=ch, skip=refuses_retirement, namespace="ns")
     written = {r["memory_id"] for _, rows in ch.inserted for r in rows}
     assert written == {"free", "lapsed"} and n == 2

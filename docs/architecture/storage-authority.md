@@ -1,3 +1,8 @@
+---
+seo:
+  title: Postgres and ClickHouse storage authority
+---
+
 # Storage authority: Postgres for live memory, ClickHouse for search
 
 Loom runs with one of two memory authorities, chosen per deployment by
@@ -95,6 +100,14 @@ Acknowledged copies record their commit before holder cleanup, and still run the
 announcements and follow-ups when that cleanup is cancelled.
 Point writes retain their hash-only receipt and announcement after an acknowledged
 insert, including cancellation during holder release.
+On ClickHouse, a successful `memory.set` insert requires an acknowledged audit receipt.
+Receipt failure reports `BACKEND_UNAVAILABLE` for `memory.set.audit`, with
+`outcome_unknown=true`, after completing the committed row's safety follow-ups.
+The deferred error leaves graph reconciliation and high-sensitivity edge-drop
+obligations intact; their ordered follow-ups finish even under cancellation.
+The error says that memory was written: read the current row before retrying.
+The memory and audit inserts are separate; a process loss between them is not an
+atomic transaction. Postgres commits the revision receipt and delivery debt with the row.
 These follow-up sequences and the high-sensitivity fence finish despite repeated
 request cancellation, and propagate the original cancellation once they finish.
 Holder release uses bounded waves too, so a batch does not exhaust its own connection
@@ -186,6 +199,11 @@ included. A commit stores each row without the fields at their default
 default, and every stored field repeats its name. The writers that change a stored row in
 place (the usage fold, a redaction) merge fields into it, and may store a field at its
 default.
+
+A stored row always carries `requires_review`, including false. When that field
+is absent, decoding treats a proposed or rejected row as requiring review. Keeping
+false explicit lets an ordinary rejected fact remain correctable without clearing
+the review requirement of a proposal.
 
 A memory id is not unique within an org: a namespace restored from another's snapshot
 keeps the memory ids under newer versions. Every head read by id therefore names its

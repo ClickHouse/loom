@@ -27,7 +27,6 @@
   "server/memory/app/consolidate.py": 1,
   "server/memory/app/entity_resolution.py": 1,
   "server/memory/app/expiry.py": 1,
-  "server/memory/app/extract/handler.py": 1,
   "server/memory/app/extract/parse.py": 1,
   "server/memory/app/extract/sweep.py": 1,
   "server/memory/app/extract/typed.py": 1,

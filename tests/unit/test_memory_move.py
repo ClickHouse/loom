@@ -22,7 +22,7 @@ from fastapi import HTTPException
 
 import server.memory.app.handlers as mem_handlers
 import server.memory.app.move as mv
-from server.core.hashing import sha256_value_json
+from server.core.hashing import sha256_value, sha256_value_json
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 from server.memory.api.models_crud import MemoryGetInput, MemorySetOutput
@@ -100,6 +100,7 @@ _MIRROR_ROW: dict[str, Any] = {
     "session_id": "-",
     "memory_key": _FROM,
     "content_excerpt": "ReplicaLag ch-3 42 (#alert_3f9c1a2b)",
+    "content_sha256": sha256_value(_OLD_VALUE),
     "embedding_model": "fake-test",
     "embedding_dim": 3,
     "embedding": [0.1, 0.2, 0.3],
@@ -142,17 +143,24 @@ class _CH:
         self.query_all_sqls: list[str] = []
         self.routes = routes or []
         self.fail_inserts_into: tuple[str, ...] = ()
+        self.memory_heads: dict[Any, Any] = {}
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         if table in self.fail_inserts_into:
             raise RuntimeError(f"insert into {table} unavailable")
         self.inserts.append((table, [dict(r) for r in rows], settings or {}))
+        if table == "loom.memory":
+            from server.memory.store.rows import identity_key
+
+            self.memory_heads.update({identity_key(row): row for row in rows})
 
     async def query_one(self, *_: Any, **__: Any) -> dict[str, Any] | None:
         return None
 
     async def query_all(self, sql: str, params: Any = None, **_: Any) -> list[dict[str, Any]]:
         self.query_all_sqls.append(sql)
+        if "FROM loom.memory FINAL" in sql and "PREWHERE (org, namespace" in sql:
+            return [self.memory_heads[key] for key in params["keys"] if key in self.memory_heads]
         for needle, result in self.routes:
             if needle in sql:
                 return [dict(r) for r in result]
@@ -187,6 +195,10 @@ class _Harness:
         set_out: MemorySetOutput | None = None,
     ) -> None:
         self.ch = ch or _ch_with_mirror_and_chunks()
+        if source is not None:
+            from server.memory.store.rows import identity_key
+
+            self.ch.memory_heads[identity_key(source)] = source.model_dump()
         self.set_inputs: list[Any] = []
         self.delete_inputs: list[Any] = []
         self.get_by_key_calls: list[tuple[memory_repo.Identity, str]] = []
@@ -217,7 +229,7 @@ class _Harness:
         monkeypatch.setattr(
             "server.memory.app.write.handle_memory_set", write_mod.handle_memory_set
         )
-        monkeypatch.setattr(mem_handlers, "handle_memory_delete", _delete)
+        monkeypatch.setattr(mv, "_tombstone_source", _delete)
         monkeypatch.setattr(mv, "get_client", lambda: self.ch)
 
 
@@ -342,7 +354,7 @@ def test_keep_redirect_false_takes_the_delete_path_and_writes_no_redirect(
     d = h.delete_inputs[0]
     assert (d.memory_key, d.agent, d.user_id, d.session_id) == (_FROM, "sre", "-", "-")
     assert out.redirected is False and out.memory_id == _DEST_ID
-    assert h.ch.inserts == []  # the delete path (stubbed) owns the source's rows
+    assert h.ch.inserts == []  # Internal retirement (stubbed) owns the source's rows.
 
 
 def test_a_merge_that_wrote_nothing_still_redirects_to_the_live_destination_row(
@@ -622,3 +634,42 @@ def test_the_op_is_writer_audited_not_idempotent_and_listed_under_all_only() -> 
     assert "memory.move" not in _MCP_CODING_OPS
     assert "memory.move" not in _MCP_ATOMIC_OPS
     assert op_toolsets("memory.move") == ["all"]
+
+
+@pytest.mark.parametrize("cascade_fails", [False, True])
+async def test_internal_move_retirement_announces_its_landed_tombstone(monkeypatch, cascade_fails):
+    from unittest.mock import AsyncMock
+
+    source = _source()
+    write = AsyncMock()
+    retire = AsyncMock(side_effect=RuntimeError("cascade unavailable") if cascade_fails else None)
+    announce = AsyncMock(return_value=False)
+    monkeypatch.setattr(mem_handlers, "_write_tombstone_row", write)
+    monkeypatch.setattr(mem_handlers, "_retire_derived", retire)
+    monkeypatch.setattr(mv.webhooks, "announce", announce)
+    if cascade_fails:
+        with pytest.raises(RuntimeError, match="cascade unavailable"):
+            await mv._tombstone_source(source)
+    else:
+        await mv._tombstone_source(source)
+    assert write.await_args.kwargs["exact"] is True
+    assert not write.await_args.kwargs.get("refuse_value", False)
+    assert announce.await_args.args[0][0][0] == "memory.tombstoned"
+
+
+def test_a_move_preserves_a_source_written_while_the_destination_was_created(monkeypatch):
+    from server.memory.store.pg_memory import AdmissionContendedError
+    from server.memory.store.rows import build_memory_version_row, identity_key
+
+    source = _source()
+    h = _Harness(monkeypatch, source=source)
+    newer = source.model_copy(update={"value": "a newer fact", "version": source.version + 100})
+
+    async def set_destination(inp):
+        h.ch.memory_heads[identity_key(newer)] = build_memory_version_row(newer)
+        return h.set_out
+
+    monkeypatch.setattr(write_mod, "handle_memory_set", set_destination)
+    with pytest.raises(AdmissionContendedError):
+        _move(_inp())
+    assert h.ch.rows_for("loom.memory") == []

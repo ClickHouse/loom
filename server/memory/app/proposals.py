@@ -9,21 +9,22 @@ derived, never stored: `graded_counts` reads them from `loom.agent_runs`,
 where a regrade replaces the run's verdict, so a count can never drift from
 the grades it was made of.
 
-Loom never decides acceptance on its own: a person
-or an agent decides with `memory.proposal_decide`, unless the namespace owner
-set `proposal_policy.mode = "auto"`. Then `apply_policy` accepts a proposal
-at `min_passes` passes with at most `max_fails` fails, and rejects it at
-`reject_after_fails` fails (0 = never). A decision is a new version of the
-row (`build_memory_version_row`) mirrored onto `memory_embeddings`: no
-lightweight UPDATE, so the vector table gets no patch part.
+An authenticated human administrator independent of the proposer accepts with
+`memory.proposal_decide`. The namespace's automatic policy only rejects proposals
+at `reject_after_fails` fails (0 = never). Pass thresholds mark a proposal ready for
+review. A decision writes a full version and mirrors its status onto embeddings.
+
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from fastapi import HTTPException
 
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.app import webhooks
@@ -34,6 +35,36 @@ log = logging.getLogger(__name__)
 
 PROPOSED = "proposed"
 Decision = Literal["accept", "reject"]
+
+
+async def _reviewer_subjects(org: str, namespace: str, actor: str) -> set[str]:
+    """Acceptance needs an authenticated human admin, including internal callers."""
+    from server.auth.aliases import read_aliases
+    from server.auth.authz import CachedGate
+    from server.auth.context import current_auth
+    from server.memory.app.provenance import writer_actor
+    from server.operations.base import Role
+
+    auth = current_auth()
+    if (
+        auth is None
+        or not auth.subject
+        or auth.is_service_account
+        or actor != writer_actor()
+        or not await CachedGate(auth, org).admits(namespace, Role.ADMIN)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AUTH_INSUFFICIENT",
+                "message": "A human administrator must review the proposal.",
+            },
+        )
+    from server.core.ch import sequential_reads
+
+    with sequential_reads():
+        aliases = await read_aliases(org, auth.subject, None)
+    return {s.casefold() for s in [auth.subject, *aliases]}
 
 
 _POLICY_CACHE: dict[tuple[str, str], tuple[float, ProposalPolicy]] = {}
@@ -144,6 +175,7 @@ async def decide(
     actor: str,
     reason: str = "",
     policy: ProposalPolicy | None = None,
+    approved_sha256: dict[str, str] | None = None,
     ch: Any = None,
 ) -> list[DecideResult]:
     """Accept (→ `active`) or reject (→ `rejected`) the proposals under `keys`.
@@ -156,6 +188,9 @@ async def decide(
     An accepted proposal that recorded a contradiction while on trial enters the
     ordinary conflict flow now (`mark_peers_conflicted`)."""
     import server.memory.store as memory_repo
+    from server.memory.domain.proposal_review import reviewed_changes
+
+    reviewers = await _reviewer_subjects(org, namespace, actor) if decision == "accept" else set()
 
     if ch is None:
         from server.core.ch import get_client
@@ -181,6 +216,10 @@ async def decide(
         if status != PROPOSED:
             out.append(DecideResult(key, False, status, f"not a proposal (status {status})"))
             continue
+        refusal = _approval_refusal(row, decision, reviewers, (approved_sha256 or {}).get(key, ""))
+        if refusal:
+            out.append(DecideResult(key, False, PROPOSED, refusal))
+            continue
         # An accepted proposal that met a contradiction on trial lands as a
         # conflicted fact in the same version (no re-read that a lagging
         # replica could answer with the proposal); its peers are flagged below.
@@ -190,6 +229,16 @@ async def decide(
             "version": memory_repo.version_over(row),
             "status": accepted_status if decision == "accept" else "rejected",
         }
+        if decision == "accept":
+            overrides["requires_review"] = 0
+            from server.core.datetimes import naive_utc_now
+            from server.memory.domain.trust import row_content_sha256
+
+            overrides.update(
+                verified_by=actor,
+                verified_at=naive_utc_now(),
+                verified_sha256=row_content_sha256(row),
+            )
         if decision == "reject":
             overrides["rejection_reason"] = (reason or "proposal rejected")[:512]
         to_write.append(memory_repo.build_memory_version_row(row, **overrides))
@@ -197,7 +246,8 @@ async def decide(
         out.append(DecideResult(key, True, str(overrides["status"])))
     if not to_write:
         return out
-    await memory_repo.insert_versions_over_heads(to_write, decided, ch=ch)
+    with reviewed_changes(decided, to_write) if decision == "accept" else nullcontext():
+        await memory_repo.insert_versions_over_heads(to_write, decided, ch=ch, exact=True)
     if decision == "accept":
         # The accepted row is the key's first served one: a proposal may not land on a
         # key that holds a fact. A rejected proposal was never served or announced.
@@ -211,6 +261,20 @@ async def decide(
     if decision == "accept":
         await _surface_conflicts(org, decided)
     return out
+
+
+def _approval_refusal(row: Any, decision: Decision, reviewers: set[str], approved: str) -> str:
+    from server.core.hashing import sha256_value
+    from server.memory.domain.trust import is_valid_actor, subject_of
+
+    if decision != "accept":
+        return ""
+    proposer = str(row.actor or "")
+    if not is_valid_actor(proposer) or subject_of(proposer).casefold() in reviewers:
+        return "an independent reviewer is required"
+    if row.value_truncated or approved != sha256_value(row.value):
+        return "proposal content must match approved_sha256"
+    return ""
 
 
 async def _audit_decisions(
@@ -295,31 +359,28 @@ async def apply_policy(
     if not proposed:
         return []
     counts = await graded_counts(ch, org, namespace, proposed)
-    plan: dict[Decision, list[str]] = {"accept": [], "reject": []}
-    for key in proposed:
-        verdict = policy_verdict(policy, counts.get(key, GradedCounts()))
-        if verdict:
-            plan[verdict].append(key)
-    decided: list[tuple[str, Decision, GradedCounts]] = []
-    for verdict, batch in plan.items():
-        if not batch:
-            continue
-        results = await decide(
-            org,
-            namespace,
-            batch,
-            verdict,
-            actor="process:proposal_policy",
-            reason=f"owner policy: {policy.model_dump_json()}",
-            policy=policy,
-            ch=ch,
-        )
-        decided.extend(
-            (r.memory_key, verdict, counts.get(r.memory_key, GradedCounts()))
-            for r in results
-            if r.decided
-        )
-    return decided
+    rejected = [
+        key
+        for key in proposed
+        if policy_verdict(policy, counts.get(key, GradedCounts())) == "reject"
+    ]
+    if not rejected:
+        return []
+    results = await decide(
+        org,
+        namespace,
+        rejected,
+        "reject",
+        actor="process:proposal_policy",
+        reason=f"owner policy: {policy.model_dump_json()}",
+        policy=policy,
+        ch=ch,
+    )
+    return [
+        (r.memory_key, "reject", counts.get(r.memory_key, GradedCounts()))
+        for r in results
+        if r.decided
+    ]
 
 
 async def proposal_keys_among(ch: Any, org: str, namespace: str, keys: list[str]) -> list[str]:
