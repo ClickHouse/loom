@@ -33,9 +33,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
-          sparse-checkout: |
-            sdk/go
-            .github/actions/patch-coverage
+          sparse-checkout: sdk/go
       - name: Install Go
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
@@ -60,7 +58,7 @@ jobs:
       - name: Report Go SDK changed-line coverage
         if: steps.go-coverage.outcome == 'success'
         continue-on-error: true
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Go SDK
           working-directory: sdk/go
@@ -140,9 +138,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
-          sparse-checkout: |
-            sdk/java
-            .github/actions/patch-coverage
+          sparse-checkout: sdk/java
       - name: Install the declared Java target
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
@@ -163,7 +159,7 @@ jobs:
       - name: Report Java SDK changed-line coverage
         if: steps.java-coverage.outcome == 'success'
         continue-on-error: true
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Java SDK
           source-root: sdk/java/src/main/java
@@ -214,9 +210,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
-          sparse-checkout: |
-            sdk/dotnet
-            .github/actions/patch-coverage
+          sparse-checkout: sdk/dotnet
       - name: Select a private SDK installation
         run: |
           printf 'DOTNET_INSTALL_DIR=%s/loom-dotnet-sdk\nDOTNET_ROOT=%s/loom-dotnet-sdk\nDOTNET_ROOT_X64=%s/loom-dotnet-sdk\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
@@ -256,7 +250,7 @@ jobs:
       - name: Report .NET SDK changed-line coverage
         if: steps.dotnet-coverage.outcome == 'success'
         continue-on-error: true
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: .NET SDK
           working-directory: sdk/dotnet
@@ -307,9 +301,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
-          sparse-checkout: |
-            sdk/ruby
-            .github/actions/patch-coverage
+          sparse-checkout: sdk/ruby
       - name: Install Ruby
         uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
         with:
@@ -324,7 +316,7 @@ jobs:
       - name: Report Ruby SDK changed-line coverage
         if: github.event_name == 'pull_request'
         continue-on-error: true
-        uses: ./.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Ruby SDK
           working-directory: sdk/ruby

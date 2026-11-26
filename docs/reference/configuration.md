@@ -351,6 +351,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_GIT_LEDGER_MERGE_BATCH` | `int` | `40` |  | Missing ledger merge shas fetched per entry per pass (40 take about 8.5 s). |
 | `LOOM_CODE_GIT_FETCH_PR_HEADS` | `bool` | `True` |  | The mirror carries `refs/pull/N/head` for every PR the ledger holds OPEN (refetched when the tip moves, never pruned), so pre-merge reads diff the PR's own head. Only open heads: fetching every PR head is too costly. Per-entry `git_fetch_pr_heads` overrides. Off = the overlay reports `head_not_in_mirror`. |
 | `LOOM_CODE_GIT_PR_HEAD_BATCH` | `int` | `200` |  | Max PR heads fetched per shared mirror per ingest pass. |
+| `LOOM_CODE_GIT_CA_FILE` | `str` | `''` |  | PEM bundle git verifies https remotes with, in place of its default roots (a server under a private authority); under /etc/ssl, which the job sandbox mounts. code_git_proxy_ca_file takes its place through the proxy. Empty = default roots. |
 
 ### Git through a forward proxy
 
