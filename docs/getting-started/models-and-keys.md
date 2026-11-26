@@ -747,6 +747,19 @@ Use the response's `X-Trace-Id` to find a successful [generation span](../featur
 for the intended provider and model with `loom.llm.stage=code_answer`. A request span
 alone does not prove the model ran, and a successful call before synthesis verifies
 provider access only.
-Without a successful synthesis span, leave answer synthesis unverified. These probes
-make model calls and can incur charges. For a stored memory missing from search, also
+Without a successful synthesis span, leave answer synthesis unverified.
+
+For a memory-only installation, call [`memory.ask`](../reference/operations/memory.md#memoryask)
+with a fresh question about a known test memory in an authorized namespace. Set
+`namespace_scope: "this"`, `allow_synthesis: true`, `reinforce: false`, `knowledge: false`,
+`precedents: false` and `llm_cache: false`. On the response's `X-Trace-Id`, look for a
+successful non-fake generation span for the intended provider and model with
+`loom.llm.stage` set to `ask_synthesize`, `ask_synthesize_cheap`, `ask_synthesize_mid`,
+`ask_synthesize_strong` or `ask_synthesize_deep`. `LOOM_READS_LLM_FREE=true` refuses the
+request with HTTP 409. A spend cap can return `source: retrieval_only` with
+`abstain_reason: budget_capped`, and insufficient evidence can skip synthesis. A
+retrieval hit or a helper model call does not verify synthesis. Without the matching
+span, leave the call unverified.
+
+These probes make model calls and can incur charges. For a stored memory missing from search, also
 check the embedding backlog described in the smoke guide.
