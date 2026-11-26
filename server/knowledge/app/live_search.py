@@ -97,39 +97,48 @@ async def search(org: str, namespaces: list[str], query: str, *, top_k: int) -> 
                 await session_admission.require(auth)
                 contributions = []
                 total_budget = min(top_k, settings.knowledge_live_search_max_hits)
-                # Anti-starvation: allocate fair per-source hit quota so early sources
-                # do not greedily exhaust the hit budget and starve subsequent sources.
-                per_source_quota = max(1, (total_budget + len(selected) - 1) // len(selected))
 
-                for source in selected:
+                for i, source in enumerate(selected):
                     if total_budget <= 0 or time.monotonic() >= deadline:
                         break
 
-                    authority = await connected_accounts.resolve(
-                        org,
-                        source.namespace,
-                        source.name,
-                        deadline=deadline,
-                        expected_source_id=source.source_id,
+                    # Dynamic quota rebalancing: dynamically compute remaining quota per remaining source
+                    # so under-filled or skipped sources naturally yield their unused budget to later ones.
+                    remaining_sources = len(selected) - i
+                    fetch_limit = min(
+                        max(1, (total_budget + remaining_sources - 1) // remaining_sources),
+                        total_budget,
                     )
-                    if authority.source != source:
-                        continue  # a changed registration cannot widen the discovered corpus
 
-                    fetch_limit = min(per_source_quota, total_budget)
-
-                    async def native(
-                        access: CheckedAccess,
-                        authority: connected_accounts.SourceAuthority = authority,
-                        limit: int = fetch_limit,
-                    ) -> list[live_provider_search.LiveProviderHit]:
-                        return await live_provider_search.search(
-                            authority.source, access, query, top_k=limit, deadline=deadline
+                    try:
+                        authority = await connected_accounts.resolve(
+                            org,
+                            source.namespace,
+                            source.name,
+                            deadline=deadline,
+                            expected_source_id=source.source_id,
                         )
+                        if authority.source != source:
+                            continue  # a changed registration cannot widen the discovered corpus
 
-                    hits = tuple(await authority.run(native))[:fetch_limit]
-                    if hits:
-                        contributions.append(Contribution(authority, hits))
-                        total_budget -= len(hits)
+                        async def native(
+                            access: CheckedAccess,
+                            authority: connected_accounts.SourceAuthority = authority,
+                            limit: int = fetch_limit,
+                        ) -> list[live_provider_search.LiveProviderHit]:
+                            return await live_provider_search.search(
+                                authority.source, access, query, top_k=limit, deadline=deadline
+                            )
+
+                        hits = tuple(await authority.run(native))[:fetch_limit]
+                        if hits:
+                            contributions.append(Contribution(authority, hits))
+                            total_budget -= len(hits)
+                    except Exception:  # noqa: BLE001
+                        # Fault-tolerant isolation: provider failures or timeouts in one source
+                        # must not discard contributions already retrieved from earlier sources.
+                        continue
+
                 return LiveResult(tuple(contributions), deadline) if contributions else None
         except Exception:  # noqa: BLE001 — optional private search never exposes account/provider detail
             return None
