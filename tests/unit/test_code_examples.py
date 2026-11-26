@@ -165,7 +165,7 @@ def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None
     assert [site["line"] for site in examples] == [25, 10, 40]
 
 
-def test_edit_examples_prefer_a_test_covering_the_related_target() -> None:
+def test_edit_examples_prefer_a_test_named_for_the_related_target() -> None:
     path = "test_routes.py"
     edges = [
         _edge(path, 5, "test_routes::test_url_for_with_scheme"),

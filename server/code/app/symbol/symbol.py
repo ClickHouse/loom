@@ -591,7 +591,7 @@ async def _edit_context_for_target(
         matched_rows=target.rows,
         matched_members=target.grouped,
         match_witnesses=target.matches,
-        related_test_names=_other_edit_names(input.names, target.name),
+        related_test_names=_edit_batch_names(input.names),
     )
     if target.revision is not None:
         if not out.definitions:
@@ -613,11 +613,14 @@ async def _edit_context_for_target(
     return out
 
 
-def _other_edit_names(names: list[str], target: str) -> tuple[str, ...]:
+def _edit_batch_names(names: list[str]) -> tuple[str, ...]:
+    """Give every spelling in the batch the same ranking context."""
+    if len(names) < 2:
+        return ()
     return tuple(
         local[1] if (local := _parse_file_symbol(name)) else name
         for name in names
-        if name != target and not _parse_location(name)
+        if not _parse_location(name)
     )
 
 
