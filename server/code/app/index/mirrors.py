@@ -438,9 +438,15 @@ async def _named_paths() -> tuple[set[str], set[str]] | None:
         return None
     mirrors = {c.git_dir for c in cfgs} | {repo_registry.git_dir_for(str(r["repo"])) for r in rows}
     # An entry naming no producer runs whichever tiers its tree calls for, so every
-    # tier's tree is named.
+    # tier's tree is named; one naming its producer runs that tier and its extras.
     checkouts = {
-        repos.checkout_for(c, p) for c in cfgs for p in (*PRODUCERS, *c.scip_extra_producers)
+        repos.checkout_for(c, p)
+        for c in cfgs
+        for p in (
+            (c.scip_producer, *c.scip_extra_producers)
+            if c.scip_producer
+            else (*PRODUCERS, *c.scip_extra_producers)
+        )
     }
     for r in rows:
         base = repo_registry.checkout_dir_for(str(r["namespace"]))

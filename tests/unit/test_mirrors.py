@@ -362,6 +362,38 @@ async def test_the_sweep_keeps_the_tier_checkouts_of_an_entry_naming_no_producer
 
 
 @pytest.mark.asyncio
+async def test_the_sweep_removes_a_tier_checkout_an_explicit_entry_no_longer_names(
+    monkeypatch, tmp_path
+) -> None:
+    """An entry that names its producer runs that tier and its extras only, so the
+    old checkout of a tier dropped from the extras goes while the named ones stay."""
+    from server.code.store import index as store
+
+    root = tmp_path / "self"
+    monkeypatch.setattr(settings, "code_repos_root", str(root))
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    for name in ("checkout-code-go", "checkout-code-go.python", "checkout-code-go.typescript"):
+        _old(root / name)
+
+    class _Repo:
+        async def registry_rows(self) -> list[dict[str, Any]]:
+            return []
+
+    cfg = _Cfg(str(root / "o__go.git"), "code-go")
+    cfg.scip_producer = "go"
+    cfg.scip_checkout_dir = str(root / "checkout-code-go")
+    cfg.scip_extra_producers = ("python",)
+    monkeypatch.setattr(store, "CodeRepo", _Repo)
+    _repos(monkeypatch, [cfg])
+    removed = {os.path.basename(p) for p in await mirrors.sweep()}
+    assert removed == {"checkout-code-go.typescript"}
+    assert sorted(p.name for p in root.iterdir() if p.is_dir()) == [
+        "checkout-code-go",
+        "checkout-code-go.python",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_mirror_named_like_a_temp_dir_is_swept_as_a_mirror(monkeypatch, tmp_path) -> None:
     """A self-service name never holds a dot, so such a mirror is no entry's; it
     goes under its own clone lock, and its clone's temp dir under the same."""
