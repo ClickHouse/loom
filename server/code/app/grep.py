@@ -540,17 +540,24 @@ async def _grep_lines(
     route, related_pattern, note = scan.route, scan.related_pattern, scan.note
     trace_run_id = new_trace_run_id()
     matches = scan.matches[offset : offset + served_limit]
+    # Keep the scan's coverage for the cursor and record enrichment cuts for this page.
+    page_budget = replace(budget, cut=[]) if budget is not None else None
     context, context_source, context_lines, complete_contexts = await _grep_page_context(
-        repo, org, ns, input, scan, matches, budget
+        repo, org, ns, input, scan, matches, page_budget
     )
-    bodies = await definitions_for(input, matches, budget, match_commits=scan.match_commits)
+    bodies = await definitions_for(input, matches, page_budget, match_commits=scan.match_commits)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
-        repo, org, ns, input, matches, route, budget=budget
+        repo, org, ns, input, matches, route, budget=page_budget
     )
     exact_coverage = await asyncio.to_thread(
         _line_coverage_fields, scan.chunks, budget, additional_reason=scan.batch_partial_reason
     )
     coverage = dict(exact_coverage)
+    if page_budget is not None and page_budget.partial:
+        coverage.update(
+            partial=True,
+            partial_reason=_notes(coverage.get("partial_reason", ""), page_budget.reason()),
+        )
     extra_related = None
     if not (related_pattern or offset or coverage.get("partial")):
         extra_related, extra_coverage = await _extra_related_source(
@@ -563,7 +570,7 @@ async def _grep_lines(
             scan=scan,
             exact_definitions=bodies.get("definitions", []),
             limit=served_limit,
-            budget=budget,
+            budget=page_budget,
         )
         coverage.update(extra_coverage)
         if extra_related is not None:
@@ -584,7 +591,7 @@ async def _grep_lines(
         scan,
         matches,
         related,
-        budget=budget,
+        budget=page_budget,
         incomplete=bool(coverage.get("partial")),
         whole_page=not offset and len(matches) == len(scan.matches),
         definitions=bodies.get("definitions", []) if not offset else [],
