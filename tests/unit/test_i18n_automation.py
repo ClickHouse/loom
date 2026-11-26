@@ -235,6 +235,7 @@ def test_paid_runner_remains_main_only_with_finite_cumulative_default() -> None:
     assert workflow["on"]["schedule"] == [{"cron": "37 */6 * * *"}, {"cron": "11,26,41,56 * * * *"}]
     assert workflow["concurrency"]["group"] == "${{ github.workflow }}"
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
+    assert workflow["concurrency"]["queue"] == "max"
     update = workflow["jobs"]["update"]
     assert update["env"]["LOOM_I18N_BATCH_LANGUAGES"] == "${{ inputs.languages }}"
     assert "github.ref == 'refs/heads/main'" in update["if"]
