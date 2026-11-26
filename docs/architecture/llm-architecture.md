@@ -314,8 +314,10 @@ OpenAI client sends it as the Responses `text.format`, a schema's `name`, `schem
 `strict` beside its `type`. The Anthropic client sends a schema as the Messages API's
 structured output (`output_config.format`, beside the effort) and writes it into a JSON
 directive appended to the system prompt, so a model that refuses `output_config` still
-answers in the schema's shape; a `json_object` format gets the directive alone. It strips
-code fences and marks the system block cacheable.
+answers in the schema's shape; a `json_object` format gets the directive alone. A refusal
+that names one key of `output_config` drops that key alone for the model, so a refused
+effort leaves the format in place and a refused format leaves the effort. It strips code
+fences and marks the system block cacheable.
 The caller parses (`server/llm/json_text.py`).
 
 **Request shape per model.** `server/llm/traits.py` seeds documented sampling

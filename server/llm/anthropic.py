@@ -32,6 +32,8 @@ _ANTHROPIC_ROOT = "https://api.anthropic.com"
 
 # Fields a model may refuse; server/llm/traits.py learns which, per model, from
 # the 400 that names them (e.g. "`temperature` is deprecated for this model").
+# A 400 naming one key of output_config refuses that key alone
+# ("output_config.effort", "output_config.format"), so the other is still sent.
 _OPTIONAL = ("temperature", "output_config")
 
 _JSON_DIRECTIVE = (
@@ -109,9 +111,9 @@ def _payload(
         "messages": [{"role": "user", "content": user}],
     }
     output_config: dict[str, Any] = {}
-    if settings.llm_anthropic_effort:
+    if settings.llm_anthropic_effort and "output_config.effort" not in t.refused:
         output_config["effort"] = settings.llm_anthropic_effort
-    if schema is not None:
+    if schema is not None and "output_config.format" not in t.refused:
         output_config["format"] = {"type": "json_schema", "schema": schema}
     if output_config and "output_config" not in t.refused:
         payload["output_config"] = output_config
@@ -141,7 +143,9 @@ def _learn_from_refusal(model: str, r: httpx.Response, payload: dict[str, Any]) 
         return False
     if traits.learn_output_limit(model, body):
         return True
-    name = traits.refused_field(body, payload, _OPTIONAL)
+    name = traits.refused_key(body, payload, "output_config") or traits.refused_field(
+        body, payload, _OPTIONAL
+    )
     if name is None:
         return False
     traits.traits(model).refused.add(name)

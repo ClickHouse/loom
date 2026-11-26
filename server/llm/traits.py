@@ -167,6 +167,24 @@ def refused_field(body: Any, payload: dict[str, Any], optional: tuple[str, ...])
     return None
 
 
+def refused_key(body: Any, payload: dict[str, Any], name: str) -> str | None:
+    """`name.key` when a 400 refuses one key of the object field `name` the request
+    sent, by its `param` path or by naming `name.key` or the quoted key in its
+    message; None when it names no single key, which leaves the whole field to
+    `refused_field`."""
+    sent = payload.get(name)
+    if not isinstance(sent, dict):
+        return None
+    message, param = _error_text(body)
+    for key in sent:
+        path = f"{name}.{key}"
+        if param == path or param.startswith((f"{path}.", f"{path}[")):
+            return path
+        if re.search(rf"\b{re.escape(path)}\b|[`'\"]{re.escape(key)}[`'\"]", message):
+            return path
+    return None
+
+
 def learn_output_limit(model: str, body: Any) -> bool:
     """Whether a 400 named the model's output limit (then remembered; the call is
     re-sent within it)."""
