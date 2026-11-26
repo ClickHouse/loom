@@ -11,6 +11,7 @@ from server.code.api.models_common import _CodeIdentity, _LessonsOut, _ResultLes
 _FilePath = Annotated[str, Field(min_length=1, max_length=1024)]
 _SourceLine = Annotated[int, Field(ge=1, lt=2**32)]
 _RangeText = Annotated[str, Field(max_length=1024)]
+# not a setting: the request schema publishes this maximum.
 CODE_READ_MAX_RANGES = 32
 
 

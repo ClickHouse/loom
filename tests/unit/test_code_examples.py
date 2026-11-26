@@ -80,7 +80,7 @@ class _Repo:
         assert not with_revision
         assert tests_only == self.tests_only
         self.edge_reads.append(list(ids))
-        return self.edges
+        return self.edges[:limit]
 
     async def test_map_for(self, org: str, ns: str, paths: list[str]) -> list[dict[str, Any]]:
         return [{"src_path": p} for p in paths if p in self.tested]
@@ -145,6 +145,15 @@ def test_top_k_bounds_the_sites(
     repo = _Repo(seeds=[SEED], edges=[_edge(f"src/f{i}.cpp", i + 1) for i in range(6)])
     out = _run(monkeypatch, repo, name="DB::parseQuery", top_k=2)
     assert [e["path"] for e in out.examples] == ["src/f0.cpp", "src/f1.cpp"]
+
+
+def test_the_candidate_limit_bounds_usage_example_reads(
+    monkeypatch: pytest.MonkeyPatch, traces: list[dict[str, Any]]
+) -> None:
+    monkeypatch.setattr(settings, "code_enrich_example_candidate_limit", 1)
+    repo = _Repo(seeds=[SEED], edges=[_edge("src/a.cpp", 10), _edge("src/b.cpp", 20)])
+    out = _run(monkeypatch, repo, name="DB::parseQuery", top_k=2)
+    assert [example["path"] for example in out.examples] == ["src/a.cpp"]
 
 
 def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None:
@@ -250,6 +259,7 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
                 ]
             assert ids == ["wrapper"] and options["tests_only"]
             assert options["caller_revision"] == revision and options["sites_per_caller"] == 2
+            assert options["limit"] == 10
             if promoted != "present":
                 return [
                     incoming(
@@ -312,6 +322,7 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
             ]
 
     monkeypatch.setattr(settings, "embedding_model", "fake-ngram-3072")
+    monkeypatch.setattr(settings, "code_enrich_indirect_test_caller_limit", 5)
     repo: Any = Repo()
     ready: list[dict[str, Any]] = []
     examples = await bounded(
