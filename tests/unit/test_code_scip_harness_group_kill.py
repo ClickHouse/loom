@@ -37,7 +37,7 @@ def _alive(pid: int) -> bool:
 
 class _Repo:
     async def get_state(self, org: str, ns: str, key: str) -> str:
-        return {"git_head": "b" * 40, "scip_commit": "a" * 40}[key]
+        return {"git_head": "b" * 40, "scip_commit": "a" * 40}.get(key, "")
 
 
 def _cpp(tmp: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], Awaitable[Any]]:

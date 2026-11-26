@@ -680,6 +680,9 @@ async def test_backfill_embed_leaves_a_manual_trigger_row_for_its_namespace(ch: 
         async def pending_embed_chunks(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
             return []
 
+        async def get_state_or_none(self, *_a: Any) -> str | None:
+            return None
+
     rc = await code_backfill._backfill_embed(
         _Repo(), "acme", "clickgap-public", argparse.Namespace()
     )

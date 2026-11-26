@@ -41,12 +41,13 @@ from server.code.app.index.compiler_tier import (
     git,
     gone_documents,
     harness_failure,
+    open_tier_delta,
+    refusal_held,
     resolve_binary,
     resolve_checkout,
     run_harness,
     run_tier,
 )
-from server.code.app.index.delta_file import open_delta
 from server.code.app.index.gitrepo import auth_env, communicate_or_kill, git_config_env
 from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.typescript_dependencies import (
@@ -109,8 +110,8 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipTsDeltaResu
         result.skipped.append(f"{cfg.namespace}: git_head not seeded")
         return
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK) or ""
-    if target == scip_commit:
-        return  # compiler tier is current
+    if target == scip_commit or await refusal_held(repo, cfg, WATERMARK, target, result):
+        return  # compiler tier is current, or its delta at target was refused
     checkout, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
         result.skipped.append(f"{cfg.namespace}: {missing}")
@@ -139,7 +140,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipTsDeltaResu
             cfg.scip_ts_projects,
         )
         try:
-            delta = await asyncio.to_thread(open_delta, delta_path)
+            delta = await open_tier_delta(repo, cfg, WATERMARK, target, delta_path)
         except FileNotFoundError:
             # the harness exits 0 with no delta when no TypeScript file changed
             logger.info("code_scip_ts_delta: %s no TypeScript changes in window", cfg.namespace)
