@@ -18,6 +18,7 @@ on:
       - ".github/workflows/plugin-platforms.yml"
       - ".github/agent-clis/**"
       - "scripts/code-toolchains/bind-native.cjs"
+      - "dev/test_plugins_wsl.sh"
   pull_request:
     branches: [main, "release/**"]
     paths:
@@ -28,6 +29,7 @@ on:
       - ".github/workflows/plugin-platforms.yml"
       - ".github/agent-clis/**"
       - "scripts/code-toolchains/bind-native.cjs"
+      - "dev/test_plugins_wsl.sh"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
@@ -158,36 +160,15 @@ jobs:
     name: plugins on WSL 2 (Ubuntu 24.04, Node 18)
     runs-on: windows-latest
     timeout-minutes: 30
-    defaults:
-      run:
-        shell: wsl-bash {0}
+    env:
+      WSL_DISTRIBUTION: Ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: Vampire/setup-wsl@4c48163d9f981914dd8caa0fc335fe19cca5bff4 # v7.2.0
         with:
-          distribution: Ubuntu-24.04
+          distribution: ${{ env.WSL_DISTRIBUTION }}
           additional-packages: git ca-certificates nodejs npm
       - name: suite and sessions in WSL
-        run: |
-          useradd -m ci
-          # A clone inside WSL, with Linux modes and line endings, as a WSL user's is.
-          git -c safe.directory='*' clone --quiet --no-local . /home/ci/repo
-          chown -R ci /home/ci/repo
-          npm ci --prefix /home/ci/repo/.github/agent-clis --ignore-scripts --no-fund --no-audit >/dev/null
-          node /home/ci/repo/scripts/code-toolchains/bind-native.cjs /home/ci/repo/.github/agent-clis claude
-          root=$(npm root --prefix /home/ci/repo/.github/agent-clis)
-          codex=$(ls "$root"/@openai/codex-linux-*/vendor/*/bin/codex | head -1)
-          test -n "$codex" && test -x "$codex" || { echo "The locked native agent executable is missing" >&2; exit 1; }
-          su ci -s /bin/sh -c "
-            set -e
-            cd /home/ci/repo
-            node --version
-            git config --global user.email ci@example.com
-            git config --global user.name ci
-            node --test integrations/claude-code-plugin/tests/*.test.mjs
-            node --test integrations/grep-shim/tests/*.test.mjs
-            node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin $root/@anthropic-ai/claude-code/bin/claude.exe --expect-tool Bash
-            node integrations/claude-code-plugin/tests/e2e/agent-session.mjs codex --bin $codex
-          "
+        run: wsl.exe --distribution $env:WSL_DISTRIBUTION --user root --exec bash dev/test_plugins_wsl.sh

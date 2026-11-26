@@ -29,7 +29,8 @@ export default defineConfig({
   agents: {
     llmsTxt: {
       details:
-        "Use the [MCP installation runbook](https://loom.clickhouse.com/docs/llms-install.md) to install Loom for Cline or another MCP client.",
+        "Use the [MCP installation runbook](https://loom.clickhouse.com/docs/llms-install.md) to install Loom for Cline or another MCP client.\n\n" +
+        "Use the [coding-agent memory selector](https://loom.clickhouse.com/agent-memory-selector) to compare memory setups and copy an evaluation checklist.",
     },
     mcp: {
       enabled: true,
