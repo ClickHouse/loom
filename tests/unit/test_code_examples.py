@@ -8,6 +8,7 @@ import asyncio
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from server.code.api.models_navigation import CodeExamplesInput
 from server.code.app.enrich import (
@@ -20,6 +21,7 @@ from server.code.app.symbol import examples as h
 from server.code.store.index import CodeRepo
 from server.core.errors import NotFoundError, PreconditionFailedError
 from server.settings import settings
+from server.settings.catalog import CodeSettings
 
 SEED = {"symbol_id": "s-parse", "qualified_name": "DB::parseQuery", "tier": "scip"}
 
@@ -154,6 +156,18 @@ def test_the_candidate_limit_bounds_usage_example_reads(
     repo = _Repo(seeds=[SEED], edges=[_edge("src/a.cpp", 10), _edge("src/b.cpp", 20)])
     out = _run(monkeypatch, repo, name="DB::parseQuery", top_k=2)
     assert [example["path"] for example in out.examples] == ["src/a.cpp"]
+
+
+@pytest.mark.parametrize(
+    ("field", "maximum"),
+    [("code_enrich_example_candidate_limit", 50), ("code_enrich_indirect_test_caller_limit", 30)],
+)
+def test_candidate_settings_keep_enrichment_within_its_work_limits(
+    field: str, maximum: int
+) -> None:
+    CodeSettings.model_validate({field: maximum})
+    with pytest.raises(ValidationError, match=field):
+        CodeSettings.model_validate({field: maximum + 1})
 
 
 def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None:

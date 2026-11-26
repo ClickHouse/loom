@@ -2314,11 +2314,12 @@ settings:
   # Seconds one enrichment of a code result may take before it is left empty. [live]
   # code_enrich_timeout_s: 0.5
 
-  # Incoming call sites read before ranking usage examples. [restart]
+  # Incoming call sites read before ranking usage examples. The coverage lookup accepts
+  # up to 50 paths. [restart]
   # code_enrich_example_candidate_limit: 50
 
   # Indirect test callers ranked as backups. The edge query reads up to twice this many
-  # call sites. [restart]
+  # call sites, within its 60-site work limit. [restart]
   # code_enrich_indirect_test_caller_limit: 30
 
   # A full pass waits this long for a delta on its entry (past any delta's harness
