@@ -76,7 +76,10 @@ to omit domains while sending aggregate usage. In a settings file, set
 
 The [collector deployment guide](../../../deploy/telemetry/README.md) covers the
 warehouse and dashboard setup. The public [adoption page](https://loom.clickhouse.com/adoption)
-shows aggregate self-hosted usage and open-source distribution metrics.
+shows aggregate self-hosted usage and open-source distribution metrics. It also
+lists self-reported contact domain names with successful requests in the last
+90 complete UTC days. Only version 2 reports contribute names to the public
+list. Use the domain-sharing setting above to omit domains from your reports.
 `loom_adoption_windows` contains one report per
 `(installation_id, window_start)`. The daily rollup adds request counts and
 uses the peak half-day distinct count for each installation.
@@ -111,7 +114,7 @@ contain aggregate values.
 
 The restricted `loom_adoption_top_domains_30d` view ranks the top 50 domains by
 attributed successful requests and includes the number of active installations
-and the sum of latest account counts across installations. An address reported
+and the sum of latest account counts across installations. A contact reported
 by several installations can contribute more than once. Company records, domain
 rankings, and pilot stages stay in the access-controlled warehouse.
 

@@ -19,7 +19,7 @@ ts >= {{start:DateTime('UTC')}} AND ts < {{end:DateTime('UTC')}}
 
 ADOPTION_SQL = f"""
 SELECT
-    1::UInt8 AS schema_version,
+    2::UInt8 AS schema_version,
     {{installation_id:String}} AS installation_id,
     {{loom_version:String}} AS loom_version,
     version() AS clickhouse_version,
