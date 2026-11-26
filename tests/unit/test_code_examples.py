@@ -234,6 +234,43 @@ def test_edit_read_target_requires_one_member_within_the_returned_definition() -
     ]
 
 
+async def test_edit_read_sources_verify_a_shared_root_once(monkeypatch) -> None:
+    from server.code.api.models_symbol import CodeEditReadSite
+    from server.code.app.symbol import edit_reads
+
+    revision = "a" * 40
+    caller = CodeUnit(path="src/handlers.py", symbol="src.handlers::show", body="def show(): pass")
+    names = ["src.options::Options::label", "src.options::Options::style"]
+    keys = [(name, name, revision) for name in names]
+    destinations = {
+        key: {"path": "src/options.py", "qualified_name": key[1], "start_line": 1, "end_line": 2}
+        for key in keys
+    }
+    groups = {
+        key: [CodeEditReadSite(path=caller.path, symbol=caller.symbol, line=line)]
+        for line, key in enumerate(keys, start=2)
+    }
+    reads: list[str] = []
+
+    class SourceRecords:
+        async def file_rows_for_paths(self, org, ns, paths):
+            return {path: {"indexed_commit": revision} for path in paths}
+
+    async def body(repo, org, ns, row, *, expected_commit):
+        assert (org, ns, expected_commit) == ("org", "scope", revision)
+        name = row["qualified_name"]
+        reads.append(name)
+        return caller.body if name == caller.symbol else f"body of {name}"
+
+    monkeypatch.setattr(edit_reads, "symbol_body", body)
+    repo: Any = SourceRecords()
+    sources = await edit_reads._hydrate_read_sources(
+        repo, "org", "scope", {(caller.path, caller.symbol): caller}, destinations, groups
+    )
+    assert [source.qualified_name for source in sources] == names
+    assert sorted(reads) == sorted([caller.symbol, *names])
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stale_setup", [False, True])
 async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(

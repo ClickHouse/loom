@@ -99,47 +99,61 @@ async def edit_read_sources(
     }
     if not any(groups.values()):
         return []
+    return await _hydrate_read_sources(repo, org, ns, anchors, destinations, groups)
+
+
+async def _hydrate_read_sources(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    anchors: dict[_AnchorKey, CodeUnit],
+    destinations: dict[_TargetKey, dict[str, Any]],
+    groups: dict[_TargetKey, list[CodeEditReadSite]],
+) -> list[CodeEditReadSource]:
     files = await repo.file_rows_for_paths(
         org, ns, [*(path for path, _ in anchors), *(destinations[key]["path"] for key in groups)]
     )
-
-    async def verify(key: _TargetKey, sites: list[CodeEditReadSite]) -> CodeEditReadSource | None:
-        related = destinations[key]
+    live_revisions = {
+        path: _indexed_commit(row.get("indexed_commit")) for path, row in files.items()
+    }
+    live_groups: dict[_TargetKey, list[CodeEditReadSite]] = {}
+    required_anchors: dict[_AnchorKey, tuple[CodeUnit, str]] = {}
+    for key, sites in groups.items():
         revision = key[2]
-        if not sites or files.get(related["path"], {}).get("indexed_commit") != revision:
-            return None
-        by_anchor = {
-            (site.path, site.symbol): anchors[site.path, site.symbol]
-            for site in sites
-            if files.get(site.path, {}).get("indexed_commit") == revision
-        }
-        if not by_anchor:
-            return None
-        checked, body = await asyncio.gather(
-            _verified_anchors(repo, org, ns, by_anchor, revision),
-            symbol_body(
-                repo, org, ns, {**related, "_extent_commit": revision}, expected_commit=revision
-            ),
+        if live_revisions.get(destinations[key]["path"]) != revision:
+            continue
+        current = [site for site in sites if live_revisions.get(site.path) == revision]
+        if current:
+            live_groups[key] = current
+            for site in current:
+                identity = site.path, site.symbol
+                required_anchors[identity] = anchors[identity], revision
+
+    async def read_member(key: _TargetKey) -> str:
+        return await symbol_body(
+            repo, org, ns, {**destinations[key], "_extent_commit": key[2]}, expected_commit=key[2]
         )
+
+    checked, bodies = await asyncio.gather(
+        _verified_anchors(repo, org, ns, required_anchors),
+        asyncio.gather(*(read_member(key) for key in live_groups)),
+    )
+    remaining = settings.code_chunk_max_chars
+    sources = []
+    for (key, sites), body in zip(live_groups.items(), bodies, strict=True):
         proven = [site for site in sites if (site.path, site.symbol) in checked]
-        if not body or len(body) > settings.code_chunk_max_chars or not proven:
-            return None
-        return CodeEditReadSource(
+        if not body or len(body) > remaining or not proven:
+            continue
+        related = destinations[key]
+        row = CodeEditReadSource(
             qualified_name=related["qualified_name"],
             path=related["path"],
             start_line=related["start_line"],
             end_line=related["end_line"],
-            commit=revision,
+            commit=key[2],
             body=body,
             sites=proven,
         )
-
-    verified = await asyncio.gather(*(verify(key, sites) for key, sites in groups.items()))
-    remaining = settings.code_chunk_max_chars
-    sources = []
-    for row in verified:
-        if row is None:
-            continue
         size = len(row.model_dump_json())
         if size <= remaining:
             sources.append(row)
@@ -197,9 +211,9 @@ def _read_candidates(
 
 
 async def _verified_anchors(
-    repo: CodeRepo, org: str, ns: str, anchors: dict[_AnchorKey, CodeUnit], revision: str
+    repo: CodeRepo, org: str, ns: str, anchors: dict[_AnchorKey, tuple[CodeUnit, str]]
 ) -> set[_AnchorKey]:
-    async def current(unit: CodeUnit) -> bool:
+    async def current(unit: CodeUnit, revision: str) -> bool:
         metadata = {
             "path": unit.path,
             "start_line": unit.start_line,
@@ -211,5 +225,7 @@ async def _verified_anchors(
         body = await symbol_body(repo, org, ns, metadata, expected_commit=revision)
         return body == unit.body
 
-    verified = await asyncio.gather(*(current(unit) for unit in anchors.values()))
+    verified = await asyncio.gather(
+        *(current(unit, revision) for unit, revision in anchors.values())
+    )
     return {key for key, matches in zip(anchors, verified, strict=True) if matches}
