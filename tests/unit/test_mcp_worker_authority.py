@@ -483,7 +483,17 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts), 1)
         self.assertIn(b"synthetic live canary", published[-1]["body"])
 
-    async def test_unenrolled_team_viewer_cannot_distinguish_selected_ids(self) -> None:
+    async def test_team_viewer_cannot_distinguish_selected_ids_without_current_authority(
+        self,
+    ) -> None:
+        enrollment = self.bob_enrollment
+        assert enrollment is not None
+        for enrolled, outage in ((False, False), (False, True), (True, True)):
+            with self.subTest(enrolled=enrolled, outage=outage):
+                self.bob_enrollment = enrollment if enrolled else None
+                await self._assert_team_refusal(enrolled=enrolled, outage=outage)
+
+    async def _assert_team_refusal(self, *, enrolled: bool, outage: bool) -> None:
         from unittest.mock import AsyncMock, patch
 
         from server.auth.context import set_current_auth
@@ -495,10 +505,15 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
         from server.knowledge.app.mcp_worker_live_op import read_source_live
         from server.operations.base import Role
 
-        self.bob_enrollment = None
         worker = unittest.mock.Mock()
+        approval = (
+            AsyncMock(side_effect=WorkerReadRefused("unavailable"))
+            if outage
+            else AsyncMock(wraps=self._approval)
+        )
+        status = "unavailable" if enrolled else "denied"
         directory = protected.LiveSourceDirectory(
-            self._source, self._connection, self._enrollment, worker, self._approval, AsyncMock()
+            self._source, self._connection, self._enrollment, worker, approval, AsyncMock()
         )
         auth = AuthInfo(
             subject="bob",
@@ -524,9 +539,7 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
                             ),
                             directory,
                         )
-                        self.assertEqual(
-                            result.model_dump(), {"status": "denied", "document": None}
-                        )
+                        self.assertEqual(result.model_dump(), {"status": status, "document": None})
                 finally:
                     set_current_auth(None)
 
@@ -540,4 +553,5 @@ class TestCurrentRead(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             await request_tail.RequestTailMiddleware(downstream)(scope, None, AsyncMock())
+        self.assertEqual(approval.await_count, 2 if enrolled else 0)
         worker.assert_not_called()

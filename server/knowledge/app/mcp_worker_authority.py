@@ -17,6 +17,7 @@ from server.knowledge.domain.mcp_worker_source import (
 from server.knowledge.domain.sources import KnowledgeSource
 
 if TYPE_CHECKING:
+    from server.knowledge.domain.mcp_identity import ResourceIdentity
     from server.knowledge.domain.mcp_worker_source import WorkerSourceConfig
 
 
@@ -72,7 +73,9 @@ class CurrentRead:
     worker_approval: GetWorkerApproval
     purpose: Literal["live", "stored"]
 
-    async def _selection(self) -> tuple[KnowledgeSource, WorkerSourceConfig, str]:
+    async def _registration(
+        self,
+    ) -> tuple[KnowledgeSource, WorkerSourceConfig, tuple[ResourceIdentity, ...], str]:
         requested = self.request
         standing = await self.standing(requested)
         if (
@@ -94,9 +97,9 @@ class CurrentRead:
             config, selected = decode_worker_source(source)
         except WorkerSourceRefused:
             raise WorkerReadRefused("denied") from None
-        if config.paused or not any(item.id == requested.resource_id for item in selected):
+        if config.paused:
             raise WorkerReadRefused("denied")
-        return source, config, standing.subject
+        return source, config, selected, standing.subject
 
     async def _current_connection(
         self,
@@ -127,7 +130,6 @@ class CurrentRead:
         config: WorkerSourceConfig,
         source_id: UUID,
         requester: str,
-        owner_account: CurrentConnection,
     ) -> tuple[CurrentConnection, int]:
         requested = self.request
         enrollment = await self.enrollment(requested.org, requested.namespace, source_id, requester)
@@ -149,42 +151,58 @@ class CurrentRead:
             enrollment.connection_generation,
             refusal="denied",
         )
-        if not reader.resource_space or reader.resource_space != owner_account.resource_space:
-            raise WorkerReadRefused("denied")
         return reader, enrollment.link_generation
 
-    async def resolve(self) -> WorkerReadScope:
+    async def _approval_generation(self, config: WorkerSourceConfig, *, team: bool) -> int:
         requested = self.request
-        source, config, requester = await self._selection()
-        source_id = UUID(source.source_id)
-        is_owner = requester == source.owner_subject
-        if (not is_owner and config.reader_policy != "current_team_access") or (
-            self.purpose == "stored" and config.mode == "live"
-        ):
-            raise WorkerReadRefused("denied")
         approval = await self.worker_approval(
             requested.org,
             requested.namespace,
             config.worker_id,
             config.profile_digest,
             "live" if self.purpose == "live" else config.mode,
-            not is_owner,
+            team,
         )
         if type(approval) is not int or approval != config.approval_generation:
             raise WorkerReadRefused("denied")
+        return approval
 
-        owner_account = await self._current_connection(
-            config,
-            source.owner_subject,
-            config.owner_connection_id,
-            config.owner_connection_generation,
-            refusal="reconnect" if is_owner else "denied",
-        )
-        reader, enrollment_generation = owner_account, 0
-        if not is_owner:
-            reader, enrollment_generation = await self._team_reader(
-                config, source_id, requester, owner_account
+    async def resolve(self) -> WorkerReadScope:
+        requested = self.request
+        source, config, selected, requester = await self._registration()
+        source_id = UUID(source.source_id)
+        is_owner = requester == source.owner_subject
+        if self.purpose == "stored" and config.mode == "live":
+            raise WorkerReadRefused("denied")
+        if is_owner:
+            if not any(item.id == requested.resource_id for item in selected):
+                raise WorkerReadRefused("denied")
+            approval = await self._approval_generation(config, team=False)
+            owner_account = await self._current_connection(
+                config,
+                source.owner_subject,
+                config.owner_connection_id,
+                config.owner_connection_generation,
+                refusal="reconnect",
             )
+            reader, enrollment_generation = owner_account, 0
+        else:
+            if config.reader_policy != "current_team_access":
+                raise WorkerReadRefused("denied")
+            reader, enrollment_generation = await self._team_reader(config, source_id, requester)
+            owner_account = await self._current_connection(
+                config,
+                source.owner_subject,
+                config.owner_connection_id,
+                config.owner_connection_generation,
+                refusal="denied",
+            )
+            if not reader.resource_space or reader.resource_space != owner_account.resource_space:
+                raise WorkerReadRefused("denied")
+            # An approval lookup failure must not reveal whether a team resource was selected.
+            approval = await self._approval_generation(config, team=True)
+            if not any(item.id == requested.resource_id for item in selected):
+                raise WorkerReadRefused("denied")
         return WorkerReadScope(
             worker_id=reader.binding.worker_id,
             org=requested.org,
