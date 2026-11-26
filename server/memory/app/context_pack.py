@@ -579,18 +579,13 @@ async def _pack_decisions_from_hits(
         ns = getattr(h, "namespace", "") or input.namespace
         rec = records.get(str(h.memory_key)) or {}
         excerpt = str(getattr(h, "content_excerpt", "") or "").strip()
-        # The record is read by key, so its full statement must match the guided revision.
-        if getattr(h, "use_guidance", None) is not None and (
-            ns != input.namespace
-            or (
-                rec
-                and served_content_sha256(
-                    memory_value(rec, proposed=rec.get("stage") == "proposed")
-                )
-                != getattr(h, "_guidance_content_sha256", "")
-            )
-        ):
-            rec = {}
+        if rec and getattr(h, "use_guidance", None) is not None:
+            # The record is read by key, so bind its statement to the guided revision.
+            statement = memory_value(rec, proposed=rec.get("stage") == "proposed")
+            digest = getattr(h, "_guidance_content_sha256", "")
+            matches = served_content_sha256(statement) == digest if digest else statement == excerpt
+            if ns != input.namespace or not matches:
+                rec = {}
         scenario = str(rec.get("scenario") or "").strip() or excerpt
         outcome = str(rec.get("outcome") or "").strip()
         realized = str(rec.get("realized_outcome") or "").strip()

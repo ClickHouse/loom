@@ -308,9 +308,11 @@ def test_every_governed_definition_leads_the_memories_block(
     assert positions == sorted(positions) and positions[-1] < block.index("a resource row")
 
 
-@pytest.mark.parametrize("matches", [True, False])
+@pytest.mark.parametrize(
+    ("matches", "digest_available"), [(True, True), (False, True), (True, False)]
+)
 def test_guided_decision_uses_the_served_statement(
-    monkeypatch: pytest.MonkeyPatch, matches: bool
+    monkeypatch: pytest.MonkeyPatch, matches: bool, digest_available: bool
 ) -> None:
     from server.core.hashing import served_content_sha256
     from server.memory.domain.decision_statement import memory_value
@@ -329,8 +331,12 @@ def test_guided_decision_uses_the_served_statement(
     hit = NS(
         **{
             **vars(_DECISION),
-            "content_excerpt": selected["scenario"] if matches else memory_value(selected),
-            "_guidance_content_sha256": served_content_sha256(memory_value(selected)),
+            "content_excerpt": (
+                selected["scenario"] if matches and digest_available else memory_value(selected)
+            ),
+            "_guidance_content_sha256": (
+                served_content_sha256(memory_value(selected)) if digest_available else ""
+            ),
             "use_guidance": guidance,
         }
     )
