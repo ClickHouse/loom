@@ -145,12 +145,21 @@ async def _declaration_targets(
     if len(required) < 2 or any(len(match["text"]) >= GREP_MATCH_TEXT_CHARS for match in matches):
         return []
     declarations: set[tuple[str, int]] = set()
+    missing_clue = False
+    declaration_hits: set[frozenset[tuple[str, int]]] = set()
     for clue in required:
         hits = [match for match in matches if clue in match["text"]]
         if not hits:
-            return []
+            missing_clue = True
+            continue
         if all(hit["line"] == hit["scope_start_line"] for hit in hits):
-            declarations.update((hit["path"], hit["line"]) for hit in hits)
+            locations = frozenset((hit["path"], hit["line"]) for hit in hits)
+            declaration_hits.add(locations)
+            declarations.update(locations)
+    # With an unmatched clue, require distinct declaration evidence. Several
+    # spellings of the same hit set may still be clues for one ambiguous name.
+    if missing_clue and len(declaration_hits) < 2:
+        return []
     matches = [match for match in matches if (match["path"], match["line"]) in declarations]
     if not 1 < len(matches) <= EDIT_CONTEXT_MAX_NAMES:
         return []

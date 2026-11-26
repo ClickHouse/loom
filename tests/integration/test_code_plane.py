@@ -591,7 +591,10 @@ async def test_edit_context_batches_definitions_and_their_tests(code_env, monkey
         await handle_code_edit_context(query.model_copy(update={"name": names[0]}))
 
 
-@pytest.mark.parametrize("clue_shape", ["declarations", "mixed", "one_declaration"])
+@pytest.mark.parametrize(
+    "clue_shape",
+    ["declarations", "mixed", "one_declaration", "missing", "one_plus_missing", "same_hits"],
+)
 async def test_edit_context_reads_verified_declarations_across_files(
     code_env, monkeypatch, clue_shape
 ) -> None:
@@ -621,12 +624,19 @@ async def test_edit_context_reads_verified_declarations_across_files(
         candidate_paths.add(path)
     elif clue_shape == "one_declaration":
         clues[0] = "return result"
+    elif clue_shape == "missing":
+        clues.append("def removed(")
+    elif clue_shape in {"one_plus_missing", "same_hits"}:
+        clues[1] = "def removed("
+        if clue_shape == "same_hits":
+            clues.append("def submit")
+        candidate_paths.remove("src/gamma.py")
     result = await symbol.handle_code_edit_context(
         CodeEditContextInput(org=org, namespace=ns, clues=clues, include_lessons=False)
     )
     assert result.ambiguous
     assert {candidate["path"] for candidate in result.candidates} == candidate_paths
-    if clue_shape == "one_declaration":
+    if clue_shape in {"one_declaration", "one_plus_missing", "same_hits"}:
         assert result.definitions == []
         return
     assert {unit.path: unit.body.encode().rstrip(b"\n") for unit in result.definitions} == {
