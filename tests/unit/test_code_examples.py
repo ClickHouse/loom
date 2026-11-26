@@ -548,9 +548,10 @@ async def test_edit_context_keeps_optional_caller_source_when_aliases_share_defi
         "text": "def run():\n    value()",
     }
 
-    async def read(request):
+    async def read(_request, target, *, in_batch):
+        assert in_batch
         via = {"symbol": "src.action::run", "path": "src/action.py", "line": 2}
-        if request.name == names[source_position]:
+        if target.name == names[source_position]:
             via["context"] = context
         unit = CodeUnit(
             path="src/value.py",
@@ -560,7 +561,7 @@ async def test_edit_context_keeps_optional_caller_source_when_aliases_share_defi
         )
         return CodeSymbolOutput(definitions=[unit])
 
-    monkeypatch.setattr(symbol, "_single_edit_context", read)
+    monkeypatch.setattr(symbol, "_edit_context_for_target", read)
     monkeypatch.setattr(symbol, "_symbol_trace", lambda *args, **kwargs: "")
     answer = await symbol._batched_edit_context(
         CodeEditContextInput(org="test-org", namespace="test-ns", names=names)
