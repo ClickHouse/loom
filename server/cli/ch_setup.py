@@ -432,7 +432,8 @@ def _write_analyst() -> None:
     """Write insights.query's analyst user under this deployment's key, for a
     deployment whose server user cannot (one with access management writes it
     at boot)."""
-    from server.insights.app.analysis import SetupRefused, rewrite, shown_cause
+    from server.insights.app.analysis import rewrite, shown_cause
+    from server.insights.domain.analysis import SetupRefused
 
     try:
         run_connected(
@@ -480,7 +481,8 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         try:
             _apply_analyst()
         except Exception as error:  # noqa: BLE001 — administrative failures need one safe line
-            from server.insights.app.analysis import SetupRefused, shown_cause
+            from server.insights.app.analysis import shown_cause
+            from server.insights.domain.analysis import SetupRefused
 
             cause = error_line(error) if isinstance(error, SetupRefused) else shown_cause(error)[0]
             print(f"✗ {cause}", file=sys.stderr)

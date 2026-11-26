@@ -446,6 +446,46 @@ def test_guarded_apply_refusal_is_actionable_without_stdout(monkeypatch, capsys)
     assert out.err.strip() == "✗ row policies Loom did not write are on the analysis tables"
 
 
+@pytest.mark.parametrize(
+    ("rows", "reason"),
+    [
+        (
+            [{"statement": 1}],
+            "ClickHouse returned incomplete row-policy definitions for Loom's database",
+        ),
+        (
+            [{"statement": "CREATE ROW POLICY foreign ON loom.memory FOR SELECT USING 0 TO ALL"}],
+            "the analyst catalog has unverified row policies",
+        ),
+    ],
+)
+def test_policy_catalog_refusal_reaches_cli_and_health(monkeypatch, capsys, ready, rows, reason):
+    import argparse
+
+    from server.cli import ch_setup
+
+    class _Client:
+        query_all = staticmethod(_returns(rows))
+
+    def apply():
+        grant = "GRANT SELECT(org) ON `loom`.memory TO `loom_analyst`"
+        try:
+            asyncio.run(app.store.write_entities([grant], names=NAMES, ch=_Client()))
+        except RuntimeError as error:
+            app._probe_failed("analyst setup failed", error)
+            raise
+
+    monkeypatch.setattr(app.store, "database", lambda: "loom")
+    monkeypatch.setattr(ch_setup, "_apply_analyst", apply)
+    args = argparse.Namespace(print_analyst_sql=False, apply_analyst_sql=True, print_sql=False)
+    assert ch_setup._cmd_ch_setup(args) == 2
+    out = capsys.readouterr()
+    assert not out.out
+    assert reason in out.err and "CREATE ROW POLICY" not in out.err
+    message = out.err.strip().removeprefix("✗ ")
+    assert app.analysis_state() == (False, f"analyst setup failed: {message}", "")
+
+
 def test_rewrite_before_the_first_boot_says_to_run_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

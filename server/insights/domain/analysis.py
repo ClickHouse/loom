@@ -29,6 +29,11 @@ from typing import NamedTuple
 from server.core.event_source import event_source
 from server.core.sql_literal import sql_string
 
+
+class SetupRefused(RuntimeError):
+    """A setup refusal whose message is safe to show."""
+
+
 # Bumped whenever the allowlist, the profile or the policy shape changes. The
 # profile carries it, and a build writes the entities only when its version is
 # at least the stored one, so during a rolling upgrade build N-1 never puts

@@ -254,10 +254,16 @@ async def _verify_policy_catalog(ch: _CHClient) -> None:
             f"SHOW CREATE ROW POLICIES ON {target_database()}.*", settings=boundary.LOG_TEXT_CUT
         )
     if any(len(row) != 1 or not isinstance(next(iter(row.values())), str) for row in rows):
-        raise RuntimeError("the native analyst policy catalog was incomplete")
+        raise boundary.SetupRefused(
+            "ClickHouse returned incomplete row-policy definitions for Loom's database. "
+            "Verify the native policy catalog before retrying setup"
+        )
     statements = tuple(next(iter(row.values())) for row in rows)
     if not analyst_policy_catalog_allows_writes(statements, database()):
-        raise RuntimeError("the analyst catalog has unverified row policies")
+        raise boundary.SetupRefused(
+            "the analyst catalog has unverified row policies. "
+            "Review the row policies on the analysis tables before retrying setup"
+        )
 
 
 async def own_grants(

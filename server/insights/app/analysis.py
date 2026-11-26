@@ -54,6 +54,7 @@ from server.insights.api.models_analysis import (
     InsightsQueryOutput,
 )
 from server.insights.domain import analysis as boundary
+from server.insights.domain.analysis import SetupRefused
 from server.insights.store import analysis as store
 from server.observability.event_args import text_digest
 from server.observability.store.event_reads import MASKED_EVENT_COLUMNS
@@ -104,10 +105,6 @@ _STATEMENT_CODES = frozenset(
         477,  # INVALID_USAGE_OF_INPUT: input() outside an INSERT
     }
 )
-
-
-class SetupRefused(RuntimeError):
-    """A refusal Loom wrote, safe to show as is; `shown_cause` words any other error."""
 
 
 _WRITE_LEASE = "analysis.entities"
