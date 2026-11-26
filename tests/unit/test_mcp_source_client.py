@@ -1307,3 +1307,9 @@ async def test_discovery_without_an_approved_tool_rpc_closes_cleanly(
             assert state["calls"] == []
         assert opened._owner_task is not None and opened._owner_task.done()
         assert opened._transport is not None and opened._transport.failure is None
+
+
+def test_search_mapping_requires_items_selector() -> None:
+    search = replace(mapping("find", search=True), items_path=())
+    with pytest.raises(source.MCPSourceError, match="^MCP source config$"):
+        client(replace(config(tools=True), search=search))

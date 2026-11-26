@@ -24,7 +24,7 @@ from jsonschema import Draft202012Validator, SchemaError
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
-from pydantic import AnyUrl
+from pydantic import AnyUrl, field_validator
 from referencing import Registry
 from referencing.exceptions import Unresolvable
 
@@ -98,10 +98,12 @@ def _check_response(method: str, response: httpx.Response, body: bytes) -> None:
         if status not in {200, 204}:
             raise MCPSourceError("protocol")
         return
-    if method == "POST" and status == 202:
-        if isinstance(types.JSONRPCMessage.model_validate_json(body).root, types.JSONRPCRequest):
-            raise MCPSourceError("protocol")
-        return
+    if method == "POST" and status in {200, 202}:
+        message = types.JSONRPCMessage.model_validate_json(body).root
+        if not isinstance(message, types.JSONRPCRequest):
+            if status != 202:
+                raise MCPSourceError("protocol")
+            return
     if status != 200:
         raise MCPSourceError("protocol")
     media = response.headers.get("content-type", "").partition(";")[0].strip().lower()
@@ -110,6 +112,30 @@ def _check_response(method: str, response: httpx.Response, body: bytes) -> None:
     )
     if media not in allowed:
         raise MCPSourceError("protocol")
+
+
+def _resource_uri(identity: str) -> AnyUrl:
+    uri = AnyUrl(_string(identity))
+    if str(uri) != identity or uri.username is not None or uri.password is not None:
+        raise MCPSourceError("unsupported")
+    return uri
+
+
+def _check_resource_uris(rows: Any) -> Any:
+    # Check the spelling before the SDK converts each URI to AnyUrl.
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict) and isinstance(row.get("uri"), str):
+                _resource_uri(row["uri"])
+    return rows
+
+
+class _ListResourcesResult(types.ListResourcesResult):
+    _check_uris = field_validator("resources", mode="before")(_check_resource_uris)
+
+
+class _ReadResourceResult(types.ReadResourceResult):
+    _check_uris = field_validator("contents", mode="before")(_check_resource_uris)
 
 
 @dataclass(frozen=True)
@@ -567,7 +593,9 @@ class MCPSourceClient:
         mappings = [m for m in (self._config.search, self._config.read) if m is not None]
         if set(config.approved_tools) != {m.name for m in mappings}:
             raise MCPSourceError("config")
-        if self._config.read is not None and not self._config.read.text_path:
+        if (self._config.read is not None and not self._config.read.text_path) or (
+            self._config.search is not None and not self._config.search.items_path
+        ):
             raise MCPSourceError("config")
         for mapping in mappings:
             _validate_tool_mapping(mapping)
@@ -803,11 +831,16 @@ class MCPSourceClient:
         ):
             self._tool_catalog_generation += 1
 
-    async def _run(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
+    async def _run(
+        self, action: Callable[[ClientSession], Awaitable[_T]], *, pins_tools: bool = False
+    ) -> _T:
         with private_work():
-            return await self._execute(action)
+            return await self._execute(action, pins_tools=pins_tools)
 
-    async def _execute(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
+    async def _execute(
+        self, action: Callable[[ClientSession], Awaitable[_T]], *, pins_tools: bool
+    ) -> _T:
+        generation = self._tool_catalog_generation
         set_query_tag("mcp-source")
         try:
             self._check_state(require_session=True)
@@ -818,6 +851,8 @@ class MCPSourceClient:
                 result = await action(self._session)
                 await self._authorize()
                 self._check_state(require_session=True)
+                if pins_tools and generation != self._tool_catalog_generation:
+                    raise MCPSourceError("schema")
                 return result
         except (
             Exception,  # Terminal refusals must drain owned HTTP work before returning.
@@ -889,7 +924,7 @@ class MCPSourceClient:
             self._discovery = MCPDiscovery(self._discovery.resources, tuple(sorted(found)))
             return self._discovery
 
-        return await self._run(action)
+        return await self._run(action, pins_tools=bool(self._config.approved_tools))
 
     def _page_start(self, cursor: str | None, scope: tuple[str, str]) -> None:
         if cursor is not None:
@@ -921,8 +956,11 @@ class MCPSourceClient:
             if self._discovery is None or not self._discovery.resources:
                 raise MCPSourceError("unsupported")
             self._page_start(cursor, ("resources", ""))
-            result = await session.list_resources(
-                params=types.PaginatedRequestParams(cursor=cursor)
+            result = await session.send_request(
+                types.ClientRequest(
+                    types.ListResourcesRequest(params=types.PaginatedRequestParams(cursor=cursor))
+                ),
+                _ListResourcesResult,
             )
             items = []
             for resource in result.resources:
@@ -994,7 +1032,7 @@ class MCPSourceClient:
                 ("search", query),
             )
 
-        return await self._run(action)
+        return await self._run(action, pins_tools=self._config.search is not None)
 
     async def read(self, resource_id: str) -> MCPEvidence:
         async def action(session: ClientSession) -> MCPEvidence:
@@ -1011,7 +1049,14 @@ class MCPSourceClient:
                 return self._with_receipt(evidence, "tools/call")
             if self._discovery is None or not self._discovery.resources:
                 raise MCPSourceError("unsupported")
-            result = await session.read_resource(AnyUrl(identity))
+            result = await session.send_request(
+                types.ClientRequest(
+                    types.ReadResourceRequest(
+                        params=types.ReadResourceRequestParams(uri=_resource_uri(identity))
+                    )
+                ),
+                _ReadResourceResult,
+            )
             if not result.contents or len(result.contents) > self._config.limits.max_results:
                 raise MCPSourceError("limit")
             texts: list[str] = []
@@ -1040,4 +1085,4 @@ class MCPSourceClient:
                 "resources/read",
             )
 
-        return await self._run(action)
+        return await self._run(action, pins_tools=self._config.read is not None)

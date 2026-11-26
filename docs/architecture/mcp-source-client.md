@@ -45,16 +45,19 @@ and [authorization contract](https://modelcontextprotocol.io/specification/2025-
 ## Read operations and capabilities
 
 Standard resource listing and reading use `resources/list` and `resources/read` when the
-server advertises resources. Tool-based reads require an explicit mapping approved by
-the caller's control plane. A mapping names the exact tool, its argument and result
-schemas, fixed scope arguments and result selectors. Search text, a selected resource
+server advertises resources. Native resource URIs must retain their exact spelling through
+SDK parsing and cannot contain URL credentials. Tool-based reads require an explicit
+mapping approved by the caller's control plane. A mapping names the exact tool, its
+argument and result schemas, fixed scope arguments and result selectors. Searches
+require a selector for the result list. Search text, a selected resource
 identity or a pagination cursor fills only its configured argument. It cannot replace
 a fixed scope argument or choose another tool.
 
 Discovery verifies the configured schemas before execution. Tool descriptions and
 `readOnlyHint` are untrusted descriptive fields, never approval to call a tool. Unknown
 capabilities remain unsupported; an action-only server supplies no usable document source.
-Schema drift refuses the configured operation rather than guessing another result shape.
+Schema drift refuses the configured operation. A catalog change before the final access
+check completes also refuses tool discovery and mapped results.
 Returned resource links are evidence, never instructions to fetch an arbitrary URL.
 Listing and search do not expand the explicitly approved resource identities. An empty
 selection grants no read authority.
@@ -84,6 +87,7 @@ request deadline expires while HTTP response data is still arriving. Another cli
 SDK scope remains independent. A known background transport failure or an expired
 deadline refuses discovery and result publication, including cached discovery.
 Unexpected HTTP status or response media types are terminal before protocol handoff.
+A JSON-RPC request expects HTTP 200; a notification or response expects HTTP 202.
 Optional GET and DELETE responses with status 405 remain supported.
 Cancellation publishes no partial read evidence.
 The transport retains cleanup ownership while checking authority after response headers

@@ -1651,3 +1651,145 @@ async def test_close_drains_outstanding_dispatch_before_session_delete(
         await asyncio.wait_for(started.wait(), 1)
     assert stopped.is_set() and fixture.pool_closed.is_set()
     assert drained_at_delete == [True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["list", "request", "response"])
+async def test_native_resource_identity_is_not_normalized(
+    monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    canonical = "https://docs.example/a"
+    noncanonical = "https://docs.example:443/a"
+
+    class ResourceURIs(HTTPFixture):
+        async def reply(self, request: httpx.Request) -> httpx.Response:
+            if request.method == "POST":
+                payload = json.loads(await request.aread())
+                if payload["method"] == "resources/list":
+                    return httpx.Response(
+                        200,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": payload["id"],
+                            "result": {"resources": [{"uri": noncanonical, "name": "One"}]},
+                        },
+                    )
+            return await super().reply(request)
+
+        def document(self) -> dict[str, Any]:
+            return {
+                "contents": [
+                    {"uri": noncanonical if phase == "response" else canonical, "text": TEXT}
+                ]
+            }
+
+    fixture = ResourceURIs("resources", block=False)
+    selected = noncanonical if phase == "request" else canonical
+    config = replace(fixture.config(), approved_resource_ids=(selected,))
+    async with source.MCPSourceClient(
+        config, None, validate_access=access, _transport=FixtureTransport(fixture)
+    ) as remote:
+        with pytest.raises(source.MCPSourceError, match="unsupported"):
+            if phase == "list":
+                await remote.list_resources()
+            else:
+                await remote.read(selected)
+    assert fixture.reads == (1 if phase == "response" else 0)
+
+
+@pytest.mark.asyncio
+async def test_catalog_change_during_final_access_refuses_mapped_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HTTPFixture("tools", block=False)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def authority() -> None:
+        if asyncio.current_task() is operation and fixture.reads:
+            entered.set()
+            await release.wait()
+
+    operation: asyncio.Task[source.MCPEvidence] | None = None
+    async with source.MCPSourceClient(
+        fixture.config(), None, validate_access=authority, _transport=FixtureTransport(fixture)
+    ) as remote:
+        operation = asyncio.create_task(remote.read(IDENTITY))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await remote._message_handler(
+                source.types.ServerNotification(source.types.ToolListChangedNotification())
+            )
+        finally:
+            release.set()
+        with pytest.raises(source.MCPSourceError, match="schema"):
+            await operation
+    assert fixture.reads == 1
+
+
+@pytest.mark.asyncio
+async def test_initialized_notification_requires_accepted_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+
+    class OKNotification(HTTPFixture):
+        async def reply(self, request: httpx.Request) -> httpx.Response:
+            if (
+                request.method == "POST"
+                and json.loads(await request.aread())["method"] == "notifications/initialized"
+            ):
+                return httpx.Response(200, json={})
+            return await super().reply(request)
+
+    fixture = OKNotification("resources", block=False)
+    with pytest.raises(source.MCPSourceError, match="protocol"):
+        async with fixture.client() as remote:
+            await remote.read(IDENTITY)
+    assert fixture.reads == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "identity",
+    ["file:///local/example", "urn:example:document", "https://user:secret@docs.example/a"],
+)
+async def test_native_resource_uri_profile(monkeypatch: pytest.MonkeyPatch, identity: str) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+
+    class Resource(HTTPFixture):
+        async def reply(self, request: httpx.Request) -> httpx.Response:
+            if request.method == "POST":
+                payload = json.loads(await request.aread())
+                if payload["method"] == "resources/list":
+                    return httpx.Response(
+                        200,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": payload["id"],
+                            "result": {"resources": [{"uri": identity, "name": "One"}]},
+                        },
+                    )
+                if payload["method"] == "resources/read":
+                    assert payload["params"]["uri"] == identity
+            return await super().reply(request)
+
+        def document(self) -> dict[str, Any]:
+            return {"contents": [{"uri": identity, "text": TEXT}]}
+
+    fixture = Resource("resources", block=False)
+    config = replace(fixture.config(), approved_resource_ids=(identity,))
+    async with source.MCPSourceClient(
+        config, None, validate_access=access, _transport=FixtureTransport(fixture)
+    ) as remote:
+        if identity.startswith("https:"):
+            with pytest.raises(source.MCPSourceError, match="unsupported"):
+                await remote.list_resources()
+        else:
+            page = await remote.list_resources()
+            assert page.items[0].resource_id == identity
+            evidence = await remote.read(identity)
+            assert evidence.resource_id == identity and evidence.receipt is not None
+    assert fixture.reads == (0 if identity.startswith("https:") else 1)
