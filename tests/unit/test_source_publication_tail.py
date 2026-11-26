@@ -314,3 +314,81 @@ async def test_stream_completion_after_delivered_payload_keeps_next_request_usab
         assert checks == [True, True]
         await middleware({**scope, "path": "/ordinary"}, None, send)
         assert sent[-1]["body"] == b"ordinary"
+
+
+@pytest.mark.parametrize("mode", ["unfenced", "fenced", "streaming", "revoked"])
+async def test_large_body_uses_a_fresh_fence_for_each_bounded_send(mode):
+    from starlette.responses import Response, StreamingResponse
+
+    limit = 256 * 1024
+    body = b"a" * limit + b"b" * 123
+    sent = []
+    live = True
+    held = None
+    acquisitions = 0
+
+    async def check():
+        if not live:
+            raise LostCorpus()
+
+    async def fence(deliver):
+        nonlocal held, acquisitions
+        assert held is None
+        acquisitions += 1
+        held = acquisitions
+        try:
+            await deliver()
+        finally:
+            held = None
+
+    async def stream():
+        yield body
+        yield b"last"
+
+    async def app(scope, receive, send):
+        request_tail.retain_publication(
+            object(), check, lambda: live, fence=None if mode == "unfenced" else fence
+        )
+        if mode == "streaming":
+            await StreamingResponse(
+                stream(), headers={"content-length": str(len(body) + len(b"last"))}
+            )(scope, receive, send)
+        else:
+            await Response(body)(scope, receive, send)
+
+    async def send(message):
+        nonlocal live
+        chunk = message.get("body", b"")
+        if mode != "unfenced" and (chunk or message["type"] == "http.response.start"):
+            assert held is not None
+            if len(chunk) > limit:
+                raise TimeoutError("body exceeds the simulated per-send budget")
+        sent.append((held, message))
+        if chunk and mode == "revoked":
+            live = False
+
+    response = request_tail.RequestTailMiddleware(app)(
+        {"type": "http", "asgi": {"spec_version": "2.4"}}, None, send
+    )
+    if mode == "revoked":
+        with pytest.raises(request_tail.RequiredTailError):
+            await response
+    else:
+        await response
+
+    size = len(body) + (len(b"last") if mode == "streaming" else 0)
+    assert dict(sent[0][1]["headers"])[b"content-length"] == str(size).encode()
+    frames = [(guard, msg["body"], msg.get("more_body", False)) for guard, msg in sent[1:]]
+    if mode == "unfenced":
+        assert frames == [(None, body, False)]
+    elif mode == "streaming":
+        assert frames == [
+            (2, body[:limit], True),
+            (3, body[limit:], True),
+            (4, b"last", True),
+            (None, b"", False),
+        ]
+    elif mode == "revoked":
+        assert frames == [(2, body[:limit], True)]
+    else:
+        assert frames == [(2, body[:limit], True), (3, body[limit:], False)]

@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
+from functools import partial
 from typing import Any
 
 import anyio
@@ -16,6 +17,7 @@ from server.core.ch import class_timeout_s, current_query_tag, query_tag, statem
 log = logging.getLogger("loom.request_tail")
 # not a setting: one required publication attempt has a fixed cleanup safety ceiling.
 REQUIRED_STEP_TIMEOUT_S = 60.0
+_FENCED_BODY_CHUNK_BYTES = 256 * 1024
 
 
 class RequiredTailError(RuntimeError):
@@ -241,6 +243,30 @@ async def _publish(tail: _Tail, deliver: Callable[[], Awaitable[None]]) -> None:
         raise
 
 
+async def _publish_body(
+    tail: _Tail,
+    message: dict[str, Any],
+    send: Callable[[dict[str, Any]], Awaitable[None]],
+) -> None:
+    body = message["body"]
+    size = len(body)
+    if size <= _FENCED_BODY_CHUNK_BYTES or not any(
+        fence is not None for _owner, _context, _check, _fresh, fence in tail.publications.values()
+    ):
+        await _publish(tail, partial(send, message))
+        return
+
+    # Bound the bytes handed off by each lock acquisition. Renew access between chunks.
+    for offset in range(0, size, _FENCED_BODY_CHUNK_BYTES):
+        end = offset + _FENCED_BODY_CHUNK_BYTES
+        chunk = {
+            **message,
+            "body": body[offset:end],
+            "more_body": end < size or message.get("more_body", False),
+        }
+        await _publish(tail, partial(send, chunk))
+
+
 def _guarded_delivery(
     context: Context,
     fence: PublicationFence,
@@ -441,7 +467,7 @@ class RequestTailMiddleware:
             elif message.get("type") == "http.response.body" and message.get("body"):
                 # Empty completion frames publish no bytes; the client may already
                 # have consumed Content-Length and started its next request.
-                await _publish(tail, lambda: send(message))
+                await _publish_body(tail, message, send)
             else:
                 await send(message)
 
