@@ -444,6 +444,26 @@ _GUIDANCE_COLUMNS = (
 )
 
 
+async def count_belief_support(ch: _CHClient, org: str, keys: list[tuple[str, str]]) -> int:
+    """Count live belief sources for the given namespace and memory key pairs."""
+    rows = await ch.query_all(
+        """
+        SELECT count() AS n
+        FROM (
+            SELECT namespace, memory_key, evidence_id,
+                   argMax(tombstoned_at, created_at) AS tomb_latest
+            FROM loom.memory_belief_sources
+            WHERE org = {org:String}
+              AND (namespace, memory_key) IN {keys:Array(Tuple(String, String))}
+            GROUP BY namespace, memory_key, evidence_id
+            HAVING tomb_latest IS NULL
+        )
+        """,
+        params={"org": org, "keys": keys},
+    )
+    return int(rows[0]["n"]) if rows else 0
+
+
 async def guidance_heads(keys: Sequence[IdentityKey]) -> dict[IdentityKey, dict[str, Any]]:
     """Current guidance metadata, without loading the value or source text."""
     if not keys:

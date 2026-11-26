@@ -199,7 +199,7 @@ async def test_verdict_keeps_belief_support_for_a_retained_hit(search_env, monke
         return {keys[0]: {"version": 42, "tombstoned_at": "now"}}
 
     async def support(sql, params):
-        return [{"n": int("retained" in params["keys"])}]
+        return [{"n": int(("ns", "retained") in params["keys"])}]
 
     monkeypatch.setattr(guidance, "guidance_heads", heads)
     monkeypatch.setattr(evidence_support, "get_client", lambda: SimpleNamespace(query_all=support))
@@ -212,6 +212,27 @@ async def test_verdict_keeps_belief_support_for_a_retained_hit(search_env, monke
     assert result.retrieval_confidence == baseline.retrieval_confidence
     assert "evidence_support=1" in baseline.calibration_explanation
     assert result.calibration_explanation == baseline.calibration_explanation
+
+
+async def test_belief_support_binds_exact_namespace_and_key_pairs(monkeypatch) -> None:
+    from server.memory.app.search import evidence_support
+
+    queries = []
+
+    async def support(sql, params):
+        queries.append((" ".join(sql.split()), params))
+        return [{"n": 0}]
+
+    monkeypatch.setattr(evidence_support, "get_client", lambda: SimpleNamespace(query_all=support))
+    hits = [
+        SimpleNamespace(namespace="a", memory_key="x"),
+        SimpleNamespace(namespace="b", memory_key="y"),
+    ]
+    assert await evidence_support._evidence_support_count(_input(), hits) == 0
+    [(sql, params)] = queries
+    assert "(namespace, memory_key) IN {keys:Array(Tuple(String, String))}" in sql
+    assert "GROUP BY namespace, memory_key, evidence_id" in sql
+    assert params == {"org": "o", "keys": [("a", "x"), ("b", "y")]}
 
 
 async def test_weak_top_hit_makes_no_hyde_call(search_env) -> None:
