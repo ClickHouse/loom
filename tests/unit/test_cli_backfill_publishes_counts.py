@@ -112,3 +112,78 @@ def test_a_failed_refresh_does_not_fail_the_phase(
     assert rc == 0
     assert repo.refreshed == [("coverage", "acme", "code-a")]
     assert "table counts not republished: ConnectionError: down" in capsys.readouterr().err
+
+
+def test_a_full_index_run_publishes_coverage_at_its_new_watermark(
+    quiet: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The rows carry the counts fingerprint, `git_head` included, the way
+    # `refresh_coverage` stamps them; a reader serves the row only while it matches.
+    from server.code.domain.index.state import IndexState
+    from server.code.store.index.status import counts_fingerprint, parse_shared_coverage
+
+    class _StateRepo(_Repo):
+        def __init__(self) -> None:
+            super().__init__(pages=0)
+            self.state: IndexState = {"git_head": {"value": "old"}}
+
+        async def get_state(self, org: str, ns: str, key: str) -> str:
+            return str(self.state.get(key, {}).get("value") or "")
+
+        async def all_state(self, org: str, ns: str) -> IndexState:
+            return {k: v.copy() for k, v in self.state.items()}
+
+        async def set_state(self, org: str, ns: str, key: str, value: str, **k: Any) -> None:
+            self.state[key] = {"value": value, "detail": str(k.get("detail", ""))}
+
+        async def refresh_table_counts(self, org: str, ns: str) -> None:
+            await self.set_state(org, ns, "table_counts", "{}", detail=await self._print(org, ns))
+
+        async def refresh_coverage(self, org: str, ns: str) -> None:
+            cov = '{"cov": {}, "gaps": null}'
+            await self.set_state(org, ns, "coverage", cov, detail=await self._print(org, ns))
+
+        async def _print(self, org: str, ns: str) -> str:
+            return counts_fingerprint(await self.all_state(org, ns))
+
+    async def head(*_a: Any) -> str:
+        return "new"
+
+    async def tree(*_a: Any) -> list[str]:
+        return ["a.py"]
+
+    async def written(*_a: Any, **_k: Any) -> str:
+        return ""  # the batch landed, nothing held
+
+    async def no_denylist(*_a: Any) -> None:
+        return None
+
+    repo = _StateRepo()
+    cfg = argparse.Namespace(
+        org="acme", namespace="code-a", git_dir="/g", git_branch="main", path_prefixes=("",)
+    )
+    cfg.embed_reuse_from = ""
+    from server.code.store import index as code_index
+
+    monkeypatch.setattr(code_index, "CodeRepo", lambda: repo)
+    monkeypatch.setattr(code_backfill, "_repo_cfg", lambda args: cfg)
+    monkeypatch.setattr("server.cli.code_backfill.os.path.isdir", lambda p: True)
+    monkeypatch.setattr(code_backfill, "_backfill_head", head)
+    monkeypatch.setattr(code_backfill, "_tree_paths_with_coverage", tree)
+    monkeypatch.setattr(code_backfill, "_held_batch", written)
+    monkeypatch.setattr("server.code.app.index.denylist.load_denylist", no_denylist)
+    args = argparse.Namespace(
+        org="acme",
+        namespace="code-a",
+        phase="index",
+        embed=False,
+        limit=0,
+        paths_file="",
+        concurrency=1,
+        no_edges_second_pass=True,
+    )
+    asyncio.run(code_backfill._backfill(args))
+    final = counts_fingerprint(repo.state)
+    assert repo.state["git_head"]["value"] == "new"
+    assert repo.state["table_counts"]["detail"] == final
+    assert parse_shared_coverage(repo.state.get("coverage"), final) is not None

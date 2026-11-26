@@ -221,7 +221,9 @@ async def _backfill(args: argparse.Namespace) -> int:
     if getattr(args, "dialect_folder_pass", False):
         folder = await _dialect_folder_pass(repo, org, ns, head)
         counters["dialect_inherited"] = folder["inherited"]
-    await _close_index(repo, counters, org, ns, model_name, started, head, mode)
+    # A full run republishes after its `git_head` write: the rows carry that watermark.
+    full = not paths_file and not suffix
+    await _close_index(repo, counters, org, ns, model_name, started, head, mode, republish=not full)
     if paths_file:
         # a targeted repair proves nothing about the rest of the tree: the
         # per-merge watermark must keep walking every commit it has not seen
@@ -238,6 +240,7 @@ async def _backfill(args: argparse.Namespace) -> int:
     from server.code.app.index.bootstrap import record_backfill_stamps
 
     await record_backfill_stamps(repo, org, ns)
+    await _republish_counts(repo, org, ns)
     print(f"backfill index phase complete at {head[:12]}: {counters}")
     _note(phase="index", head=head[:12], total_paths=len(paths), **counters)
     if not args.embed:
@@ -443,11 +446,15 @@ async def _close_index(
     started: float,
     head: str,
     mode: str,
+    *,
+    republish: bool = True,
 ) -> None:
     """The index phase's end: compact what it wrote, republish its counts and record
-    its pass."""
+    its pass. A full run passes `republish=False` and republishes once its watermark
+    is written."""
     await _compact_after_bulk(counters["chunks"] + counters.get("moved", 0), model_name)
-    await _republish_counts(repo, org, ns)
+    if republish:
+        await _republish_counts(repo, org, ns)
     await _record_manual_pass(
         "code_ingest",
         org,
