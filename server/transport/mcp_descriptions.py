@@ -1443,9 +1443,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "omitted qualification or SQL registration. `documented_in` lists citing sections."
     ),
     "code.edit_context": (
-        "Read implementation, indexed tests, and linked notes before editing. "
-        "Give a definition name, path:symbol, or path:line. "
-        "Use literal clues to find the edit target, with the file path if known."
+        "Read source, tests, and notes. Batch exact `names` or declaration `clues`. "
+        "Use `name` for one target."
     ),
     "code.backport_gap": (
         "Which release branches still carry the bug a merged fix removed, "
@@ -2169,12 +2168,11 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`uses_brief: true` summarizes callers. Check freshness and source elision."
     ),
     "code.grep": (
-        "Read full enclosing definitions for exact text in indexed code. "
-        'For source to edit, use a literal or a list such as ["def parse(", "def test_parse"]. '
-        "Use path_globs to scope code and tests together. Use mode=files for paths only. "
-        "Use regex=true for RE2.\n\n"
+        "Batch exact code and test literals with path_globs. Keep default bodies for edits. "
+        "For excerpts, set `include_body: false` and `context_lines`. "
+        "Use mode=files for paths only and regex=true for RE2.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
-        "Set `include_body: false` and `context_lines: 0` for match locations. "
+        "For locations, set `include_body: false`, `context_lines: 0`. "
         "Use code.search for behavior or code.edit_context for a known definition. "
         "Call prefixes and misses can return related source and notes. "
         "Use code.read for exact lines. "

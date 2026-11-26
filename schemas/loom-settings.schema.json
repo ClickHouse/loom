@@ -1625,6 +1625,13 @@
           "type": "integer",
           "description": "Estimated-token cap on file or symbol `lessons`, counted on serialized rows at 4 characters a token; 0 means unlimited. Rows are whole or left out."
         },
+        "code_result_path_hint_rows": {
+          "default": 512,
+          "maximum": 4294967294,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum metadata rows per read when reordering source results by linked lessons. If a read exceeds this bound, the source results keep their original order."
+        },
         "code_review_brief_mirror_miss_ttl_s": {
           "default": 600.0,
           "exclusiveMinimum": 0,

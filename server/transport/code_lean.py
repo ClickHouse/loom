@@ -19,11 +19,21 @@ HTTP and SDK shapes are unchanged; `explain=true` skips all trimming.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from io import StringIO
 from typing import Any, NamedTuple
 
+from pydantic import ValidationError
+
+from server.code.api.models_common import _safe_path
+from server.code.api.models_read import CODE_READ_MAX_RANGES, CodeReadRangeInput
+from server.code.api.models_symbol import EDIT_CONTEXT_MAX_NAMES, CodeEditContextInput
+from server.code.app.symbol.resolve import _parse_file_symbol, _parse_location
+from server.code.domain.extract.py_notebooks import is_notebook_path
+from server.code.domain.scope import current_code_scope
 from server.code.domain.symbol_documentation import description_repeats_body
+from server.settings import settings
 
 # Accounting counters and ranking internals no agent acts on.
 _DROP_KEYS: frozenset[str] = frozenset(
@@ -231,6 +241,136 @@ def _lean_grep(out: dict[str, Any]) -> None:
         out["related"] = lean_code("code.grep", related)
 
 
+_PYTHON_DECLARATION = re.compile(r"^(?:async\s+)?def\s+([^\W\d]\w*)\s*[\[(]")
+
+
+def _python_declaration_at_hit(hit: dict[str, Any], path: str) -> bool:
+    definition = _PYTHON_DECLARATION.match(str(hit.get("text") or "").lstrip())
+    return bool(
+        path.endswith((".py", ".pyi"))
+        and definition
+        and definition[1] == str(hit["scope"]).rsplit("::", 1)[-1]
+    )
+
+
+def _grep_edit_selector(hit: dict[str, Any], span: CodeReadRangeInput) -> str:
+    if hit["line"] == span.start_line:
+        name = f"{span.path}:{span.start_line}"
+        if _python_declaration_at_hit(hit, span.path) and _parse_location(name) == (
+            span.path,
+            span.start_line,
+        ):
+            return name
+        return ""
+    scope = str(hit["scope"])
+    module, _, member = scope.partition("::")
+    # A dotted module name cannot be mistaken for a class suffix in this file.
+    if not (
+        span.path.endswith((".py", ".pyi"))
+        and "." in module
+        and all(part.isidentifier() for part in member.split("::"))
+        and not str(hit.get("text") or "").lstrip().startswith("@")
+    ):
+        return ""
+    name = f"{span.path}:{scope}"
+    return name if _parse_file_symbol(name) == (span.path, scope) else ""
+
+
+class _GrepFollowup(NamedTuple):
+    span: CodeReadRangeInput
+    name: str
+    declaration_hit: bool
+
+
+def _grep_edit_names(items: list[_GrepFollowup]) -> list[str]:
+    if not 0 < len(items) <= EDIT_CONTEXT_MAX_NAMES:
+        return []
+    names = [item.name for item in items]
+    if len(set(names)) != len(names):
+        return []
+    try:
+        return CodeEditContextInput(names=names).names
+    except ValidationError:
+        return []
+
+
+def _grep_continuation(
+    out: dict[str, Any],
+    arguments: dict[str, Any],
+    followups: frozenset[str],
+) -> None:
+    """Give excerpt callers the source spans covering their matches."""
+    contexts = out.get("contexts") or []
+    if (
+        arguments.get("include_body") is not False
+        or "loom_code_read" not in followups
+        or out.get("definitions")
+    ):
+        return
+    selections: dict[tuple[str, int, int], _GrepFollowup] = {}
+    hits = [hit for hit in out.get("matches") or [] if isinstance(hit, dict)]
+    # Keep declaration matches ahead of body hits when the read batch fills.
+    hits.sort(key=lambda hit: hit.get("line") != hit.get("scope_start_line"))
+    for hit in hits:
+        path, line, start, end = (
+            hit.get(key) for key in ("path", "line", "scope_start_line", "scope_end_line")
+        )
+        if not (path and start and line and end and hit.get("scope") and start <= line <= end):
+            continue
+        if any(
+            window["path"] == path and window["start_line"] <= start <= end <= window["end_line"]
+            for window in contexts
+        ):
+            continue
+        try:
+            span = CodeReadRangeInput(path=path, start_line=start, end_line=end)
+        except ValidationError:
+            continue
+        if not _safe_path(span.path) or "\0" in span.path or is_notebook_path(span.path):
+            continue
+        key = span.path, span.start_line, end
+        if key not in selections:
+            selections[key] = _GrepFollowup(span, _grep_edit_selector(hit, span), line == start)
+        if len(selections) == CODE_READ_MAX_RANGES:
+            break
+    if not selections:
+        return
+    scope = (arguments.get("org"), arguments.get("namespace"))
+    # A cell checks the organization before applying the connection's scope.
+    options = (
+        {}
+        if not settings.cell and scope == current_code_scope()
+        else {key: arguments[key] for key in ("org", "namespace") if arguments.get(key)}
+    )
+    options.update(
+        {
+            key: arguments[key]
+            for key in ("include_lessons", "lesson_namespaces")
+            if key in arguments
+        }
+    )
+    selected = list(selections.values())
+    names: list[str] = []
+    has_edit_context = "loom_code_edit_context" in followups
+    exact_read = bool(contexts) or (has_edit_context and len(selected) == 1)
+    if has_edit_context:
+        names = _grep_edit_names(selected)
+        if not names:
+            declarations = [item for item in selected if item.declaration_hit]
+            names = _grep_edit_names(declarations)
+            if not exact_read:
+                selected = declarations
+    if names:
+        out["edit_context_next"] = {
+            "tool": "loom_code_edit_context",
+            "arguments": {"names": names, **options},
+        }
+    elif not exact_read:
+        return
+    params = {"ranges": [item.span.model_dump() for item in selected], **options}
+    out["next"] = "For the full source, call loom_code_read with " + json.dumps(params)
+
+
 class _GrepBody(NamedTuple):
     row: dict[str, Any]
     start: int
@@ -318,8 +458,12 @@ def _lean_grep_definition(definition: dict[str, Any]) -> None:
     ):
         definition.pop("symbol")
     signature = definition.get("signature")
-    if isinstance(signature, str) and signature and signature in body.lstrip().partition("\n")[0]:
-        definition.pop("signature")
+    if isinstance(signature, str) and signature:
+        source = body.lstrip()
+        start = source.find(signature)
+        first_break = source.find("\n")
+        if start >= 0 and (first_break < 0 or start < first_break):
+            definition.pop("signature")
     if definition.get("body_elided") is False:
         definition.pop("body_elided")
 
@@ -384,12 +528,18 @@ def _lean_symbol(out: dict[str, Any]) -> None:
     """Keep requested source and leave out an outline the body already supplies.
     Asked for a class, the class answers: definitions of
     its own members that matched the bare name (its constructor) keep their
-    path and span, not their bodies; `next` fetches one."""
+    path and span, and `next` fetches their bodies. An edit batch names each
+    target separately and keeps requested member bodies."""
     defs = [d for d in out.get("definitions") or [] if isinstance(d, dict)]
     for d in defs:
         if d.get("body") and d.get("outline"):
             d.pop("outline")
-    if defs and defs[0].get("granularity") == "skeleton" and defs[0].get("body"):
+    if (
+        not out.get("edit_targets")
+        and defs
+        and defs[0].get("granularity") == "skeleton"
+        and defs[0].get("body")
+    ):
         owner = str(defs[0].get("symbol") or "")
         for d in defs[1:]:
             sym = str(d.get("symbol") or "")
@@ -407,6 +557,99 @@ def _lean_symbol(out: dict[str, Any]) -> None:
             and description_repeats_body(description, body, scip=d.get("tier") == "scip")
         ):
             d.pop("description")
+
+
+def _edit_test_sources(
+    definitions: list[Any],
+) -> dict[tuple[str, str, int, int, str], list[tuple[int, int]]]:
+    groups: dict[tuple[str, str, int, int, str], list[tuple[int, int]]] = defaultdict(list)
+    for i, definition in enumerate(definitions):
+        if not isinstance(definition, dict) or not isinstance(definition.get("examples"), list):
+            continue
+        for j, example in enumerate(definition["examples"]):
+            if not isinstance(example, dict) or not isinstance(example.get("context"), dict):
+                continue
+            context = example["context"]
+            path, commit, body = example.get("path"), context.get("commit"), context.get("text")
+            start, end = context.get("start_line"), context.get("end_line")
+            if (
+                isinstance(path, str)
+                and path
+                and isinstance(commit, str)
+                and commit
+                and isinstance(body, str)
+                and body
+                and isinstance(start, int)
+                and isinstance(end, int)
+            ):
+                groups[path, commit, start, end, body].append((i, j))
+    return groups
+
+
+def _structured_chars(value: dict[str, Any]) -> int:
+    # Session capture counts the UTF-16 units in compact JSON.
+    rendered = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return len(rendered.encode("utf-16-le", errors="surrogatepass")) // 2
+
+
+def _shared_excerpt(
+    path: str, body: str, definitions: list[Any], locations: list[tuple[int, int]]
+) -> dict[str, Any]:
+    # Capture must read the source and its identifiers in the same piece.
+    callers = dict.fromkeys(
+        caller
+        for i, j in locations
+        if isinstance((caller := definitions[i]["examples"][j].get("caller")), str) and caller
+    )
+    owners = dict.fromkeys(
+        (str(definition.get("symbol") or ""), str(definition.get("path") or ""))
+        for i, _ in locations
+        if (definition := definitions[i])
+    )
+    return {
+        "path": path,
+        "callers": list(callers),
+        "definitions": [{"symbol": symbol, "path": owner_path} for symbol, owner_path in owners],
+        "text": body,
+    }
+
+
+def _share_edit_test_source(out: dict[str, Any]) -> dict[str, Any]:
+    """Keep shared text in a standalone result row for clients that split top-level lists."""
+    if "test_sources" in out:
+        return out
+    definitions = out["definitions"]
+    sources: list[dict[str, Any]] = []
+    references: dict[tuple[int, int], str] = {}
+    for (path, _, _, _, body), locations in _edit_test_sources(definitions).items():
+        if len(locations) < 2:
+            continue
+        pointer = f"#/test_sources/0/excerpts/{len(sources)}/text"
+        text_size = len(json.dumps({"text": body}))
+        ref_size = len(json.dumps({"text_ref": pointer}))
+        excerpt = _shared_excerpt(path, body, definitions, locations)
+        if len(locations) * text_size > len(json.dumps(excerpt)) + len(locations) * ref_size:
+            sources.append(excerpt)
+            references.update(dict.fromkeys(locations, pointer))
+    if not sources:
+        return out
+    shared = {"test_sources": [{"excerpts": sources}]}
+    original_rows = {i for i, _ in references}
+    # A client that retained any old source row can retain the whole source row here.
+    if _structured_chars(shared) > min(
+        _structured_chars({"definitions": [definitions[i]]}) for i in original_rows
+    ):
+        return out
+    updated = [
+        {**d, "examples": list(d["examples"])} if i in original_rows else d
+        for i, d in enumerate(definitions)
+    ]
+    for (i, j), pointer in references.items():
+        example = updated[i]["examples"][j]
+        context = {key: value for key, value in example["context"].items() if key != "text"}
+        updated[i]["examples"][j] = {**example, "context": {**context, "text_ref": pointer}}
+    packed = {**shared, **out, "definitions": updated}
+    return packed if len(json.dumps(packed)) < len(json.dumps(out)) else out
 
 
 _PER_OP = {
@@ -439,7 +682,13 @@ LEAN_CODE_OPS: frozenset[str] = frozenset(
 )
 
 
-def lean_code(op_name: str, payload: Any) -> Any:
+def lean_code(
+    op_name: str,
+    payload: Any,
+    arguments: dict[str, Any] | None = None,
+    *,
+    followups: frozenset[str] = frozenset(),
+) -> Any:
     """The MCP shape of a code.* result (see module docstring)."""
     if not isinstance(payload, dict) or op_name not in LEAN_CODE_OPS:
         return payload
@@ -457,9 +706,13 @@ def lean_code(op_name: str, payload: Any) -> Any:
             if isinstance(src, dict) and isinstance(d, dict) and src.get("unit_id"):
                 d["symbol_id"] = src["unit_id"]
     _lean_prs(out.get("definitions"))
+    if op_name == "code.grep" and arguments is not None and followups:
+        _grep_continuation(out, arguments, followups)
     fn = _PER_OP.get(op_name)
     if fn is not None:
         fn(out)
+    if op_name == "code.edit_context" and out.get("edit_targets") and out.get("definitions"):
+        out = _share_edit_test_source(out)
     _hoist_defaults(out)
     if out.get("candidates") == []:
         out.pop("candidates")

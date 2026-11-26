@@ -104,6 +104,9 @@ expression can recover source from its qualified argument. It reports
 `resolved_by: file_argument` for a named file or `repository_argument` for a
 repository lookup. When several test calls are close together, Loom prefers
 examples from different source windows when it can verify their excerpts.
+When direct examples are absent, edit context can show tests that reach the
+definition through one indexed caller. Such examples carry `evidence:
+indirect_call` and a `via` source location.
 
 When an exact call expression such as `convert(row.value)` is absent,
 `related_on_miss: true` looks for its qualified argument in the same scope.

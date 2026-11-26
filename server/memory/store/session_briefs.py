@@ -15,11 +15,13 @@ version of a brief, never an older one that still matches.
 
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import Any
 
+from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now as now
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
-from server.memory.store.rows import next_version
+from server.memory.store.rows import version_over
 
 TABLE = "loom.session_briefs"
 REVISIONS = "loom.session_brief_revisions"
@@ -92,9 +94,10 @@ _DEFAULTS: dict[str, Any] = {
 _SELECT = ", ".join(COLUMNS) + ", version"
 
 
-def build_brief_row(prev: dict[str, Any] | None, **changes: Any) -> dict[str, Any]:
-    """A full version row: `prev`'s columns (or the defaults), then
-    `changes`, then a fresh `version`. Unknown keys are a programming error."""
+def build_brief_row(
+    prev: dict[str, Any] | None, *, version_after: int = 0, **changes: Any
+) -> dict[str, Any]:
+    """Merge the row's columns and stamp it above the observed head."""
     unknown = set(changes) - set(COLUMNS)
     if unknown:
         raise KeyError(f"not a loom.session_briefs column: {sorted(unknown)}")
@@ -108,7 +111,7 @@ def build_brief_row(prev: dict[str, Any] | None, **changes: Any) -> dict[str, An
     for c in ("org", "namespace", "brief_key"):
         if not base.get(c):
             raise ValueError(f"session brief row needs {c}")
-    base["version"] = next_version()
+    base["version"] = version_over(max(version_after, int((prev or {}).get("version") or 0)))
     return base
 
 
@@ -123,8 +126,6 @@ async def current(
     delete continues the revision count), inside the read `scope`. Read with
     sequential consistency: the previous save is often seconds old
     (PreCompact, then SessionEnd)."""
-    from server.core.ch import own_write_reads
-
     params: dict[str, Any] = {"org": org, "ns": namespace, "key": brief_key}
     with own_write_reads():
         row = await ch.query_one(
@@ -140,25 +141,60 @@ async def current(
     return dict(row) if row else None
 
 
+def snapshot_id(row: dict[str, Any]) -> str:
+    """Pin the commit and brief content even if two writes share a version."""
+    digest = sha256()
+    for name in ("head_sha", "rendered", "sections"):
+        data = row[name].encode("utf-8")
+        digest.update(f"{len(data)}:".encode())
+        digest.update(data)
+    return f"{row['version']}.{digest.hexdigest()}"
+
+
 async def by_revision(
-    ch: Any, org: str, namespace: str, brief_key: str, revision: int, *, scope: ReadFilters
+    ch: Any,
+    org: str,
+    namespace: str,
+    brief_key: str,
+    revision: int,
+    *,
+    scope: ReadFilters,
+    snapshot: tuple[int, str] | None = None,
 ) -> dict[str, Any] | None:
-    """One past revision from the append-only history (the newest write of
-    that revision number when two saves raced to it), inside the read `scope`."""
+    """Read a revision written after the last delete. Version orders writes
+    even when concurrent saves reuse or move the revision number backwards.
+    """
     params: dict[str, Any] = {"org": org, "ns": namespace, "key": brief_key, "rev": int(revision)}
-    row = await ch.query_one(
-        f"""
-        SELECT brief_key, revision, agent, user_id, session_id, head_sha, trigger,
-               author, sections, rendered, events_total, source_chars, brief_chars,
-               actor, updated_at, tombstoned_at, version
-        FROM {REVISIONS}
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND brief_key = {{key:String}} AND revision = {{rev:UInt32}}{scope_and(scope, params)}
-        ORDER BY version DESC
-        LIMIT 1
-        """,
-        params=params,
-    )
+    snapshot_clause = ""
+    if snapshot is not None:
+        params["snapshot"], params["digest"] = snapshot
+        # Match the UTF-8 byte framing in snapshot_id.
+        snapshot_clause = (
+            " AND version = {snapshot:UInt64}"
+            " AND SHA256(concat(toString(length(head_sha)), ':', head_sha, "
+            "toString(length(rendered)), ':', rendered, "
+            "toString(length(sections)), ':', sections)) = unhex({digest:String})"
+        )
+    with own_write_reads():
+        row = await ch.query_one(
+            f"""
+            SELECT brief_key, revision, agent, user_id, session_id, head_sha, trigger,
+                   author, sections, rendered, events_total, source_chars, brief_chars,
+                   actor, updated_at, tombstoned_at, version
+            FROM {REVISIONS}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND brief_key = {{key:String}} AND revision = {{rev:UInt32}}{snapshot_clause}
+              AND version > (
+                  SELECT max(version) FROM {REVISIONS}
+                  WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                    AND brief_key = {{key:String}} AND tombstoned_at IS NOT NULL
+              )
+              {scope_and(scope, params)}
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            params=params,
+        )
     return dict(row) if row else None
 
 
@@ -223,8 +259,6 @@ async def listing(
     if from_session:
         where.append("has(source_sessions, {sid:String})")
         params["sid"] = from_session
-    from server.core.ch import own_write_reads
-
     with own_write_reads():
         rows = await ch.query_all(_latest_sql(where, True), params=params)
     return [dict(r) for r in rows or []]

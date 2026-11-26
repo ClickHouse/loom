@@ -106,7 +106,17 @@ async def lessons_for_symbol(
         matched = _as_trunk_has_it(links, qualified_name)
     else:
         matched = _matched(links, here, on_trunk=code_namespace == trunk)
-    served = await reads.served_excerpts(org, namespaces, [a["memory_id"] for a, _, _ in matched])
+    # a memory's state is that of its first matched link, as the ranking below reads it
+    states: dict[str, str] = {}
+    for a, state, _ in matched:
+        states.setdefault(a["memory_id"], state)
+    served = await reads.served_excerpts(
+        org,
+        namespaces,
+        [links_store.linked_memory(a) for a, _, _ in matched],
+        limit=limit,
+        changed=[mid for mid, state in states.items() if state == "changed"],
+    )
     rows = {str(r["mid"]): r for r in served}
     out: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
     for a, state, suggestion in matched:

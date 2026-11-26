@@ -11,6 +11,7 @@ from server.code.api.models_common import _CodeIdentity, _LessonsOut, _ResultLes
 _FilePath = Annotated[str, Field(min_length=1, max_length=1024)]
 _SourceLine = Annotated[int, Field(ge=1, lt=2**32)]
 _RangeText = Annotated[str, Field(max_length=1024)]
+CODE_READ_MAX_RANGES = 32
 
 
 class CodeReadRangeInput(BaseModel):
@@ -23,8 +24,8 @@ class CodeReadInput(_CodeIdentity, _ResultLessons):
     # Batch of inclusive one-based ranges as path:start-end strings or objects
     # with path, start_line, and optional end_line.
     ranges: (
-        Annotated[list[_RangeText], Field(max_length=32)]
-        | Annotated[list[CodeReadRangeInput | _RangeText], Field(max_length=32)]
+        Annotated[list[_RangeText], Field(max_length=CODE_READ_MAX_RANGES)]
+        | Annotated[list[CodeReadRangeInput | _RangeText], Field(max_length=CODE_READ_MAX_RANGES)]
     ) = Field(default_factory=list)
     # Repository-relative file for a single range.
     path: _FilePath | None = None

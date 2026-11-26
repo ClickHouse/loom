@@ -8,6 +8,7 @@ import os
 from typing import Any
 
 import pytest
+from clickhouse_connect.driver.exceptions import DatabaseError
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
 
@@ -83,15 +84,24 @@ async def test_a_reader_statement_cannot_lift_a_cap_with_0(client: Any, cap: str
         await client.query_all(f"SELECT count() FROM numbers(10) SETTINGS {cap} = 0")
 
 
-@pytest.mark.parametrize("limit_s", [0.01, -1])
+@pytest.mark.parametrize(
+    ("limit_s", "refusal"),
+    [
+        (0.01, r"shouldn't be less than 0\.05"),
+        (
+            -1,
+            r"shouldn't be less than 0\.05|cannot be negative\. Got -1: while setting 'max_execution_time'",
+        ),
+    ],
+)
 async def test_a_reader_statement_cannot_go_under_the_time_floor(
-    client: Any, limit_s: float
+    client: Any, limit_s: float, refusal: str
 ) -> None:
     """The time min is code.grep's statement floor (0.05 s)."""
     from server.core.ch import caller_shaped
 
     sql = f"SELECT count() FROM numbers(10) SETTINGS max_execution_time = {limit_s}"
-    with caller_shaped(), pytest.raises(Exception, match=r"shouldn't be less than 0.05"):
+    with caller_shaped(), pytest.raises(DatabaseError, match=refusal):
         await client.query_all(sql)
 
 

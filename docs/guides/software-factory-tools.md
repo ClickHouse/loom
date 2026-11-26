@@ -58,6 +58,8 @@ deciding whether the prior lesson still applies.
 
 For a memory pilot, use the [cross-client recall and access checks](../getting-started/evaluate.md#shared-memory-across-clients)
 and the [code-linked lesson exercise](../use-cases/memory-linked-to-code.md#check-a-lesson-after-a-code-edit).
+Use the [software factory handoff output](../use-cases/multi-agent.md#check-the-handoff-output)
+to see what a reviewer can verify about the source and the saved lesson.
 Use the [paired task scorecard](../getting-started/evaluate.md#compare-coding-agents-with-and-without-memory)
 to see which tasks passed with memory, without it, or in both setups.
 Use the [cost comparison procedure](../use-cases/coding-agent-cost.md#compare-completed-tasks-including-overhead)

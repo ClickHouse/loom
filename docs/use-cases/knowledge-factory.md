@@ -49,6 +49,25 @@ rollback. Use the question to test the workflow end to end:
    it supports the answer. Check separately that an agent outside the intended
    namespace cannot read it.
 
+### Triage an unanswered agent question
+
+Repeat the question with the same namespace and access as the agent. Note the
+source you expected to answer it and the supporting passage if you know it.
+
+- **Access.** Have a namespace admin check the reader's
+  [grants](../features/namespaces-and-sharing.md#membership-and-grants). For a source
+  that [mirrors document permissions](../architecture/document-sources.md#who-may-read),
+  also check that the identity the agent uses may read the original document.
+- **Source sync.** For a synced runbook, inspect the
+  [source's last sync](../reference/operations/knowledge.md#knowledgesourceinspect)
+  and compare the document revision in Loom with the approved runbook.
+- **Retrieval.** If the current source supports the answer, run a
+  [document search evaluation](document-search.md#evaluate-rag-over-internal-documents).
+  Check whether the expected passage was retrieved and whether the answer cited it.
+- **Missing knowledge.** If the current sources leave the rule open, ask the source
+  owner to confirm the answer. Publish it in the runbook and repeat the test from a
+  fresh session.
+
 ## Run a knowledge factory walkthrough
 
 Use a disposable namespace on a [Loom server with authentication enabled](../getting-started/quickstart.md#2-open-the-dashboard),
@@ -172,6 +191,14 @@ old rule, revise that claim separately so its earlier version remains visible in
 [conflicts](../features/memory/conflicts-and-refusal.md#resolving-conflicts) when agents
 report incompatible facts. When the source of a code-linked lesson changes, inspect
 the current definition before using the lesson to make a decision.
+
+### Share a Markdown snapshot of lessons
+
+To review lessons outside Loom, [export the namespace as an Open Knowledge Format bundle](../features/integrations/okf.md#test-agent-memory-portability).
+Use `--no-evidence` to leave raw chunks and session digests out of the copy. Keep
+the approved runbooks, their revisions, and their access controls in the source
+document system. On the receiving deployment, check that the citation resolves
+to the approved revision and that the reader has access before using the lesson.
 
 Start with [document search and citations](document-search.md) to connect your first
 source. For a workflow in which implementation and review agents hand work to each

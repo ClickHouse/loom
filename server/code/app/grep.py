@@ -1170,7 +1170,7 @@ def _matching_lines(
     pending = set(first_hits)
     excluded_paths = set(input.exclude_unit_ids)
     matches: list[dict[str, Any]] = []
-    seen: set[tuple[str, int]] = set()
+    seen: dict[tuple[str, int], str] = {}
     scanned = 0
     for c in chunks:
         if pending and priority_until is not None and time.monotonic() >= priority_until:
@@ -1200,7 +1200,7 @@ def _matching_lines(
             key = (str(c["path"]), int(c["start_line"] or 1) + off)
             if match_commits is not None:
                 commit = str(c.get("indexed_commit") or "").rstrip("\0")
-                if match_commits.setdefault(key, commit) != commit:
+                if match_commits.setdefault(key, commit) != commit or seen.get(key, line) != line:
                     match_commits[key] = ""
             if key in seen:
                 continue  # the same span indexed twice (re-parse race)
@@ -1213,7 +1213,7 @@ def _matching_lines(
                 if not pending:
                     return _promote_pattern_hits(matches, first_hits, priority_limit), False
                 continue
-            seen.add(key)
+            seen[key] = line
             for literal in new_patterns:
                 first_hits[literal] = len(matches)
             pending_here.difference_update(new_patterns)

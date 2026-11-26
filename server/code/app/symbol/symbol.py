@@ -8,11 +8,12 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from server.code.api.models_symbol import (
     EDIT_TEST_CONTEXT_LINES,
     CodeEditContextInput,
+    CodeEditContextTarget,
     CodeSymbolInput,
     CodeSymbolOutput,
 )
@@ -43,6 +44,7 @@ from server.code.app.symbol.neighbours import (
 )
 from server.code.app.symbol.outline import _container_skeleton, _is_large_container
 from server.code.app.symbol.resolve import (
+    _indexed_commit,
     _parse_location,
     _resolve_symbols,
     _seed_ids_of,
@@ -54,6 +56,9 @@ from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
 from server.identity.app.request_scope import request_narrowed
 from server.observability.budget_shape import note_budget_shape
+
+if TYPE_CHECKING:
+    from server.code.app.symbol.edit_target import EditTarget
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +167,7 @@ class _SymbolLegs:
         input: CodeSymbolInput,
         rows: list[dict[str, Any]],
         *,
-        include_owner: bool,
+        for_edit: bool,
         matched_members: bool,
     ) -> None:
         head = rows if matched_members else rows[:10]
@@ -197,7 +202,7 @@ class _SymbolLegs:
                 ns,
                 input,
                 head,
-                include_owner=include_owner,
+                for_edit=for_edit,
                 matched_members=matched_members,
             )
         )
@@ -320,7 +325,9 @@ async def _owner_context(
     owner = await owning_type(repo, org, ns, method)
     if owner is None:
         return {}
-    reads: dict[str, Awaitable[list[dict[str, Any]]]] = {}
+    # an owner read cut off (None) is dropped like an empty one: owner lessons only stand in
+    # for the method's own, so they do not set lessons_unread
+    reads: dict[str, Awaitable[list[dict[str, Any]] | None]] = {}
     if want_examples:
         reads["examples"] = named_test_examples(repo, org, ns, owner, input.example_context_lines)
     if want_lessons:
@@ -339,6 +346,10 @@ async def _owner_context(
     }
 
 
+async def _no_enrichment() -> None:
+    return None
+
+
 async def _enrichment(
     repo: CodeRepo,
     org: str,
@@ -346,7 +357,7 @@ async def _enrichment(
     input: CodeSymbolInput,
     head: list[dict[str, Any]],
     *,
-    include_owner: bool = False,
+    for_edit: bool = False,
     matched_members: bool = False,
 ) -> dict[str, Any]:
     """Enrichment of the first definition (recent PRs, usage examples, lessons), the
@@ -361,14 +372,14 @@ async def _enrichment(
     sids = _seed_ids_of(head)
     symbol = str(head[0].get("qualified_name") or "") or input.name
 
-    async def none() -> None:
-        return None
+    # members whose lessons read was cut off or failed; non-empty sets lessons_unread
+    unread: list[str] = []
 
-    async def lessons() -> list[dict[str, Any]]:
+    async def lessons() -> list[dict[str, Any]] | None:
         if request_narrowed():
             return []  # a token that may not read every user's lessons
 
-        async def read(name: str) -> list[dict[str, Any]]:
+        async def read(name: str) -> list[dict[str, Any]] | None:
             return await code_enrich.lessons_for_symbol(
                 org, ns, symbol_name=name, paths=paths, extra_namespaces=input.lesson_namespaces
             )
@@ -379,6 +390,9 @@ async def _enrichment(
         groups = await asyncio.gather(*(read(name) for name in names))
         notes: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
         for name, group in zip(names, groups, strict=True):
+            if group is None:
+                unread.append(name)
+                continue
             for note in group:
                 key = (
                     note["namespace"],
@@ -391,6 +405,8 @@ async def _enrichment(
                 linked["linked_symbols"].append(name)
         return list(notes.values())
 
+    ready_examples: list[dict[str, Any]] = []
+
     async def examples_for_definition() -> list[dict[str, Any]]:
         callers = code_enrich.usage_examples(
             repo,
@@ -399,6 +415,7 @@ async def _enrichment(
             sids,
             context_lines=input.example_context_lines,
             tests_only=input.test_examples_only,
+            ready=ready_examples,
         )
         if not (input.test_examples_only and _uses_brief.single_declaration(head)):
             return await callers
@@ -408,6 +425,25 @@ async def _enrichment(
             ),
             callers,
         )
+        if for_edit and len(head) == 1 and not (named or sites):
+            definition = head[0]
+            revision = _indexed_commit(
+                definition.get("extent_commit") or definition.get("indexed_commit")
+            )
+            with code_span("enrich.indirect_examples"):
+                return await code_enrich.bounded(
+                    code_enrich.indirect_test_examples(
+                        repo,
+                        org,
+                        ns,
+                        sids,
+                        definition,
+                        revision,
+                        input.example_context_lines,
+                        ready=ready_examples,
+                    ),
+                    ready_examples,
+                )
         by_line = {(site["path"], site["line"]): site for site in sites}
         named = [by_line.pop((site["path"], site["line"]), site) for site in named]
         if by_line and all(site.get("evidence") == "name_reference" for site in named):
@@ -421,14 +457,18 @@ async def _enrichment(
         prs, examples, lessons_out = await asyncio.gather(
             _staged("enrich.prs", _soft(code_enrich.recent_prs(repo, org, ns, paths), None))
             if input.include_history
-            else none(),
+            else _no_enrichment(),
             _staged(
                 "enrich.examples",
-                _soft(examples_for_definition(), None),
+                _soft(
+                    examples_for_definition(), ready_examples if input.test_examples_only else None
+                ),
             )
             if input.include_examples
-            else none(),
-            _staged("enrich.lessons", _soft(lessons(), None)) if input.include_lessons else none(),
+            else _no_enrichment(),
+            _staged("enrich.lessons", _soft(lessons(), None))
+            if input.include_lessons
+            else _no_enrichment(),
         )
     out: dict[str, Any] = {}
     if prs is not None:
@@ -437,7 +477,9 @@ async def _enrichment(
         out["examples"] = examples
     if lessons_out is not None:
         out["lessons"] = lessons_out
-    if include_owner and (matched_members or _uses_brief.single_declaration(head)):
+    if input.include_lessons and (lessons_out is None or unread):
+        out["lessons_unread"] = True  # cut off or failed: not "no lessons"
+    if for_edit and (matched_members or _uses_brief.single_declaration(head)):
         with code_span("enrich.owner_context"):
             out.update(
                 await code_enrich.bounded(_owner_context(repo, org, ns, input, head[0], out), {})
@@ -501,19 +543,39 @@ def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any],
 
 
 async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
-    from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
-
     require_code_intel()
+    if input.names:
+        if input.name or input.clues:
+            raise ValidationError("code.edit_context names cannot be combined with name or clues")
+        return await _batched_edit_context(input)
     if not input.name and not input.clues:
         raise ValidationError("code.edit_context requires a name or literal clues")
-    target = await locate_edit_target(input) if input.clues else EditTarget(name=input.name)
+    return await _single_edit_context(input)
+
+
+async def _single_edit_context(input: CodeEditContextInput) -> CodeSymbolOutput:
+    from server.code.app.symbol.edit_target import EditTarget, locate_edit_target
+
+    if input.clues:
+        started = time.monotonic()
+        target = await locate_edit_target(input)
+        if target.declarations:
+            return await _batched_edit_context(input, located=target, started=started)
+    else:
+        target = EditTarget(name=input.name)
+    return await _edit_context_for_target(input, target)
+
+
+async def _edit_context_for_target(
+    input: CodeEditContextInput, target: EditTarget
+) -> CodeSymbolOutput:
     if not target.name:
         return CodeSymbolOutput(
             definitions=[], ambiguous=len(target.candidates) > 1, candidates=target.candidates
         )
     out = await handle_code_symbol(
         CodeSymbolInput(
-            **input.model_dump(exclude={"name", "clues"}),
+            **input.model_dump(exclude={"name", "clues", "names"}),
             name=target.name,
             include_history=False,
             test_examples_only=True,
@@ -543,6 +605,106 @@ async def handle_code_edit_context(input: CodeEditContextInput) -> CodeSymbolOut
                 )
             ]
     return out
+
+
+async def _batched_edit_context(
+    input: CodeEditContextInput,
+    *,
+    located: EditTarget | None = None,
+    started: float | None = None,
+) -> CodeSymbolOutput:
+    from server.code.domain.units import CodeUnit, estimate_json_tokens, estimate_unit_tokens
+
+    if started is None:
+        started = time.monotonic()
+        start_stage_wall()
+    declarations = {target.name: target for target in located.declarations} if located else {}
+    requested = list(declarations) if declarations else input.names
+    names = list(dict.fromkeys(requested))
+
+    async def read_target(name: str) -> CodeSymbolOutput:
+        with code_span("edit_context.target"):
+            if name in declarations:
+                return await _edit_context_for_target(input, declarations[name])
+            return await _single_edit_context(input.model_copy(update={"name": name}))
+
+    with code_span("edit_context.batch", seeds=len(names)):
+        results = await asyncio.gather(
+            *(read_target(name) for name in names),
+            return_exceptions=True,
+        )
+    by_name = dict(zip(names, results, strict=True))
+    definitions: list[CodeUnit] = []
+    positions: dict[str, int] = {}
+    targets: list[CodeEditContextTarget] = []
+    for name in requested:
+        result = by_name[name]
+        if isinstance(result, BaseException):
+            raise result
+        indices: list[int] = []
+        for unit in result.definitions:
+            key = unit.model_dump_json()
+            index = positions.setdefault(key, len(definitions))
+            if index == len(definitions):
+                definitions.append(unit)
+            indices.append(index)
+        status: Literal["resolved", "ambiguous", "dependency", "not_found"]
+        if result.resolved_by == "dependency":
+            status = "dependency"
+        elif result.ambiguous:
+            status = "ambiguous"
+        else:
+            status = "resolved" if indices else "not_found"
+        targets.append(
+            CodeEditContextTarget(
+                name=name,
+                status=status,
+                definition_indices=indices,
+                candidates=result.candidates,
+                resolved_by=result.resolved_by,
+                presence=result.presence,
+                hierarchy=result.hierarchy,
+                documented_in=result.documented_in,
+                trace_run_id=result.trace_run_id,
+            )
+        )
+    shape = "declaration_batch" if located else "named_batch"
+    note_budget_shape(shape)
+    candidates = located.candidates if located else []
+    tokens = sum(estimate_unit_tokens(unit) for unit in definitions) + estimate_json_tokens(
+        [target.model_dump() for target in targets]
+    )
+    if candidates:
+        tokens += estimate_json_tokens(candidates)
+    org, ns = resolve_code_identity(input.org, input.namespace)
+    route = f"edit_context_{shape}"
+    trace_id = _symbol_trace(
+        input,
+        org,
+        ns,
+        route,
+        definitions,
+        tokens,
+        started,
+        op_name="code.edit_context",
+        query="\n".join(input.clues if located else names),
+        args={"names_n": len(names), "shape": shape},
+    )
+    set_code_span_attributes(
+        route=route,
+        results=len(definitions),
+        tokens_returned=tokens,
+        abstain=not definitions,
+        consumer=input.consumer,
+    )
+    return CodeSymbolOutput(
+        definitions=definitions,
+        edit_targets=targets,
+        ambiguous=located is not None,
+        candidates=candidates,
+        tokens_returned=tokens,
+        trace_run_id=trace_id,
+    )
 
 
 def _matches_source(unit: Any, matches: list[dict[str, Any]]) -> bool:
@@ -645,7 +807,7 @@ async def handle_code_symbol(
         ns,
         input,
         rows,
-        include_owner=op_name == "code.edit_context",
+        for_edit=op_name == "code.edit_context",
         matched_members=matched_members,
     )
     try:
@@ -807,6 +969,7 @@ def _symbol_trace(
     *,
     op_name: str = "code.symbol",
     args: dict[str, Any] | None = None,
+    query: str | None = None,
 ) -> str:
     """The code.symbol trace row; returns its run id. `args` are the knobs that shaped the
     answer (pr_number, near_paths_n, uses_brief, picked_by, shape); the bare lookup writes
@@ -817,7 +980,7 @@ def _symbol_trace(
         org=org,
         ns=ns,
         op=op_name,
-        query=input.name or input.symbol_id,
+        query=query if query is not None else input.name or input.symbol_id,
         route=route,
         args=args or None,
         returned_ids=[u.unit_id for u in budgeted],

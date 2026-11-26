@@ -770,8 +770,10 @@ export interface CodeEditContextInput {
   consumer?: string;
   /** Definition name, path:symbol, or path:line. File path with clues if known. */
   name?: string;
-  /** Literal fragments to find the edit target in a file or across the index. */
+  /** Fragments for one target, or exact declaration fragments across files. */
   clues?: string[];
+  /** Batch name, path:symbol or path:line. Replaces name and clues. */
+  names?: string[];
 }
 
 export interface CodeUnit {
@@ -791,6 +793,7 @@ export interface CodeUnit {
   recent_prs?: Array<Record<string, unknown>>;
   examples?: Array<Record<string, unknown>>;
   lessons?: Array<Record<string, unknown>>;
+  lessons_unread?: boolean;
   churn?: number;
   amp?: number;
   tested?: boolean;
@@ -803,6 +806,18 @@ export interface CodeUnit {
   lexical_rank?: number;
   vector_rank?: number;
   namespace?: string;
+}
+
+export interface CodeEditContextTarget {
+  name: string;
+  status: "resolved" | "ambiguous" | "dependency" | "not_found";
+  definition_indices?: number[];
+  candidates?: Array<Record<string, unknown>>;
+  resolved_by?: string;
+  presence?: Array<Record<string, unknown>>;
+  hierarchy?: Record<string, Array<Record<string, unknown>>>;
+  documented_in?: Array<Record<string, unknown>>;
+  trace_run_id?: string;
 }
 
 export interface CodeSymbolOutput {
@@ -824,6 +839,7 @@ export interface CodeSymbolOutput {
   neighbour_tokens?: number;
   presence?: Array<Record<string, unknown>>;
   summary?: Record<string, string[]>;
+  edit_targets?: CodeEditContextTarget[];
 }
 
 export interface CodeEnclosingInput {
@@ -9561,6 +9577,7 @@ export interface SessionBriefGetInput {
   from_session?: string;
   project?: string;
   revision?: number;
+  snapshot_id?: string;
   include_sections?: boolean;
   full?: boolean;
 }
@@ -9568,6 +9585,7 @@ export interface SessionBriefGetInput {
 export interface BriefSections {
   goal?: string;
   status?: string;
+  verification?: string;
   decisions?: BriefDecision[];
   dead_ends?: BriefDeadEnd[];
   done?: BriefDone[];
@@ -9604,6 +9622,8 @@ export interface SessionBriefGetOutput {
   found: boolean;
   brief_key?: string;
   revision?: number;
+  snapshot_id?: string;
+  snapshot_key?: string;
   rendered?: string;
   sections?: BriefSections | null;
   project?: string;
@@ -9655,6 +9675,11 @@ export interface SessionBriefListOutput {
   rendered?: string;
 }
 
+export interface BriefCheckout {
+  dirty?: boolean | null;
+  head_in_remote_refs?: boolean | null;
+}
+
 export interface BriefEvent {
   kind: "user" | "assistant" | "edit" | "command" | "error" | "read" | "search" | "tool" | "note" | "summary";
   text?: string;
@@ -9675,6 +9700,7 @@ export interface SessionBriefSaveInput {
   repo?: string;
   branch?: string;
   head_sha?: string;
+  checkout?: BriefCheckout | null;
   trigger?: "precompact" | "session_end" | "stop" | "manual" | "model";
   events?: BriefEvent[];
   sections?: BriefSections | null;

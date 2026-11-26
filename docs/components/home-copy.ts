@@ -33,7 +33,7 @@ type HomeCopy = {
 
 export const homeCopy: Record<SiteLocale, HomeCopy> = {
   en: {
-    title: "Open-source agent memory and code intelligence | ClickHouse Loom",
+    title: "Shared agent memory and code intelligence | ClickHouse Loom",
     description:
       "Shared memory for Claude Code, Codex, Cursor, and autonomous agents. Recall lessons across sessions, find cited documents, and trace code.",
     deployment: "Open source · Self-hosted on ClickHouse",

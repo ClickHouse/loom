@@ -9,6 +9,7 @@ const config = JSON.parse(readFileSync(manifest, "utf8"));
 const publicPagesFile = new URL("./public-pages.json", import.meta.url);
 const publicPages = new Map(Object.entries(JSON.parse(readFileSync(publicPagesFile, "utf8"))));
 const homeLocales = JSON.parse(readFileSync(new URL("./home-locales.json", import.meta.url), "utf8"));
+const productDates = JSON.parse(readFileSync(new URL(".blume-content/.product-dates.json", docs), "utf8"));
 const adoptionDestination = "/docs/adoption";
 
 if (!Array.isArray(config.routes)) throw new Error("Vercel build manifest has no routes.");
@@ -41,6 +42,7 @@ const translationRedirects = publishSiteDiscovery(new URL("static/", output), {
   root: [...publicPages.keys()],
   aliases: [...publicPages.values()],
   homeLocales,
+  productDates,
 });
 const publicPaths = new Set(siteRoutes.map(({ src }) => src));
 config.routes = [

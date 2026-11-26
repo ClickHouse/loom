@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { escape } from "html-escaper";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import sharp from "sharp";
-import { readContentDates } from "./content-dates.mjs";
+import { readSiteDates } from "./content-dates.mjs";
 import { withContentMetadata } from "./content-metadata.mjs";
 
 const docs = dirname(fileURLToPath(import.meta.url));
@@ -333,7 +333,9 @@ async function prepareContent() {
       .map((file) => relative(content, file).split(sep).join("/"))
       .filter((file) => !locales.includes(file.split("/")[0])),
   );
-  const contentDates = readContentDates(repository);
+  const publicPages = JSON.parse(readFileSync(join(docs, "public-pages.json"), "utf8"));
+  const { contentDates, productDates } = readSiteDates(repository, publicPages);
+  writeFileSync(join(content, ".product-dates.json"), JSON.stringify(productDates));
   for (const file of files) {
     const text = readFileSync(file, "utf8");
     const preparedPath = relative(content, file).split(sep).join("/");
@@ -395,7 +397,7 @@ async function prepareDocsScreenshot() {
   const srcset = candidates.map(({ url, width }) => `${url} ${width}w`).join(", ");
   // Match the documentation column's maximum width and mobile gutters.
   const sizes = "(max-width: 45rem) calc(100vw - 3rem), 42rem";
-  const markup = `<img src="${fullSize}" srcset="${srcset}" sizes="${sizes}" alt="${escape(match[1])}" width="${width}" height="${height}" loading="eager" fetchpriority="high" decoding="async" data-zoom-src="${fullSize}" />`;
+  const markup = `<img src="${fullSize}" srcset="${srcset}" sizes="${sizes}" alt="${escape(match[1])}" width="${width}" height="${height}" loading="lazy" decoding="async" data-zoom-src="${fullSize}" />`;
   writeFileSync(
     landing,
     text.replace(screenshot, () => markup),

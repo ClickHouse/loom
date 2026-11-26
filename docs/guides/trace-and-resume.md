@@ -123,11 +123,20 @@ LOOM_BASE_URL=http://localhost:7777 python catalog.py "$job_id" "$demo_dir/catal
 ```
 
 The first process prints `Next input index: 0` and exits with
-`Stopped after committing batch-02`. The second process reads checkpoint `1`,
-retries `batch-02` with the same key, and reports `Unique results: 3`.
+`Stopped after committing batch-02`. To check that the cursor survives a Loom server
+restart, restart the server on this disposable stack before running the next command.
+Keep the ClickHouse data volume and SQLite output file.
 
 ```bash
 LOOM_BASE_URL=http://localhost:7777 python catalog.py "$job_id" "$demo_dir/catalog.sqlite"
+```
+
+The second process reads cursor `1` and retries `batch-02` with the same key. The
+SQLite primary key keeps one row per input, and the process prints:
+
+```text
+Next input index: 1
+Unique results: 3
 ```
 
 Use a checkpoint with one active worker per job. Give a replacement the same

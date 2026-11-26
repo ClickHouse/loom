@@ -22,6 +22,7 @@ from server.code.app.index import gitrepo
 from server.code.app.index.denylist import under_prefixes
 from server.code.app.index.mirrors import present_dir
 from server.code.app.spans import set_code_span_attributes
+from server.code.domain.extract.py_notebooks import is_notebook_path
 from server.code.domain.index.repos import repo_for_namespace
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
@@ -148,7 +149,7 @@ async def handle_code_read(input: CodeReadInput) -> CodeReadOutput:
             and commit
             and file["blob_sha"]
             and file["lang"] != "reference"
-            and not path.lower().endswith(".ipynb")
+            and not is_notebook_path(path)
         ):
             raw = await _verified_blob(git_dir, path, commit, file["blob_sha"])
             if raw is not None:

@@ -279,6 +279,7 @@ One code namespace indexes one repository. No repository is configured by defaul
 | `LOOM_CODE_RESULT_LESSONS` | `bool` | `True` | live | Whether the code ops that return files carry `lessons`, the readable memories about their top files. |
 | `LOOM_CODE_RESULT_LESSONS_TOKENS` | `int` | `0` | live | Estimated-token cap on file or symbol `lessons`, counted on serialized rows at 4 characters a token; 0 means unlimited. Rows are whole or left out. |
 | `LOOM_CODE_RESULT_LESSONS_PATHS` | `int` | `3` | live | How many of an answer's files, in rank order, its `lessons` are read for. |
+| `LOOM_CODE_RESULT_PATH_HINT_ROWS` | `int` | `512` | live | Maximum metadata rows per read when reordering source results by linked lessons. If a read exceeds this bound, the source results keep their original order. |
 
 ### Repository access
 

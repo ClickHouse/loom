@@ -501,6 +501,199 @@ async def test_symbol_reads_test_examples_with_the_definition(code_env, monkeypa
     assert example["context"]["text"].strip() == call
 
 
+async def test_edit_context_batches_definitions_and_their_tests(code_env, monkeypatch) -> None:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.code.app.symbol import symbol as edit_handler
+    from server.core.errors import ValidationError
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    await _ingest(repo, org, ns)
+    call = "void test_work() { DB::doWork(); }"
+    await _ingest(repo, org, ns, source=(call + "\n").encode(), path="tests/test_work.cpp")
+    await _ingest(repo, org, ns, source=b"def helper():\n    return 42\n", path="src/second.py")
+    dependency = {"namespace": "dependency", "verdict": "present", "path": "src/other.py"}
+
+    async def dependency_lookup(input, _org, _ns):
+        if input.name == "external_symbol":
+            return [dependency], {"present": ["dependency"]}
+        return [], {}
+
+    monkeypatch.setattr(edit_handler, "_dependency_presence", dependency_lookup)
+    names = [
+        "DB::doWork",
+        "src/S.cpp:DB::doWork",
+        "src/second.py:helper",
+        "missing_symbol",
+        "DB::Squasher::insert",
+        "DB::doWork",
+        "external_symbol",
+    ]
+    query = CodeEditContextInput(org=org, namespace=ns, names=names, include_lessons=False)
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("loom.handlers")
+    monkeypatch.setattr(trace, "get_tracer", lambda *_args, **_kw: tracer)
+    with tracer.start_as_current_span("request"):
+        result = await handle_code_edit_context(query)
+    spans = exporter.get_finished_spans()
+    root = next(span for span in spans if span.name == "request")
+    children = [span for span in spans if span.name == "code.edit_context.target"]
+    assert root.attributes["loom.code.route"] == "edit_context_named_batch"
+    assert root.attributes["loom.code.results"] == 4
+    assert root.attributes["loom.code.abstain"] is False
+    assert any(span.attributes.get("loom.code.abstain") is True for span in children)
+    assert [target.name for target in result.edit_targets] == names
+    assert [target.status for target in result.edit_targets] == [
+        "resolved",
+        "resolved",
+        "resolved",
+        "not_found",
+        "ambiguous",
+        "resolved",
+        "dependency",
+    ]
+    assert [target.definition_indices for target in result.edit_targets] == [
+        [0],
+        [0],
+        [1],
+        [],
+        [2, 3],
+        [0],
+        [],
+    ]
+    assert len(result.definitions) == 4
+    first, second = result.definitions[:2]
+    assert first.body.strip() == "void doWork() { }"
+    assert first.examples[0]["context"]["text"].strip() == call
+    assert second.body.strip() == "def helper():\n    return 42"
+    assert len({item.signature for item in result.definitions[2:]}) == 2
+    assert result.edit_targets[0].trace_run_id
+    assert result.edit_targets[-2].trace_run_id == result.edit_targets[0].trace_run_id
+    assert result.edit_targets[-1].resolved_by == "dependency"
+    assert result.edit_targets[-1].presence == [dependency]
+    assert result.trace_run_id and result.trace_run_id != result.edit_targets[0].trace_run_id
+    single = await handle_code_edit_context(
+        query.model_copy(update={"name": names[0], "names": []})
+    )
+    assert "edit_targets" not in single.model_dump()
+    with pytest.raises(ValidationError, match="cannot be combined"):
+        await handle_code_edit_context(query.model_copy(update={"name": names[0]}))
+
+
+@pytest.mark.parametrize(
+    "clue_shape",
+    [
+        "declarations",
+        "mixed",
+        "one_declaration",
+        "missing",
+        "one_plus_missing",
+        "same_hits",
+        "stripped",
+        "mixed_preview",
+        "multiline",
+    ],
+)
+async def test_edit_context_reads_verified_declarations_across_files(
+    code_env, monkeypatch, clue_shape
+) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import symbol
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    traces = []
+    monkeypatch.setattr(symbol, "schedule_code_trace", lambda **row: traces.append(row))
+    sources = {
+        "src/alpha.py": b"def submit(value):\n    result = value + 1\n    return result\n",
+        "src/beta.py": b"def submit(value):\n    result = value * 2\n    return result\n",
+        "src/gamma.py": b"def handle(value):\n    return value - 1\n",
+    }
+    if clue_shape == "mixed_preview":
+        sources["src/alpha.py"] = b'def submit(value="    def other("):\n    return value\n'
+    for path, body in sources.items():
+        await _ingest(repo, org, ns, source=body, path=path)
+    clues = ["def submit(", "def handle("]
+    candidate_paths = set(sources)
+    if clue_shape == "mixed":
+        path = "src/delta.py"
+        await _ingest(repo, org, ns, source=b"def other(result):\n    return result\n", path=path)
+        clues.append("return result")
+        candidate_paths.add(path)
+    elif clue_shape == "one_declaration":
+        clues[0] = "return result"
+    elif clue_shape == "missing":
+        clues.append("def removed(")
+    elif clue_shape in {"stripped", "mixed_preview"}:
+        path = "src/delta.py"
+        await _ingest(
+            repo,
+            org,
+            ns,
+            source=b"class Handler:\n    def other(self):\n        return 1\n",
+            path=path,
+        )
+        if clue_shape == "mixed_preview":
+            clues = ["    def other(", "def handle(", "def removed("]
+            candidate_paths.remove("src/beta.py")
+        else:
+            clues.append("    def other(")
+        candidate_paths.add(path)
+    elif clue_shape in {"one_plus_missing", "same_hits"}:
+        clues[1] = "def removed("
+        if clue_shape == "same_hits":
+            clues.append("def submit")
+        candidate_paths.remove("src/gamma.py")
+    elif clue_shape == "multiline":
+        await _ingest(
+            repo,
+            org,
+            ns,
+            source=b"def other(\n    value,\n):\n    return value\n",
+            path="src/delta.py",
+        )
+        clues.append("def other(\n    value")
+    result = await symbol.handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, clues=clues, include_lessons=False)
+    )
+    assert result.ambiguous
+    assert {candidate["path"] for candidate in result.candidates} == candidate_paths
+    if clue_shape in {
+        "one_declaration",
+        "one_plus_missing",
+        "same_hits",
+        "stripped",
+        "mixed_preview",
+        "multiline",
+    }:
+        assert result.definitions == []
+        return
+    assert {unit.path: unit.body.encode().rstrip(b"\n") for unit in result.definitions} == {
+        path: body.rstrip(b"\n") for path, body in sources.items()
+    }
+    assert [target.name for target in result.edit_targets] == [f"{path}:1" for path in sources]
+    assert all(target.status == "resolved" for target in result.edit_targets)
+    assert result.trace_run_id and result.trace_run_id not in {
+        target.trace_run_id for target in result.edit_targets
+    }
+    root = next(trace for trace in traces if trace["route"] == "edit_context_declaration_batch")
+    assert "declarations" in root["stage_ms"]
+
+
 @pytest.mark.parametrize("older_site_line", [None, 3, 20])
 async def test_edit_context_prefers_distinct_test_source_windows(
     code_env, monkeypatch, older_site_line
@@ -546,14 +739,260 @@ async def test_edit_context_prefers_distinct_test_source_windows(
         CodeEditContextInput(org=org, namespace=ns, name="DB::doWork", include_lessons=False)
     )
     (definition,) = response.definitions
-    third_line = 3 if older_site_line == 20 else 66
     assert [(site["path"], site["line"]) for site in definition.examples] == [
         (path, 2),
         (path, 35),
-        (path, third_line),
+        (path, 66),
     ]
     assert all(site["context"]["commit"] == "a" * 40 for site in definition.examples)
     assert "DB::doWork();\n    DB::doWork();" in definition.examples[0]["context"]["text"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "indirect",
+        "crowded",
+        "fixture",
+        "different_test_revision",
+        "different_caller_revision",
+        "direct",
+    ],
+)
+async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monkeypatch, case):
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    source_path = "src/sample.py"
+    await _ingest(repo, org, ns, source=b"def value():\n    return 7\n", path=source_path)
+    caller_path = "src/action.py"
+    caller_source = b"from src.sample import value\n\n"
+    if case == "crowded":
+        caller_source += b"def unrelated():\n" + b"    value()\n" * 12 + b"\n"
+    caller_source += b"def run():\n    return value()\n"
+    await _ingest(
+        repo,
+        org,
+        ns,
+        source=caller_source,
+        path=caller_path,
+        sha="b" * 40 if case == "different_caller_revision" else "a" * 40,
+    )
+    path = "tests/test_action.py"
+    tests = b"from src.action import run\nfrom src.sample import value\n\ndef test_action():\n    assert run() == 7\n"
+    if case == "fixture":
+        path = "tests/fixtures/fake_app.py"
+        tests = tests.replace(b"def test_action():", b"def sample_setup():")
+    if case == "direct":
+        tests += b"\ndef test_value():\n    assert value() == 7\n"
+    await _ingest(
+        repo,
+        org,
+        ns,
+        source=tests,
+        path=path,
+        sha="b" * 40 if case == "different_test_revision" else "a" * 40,
+    )
+
+    response = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=f"{source_path}:value", include_lessons=False
+        )
+    )
+    (definition,) = response.definitions
+    if case in {"fixture", "different_test_revision", "different_caller_revision"}:
+        assert definition.examples == []
+        return
+    (example,) = definition.examples
+    assert example["path"] == path
+    assert example["context"]["commit"] == "a" * 40
+    if case == "direct":
+        assert example["line"] == 8
+        assert "via" not in example
+    else:
+        assert example["line"] == 5
+        assert example["evidence"] == "indirect_call"
+        line = caller_source.splitlines().index(b"    return value()") + 1
+        assert example["via"] == {"symbol": "src.action::run", "path": caller_path, "line": line}
+        context = example["context"]
+        lines = tests.decode().splitlines(keepends=True)
+        assert context["text"] == "".join(lines[context["start_line"] - 1 : context["end_line"]])
+
+
+@pytest.mark.parametrize(
+    "case", ["current", "stale", "compiled_other_receiver", "compiled_other_pair"]
+)
+async def test_edit_context_labels_unresolved_repeated_test_calls(code_env, monkeypatch, case):
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.code.store.index import build_row
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    revision = "a" * 40
+    source_path = "src/counter.py"
+    await _ingest(
+        repo,
+        org,
+        ns,
+        path=source_path,
+        source=(
+            b"def apply(item, scale):\n    return item * scale\n\n"
+            b"class Counter:\n    def submit(self, item, scale):\n"
+            b"        return apply(item, scale)\n\n"
+            b"class StubCounter:\n    def submit(self, item, scale):\n        return None\n"
+        ),
+    )
+    unrelated = "src/unrelated.py"
+    await _ingest(
+        repo, org, ns, path=unrelated, source=b"def other(client, item):\n    client.submit(item)\n"
+    )
+    path = "tests/test_counter.py"
+    tests = (
+        b"def test_repeated_item(client, other, first, second, item):\n"
+        b"    client.submit(first, scale=1)\n    client.submit(second, scale=2)\n"
+        + b"\n" * 10
+        + b"    client.submit(item, scale=1)\n    client.submit(item, scale=2)\n"
+    )
+    repeated = len(tests.splitlines()) - 1
+    expected_lines = {2, 3, repeated, repeated + 1}
+    if case == "compiled_other_pair":
+        tests += b"    other.submit(item, scale=3)\n    other.submit(item, scale=4)\n"
+        expected_lines.update({repeated + 2, repeated + 3})
+    await _ingest(
+        repo, org, ns, path=path, source=tests, sha="b" * 40 if case == "stale" else revision
+    )
+    assert (await repo.live_call_misses_for_names(org, ns, ["submit"], limit=1))[0][
+        "path"
+    ] == unrelated
+    assert (await repo.live_call_misses_for_names(org, ns, ["submit"], limit=1, paths=[path]))[0][
+        "path"
+    ] == path
+    declines = await repo.live_call_misses_for_names(org, ns, ["submit"], paths=[path])
+    assert {row["line"] for row in declines} == expected_lines
+    if case.startswith("compiled_"):
+        target = (await repo.symbols_by_name(org, ns, "src.counter::StubCounter::submit"))[0]
+        await repo.insert_rows(
+            "code_edges",
+            [
+                build_row(
+                    "code_edges",
+                    org=org,
+                    namespace=ns,
+                    tier="scip",
+                    edge_kind="calls",
+                    path=path,
+                    line=site["line"],
+                    from_symbol_id=site["from_symbol_id"],
+                    from_qualified_name=site["from_qualified_name"],
+                    to_symbol_id=target["symbol_id"],
+                    to_qualified_name=target["qualified_name"],
+                    confidence=1.0,
+                    indexed_commit=revision,
+                )
+                for site in declines
+                if site["line"] in (repeated, repeated + 1)
+            ],
+        )
+    response = await handle_code_edit_context(
+        CodeEditContextInput(
+            org=org, namespace=ns, name=f"{source_path}:apply", include_lessons=False
+        )
+    )
+    (definition,) = response.definitions
+    if case in {"stale", "compiled_other_receiver"}:
+        assert definition.examples == []
+        return
+    (example,) = definition.examples
+    assert (example["path"], example["line"], example["evidence"]) == (
+        path,
+        repeated + 2 if case == "compiled_other_pair" else repeated,
+        "name_reference",
+    )
+    assert example["via"] == {
+        "symbol": "src.counter::Counter::submit",
+        "path": source_path,
+        "line": 6,
+    }
+    assert example["context"]["commit"] == revision
+    expected_text = (
+        "other.submit(item, scale=4)"
+        if case == "compiled_other_pair"
+        else "client.submit(item, scale=2)"
+    )
+    assert expected_text in example["context"]["text"]
+
+
+async def test_edit_context_does_not_attach_indirect_example_to_an_overload(
+    code_env, monkeypatch
+) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.index.scip_delta import ScipDelta, apply_delta
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    files = {
+        "src/a.cpp": b"#define DECLARE_VALUE(T) T value(T n) { return n; }\nnamespace DB {\nDECLARE_VALUE(int)\n}\n",
+        "src/b.cpp": b"namespace DB {\ndouble value(double n) { return n; }\ndouble run() { return value(2.0); }\n}\n",
+        "tests/test_b.cpp": b"void test_run() { DB::run(); }\n",
+    }
+    for path, source in files.items():
+        await _ingest(repo, org, ns, source=source, path=path)
+    delta = ScipDelta.model_validate(
+        {
+            "delta_version": 1,
+            "commit": "a" * 40,
+            "files": [
+                {
+                    "path": "src/a.cpp",
+                    "symbols": [
+                        {
+                            "qualified_name": "DB::value",
+                            "signature": "(int)",
+                            "kind": "function",
+                            "line_start": 3,
+                            "line_end": 3,
+                        }
+                    ],
+                    "edges": [],
+                },
+                {
+                    "path": "tests/test_b.cpp",
+                    "symbols": [],
+                    "edges": [
+                        {
+                            "from_qualified_name": "test_run",
+                            "from_signature": "()",
+                            "to_qualified_name": "DB::run",
+                            "to_signature": "()",
+                            "edge_kind": "calls",
+                            "line": 1,
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    await apply_delta(repo, org, ns, delta)
+
+    result = await handle_code_edit_context(
+        CodeEditContextInput(org=org, namespace=ns, name="DB::value", include_lessons=False)
+    )
+    assert result.ambiguous
+    assert {d.path for d in result.definitions} == {"src/a.cpp", "src/b.cpp"}
+    assert all(not definition.examples for definition in result.definitions)
 
 
 async def test_symbol_reads_a_test_that_passes_a_class_to_a_decorator(

@@ -139,11 +139,16 @@ Record the server-enforced namespace access for each identity. Report cross-clie
 recall and denied-access results separately, with the client, operation and expected
 response.
 
+[Reuse a SQL lesson across sessions](../use-cases/self-hosted-clickhouse.md#reuse-sql-lessons-across-agent-sessions)
+to check how a fresh client handles a saved predicate after a schema change.
+
 ### Compare coding agents with and without memory
 
 Replay the same coding tasks with and without access to saved lessons. Grade the
 patches against tests fixed before the run. A recall score measures whether an agent
 found a lesson. A patch score measures whether it completed the work.
+[Check which lessons the agent used](../concepts/memory.md#how-to-tell-whether-an-agent-used-a-memory)
+when you investigate why outcomes differ.
 
 1. **Choose tasks from the repository's history.** Include a task that depends on
    an earlier decision, one with an outdated lesson, and one with no useful prior

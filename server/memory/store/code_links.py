@@ -16,12 +16,9 @@ from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY, QueuePosition
 from server.memory.domain.temporal_sql import served_status_sql
 from server.memory.store.sql import FILE_LISTING_VISIBLE
+from server.settings import settings
 
 TABLE = "loom.memory_code_links"
-
-# The path hint uses metadata only. Keep the original path order when a
-# broad response cannot be checked within this many links.
-_PATH_HINT_ROWS = 512
 
 
 class Former(TypedDict):
@@ -334,16 +331,17 @@ async def _path_hint_rows(sql: str, params: dict[str, Any], until: float) -> lis
     remaining = until - time.monotonic()
     if remaining <= 0:
         return []
+    limit = settings.code_result_path_hint_rows
     rows = await _default_client().query_all(
         sql,
-        params | {"lim": _PATH_HINT_ROWS + 1},
+        params | {"lim": limit + 1},
         settings={
             "max_execution_time": remaining,
             "timeout_before_checking_execution_speed": 0,
             "timeout_overflow_mode": "throw",
         },
     )
-    return rows if len(rows) <= _PATH_HINT_ROWS else []
+    return rows if len(rows) <= limit else []
 
 
 async def path_hint_links(
@@ -414,6 +412,10 @@ def _key(r: LinkRow) -> tuple[str, ...]:
     return tuple(row[c] for c in _KEY_COLUMNS)
 
 
+# Columns a read narrows by a bloom filter alone: none is in the sort key.
+_OFF_KEY = frozenset({"former_paths", "anchored_path"})
+
+
 async def _for_code(
     ch: _CHClient,
     org: str,
@@ -437,7 +439,14 @@ async def _for_code(
             params[column] = list(values)
             if column in ("path", "former_paths", "anchored_path", "checked_commit"):
                 long = column
-    sql = f"SELECT * {_LIVE} AND {' AND '.join(where)}"
+    filters = " AND ".join(where)
+    sql = f"SELECT * {_LIVE} AND {filters}"
+    if _OFF_KEY.intersection(narrow):
+        # Under FINAL, ClickHouse widens a skip index's granules to every granule of
+        # every part whose sort-key range overlaps them, most of the table here. The
+        # keys of every version that matches come from the index alone, then FINAL
+        # reads only those keys and judges each by its newest version.
+        sql += f" AND ({_KEY}) IN (SELECT {_KEY} FROM {TABLE} WHERE {filters})"
     return _links(
         await query_all_sliced(ch, sql, params, long) if long else await ch.query_all(sql, params)
     )
@@ -712,6 +721,40 @@ async def memory_heads(
         _HEADS + "WHERE org = {org:String} AND memory_id IN {ids:Array(UUID)}",
         {"org": org, "ids": sorted(set(memory_ids))},
         "ids",
+    )
+
+
+# A memory as a link names it: its identity without the org, then its memory_id.
+LinkedMemory = tuple[str, str, str, str, str, str]
+
+
+def linked_memory(a: LinkRow) -> LinkedMemory:
+    """The memory link `a` was made from, as `heads_by_identity` reads it."""
+    return (
+        a["namespace"],
+        a["agent"],
+        a["user_id"],
+        a["session_id"],
+        a["memory_key"],
+        a["memory_id"],
+    )
+
+
+async def heads_by_identity(
+    org: str, memories: Sequence[LinkedMemory], *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The head rows of these memories, each named by its identity without the org and
+    then its memory_id, as `memory_heads` returns them: read by the identity, the
+    table's sort key, and kept only while it still holds that memory_id."""
+    if not memories:
+        return []
+    return await query_all_sliced(
+        ch or _default_client(),
+        _HEADS + "WHERE org = {org:String} "
+        "AND (namespace, agent, user_id, session_id, memory_key, memory_id) "
+        "IN {memories:Array(Tuple(String, String, String, String, String, UUID))}",
+        {"org": org, "memories": sorted(set(memories))},
+        "memories",
     )
 
 

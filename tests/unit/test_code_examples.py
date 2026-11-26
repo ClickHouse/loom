@@ -10,7 +10,12 @@ from typing import Any
 import pytest
 
 from server.code.api.models_navigation import CodeExamplesInput
-from server.code.app.enrich import _example_context
+from server.code.app.enrich import (
+    _example_context,
+    bounded,
+    indirect_test_examples,
+    usage_examples,
+)
 from server.code.app.symbol import examples as h
 from server.code.store.index import CodeRepo
 from server.core.errors import NotFoundError, PreconditionFailedError
@@ -44,10 +49,12 @@ class _Repo:
         edges: list[dict[str, Any]],
         tested: list[str] = (),  # type: ignore[assignment]
         bodies: dict[tuple[str, int], str] | None = None,
+        tests_only: bool = False,
     ) -> None:
         self.seeds, self.edges, self.tested = seeds, edges, list(tested)
         self._store = CodeRepo(_CH(bodies or {}))  # type: ignore[arg-type]
         self.edge_reads: list[list[str]] = []
+        self.tests_only = tests_only
 
     async def innermost_chunk_at(self, org: str, ns: str, path: str, line: int) -> str | None:
         return await self._store.innermost_chunk_at(org, ns, path, line)
@@ -71,7 +78,7 @@ class _Repo:
     ) -> list[dict[str, Any]]:
         assert direction == "callers"
         assert not with_revision
-        assert not tests_only
+        assert tests_only == self.tests_only
         self.edge_reads.append(list(ids))
         return self.edges
 
@@ -138,6 +145,193 @@ def test_top_k_bounds_the_sites(
     repo = _Repo(seeds=[SEED], edges=[_edge(f"src/f{i}.cpp", i + 1) for i in range(6)])
     out = _run(monkeypatch, repo, name="DB::parseQuery", top_k=2)
     assert [e["path"] for e in out.examples] == ["src/f0.cpp", "src/f1.cpp"]
+
+
+def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None:
+    edges = [
+        _edge("tests/a_support.py", 4, "tests.a_support::setup"),
+        _edge("tests/test_async.py", 8, "tests.test_async::test_async_context"),
+        _edge("tests/test_routing.py", 10, "tests.test_routing::test_blueprint_single"),
+        _edge("tests/test_routing.py", 25, "tests.test_routing::test_blueprint_twice"),
+        _edge("tests/test_routing.py", 27, "tests.test_routing::test_blueprint_twice"),
+        _edge("tests/test_routing.py", 40, "tests.test_routing::test_blueprint_defaults"),
+    ]
+    for edge in edges:
+        edge["to_qualified_name"] = "web.app::App::register_blueprint"
+    repo = _Repo(seeds=[], edges=edges, tests_only=True)
+
+    examples = asyncio.run(usage_examples(repo, "org", "code", ["s"], tests_only=True))  # type: ignore[arg-type]
+
+    assert [site["line"] for site in examples] == [25, 10, 40]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale_setup", [False, True])
+async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(
+    monkeypatch, stale_setup
+):
+    revision = "a" * 39 + "0"
+    older = "b" * 40
+    names = ["one", "two", "three"]
+    prefix = (
+        [("tests/test_a.py", line, "setup", older) for line in (4, 5, 6)] if stale_setup else []
+    )
+    candidates = [
+        (f"tests/test_{suffix}.py", 10, f"test_other_{name}", revision)
+        for suffix, name in zip(("b", "c", "d"), names, strict=True)
+    ] + [(f"tests/test_z_{name}.py", 10, f"test_register_{name}", older) for name in names]
+
+    class Repo:
+        async def edges_for_symbols(self, *args, **kw):
+            return [
+                {
+                    **_edge(path, line, caller),
+                    "indexed_commit": commit + chr(0),
+                    "to_qualified_name": "lib::register",
+                }
+                for path, line, caller, commit in prefix + candidates
+            ]
+
+        async def test_map_for(self, *args):
+            return []
+
+        async def source_chunks_for_span(self, org, ns, path, start, end, model, **kw):
+            return [
+                {
+                    "start_line": start,
+                    "end_line": end,
+                    "indexed_commit": revision,
+                    "content": "    register()\n" * (end - start + 1),
+                }
+            ]
+
+    monkeypatch.setattr(settings, "embedding_model", "fake-ngram-3072")
+    repo: Any = Repo()
+    examples = await usage_examples(
+        repo, "org", "code", ["register"], tests_only=True, context_lines=2
+    )
+    current = [site for site in examples if site.get("context", {}).get("commit") == revision]
+    expected = names[:2] if stale_setup else names
+    assert [site["caller"] for site in current] == [f"test_other_{name}" for name in expected]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("promoted", ["present", "missing", "timeout"])
+async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, promoted) -> None:
+    revision = "a" * 40
+    bridge_path = "web/app.py"
+    bridge_name = "web.app::App::register_blueprint"
+    target = {
+        "path": "web/blueprints.py",
+        "kind": "method",
+        "qualified_name": "web.blueprints::Blueprint::register",
+    }
+    test_path = "tests/test_routes.py"
+    fallback_started = asyncio.Event()
+
+    def incoming(path, line, caller, from_id, to_id, callee, commit=revision):
+        return {
+            **_edge(path, line, caller),
+            "from_symbol_id": from_id,
+            "to_symbol_id": to_id,
+            "to_qualified_name": callee,
+            "indexed_commit": commit,
+            "confidence": 0.9,
+        }
+
+    class Repo:
+        async def edges_for_symbols(self, org, ns, ids, **options):
+            assert (org, ns) == ("org", "code")
+            if ids == ["register"]:
+                return [
+                    incoming(
+                        bridge_path, 9, bridge_name, "wrapper", "register", target["qualified_name"]
+                    )
+                ]
+            assert ids == ["wrapper"] and options["tests_only"]
+            assert options["caller_revision"] == revision and options["sites_per_caller"] == 2
+            if promoted != "present":
+                return [
+                    incoming(
+                        test_path, line, f"test_other_{line}", str(line), "wrapper", bridge_name
+                    )
+                    for line in (10, 40, 70)
+                ] + [
+                    incoming(
+                        "tests/test_z.py",
+                        line,
+                        f"test_blueprint_{line}",
+                        str(line),
+                        "wrapper",
+                        bridge_name,
+                    )
+                    for line in (11, 21, 31, 41, 51, 61)
+                ]
+            return [
+                incoming("tests/a_support.py", 4, "setup", "setup", "wrapper", bridge_name),
+                incoming("tests/test_async.py", 5, "test_async", "async", "wrapper", bridge_name),
+                incoming(test_path, 10, "test_blueprint_hook", "hook", "wrapper", bridge_name),
+                incoming(
+                    test_path, 40, "test_blueprint_defaults", "defaults", "wrapper", bridge_name
+                ),
+                incoming(
+                    test_path, 42, "test_blueprint_defaults", "defaults", "wrapper", bridge_name
+                ),
+                incoming(
+                    test_path, 75, "test_blueprint_old", "old", "wrapper", bridge_name, "b" * 40
+                ),
+                incoming(
+                    test_path,
+                    90,
+                    "test_blueprint_wrong_target",
+                    "wrong",
+                    "wrapper",
+                    "other::register_blueprint",
+                ),
+            ]
+
+        async def file_rows_for_paths(self, org, ns, paths):
+            return {path: {"loc": 125, "indexed_commit": revision} for path in paths}
+
+        async def source_chunks_for_span(self, org, ns, path, start, end, model, **options):
+            assert options["with_revision"]
+            if path == "tests/test_z.py":
+                await fallback_started.wait()
+                if promoted == "timeout":
+                    await asyncio.Future()
+                return []
+            fallback_started.set()
+            return [
+                {
+                    "path": path,
+                    "start_line": start,
+                    "end_line": end,
+                    "indexed_commit": revision,
+                    "content": "    app.register_blueprint(bp)\n" * (end - start + 1),
+                }
+            ]
+
+    monkeypatch.setattr(settings, "embedding_model", "fake-ngram-3072")
+    repo: Any = Repo()
+    ready: list[dict[str, Any]] = []
+    examples = await bounded(
+        indirect_test_examples(repo, "org", "code", ["register"], target, revision, 2, ready=ready),
+        ready,
+        seconds=0.15,
+    )
+
+    expected = [
+        ("test_blueprint_defaults", 40),
+        ("test_blueprint_hook", 10),
+        ("test_async", 5),
+    ]
+    if promoted != "present":
+        expected = [("test_other_10", 10), ("test_other_40", 40), ("test_other_70", 70)]
+    assert [(e["caller"], e["line"]) for e in examples] == expected
+    assert all(
+        e["evidence"] == "indirect_call" and e["via"]["symbol"] == bridge_name for e in examples
+    )
+    assert all(e["context"]["commit"] == revision for e in examples)
 
 
 @pytest.mark.parametrize(

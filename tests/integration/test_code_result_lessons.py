@@ -283,7 +283,9 @@ async def test_lessons_match_the_result_file_by_path(
     assert response.status_code == 200, response.text
     payload = response.json()
     memory_id = payload.get("data", payload)["memory_id"]
-    (stored,) = await served_excerpts(org, ["dev"], [memory_id])
+    # _set writes with the default user_id and session_id
+    identity = ("dev", "claude-code", "-", "-", "notes/long", memory_id)
+    (stored,) = await served_excerpts(org, ["dev"], [identity], limit=1)
     assert stored["excerpt"] == long_note
     # a cap below the decision's size leaves it out, never cut
     small = (await path_lessons.lessons_for_paths(org, ["dev"], "", [PATH], token_budget=60)).rows

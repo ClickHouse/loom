@@ -98,6 +98,17 @@ recomputes it: take the concept files only, sort them by bundle-relative path, a
 file's SHA-256 hex digest with no separator, and SHA-256 that string. A mismatch is the
 `drift` warning, naming how many concept files the tree holds against what the index says.
 
+### Check a bundle from another tool
+
+Read `okf_version` in the root `index.md`. Loom exports v0.2. To check format
+conformance, follow the rules for the declared version, such as the
+[OKF v0.3 specification](https://github.com/open-knowledge-format/open-knowledge-format/blob/527e81aff55992be21507e97004286789126f88c/SPEC.md).
+
+`loom okf-lint` checks for a version declaration and the fields Loom needs. A
+Markdown concept can conform to its format and still raise `required_keys` if it
+lacks `loom.memory_key` or `loom.memory_type`. Map the concepts you intend to
+import to stable keys and memory types, then [preview the import in an empty test namespace](#test-agent-memory-portability).
+
 ## Import
 
 `loom import-okf DIR --namespace NS` lints first and refuses a bundle with critical

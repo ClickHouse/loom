@@ -61,6 +61,39 @@ egress to the destinations you approved.
    run those examples separately. Check the destinations observed at runtime for both
    Loom and the coding client.
 
+## Reuse SQL lessons across agent sessions
+
+Give the agent two connections. Use the [ClickHouse MCP server](https://github.com/ClickHouse/mcp-clickhouse)
+with a read-only ClickHouse user to inspect current tables and run queries. Use
+[Loom over MCP](../features/integrations/mcp-clients.md) to save and recall metric
+definitions and decisions. Grant database access and [memory namespace access](../guides/tokens-and-grants.md)
+separately. Share metric rules and schema references that every reader in the namespace
+may see. Keep query results and credentials out of shared lessons.
+
+In a disposable ClickHouse database, create a table and three test rows as an operator:
+
+```sql
+CREATE TABLE ingest_events (id UInt64, accepted UInt8)
+ENGINE = MergeTree ORDER BY id;
+INSERT INTO ingest_events VALUES (1, 1), (2, 0), (3, 1);
+```
+
+Set `CLICKHOUSE_DATABASE` on the read-only MCP connection to the test database.
+Limit that database user's `SELECT` grant to `ingest_events`.
+
+1. With the read-only client, use `run_query` to check `system.columns` for `ingest_events`
+   in the test database. Run `SELECT count() FROM ingest_events WHERE accepted = 1`
+   and expect `2`. Save the predicate and a reminder to recheck the schema under
+   `example/sql/accepted-events` using `loom_memory_set` in a test namespace.
+2. As the operator, run `ALTER TABLE ingest_events RENAME COLUMN accepted TO is_accepted`.
+   Start a fresh session with a separate Loom token that can read the same namespace.
+   Call `loom_memory_get` with that test `namespace` and `memory_key="example/sql/accepted-events"`.
+   Check that it returns the writer and the saved predicate containing `accepted`.
+3. Repeat the metadata lookup and verify `is_accepted` before applying the lesson.
+   Run `SELECT count() FROM ingest_events WHERE is_accepted = 1` and expect `2`.
+4. Repeat the same lookup arguments with a token that lacks access to the test namespace.
+   Require an access refusal with no saved value. Remove the disposable table and lesson when done.
+
 ## Query agent memory with SQL
 
 Use the [read-only ClickHouse views](../reference/sql-surface.md) to audit saved facts,

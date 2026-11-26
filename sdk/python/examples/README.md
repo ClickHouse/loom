@@ -120,7 +120,8 @@ Output contains operation names, available request IDs and categorical outcomes.
 prints no source bodies, review claims, credentials or server error bodies. It disables
 automatic run recording, optional startup briefs, write coalescing, retries and
 rate-limit pacing; failed or ambiguous operations are not silently retried. Actual request IDs and
-outcomes come from the deployment; no captured live output is supplied here.
+outcomes come from the deployment. See [example handoff output](../../../docs/use-cases/multi-agent.md#check-the-handoff-output)
+for the source recheck and cleanup results from a run with development providers.
 A lost create response can leave a task or run whose ID the client did not receive;
 its operator must reconcile that history rather than repeat the call automatically.
 Cleanup reads and cancellation are separate operations. Do not let other workers

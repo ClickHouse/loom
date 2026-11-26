@@ -76,7 +76,7 @@ async def current_links(org: str, links: list[LinkRow]) -> list[LinkRow]:
     by_mid: dict[str, list[LinkRow]] = defaultdict(list)
     for a in links:
         by_mid[a["memory_id"]].append(a)
-    heads = await store.memory_heads(org, list(by_mid))
+    heads = await store.heads_by_identity(org, [store.linked_memory(a) for a in links])
     return [a for h in heads for a in current(org, h, by_mid.get(str(h["mid"]), []))]
 
 
