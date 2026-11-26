@@ -189,6 +189,31 @@ async def test_verdict_abstains_when_guidance_drops_the_last_hit(
     assert unavailable.retrieval_confidence == 0.0 and unavailable.retrieval_risk == "abstain"
 
 
+async def test_verdict_keeps_belief_support_for_a_retained_hit(search_env, monkeypatch) -> None:
+    from server.memory.app.search import evidence_support, guidance
+
+    retained = _svc_hit("retained", sim=0.75)
+    removed = replace(_svc_hit("removed", sim=0.95), identity=("a", "-", "-"), version=42)
+
+    async def heads(keys):
+        return {keys[0]: {"version": 42, "tombstoned_at": "now"}}
+
+    async def support(sql, params):
+        return [{"n": int("retained" in params["keys"])}]
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    monkeypatch.setattr(evidence_support, "get_client", lambda: SimpleNamespace(query_all=support))
+    search_env.hits = [retained]
+    baseline = await _run(search_env)
+    search_env.hits = [removed, retained]
+    result = await _run(search_env)
+
+    assert [row.memory_key for row in result.results] == ["retained"]
+    assert result.retrieval_confidence == baseline.retrieval_confidence
+    assert "evidence_support=1" in baseline.calibration_explanation
+    assert result.calibration_explanation == baseline.calibration_explanation
+
+
 async def test_weak_top_hit_makes_no_hyde_call(search_env) -> None:
     # A weak top hit on the default path makes no HyDE call: the read path
     # stays LLM-free.

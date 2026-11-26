@@ -69,7 +69,7 @@ from server.memory.app.search.telemetry import (
     _start_actual_work,
 )
 from server.memory.app.search.vector_legs import _run_vector_legs
-from server.memory.app.search.verdict import _calibrate_final_hits
+from server.memory.app.search.verdict import _calibrate_final_hits, _verdict_after_guidance
 
 
 async def _run_retrieval_stages(
@@ -353,17 +353,9 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             ctx, final_hits
         )
         if guidance_dropped:
-            retained = {id(hit) for hit in final_hits}
-            ctx.actual_work.pop("below_threshold_hits", None)
-            # Preserve the verdict's original rank order and exclude late tier rows.
-            # The pooled support count can include evidence for removed rows.
-            calibration, abstain_verdict = _calibrate_final_hits(
-                ctx, run, [hit for hit in verdict_hits if id(hit) in retained], 0
+            calibration, abstain_verdict = await _verdict_after_guidance(
+                ctx, run, verdict_hits, final_hits, evidence_support_count
             )
-            governed_count = sum(1 for hit in final_hits if hit.governed)
-            ctx.actual_work["term_leg_served"] = governed_count
-            if governed_count:
-                abstain_verdict = (False, "", "")
         _output = _build_search_output(
             ctx,
             run,
