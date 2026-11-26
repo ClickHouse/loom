@@ -15,6 +15,9 @@ the SDKs on the repositories a self-hosted Loom indexes (the
 [code index](code-intelligence.md), `LOOM_CODE_INGEST_ENABLED=true`), and the
 `memory_code_links` worker that keeps the links is on by default.
 
+To see the change in a read response, [save a lesson, edit its source and check the
+reported commit](#check-a-lesson-after-a-code-edit).
+
 ## What you get
 
 - **Lessons attached to the code they are about.** A memory tagged `repo:<id>` (the Claude

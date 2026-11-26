@@ -53,6 +53,10 @@ to test semantic search, lookup by memory ID, and expired credentials as separat
   A code change is surfaced after indexing. The reviewer still validates the current
   behavior before using the lesson.
 
+To try the Loom workflow yourself, [pass a decision between coding clients](../getting-started/connect-a-coding-agent.md#verify-shared-memory-between-claude-code-and-codex),
+[check what happens after its code changes](../use-cases/memory-linked-to-code.md#check-a-lesson-after-a-code-edit),
+or [read a correction's version history in SQL](../use-cases/self-hosted-clickhouse.md#audit-a-changed-decision-with-sql).
+
 If the team is deciding between options, run a small pilot on a repository it maintains.
 Keep the same tasks, starting revisions, and acceptance tests. Count model use, indexing,
 maintenance, and human review time before assigning a budget. See the
