@@ -93,8 +93,7 @@ def test_one_entrys_failed_setup_leaves_the_other_entries_their_commits(
     from server.workers import pass_context
 
     clock = _Clock()
-    now = int(clock.time())
-    _wire_streams(monkeypatch, clock, {"a1": now - 50, "b1": now - 45, "b2": now - 40})
+    _wire_streams(monkeypatch, clock)
     _concurrent_ingest(monkeypatch)
     monkeypatch.setattr(settings, "code_ingest_lanes", lanes)
     real_prepare = ingest_stream.CommitStream._prepare

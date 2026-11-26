@@ -158,11 +158,8 @@ def test_the_pass_stops_between_commits_and_the_next_pass_continues_from_the_wat
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = _Clock()
-    now = int(clock.time())
     commits = ["c1", "c2", "c3", "c4"]
-    ingested = _wire_streams(
-        monkeypatch, clock, {c: now - 100 + i for i, c in enumerate(commits)}, cost=100.0
-    )
+    ingested = _wire_streams(monkeypatch, clock, cost=100.0)
     plan, repo = _plan("code-a", commits)
     result = ingest_budget.CodeIngestResult()
     budget = ingest_budget.PassBudget(started=clock.now, stop_after=clock.now + 250.0)
