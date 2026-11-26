@@ -104,7 +104,9 @@ def _guard_state(deadline: float, failure: ErrorCode | None, *, active: bool = T
         raise MCPSourceError("timeout")
 
 
-def _check_response(method: str, response: httpx.Response, *, has_session: bool) -> None:
+def _check_response(
+    method: str, response: httpx.Response, *, has_session: bool, expects_post_reply: bool
+) -> None:
     status = response.status_code
     if status == 401:
         raise MCPSourceError("reconnect")
@@ -122,7 +124,9 @@ def _check_response(method: str, response: httpx.Response, *, has_session: bool)
         if status not in {200, 204}:
             raise MCPSourceError("protocol")
         return
-    if method == "POST" and status == 202:
+    if method == "POST" and not expects_post_reply:
+        if status != 202:
+            raise MCPSourceError("protocol")
         return
     if status != 200:
         raise MCPSourceError("protocol")
@@ -662,7 +666,9 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         validate_access: Callable[[], Awaitable[None]],
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        guard_tool_dispatch: Callable[[], None] | None = None,
     ) -> None:
+        self.guard_tool_dispatch = guard_tool_dispatch
         self.endpoint = _endpoint_url(config.endpoint)
         self.credential, self.deadline, self.limits = credential, deadline, config.limits
         self.validate_access = validate_access
@@ -699,6 +705,40 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
             return await self._handle(request)
         except Exception as error:  # noqa: BLE001 — HTTP exceptions may contain upstream credentials
             raise MCPSourceError(self.record_failure(error)) from None
+
+    def _expects_post_reply(self, method: str, body: bytes) -> bool:
+        if method != "POST":
+            return False
+        message = types.JSONRPCMessage.model_validate_json(body).root
+        if not isinstance(message, types.JSONRPCRequest):
+            return False
+        if message.method == "tools/call" and self.guard_tool_dispatch is not None:
+            self.guard_tool_dispatch()
+        return True
+
+    async def _validate_response(
+        self, request: httpx.Request, response: httpx.Response, *, expects_post_reply: bool
+    ) -> httpx.Response:
+        _check_response(
+            request.method,
+            response,
+            has_session="mcp-session-id" in request.headers,
+            expects_post_reply=expects_post_reply,
+        )
+        if request.method == "DELETE":
+            return httpx.Response(response.status_code, content=b"")
+        # Reject compression so the wire budget bounds decoded protocol bytes.
+        if response.headers.get("content-encoding", "identity") != "identity":
+            raise MCPSourceError("protocol")
+        if not isinstance(response.stream, httpx.AsyncByteStream):
+            raise MCPSourceError("protocol")
+        response.stream = _LimitedStream(response.stream, self)
+        if request.method == "POST" and not expects_post_reply:
+            async for chunk in response.stream:
+                if chunk:
+                    raise MCPSourceError("protocol")
+            return httpx.Response(response.status_code, headers=response.headers, content=b"")
+        return response
 
     async def _handle(self, request: httpx.Request) -> httpx.Response:
         response: httpx.Response | None = None
@@ -764,19 +804,14 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                     },
                 )
                 await self._authorize()
+                expects_post_reply = self._expects_post_reply(request.method, body)
                 response = await self.inner.handle_async_request(outgoing)
                 self._check_state()
-                _check_response(request.method, response, has_session="mcp-session-id" in headers)
-                if request.method == "DELETE":
-                    return httpx.Response(response.status_code, content=b"")
-                # Reject compression so the wire budget bounds decoded protocol bytes.
-                if response.headers.get("content-encoding", "identity") != "identity":
-                    raise MCPSourceError("protocol")
-                if not isinstance(response.stream, httpx.AsyncByteStream):
-                    raise MCPSourceError("protocol")
-                response.stream = _LimitedStream(response.stream, self)
-                handed_off = True
-                return response
+                validated = await self._validate_response(
+                    outgoing, response, expects_post_reply=expects_post_reply
+                )
+                handed_off = validated is response
+                return validated
         except Exception as error:  # noqa: BLE001 — poison the session before awaiting private failure cleanup
             raise MCPSourceError(self.record_failure(error)) from None
         finally:
@@ -853,6 +888,8 @@ class MCPSourceClient:
         self._discovery: MCPDiscovery | None = None
         self._tool_epoch = 0
         self._discovered_epoch = -1
+        self._tool_dispatch_epoch: int | None = None
+        self._tool_dispatch_lock = asyncio.Lock()
         self._pages, self._results = 0, 0
         self._issued_cursors: set[tuple[tuple[str, str], str]] = set()
         self._used_cursors: set[tuple[tuple[str, str], str]] = set()
@@ -1005,6 +1042,7 @@ class MCPSourceClient:
             self._deadline,
             self._transport_authorize,
             transport=self._test_transport,
+            guard_tool_dispatch=self._check_tool_dispatch,
         )
         self._transport = transport
         client = await stack.enter_async_context(
@@ -1076,9 +1114,11 @@ class MCPSourceClient:
         ):
             self._tool_epoch += 1
 
-    async def _run(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
+    async def _run(
+        self, action: Callable[[ClientSession], Awaitable[_T]], *, pins_tools: bool = False
+    ) -> _T:
         with private_work():
-            return await self._execute(action)
+            return await self._execute(action, pins_tools=pins_tools)
 
     async def _request(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
         # The SDK RPC can keep waiting after its HTTP task has refused the request.
@@ -1095,12 +1135,15 @@ class MCPSourceClient:
                 request.cancel()
             await asyncio.gather(request, return_exceptions=True)
 
-    async def _execute(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
+    async def _execute(
+        self, action: Callable[[ClientSession], Awaitable[_T]], *, pins_tools: bool
+    ) -> _T:
         try:
             self._check_state(require_session=True)
             async with asyncio.timeout_at(self._deadline):
                 await self._authorize()
                 self._check_state(require_session=True)
+                epoch = self._tool_epoch
                 try:
                     result = await self._request(action)
                 except Exception:  # Check authority before reporting an upstream error.
@@ -1108,6 +1151,8 @@ class MCPSourceClient:
                     raise
                 await self._authorize()
                 self._check_state(require_session=True)
+                if pins_tools and epoch != self._tool_epoch:
+                    raise MCPSourceError("schema")
                 return result
         except (
             Exception,  # Terminal refusals must drain owned HTTP work before returning.
@@ -1133,7 +1178,7 @@ class MCPSourceClient:
             raise MCPSourceError(code) from None
 
     async def discover(self) -> MCPDiscovery:
-        return await self._run(self._discover)
+        return await self._run(self._discover, pins_tools=bool(self._config.approved_tools))
 
     async def _discover(self, session: ClientSession) -> MCPDiscovery:
         approved = set(self._config.approved_tools)
@@ -1245,6 +1290,10 @@ class MCPSourceClient:
 
         return await self._run(action)
 
+    def _check_tool_dispatch(self) -> None:
+        if self._tool_dispatch_epoch != self._tool_epoch:
+            raise MCPSourceError("schema")
+
     async def _tool(
         self, session: ClientSession, mapping: MCPToolMapping, value: str, cursor: str | None = None
     ) -> Any:
@@ -1263,16 +1312,26 @@ class MCPSourceClient:
                 raise MCPSourceError("unsupported")
             arguments[mapping.cursor_argument] = cursor
         _validate(mapping.input_schema, arguments, 32_768, self._config.data_policy)
-        # Public SDK RPC path lets independent data bounds precede schema validation.
-        result = await session.send_request(
-            types.ClientRequest(
-                types.CallToolRequest(
-                    params=types.CallToolRequestParams(name=mapping.name, arguments=arguments)
+        epoch = self._discovered_epoch
+        async with self._tool_dispatch_lock:
+            self._check_state(require_session=True)
+            self._tool_dispatch_epoch = epoch
+            try:
+                self._check_tool_dispatch()
+                # Public SDK RPC path lets independent data bounds precede schema validation.
+                result = await session.send_request(
+                    types.ClientRequest(
+                        types.CallToolRequest(
+                            params=types.CallToolRequestParams(
+                                name=mapping.name, arguments=arguments
+                            )
+                        )
+                    ),
+                    types.CallToolResult,
                 )
-            ),
-            types.CallToolResult,
-        )
-        if self._tool_epoch != self._discovered_epoch:
+            finally:
+                self._tool_dispatch_epoch = None
+        if self._tool_epoch != epoch:
             raise MCPSourceError("schema")
         return _tool_value(result, mapping, self._config.limits, self._config.data_policy)
 
@@ -1312,7 +1371,7 @@ class MCPSourceClient:
                 ("search", query),
             )
 
-        return await self._run(action)
+        return await self._run(action, pins_tools=True)
 
     async def _read_tool(self, session: ClientSession, identity: str) -> MCPEvidence:
         mapping = self._config.read
@@ -1358,4 +1417,4 @@ class MCPSourceClient:
                 "resources/read",
             )
 
-        return await self._run(action)
+        return await self._run(action, pins_tools=self._config.read is not None)

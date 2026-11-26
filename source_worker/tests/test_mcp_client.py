@@ -769,3 +769,83 @@ async def test_failed_session_delete_rechecks_authority_after_close(pin: list[st
         for request, method in source.calls
         if method in {"resources/read", "DELETE"}
     ] == [("resources/read", "synthetic-session"), ("DELETE", "synthetic-session")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["dispatch", "publication"])
+async def test_catalog_invalidation_refuses_mapped_read(
+    pin: list[str], monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    source, mapping = _mapped_source()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    dispatch_task: asyncio.Task[Any] | None = None
+    operation: asyncio.Task[Any] | None = None
+    original_aread = httpx.Request.aread
+
+    async def mark_tool_request(request: httpx.Request) -> bytes:
+        data = await original_aread(request)
+        if request.method == "POST" and json.loads(data)["method"] == "tools/call":
+            nonlocal dispatch_task
+            dispatch_task = asyncio.current_task()
+        return data
+
+    async def validate_access() -> None:
+        current = asyncio.current_task()
+        dispatched = any(method == "tools/call" for _, method in source.calls)
+        if (stage == "dispatch" and current is dispatch_task and not dispatched) or (
+            stage == "publication" and current is operation and dispatched and not entered.is_set()
+        ):
+            entered.set()
+            await release.wait()
+
+    monkeypatch.setattr(httpx.Request, "aread", mark_tool_request)
+    config = MCPSourceConfig(
+        _ENDPOINT, approved_tools=("read",), read=mapping, approved_resource_ids=(_DOCUMENT,)
+    )
+    async with MCPSourceClient(
+        config, None, validate_access=validate_access, _transport=source
+    ) as client:
+        operation = asyncio.create_task(client.read(_DOCUMENT))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await client._message_handler(
+                mcp_client.types.ServerNotification(mcp_client.types.ToolListChangedNotification())
+            )
+        finally:
+            release.set()
+        with pytest.raises(MCPSourceError, match="^MCP source schema$"):
+            await operation
+    assert sum(method == "tools/call" for _, method in source.calls) == (stage == "publication")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "status", "payload"),
+    [
+        ("notifications/initialized", 200, b"{}"),
+        ("notifications/initialized", 202, b"{}"),
+        ("resources/read", 202, b""),
+    ],
+)
+async def test_refuses_invalid_post_response(
+    pin: list[str], method: str, status: int, payload: bytes
+) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status, stream=_Body(payload), headers={"content-type": "application/json"}
+        )
+
+    message: dict[str, str | int] = {"jsonrpc": "2.0", "method": method}
+    if method == "resources/read":
+        message["id"] = 1
+    transport = mcp_client._PinnedTransport(
+        MCPSourceConfig(_ENDPOINT),
+        None,
+        asyncio.get_running_loop().time() + 1,
+        _authorized,
+        transport=httpx.MockTransport(respond),
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(MCPSourceError, match="^MCP source protocol$"):
+            await client.post(_ENDPOINT, json=message)
