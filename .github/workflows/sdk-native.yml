@@ -58,7 +58,7 @@ jobs:
       - name: Report Go SDK changed-line coverage
         if: steps.go-coverage.outcome == 'success'
         continue-on-error: true
-        uses: $/.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Go SDK
           working-directory: sdk/go
@@ -159,7 +159,7 @@ jobs:
       - name: Report Java SDK changed-line coverage
         if: steps.java-coverage.outcome == 'success'
         continue-on-error: true
-        uses: $/.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Java SDK
           source-root: sdk/java/src/main/java
@@ -250,7 +250,7 @@ jobs:
       - name: Report .NET SDK changed-line coverage
         if: steps.dotnet-coverage.outcome == 'success'
         continue-on-error: true
-        uses: $/.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: .NET SDK
           working-directory: sdk/dotnet
@@ -316,7 +316,7 @@ jobs:
       - name: Report Ruby SDK changed-line coverage
         if: github.event_name == 'pull_request'
         continue-on-error: true
-        uses: $/.github/actions/patch-coverage
+        uses: ClickHouse/loom/.github/actions/patch-coverage@df405e9ed5d032b8248f6cfa8cf87e856685e490
         with:
           component: Ruby SDK
           working-directory: sdk/ruby
