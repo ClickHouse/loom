@@ -41,7 +41,7 @@ for port in "$LOOM_CH_HOST_PORT" "$LOOM_CH_NATIVE_HOST_PORT" "$api_port"; do
   fi
 done
 
-export LOOM_ENV_FILE= LOOM_CH_CONTAINER="$container" LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:26.11.2.4
+export LOOM_ENV_FILE='' LOOM_CH_CONTAINER="$container" LOOM_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:26.11.2.4
 export LOOM_CH_HOST=127.0.0.1 LOOM_CH_PORT="$LOOM_CH_HOST_PORT" LOOM_CH_DATABASE=loom LOOM_CH_SECURE=false
 export LOOM_CH_USER=loom LOOM_CH_READER_USER=loom_reader LOOM_CH_PASSWORD=loomdev LOOM_STORAGE_AUTHORITY=clickhouse
 export LOOM_BASE_URL="http://127.0.0.1:$api_port" LOOM_INSTANCE_LABEL="iso:coding-agent-comparison:${scratch##*.}"
@@ -51,7 +51,9 @@ export LOOM_BACKGROUND_WORKERS=off LOOM_ADOPTION_TELEMETRY_ENABLED=false LOOM_ME
 LOOM_JWT_SECRET=$(python -c 'import secrets; print(secrets.token_hex(32))')
 export LOOM_JWT_SECRET
 
-npm install --prefix "$scratch/deps" --ignore-scripts --no-audit --no-fund @modelcontextprotocol/server-memory@2.2.1 >&2
+mkdir "$scratch/deps"
+cp examples/coding-agent-memory-comparison/{package.json,package-lock.json} "$scratch/deps/"
+npm ci --prefix "$scratch/deps" --ignore-scripts --no-audit --no-fund >&2
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost"
 export no_proxy="${no_proxy:+$no_proxy,}127.0.0.1,localhost"
 started_db=1
