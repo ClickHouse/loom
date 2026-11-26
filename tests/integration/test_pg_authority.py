@@ -529,7 +529,7 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
         parameters={"o": org, "ns": namespaces},
     ).result_rows[0][0]
     assert rows == 20
-    ch_client.command("SYSTEM FLUSH LOGS")
+    ch_client.command("SYSTEM FLUSH LOGS query_log")
     # The flushes' own inserts, by their query tag: one each, not one per write.
     flushes = ch_client.query(
         "SELECT count() FROM system.query_log WHERE type = 'QueryFinish' "
