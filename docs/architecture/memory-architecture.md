@@ -1543,7 +1543,7 @@ cached answers, so code.ask reads both again after storing an answer and, findin
 either, tombstones it and deletes the answers quoting its keys; an answer that quoted no
 memory is only checked against the erasure ledger, and is deleted by its own key. A
 process killed between the two leaves the answer unchecked. A tombstone of an entry
-keeps no answer text, so one written after such a delete brings nothing back. Answers
+keeps no answer text, only the question, which a namespace erasure's census counts until its delete runs again. Answers
 drawn from the code index alone name no memory: a redact or a user erasure leaves them,
 and a namespace erasure deletes them with the code namespace they were asked in; its
 census counts every version that holds an answer, citations or a question.
