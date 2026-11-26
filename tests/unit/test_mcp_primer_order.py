@@ -117,10 +117,10 @@ def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) 
     assert "For prior decisions or procedures beyond linked code lessons" in bound
     assert "For prior decisions or procedures beyond linked code lessons" in standard
     reuse = "For a repeat source lookup, set `include_lessons: false`"
-    assert reuse in bound and reuse in standard
     activation = asyncio.run(mcp_primer._loom_primer_text(object(), toolset="coding"))
     assert "For prior decisions or procedures beyond linked code lessons" in activation
-    assert reuse in activation
+    for primer in (bound, standard, activation):
+        assert primer.index(reuse) < primer.index("with the task as `query`. Skip it when")
     assert "first with the task" not in activation
     assert reuse not in mcp_primer._coding_instructions("coding", compact=True)
     monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: None)
