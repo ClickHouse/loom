@@ -174,6 +174,7 @@ async def ingest_file(
     are re-derived and key-diffed. A file whose parse degrades in this mode writes
     nothing: a parser fault must not retire edges the last full ingest derived."""
     stats = FileIngestStats(path=path, edges_only=edges_only)
+    rules = denylist if denylist is not None else default_denylist()
     refused, declared_only = await _refused(
         repo,
         org,
@@ -182,7 +183,7 @@ async def ingest_file(
         source=source,
         commit_sha=commit_sha,
         embedding_model=embedding_model,
-        denylist=denylist,
+        rules=rules,
         stats=stats,
     )
     if refused:
@@ -208,7 +209,6 @@ async def ingest_file(
     # blocks would read their live rows to write nothing, so they are skipped outright.
     is_reference = pf.lang == REFERENCE_LANG
     # An embed-excluded path keeps every stage but its chunks get no description or vector.
-    rules = denylist if denylist is not None else default_denylist()
     embed_excluded = not is_reference and rules.embed_excluded(path)
     # A SQL test has statement symbols and statement → object edges, but no call guards
     # to derive.
@@ -332,7 +332,7 @@ async def _refused(
     source: bytes,
     commit_sha: str,
     embedding_model: str,
-    denylist: Denylist | None,
+    rules: Denylist,
     stats: FileIngestStats,
 ) -> tuple[bool, bool]:
     """(refused, declared_only) before the parse: the denylist's refusal tombstones the
@@ -342,7 +342,6 @@ async def _refused(
     from server.settings import settings as _settings
 
     # Denylist first: an excluded path indexes nothing, its existing rows tombstoned
-    rules = denylist if denylist is not None else default_denylist()
     reason = rules.refusal(path, source)  # path layers, binary, generated
     declared_only = _declared_not_searched(reason, stats)
     if reason and not declared_only:
@@ -509,7 +508,7 @@ async def _chunk_stage(
     callers_namespace: str,
     callee_stoplist: frozenset[str],
     is_reference: bool,
-    embed_excluded: bool = False,
+    embed_excluded: bool,
 ) -> bool:
     """The chunk stage of `ingest_file`: a content-addressed reconcile of the file's
     chunks against its live rows, the new ones described and embedded (neither for a
@@ -605,16 +604,11 @@ async def _chunk_stage(
             context_texts=context_texts,
         )
 
+    marker = UNEMBEDDED_BY_DESIGN if is_reference else UNEMBEDDED_EMBED_EXCLUDE
     chunk_rows = []
     for i, c in enumerate(to_insert):
         vec = embed_res.vectors.get(i, [])
-        err = (
-            UNEMBEDDED_BY_DESIGN
-            if is_reference
-            else UNEMBEDDED_EMBED_EXCLUDE
-            if embed_excluded
-            else embed_res.failures.get(i, "")
-        )
+        err = marker if unembedded else embed_res.failures.get(i, "")
         chunk_rows.append(
             build_row(
                 "code_chunks",
