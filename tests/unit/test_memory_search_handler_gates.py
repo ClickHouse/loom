@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -157,6 +158,35 @@ async def test_fast_budget_spends_no_llm_call(search_env) -> None:
     out = await _run(search_env, retrieval_budget="fast", top_k=1)
     assert search_env.judge_calls == []
     assert out.retrieval_work["llm_calls_total"] == 0
+
+
+@pytest.mark.parametrize(
+    "unavailable_head", [{"tombstoned_at": "now"}, {"expires_at": "2000-01-01"}]
+)
+async def test_verdict_abstains_when_guidance_drops_the_last_hit(
+    search_env, monkeypatch: pytest.MonkeyPatch, unavailable_head: dict[str, str]
+) -> None:
+    from server.memory.app.search import guidance
+
+    hit = replace(_svc_hit("blue", sim=0.95), identity=("a", "-", "-"), version=42)
+    search_env.hits = [hit]
+    head: dict[str, Any] = {"version": hit.version, "status": "active"}
+
+    async def heads(keys):
+        assert keys == [("o", "ns", "a", "-", "-", "blue")]
+        return {keys[0]: head}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    monkeypatch.setattr(guidance, "naive_utc_now", lambda: datetime(2000, 1, 2))
+    live = await _run(search_env)
+    assert [row.memory_key for row in live.results] == ["blue"]
+    assert not live.abstain and live.retrieval_confidence > 0
+
+    head.update(unavailable_head)
+    unavailable = await _run(search_env)
+    assert unavailable.results == []
+    assert unavailable.abstain and unavailable.abstain_code == "no_match"
+    assert unavailable.retrieval_confidence == 0.0 and unavailable.retrieval_risk == "abstain"
 
 
 async def test_weak_top_hit_makes_no_hyde_call(search_env) -> None:

@@ -77,7 +77,7 @@ class _StubCH:
         self.fail_inserts_into = fail_inserts_into
         self.insert_calls: list[tuple[str, list[dict[str, Any]], dict[str, Any]]] = []
         self.execute_calls: list[tuple[str, dict[str, Any]]] = []
-        self.query_all_sqls: list[str] = []
+        self.query_all_calls: list[tuple[str, dict[str, Any]]] = []
 
     async def query_one(
         self, sql: str, params: dict[str, Any] | None = None
@@ -87,7 +87,7 @@ class _StubCH:
     async def query_all(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        self.query_all_sqls.append(sql)
+        self.query_all_calls.append((sql, params or {}))
         if (
             "FROM loom.memory FINAL" in sql
             and "PREWHERE (org, namespace, agent, user_id, session_id, memory_key)" in sql
@@ -232,7 +232,7 @@ async def test_restore_mirrors_every_embedding_column(
     assert row["source_class"] == "extracted"
     assert row["valid_to"] == _NOW
     assert row["verified"] == 0
-    emb_sql = next(s for s in ch.query_all_sqls if "loom.memory_embeddings" in s)
+    emb_sql = next(sql for sql, _ in ch.query_all_calls if "loom.memory_embeddings" in sql)
     assert "argMaxIf(memory_key_embedding" in emb_sql
     assert "argMax(content_excerpt, version)" in emb_sql
 
@@ -301,7 +301,8 @@ async def test_touch_mirrors_expiry_onto_embeddings(
     live embedding rows — every persisted column and both vectors carried,
     `expires_at` set, a fresh version — never a lightweight UPDATE (its patch
     part would switch the fact leg's codes-first read off)."""
-    ch = _StubCH(query_all_routes=[("FROM loom.memory_embeddings", [dict(_EMB_TABLE_ROW)])])
+    identity = {"user_id": "user-1", "session_id": "session-1"}
+    ch = _StubCH(query_all_routes=[("FROM loom.memory_embeddings", [_EMB_TABLE_ROW | identity])])
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
     monkeypatch.setattr(_restore_mod, "get_client", lambda: ch)
@@ -309,7 +310,7 @@ async def test_touch_mirrors_expiry_onto_embeddings(
     monkeypatch.setattr("server.memory.app.update.get_client", mem_handlers.get_client)
 
     async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
-        return _mk_row()
+        return _mk_row(**identity)
 
     monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
 
@@ -320,6 +321,7 @@ async def test_touch_mirrors_expiry_onto_embeddings(
             agent="cursor",
             memory_key="user_dog_name",
             ttl_seconds=7200,
+            **identity,
         )
     )
     assert out.touched is True
@@ -335,9 +337,24 @@ async def test_touch_mirrors_expiry_onto_embeddings(
     assert row["memory_key_embedding"] == _EMB_TABLE_ROW["memory_key_embedding"]
     assert row["content_excerpt"] == _EMB_TABLE_ROW["content_excerpt"]
     assert row["version"] > 0
-    # the read is one keyed FINAL statement over the full identity
-    read_sql = next(s for s in ch.query_all_sqls if "loom.memory_embeddings" in s)
-    assert "FINAL" in read_sql and "memory_key = {k:String}" in read_sql
+    ((read_sql, params),) = [
+        (sql, params) for sql, params in ch.query_all_calls if "FROM loom.memory_embeddings" in sql
+    ]
+    assert "FROM loom.memory_embeddings FINAL" in read_sql
+    assert (
+        "PREWHERE (org, namespace, agent, user_id, session_id, memory_key) IN arrayZip( "
+        "{o:Array(String)}, {n:Array(String)}, {a:Array(String)}, "
+        "{u:Array(String)}, {s:Array(String)}, {k:Array(String)})"
+    ) in " ".join(read_sql.split())
+    assert "WHERE tombstoned_at IS NULL" in read_sql
+    assert params == {
+        "o": ["test"],
+        "n": ["personal"],
+        "a": ["cursor"],
+        "u": ["user-1"],
+        "s": ["session-1"],
+        "k": ["user_dog_name"],
+    }
 
 
 @pytest.mark.asyncio
