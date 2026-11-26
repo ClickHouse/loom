@@ -146,3 +146,66 @@ def test_direct_live_call_still_refuses_a_narrow_protected_context(monkeypatch) 
     monkeypatch.setattr(protected, "current_auth", lambda: narrow)
     with pytest.raises(WorkerReadRefused, match="^denied$"):
         protected._require_context("test-org", narrow)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["large", "escaped", "array"])
+async def test_live_mcp_refuses_an_unbounded_response_id(monkeypatch, form) -> None:
+    from server.knowledge.api.ops_worker_source import knowledge_source_live
+    from server.transport import mcp_call
+    from server.transport.mcp_config import INVALID_REQUEST
+
+    monkeypatch.setattr(
+        mcp_call, "_resolve_connection_tool", AsyncMock(return_value=knowledge_source_live)
+    )
+    admission = AsyncMock(return_value={"admitted": False})
+    monkeypatch.setattr(mcp_call, "_session_content_refusal", admission)
+    request_id = {
+        "large": lambda: "x" * (20 * 1024 * 1024),
+        "escaped": lambda: "\x01" * 1024,
+        "array": lambda: [1],
+    }[form]()
+    response = await mcp_call._call_tool(request_id, {"name": "loom_knowledge_source_live"})
+    assert response.get("id", "missing") is None
+    assert response["error"]["code"] == INVALID_REQUEST
+    admission.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_live_refuses_unbounded_ignored_argument_names_in_both_transports(
+    monkeypatch,
+) -> None:
+    from fastapi import HTTPException
+
+    from server.knowledge.api.ops_worker_source import knowledge_source_live
+    from server.transport import http, mcp_call
+
+    arguments = {"extra-" + "x" * 8192: True}
+    monkeypatch.setattr(http, "_emit_event", Mock())
+    monkeypatch.setattr(mcp_call, "_emit_refused", Mock())
+    request = Mock(json=AsyncMock(return_value=arguments))
+    with pytest.raises(HTTPException) as refused:
+        await http._read_body(knowledge_source_live, request, "r", None)
+    assert refused.value.status_code == 422
+    assert len(str(refused.value.detail)) < 512
+    response = mcp_call._validated_input(1, knowledge_source_live, arguments, "r")
+    assert len(str(response)) < 512
+    assert response["result"]["isError"]
+    assert "argument names" in str(response)
+
+
+@pytest.mark.asyncio
+async def test_live_mcp_accepts_a_bounded_string_id(monkeypatch) -> None:
+    from server.knowledge.api.ops_worker_source import knowledge_source_live
+    from server.transport import mcp_call
+
+    monkeypatch.setattr(
+        mcp_call, "_resolve_connection_tool", AsyncMock(return_value=knowledge_source_live)
+    )
+    req_id = "x" * 4094
+    result = {"jsonrpc": "2.0", "id": req_id, "result": {}}
+    admission = AsyncMock(return_value=result)
+    monkeypatch.setattr(mcp_call, "_session_content_refusal", admission)
+    response = await mcp_call._call_tool(req_id, {"name": "loom_knowledge_source_live"})
+    assert response == result
+    admission.assert_awaited_once()

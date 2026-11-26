@@ -40,6 +40,7 @@ from server.core.errors import (
     unverified_class,
 )
 from server.core.naming import present
+from server.core.operation_privacy import KNOWLEDGE_SOURCE_LIVE
 from server.observability.consumer import (
     bind_current_consumer,
     explicit_consumer,
@@ -75,7 +76,7 @@ from server.transport._common import (
     validation_note,
 )
 from server.transport.arg_check import header_value as arg_header_value
-from server.transport.arg_check import named_argument_error
+from server.transport.arg_check import live_argument_names_fit, named_argument_error
 from server.transport.arg_check import response_body as arg_response_body
 from server.transport.post_rows import post_handler_rows
 
@@ -270,6 +271,12 @@ async def _read_body(
     raw_body: dict[str, Any] = parsed
 
     set_current_consumer(explicit_consumer(raw_body))
+    if op.name == KNOWLEDGE_SOURCE_LIVE and not live_argument_names_fit(op.input_model, raw_body):
+        _emit_event(op, request_id, {}, 0, success=False, error_code="VALIDATION_FAILED")
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_FAILED", "message": "Ignored argument names are too large"},
+        )
     # A write's misspelled argument is refused by name, not dropped.
     refused = named_argument_error(op, raw_body)
     if refused is not None:

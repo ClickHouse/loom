@@ -21,6 +21,7 @@ served and reported — a client a release behind the server keeps working.
 from __future__ import annotations
 
 import difflib
+import json
 from functools import lru_cache
 from typing import Any
 from urllib.parse import quote
@@ -84,6 +85,21 @@ def unknown_args(model: type[BaseModel], args: Any) -> list[str]:
         return []
     skip = TRANSPORT_KEYS | IDENTITY_KEYS
     return sorted(k for k in args if isinstance(k, str) and k not in known and k not in skip)
+
+
+_LIVE_IGNORED_ARGUMENT_BYTES = 1024
+
+
+def live_argument_names_fit(model: type[BaseModel], args: dict[str, Any]) -> bool:
+    """Bound the unknown names echoed in live response bodies and headers."""
+    budget = _LIVE_IGNORED_ARGUMENT_BYTES
+    for name in unknown_args(model, args):
+        if len(name) > budget:
+            return False
+        budget -= len(json.dumps(name, ensure_ascii=True)) + 2
+        if budget < 0:
+            return False
+    return True
 
 
 # Synonyms models send for a field the op has (seen in session transcripts

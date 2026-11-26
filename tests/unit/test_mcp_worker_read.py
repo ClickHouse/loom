@@ -167,7 +167,7 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(WorkerReadRefused, "^denied$"):
             await tail[0]()
 
-    async def _encode_live(self, text: str):
+    async def _encode_live(self, text: str, *, request_id: int | str = 1, extra: str = ""):
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, patch
 
@@ -200,8 +200,10 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
             )
 
         arguments = request.model_dump()
+        if extra:
+            arguments[extra] = True
         call = SimpleNamespace(
-            req_id=1,
+            req_id=request_id,
             op=knowledge_source_live,
             input_obj=request,
             arguments=arguments,
@@ -237,10 +239,14 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
 
     async def test_live_preserves_content_fitting_both_encodings(self) -> None:
         text = "\x01" * 1_200_000
-        retain, http, mcp = await self._encode_live(text)
+        request_id = "x" * 4094
+        extra = "unknown-" + "y" * 1000
+        retain, http, mcp = await self._encode_live(text, request_id=request_id, extra=extra)
         retain.assert_awaited_once()
         self.assertLess(len(mcp), 16 * 1024 * 1024)
-        result = json.loads(mcp)["result"]
+        envelope = json.loads(mcp)
+        self.assertEqual(envelope["id"], request_id)
+        result = envelope["result"]
         for payload in (
             json.loads(http),
             result["structuredContent"],
@@ -248,6 +254,7 @@ class TestWorkerReadChannel(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertEqual(payload["status"], "ok")
             self.assertEqual(payload["document"]["text"], text)
+            self.assertEqual(payload["ignored_args"], [extra])
 
     async def test_unprotected_request_cannot_look_up_any_worker_or_source(self) -> None:
         def refuse(*args):

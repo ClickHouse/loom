@@ -79,7 +79,9 @@ A live request lives with its API request. It has a separate read deadline and
 admission limit from refresh work, a bounded delivery budget after the read,
 and no durable payload queue. Loom checks the size of the document before
 publication. It budgets 16 MiB for the document and its escaped MCP text copy.
-A document beyond that budget returns `unsupported` with no document. Denial,
+A document beyond that budget returns `unsupported` with no document. The
+transports also bound echoed unknown argument names and the MCP request ID before
+contacting a worker. Denial,
 reconnect, saturation, unavailable and timeout remain distinct outcomes. Team
 viewers without current source enrollment see the same denial for selected and
 unselected IDs. An authorized stored copy can be offered after timeout or worker

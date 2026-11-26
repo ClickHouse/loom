@@ -30,6 +30,7 @@ from server.core.errors import (
 )
 from server.core.errors import ValidationError as LoomValidationError
 from server.core.naming import named, present
+from server.core.operation_privacy import KNOWLEDGE_SOURCE_LIVE
 from server.identity.app.caller_home import home_namespace
 from server.observability import genai
 from server.observability.consumer import ASSISTANT_CONSUMER
@@ -57,6 +58,7 @@ from server.transport.lean_results import lean_result
 from server.transport.mcp_config import (
     _LOOM_ACTIVATE_TOOL_NAME,
     INVALID_PARAMS,
+    INVALID_REQUEST,
     _err,
     _ok,
 )
@@ -251,6 +253,20 @@ async def _capture_level(operation: str, identity: dict[str, Any]) -> str:
         return "off"
 
 
+_MAX_LIVE_REQUEST_ID_BYTES = 4096
+
+
+def _live_request_id_fits(req_id: Any) -> bool:
+    if isinstance(req_id, str):
+        return (
+            len(req_id) <= _MAX_LIVE_REQUEST_ID_BYTES
+            and len(json.dumps(req_id, ensure_ascii=True)) <= _MAX_LIVE_REQUEST_ID_BYTES
+        )
+    if type(req_id) is int:
+        return req_id.bit_length() <= 128
+    return req_id is None
+
+
 async def _call_tool(
     req_id: Any,
     params: dict[str, Any],
@@ -282,6 +298,8 @@ async def _call_tool(
     if isinstance(tool, dict):
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
+    if op.name == KNOWLEDGE_SOURCE_LIVE and not _live_request_id_fits(req_id):
+        return _err(None, INVALID_REQUEST, "Live read request ID is invalid or too large")
 
     if (refused := await _session_content_refusal(req_id, op, auth)) is not None:
         return refused
@@ -785,8 +803,14 @@ def _validated_input(
     """Phase 4 of `_call_tool`: the misspelled-argument refusal, then
     Pydantic validation. Returns the input model, or the refusal response
     (a dict) when the call ends here."""
-    from server.transport.arg_check import named_argument_error
+    from server.transport.arg_check import live_argument_names_fit, named_argument_error
 
+    if op.name == KNOWLEDGE_SOURCE_LIVE and not live_argument_names_fit(op.input_model, arguments):
+        _emit_refused(op.name, {}, error_code="VALIDATION_FAILED", request_id=request_id)
+        return _ok(
+            req_id,
+            tool_error("Ignored argument names are too large", {"code": "VALIDATION_FAILED"}),
+        )
     refused = named_argument_error(op, arguments)
     if refused is not None:
         _emit_refused(
