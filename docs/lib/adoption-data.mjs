@@ -166,6 +166,7 @@ export async function loadAdoption(env = process.env, now = new Date()) {
   };
 }
 
+const failedRefreshTtlMs = 15_000;
 let published;
 export function loadPublishedAdoption() {
   const now = Date.now();
@@ -173,11 +174,11 @@ export function loadPublishedAdoption() {
     const refresh = { expires: now + 5 * 60_000 };
     refresh.data = loadAdoption(process.env, new Date(now)).then(
       (data) => {
-        if (data.selfHosted.totals === undefined) refresh.expires = 0;
+        if (data.selfHosted.totals === undefined) refresh.expires = Date.now() + failedRefreshTtlMs;
         return data;
       },
       (error) => {
-        refresh.expires = 0;
+        refresh.expires = Date.now() + failedRefreshTtlMs;
         throw error;
       },
     );

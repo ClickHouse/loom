@@ -99,6 +99,8 @@ test("keeps Query API credentials off unrecognized endpoint URLs", async (t) => 
 });
 
 test("retries a timed-out warehouse and caches the next successful refresh", async (t) => {
+  let now = Date.UTC(2026, 10, 27);
+  t.mock.method(Date, "now", () => now);
   const originalEnv = process.env;
   t.after(() => {
     process.env = originalEnv;
@@ -130,8 +132,14 @@ test("retries a timed-out warehouse and caches the next successful refresh", asy
 
   const first = loadPublishedAdoption();
   assert.equal(loadPublishedAdoption(), first);
+  now += 30_000;
   assert.equal((await first).selfHosted.totals, undefined);
 
+  now += 14_999;
+  assert.equal(loadPublishedAdoption(), first);
+  assert.equal(warehouseTimeouts.length, 1);
+
+  now += 1;
   const retry = loadPublishedAdoption();
   assert.notEqual(retry, first);
   assert.deepEqual((await retry).selfHosted.totals, []);
