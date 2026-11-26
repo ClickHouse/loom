@@ -221,7 +221,8 @@ async def ingest_round_robin(
     phase is one commit per round whatever its backlog, so a branch with one
     new merge lands in the first round instead of waiting behind a sibling's
     thousand-commit backlog, pass after pass. At the budget every entry still
-    waiting is cut, the one the scheduler would have served next first; the
+    waiting is cut, the one the scheduler would have served next first (a
+    sliced commit counts as its entry's turn, like a landed one); the
     next pass's entry order starts there (`rotate_to` on the `commits` cut),
     so a round the budget ends early resumes at the entry it did not reach.
     `code_ingest_lanes` lanes pop the same order at once, each a different
@@ -269,7 +270,9 @@ async def ingest_round_robin(
         ):
             landed = await stream.step(clock=clock)
         if landed is None:
-            deferred.append((stream.landed, order, stream))  # sliced: continues next pass
+            # sliced: continues next pass. The slice was its turn, so it sorts
+            # after the entries this round has not reached.
+            deferred.append((stream.landed + 1, order, stream))
         elif landed and stream.remaining:
             heapq.heappush(heap, (stream.landed, order, stream))
 
