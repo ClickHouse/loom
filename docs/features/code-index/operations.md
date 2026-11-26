@@ -371,8 +371,8 @@ on the answer ([overview.md](overview.md#reading-an-answer)).
 On the Python parser tier, `edge_kinds: ["reads"]` can follow member access
 through a top-level function's typed parameter or an imported value with a
 declared type.
-The graph records those accesses separately from function calls and resolves
-them against parser definitions in repositories with both index tiers.
+The graph records those accesses separately from function calls. It prefers
+parser definitions for the same qualified name and can follow compiler-only definitions.
 
 **Example: impact of a diff.**
 

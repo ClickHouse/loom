@@ -41,8 +41,8 @@ class MemberRead:
     imported: tuple[str, str] | None = None
 
 
-def parser_candidate_names(sites: list[MemberRead]) -> set[str]:
-    """Look up member and imported binding names in the parser's symbol tier."""
+def read_candidate_names(sites: list[MemberRead]) -> set[str]:
+    """Names that need parser-preferred candidates for typed reads."""
     names = {site.member for site in sites}
     names.update(site.imported[1] for site in sites if site.imported)
     return names

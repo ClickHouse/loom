@@ -191,18 +191,20 @@ async def _edge_names(
     names = collect_call_names(pf, header)
     chains = await _reexport_chains(repo, org, ns, pf)
     names.update(declared for _module, declared in chains.values())
-    read_names = py_member_reads.parser_candidate_names(member_sites)
+    read_names = py_member_reads.read_candidate_names(member_sites)
     if read_names:
-        rows, parser = await repo.name_candidate_views(org, ns, sorted(names | read_names))
+        rows, read_rows = await repo.name_candidate_views(org, ns, sorted(names | read_names))
     else:
         rows = await repo.name_candidates(org, ns, sorted(names)) if names else {}
-        parser = {}
+        read_rows = {}
     # A site binds within its language class. A shell program can share a name with C++.
     rows = gate_name_table(rows, pf.lang)
     calls = {name: hits for name, hits in rows.items() if name in names}
     if pf.lang == "shell":
         calls = drop_test_local_shell_defs(calls, pf.path)
-    reads = gate_name_table({name: parser[name] for name in read_names if name in parser}, pf.lang)
+    reads = gate_name_table(
+        {name: read_rows[name] for name in read_names if name in read_rows}, pf.lang
+    )
     return _EdgeNames(calls, reads, member_sites, chains)
 
 

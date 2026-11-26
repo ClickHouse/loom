@@ -77,7 +77,7 @@ class RoundReads:
         self._guards: dict[str, list[dict[str, Any]]] = {}
         self._facets: dict[str, list[dict[str, Any]]] = {}
         self._names: NameCandidates = {}
-        self._parser_names: NameCandidates = {}
+        self._read_names: NameCandidates = {}
         self._known: set[str] = set()
         # For the record and the tests: per-file reads answered here / sent on.
         self.hits = 0
@@ -261,14 +261,14 @@ class RoundReads:
         if not names:
             return
         try:
-            self._names, self._parser_names = await self._repo.name_candidate_views(
+            self._names, self._read_names = await self._repo.name_candidate_views(
                 self._org, self._ns, sorted(names)
             )
             self._known = set(names)
             self.statements += 1
         except Exception as exc:  # noqa: BLE001 — a missed prefetch: each file reads its own names
             logger.debug("round reads: name prefetch skipped (%s)", exc)
-            self._names, self._parser_names, self._known = {}, {}, set()
+            self._names, self._read_names, self._known = {}, {}, set()
 
     async def _round_read(self, method: str, paths: list[str], *args: Any) -> dict[str, Any]:
         """One round-wide read by name; a repository without it, or a failing
@@ -340,15 +340,15 @@ class RoundReads:
         if missing:
             self.misses += 1
             await self.flush()  # a name read sees every symbol the round wrote
-            fetched, parser_fetched = await self._repo.name_candidate_views(org, ns, missing)
+            fetched, reads_fetched = await self._repo.name_candidate_views(org, ns, missing)
             self._names.update(fetched)
-            self._parser_names.update(parser_fetched)
+            self._read_names.update(reads_fetched)
             self._known.update(missing)
         else:
             self.hits += 1
         return (
             {n: list(self._names[n]) for n in names if n in self._names},
-            {n: list(self._parser_names[n]) for n in names if n in self._parser_names},
+            {n: list(self._read_names[n]) for n in names if n in self._read_names},
         )
 
     async def return_types_for_qualified(
@@ -424,7 +424,7 @@ class RoundReads:
                 name = str(r.get("name") or "")
                 self._known.discard(name)
                 self._names.pop(name, None)
-                self._parser_names.pop(name, None)
+                self._read_names.pop(name, None)
                 self._return_types.pop(str(r.get("qualified_name") or ""), None)
         if table == "code_chunks":
             touched = {str(r.get("path") or "") for r in rows}

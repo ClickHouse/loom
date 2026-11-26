@@ -110,8 +110,11 @@ async def test_python_member_read_uses_parser_candidates_even_with_scip() -> Non
     def value(self):
         return 1
 
-def read(client: Client):
-    return client.value, client.refresh()
+class Remote:
+    pass
+
+def read(client: Client, remote: Remote):
+    return client.value, remote.value, client.refresh()
 """,
     )
     member = next(symbol for symbol in parsed.symbols if symbol.name == "value")
@@ -137,16 +140,26 @@ def read(client: Client):
             "symbol_id": "compiler-call",
             "kind": "method",
         },
+        {
+            "name": "value",
+            "tier": "scip",
+            "qualified_name": "src.pkg.client::Remote::value",
+            "symbol_id": "compiler-only-member",
+            "kind": "method",
+        },
     ]
     competing_parser = {**rows[0], "symbol_id": "other-parser-member"}
     modules = module_types(parsed, {})
     context = {"py_present": {parsed.path}, "py_roots": ("src",)}
-    for candidates, expected in ((rows, [member.id]), ([*rows, competing_parser], [])):
+    for candidates, expected in (
+        (rows, {member.id, "compiler-only-member"}),
+        ([*rows, competing_parser], {"compiler-only-member"}),
+    ):
         ch = StubCH([candidates])
         repo = CodeRepo(ch)  # type: ignore[arg-type]
         names = await _edge_names(repo, "o", "n", parsed, None)
         edges = read_edges(parsed, names.member_sites, names.reads, {}, {}, modules, context)
-        assert [edge.to_symbol_id for edge in edges if edge.edge_kind == "reads"] == expected
+        assert {edge.to_symbol_id for edge in edges if edge.edge_kind == "reads"} == expected
         assert names.calls["refresh"][0][0] == "compiler-call"
         assert len(ch.calls) == 1
 

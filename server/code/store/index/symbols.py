@@ -246,7 +246,7 @@ class SymbolsMixin(CodeRepoBase):
     async def name_candidate_views(
         self, org: str, ns: str, names: list[str]
     ) -> tuple[NameCandidates, NameCandidates]:
-        """Return merged and parser-only candidates from the same name-keyed read."""
+        """Return merged and parser-preferred candidates from one name-keyed read."""
         if not names:
             return {}, {}
         # One statement over `code_symbol_names`. The key (name, tier,
@@ -278,10 +278,17 @@ class SymbolsMixin(CodeRepoBase):
             merged.setdefault(name, set()).add(cand)
             if r["tier"] == "treesitter":
                 parser.setdefault(name, set()).add(cand)
-        return (
-            {name: sorted(candidates) for name, candidates in merged.items()},
-            {name: sorted(candidates) for name, candidates in parser.items()},
-        )
+        calls = {name: sorted(candidates) for name, candidates in merged.items()}
+        reads: NameCandidates = {}
+        for name, candidates in calls.items():
+            preferred = parser.get(name, set())
+            exact_parser_names = {candidate[1] for candidate in preferred}
+            reads[name] = [
+                candidate
+                for candidate in candidates
+                if candidate in preferred or candidate[1] not in exact_parser_names
+            ]
+        return calls, reads
 
     async def symbols_by_name(
         self, org: str, ns: str, name: str, *, limit: int = 50, path: str = ""
