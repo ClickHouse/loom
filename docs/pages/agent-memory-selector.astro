@@ -44,7 +44,7 @@ const plans: Plan[] = [
       { text: "Save a test decision with one client. Read the same value and memory ID in a fresh client with its own credential." },
       { text: "Try the same read from a credential scoped to another namespace and record the denial.", requirement: "credentials" },
       { text: "Change the linked source, wait for indexing and check that the lesson reports the changed commit.", requirement: "code-changes" },
-      { text: "Correct the decision and use a scoped SQL reader to check both versions and the writer identities.", requirement: "audit" },
+      { text: "On an authenticated deployment, correct the decision and use a scoped SQL reader to check both versions and the token subject for each write.", requirement: "audit" },
     ],
     links: [
       { label: "Verify a handoff between coding agents", href: "/docs/getting-started/connect-a-coding-agent#verify-shared-memory-between-claude-code-and-codex" },
