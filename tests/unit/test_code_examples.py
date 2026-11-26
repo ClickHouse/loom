@@ -356,6 +356,44 @@ async def test_indirect_examples_rank_related_tests_ahead_of_setup(monkeypatch, 
     assert all(e["context"]["commit"] == revision for e in examples)
 
 
+@pytest.mark.parametrize("source_position", [0, 1])
+async def test_edit_context_keeps_optional_caller_source_when_aliases_share_definition(
+    monkeypatch, source_position
+):
+    from server.code.api.models_symbol import CodeEditContextInput, CodeSymbolOutput
+    from server.code.app.symbol import symbol
+    from server.code.domain.units import CodeUnit
+
+    names = ["value", "src/value.py:value"]
+    context = {
+        "commit": "a" * 40,
+        "start_line": 1,
+        "end_line": 2,
+        "text": "def run():\n    value()",
+    }
+
+    async def read(request):
+        via = {"symbol": "src.action::run", "path": "src/action.py", "line": 2}
+        if request.name == names[source_position]:
+            via["context"] = context
+        unit = CodeUnit(
+            path="src/value.py",
+            symbol="src.value::value",
+            body="def value():\n    return 7",
+            examples=[{"path": "tests/test_action.py", "line": 3, "via": via}],
+        )
+        return CodeSymbolOutput(definitions=[unit])
+
+    monkeypatch.setattr(symbol, "_single_edit_context", read)
+    monkeypatch.setattr(symbol, "_symbol_trace", lambda *args, **kwargs: "")
+    answer = await symbol._batched_edit_context(
+        CodeEditContextInput(org="test-org", namespace="test-ns", names=names)
+    )
+    assert [target.definition_indices for target in answer.edit_targets] == [[0], [0]]
+    (definition,) = answer.definitions
+    assert definition.examples[0]["via"]["context"] == context
+
+
 @pytest.mark.parametrize(
     ("revisions", "extra", "expected"),
     [

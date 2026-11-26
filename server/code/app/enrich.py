@@ -272,7 +272,9 @@ async def indirect_test_examples(
     if ready is not None:
         ready[:] = examples
     if bridge["path"] != definition["path"]:
-        await bounded(_attach_caller_source(repo, org, ns, bridge, revision, examples), None)
+        await bounded(
+            _attach_caller_source(repo, org, ns, bridge, revision, examples, context_lines), None
+        )
     return examples
 
 
@@ -283,8 +285,9 @@ async def _attach_caller_source(
     bridge: dict[str, Any],
     revision: str,
     examples: list[dict[str, Any]],
+    context_lines: int,
 ) -> None:
-    """Return the source for the same-revision caller one test reaches."""
+    """Return the verified caller when its source fits a test example's window."""
     from server.code.app.symbol.resolve import _indexed_commit, symbol_body
 
     via = _via_caller(bridge)
@@ -301,7 +304,7 @@ async def _attach_caller_source(
     if example is None:
         return
     path = via["path"]
-    with code_span("enrich.indirect_caller_source") as sp:
+    with code_span("enrich.indirect_caller_source", results=0) as sp:
         rows, files = await asyncio.gather(
             repo.symbols_by_ids(org, ns, [str(bridge["from_symbol_id"])]),
             repo.file_rows_for_paths(org, ns, [path]),
@@ -320,10 +323,12 @@ async def _attach_caller_source(
         if len(callers) != 1:
             return
         (caller,) = callers
+        if caller["end_line"] - caller["start_line"] > 2 * context_lines:
+            return  # a larger caller remains available from its exact source location
         body = await symbol_body(
             repo, org, ns, {**caller, "_extent_commit": revision}, expected_commit=revision
         )
-        span_attrs(sp, results=int(bool(body)), source_chars=len(body))
+        span_attrs(sp, results=int(bool(body)))
     if body:
         example["via"] = {
             **via,
@@ -334,6 +339,14 @@ async def _attach_caller_source(
                 "text": body,
             },
         }
+
+
+def merge_indirect_caller_sources(target: CodeUnit, repeated: CodeUnit) -> None:
+    """Keep verified optional caller source from either spelling of a definition."""
+    for old, new in zip(target.examples, repeated.examples, strict=True):
+        old_via, new_via = old.get("via") or {}, new.get("via") or {}
+        if new_via.get("context") and not old_via.get("context"):
+            old["via"] = new_via
 
 
 def deduplicate_indirect_caller_sources(definitions: list[CodeUnit]) -> None:

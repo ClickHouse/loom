@@ -630,7 +630,10 @@ async def _batched_edit_context(
     located: EditTarget | None = None,
     started: float | None = None,
 ) -> CodeSymbolOutput:
-    from server.code.app.enrich import deduplicate_indirect_caller_sources
+    from server.code.app.enrich import (
+        deduplicate_indirect_caller_sources,
+        merge_indirect_caller_sources,
+    )
     from server.code.domain.units import CodeUnit, estimate_json_tokens, estimate_unit_tokens
 
     if started is None:
@@ -661,10 +664,13 @@ async def _batched_edit_context(
             raise result
         indices: list[int] = []
         for unit in result.definitions:
-            key = unit.model_dump_json()
+            # Optional enrichment can complete for one spelling of the same definition.
+            key = unit.model_dump_json(exclude={"examples": {"__all__": {"via": {"context"}}}})
             index = positions.setdefault(key, len(definitions))
             if index == len(definitions):
                 definitions.append(unit)
+            else:
+                merge_indirect_caller_sources(definitions[index], unit)
             indices.append(index)
         status: Literal["resolved", "ambiguous", "dependency", "not_found"]
         if result.resolved_by == "dependency":
