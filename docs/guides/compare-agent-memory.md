@@ -117,7 +117,9 @@ wall-clock time and total cost including construction and server inference.
    separate behavior change. Observe whether the reviewer rechecks the claim.
 3. Correct and delete the lesson. Check history, derived data and retention separately.
 
-These are adoption checks for your deployment, rather than comparative results.
+These are adoption checks for your deployment. The [self-hosted comparison](compare-coding-agent-memory.md)
+runs a separate fixture against Git instructions, a file-backed MCP server and Loom.
+It does not compare the named tools surveyed here.
 
 [loom-quickstart]: https://github.com/ClickHouse/loom/blob/v1.3.0/docs/getting-started/quickstart.md
 [loom-identity]: https://github.com/ClickHouse/loom/blob/v1.3.0/docs/concepts/identities-and-namespaces.md
