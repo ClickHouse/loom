@@ -115,6 +115,11 @@ class Operation:
     # is safe (a feedback row, a watch registration, a seen-marker). Only
     # such ops set it: a WRITER+ role or `audit=True` already says "writes".
     writes: bool = False
+    # The op deletes or tombstones stored rows although no word of its name says so
+    # (a resolve that tombstones the side that loses). The MCP `destructiveHint` and
+    # the action schema's `Destructive` group read a delete-shaped name; this mark
+    # says it for an op whose name is not one.
+    destructive: bool = False
     session_content: bool = False
     maturity: Maturity = "stable"
     # The MCP tool name when it is not derived from `name`: an op MCP serves

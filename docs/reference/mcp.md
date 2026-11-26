@@ -215,8 +215,9 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   `namespace` stays as an optional property. Hidden fields stay accepted by
   name.
 - **Annotations.** `readOnlyHint`, `destructiveHint` and `idempotentHint` are
-  derived from the registry (role, idempotency, audit, destructive verbs in the
-  name). `readOnlyHint` is true only for an idempotent viewer op that is
+  derived from the registry (role, idempotency, audit, and a destructive verb in
+  the name or the op's `destructive` mark, which `conflicts.resolve` carries for
+  its tombstones). `readOnlyHint` is true only for an idempotent viewer op that is
   neither audited nor marked `writes`, so a client that auto-approves read-only
   tools never runs a state change unprompted. They are hints; the role check at
   call time is the boundary.

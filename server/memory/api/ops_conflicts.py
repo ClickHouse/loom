@@ -41,6 +41,7 @@ conflicts_resolve = Operation(
     idempotent=True,
     required_role=Role.ADMIN,
     audit=True,
+    destructive=True,  # `revise` and `contract` tombstone the side that loses
 )
 
 
