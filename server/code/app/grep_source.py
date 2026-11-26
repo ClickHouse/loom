@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 ContextSource = dict[str, dict[str, str | None]]
+CompleteContexts = frozenset[tuple[str, int]]
 GREP_MATCH_TEXT_CHARS = 300
 
 
@@ -50,19 +51,74 @@ def _retains_window(source: dict[str, str | None], window: range) -> bool:
     )
 
 
+def _centered_window(line: int, radius: int) -> range:
+    return range(max(1, line - radius), line + radius + 1)
+
+
+async def verify_complete_contexts(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    chunks: list[dict[str, Any]],
+    matches: list[dict[str, Any]],
+    commits: dict[tuple[str, int], str],
+    radius: int,
+    budget: Budget | None,
+) -> CompleteContexts:
+    """Only the parser's current extent can confirm the end of a split declaration."""
+    candidates = {}
+    for hit in matches:
+        path, line = str(hit["path"]), int(hit["line"])
+        window = _centered_window(line, radius)
+        if (commit := commits.get((path, line))) and _complete_excerpt(hit, line, window) != window:
+            candidates[path, str(hit["scope"]), line, commit] = hit["scope_end_line"]
+    if not candidates:
+        return frozenset()
+    scopes = {(path, scope) for path, scope, _, _ in candidates}
+    ids = sorted(
+        {
+            str(sid)
+            for chunk in chunks
+            if (str(chunk["path"]), str(chunk.get("scope") or "")) in scopes
+            for sid in (chunk.get("symbol_ids") or [])
+            if sid
+        }
+    )
+    if not ids or len(ids) > 500 or (budget is not None and budget.left_ms() <= 0):
+        return frozenset()
+    try:
+        async with asyncio.timeout(None if budget is None else budget.left_ms() / 1000):
+            rows = await repo.symbol_spans_by_ids(org, ns, ids, source_only=True)
+    except Exception as exc:  # noqa: BLE001 — keep centered excerpts if the optional lookup fails
+        logger.debug("grep declaration extent lookup failed: %s", type(exc).__name__)
+        return frozenset()
+    ends: dict[tuple[str, str, int, str], set[int]] = {}
+    for row in rows:
+        key = (
+            str(row["path"]),
+            str(row["qualified_name"]),
+            int(row["start_line"]),
+            str(row["extent_commit"]).rstrip("\0"),
+        )
+        ends.setdefault(key, set()).add(int(row["end_line"]))
+    return frozenset((key[0], key[2]) for key, end in candidates.items() if ends.get(key) == {end})
+
+
 def _wanted_lines(
     matches: list[dict[str, Any]],
     radius: int,
     *,
-    prefer_complete_context: bool,
+    complete_contexts: CompleteContexts,
     source: ContextSource | None = None,
 ) -> dict[str, set[int]]:
     wanted: dict[str, set[int]] = {}
     for hit in matches:
         line = int(hit["line"])
         path = str(hit["path"])
-        window = range(max(1, line - radius), line + radius + 1)
-        if prefer_complete_context and (complete := _complete_excerpt(hit, line, window)) != window:
+        window = _centered_window(line, radius)
+        if (path, line) in complete_contexts and (
+            complete := _complete_excerpt(hit, line, window)
+        ) != window:
             if source is None:
                 window = range(window.start, complete.stop)
             elif _retains_window(source.get(path, {}), complete):
@@ -78,10 +134,10 @@ def collect_contexts(
     max_chars: int,
     *,
     match_commits: dict[tuple[str, int], str],
-    prefer_complete_context: bool = False,
+    complete_contexts: CompleteContexts = frozenset(),
 ) -> ContextSource:
     """Keep context at each path's verified match revision, with omissions marked."""
-    wanted = _wanted_lines(matches, radius, prefer_complete_context=prefer_complete_context)
+    wanted = _wanted_lines(matches, radius, complete_contexts=complete_contexts)
     revisions = match_revisions(matches, match_commits)
     by_path: ContextSource = {
         path: {str(line): None for line in lines}
@@ -122,12 +178,10 @@ def page_contexts(
     matches: list[dict[str, Any]],
     radius: int,
     *,
-    prefer_complete_context: bool = False,
+    complete_contexts: CompleteContexts = frozenset(),
 ) -> dict[str, Any]:
     """Render only this page's windows from retained lines that agree."""
-    wanted = _wanted_lines(
-        matches, radius, prefer_complete_context=prefer_complete_context, source=source
-    )
+    wanted = _wanted_lines(matches, radius, complete_contexts=complete_contexts, source=source)
     partial = False
     contexts = []
     for path, lines in wanted.items():
