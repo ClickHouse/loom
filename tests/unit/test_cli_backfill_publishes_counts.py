@@ -270,6 +270,20 @@ def test_current_counts_over_a_coverage_row_behind_republish_the_coverage(
     assert _coverage_embedded(_read_back(repo)) == 4
 
 
+def test_a_coverage_row_alone_behind_the_chunks_is_republished_by_the_rerun(
+    declared: list[str],
+) -> None:
+    # The index phase published the coverage and its first counts write failed; the
+    # embed phase then landed its last vectors and stopped before publishing.
+    coverage = json.dumps({"cov": {"chunks": [{"embedded": 2}]}, "gaps": None})
+    repo = _Namespace(_Replica({"coverage": coverage}, chunks=4, embedded=4))
+    assert _embed(repo) == 0
+    assert declared == ["acme"]
+    state = _read_back(repo)
+    assert _published(state)["code_chunks_embedded"] == 4
+    assert _coverage_embedded(state) == 4
+
+
 @pytest.mark.parametrize("counts_row", [None, "zeros"])
 def test_an_empty_embed_phase_for_an_unindexed_org_declares_nothing(
     declared: list[str], counts_row: str | None

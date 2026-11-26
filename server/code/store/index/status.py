@@ -289,15 +289,13 @@ class StatusMixin(CodeRepoBase):
         """Whether the chunk figures readers serve trail the chunk table, as they do
         when an embed backfill's last page landed in a process that died before it
         republished, or when vectors landed between the coverage write and the
-        counts write. False with no counts row (its first reader computes all of it)
-        or one that matches the table, such as the zeros a read writes for a
-        namespace with no chunks, and a coverage row that is missing or matches.
-        Two point reads and one chunk aggregate."""
+        counts write. Each published row is compared when it exists, so a coverage
+        row published before its counts write failed still counts. False with no
+        row, or rows that match the table, such as the zeros a read writes for a
+        namespace with no chunks. Two point reads and one chunk aggregate."""
         published = await self._shared_counts(org, ns)
-        if published is None:
-            return False
         embeddable, embedded = await self.chunk_embed_coverage(org, ns)
-        if (
+        if published is not None and (
             published.get("code_chunks_embeddable", 0),
             published.get("code_chunks_embedded", 0),
         ) != (embeddable, embedded):
