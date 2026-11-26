@@ -263,13 +263,17 @@ def _grep_edit_selector(hit: dict[str, Any], span: CodeReadRangeInput) -> str:
             return name
         return ""
     scope = str(hit["scope"])
-    if span.path.endswith((".py", ".pyi")) and all(
-        part.isidentifier() for part in scope.split("::")
+    module, _, member = scope.partition("::")
+    # A dotted module name cannot be mistaken for a class suffix in this file.
+    if not (
+        span.path.endswith((".py", ".pyi"))
+        and "." in module
+        and all(part.isidentifier() for part in (*module.split("."), *member.split("::")))
+        and not str(hit.get("text") or "").lstrip().startswith("@")
     ):
-        name = f"{span.path}:{scope}"
-        if _parse_file_symbol(name) == (span.path, scope):
-            return name
-    return ""
+        return ""
+    name = f"{span.path}:{scope}"
+    return name if _parse_file_symbol(name) == (span.path, scope) else ""
 
 
 class _GrepFollowup(NamedTuple):
@@ -700,11 +704,11 @@ def lean_code(
             if isinstance(src, dict) and isinstance(d, dict) and src.get("unit_id"):
                 d["symbol_id"] = src["unit_id"]
     _lean_prs(out.get("definitions"))
+    if op_name == "code.grep" and arguments is not None and followups:
+        _grep_continuation(out, arguments, followups)
     fn = _PER_OP.get(op_name)
     if fn is not None:
         fn(out)
-    if op_name == "code.grep" and arguments is not None and followups:
-        _grep_continuation(out, arguments, followups)
     if op_name == "code.edit_context" and out.get("edit_targets") and out.get("definitions"):
         out = _share_edit_test_source(out)
     _hoist_defaults(out)
