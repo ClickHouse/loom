@@ -117,8 +117,11 @@ before collecting results:
    expected source ranges or caller sets without exposing reference answers to the agent.
 2. Run a baseline using the platform's usual checkout, framework memory and local tools.
    Run the treatment with the same inputs and access plus the intended Loom integration.
-   Keep reference fixes and held-out tests outside both agent checkouts. Use fresh
-   sessions; prevent one arm's writes from teaching the other arm evaluation answers.
+   Apply the same task cutoff to all evidence that either arm can retrieve, including
+   indexed source and Git, pull-request and tracker history, shared memory, and cached
+   answers. Neither arm should see reference fixes or held-out tests. If you cannot
+   rule out access to the reference fix, report the comparison as an upper bound. Use
+   fresh sessions; prevent one arm's writes from teaching the other arm evaluation answers.
 3. Record each task's actual calls, request IDs, outcomes and evidence delivered to the
    model. Separate explicit application calls, hooks and model-selected tools. A run with
    no calls remains a non-use outcome. A failed or misconfigured request is an integration
@@ -174,4 +177,7 @@ and [published evidence](../benchmarks/coverage.md).
 These are technical delivery options. They do not establish a partner program, joint
 delivery commitment, support agreement, SLA, pricing or commercial terms. Those terms,
 including who owns customer support and escalation, require a separate agreement with
-the parties involved.
+the parties involved. Loom does not document a partnership intake process. To prepare
+a joint-deployment proposal, specify the hosting and data boundaries, the integration
+each party would operate, acceptance tests, and who would own upgrades, support and
+incident response.

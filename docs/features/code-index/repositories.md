@@ -228,9 +228,19 @@ Keep repositories with different readers in different code namespaces. For examp
 index a billing repository as `code-billing` and an operations repository as
 `code-operations`, both `classification: "restricted"` with `join_policy: "approval"`.
 For a fresh operator-configured repository, start with a standard namespace that is
-neither public nor org-readable. Initialize it, adopt it for its maintainer, restrict it,
-and only then run the first backfill. An entry that starts restricted cannot be adopted
-to install its first direct grant. Follow the [bootstrap procedure](../../operations/code-index-operations.md#configure-the-entry),
+neither public nor org-readable. Before configuring the entry, audit existing grants
+and token claims, including wildcard claims, for access they would give to the
+standard namespace. The mirror may be cloned before the first
+backfill, so withholding backfill alone does not protect repository history. If you
+cannot rule out unintended access during bootstrap, do not configure the entry in
+that organization.
+
+Initialize the entry, adopt it for its maintainer, then restrict it. An entry that
+starts restricted cannot be adopted to install its first direct grant. After the
+restriction takes effect, check that the maintainer still has readable access and
+that a same-org token that would have read the standard namespace, but lacks a
+direct grant on the restricted namespace, does not. Run the first backfill only
+after both checks pass. Follow the [bootstrap procedure](../../operations/code-index-operations.md#configure-the-entry),
 or use the [self-service access controls](#self-service-repositories) for a registered
 repository.
 

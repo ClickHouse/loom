@@ -85,6 +85,13 @@ it cannot retrieve those citations. [Index freshness](../features/code-index/fre
 | Design assistant | `code.impact` for a proposed symbol change and [linked team decisions](../use-cases/memory-linked-to-code.md) | Affected definitions, test mappings and lessons with their freshness state |
 | Team chatbot     | `code.ask` for a cited answer, or `code.search` for the application's own reader                              | Source ranges supporting each claim, or an explicit abstention             |
 
+When a chatbot replies in a shared channel, restrict retrieval to repositories that
+both the questioner and every reader of the reply can access. The host must check
+the destination audience; the questioner's token does not authorize disclosure to
+other readers. If the host cannot verify the shared scope, do not answer there from
+private sources. Use a private reply with separate authorization or abstain. See
+[audience-scoped retrieval](audience-scoped-retrieval.md) for the host-side pattern.
+
 The answer concerns the indexed branch, not an uncommitted local checkout. Check
 [freshness](../features/code-index/freshness.md), [language and compiler-tier support](../features/code-index/overview.md#language-support),
 and returned truncation or lower-bound metadata. An empty caller list does not prove
@@ -191,6 +198,9 @@ must happen; model instructions guide discretionary investigation.
 
 For issue-resolution comparisons, give both arms the same public issue, historical
 base, tools for local work, test access and execution budgets. Keep reference fixes
-and hidden tests outside the agent's checkout. Count test-gate overhead, backend model
-usage and failed or unused tools. Zero tool use is a tool-adoption result and must
+and hidden tests out of the checkout and out of retrievable evidence. Apply the same
+task cutoff to Loom's indexed source and Git, pull-request and tracker history, shared
+memory, and cached answers. If you cannot rule out access to the reference fix, label
+the result as an upper bound, not a clean comparison. Count test-gate overhead, backend
+model usage and failed or unused tools. Zero tool use is a tool-adoption result and must
 remain in the report. See [benchmark methodology](../benchmarks/methodology.md).
