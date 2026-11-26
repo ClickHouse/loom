@@ -8,7 +8,7 @@ its own model name are tombstoned once the active model has the file, and
 their card text is carried over first when it still matches the file.
 Cards are embedded inline; failures leave a dim=0 stub the
 code_embed_recovery worker fills. A file the entry's `embed_exclude` globs name
-gets no card.
+gets no card; one written before its glob is tombstoned once the file changes.
 """
 
 from __future__ import annotations
@@ -263,7 +263,8 @@ async def _summarize_repo(
     cap: int | None = None,
 ) -> None:
     """One repository's cards, until the pass has written `cap` in total
-    (None → the whole per-pass cap). An `excluded` file gets none."""
+    (None → the whole per-pass cap). An `excluded` file gets none, and loses
+    the one it had once its content changes."""
     from server.code.store.index import CodeRepo, build_row
     from server.embedding.embedder import get_embedder
     from server.llm.client import get_llm_client_for_model
@@ -288,6 +289,16 @@ async def _summarize_repo(
         if str(r["scope_type"]) == "file"
     }
     await _dedupe_models(repo, embedder, org, ns, model, summaries, file_hashes, result, excluded)
+    # An excluded file's card stays while it describes the file, and goes once the file changes.
+    stale = [
+        CodeRepo.tombstone_of("code_summaries", live)
+        for path, live in summaries.items()
+        if excluded(path)
+        and live.get("summary")
+        and _hash_str(live.get("inputs_hash")) != file_hashes.get(path, "")
+    ]
+    for start in range(0, len(stale), _BATCH):
+        await repo.insert_rows("code_summaries", stale[start : start + _BATCH])
 
     candidates = [
         path

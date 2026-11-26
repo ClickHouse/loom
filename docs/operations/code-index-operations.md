@@ -152,7 +152,7 @@ embeds them, and the coverage counts leave them out. The `code_summary` pass wri
 card for such a file. The globs apply to chunks written after they change:
 
 1. Adding a glob leaves the path's existing vectors in place until a chunk's content
-   changes, and its existing card in place.
+   changes, and its existing card in place until the file changes.
 2. Removing a glob leaves the path's chunks without a vector and outside the coverage
    denominator, so `code.repos` still reports them covered. No writer re-embeds an
    unchanged chunk: a chunk is embedded when its content changes, and to embed them all,

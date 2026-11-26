@@ -264,6 +264,21 @@ async def test_worker_writes_and_carries_no_card_for_an_embed_excluded_file(monk
 
 
 @pytest.mark.asyncio
+async def test_an_embed_excluded_files_card_goes_once_the_file_changes(monkeypatch):
+    hashes = {"tests/changed.cpp": "new", "tests/same.cpp": "hs"}
+    live = [
+        _live("tests/changed.cpp", summary="old card", inputs_hash="old"),
+        _live("tests/same.cpp", summary="current card", inputs_hash="hs"),
+        _live("tests/gone.cpp", summary="card of a deleted file", inputs_hash="hg"),
+        _live("tests/ranked.cpp", pagerank=0.5),  # a rank row, no card
+    ]
+    repo = _fake_repo(hashes=hashes, live=live, others=[], churn=[])
+    res = await _run_worker(repo, monkeypatch, cfg=_cfg(embed_exclude=("tests/",)))
+    assert res.cards_written == 0 and not res.errors
+    assert _written(repo) == [("tests/changed.cpp", "m", True), ("tests/gone.cpp", "m", True)]
+
+
+@pytest.mark.asyncio
 async def test_the_card_cap_is_per_pass_across_repositories(monkeypatch):
     """`code_summary_max_scopes_per_pass` bounds the pass's LLM calls, not
     each repository's, so a pass over N repositories cannot write (and pay
