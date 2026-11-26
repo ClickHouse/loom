@@ -370,11 +370,12 @@ each commit into it from the entry's mirror, so a new leader starts from nothing
 The checkout's packs are hard links of the mirror's (each marked by a `.keep` file),
 so a tier costs its working tree rather than a second copy of the repository; a
 checkout that already holds its own copy, from an earlier version or an operator,
-drops it after the tier's next pass (for C/C++, the full-index worker's) with a
-`git repack` that keeps the shared packs. The checkout stays a standalone repository.
-Hard links need the checkout on the mirror's filesystem, and the kernel refuses a
-link to another user's pack file the server cannot write (`fs.protected_hardlinks`):
-there the checkout keeps its own copy, and the log says so once.
+drops it in the checkout gc of the tier's next pass with a new commit (for C/C++, the
+full-index worker's), which keeps the shared packs. The checkout stays a standalone
+repository. Hard links need the checkout on the mirror's filesystem, and the kernel
+refuses a link to another user's pack file the server cannot write
+(`fs.protected_hardlinks`): there the checkout keeps its own copy, gc'd every
+`code_mirror_gc_interval_h` as before, and the log says so once.
 An existing checkout must be the root of a standalone Git working tree, with its
 `.git` directory inside the checkout. Compiler Git jobs need writable metadata
 there. Linked worktrees, external Git metadata, regular files, bare repositories and

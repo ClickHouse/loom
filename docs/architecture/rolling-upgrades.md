@@ -943,10 +943,13 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
 
 64. **A compiler tier's checkout shares its mirror's packs** by hard link, each kept by
     a `.keep` file. It stays a standalone repository with every object in its own
-    `.git`, so N-1's jobs, which mount only the checkout, read it, and N-1's gc keeps
-    the shared packs. N converts a checkout N-1 filled with its own copy in place.
-    `tests/unit/test_code_compiler_checkout.py` checks the handoff N → N-1 → N on one
-    repository volume.
+    `.git`, so N-1's jobs, which mount only the checkout, read it, and N-1's
+    `git gc --no-prune` keeps the shared packs. N-1's git jobs mount no shared pack
+    read-only, so while N-1 holds the lease they could write the mirror's packs through
+    the checkout. Objects N-1 fetched stay the checkout's own until a gc drops them. In
+    `tests/unit/test_code_compiler_checkout.py`, a pass of N, then N-1's fetch,
+    `checkout --force` with the mirror out of sight and gc command, then N again, run
+    on one repository volume.
 
 ## What checks them
 
