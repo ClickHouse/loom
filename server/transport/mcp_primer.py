@@ -607,6 +607,7 @@ def _coding_instructions(
     ]
     definition_hint = (
         f"Before editing, use {tool['code.edit_context']} with a definition or literal clues. "
+        "If the editor needs a local read first, start with one line near the edit. "
         if tool["code.edit_context"]
         else ""
     )
