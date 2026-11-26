@@ -422,7 +422,7 @@ async def _backfill_run(args: argparse.Namespace, stack: contextlib.AsyncExitSta
     if second is not None:
         counters["edges_second_pass"] = second["edges"]
         counters["errors"] += second["errors"]
-        if not paths_file:
+        if not paths_file and not second["errors"]:
             await repo.set_state(org, ns, owed_key, "")
     if getattr(args, "dialect_folder_pass", False):
         folder = await _dialect_folder_pass(repo, org, ns, head)

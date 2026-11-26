@@ -221,7 +221,8 @@ def _prepare(log: str, opts: dict[str, Any]) -> None:
             self.connected = False
 
     client = _Client()
-    state: dict[str, str] = {}
+    saved = Path(opts["root"]) / "state.json"  # the namespace's state rows, kept across runs
+    state: dict[str, str] = json.loads(saved.read_text()) if saved.exists() else {}
 
     async def _noop(*_a: object, **_k: object) -> None:
         return None
@@ -253,6 +254,7 @@ def _prepare(log: str, opts: dict[str, Any]) -> None:
 
     async def _set_state(self: object, org: str, ns: str, key: str, value: str, **_k: Any) -> None:
         state[key] = value
+        saved.write_text(json.dumps(state))
         _note(log, role=role, event="state", key=key, value=value)
 
     async def _close_index(_repo: object, counters: dict[str, int], *_a: object, **k: Any) -> None:
@@ -294,6 +296,8 @@ def _prepare(log: str, opts: dict[str, Any]) -> None:
             live = await _resolve(self, paths[0]) if opts.get("live") else None
             _note(log, role=role, event="edges", first=paths[0], live=live)
             self.edges["files"] += len(paths)
+            if paths[0] == opts.get("edge_fails"):
+                self.edges["errors"] += 1  # a file's edge write failed in this batch
 
     written = Path(opts["root"]) / "written.txt"
 
@@ -449,6 +453,26 @@ def test_a_held_batch_on_real_workers_starts_nothing_more_and_what_ran_beside_it
     # the edge pass the run owes stays recorded for the next run
     owed = [e["value"] for e in events if e.get("key") == "backfill_edges_owed:index"]
     assert owed == ["workers"]
+
+
+def test_an_edge_batch_that_fails_a_write_leaves_the_pass_owed_for_a_resume_without_workers(
+    tmp_path: Path,
+) -> None:
+    """A worker's edge batch returns with a failed file write. The run still ends (the
+    cursor clears, `git_head` is written), but the pass stays owed, so a resume with one
+    process runs it again and only a clean pass clears the record."""
+    first, first_log = _spawn(tmp_path, 2, files=400, edge_fails="f200.py")
+    first.join(120)
+    assert first.exitcode == 0  # one failed file in 400 does not fail the run
+    owed = [e["value"] for e in _events(first_log) if e.get("key") == "backfill_edges_owed:index"]
+    assert owed == ["workers"]  # recorded, and never cleared
+    resume, resume_log = _spawn(tmp_path, 1, files=400)
+    resume.join(120)
+    assert resume.exitcode == 0
+    events = _events(resume_log)
+    assert [e["first"] for e in events if e["event"] == "edges"] == ["f0.py", "f200.py"]
+    owed = [e["value"] for e in events if e.get("key") == "backfill_edges_owed:index"]
+    assert owed == [""]  # cleared once the pass ran without errors
 
 
 @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGKILL])
