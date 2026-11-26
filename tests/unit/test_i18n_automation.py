@@ -230,15 +230,11 @@ def test_hosted_ci_gates_every_job_and_keeps_original_dependencies() -> None:
 def test_paid_runner_remains_main_only_with_finite_cumulative_default() -> None:
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.load((root / ".github/workflows/i18n.yml").read_text(), Loader=yaml.BaseLoader)
-    assert "pull_request" not in workflow["on"]
-    assert set(workflow["on"]) == {"push", "schedule", "workflow_dispatch", "workflow_run"}
-    assert workflow["on"]["workflow_run"] == {
-        "workflows": ["ci"],
-        "types": ["completed"],
-        "branches": ["i18n/update"],
-    }
-    assert workflow["on"]["schedule"] == [{"cron": "37 */6 * * *"}]
-    assert workflow["concurrency"]["group"] == "${{ github.workflow }}"
+    assert set(workflow["on"]) == {"push", "schedule", "workflow_dispatch"}
+    assert workflow["on"]["schedule"] == [{"cron": "37 */6 * * *"}, {"cron": "22,52 * * * *"}]
+    assert workflow["concurrency"]["group"] == (
+        "${{ github.workflow }}-${{ github.event.schedule == '22,52 * * * *' && 'poll' || 'update' }}"
+    )
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
     update = workflow["jobs"]["update"]
     assert update["env"]["LOOM_I18N_BATCH_LANGUAGES"] == "${{ inputs.languages }}"
@@ -246,13 +242,16 @@ def test_paid_runner_remains_main_only_with_finite_cumulative_default() -> None:
     assert update["environment"] == "i18n"
     assert update["needs"] == "finalize"
     assert "!cancelled()" in update["if"]
-    finalize = workflow["jobs"]["finalize"]
-    assert "github.event_name == 'schedule'" in finalize["if"]
-    assert "github.event.workflow_run.event == 'workflow_dispatch'" in finalize["if"]
-    assert "github.event.workflow_run.conclusion == 'success'" in finalize["if"]
     assert (
-        "github.event.workflow_run.head_repository.full_name == github.repository" in finalize["if"]
+        "github.event_name == 'schedule' && github.event.schedule == '37 */6 * * *'" in update["if"]
     )
+    finalize = workflow["jobs"]["finalize"]
+    assert finalize["if"] == "github.ref == 'refs/heads/main' && github.event_name == 'schedule'"
+    assert update["concurrency"] == finalize["concurrency"]
+    assert finalize["concurrency"] == {
+        "group": "${{ github.workflow }}-write",
+        "cancel-in-progress": "false",
+    }
     assert finalize["runs-on"] == "ubuntu-latest"
     assert "environment" not in finalize
     assert finalize["steps"][0]["with"]["ref"] == "main"

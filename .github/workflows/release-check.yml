@@ -148,14 +148,16 @@ jobs:
           "$RUNNER_TEMP/sdk/bin/pip" --isolated install --index-url https://pypi.org/simple "clickhouse-loom==$VERSION"
           "$RUNNER_TEMP/sdk/bin/python" -c "import loom, sys; assert loom.__version__ == sys.argv[1], loom.__version__" "${VERSION/-rc./rc}"
           "$RUNNER_TEMP/sdk/bin/pip" --isolated check
-      - name: npm install @clickhouse/loom
+      - name: Install the published npm SDK
         env:
           VERSION: ${{ inputs.version }}
         run: |
           mkdir -p "$RUNNER_TEMP/npm" && cd "$RUNNER_TEMP/npm"
           npm init -y >/dev/null
-          npm install --registry=https://registry.npmjs.org --ignore-scripts --no-audit --no-fund "@clickhouse/loom@$VERSION"
-          npm audit signatures
+          npm pkg set "dependencies.@clickhouse/loom=$VERSION"
+          npm install --package-lock-only --registry=https://registry.npmjs.org --ignore-scripts --no-audit --no-fund
+          npm ci --registry=https://registry.npmjs.org --ignore-scripts --no-audit --no-fund
+          npm audit signatures --registry=https://registry.npmjs.org
           node -e 'const { SDK_VERSION } = require("@clickhouse/loom"); if (SDK_VERSION !== process.argv[1]) { throw new Error(SDK_VERSION) }' "$VERSION"
       - name: Install the metadata checker separately from the SDKs
         run: |
@@ -298,13 +300,15 @@ jobs:
       - name: Install the published SDK with its declared peer
         env:
           VERSION: ${{ inputs.version }}
+          PEER: ${{ matrix.peer }}
           PEER_SPEC: ${{ matrix.requirement }}
         run: |
           mkdir -p "$RUNNER_TEMP/peer" && cd "$RUNNER_TEMP/peer"
           npm init -y >/dev/null
-          packages=("@clickhouse/loom@$VERSION")
-          [ -z "$PEER_SPEC" ] || packages+=("$PEER_SPEC")
-          npm install --registry=https://registry.npmjs.org --ignore-scripts --no-audit --no-fund "${packages[@]}"
-          npm audit signatures
+          npm pkg set "dependencies.@clickhouse/loom=$VERSION"
+          if [ -n "$PEER_SPEC" ]; then npm pkg set "dependencies[$PEER]=${PEER_SPEC#"$PEER@"}"; fi
+          npm install --package-lock-only --registry=https://registry.npmjs.org --ignore-scripts --no-audit --no-fund
+          npm ci --registry=https://registry.npmjs.org --ignore-scripts --no-audit --no-fund
+          npm audit signatures --registry=https://registry.npmjs.org
           node -e 'const { SDK_VERSION } = require("@clickhouse/loom"); if (SDK_VERSION !== process.argv[1]) { throw new Error(SDK_VERSION) }' "$VERSION"
           npm ls --depth=0
