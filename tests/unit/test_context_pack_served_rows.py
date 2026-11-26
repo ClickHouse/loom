@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from server.memory.api.models_context import ContextPackInput
-from server.memory.app.context_pack import handle_context_pack
+from server.memory.app.context_pack import _PackState, _render_checked_pack, handle_context_pack
 from server.memory.domain.context_layout import served_rows
 from server.memory.domain.use_guidance import guidance_for_row
 from tests.unit.checked_pack_fakes import install_pack_stack, install_pack_target
@@ -31,6 +31,37 @@ def test_served_rows_keeps_the_rows_whose_lines_survive_each_cut() -> None:
     # procedures, by the pack's own budget; a continuation line is no item
     shown = served_rows(rendered, ["memory_stack", "memories", "procedures"], rows)
     assert shown == [("n", "a"), ("n", "b"), ("n", "c")]
+
+
+@pytest.mark.parametrize("section_cut", [False, True])
+def test_pack_guidance_requires_a_complete_citation(section_cut: bool) -> None:
+    state = _PackState(
+        ContextPackInput(
+            org="o",
+            namespace="ns",
+            agent="a",
+            token_budget=500 if section_cut else 256,
+            section_token_budgets={"memories": 256 if section_cut else 500},
+        ),
+        {},
+    )
+    complete = "memory:ns/complete"
+    clipped = "memory:ns/partial-" + "x" * 1200
+    guidance = guidance_for_row({"status": "active"})
+    state.put(
+        "memories",
+        f"- [{complete}] an earlier claim\n- [{clipped}] the last claim",
+        citations=[complete, clipped],
+        guidance=[guidance, guidance],
+    )
+
+    out = _render_checked_pack(state, None, None)
+
+    assert out.truncated is True
+    assert out.section_meta["memories"]["truncated"] is section_cut
+    assert "- [memory:ns/partial-" in out.rendered
+    assert f"[{clipped}]" not in out.rendered
+    assert [item.citation for item in out.use_guidance] == [complete]
 
 
 def _stub_all_but_the_stack(monkeypatch: pytest.MonkeyPatch, entries: list[Any]) -> None:

@@ -270,11 +270,14 @@ def _own_bookmark(block: Any, mine: str) -> bool:
 STACK_ROW_LAYERS = frozenset({"pinned", "recent_recall", "procedure"})
 
 
-def served_item_counts(rendered: str, section_names: list[str]) -> dict[str, int]:
+def served_item_counts(
+    rendered: str, section_names: list[str], *, require_citation: bool = False
+) -> dict[str, int]:
     """Count the rendered item lines that survived each section and pack budget.
 
     Items are one '- ' bullet each, followed by optional continuation lines.
     Trimming preserves a prefix and can leave part of its last item.
+    Guidance requires the item's closing citation bracket to survive the cut.
     """
     counts: dict[str, int] = {}
     cursor = 0
@@ -285,7 +288,12 @@ def served_item_counts(rendered: str, section_names: list[str]) -> dict[str, int
         start += len(name) + 3
         end = rendered.find(f"\n</{name}>", start)
         end = len(rendered) if end < 0 else end
-        counts[name] = sum(1 for line in rendered[start:end].split("\n") if line.startswith("- "))
+        counts[name] = sum(
+            1
+            for line in rendered[start:end].split("\n")
+            if line.startswith("- ")
+            and (not require_citation or (line.startswith("- [") and "]" in line))
+        )
         cursor = end
     return counts
 

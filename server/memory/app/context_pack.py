@@ -1076,7 +1076,9 @@ def _render_checked_pack(
         blocks=blocks,
         use_guidance=[
             item
-            for name, lines in served_item_counts(rendered, [name for name, _ in present]).items()
+            for name, lines in served_item_counts(
+                rendered, [name for name, _ in present], require_citation=True
+            ).items()
             for item in st.item_guidance.get(name, [])[:lines]
             if item is not None
         ],
