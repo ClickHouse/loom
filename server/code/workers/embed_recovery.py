@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.code.app.index import erasing
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
 from server.settings import settings
@@ -127,7 +128,13 @@ async def _run(result: CodeEmbedRecoveryResult) -> None:
     # attempts untouched, and the periodic full scan from zero finds them once
     # the org is back on (the watermark may have moved past them meanwhile).
     off = await customer.switched_off_orgs()
-    repos = [(cfg.org, cfg.namespace) for cfg in configured_repos() if cfg.org not in off]
+    # A namespace being erased is not scanned either: a row written after the purge
+    # would fail the erasure's residue check.
+    repos = [
+        (cfg.org, cfg.namespace)
+        for cfg in configured_repos()
+        if cfg.org not in off and not await erasing.being_erased(cfg.org, cfg.namespace)
+    ]
     result.full_scan = _full_scan_due()
     for table, text_of in _TABLES:
         embedded = await _recover_table(

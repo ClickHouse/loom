@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.code.app.index import erasing
 from server.code.domain.index.card_selection import (
     churn_eligible,
     select_card_paths,
@@ -93,6 +94,8 @@ async def _run(result: CodeSummaryResult) -> None:
         share = max(1, -(-left // (len(repos) - i)))
         if await customer.switched_off(cfg.org):
             continue  # its cards wait until the org is switched back on
+        if await erasing.being_erased(cfg.org, cfg.namespace):
+            continue  # an erasure is purging it: no card may land after the purge
         try:
             with customer.for_org(cfg.org, namespace=cfg.namespace):
                 await _summarize_repo(

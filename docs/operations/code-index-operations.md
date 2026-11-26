@@ -1099,7 +1099,8 @@ has a gold question set; it is never run in CI, whose embedder is fake
   also purges the `loom.code_*` tables. An entry that is still configured is re-indexed
   from scratch on the next pass, so retire it first.
 - **Writes during an erasure.** While an erasure that may reach a code namespace is
-  unfinished, the code workers skip it and `code.refresh` answers `ERASURE_RUNNING`. The
+  unfinished, the ingest pass, the compiler tiers, the summary, embed recovery, coverage
+  import and graph stats workers skip it and `code.refresh` answers `ERASURE_RUNNING`. The
   purge refuses with `OVERLOADED` while work begun before the erasure was recorded may
   still write the namespace: a live entry lock or `code.refresh` lease on it, or a code
   worker's pass that may have begun before then, until that pass's deadline. The

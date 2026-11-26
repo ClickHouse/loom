@@ -162,3 +162,57 @@ async def test_an_unreadable_ledger_skips_the_namespace(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(ledger_reads, "unfinished_reaching", down)
     assert await erasing.being_erased("o", "code-a") is True
+
+
+def _entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    import server.code.domain.index.repos as repos
+
+    monkeypatch.setattr(
+        repos,
+        "configured_repos",
+        lambda: [SimpleNamespace(org="o", namespace=n) for n in ("code-a", "code-b")],
+    )
+
+    async def being_erased(org: str, ns: str) -> bool:
+        return ns == "code-a"
+
+    monkeypatch.setattr(erasing, "being_erased", being_erased)
+
+
+async def test_the_summary_worker_skips_a_namespace_being_erased(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.workers import summary
+
+    _entries(monkeypatch)
+    seen: list[str] = []
+
+    async def fake_repo(org: str, ns: str, result: Any, **kw: Any) -> None:
+        seen.append(ns)
+
+    monkeypatch.setattr(summary, "_summarize_repo", fake_repo)
+    await summary._run(summary.CodeSummaryResult())
+    assert seen == ["code-b"]
+
+
+async def test_embed_recovery_skips_a_namespace_being_erased(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.store import index as code_store
+    from server.code.workers import embed_recovery as w
+    from server.embedding import embedder
+
+    _entries(monkeypatch)
+    monkeypatch.setattr(code_store, "CodeRepo", lambda: object())
+    monkeypatch.setattr(embedder, "get_embedder", lambda: object())
+    seen: list[list[tuple[str, str]]] = []
+
+    async def fake_recover(table: str, repos: Any, *a: Any, **kw: Any) -> int:
+        seen.append(list(repos))
+        return 0
+
+    monkeypatch.setattr(w, "_recover_table", fake_recover)
+    await w._run(w.CodeEmbedRecoveryResult())
+    assert seen and all(r == [("o", "code-b")] for r in seen)
