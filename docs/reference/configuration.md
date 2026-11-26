@@ -553,7 +553,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_EMBED_RECOVERY_FULL_SCAN_SECONDS` | `int` | `1800` |  | The pending scan reads above a version watermark; once per this many seconds it scans from version 0 to catch late rows. 0 = always from 0. |
 | `LOOM_CODE_EMBED_MAX_ATTEMPTS` | `int` | `8` |  | Embed attempts per stub before it is poisoned (`embed_failed_at` set) and skipped. |
 | `LOOM_CODE_EMBED_RECOVERY_BATCH` | `int` | `100` |  | Stub keys the recovery scan takes per repo per pass (also texts per embed call); raise it to onboard large repositories faster. |
-| `LOOM_CODE_READY_EMBED_COVERAGE` | `float` | `0.95` |  | Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says "lexical only". Poisoned rows count against it; rows unembedded by design (reference fixtures, `embed_exclude`) do not. |
+| `LOOM_CODE_READY_EMBED_COVERAGE` | `float` | `0.95` |  | Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says "lexical only". Poisoned rows count against it; rows unembedded by design (reference fixtures, `code_embed_exclude`) do not. |
 
 ### Ingest limits and denylist
 
