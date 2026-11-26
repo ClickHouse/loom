@@ -3,7 +3,7 @@
 Three surfaces are pinned:
   * `memory_repo.tombstone_cascade_by_ids` writes a status='tombstoned'
     version per row AND mirrors it onto memory_embeddings for the row's
-    identity; `tombstone_by_id` (dedup) and `conflicts_repo.tombstone_ids`
+    identity; `tombstone_by_id` (dedup) and `conflicts_repo.settle`
     (conflict resolution) both go through it.
   * the orphan_vector_reconcile worker's scan mirrors the probe (ANTI JOIN
     against live memory rows, grace window, bound) and heals what it finds.
@@ -59,10 +59,11 @@ def cascade_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         scope: Any = None,
         strong: bool = False,
     ):
-        row = rows.get(mid)
+        row = rows.get(mid.lower())  # a UUID is found whatever its letters' case
         return row if row is not None and row.namespace == namespace else None
 
     async def fake_insert(built: list[dict[str, Any]], *, ch: Any = None, **callbacks: Any) -> None:
+        spy["expected_heads"] = callbacks.get("expected_heads")
         for r in built:
             spy["versions"].append(str(r["memory_id"]))
             spy["overrides"].append(r)
@@ -206,29 +207,95 @@ async def test_tombstone_by_id_goes_through_the_cascade(cascade_spy: dict[str, A
 
 
 @pytest.mark.asyncio
-async def test_conflicts_tombstone_ids_cascades_with_audit_note(
+async def test_conflicts_settle_tombstones_and_activates_in_one_exact_insert(
     cascade_spy: dict[str, Any],
 ) -> None:
     from server.memory.store import conflicts as conflicts_repo
 
     when = datetime(2026, 9, 12, 9)
-    await conflicts_repo.tombstone_ids(
-        "o", ["m1", "m2"], "conflicts.resolve:revise by bob", when, namespace="ns", ch=object()
+    tombstoned = await conflicts_repo.settle(
+        "o",
+        namespace="ns",
+        tombstone=["m1"],
+        activate=["m2"],
+        audit_note="conflicts.resolve:revise by bob",
+        when=when,
+        ch=object(),
     )
-    assert cascade_spy["versions"] == ["m1", "m2"]
-    assert len(cascade_spy["mirrored"]) == 2
-    assert cascade_spy["overrides"][0]["source_trace"].endswith("| conflicts.resolve:revise by bob")
-    assert cascade_spy["overrides"][0]["status"] == "tombstoned"
+    assert [t["memory_id"] for t in tombstoned or []] == ["m1"]
+    assert cascade_spy["versions"] == ["m1", "m2"]  # one insert, both sides
+    lost, kept = cascade_spy["overrides"]
+    assert lost["source_trace"].endswith("| conflicts.resolve:revise by bob")
+    assert (lost["status"], kept["status"], kept["tombstoned_at"]) == ("tombstoned", "active", None)
+    assert len(cascade_spy["mirrored"]) == 1  # the tombstone; an active flip is not mirrored
+    # Committed only over the two heads it read.
+    assert sorted(k[-1] for k in cascade_spy["expected_heads"]) == ["k1", "k2"]
 
 
 @pytest.mark.asyncio
-async def test_conflicts_tombstone_ids_empty_is_a_noop(cascade_spy: dict[str, Any]) -> None:
+@pytest.mark.parametrize(
+    ("tombstone", "activate"),
+    [(["m1", "missing"], []), (["m1"], ["m3"]), ([], ["m2", "missing"]), ([], [])],
+)
+async def test_conflicts_settle_is_whole_or_not_made(
+    cascade_spy: dict[str, Any], tombstone: list[str], activate: list[str]
+) -> None:
     from server.memory.store import conflicts as conflicts_repo
 
-    await conflicts_repo.tombstone_ids(
-        "o", [], "note", datetime(2026, 9, 12), namespace="ns", ch=object()
+    # A row that is gone, or lives in another namespace, leaves the write unmade.
+    wrote = await conflicts_repo.settle(
+        "o",
+        namespace="ns",
+        tombstone=tombstone,
+        activate=activate,
+        audit_note="note",
+        when=datetime(2026, 9, 12),
+        ch=object(),
     )
+    assert wrote is None and cascade_spy["versions"] == [] and cascade_spy["mirrored"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tombstone", "activate"), [(["m1"], ["M2"]), (["M1"], ["m2"]), (["m1"], ["m1"])]
+)
+async def test_conflicts_settle_refuses_a_row_whose_side_it_cannot_tell(
+    cascade_spy: dict[str, Any], tombstone: list[str], activate: list[str]
+) -> None:
+    from server.memory.store import conflicts as conflicts_repo
+
+    # An id spelled another way than the row's own, or given on both sides: the row to
+    # keep must not get the tombstone, so nothing is written.
+    with pytest.raises(ValueError, match="side"):
+        await conflicts_repo.settle(
+            "o",
+            namespace="ns",
+            tombstone=tombstone,
+            activate=activate,
+            audit_note="note",
+            when=datetime(2026, 9, 12),
+            ch=object(),
+        )
     assert cascade_spy["versions"] == []
+
+
+@pytest.mark.asyncio
+async def test_conflicts_settle_leaves_the_write_unmade_when_a_head_is_skipped(
+    cascade_spy: dict[str, Any],
+) -> None:
+    from server.memory.store import conflicts as conflicts_repo
+
+    wrote = await conflicts_repo.settle(
+        "o",
+        namespace="ns",
+        tombstone=["m1"],
+        activate=["m2"],
+        audit_note="note",
+        when=datetime(2026, 9, 12),
+        skip=lambda head: head.memory_key == "k2",
+        ch=object(),
+    )
+    assert wrote is None and cascade_spy["versions"] == []
 
 
 # ---------------------------------------------------------------------------

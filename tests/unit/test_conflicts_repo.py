@@ -16,7 +16,7 @@ from server.memory.store.conflicts import (
     list_conflicted,
     lookup_target,
     mark_active_by_ids,
-    tombstone_ids,
+    settle,
 )
 
 
@@ -71,14 +71,20 @@ async def test_lookup_target_returns_none_when_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tombstone_ids_empty_input_short_circuits() -> None:
+async def test_settle_empty_input_short_circuits() -> None:
     """Defensive: an empty IN list would tombstone every row in the
     table. Empty input must NOT touch CH."""
     ch = StubCH()
-    await tombstone_ids(
-        "clickhouse", [], "note", datetime(2026, 5, 17, tzinfo=UTC), namespace="ns", ch=ch
+    wrote = await settle(
+        "clickhouse",
+        namespace="ns",
+        tombstone=[],
+        activate=[],
+        audit_note="note",
+        when=datetime(2026, 5, 17, tzinfo=UTC),
+        ch=ch,
     )
-    assert ch.execute_calls == []
+    assert wrote is None and ch.execute_calls == []
 
 
 @pytest.mark.asyncio
@@ -91,7 +97,7 @@ async def test_tombstone_ids_empty_input_short_circuits() -> None:
         ("memory.delete_version:42", "resolve:revise:reason:by"),
     ],
 )
-async def test_tombstone_ids_writes_rmt_versions(
+async def test_settle_writes_rmt_versions(
     monkeypatch: pytest.MonkeyPatch, trace: str, written: str
 ) -> None:
     from server.memory import store as memory_repo
@@ -123,10 +129,11 @@ async def test_tombstone_ids_writes_rmt_versions(
     monkeypatch.setattr(lifecycle, "get_by_id", fake_get_by_id)
 
     async def fake_write_versions_by_ids(
-        org, memory_ids, update, *, ch=None, namespace=None, skip=None, strong=False
+        org, memory_ids, update, *, ch=None, namespace=None, skip=None, strong=False, **flags
     ):
+        captured["flags"] = flags
         row = memory_repo.MemoryRow(
-            memory_id="11111111-2222-3333-4444-555555555555",
+            memory_id=memory_ids[0],  # a row of the side that is tombstoned
             org=org,
             namespace="ns",
             agent="agent",
@@ -149,16 +156,19 @@ async def test_tombstone_ids_writes_rmt_versions(
         return len(memory_ids)
 
     monkeypatch.setattr(lifecycle, "write_versions_by_ids", fake_write_versions_by_ids)
-    await tombstone_ids(
+    await settle(
         "clickhouse",
-        ["id-1", "id-2"],
-        "resolve:revise:reason:by",
-        datetime(2026, 5, 17, tzinfo=UTC),
         namespace="ns",
+        tombstone=["id-1", "id-2"],
+        activate=["id-3"],
+        audit_note="resolve:revise:reason:by",
+        when=datetime(2026, 5, 17, tzinfo=UTC),
         ch=ch,
     )
     assert captured["org"] == "clickhouse"
-    assert captured["ids"] == ["id-1", "id-2"]
+    # Both sides in one write, whole and over the heads it read.
+    assert captured["ids"] == ["id-1", "id-2", "id-3"]
+    assert captured["flags"] == {"exact": True, "whole": True}
     assert captured["update"]["status"] == "tombstoned"
     assert captured["update"]["source_trace"] == written
 

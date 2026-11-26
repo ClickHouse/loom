@@ -164,7 +164,15 @@ A resolve decides a row that `conflicts.list` shows. On a row that is not flagge
 a proposal awaiting review, it answers `resolved: false` and changes nothing. Of the
 peers it writes the flagged ones only. A row keeps its `conflict_with` once its conflict
 is settled, so a peer settled earlier, revised since or still a proposal is neither
-tombstoned nor returned to `active`; `allow` still puts its pair on the allowlist.
+tombstoned nor returned to `active`; `allow` still puts its pair on the allowlist. With
+`peer_id` the peer named must be flagged too, or the answer is `resolved: false`.
+
+The rows a resolve changes go in one insert, committed over the rows as the resolve read
+them. A change another call makes in between refuses it, and no row is written: the
+answer is `resolved: false` when a row no longer awaits a decision, 423 `LOCKED` when a
+row it would tombstone was locked, and 503 `ADMISSION_CONTENDED` when the change lands
+as the insert is committed. A refused resolve changes no memory, and a 503 can be
+retried as it is.
 
 ```python
 from loom import Agent

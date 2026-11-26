@@ -229,27 +229,46 @@ async def lookup_target(
     return None if r is None else ConflictTarget.from_row(r)
 
 
-async def tombstone_ids(
+async def settle(
     org: str,
-    memory_ids: list[str],
-    audit_note: str,
-    when: datetime,
     *,
     namespace: str,
-    ch: _CHClient | None = None,
+    tombstone: list[str],
+    activate: list[str],
+    audit_note: str,
+    when: datetime,
     skip: Callable[[MemoryRow], bool] | None = None,
-) -> list[dict[str, Any]]:
-    """Tombstone N rows of `namespace` by memory_id. `audit_note` is appended to
-    source_trace so the resolution-audit trail is queryable.
-    Empty list short-circuits (an empty IN would mutate every row).
-    `skip(head)` leaves a head as it is, or raises to refuse the whole call: every
-    head is read current and judged before the first is written.
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]] | None:
+    """A resolve's one write to `namespace`: the `tombstone` rows are tombstoned, with
+    `audit_note` appended to source_trace so the resolution-audit trail is queryable, and
+    the `activate` rows are set status='active'. Every head is read current and judged
+    before a row is written, and the rows go in one insert, committed only over the
+    heads read: a head that moves in between answers 503. `skip(head)` raises to refuse
+    the write, or leaves a head, which leaves them all: the write is whole or not made.
+    The ids are the rows' own, as stored.
 
-    Returns each tombstoned row's identity tuple, memory_key, memory_id and
-    tombstone version, for the handler's webhook events."""
-    if not memory_ids:
-        return []
+    Returns each tombstoned row's identity tuple, memory_key, memory_id and tombstone
+    version, for the handler's webhook events; None when nothing was written."""
     import server.memory.store as memory_repo
+
+    if set(tombstone) & set(activate):
+        raise ValueError("a row is on both sides of the write")
+    if not tombstone:
+        if not activate:
+            return None
+        written = await memory_repo.write_versions_by_ids(
+            org,
+            activate,
+            lambda _row: {"status": "active"},
+            ch=ch,
+            namespace=namespace,
+            skip=skip,
+            strong=True,
+            exact=True,
+            whole=True,
+        )
+        return [] if written else None
 
     def _note(row: memory_repo.MemoryRow) -> dict[str, Any]:
         trace = carried_trace(row.source_trace)  # the delete_version marker is not carried
@@ -257,16 +276,20 @@ async def tombstone_ids(
 
     # The tombstone must reach memory_embeddings too, or the losing side of a
     # conflict keeps surfacing in search.
-    return await memory_repo.tombstone_cascade_by_ids(
+    tombstoned = await memory_repo.tombstone_cascade_by_ids(
         org,
-        memory_ids,
+        tombstone,
         when=when,
         update=_note,
         ch=ch,
         namespace=namespace,
         skip=skip,
-        strong=skip is not None,
+        strong=True,
+        beside={memory_id: {"status": "active"} for memory_id in activate},
+        exact=True,
+        whole=True,
     )
+    return tombstoned or None
 
 
 async def mark_active_by_ids(
@@ -275,31 +298,19 @@ async def mark_active_by_ids(
     *,
     namespace: str,
     ch: _CHClient | None = None,
-    skip: Callable[[MemoryRow], bool] | None = None,
-) -> list[str]:
-    """Flip status='active' for the listed rows of `namespace`, and return the ids of
-    the rows written. Empty short-circuits. `skip(head)` leaves a head as it is; the
-    heads it judges are read current."""
+) -> None:
+    """Flip status='active' for the listed rows of `namespace`. Empty short-circuits."""
     if not memory_ids:
-        return []
+        return
     import server.memory.store as memory_repo
-
-    written: list[str] = []
-
-    def _activate(row: MemoryRow) -> dict[str, Any]:
-        written.append(str(row.memory_id))
-        return {"status": "active"}
 
     await memory_repo.write_versions_by_ids(
         org,
         memory_ids,
-        _activate,
+        lambda _row: {"status": "active"},
         ch=ch,
         namespace=namespace,
-        skip=skip,
-        strong=skip is not None,
     )
-    return written
 
 
 async def allowlist_list(

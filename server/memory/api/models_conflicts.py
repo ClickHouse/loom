@@ -79,8 +79,8 @@ class ConflictsResolveInput(BaseModel):
     # the peers; `allow` reactivates all and allowlists each key pair.
     decision: ResolveDecision
     # Optional: scope the resolve to one specific peer (revise against
-    # just that one). If unset, the resolve fans out across all peers
-    # in conflict_with.
+    # just that one), which must be flagged too. If unset, the resolve fans
+    # out across the flagged peers in conflict_with.
     peer_id: str | None = None
     # Why; appended to tombstoned rows' `source_trace` and stored on allowlist rows
     # (first 512 characters).
@@ -91,10 +91,11 @@ class ConflictsResolveInput(BaseModel):
 
 
 class ConflictsResolveOutput(BaseModel):
-    # False when the memory or the named peer is unknown, the memory is not in
-    # `namespace`, or it is not an unresolved conflict (a memory that is not flagged, or a
-    # proposal awaiting review); no memory was written then. A peer not in `namespace` is
-    # left as it is, as is a peer that is not flagged.
+    # False when the memory or the peer named in `peer_id` is unknown, is not in
+    # `namespace`, or is not one side of an unresolved conflict (a memory that is not
+    # flagged, or a proposal awaiting review), also when a row the resolve would write
+    # stopped being one while the call ran; no memory was written then. Without
+    # `peer_id`, a peer that is not flagged or not in `namespace` is left as it is.
     resolved: bool
     # The decision, echoed.
     decision: ResolveDecision

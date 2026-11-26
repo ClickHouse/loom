@@ -63,15 +63,12 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
     def _in(namespace: str, ids: list[str]) -> list[str]:
         return [i for i in ids if i in t.rows and t.rows[i]["namespace"] == namespace]
 
-    async def _tombstone(
-        org: str, ids: list[str], *_: Any, namespace: str, **__: Any
+    async def _settle(
+        org: str, *, namespace: str, tombstone: list[str], activate: list[str], **_: Any
     ) -> list[dict[str, Any]]:
-        t.tombstoned.extend(_in(namespace, ids))
-        return [{"memory_id": i} for i in _in(namespace, ids)]
-
-    async def _activate(org: str, ids: list[str], *, namespace: str, **_: Any) -> list[str]:
-        t.activated.extend(_in(namespace, ids))
-        return _in(namespace, ids)
+        t.tombstoned.extend(_in(namespace, tombstone))
+        t.activated.extend(_in(namespace, activate))
+        return [{"memory_id": i} for i in _in(namespace, tombstone)]
 
     async def _count(org: str, namespace: str, **_: Any) -> int:
         t.count_reads_consistent.append(sequential_reads_active())
@@ -94,8 +91,7 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
         )
 
     monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
-    monkeypatch.setattr(repo, "tombstone_ids", _tombstone)
-    monkeypatch.setattr(repo, "mark_active_by_ids", _activate)
+    monkeypatch.setattr(repo, "settle", _settle)
     monkeypatch.setattr(repo, "allowlist_insert", _allow)
     monkeypatch.setattr(repo, "count_conflicted", _count)
     h.reset_conflicts_count_cache()

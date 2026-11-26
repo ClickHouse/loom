@@ -1,6 +1,5 @@
-"""What conflicts.resolve writes: only rows that await a decision, and no tombstone of a
-locked memory. Both are judged on the heads a resolve reads first, before its first
-write: one that answers `resolved: false` or is refused there leaves every row as it was.
+"""What conflicts.resolve writes: only rows that await a decision, no tombstone of a
+locked memory, and all of it in one insert.
 
 A resolve decides a memory the Review queue lists: flagged `conflicted`, and not held
 for a proposal's review. On any other target it resolves nothing. `contract` does not
@@ -10,19 +9,21 @@ proposal does not tombstone the facts it contradicts.
 The same holds for the peers. A row keeps its `conflict_with` once its conflict is
 settled, so a flagged target names peers settled earlier beside the ones flagged now. A
 peer that is not flagged is neither tombstoned nor reactivated: one settled with `allow`
-survives a later `revise`, and a proposal stays on trial.
+survives a later `revise`, and a proposal stays on trial. A peer named in `peer_id` must
+await a decision too, or the pair is not one to decide.
 
-The states are read current, from the rows' heads, and each write judges again the head
-it reads: a row another caller settles in between is left as it is. A resolve that fails
-between its two writes leaves the target flagged, so a retry completes it.
+The rows a resolve changes go in one insert. The write reads their heads current and
+judges them again: a row that no longer awaits a decision leaves the write unmade, and
+a lock on a row it would tombstone refuses it (423 LOCKED, as on `memory.delete`). The
+insert is committed only over those heads, so a lock or another write landing after the
+read refuses it too. A resolve that is refused, or whose insert fails, leaves every row
+as it was, and a retry completes it. Each side is known by the id the store holds: a
+request may spell the target's id another way.
 
-A lock refuses `memory.delete` (423 LOCKED), and a resolve refuses the same row. It
-tombstones the side that loses, so it reads those heads current and asserts their locks.
-`allow` tombstones nothing and settles a locked pair, and a lapsed lock is no lock.
-
-The handler, `conflicts_repo.tombstone_ids` and `write_versions_by_ids` are the real
-ones. The reads and the two inserts are faked, as in test_tombstone_cascade.py; the faked
-insert keeps the proposal fence every real insert passes.
+The handler, `conflicts_repo.settle`, `tombstone_cascade_by_ids` and
+`write_versions_by_ids` are the real ones. The reads and the two inserts are faked, as
+in test_tombstone_cascade.py; the faked insert keeps the proposal fence every real
+insert passes and the check of the heads an exact commit makes.
 """
 
 from __future__ import annotations
@@ -42,12 +43,20 @@ from server.memory.domain import lock
 from server.memory.domain.proposal_review import enforce_review
 from server.memory.store import conflicts as conflicts_repo
 from server.memory.store import lifecycle
+from server.memory.store.pg_memory import AdmissionContendedError
+from server.memory.store.rows import identity_key, memory_head_state
 
-NEW = "11111111-1111-1111-1111-111111111111"
-OLD = "22222222-2222-2222-2222-222222222222"
-DRAFT = "33333333-3333-3333-3333-333333333333"
+NEW = "aaaaaaaa-1111-1111-1111-111111111111"
+OLD = "bbbbbbbb-2222-2222-2222-222222222222"
+DRAFT = "cccccccc-3333-3333-3333-333333333333"
 
 DECISIONS = ["revise", "contract", "allow"]
+# What each decision writes on the pair, where NEW is the target.
+SETTLED = {
+    "revise": {OLD: "tombstoned", NEW: "active"},
+    "contract": {NEW: "tombstoned", OLD: "active"},
+    "allow": {NEW: "active", OLD: "active"},
+}
 
 
 def _row(mid: str, key: str, *peers: str, status: str = "conflicted") -> memory_repo.MemoryRow:
@@ -83,15 +92,19 @@ class _Store:
     written: list[dict[str, Any]] = field(default_factory=list)
     allowlisted: list[tuple[str, str]] = field(default_factory=list)
     strong_reads: list[bool] = field(default_factory=list)
-    # Runs once the resolve has read its target and peers: another caller's write.
-    after_first_reads: Callable[[], None] | None = None
-    # The inserts that fail, counted from 1; the allowlist's insert is not one of them.
-    failing_inserts: set[int] = field(default_factory=set)
     inserts: int = 0
+    # Another caller's write, landing once the resolve has read its target and peers.
+    after_first_reads: Callable[[], None] | None = None
+    # Another caller's write, landing between the write's own read and its insert.
+    before_insert: Callable[[], None] | None = None
+    failing_inserts: set[int] = field(default_factory=set)  # counted from 1
     allowlist_fails: bool = False
 
     def change(self, mid: str, **update: Any) -> None:
         self.rows[mid] = self.rows[mid].model_copy(update=update)
+
+    def lock(self, mid: str, mode: str = "no_delete", *, until: datetime | None = None) -> None:
+        self.change(mid, lock_mode=mode, lock_until=until, lock_reason="keep", locked_by="curator")
 
     def statuses(self) -> dict[str, str]:
         return {str(r["memory_id"]): r["status"] for r in self.written}
@@ -106,18 +119,22 @@ def store(monkeypatch: pytest.MonkeyPatch) -> _Store:
     s = _Store({NEW: _row(NEW, "deploy_day_new", OLD), OLD: _row(OLD, "deploy_day", NEW)})
 
     async def get_by_id(mid: str, **kw: Any) -> Any:
-        if kw.get("include_tombstoned"):
-            raise AssertionError("a resolve reads live heads only")
         s.strong_reads.append(bool(kw.get("strong")))
-        row = s.rows.get(mid)
+        row = s.rows.get(mid.lower())  # a UUID is found whatever its letters' case
         found = row is not None and row.namespace == kw.get("namespace")
         answer = row if found and row.tombstoned_at is None else None
         if len(s.strong_reads) == 2 and s.after_first_reads is not None:
             s.after_first_reads()
         return answer
 
-    async def insert(built: list[dict[str, Any]], **callbacks: Any) -> None:
+    async def insert(built: list[dict[str, Any]], **options: Any) -> None:
+        if s.before_insert is not None:
+            s.before_insert()
         enforce_review(built, s.rows)
+        current = {identity_key(r): r for r in s.rows.values()}
+        for key, read in (options.get("expected_heads") or {}).items():
+            if memory_head_state(current.get(key)) != memory_head_state(read):
+                raise AdmissionContendedError("the memory changed while it was read")
         s.inserts += 1
         if s.inserts in s.failing_inserts:
             raise ConnectionError("insert failed")
@@ -125,7 +142,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> _Store:
         for version in built:
             mid = str(version["memory_id"])
             s.change(mid, status=version["status"], tombstoned_at=version["tombstoned_at"])
-        if on_inserted := callbacks.get("on_inserted"):
+        if on_inserted := options.get("on_inserted"):
             on_inserted()
 
     async def mirror(built: list[dict[str, Any]], **_: Any) -> int:
@@ -154,12 +171,6 @@ def store(monkeypatch: pytest.MonkeyPatch) -> _Store:
     return s
 
 
-def _lock(store: _Store, mode: str, *, until: datetime | None = None) -> None:
-    """Locks the older row."""
-    store.change(OLD, lock_mode=mode, lock_until=until, lock_reason="keep", locked_by="curator")
-    assert lock.refuses(store.rows[OLD], "delete") is (bool(mode) and until is None)
-
-
 async def _resolve(memory_id: str, decision: str, peer_id: str | None = None) -> Any:
     return await h.handle_conflicts_resolve(
         ConflictsResolveInput(
@@ -172,6 +183,10 @@ async def _resolve(memory_id: str, decision: str, peer_id: str | None = None) ->
     )
 
 
+def _unresolved(out: Any) -> bool:
+    return (out.resolved, out.affected_memory_ids, out.resolved_at) == (False, [], None)
+
+
 # ---- The target: only an unresolved conflict is decided ----
 
 
@@ -180,9 +195,8 @@ async def test_a_proposal_awaiting_review_resolves_nothing(store: _Store, decisi
     # A proposal records the facts it contradicts and keeps its status; they stay active.
     store.rows[NEW] = _row(NEW, "deploy_day_new", OLD, status="proposed")
     store.change(OLD, status="active", conflict_with=[])
-    out = await _resolve(NEW, decision)
-    assert (out.resolved, out.affected_memory_ids, out.resolved_at) == (False, [], None)
-    assert store.written == []
+    assert _unresolved(await _resolve(NEW, decision))
+    assert store.written == [] and store.allowlisted == []
 
 
 @pytest.mark.parametrize("decision", DECISIONS)
@@ -191,9 +205,8 @@ async def test_a_flagged_memory_held_for_review_resolves_nothing(
 ) -> None:
     # The fence serves no row held for review, whatever its status says.
     store.change(NEW, requires_review=True)
-    out = await _resolve(NEW, decision)
-    assert (out.resolved, out.affected_memory_ids) == (False, [])
-    assert store.written == []
+    assert _unresolved(await _resolve(NEW, decision))
+    assert store.written == [] and store.allowlisted == []
 
 
 @pytest.mark.parametrize("decision", DECISIONS)
@@ -211,9 +224,8 @@ async def test_a_memory_that_is_not_flagged_resolves_nothing(
         status="conflicted" if peer == "flagged-again" else "active",
         conflict_with=[NEW] if links else [],
     )
-    out = await _resolve(NEW, decision)
-    assert (out.resolved, out.affected_memory_ids) == (False, [])
-    assert store.written == []
+    assert _unresolved(await _resolve(NEW, decision))
+    assert store.written == [] and store.allowlisted == []  # `allow` allowlists no pair
 
 
 # ---- The peers: only the flagged ones are written ----
@@ -265,80 +277,103 @@ async def test_a_named_peer_narrows_the_resolve_to_that_peer(store: _Store) -> N
     assert out.resolved and store.statuses() == {DRAFT: "tombstoned", NEW: "active"}
 
 
-async def test_every_head_a_resolve_judges_is_read_current(store: _Store) -> None:
-    for decision in DECISIONS:
-        store.rows[NEW], store.rows[OLD] = _row(NEW, "k_new", OLD), _row(OLD, "k", NEW)
-        assert (await _resolve(NEW, decision)).resolved
-    assert store.strong_reads and all(store.strong_reads)
-
-
-# ---- Each write judges the head it reads ----
-
-
-@pytest.mark.parametrize(
-    ("decision", "settled", "wrote"),
-    [
-        ("revise", OLD, {NEW: "active"}),
-        ("contract", OLD, {NEW: "tombstoned"}),
-        ("allow", OLD, {NEW: "active"}),
-        ("revise", NEW, {OLD: "tombstoned"}),
-        ("contract", NEW, {OLD: "active"}),
-        ("allow", NEW, {OLD: "active"}),
-    ],
-    ids=[f"{d}-{side}" for side in ("peer", "target") for d in DECISIONS],
-)
-async def test_a_row_settled_between_the_reads_is_left_as_it_is(
-    store: _Store, decision: str, settled: str, wrote: dict[str, str]
+@pytest.mark.parametrize("decision", DECISIONS)
+@pytest.mark.parametrize("peer", ["deleted", "settled", "on-trial"])
+async def test_a_named_peer_that_awaits_no_decision_resolves_nothing(
+    store: _Store, decision: str, peer: str
 ) -> None:
-    # Another caller settles one side once this resolve has read both: it is neither
-    # tombstoned nor rewritten, and the answer does not list it.
-    store.after_first_reads = lambda: store.change(settled, status="active")
-    out = await _resolve(NEW, decision)
-    assert (out.resolved, out.affected_memory_ids) == (True, list(wrote))
-    assert store.statuses() == wrote
+    # The target still names the peer. `contract` would tombstone the only row in play.
+    if peer == "deleted":
+        store.change(OLD, status="tombstoned", tombstoned_at=datetime(2026, 9, 2))
+    else:
+        store.change(OLD, status="active" if peer == "settled" else "proposed")
+    assert _unresolved(await _resolve(NEW, decision, peer_id=OLD))
+    assert store.written == [] and store.allowlisted == []
 
 
 @pytest.mark.parametrize("decision", DECISIONS)
-async def test_a_pair_settled_between_the_reads_resolves_nothing(
+async def test_an_id_spelled_another_way_names_the_same_row(store: _Store, decision: str) -> None:
+    # Each side is known by the id the store holds, not by the request's spelling of it:
+    # `revise` keeps the target, and `contract` asserts its lock.
+    out = await _resolve(NEW.upper(), decision)
+    assert out.resolved and store.statuses() == SETTLED[decision]
+    assert sorted(out.affected_memory_ids) == [NEW, OLD]
+
+
+async def test_a_locked_target_whose_id_is_spelled_another_way_is_refused(store: _Store) -> None:
+    store.lock(NEW)
+    with pytest.raises(HTTPException) as refused:
+        await _resolve(NEW.upper(), "contract")
+    assert refused.value.status_code == 423 and store.written == []
+
+
+@pytest.mark.parametrize("decision", DECISIONS)
+async def test_a_row_is_not_its_own_peer(store: _Store, decision: str) -> None:
+    store.change(NEW, conflict_with=[NEW, OLD])
+    out = await _resolve(NEW, decision)
+    assert out.resolved and store.statuses() == SETTLED[decision]
+
+
+# ---- One write, on heads read current ----
+
+
+@pytest.mark.parametrize("decision", DECISIONS)
+async def test_a_resolve_is_one_insert_over_heads_read_current(
     store: _Store, decision: str
 ) -> None:
-    def settle() -> None:
-        store.change(NEW, status="active")
-        store.change(OLD, status="active")
-
-    store.after_first_reads = settle
     out = await _resolve(NEW, decision)
-    assert (out.resolved, out.affected_memory_ids, out.resolved_at) == (False, [], None)
+    assert out.resolved and store.statuses() == SETTLED[decision]
+    assert store.inserts == 1  # the side that loses and the side that stays, together
+    assert store.strong_reads and all(store.strong_reads)
+
+
+@pytest.mark.parametrize("decision", DECISIONS)
+@pytest.mark.parametrize("settled", [NEW, OLD], ids=["target", "peer"])
+async def test_a_row_settled_before_the_write_reads_it_leaves_the_write_unmade(
+    store: _Store, decision: str, settled: str
+) -> None:
+    # Another caller settles one side once this resolve has read both.
+    store.after_first_reads = lambda: store.change(settled, status="active")
+    assert _unresolved(await _resolve(NEW, decision))
     assert store.written == []
 
 
-# ---- A failure between the two writes ----
+@pytest.mark.parametrize(
+    ("decision", "loses"), [("revise", OLD), ("contract", NEW)], ids=["revise", "contract"]
+)
+async def test_a_lock_that_lands_before_the_write_reads_refuses_it(
+    store: _Store, decision: str, loses: str
+) -> None:
+    store.after_first_reads = lambda: store.lock(loses)
+    with pytest.raises(HTTPException) as refused:
+        await _resolve(NEW, decision)
+    assert refused.value.status_code == 423
+    assert store.written == []  # the side that stays is not written either
 
 
 @pytest.mark.parametrize(
-    ("decision", "fails", "after_failure", "after_retry"),
-    [
-        ("revise", 1, {NEW: "conflicted", OLD: "conflicted"}, {NEW: "active"}),
-        ("revise", 2, {NEW: "conflicted"}, {NEW: "active"}),
-        ("contract", 1, {NEW: "conflicted", OLD: "conflicted"}, {OLD: "active"}),
-        ("contract", 2, {NEW: "conflicted", OLD: "active"}, {OLD: "active"}),
-        ("allow", 1, {NEW: "conflicted", OLD: "conflicted"}, {NEW: "active", OLD: "active"}),
-    ],
-    ids=["revise-1", "revise-2", "contract-1", "contract-2", "allow-1"],
+    ("decision", "moved"), [("revise", OLD), ("contract", NEW), ("allow", OLD)], ids=DECISIONS
 )
-async def test_a_failed_write_leaves_the_target_flagged_and_a_retry_completes(
-    store: _Store,
-    decision: str,
-    fails: int,
-    after_failure: dict[str, str],
-    after_retry: dict[str, str],
+async def test_a_write_that_lands_before_the_insert_refuses_it(
+    store: _Store, decision: str, moved: str
 ) -> None:
-    store.failing_inserts = {fails}
+    # The write judged its heads; a lock lands before its insert is committed.
+    store.before_insert = lambda: store.lock(moved)
+    with pytest.raises(AdmissionContendedError):
+        await _resolve(NEW, decision)
+    assert store.written == []
+
+
+@pytest.mark.parametrize("decision", DECISIONS)
+async def test_a_failed_write_changes_nothing_and_a_retry_completes(
+    store: _Store, decision: str
+) -> None:
+    store.failing_inserts = {1}
     with pytest.raises(ConnectionError):
         await _resolve(NEW, decision)
-    assert store.live() == after_failure  # the target is flagged still
+    assert store.live() == {NEW: "conflicted", OLD: "conflicted"}
     assert (await _resolve(NEW, decision)).resolved
-    assert store.live() == after_retry
+    assert store.statuses() == SETTLED[decision]
 
 
 async def test_an_allow_that_fails_at_the_allowlist_writes_nothing_and_a_retry_completes(
@@ -350,7 +385,7 @@ async def test_an_allow_that_fails_at_the_allowlist_writes_nothing_and_a_retry_c
     assert store.written == []  # still flagged, so the retry is not answered `resolved: false`
     store.allowlist_fails = False
     out = await _resolve(NEW, "allow")
-    assert out.resolved and store.statuses() == {NEW: "active", OLD: "active"}
+    assert out.resolved and store.statuses() == SETTLED["allow"]
     assert store.allowlisted == [("deploy_day", "deploy_day_new")]
 
 
@@ -364,7 +399,8 @@ async def test_an_allow_that_fails_at_the_allowlist_writes_nothing_and_a_retry_c
 async def test_a_resolve_that_would_tombstone_a_locked_row_is_refused(
     store: _Store, mode: str, memory_id: str, decision: str
 ) -> None:
-    _lock(store, mode)
+    store.lock(OLD, mode)
+    assert lock.refuses(store.rows[OLD], "delete")
     with pytest.raises(HTTPException) as refused:
         await _resolve(memory_id, decision)
     assert refused.value.status_code == 423
@@ -374,7 +410,7 @@ async def test_a_resolve_that_would_tombstone_a_locked_row_is_refused(
 
 
 async def test_one_locked_peer_refuses_the_whole_resolve(store: _Store) -> None:
-    _lock(store, "no_delete")
+    store.lock(OLD)
     store.rows[DRAFT] = _row(DRAFT, "deploy_day_draft", NEW)  # unlocked, and read first
     store.change(NEW, conflict_with=[DRAFT, OLD])
     with pytest.raises(HTTPException) as refused:
@@ -384,20 +420,13 @@ async def test_one_locked_peer_refuses_the_whole_resolve(store: _Store) -> None:
 
 
 async def test_a_lapsed_lock_is_no_lock(store: _Store) -> None:
-    _lock(store, "read_only", until=datetime(2026, 9, 2))
+    store.lock(OLD, "read_only", until=datetime(2026, 9, 2))
+    assert not lock.refuses(store.rows[OLD], "delete")
     out = await _resolve(NEW, "revise")
-    assert out.resolved
-    assert store.statuses() == {OLD: "tombstoned", NEW: "active"}
+    assert out.resolved and store.statuses() == SETTLED["revise"]
 
 
 async def test_allow_settles_a_locked_pair(store: _Store) -> None:
-    _lock(store, "read_only")
+    store.lock(OLD, "read_only")
     out = await _resolve(NEW, "allow")
-    assert out.resolved
-    assert store.statuses() == {NEW: "active", OLD: "active"}
-
-
-async def test_an_unlocked_pair_resolves(store: _Store) -> None:
-    out = await _resolve(NEW, "revise")
-    assert out.resolved
-    assert store.statuses() == {OLD: "tombstoned", NEW: "active"}
+    assert out.resolved and store.statuses() == SETTLED["allow"]

@@ -445,7 +445,8 @@ async def test_an_agent_settles_conflicts_in_its_own_namespace_only(ch: Any) -> 
             assert await statuses(kept, dropped, plain) == ["conflicted", "conflicted", "active"]
             nothing = await settle(plain, "contract")
             assert (nothing.resolved, nothing.affected_memory_ids) == (False, [])
-            done = await settle(kept, "revise")
+            # The id as a client may spell it: the row kept is the one the store holds.
+            done = await settle(kept.upper(), "revise")
             assert (done.resolved, done.affected_memory_ids) == (True, [dropped, kept])
             assert await statuses(kept, dropped, plain) == ["active", None, "active"]
 
