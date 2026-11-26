@@ -70,6 +70,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [LibreChat](docs/features/integrations/librechat.md): Needs LibreChat v0.8.8 (MIT), a Loom server that serves the assistant toolset, and one Loom `viewer` token per person.
 - [Connect to Loom's MCP memory server](docs/features/integrations/mcp-clients.md): An MCP memory server lets AI agents save and retrieve durable facts through the Model Context Protocol.
 - [OKF bundles](docs/features/integrations/okf.md): A namespace can be rendered as an OKF (Open Knowledge Format) v0.2 bundle: one Markdown file per memory with YAML frontmatter, an `index.md` per directory listing each concept with a one-line description, and a `log.md` of changes.
+- [RAGFlow](docs/features/integrations/ragflow.md): Connect a RAGFlow agent to an authenticated Loom deployment over Streamable HTTP so it can look up a handoff saved in Loom.
 - [VS Code](docs/features/integrations/vscode.md): GitHub Copilot in VS Code can save and retrieve project decisions through Loom's MCP server over streamable HTTP.
 - [Conflicts and refusal](docs/features/memory/conflicts-and-refusal.md): Every memory write is judged against the facts the namespace already holds.
 - [Extraction from transcripts](docs/features/memory/extraction.md): `memory.set_from_messages` takes a transcript and the server decides what in it is durable.
