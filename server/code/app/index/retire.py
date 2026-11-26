@@ -23,10 +23,8 @@ from typing import Any
 
 logger = logging.getLogger("loom.code_index.retire")
 
-# Not purged here: search telemetry (`code_search_trace`, `code_search_outcome`) and the
-# answer cache (`code_answers`) have their own saga steps. The answer cache is deleted with
-# the namespace, not kept as an audit trail: a row holds the cited paths and symbols and the
-# model's text written from the repository's code, so it is the repository's content.
+# Not purged here: search telemetry and the answer cache (`code_answers`) are deleted by
+# their own saga steps.
 KEEP_TABLES: frozenset[str] = frozenset(
     {"loom.code_search_trace", "loom.code_search_outcome", "loom.code_answers"}
 )

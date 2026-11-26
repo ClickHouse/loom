@@ -884,8 +884,8 @@ _BESIDE_OTHER_ROWS = frozenset(
 def namespace_tables() -> list[str]:
     """The census tables that hold a namespace's rows under its `namespace` column:
     the namespace scope's substrates less those with a predicate of their own (counted
-    org-wide, or by the memory namespace they quote) and those whose rows sit beside
-    rows of the others (`_BESIDE_OTHER_ROWS`)."""
+    org-wide, or by the namespace asked in and the memory namespace quoted) and those
+    whose rows sit beside rows of the others (`_BESIDE_OTHER_ROWS`)."""
     return [s.table for s in _CENSUS if s.ns_pred is None and s.table not in _BESIDE_OTHER_ROWS]
 
 

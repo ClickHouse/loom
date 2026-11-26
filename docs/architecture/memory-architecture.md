@@ -1542,7 +1542,8 @@ cached answers, so code.ask reads both again after storing an answer and, findin
 either, tombstones it and deletes the answers quoting its keys; a process killed between
 the two leaves the answer unchecked. A tombstone of an entry
 keeps no answer text, so one written after such a delete brings nothing back. Answers
-drawn from the code index alone name no memory and stay.
+drawn from the code index alone name no memory: a redact or a user erasure leaves them,
+and a namespace erasure deletes them with the code namespace they were asked in.
 
 An answer or tombstone written by a build before the columns existed names nothing, and so
 does a tombstone that build writes of a stamped entry while both builds serve; an erasure

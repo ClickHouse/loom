@@ -192,7 +192,7 @@ def _asked_in(sql: str) -> bool:
 
 def test_the_answer_cache_of_an_erased_code_namespace_is_deleted_with_it() -> None:
     """An answer asked in the erased code namespace carries the repository's code in its
-    text; the step reached only the answers that quoted the namespace's memories."""
+    text, so the step deletes it with the namespace."""
     ch = _StubCH([], count=2)
     n = asyncio.run(graph_steps.delete_code_answers_by_namespace("o", "code-repo", ch=ch))
     assert n == 2

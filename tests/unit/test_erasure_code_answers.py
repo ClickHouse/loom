@@ -1,7 +1,9 @@
 """code.ask's answer cache under erasure, on clickhouse-local: an answer that quoted
 memory excerpts names their namespace and keys, and the namespace and user sagas delete
 it, its tombstone versions included, while the census counts it until they do. An answer
-drawn from the code index alone, or from another namespace's memory, stays."""
+drawn from the code index alone, or from another namespace's memory, stays under a
+memory-namespace or user erasure; an erasure of the code namespace it was asked in
+deletes it."""
 
 from __future__ import annotations
 
