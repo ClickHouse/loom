@@ -264,18 +264,21 @@ and recreate the server container after changing it.
 
 ### Read caller lessons before editing a dependency
 
-Suppose an indexed test calls `App.mount`, which forwards to `Receiver.register`.
-A lesson attached to `App.mount` says that mounts can repeat. Read the lesson
-before editing `Receiver.register` so the change preserves that behavior.
+Suppose an indexed Python test calls `App.mount`, a short method that forwards
+to `Receiver.register` in a different file. A lesson attached to `App.mount`
+says that mounts can repeat. Read the lesson before editing `Receiver.register`
+so the change preserves that behavior.
 
-1. Call `code.edit_context` with `name: "Receiver.register"` and `include_lessons: true`
-   in the repository's code namespace. If the lesson is in another namespace
-   the credential can read, name it in `lesson_namespaces`.
+1. In the repository's code namespace, call `code.edit_context` with the indexed
+   name or `path:line` of `Receiver.register` as `name` and set
+   `include_lessons: true`. Caller lessons require namespace-wide read access.
+   If the lesson is in another readable namespace, name it in `lesson_namespaces`.
 2. In the definition's `examples`, look for `evidence: "indirect_call"` and
-   `via.symbol: "App.mount"`. When Loom returns the caller's verified source,
-   `via.context` carries the excerpt and indexed commit.
-3. In the same definition's `lessons`, look for `linked_symbols: ["App.mount"]`
-   and `code_state: "fresh"`. Read the caller excerpt before applying the lesson.
+   the indexed name for `App.mount` in `via.symbol`. When Loom returns the
+   caller's verified source, `via.context` carries the excerpt and indexed commit.
+3. In the same definition's `lessons`, look for `code_state: "fresh"` and the
+   returned `via.symbol` in `linked_symbols`. Read the caller excerpt before
+   applying the lesson.
 
 Caller lessons must match the returned indexed revision and fit the time and
 token limits. Use `code.symbol` to inspect the caller directly when edit
