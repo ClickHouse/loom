@@ -1,6 +1,6 @@
 ---
 title: Compare self-hosted memory tools for coding agents
-description: Compare Git instructions, a file-backed MCP memory server, and Loom on cross-session handoff, changed code, and audit history.
+description: Compare Git instructions, file-backed MCP memory, and Loom. See which setups share decisions, track source changes, and support project access controls.
 seo:
   title: Compare coding-agent memory tools
 ---
@@ -28,6 +28,17 @@ changing the saved decision. After reading it again, the reviewer records a corr
 The Git author is commit metadata. The Loom SQL actor is the subject of the credential
 that performed the write. The reference server's second observation was explicitly
 appended by the reviewer. It does not establish which statement is current.
+
+## Check access across projects
+
+The authorized reviewer retrieved the decision by key over HTTP. A third identity
+with viewer access to a different project namespace in the same organization made the
+same request and received `403`. The other two setups use access to the repository or
+storage file. The fixture does not test repository or filesystem permissions.
+
+When separate teams share a deployment, check both an allowed handoff and a refused
+read before adding project data. Use the [cross-client access checks](../getting-started/evaluate.md#shared-memory-across-clients)
+to test semantic search, lookup by memory ID, and expired credentials as separate cases.
 
 ## Operating trade-offs
 
@@ -76,8 +87,8 @@ bash examples/run_coding_agent_memory_comparison.sh
 
 The runner creates a temporary repository, storage file, local server, and ClickHouse
 container. It installs `@modelcontextprotocol/server-memory@2.2.1` as the MCP reference
-arm and prints the two source revisions, the fields returned by the graph, and the
-observed author and version records. If a default port is taken, set
+arm and prints the two source revisions, the fields returned by the graph, the
+project-access check, and the observed author and version records. If a default port is taken, set
 `COMPARISON_CH_HTTP_PORT`, `COMPARISON_CH_NATIVE_PORT`, or `COMPARISON_API_PORT` to
 unused ports before running it.
 

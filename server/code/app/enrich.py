@@ -17,15 +17,18 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from itertools import pairwise
 from pathlib import PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from server.code.app.spans import code_span
+from server.code.app.spans import code_span, span_attrs
 from server.code.domain.extract.treesitter import lang_for_path
 from server.code.domain.index.test_conventions import is_test_unit_path, sibling_test_paths, snake
 from server.code.domain.symbol_body import retained_source_window
 from server.code.store.index import CodeRepo
 from server.embedding.embedder import served_model_label
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.code.domain.units import CodeUnit
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,7 @@ async def usage_examples(
     context_lines: int = 0,
     tests_only: bool = False,
     ready: list[dict[str, Any]] | None = None,
+    related_names: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Call sites of the symbol, optionally restricted to indexed tests."""
     with_context = bool(context_lines and settings.embedding_model)
@@ -101,7 +105,7 @@ async def usage_examples(
         by_location.setdefault((str(edge["path"]), int(edge["line"])), edge)
     sites = list(by_location.values())
     limit = max(1, limit)
-    ranked = _rank_test_sites(sites) if tests_only else sites
+    ranked = _rank_test_sites(sites, related_names=related_names) if tests_only else sites
 
     def location(edge: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -161,23 +165,43 @@ def _test_name_words(name: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", snake(name))) - {"test", "tests"}
 
 
-def _rank_test_sites(sites: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _test_case(site: dict[str, Any]) -> tuple[str, str]:
+    """Group a Python test's local route handlers under their enclosing test."""
+    caller = site["from_qualified_name"]
+    path = site["path"]
+    if path.endswith(".py"):
+        segments = caller.split("::")
+        for i, name in enumerate(segments[1:], start=1):
+            if name.startswith("test_"):
+                return path, "::".join(segments[: i + 1])
+    return path, caller
+
+
+def _rank_test_sites(
+    sites: list[dict[str, Any]],
+    *,
+    related_names: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
     """Put related test functions first, with one source window per test before repeats."""
     counts: dict[tuple[str, str], int] = defaultdict(int)
+    related_words = {word for name in related_names for word in _test_name_words(name)}
     for site in sites:
-        counts[site["path"], site["from_qualified_name"]] += 1
+        counts[_test_case(site)] += 1
 
-    def key(site: dict[str, Any]) -> tuple[bool, int, int]:
-        caller = site["from_qualified_name"]
+    def key(site: dict[str, Any]) -> tuple[bool, bool, int, int]:
+        path, caller = _test_case(site)
         name = caller.rsplit("::", 1)[-1]
         _, *target = str(site.get("to_qualified_name") or "").split("::")
-        related = _test_name_words(name) & _test_name_words("_".join(target[-2:]))
-        return not snake(name).startswith("test_"), -len(related), -counts[site["path"], caller]
+        target_words = _test_name_words("_".join(target[-2:]))
+        words = _test_name_words(name)
+        related = words & target_words
+        shared = bool(related and ((related_words - target_words) & words))
+        return not snake(name).startswith("test_"), not shared, -len(related), -counts[path, caller]
 
     picked: dict[tuple[str, str], dict[str, Any]] = {}
     repeats = []
     for site in sorted(sites, key=key):
-        caller = site["path"], site["from_qualified_name"]
+        caller = _test_case(site)
         if caller in picked:
             repeats.append(site)
         else:
@@ -245,7 +269,107 @@ async def indirect_test_examples(
         for example in examples
     ):
         examples.append(reference)
+    if ready is not None:
+        ready[:] = examples
+    if bridge["path"] != definition["path"]:
+        await bounded(
+            _attach_caller_source(repo, org, ns, bridge, revision, examples, context_lines), None
+        )
     return examples
+
+
+async def _attach_caller_source(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    bridge: dict[str, Any],
+    revision: str,
+    examples: list[dict[str, Any]],
+    context_lines: int,
+) -> None:
+    """Return the verified caller when its source fits a test example's window."""
+    from server.code.app.symbol.resolve import _indexed_commit, symbol_body
+
+    via = _via_caller(bridge)
+    example = next(
+        (
+            site
+            for site in examples
+            if site.get("evidence") == "indirect_call"
+            and site.get("via") == via
+            and (site.get("context") or {}).get("commit") == revision
+        ),
+        None,
+    )
+    if example is None:
+        return
+    path = via["path"]
+    with code_span("enrich.indirect_caller_source", results=0) as sp:
+        rows, files = await asyncio.gather(
+            repo.symbols_by_ids(org, ns, [str(bridge["from_symbol_id"])]),
+            repo.file_rows_for_paths(org, ns, [path]),
+        )
+        if _indexed_commit(files.get(path, {}).get("indexed_commit")) != revision:
+            return
+        callers = [
+            row
+            for row in rows
+            if row["path"] == path
+            and row["qualified_name"] == via["symbol"]
+            and row["kind"] in {"function", "method"}
+            and row["start_line"] <= via["line"] <= row["end_line"]
+            and _indexed_commit(row.get("extent_commit") or row.get("indexed_commit")) == revision
+        ]
+        if len(callers) != 1:
+            return
+        (caller,) = callers
+        if caller["end_line"] - caller["start_line"] > 2 * context_lines:
+            return  # a larger caller remains available from its exact source location
+        body = await symbol_body(
+            repo, org, ns, {**caller, "_extent_commit": revision}, expected_commit=revision
+        )
+        fits = bool(body) and len(body) <= settings.code_chunk_max_chars
+        span_attrs(sp, results=int(fits))
+    if fits:
+        example["via"] = {
+            **via,
+            "context": {
+                "start_line": caller["start_line"],
+                "end_line": caller["end_line"],
+                "commit": revision,
+                "text": body,
+            },
+        }
+
+
+def merge_indirect_caller_sources(target: CodeUnit, repeated: CodeUnit) -> None:
+    """Keep verified optional caller source from either spelling of a definition."""
+    for old, new in zip(target.examples, repeated.examples, strict=True):
+        old_via, new_via = old.get("via") or {}, new.get("via") or {}
+        if new_via.get("context") and not old_via.get("context"):
+            old["via"] = new_via
+
+
+def deduplicate_indirect_caller_sources(definitions: list[CodeUnit]) -> None:
+    """Keep the caller body once, with its definition or with its first test."""
+    covered = {
+        (unit.path, unit.symbol, unit.start_line, unit.end_line, unit.body)
+        for unit in definitions
+        if unit.body and not unit.elided and unit.granularity == "unit"
+    }
+    attached = set()
+    for unit in definitions:
+        for example in unit.examples:
+            via = example.get("via") or {}
+            if context := via.get("context"):
+                key = (via["path"], via["symbol"])
+                start, end = context["start_line"], context["end_line"]
+                tag = (*key, context["commit"], start, end)
+                if tag in attached or (*key, start, end, context["text"]) in covered:
+                    example["via"] = {
+                        field: value for field, value in via.items() if field != "context"
+                    }
+                attached.add(tag)
 
 
 async def _verified_indirect_examples(

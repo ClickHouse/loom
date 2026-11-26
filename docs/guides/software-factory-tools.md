@@ -31,6 +31,15 @@ release record. Store pointers to those records next to the lessons and decision
 that a future run can reuse. See the [software factory memory walkthrough](../use-cases/multi-agent.md#memory-for-a-software-factory)
 for the implementation and review roles and their scoped credentials.
 
+## Choose an agent memory tool for a software factory
+
+Pick a past issue whose resolution changed after review. Give the review agent the
+issue and commit, then ask it to recover the final decision, its author and the
+definition it applies to. Check whether it can spot an outdated lesson after the
+definition changes. Repeat the read with a credential from an unrelated project.
+Use the [measured memory comparison](compare-coding-agent-memory.md) to see how these
+checks differ across repository files, a file-backed MCP server, and Loom.
+
 ## Run a pilot on one repository
 
 1. **Choose representative work.** Include a small fix, a change that depends on an

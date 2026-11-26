@@ -854,6 +854,22 @@ export interface CodeEditContextTarget {
   trace_run_id?: string;
 }
 
+export interface CodeEditReadSource {
+  qualified_name: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  commit: string;
+  body: string;
+  sites: CodeEditReadSite[];
+}
+
+export interface CodeEditReadSite {
+  path: string;
+  symbol: string;
+  line: number;
+}
+
 export interface CodeSymbolOutput {
   definitions: CodeUnit[];
   lessons_left_out?: number;
@@ -874,6 +890,7 @@ export interface CodeSymbolOutput {
   presence?: Array<Record<string, unknown>>;
   summary?: Record<string, string[]>;
   edit_targets?: CodeEditContextTarget[];
+  read_sources?: CodeEditReadSource[] | null;
 }
 
 export interface CodeEnclosingInput {

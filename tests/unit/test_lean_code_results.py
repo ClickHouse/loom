@@ -489,6 +489,7 @@ def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lo
     }
     for matches in (
         [{**declaration, "text": "@marker"}],
+        [{**declaration, "line": 2, "text": "@marker", "scope": "src.a::worker"}],
         [{**declaration, "path": f"src/module{index}.py"} for index in range(9)],
     ):
         payload = {
@@ -549,6 +550,106 @@ def test_grep_offers_edit_context_for_declarations_without_context_windows(monke
         assert json.loads(on_cell["next"].partition(" with ")[2])["org"] == "attached"
     finally:
         reset_code_scope(token)
+
+
+def test_grep_follows_matches_inside_an_indexed_scope() -> None:
+    path = "src/config.py"
+    inside = {
+        "path": path,
+        "line": 13,
+        "text": "value = read_config()",
+        "scope": "src.config::Config::load",
+        "scope_start_line": 9,
+        "scope_end_line": 16,
+    }
+    declaration = {
+        "path": path,
+        "line": 22,
+        "text": "def validate():",
+        "scope": "src.config::validate",
+        "scope_start_line": 22,
+        "scope_end_line": 26,
+    }
+    payload = {
+        "matches": [inside, {**inside, "line": 14}, declaration],
+        "contexts": [{"path": path, "start_line": 12, "end_line": 15, "text": "excerpt"}],
+    }
+    result = lr.mcp_op_result("code.grep", payload, {"include_body": False}, None, toolset="coding")
+    assert [hit["scope"] for hit in result["matches"]] == [
+        "Config::load",
+        "Config::load",
+        "validate",
+    ]
+    assert result["edit_context_next"]["arguments"] == {
+        "names": [f"{path}:22", f"{path}:src.config::Config::load"],
+    }
+    assert json.loads(result["next"].partition(" with ")[2]) == {
+        "ranges": [
+            {"path": path, "start_line": 22, "end_line": 26},
+            {"path": path, "start_line": 9, "end_line": 16},
+        ],
+    }
+    body_hits = [
+        {**inside, "path": f"src/file{i}.py", "scope": f"src.file{i}::Config::load"}
+        for i in range(9)
+    ]
+    wide = {"matches": [declaration, *body_hits]}
+    result = lr.mcp_op_result("code.grep", wide, {"include_body": False}, None, toolset="coding")
+    assert result["edit_context_next"]["arguments"] == {"names": [f"{path}:22"]}
+    assert json.loads(result["next"].partition(" with ")[2]) == {
+        "ranges": [{"path": path, "start_line": 22, "end_line": 26}],
+    }
+
+
+def test_grep_edit_followup_keeps_the_indexed_python_module() -> None:
+    for path, scope, display in (
+        ("src/demo.py", "src.demo::run", "run"),
+        ("src/demo.pyi", "src.demo.__stub__::run", "src.demo.__stub__::run"),
+        ("src/build-doc.py", "src.build-doc::run", "run"),
+    ):
+        payload = {
+            "matches": [
+                {
+                    "path": path,
+                    "line": 7,
+                    "text": "return value",
+                    "scope": scope,
+                    "scope_start_line": 5,
+                    "scope_end_line": 8,
+                },
+            ],
+        }
+        result = lr.mcp_op_result(
+            "code.grep", payload, {"include_body": False}, None, toolset="coding"
+        )
+        assert result["matches"][0]["scope"] == display
+        assert result["edit_context_next"]["arguments"] == {"names": [f"{path}:{scope}"]}
+
+
+def test_grep_offers_the_exact_range_when_the_scope_cannot_be_named() -> None:
+    for path, scope, text in (
+        ("demo.py", "demo::run", "return value"),
+        ("src/demo.py", "src.demo::run", "@marker"),
+    ):
+        payload = {
+            "matches": [
+                {
+                    "path": path,
+                    "line": 7,
+                    "text": text,
+                    "scope": scope,
+                    "scope_start_line": 5,
+                    "scope_end_line": 8,
+                },
+            ],
+        }
+        result = lr.mcp_op_result(
+            "code.grep", payload, {"include_body": False}, None, toolset="coding"
+        )
+        assert "edit_context_next" not in result
+        assert json.loads(result["next"].partition(" with ")[2]) == {
+            "ranges": [{"path": path, "start_line": 5, "end_line": 8}],
+        }
 
 
 def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:

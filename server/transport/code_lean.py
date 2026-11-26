@@ -29,7 +29,7 @@ from pydantic import ValidationError
 from server.code.api.models_common import _safe_path
 from server.code.api.models_read import CODE_READ_MAX_RANGES, CodeReadRangeInput
 from server.code.api.models_symbol import EDIT_CONTEXT_MAX_NAMES, CodeEditContextInput
-from server.code.app.symbol.resolve import _parse_location
+from server.code.app.symbol.resolve import _parse_file_symbol, _parse_location
 from server.code.domain.extract.py_notebooks import is_notebook_path
 from server.code.domain.scope import current_code_scope
 from server.code.domain.symbol_documentation import description_repeats_body
@@ -253,12 +253,53 @@ def _python_declaration_at_hit(hit: dict[str, Any], path: str) -> bool:
     )
 
 
+def _grep_edit_selector(hit: dict[str, Any], span: CodeReadRangeInput) -> str:
+    if hit["line"] == span.start_line:
+        name = f"{span.path}:{span.start_line}"
+        if _python_declaration_at_hit(hit, span.path) and _parse_location(name) == (
+            span.path,
+            span.start_line,
+        ):
+            return name
+        return ""
+    scope = str(hit["scope"])
+    module, _, member = scope.partition("::")
+    # A dotted module name cannot be mistaken for a class suffix in this file.
+    if not (
+        span.path.endswith((".py", ".pyi"))
+        and "." in module
+        and all(part.isidentifier() for part in member.split("::"))
+        and not str(hit.get("text") or "").lstrip().startswith("@")
+    ):
+        return ""
+    name = f"{span.path}:{scope}"
+    return name if _parse_file_symbol(name) == (span.path, scope) else ""
+
+
+class _GrepFollowup(NamedTuple):
+    span: CodeReadRangeInput
+    name: str
+    declaration_hit: bool
+
+
+def _grep_edit_names(items: list[_GrepFollowup]) -> list[str]:
+    if not 0 < len(items) <= EDIT_CONTEXT_MAX_NAMES:
+        return []
+    names = [item.name for item in items]
+    if len(set(names)) != len(names):
+        return []
+    try:
+        return CodeEditContextInput(names=names).names
+    except ValidationError:
+        return []
+
+
 def _grep_continuation(
     out: dict[str, Any],
     arguments: dict[str, Any],
     followups: frozenset[str],
 ) -> None:
-    """Give excerpt callers a batch of declarations they can retrieve next."""
+    """Give excerpt callers the source spans covering their matches."""
     contexts = out.get("contexts") or []
     if (
         arguments.get("include_body") is not False
@@ -266,34 +307,30 @@ def _grep_continuation(
         or out.get("definitions")
     ):
         return
-    selections: dict[tuple[str, int, int], tuple[CodeReadRangeInput, bool]] = {}
-    for hit in out.get("matches") or []:
-        if not isinstance(hit, dict):
-            continue
-        path, line, end = hit.get("path"), hit.get("line"), hit.get("scope_end_line")
-        if not (
-            path
-            and line
-            and end
-            and hit.get("scope")
-            and line == hit.get("scope_start_line")
-            and end >= line
-        ):
+    selections: dict[tuple[str, int, int], _GrepFollowup] = {}
+    hits = [hit for hit in out.get("matches") or [] if isinstance(hit, dict)]
+    # Keep declaration matches ahead of body hits when the read batch fills.
+    hits.sort(key=lambda hit: hit.get("line") != hit.get("scope_start_line"))
+    for hit in hits:
+        path, line, start, end = (
+            hit.get(key) for key in ("path", "line", "scope_start_line", "scope_end_line")
+        )
+        if not (path and start and line and end and hit.get("scope") and start <= line <= end):
             continue
         if any(
-            window["path"] == path and window["start_line"] <= line <= end <= window["end_line"]
+            window["path"] == path and window["start_line"] <= start <= end <= window["end_line"]
             for window in contexts
         ):
             continue
         try:
-            span = CodeReadRangeInput(path=path, start_line=line, end_line=end)
+            span = CodeReadRangeInput(path=path, start_line=start, end_line=end)
         except ValidationError:
             continue
         if not _safe_path(span.path) or "\0" in span.path or is_notebook_path(span.path):
             continue
-        selections.setdefault(
-            (span.path, span.start_line, end), (span, _python_declaration_at_hit(hit, span.path))
-        )
+        key = span.path, span.start_line, end
+        if key not in selections:
+            selections[key] = _GrepFollowup(span, _grep_edit_selector(hit, span), line == start)
         if len(selections) == CODE_READ_MAX_RANGES:
             break
     if not selections:
@@ -312,29 +349,25 @@ def _grep_continuation(
             if key in arguments
         }
     )
-    spans = [span for span, _ in selections.values()]
-    if (
-        "loom_code_edit_context" in followups
-        and len(spans) <= EDIT_CONTEXT_MAX_NAMES
-        and all(declaration for _, declaration in selections.values())
-    ):
-        names = [f"{span.path}:{span.start_line}" for span in spans]
-        if all(
-            _parse_location(name) == (span.path, span.start_line)
-            for name, span in zip(names, spans, strict=True)
-        ):
-            try:
-                CodeEditContextInput(names=names)
-            except ValidationError:
-                pass
-            else:
-                out["edit_context_next"] = {
-                    "tool": "loom_code_edit_context",
-                    "arguments": {"names": names, **options},
-                }
-    if not contexts and "edit_context_next" not in out:
+    selected = list(selections.values())
+    names: list[str] = []
+    has_edit_context = "loom_code_edit_context" in followups
+    exact_read = bool(contexts) or (has_edit_context and len(selected) == 1)
+    if has_edit_context:
+        names = _grep_edit_names(selected)
+        if not names:
+            declarations = [item for item in selected if item.declaration_hit]
+            names = _grep_edit_names(declarations)
+            if not exact_read:
+                selected = declarations
+    if names:
+        out["edit_context_next"] = {
+            "tool": "loom_code_edit_context",
+            "arguments": {"names": names, **options},
+        }
+    elif not exact_read:
         return
-    params = {"ranges": [span.model_dump() for span in spans], **options}
+    params = {"ranges": [item.span.model_dump() for item in selected], **options}
     out["next"] = "For the full source, call loom_code_read with " + json.dumps(params)
 
 
@@ -673,11 +706,11 @@ def lean_code(
             if isinstance(src, dict) and isinstance(d, dict) and src.get("unit_id"):
                 d["symbol_id"] = src["unit_id"]
     _lean_prs(out.get("definitions"))
+    if op_name == "code.grep" and arguments is not None and followups:
+        _grep_continuation(out, arguments, followups)
     fn = _PER_OP.get(op_name)
     if fn is not None:
         fn(out)
-    if op_name == "code.grep" and arguments is not None and followups:
-        _grep_continuation(out, arguments, followups)
     if op_name == "code.edit_context" and out.get("edit_targets") and out.get("definitions"):
         out = _share_edit_test_source(out)
     _hoist_defaults(out)

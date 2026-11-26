@@ -138,9 +138,11 @@ def graph_tool(script: Path, storage: Path, client: str, name: str, **arguments:
 
 
 class Loom:
-    def __init__(self, origin: str, org: str, name: str, role: str) -> None:
+    def __init__(
+        self, origin: str, org: str, name: str, role: str, *, namespace: str = NAMESPACE
+    ) -> None:
         token = mint_token(
-            subject=name, org=org, namespaces=[NAMESPACE], roles=[role], ttl_seconds=600
+            subject=name, org=org, namespaces=[namespace], roles=[role], ttl_seconds=600
         )
         self.client = httpx.Client(
             base_url=origin,
@@ -270,6 +272,7 @@ async def compare(origin: str, graph: Path, directory: Path) -> dict[str, Any]:
         assert (
             read["found"] and read["memory_id"] == memory["memory_id"] and read["value"] == note
         ), read
+        check_project_boundary(origin, org, reviewer, memory["memory_id"])
         await code_state(reviewer, "fresh")
         second = source(repo, 429)
         git(clone, "pull", "-q", "--ff-only")
@@ -315,9 +318,24 @@ async def compare(origin: str, graph: Path, directory: Path) -> dict[str, Any]:
         "source_after": second,
         "git_authors": [WRITER, REVIEWER],
         "graph_fields": sorted(observations),
+        "loom_denied_other_project": True,
         "loom_changed_since": changed["changed_since"],
         "loom_sql_versions": [[row[0], row[1]] for row in rows],
     }
+
+
+def check_project_boundary(origin: str, org: str, reviewer: Loom, memory_id: str) -> None:
+    arguments = {"org": org, "namespace": NAMESPACE, "agent": REVIEWER, "memory_key": KEY}
+    authorized = reviewer.client.post("/v1/memory.get", json=arguments)
+    authorized.raise_for_status()
+    assert authorized.json()["memory_id"] == memory_id
+
+    other = Loom(origin, org, "other-project-reader", "viewer", namespace="other-project")
+    try:
+        response = other.client.post("/v1/memory.get", json=arguments)
+        assert response.status_code == 403, response.status_code
+    finally:
+        other.close()
 
 
 async def main() -> None:

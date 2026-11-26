@@ -591,7 +591,66 @@ async def test_edit_context_batches_definitions_and_their_tests(code_env, monkey
         await handle_code_edit_context(query.model_copy(update={"name": names[0]}))
 
 
-@pytest.mark.parametrize("clue_shape", ["declarations", "mixed", "one_declaration"])
+async def test_edit_context_batch_returns_shared_member_source_at_its_revision(
+    code_env, monkeypatch
+) -> None:
+    from server.code.api.models_symbol import CodeEditContextInput
+    from server.code.app.symbol import handle_code_edit_context
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
+
+    repo, org, ns = code_env
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
+    member_path = "src/options.py"
+    member = b'class Options:\n    @property\n    def label(self):\n        return "one"\n'
+    caller_path = "src/handlers.py"
+    callers = (
+        b"from .options import Options\n\n"
+        b"def first(options: Options):\n    return options.label\n\n"
+        b"def second(options: Options):\n    return options.label.upper()\n"
+    )
+    await _ingest(repo, org, ns, source=member, path=member_path)
+    await _ingest(repo, org, ns, source=callers, path=caller_path)
+    names = [f"{caller_path}:first", f"{caller_path}:second"]
+    request = CodeEditContextInput(org=org, namespace=ns, names=names, include_lessons=False)
+    result = await handle_code_edit_context(request)
+    assert result.read_sources is not None
+    (source,) = result.read_sources
+    assert source.path == member_path
+    assert source.qualified_name == "src.options::Options::label"
+    assert source.commit == "a" * 40
+    assert source.body.strip() == 'def label(self):\n        return "one"'
+    assert [(site.path, site.line) for site in source.sites] == [(caller_path, 4), (caller_path, 7)]
+
+    explicit = await handle_code_edit_context(
+        request.model_copy(update={"names": [*names, f"{member_path}:Options.label"]})
+    )
+    assert source.qualified_name in {unit.symbol for unit in explicit.definitions}
+    assert "read_sources" not in explicit.model_dump()
+
+    await _ingest(
+        repo, org, ns, source=member.replace(b"one", b"two"), sha="b" * 40, path=member_path
+    )
+    stale = await handle_code_edit_context(request)
+    assert len(stale.definitions) == 2
+    assert "read_sources" not in stale.model_dump()
+
+
+@pytest.mark.parametrize(
+    "clue_shape",
+    [
+        "declarations",
+        "mixed",
+        "one_declaration",
+        "missing",
+        "one_plus_missing",
+        "same_hits",
+        "stripped",
+        "mixed_preview",
+        "multiline",
+    ],
+)
 async def test_edit_context_reads_verified_declarations_across_files(
     code_env, monkeypatch, clue_shape
 ) -> None:
@@ -610,6 +669,8 @@ async def test_edit_context_reads_verified_declarations_across_files(
         "src/beta.py": b"def submit(value):\n    result = value * 2\n    return result\n",
         "src/gamma.py": b"def handle(value):\n    return value - 1\n",
     }
+    if clue_shape == "mixed_preview":
+        sources["src/alpha.py"] = b'def submit(value="    def other("):\n    return value\n'
     for path, body in sources.items():
         await _ingest(repo, org, ns, source=body, path=path)
     clues = ["def submit(", "def handle("]
@@ -621,12 +682,50 @@ async def test_edit_context_reads_verified_declarations_across_files(
         candidate_paths.add(path)
     elif clue_shape == "one_declaration":
         clues[0] = "return result"
+    elif clue_shape == "missing":
+        clues.append("def removed(")
+    elif clue_shape in {"stripped", "mixed_preview"}:
+        path = "src/delta.py"
+        await _ingest(
+            repo,
+            org,
+            ns,
+            source=b"class Handler:\n    def other(self):\n        return 1\n",
+            path=path,
+        )
+        if clue_shape == "mixed_preview":
+            clues = ["    def other(", "def handle(", "def removed("]
+            candidate_paths.remove("src/beta.py")
+        else:
+            clues.append("    def other(")
+        candidate_paths.add(path)
+    elif clue_shape in {"one_plus_missing", "same_hits"}:
+        clues[1] = "def removed("
+        if clue_shape == "same_hits":
+            clues.append("def submit")
+        candidate_paths.remove("src/gamma.py")
+    elif clue_shape == "multiline":
+        await _ingest(
+            repo,
+            org,
+            ns,
+            source=b"def other(\n    value,\n):\n    return value\n",
+            path="src/delta.py",
+        )
+        clues.append("def other(\n    value")
     result = await symbol.handle_code_edit_context(
         CodeEditContextInput(org=org, namespace=ns, clues=clues, include_lessons=False)
     )
     assert result.ambiguous
     assert {candidate["path"] for candidate in result.candidates} == candidate_paths
-    if clue_shape == "one_declaration":
+    if clue_shape in {
+        "one_declaration",
+        "one_plus_missing",
+        "same_hits",
+        "stripped",
+        "mixed_preview",
+        "multiline",
+    }:
         assert result.definitions == []
         return
     assert {unit.path: unit.body.encode().rstrip(b"\n") for unit in result.definitions} == {
@@ -700,6 +799,8 @@ async def test_edit_context_prefers_distinct_test_source_windows(
     [
         "indirect",
         "crowded",
+        "long_caller",
+        "wide_caller",
         "fixture",
         "different_test_revision",
         "different_caller_revision",
@@ -721,7 +822,12 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
     caller_source = b"from src.sample import value\n\n"
     if case == "crowded":
         caller_source += b"def unrelated():\n" + b"    value()\n" * 12 + b"\n"
-    caller_source += b"def run():\n    return value()\n"
+    caller_source += b"def run():\n"
+    if case == "long_caller":
+        caller_source += b"    prepare()\n" * 24
+    if case == "wide_caller":
+        caller_source += (b'    prepare("' + b"value" * 160 + b'")\n') * 12
+    caller_source += b"    return value()\n"
     await _ingest(
         repo,
         org,
@@ -765,10 +871,33 @@ async def test_edit_context_reads_tests_through_a_verified_caller(code_env, monk
         assert example["line"] == 5
         assert example["evidence"] == "indirect_call"
         line = caller_source.splitlines().index(b"    return value()") + 1
-        assert example["via"] == {"symbol": "src.action::run", "path": caller_path, "line": line}
+        via = example["via"]
+        assert {key: value for key, value in via.items() if key != "context"} == {
+            "symbol": "src.action::run",
+            "path": caller_path,
+            "line": line,
+        }
         context = example["context"]
         lines = tests.decode().splitlines(keepends=True)
         assert context["text"] == "".join(lines[context["start_line"] - 1 : context["end_line"]])
+        if case in {"long_caller", "wide_caller"}:
+            assert "context" not in via
+        if case != "indirect":
+            return
+        caller_context = via["context"]
+        assert (caller_context["start_line"], caller_context["end_line"]) == (line - 1, line)
+        assert caller_context["commit"] == "a" * 40
+        assert caller_context["text"].rstrip("\n") == "def run():\n    return value()"
+        batch = await handle_code_edit_context(
+            CodeEditContextInput(
+                org=org,
+                namespace=ns,
+                names=[f"{source_path}:value", f"{caller_path}:run"],
+                include_lessons=False,
+            )
+        )
+        assert batch.definitions[1].body == caller_context["text"]
+        assert "context" not in batch.definitions[0].examples[0]["via"]
 
 
 @pytest.mark.parametrize(

@@ -142,6 +142,130 @@ def test_an_untyped_member_receiver_takes_no_same_file_guess():
     )
 
 
+@pytest.mark.parametrize(
+    ("statement", "owner"),
+    [
+        ("target = 0", ""),
+        ("target = (0)", ""),
+        ("target = -1", ""),
+        ("del target", ""),
+        ("target, other = 0, 1", ""),
+        ("target, other = (0, 1)", ""),
+        ("[target, other] = [0, 1]", ""),
+        ("extra = target = 0", ""),
+        ("target += 1", "Client"),
+        ("other = 0", "Client"),
+        ("target: object", "Client"),
+        ("target = None\ntarget: Client | None", "Client"),
+        ("target = Alternative()", "Alternative"),
+        ("target = 0\nextra = target = Alternative()", "Alternative"),
+        ("target = None\nfrom .clients import shared as target", "Client"),
+        ("target, other = Client(), 2", "Client"),
+        ("target = 0\ntarget, other = Client(), 2", "Client"),
+        ("target = 0\ndef restore():\n    global target\n    target = Client()", "Client"),
+        ("target = 0; target = Alternative()", "Alternative"),
+        ("target = None\nif __name__ == '__main__':\n    print('cli')", ""),
+    ],
+)
+def test_module_receiver_types_follow_assignment_and_deletion(statement, owner):
+    files = {
+        "svc/__init__.py": b"",
+        "svc/clients.py": (
+            b"class Client:\n    def send(self):\n        return 1\n\n"
+            b"class Alternative:\n    def send(self):\n        return 2\n\n"
+            b"shared: Client = Client()\n"
+        ),
+        "svc/service.py": (
+            f"from .clients import Client, Alternative\ntarget = Client()\n{statement}\n\n"
+            "def submit(ready=True):\n    if ready:\n        return target.send()\n"
+        ).encode(),
+    }
+    calls, _ = _edges(files, "svc/service.py")
+    expected = [(f"svc.clients::{owner}::send", 0.9)] if owner else []
+    call_line = len(files["svc/service.py"].splitlines())
+    assert [
+        (target, confidence) for line, target, confidence in calls if line == call_line
+    ] == expected
+
+
+@pytest.mark.parametrize(
+    "earlier",
+    ["before = (target).send()", "def wrap(\n    arg=target.send(),\n):\n    return arg"],
+)
+def test_module_receiver_keeps_calls_before_a_write(earlier):
+    files = {
+        "svc/__init__.py": b"",
+        "svc/clients.py": (
+            b"class Client:\n    def send(self):\n        return 1\n\n"
+            b"class Alternative:\n    def send(self):\n        return 2\n"
+        ),
+        "svc/service.py": (
+            f"from .clients import Client\ntarget = Client()\n{earlier}\ntarget = 0\n"
+        ).encode(),
+    }
+    calls, _ = _edges(files, "svc/service.py")
+    assert any(target == "svc.clients::Client::send" for _, target, _ in calls)
+
+
+@pytest.mark.parametrize("receiver", ["target", "((target))"])
+def test_module_literal_receiver_declines_unrelated_calls_and_callee_returns(receiver):
+    files = {
+        "svc/__init__.py": b"",
+        "svc/clients.py": (
+            b"class Client:\n    def send(self):\n        return 1\n\n"
+            b"class Reply:\n    def close_reply(self):\n        pass\n\n"
+            b"class Other:\n    def flush_reply(self) -> Reply:\n        return Reply()\n"
+        ),
+        "svc/service.py": (
+            "from .clients import Client, Other, Reply\ntarget = Client()\ntarget = 0\n"
+            f"def submit():\n    {receiver}.send()\n    reply = {receiver}.flush_reply()\n"
+            f"    reply.close_reply()\n    {receiver}.unknown()\n"
+        ).encode(),
+    }
+    calls, misses = _edges(files, "svc/service.py")
+    assert not any(line in {5, 6, 8} for line, _, _ in calls)
+    assert not any(miss.line in {5, 6, 8} for miss in misses)
+    assert not any(line == 7 and confidence == 0.9 for line, _, confidence in calls)
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "target: Client | None = None",
+        "target = None\ntarget: Client | None",
+        "target: Client | None\ntarget = None",
+        "target: Client | None = Client()\ntarget = None",
+    ],
+)
+def test_module_optional_receiver_declaration_preserves_type(declaration):
+    files = {
+        "svc/__init__.py": b"",
+        "svc/client.py": b"class Client:\n    def send(self): pass\n",
+        "svc/alternate.py": b"class Alternate:\n    def send(self): pass\n",
+        "svc/service.py": (
+            f"from .client import Client\n{declaration}\n"
+            "def submit():\n    if target is None:\n        raise RuntimeError()\n"
+            "    target.send()\n"
+        ).encode(),
+    }
+    calls, _ = _edges(files, "svc/service.py")
+    call_line = len(files["svc/service.py"].splitlines())
+    assert (call_line, "svc.client::Client::send", 0.9) in calls
+
+
+@pytest.mark.parametrize("condition", ["False", "TYPE_CHECKING"])
+def test_module_receiver_ignores_nonexecuting_replacement(condition):
+    from server.code.domain.extract.py_receivers import PyReceiverTyper
+
+    source = (
+        "from typing import TYPE_CHECKING\ntarget = Client()\n"
+        f"if {condition}:\n    target = 0\n"
+        "def submit():\n    return target.send()\n"
+    ).encode()
+    typer = PyReceiverTyper(parse_file("svc/service.py", source))
+    assert typer.type_of(6, "target") == "Client"
+
+
 CROSS = {
     "sa/compiler.py": b"class Compiled:\n    def process(self, x):\n        return x\n\n\nclass SQLCompiler(Compiled):\n    pass\n",
     "sa/other.py": b"class Other:\n    def process(self, x):\n        return x\n",
