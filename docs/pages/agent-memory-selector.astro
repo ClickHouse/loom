@@ -11,46 +11,85 @@ const plans: Plan[] = [
     id: "git",
     name: "Repository instructions",
     fit: "Start with a Git-tracked AGENTS.md when the memory is a set of reviewed project rules that applies to each checkout.",
-    tradeoff: "Rule updates go through your normal Git review. Readers need a checkout of the revision that contains the rule.",
+    tradeoff:
+      "Rule updates go through your normal Git review. Readers need a checkout of the revision that contains the rule.",
     checks: [
       { text: "Commit a rule with a concrete example to AGENTS.md." },
       { text: "Start a coding agent in a fresh checkout and ask it to apply the rule to the example." },
-      { text: "Change the rule in a second commit. Start a fresh session at that revision and check which rule the agent follows." },
+      {
+        text: "Change the rule in a second commit. Start a fresh session at that revision and check which rule the agent follows.",
+      },
     ],
     links: [
-      { label: "See the repository-instructions comparison", href: "/docs/guides/compare-coding-agent-memory#three-setups-on-the-same-repository" },
+      {
+        label: "See the repository-instructions comparison",
+        href: "/docs/guides/compare-coding-agent-memory#three-setups-on-the-same-repository",
+      },
     ],
   },
   {
     id: "file",
     name: "File-backed MCP memory",
     fit: "Start with a file-backed MCP server when sessions on one host need to read and write observations as they work.",
-    tradeoff: "Give the server a persistent storage path and decide who can read it. Verify cross-machine access separately if your workflow needs it.",
+    tradeoff:
+      "Give the server a persistent storage path and decide who can read it. Verify cross-machine access separately if your workflow needs it.",
     checks: [
       { text: "Start the MCP server with a persistent storage path and save a distinctive observation." },
       { text: "Start a separate client process and check that it reads the exact observation." },
-      { text: "Back up the store, restore it to a fresh path and verify that a fresh client still reads the observation." },
+      {
+        text: "Back up the store, restore it to a fresh path and verify that a fresh client still reads the observation.",
+      },
     ],
     links: [
-      { label: "See the file-backed portability check", href: "/docs/guides/compare-coding-agent-memory#move-a-saved-decision-to-a-fresh-setup" },
+      {
+        label: "See the file-backed portability check",
+        href: "/docs/guides/compare-coding-agent-memory#move-a-saved-decision-to-a-fresh-setup",
+      },
     ],
   },
   {
     id: "service",
     name: "Self-hosted memory service",
     fit: "Use a shared service when agents need separate credentials, a record of who changed a decision, or a warning after the source behind a lesson changes.",
-    tradeoff: "With Loom, operate the server and its stores, issue credentials, and index the repository if you need code-change checks.",
+    tradeoff:
+      "With Loom, operate the server and its stores, issue credentials, and index the repository if you need code-change checks.",
     checks: [
-      { text: "Save a test decision with one client. Read the same value and memory ID in a fresh client with its own credential." },
-      { text: "Try the same read from a credential scoped to another namespace and record the denial.", requirement: "credentials" },
-      { text: "Change the linked source, wait for indexing and check that the lesson reports the changed commit.", requirement: "code-changes" },
-      { text: "On an authenticated deployment, correct the decision and use a scoped SQL reader to check both versions and the token subject for each write.", requirement: "audit" },
+      {
+        text: "Save a test decision with one client. Read the same value and memory ID in a fresh client with its own credential.",
+      },
+      {
+        text: "Try the same read from a credential scoped to another namespace and record the denial.",
+        requirement: "credentials",
+      },
+      {
+        text: "Change the linked source, wait for indexing and check that the lesson reports the changed commit.",
+        requirement: "code-changes",
+      },
+      {
+        text: "On an authenticated deployment, correct the decision and use a scoped SQL reader to check both versions and the token subject for each write.",
+        requirement: "audit",
+      },
     ],
     links: [
-      { label: "Verify a handoff between coding agents", href: "/docs/getting-started/connect-a-coding-agent#verify-shared-memory-between-claude-code-and-codex" },
-      { label: "Check access across projects", href: "/docs/guides/compare-coding-agent-memory#check-access-across-projects", requirement: "credentials" },
-      { label: "Check a lesson after a source edit", href: "/docs/use-cases/memory-linked-to-code#check-a-lesson-after-a-code-edit", requirement: "code-changes" },
-      { label: "Audit a decision with SQL", href: "/docs/use-cases/self-hosted-clickhouse#audit-a-changed-decision-with-sql", requirement: "audit" },
+      {
+        label: "Verify a handoff between coding agents",
+        href: "/docs/getting-started/connect-a-coding-agent#verify-shared-memory-between-claude-code-and-codex",
+      },
+      {
+        label: "Check access across projects",
+        href: "/docs/guides/compare-coding-agent-memory#check-access-across-projects",
+        requirement: "credentials",
+      },
+      {
+        label: "Check a lesson after a source edit",
+        href: "/docs/use-cases/memory-linked-to-code#check-a-lesson-after-a-code-edit",
+        requirement: "code-changes",
+      },
+      {
+        label: "Audit a decision with SQL",
+        href: "/docs/use-cases/self-hosted-clickhouse#audit-a-changed-decision-with-sql",
+        requirement: "audit",
+      },
     ],
   },
 ];

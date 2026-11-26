@@ -442,7 +442,6 @@ function publishedDocUrl(url, englishSources) {
 
 /** Keep the translator's choice of English fallback and send it to the published page. */
 export function rewritePublishedDocLinks(text, englishSources) {
-  if (!text.includes(docsBlob)) return text;
   const pending = [fromMarkdown(text)];
   const replacements = [];
   for (const node of pending) {
