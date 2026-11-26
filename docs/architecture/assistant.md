@@ -601,16 +601,13 @@ call it directly, on any transport, and it joins the
 `read_scope` is narrower than its namespaces is refused it, as every op outside
 `SCOPED_OPS` and `NARROW_SAFE_OPS` is.
 
-The event catalog relation is `loom.analysis_agent_events`. It retains authorized request
-participation and neutralizes marked model, spend, work and outcome fields before caller
-filters, joins or aggregates. It unions ordinary `loom.agent_events` with
-`loom.agent_events_private`; the analyst has no grant on the private table. The
-ordinary table retains signed, namespace-scoped access for both serving builds and
-rejects marked events and reserved mirror namespaces through its permanent CHECK.
-The view's definer query applies the same signed org/namespace predicate as
-the physical tables' row policies; it does not use SQL-account grants. The typed projection
-is passed from the maintained event reader definition into the pure access-entity builder.
-Its shape, signed predicate and security mode are part of the entity version digest.
+The event catalog has two views. Use `loom.analysis_ordinary_agent_events` for ordinary
+requests and worker events, or `loom.analysis_agent_events` for the request ledger with
+marked model, spend, work and outcome fields masked. Both views enforce the signed
+organization and namespace before returning rows. Their definer reads the physical
+event tables and the analyst holds column grants on the views. Both physical tables
+and their storage metadata are outside those grants. The projections, signed
+predicates and definer clauses are included in the entity version digest.
 
 ### The boundary is the database user
 
@@ -765,23 +762,18 @@ stored key. Elsewhere an admin uses one of two commands:
   to drop the analyst user and run it again.
 - `loom ch-setup --apply-analyst-sql`, run with explicitly configured existing
   access-management credentials, applies only the analyst entities under the same
-  lease and lost-key rules. It does not rebuild the reader user. Its live
-  [event cutover](rolling-upgrades.md#analyst-event-storage-cutover) proves writer,
-  CHECK and policy visibility before grants. A shared service endpoint can supply
-  checked sessions for all replicas; separate replica addresses are not required.
-  If that endpoint cannot reach every writer, `LOOM_CH_ANALYSIS_OBSERVER_URLS` adds
-  trusted HTTP origins using the configured service credentials. Missing writers
-  and changes in a checked session refuse provisioning.
+  lease and lost-key rules. It reads the native policy definitions for Loom's
+  database before writing the policies and grants. The setup creates the analyst
+  login on first use and keeps its existing password on later writes.
 
 `loom ch-setup --print-analyst-sql` refuses with a nonzero result and prints no
-statements or secrets. An unchecked SQL file cannot enforce the native access-catalog
-proof, including a catalog hidden by its own policies. General `--print-sql` still
-prints database and reader preparation with a password placeholder. Entity writes
-cut their query-log text and disable local statement capture so policy expressions
-and passwords do not enter either log.
+statements or secrets. The setup verifies the live policy definitions before it
+writes. General `--print-sql` prints database and reader preparation with a password
+placeholder. Entity writes cut their query-log text and disable local statement
+capture so policy expressions and passwords stay out of both logs.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
-the grants, the policies, the masked event view and the catalog come from one definition. The rules a write
+the grants, the policies, the event views and the catalog come from one definition. The rules a write
 keeps:
 
 - **One writer at a time.** A write holds the cluster lease `analysis.entities`

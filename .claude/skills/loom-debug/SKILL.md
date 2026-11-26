@@ -56,3 +56,13 @@ One or two sentences: the line or statement that is wrong, why it produces every
 ## Report
 
 The failing cases, the pattern, the cause with `file:line`, the fix, the test that now passes, and the other sites checked.
+
+## Trace a coding-agent attempt
+
+- Join the raw model response to its tool results by call ID. Join Loom retrieval stages and the request ledger by trace run ID, organization and namespace. The ledger captures work after retrieval, including inline lessons, without relying on a remote exporter.
+- For zero Loom calls, check whether the native session received the tool catalog. Distinguish an unavailable tool from a deferred tool the agent never discovered and an available tool the agent chose to skip.
+- Compare the request, the returned evidence and what the next response did. Look for a missing source range, a repeated body or lesson, a stale link, or an avoidable discovery round trip. Distinguish source retrieval from edits, Git and tests.
+- For a repeat read, match the path, line range and source text to an earlier result and check for intervening edits. Check whether the editor needed a local read before the write and whether one line would have sufficed. Measure what the lookup replaced in the subsequent steps.
+- If startup is expensive, compare input and cache usage on the first model request. Use the pinned client and a local capture endpoint to isolate tool schemas, discovery metadata and injected instructions before paying for a rerun. Use provider receipts to measure tokens.
+- If the tool is available but skipped or called with the wrong arguments, compare first choices in disposable native sessions. Hold the task, client, model, other tools and prompt cache setting fixed. Stop after selection and verify that any execution guard is absent from the first request. Measure quality, cost and time in a separate complete run.
+- For a failed fix, compare the submitted patch with the verifier and the evidence the agent received before editing. Replay the narrow failing lookup before rerunning the agent.

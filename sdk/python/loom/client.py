@@ -289,6 +289,14 @@ class CodeOps:
             await self._agent.call("code.coverage_claim", body, **options),
         )
 
+    async def edit_context(
+        self, body: _ops.CodeEditContextBody | None = None, /, **options: Any
+    ) -> _ops.CodeSymbolOutput:
+        """`code.edit_context`."""
+        return cast(
+            "_ops.CodeSymbolOutput", await self._agent.call("code.edit_context", body, **options)
+        )
+
     async def enclosing(
         self, body: _ops.CodeEnclosingBody | None = None, /, **options: Any
     ) -> _ops.CodeEnclosingOutput:
@@ -394,6 +402,12 @@ class CodeOps:
         return cast(
             "_ops.CodePrCheckOutput", await self._agent.call("code.pr_check", body, **options)
         )
+
+    async def read(
+        self, body: _ops.CodeReadBody | None = None, /, **options: Any
+    ) -> _ops.CodeReadOutput:
+        """`code.read`."""
+        return cast("_ops.CodeReadOutput", await self._agent.call("code.read", body, **options))
 
     async def recent_commits(
         self, body: _ops.CodeRecentCommitsBody | None = None, /, **options: Any

@@ -6,6 +6,7 @@ and those of `memory.for_file`."""
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple
 
@@ -55,6 +56,16 @@ def _named(qualified_name: str, defs: list[Definition]) -> list[Definition]:
     return [d for n, d in ends if n == best]
 
 
+def _could_name_symbol(link: LinkRow, name: str) -> bool:
+    # Keep anchors and former names for branches that still have them. The
+    # source check below decides which qualified identity the link matches.
+    return (
+        bare_name(link["qualified_name"]) == name
+        or bare_name(link["anchored_name"]) == name
+        or any(bare_name(former["name"]) == name for former in link["former"])
+    )
+
+
 async def lessons_for_symbol(
     org: str,
     code_namespace: str,
@@ -79,11 +90,15 @@ async def lessons_for_symbol(
         ),
         code.indexed_head(org, code_namespace),
     )
-    links = [
+    name = bare_name(qualified_name)
+    candidates = [
         a
-        for a in await current_links(org, stored)
-        if a["state"] != "pending" and a["qualified_name"]
+        for a in stored
+        if a["state"] != "pending" and a["qualified_name"] and _could_name_symbol(a, name)
     ]
+    if not candidates:
+        return []
+    links = await current_links(org, candidates)
     if not links:
         return []
     here = await _definitions_at(org, code_namespace, head, paths, qualified_name)
@@ -91,7 +106,17 @@ async def lessons_for_symbol(
         matched = _as_trunk_has_it(links, qualified_name)
     else:
         matched = _matched(links, here, on_trunk=code_namespace == trunk)
-    served = await reads.served_excerpts(org, namespaces, [a["memory_id"] for a, _, _ in matched])
+    # a memory's state is that of its first matched link, as the ranking below reads it
+    states: dict[str, str] = {}
+    for a, state, _ in matched:
+        states.setdefault(a["memory_id"], state)
+    served = await reads.served_excerpts(
+        org,
+        namespaces,
+        [links_store.linked_memory(a) for a, _, _ in matched],
+        limit=limit,
+        changed=[mid for mid, state in states.items() if state == "changed"],
+    )
     rows = {str(r["mid"]): r for r in served}
     out: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}
     for a, state, suggestion in matched:
@@ -110,7 +135,23 @@ async def lessons_for_symbol(
                 "suggestion": suggestion,
             },
         )
-    return [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
+    ranked = [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
+    return fit_symbol_lessons(ranked)
+
+
+def fit_symbol_lessons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep whole lesson rows within the configured aggregate budget."""
+    budget = settings.code_result_lessons_tokens
+    if not budget:
+        return rows
+    kept: list[dict[str, Any]] = []
+    spent = 0
+    for lesson in rows:
+        cost = len(json.dumps(lesson, ensure_ascii=False)) // 4 + 1
+        if spent + cost <= budget:
+            kept.append(lesson)
+            spent += cost
+    return kept
 
 
 # Each path's read keeps this many rows.

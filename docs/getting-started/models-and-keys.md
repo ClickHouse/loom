@@ -352,14 +352,17 @@ setting names the same model.
 
 ### Through an inference gateway
 
-An OpenAI-compatible proxy or inference gateway can serve Loom's chat-completions
-requests. Select the provider and a model the gateway serves, as well as its API root
-and key; a key alone does not change an explicitly configured fake provider:
+Loom can use an inference gateway that serves the OpenAI Responses API or the
+Anthropic Messages API. Select the provider and a model the gateway serves, as well
+as its API root and key; a key alone does not change an explicitly configured fake
+provider. The `openai` provider calls `<root>/responses`. For a server that only
+supports chat completions, use [`LOOM_LLM_PROVIDER=local`](#a-model-server-on-your-machine-no-api-key),
+which sends no API key.
 
 ```dotenv
 LOOM_LLM_PROVIDER=openai
 LOOM_LLM_MODEL=<gateway-model-id>
-LOOM_OPENAI_BASE_URL=https://gateway.example/v1   # chat and OpenAI embeddings
+LOOM_OPENAI_BASE_URL=https://gateway.example/v1   # <root>/responses and <root>/embeddings
 LOOM_ANTHROPIC_BASE_URL=https://gateway.example   # Messages: <root>/v1/messages
 OPENAI_API_KEY=<the key the gateway issued for Loom>
 ```

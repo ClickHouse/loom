@@ -1,6 +1,7 @@
 import { cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getBrief } from "../api/briefs";
 import { useStore } from "../lib/state";
 import { Conversations } from "./Conversations";
 
@@ -39,6 +40,7 @@ vi.mock("../api", async (importOriginal) => {
     getNamespace: vi.fn(async () => ({ conversation_logging_enabled: true })),
   };
 });
+vi.mock("../api/briefs", () => ({ getBrief: vi.fn() }));
 vi.mock("../components/SessionBriefsSection", () => ({ SessionBriefsSection: () => null }));
 vi.mock("../components/SessionBriefPanel", () => ({ SessionBriefPanel: () => null }));
 
@@ -50,9 +52,13 @@ describe("Conversations keeps the open thread in its URL", () => {
       identity: { org: "dev", namespace: "ns", agent: "loom-ui" },
       view: "sessions",
       pendingConversationThread: null,
+      sessionHandoff: null,
     });
   });
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
 
   it("opening a thread writes ?thread=, closing drops it, and neither adds an entry", async () => {
     history.replaceState(null, "", "/conversations");
@@ -72,5 +78,61 @@ describe("Conversations keeps the open thread in its URL", () => {
     render(<Conversations />);
     const dialog = await screen.findByRole("dialog", { name: "Deploy chat" });
     expect(await within(dialog).findByText("ship it")).toBeInTheDocument();
+  });
+
+  it("opens the pinned handoff in Conversations after a reload", async () => {
+    const head = "c".repeat(40);
+    const brief = "handoff/case";
+    const key = "~alice~handoff/case";
+    const snapshot = `9007199254740997.${"e".repeat(64)}`;
+    vi.mocked(getBrief).mockResolvedValueOnce({
+      found: true,
+      brief_key: brief,
+      revision: 1,
+      snapshot_id: snapshot,
+      snapshot_key: key,
+      rendered: "Last recorded verification: pytest passed. Next: ship the fix.",
+      project: "proj",
+      branch: "fix/case",
+      head_sha: head,
+      author: "model",
+      trigger: "manual",
+      source_sessions: [],
+      updated_at: null,
+      age_seconds: 0,
+      revisions: 2,
+      events_total: 0,
+      source_chars: 0,
+      brief_chars: 65,
+      deleted: false,
+    });
+    history.replaceState(
+      null,
+      "",
+      `/conversations?namespace=ns&org=dev&brief=${encodeURIComponent(key)}&revision=1&snapshot=${snapshot}&commit=${head}`,
+    );
+    useStore.getState().bootView("sessions");
+    render(<Conversations />);
+    expect(await screen.findByText(/Next: ship the fix/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy restore prompt" })).toBeInTheDocument();
+    expect(getBrief).toHaveBeenCalledWith({ org: "dev", namespace: "ns" }, key, {
+      revision: 1,
+      snapshotId: snapshot,
+    });
+    useStore.getState().setIdentity({ org: "dev", namespace: "other", agent: "loom-ui" });
+    await waitFor(() => expect(screen.queryByText(/Next: ship the fix/)).toBeNull());
+    expect(new URLSearchParams(location.search).has("brief")).toBe(false);
+  });
+
+  it("does not load a handoff in a different organization", async () => {
+    history.replaceState(
+      null,
+      "",
+      `/conversations?namespace=ns&org=elsewhere&brief=handoff%2Fcase&revision=1&snapshot=6.${"e".repeat(64)}&commit=${"c".repeat(40)}`,
+    );
+    useStore.getState().bootView("sessions");
+    render(<Conversations />);
+    expect(await screen.findByText(/Open this session handoff in its organization/)).toBeInTheDocument();
+    expect(getBrief).not.toHaveBeenCalled();
   });
 });

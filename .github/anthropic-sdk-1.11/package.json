@@ -1,0 +1,8 @@
+{
+  "name": "loom-anthropic-sdk-1-11-check",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.11.0"
+  }
+}

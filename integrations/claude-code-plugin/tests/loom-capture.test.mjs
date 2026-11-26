@@ -38,6 +38,20 @@ test("a failed tool call carries its error text", () => {
   assert.ok(body.file_paths.includes("server/main.py"));
 });
 
+test("a failure event carries the top-level error text", () => {
+  const body = buildObservation(
+    "PostToolUseFailure",
+    {
+      session_id: "s1",
+      tool_name: "Bash",
+      tool_input: { command: "ls /nonexistent" },
+      error: "Exit code 2 / ls: cannot access '/nonexistent': No such file or directory",
+    },
+    scope,
+  );
+  assert.equal(body.error, "Exit code 2 / ls: cannot access '/nonexistent': No such file or directory");
+});
+
 test("outputs are bounded", () => {
   const body = buildObservation(
     "PostToolUse",

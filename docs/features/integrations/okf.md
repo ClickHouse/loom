@@ -1,3 +1,9 @@
+---
+description: Export saved AI agent memory as readable Markdown. Preview an import into another Loom namespace and verify the copied fact and its provenance.
+seo:
+  title: Export agent memory as Markdown
+---
+
 # OKF bundles
 
 A namespace can be rendered as an OKF (Open Knowledge Format) v0.2 bundle: one Markdown
@@ -92,6 +98,17 @@ recomputes it: take the concept files only, sort them by bundle-relative path, a
 file's SHA-256 hex digest with no separator, and SHA-256 that string. A mismatch is the
 `drift` warning, naming how many concept files the tree holds against what the index says.
 
+### Check a bundle from another tool
+
+Read `okf_version` in the root `index.md`. Loom exports v0.2. To check format
+conformance, follow the rules for the declared version, such as the
+[OKF v0.3 specification](https://github.com/open-knowledge-format/open-knowledge-format/blob/527e81aff55992be21507e97004286789126f88c/SPEC.md).
+
+`loom okf-lint` checks for a version declaration and the fields Loom needs. A
+Markdown concept can conform to its format and still raise `required_keys` if it
+lacks `loom.memory_key` or `loom.memory_type`. Map the concepts you intend to
+import to stable keys and memory types, then [preview the import in an empty test namespace](#test-agent-memory-portability).
+
 ## Import
 
 `loom import-okf DIR --namespace NS` lints first and refuses a bundle with critical
@@ -149,6 +166,42 @@ schedule.
 
 `--verify` never forges an attestation. The server decides the actor from the token; the
 bundle's original verifier is recorded in the memory's tags for provenance.
+
+## Test agent memory portability
+
+Use two empty test namespaces to check whether a saved decision can travel to another
+Loom. The namespaces can be on the same deployment for this test. Save a synthetic
+fact under the key `example/review-rule` in the source, using the
+[HTTP write example](../../getting-started/quickstart.md#4-first-memory-over-http).
+Choose a value you can check exactly. Leave the destination empty.
+
+Set `SOURCE_URL` and `TARGET_URL` to the server URLs. Set `SOURCE_NAMESPACE` and
+`TARGET_NAMESPACE` to the respective namespace names. Use a source viewer token
+(`SOURCE_VIEWER`) and a target writer token (`TARGET_WRITER`) with
+[access to their respective namespaces](../../guides/tokens-and-grants.md).
+
+```bash
+bundle=$(mktemp -d)
+LOOM_API_KEY="$SOURCE_VIEWER" loom export-okf --server-url "$SOURCE_URL" \
+  --namespace "$SOURCE_NAMESPACE" --no-evidence --out "$bundle"
+loom okf-lint "$bundle"
+LOOM_API_KEY="$TARGET_WRITER" loom import-okf "$bundle" --server-url "$TARGET_URL" \
+  --namespace "$TARGET_NAMESPACE" --agent portability-check --no-evidence --dry-run
+```
+
+Open the concept Markdown in the bundle and check the key and value without a Loom
+connection. The preview should report one row to write. Check that the key is still
+absent on the destination. Then run the import command again without `--dry-run`.
+
+Use [`memory.get`](../../reference/operations/memory.md#memoryget) on the destination
+with the same key and `agent: portability-check`. Compare the returned value and check
+that its `source_trace` begins with `okf:` and its `actor` identifies the importing
+token's subject. Record the key, value and import result with your evaluation.
+
+The bundle carries the saved concept. This exercise skips raw chunks and session
+digests with `--no-evidence`. A bundle does not carry the source's grants, full version
+history or document originals. Use the [backup and recovery plan](../../operations/backup-and-recovery.md)
+to rehearse recovery of a deployment.
 
 ## CI gate
 

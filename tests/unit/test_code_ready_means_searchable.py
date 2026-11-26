@@ -202,6 +202,27 @@ def test_a_slice_stores_stubs_for_the_fake_provider(monkeypatch: pytest.MonkeyPa
     assert calls and all(c["embedder"] is None for c in calls)
 
 
+def test_bootstrap_repairs_python_bindings_before_advancing_the_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.code.app.index import dependents
+
+    _wire(monkeypatch, ["reader.py", "provider.py"], _Real())
+    repo = _Repo()
+    checked: list[set[str]] = []
+
+    async def repair(_repo, _org, _ns, *, delta, **kwargs):
+        assert kwargs["closure_enabled"] is False
+        checked.append(delta.touched_paths)
+        assert repo.state.get(bs.CURSOR_KEY, "") == ("1" if len(checked) == 2 else "")
+        return None, dependents.DependentsResult()
+
+    monkeypatch.setattr(dependents, "run_for_commit", repair)
+    asyncio.run(bs.index_slice(_cfg(), repo, "f" * 40, max_files=1))
+    asyncio.run(bs.index_slice(_cfg(), repo, "f" * 40, max_files=1))
+    assert checked == [{"reader.py"}, {"provider.py"}]
+
+
 def test_a_slice_stores_stubs_while_the_breaker_is_open(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _wire(monkeypatch, ["a.cpp", "b.cpp"], _Real())
     bs.open_embed_breaker()

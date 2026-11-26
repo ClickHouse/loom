@@ -8,7 +8,7 @@ module ClickHouse
     # Every served operation: its spec in OPS, and one method per op on the class
     # of its group (`client.memory.set(...)` is `memory.set`).
     module Generated
-      OP_COUNT = 376
+      OP_COUNT = 378
 
       # The declared spec of every served op, by name; the HTTP path is /v1/<name>.
       OPS = {
@@ -36,11 +36,12 @@ module ClickHouse
         "code.coverage.unwatch" => OpSpec.new("code.coverage.unwatch", "code", "coverage_unwatch", true, false, "viewer", "stable", %w[org namespace agent user_id consumer commit inbox].freeze, %w[commit inbox].freeze),
         "code.coverage.watch" => OpSpec.new("code.coverage.watch", "code", "coverage_watch", true, false, "viewer", "stable", %w[org namespace agent user_id consumer commit inbox].freeze, %w[commit inbox].freeze),
         "code.coverage_claim" => OpSpec.new("code.coverage_claim", "code", "coverage_claim", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer symbol path setting limit].freeze, [].freeze),
+        "code.edit_context" => OpSpec.new("code.edit_context", "code", "edit_context", true, true, "viewer", "experimental", %w[include_lessons lesson_namespaces org namespace agent user_id consumer name clues names].freeze, [].freeze),
         "code.enclosing" => OpSpec.new("code.enclosing", "code", "enclosing", true, true, "viewer", "stable", %w[include_lessons lesson_namespaces org namespace agent user_id consumer locations include_body token_budget neighbours neighbour_k].freeze, %w[locations].freeze),
         "code.examples" => OpSpec.new("code.examples", "code", "examples", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer name symbol_id top_k].freeze, [].freeze),
         "code.files" => OpSpec.new("code.files", "code", "files", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer glob stem path_prefix limit].freeze, [].freeze),
         "code.first_build" => OpSpec.new("code.first_build", "code", "first_build", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer sha pr_number].freeze, [].freeze),
-        "code.grep" => OpSpec.new("code.grep", "code", "grep", true, true, "viewer", "stable", %w[include_lessons lesson_namespaces org namespace agent user_id consumer pattern regex case_sensitive path_prefix cursor exclude_unit_ids mode limit path_globs exclude_globs langs namespaces neighbours neighbour_k deadline_ms].freeze, %w[pattern].freeze),
+        "code.grep" => OpSpec.new("code.grep", "code", "grep", true, true, "viewer", "stable", %w[include_lessons lesson_namespaces org namespace agent user_id consumer pattern prioritize_patterns regex related_on_miss related_on_prefix include_dependencies case_sensitive context_lines prefer_complete_context path_prefix cursor exclude_unit_ids mode include_body limit path_globs exclude_globs langs namespaces neighbours neighbour_k deadline_ms].freeze, %w[pattern].freeze),
         "code.history" => OpSpec.new("code.history", "code", "history", true, true, "viewer", "stable", %w[org namespace agent user_id consumer name symbol_id path numbers limit reviews_per_pr].freeze, [].freeze),
         "code.impact" => OpSpec.new("code.impact", "code", "impact", true, true, "viewer", "stable", %w[include_lessons lesson_namespaces pr_files pr_diff pr_head_sha pr_base_sha org namespace agent user_id consumer name symbol_id depth files diff exclude_authors summary_only per_hop_limit offset pr_number].freeze, [].freeze),
         "code.index_errors" => OpSpec.new("code.index_errors", "code", "index_errors", true, true, "viewer", "stable", %w[org namespace agent user_id consumer limit].freeze, [].freeze),
@@ -50,6 +51,7 @@ module ClickHouse
         "code.outline" => OpSpec.new("code.outline", "code", "outline", true, true, "viewer", "experimental", %w[include_lessons lesson_namespaces org namespace agent user_id consumer path kinds token_budget].freeze, %w[path].freeze),
         "code.path_guards" => OpSpec.new("code.path_guards", "code", "path_guards", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer from_symbol to_symbol mentions depth].freeze, %w[from_symbol to_symbol].freeze),
         "code.pr_check" => OpSpec.new("code.pr_check", "code", "pr_check", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer title body paths symbols issues pr_number top_k].freeze, [].freeze),
+        "code.read" => OpSpec.new("code.read", "code", "read", true, true, "viewer", "experimental", %w[include_lessons lesson_namespaces org namespace agent user_id consumer ranges path start_line end_line].freeze, [].freeze),
         "code.recent_commits" => OpSpec.new("code.recent_commits", "code", "recent_commits", true, true, "viewer", "stable", %w[org namespace agent user_id consumer limit].freeze, [].freeze),
         "code.refresh" => OpSpec.new("code.refresh", "code", "refresh", false, false, "writer", "stable", %w[org namespace agent user_id consumer expected_head wait wait_timeout_seconds].freeze, [].freeze),
         "code.reindex" => OpSpec.new("code.reindex", "code", "reindex", false, false, "admin", "experimental", %w[org namespace agent user_id consumer git_head].freeze, %w[git_head].freeze),
@@ -65,7 +67,7 @@ module ClickHouse
         "code.scip_status" => OpSpec.new("code.scip_status", "code", "scip_status", true, true, "viewer", "stable", %w[org namespace agent user_id consumer batch_id].freeze, %w[batch_id].freeze),
         "code.search" => OpSpec.new("code.search", "code", "search", true, true, "viewer", "stable", %w[include_lessons lesson_namespaces org namespace agent user_id consumer query top_k token_budget path_prefix cursor exclude_unit_ids rerank expand annotate bodies kind_prior pr_leg_before embedding_model fresh min_fan_in sort_by pattern regex case_sensitive path_globs exclude_globs langs legs track_path vector_model vector_shortlist llm_legs deadline_ms namespaces].freeze, %w[query].freeze),
         "code.setting_facts" => OpSpec.new("code.setting_facts", "code", "setting_facts", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer name history_limit].freeze, %w[name].freeze),
-        "code.symbol" => OpSpec.new("code.symbol", "code", "symbol", true, true, "viewer", "stable", %w[org namespace agent user_id consumer name symbol_id include_body include_history include_examples include_lessons lesson_namespaces token_budget min_fan_in sort_by uses uses_limit uses_brief near_paths pr_number namespaces presence neighbours neighbour_k].freeze, [].freeze),
+        "code.symbol" => OpSpec.new("code.symbol", "code", "symbol", true, true, "viewer", "stable", %w[org namespace agent user_id consumer name symbol_id include_body include_history include_examples test_examples_only example_context_lines include_lessons lesson_namespaces token_budget min_fan_in sort_by uses uses_limit uses_brief near_paths pr_number namespaces presence neighbours neighbour_k].freeze, [].freeze),
         "code.symbol_history" => OpSpec.new("code.symbol_history", "code", "symbol_history", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer name symbol_id limit].freeze, [].freeze),
         "code.test_gate" => OpSpec.new("code.test_gate", "code", "test_gate", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer files diff depth limit].freeze, [].freeze),
         "code.test_home" => OpSpec.new("code.test_home", "code", "test_home", true, true, "viewer", "experimental", %w[org namespace agent user_id consumer file_stems settings engine symbols limit].freeze, [].freeze),
@@ -225,7 +227,7 @@ module ClickHouse
         "memory.keys" => OpSpec.new("memory.keys", "memory", "keys", true, true, "viewer", "experimental", %w[org namespace limit].freeze, %w[org namespace].freeze),
         "memory.lineage" => OpSpec.new("memory.lineage", "memory", "lineage", true, true, "viewer", "experimental", %w[org namespace agent user_id session_id run_id memory_key scope candidate_match_window_s].freeze, %w[org namespace agent memory_key].freeze),
         "memory.link" => OpSpec.new("memory.link", "memory", "link", false, false, "writer", "stable", %w[org namespace from_key to_key relation label explanation evidence confidence run_id weight tombstone].freeze, %w[org namespace from_key to_key].freeze),
-        "memory.list" => OpSpec.new("memory.list", "memory", "list", true, true, "viewer", "stable", %w[org namespace agent user_id session_id run_id prefix memory_type source_trace limit offset count_only preview_chars sort_by quotas include_tombstoned include_duplicates include_superseded include_proposed as_of tags tags_every contains fields known_version].freeze, %w[org namespace agent].freeze),
+        "memory.list" => OpSpec.new("memory.list", "memory", "list", true, true, "viewer", "stable", %w[org namespace agent user_id session_id run_id prefix memory_type source_trace limit offset count_only preview_chars sort_by quotas include_tombstoned include_duplicates include_superseded include_proposed as_of tags tags_every contains pinned_only conflicted_only fields known_version].freeze, %w[org namespace agent].freeze),
         "memory.lock" => OpSpec.new("memory.lock", "memory", "lock", false, false, "writer", "experimental", %w[org namespace agent user_id session_id run_id memory_key mode reason until ttl_seconds locked_by].freeze, %w[org namespace agent memory_key reason].freeze),
         "memory.move" => OpSpec.new("memory.move", "memory", "move", false, false, "writer", "stable", %w[org namespace agent user_id session_id run_id from_key to_key value memory_type tags entities valid_at source_resource_id keep_redirect if_match_sha256 dry_run].freeze, %w[org namespace agent from_key to_key].freeze),
         "memory.outcome" => OpSpec.new("memory.outcome", "memory", "outcome", false, false, "writer", "experimental", %w[org namespace memory_id memory_key agent user_id outcome weight source].freeze, %w[org namespace outcome].freeze),
@@ -334,9 +336,9 @@ module ClickHouse
         "run.list" => OpSpec.new("run.list", "run", "list", true, true, "viewer", "stable", %w[org namespace agent session_id status limit offset order_by q memory_activity grade fields].freeze, %w[org namespace].freeze),
         "search.query" => OpSpec.new("search.query", "search", "query", true, true, "viewer", "experimental", %w[org namespace agent query top_k tags namespace_scope recipe bodies explain live page].freeze, %w[org namespace query].freeze),
         "session.brief_delete" => OpSpec.new("session.brief_delete", "session", "brief_delete", true, false, "writer", "experimental", %w[org namespace agent user_id session_id run_id brief_key].freeze, %w[org namespace agent brief_key].freeze),
-        "session.brief_get" => OpSpec.new("session.brief_get", "session", "brief_get", true, true, "viewer", "experimental", %w[org namespace agent user_id session_id run_id brief_key from_session project revision include_sections full].freeze, %w[org namespace agent].freeze),
+        "session.brief_get" => OpSpec.new("session.brief_get", "session", "brief_get", true, true, "viewer", "experimental", %w[org namespace agent user_id session_id run_id brief_key from_session project revision snapshot_id include_sections full].freeze, %w[org namespace agent].freeze),
         "session.brief_list" => OpSpec.new("session.brief_list", "session", "brief_list", true, true, "viewer", "experimental", %w[org namespace agent user_id session_id run_id project mine_only from_session limit].freeze, %w[org namespace agent].freeze),
-        "session.brief_save" => OpSpec.new("session.brief_save", "session", "brief_save", true, false, "writer", "experimental", %w[org namespace agent user_id session_id run_id brief_key project repo branch head_sha trigger events sections event_cursor if_revision use_llm].freeze, %w[org namespace agent].freeze),
+        "session.brief_save" => OpSpec.new("session.brief_save", "session", "brief_save", true, false, "writer", "experimental", %w[org namespace agent user_id session_id run_id brief_key project repo branch head_sha checkout trigger events sections event_cursor if_revision use_llm].freeze, %w[org namespace agent].freeze),
         "task.accept" => OpSpec.new("task.accept", "task", "accept", false, false, "writer", "experimental", %w[org namespace agent task_id priority constraints note].freeze, %w[org namespace task_id].freeze),
         "task.block" => OpSpec.new("task.block", "task", "block", false, false, "writer", "experimental", %w[org namespace agent task_id fence reason blocked_on].freeze, %w[org namespace task_id fence reason].freeze),
         "task.cancel" => OpSpec.new("task.cancel", "task", "cancel", false, false, "writer", "experimental", %w[org namespace agent task_id reason fence].freeze, %w[org namespace task_id reason].freeze),
@@ -550,6 +552,11 @@ module ClickHouse
           call_op("code.coverage_claim", body, fields, request_options)
         end
 
+        # `code.edit_context` (viewer, read-only, experimental).
+        def edit_context(body = nil, request_options: nil, **fields)
+          call_op("code.edit_context", body, fields, request_options)
+        end
+
         # `code.enclosing` (viewer, read-only).
         # Batched `path:line` -> enclosing function. Built for the grep shim:
         # Required: locations.
@@ -575,7 +582,7 @@ module ClickHouse
         end
 
         # `code.grep` (viewer, read-only).
-        # Exact-match lookup over the indexed corpus. Unlike shell grep, the
+        # Literal or regex search of indexed source with enclosing symbols and coverage.
         # Required: pattern.
         def grep(body = nil, request_options: nil, **fields)
           call_op("code.grep", body, fields, request_options)
@@ -631,6 +638,11 @@ module ClickHouse
         # A PR draft asks whether a PR like it already exists. Every field is
         def pr_check(body = nil, request_options: nil, **fields)
           call_op("code.pr_check", body, fields, request_options)
+        end
+
+        # `code.read` (viewer, read-only, experimental).
+        def read(body = nil, request_options: nil, **fields)
+          call_op("code.read", body, fields, request_options)
         end
 
         # `code.recent_commits` (viewer, read-only).

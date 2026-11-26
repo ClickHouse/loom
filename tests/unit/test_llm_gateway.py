@@ -19,7 +19,7 @@ from server.memory.app.log_once import LogOnce
 from server.settings import Settings, settings
 from tests.unit.model_client import through_the_model_client
 
-_GW = "https://gateway.example/v1/chat/completions"
+_GW = "https://gateway.example/v1/responses"
 
 
 class _Gateway:
@@ -145,13 +145,14 @@ def test_chat_and_embeddings_go_to_the_gateway_with_its_token(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     chat = _Recorder(
         {
-            "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
         }
     )
     monkeypatch.setattr(chat_mod, "_http_client", lambda: chat)
     asyncio.run(chat_mod.OpenAILLMClient(model="gpt-4o-mini", api_key="").complete("s", "u"))
-    assert chat.calls[0]["url"] == "https://gateway.example/v1/chat/completions"
+    assert chat.calls[0]["url"] == "https://gateway.example/v1/responses"
     assert chat.calls[0]["headers"]["Authorization"] == "Bearer gw-1"
 
     vectors = _Recorder({"data": [{"embedding": [0.0] * 8}], "usage": {"total_tokens": 1}})

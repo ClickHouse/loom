@@ -9,6 +9,8 @@ export interface BriefGetResponse {
   found: boolean;
   brief_key: string;
   revision: number;
+  snapshot_id?: string;
+  snapshot_key?: string;
   rendered: string;
   project: string;
   branch: string;
@@ -30,7 +32,7 @@ export interface BriefGetResponse {
 export async function getBrief(
   id: { org: string; namespace: string },
   briefKey: string,
-  opts: { revision?: number; full?: boolean; fromSession?: string } = {},
+  opts: { revision?: number; snapshotId?: string; full?: boolean; fromSession?: string } = {},
 ): Promise<BriefGetResponse> {
   return post<BriefGetResponse>("/v1/session.brief_get", {
     org: id.org,
@@ -39,6 +41,7 @@ export async function getBrief(
     brief_key: briefKey,
     from_session: briefKey ? "" : (opts.fromSession ?? ""),
     revision: opts.revision ?? 0,
+    ...(opts.snapshotId ? { snapshot_id: opts.snapshotId } : {}),
     full: opts.full ?? false,
   });
 }

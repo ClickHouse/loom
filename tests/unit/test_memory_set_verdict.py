@@ -159,6 +159,7 @@ def _wire(
         return "hash"
 
     monkeypatch.setattr("server.observability.audit.emit", _audit)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _audit)
 
     async def _usage(**kw: Any) -> None:
         calls.usage.append(kw)

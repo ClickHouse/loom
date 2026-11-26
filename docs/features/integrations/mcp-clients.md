@@ -1,4 +1,13 @@
-# Connecting an MCP client
+---
+title: Self-hosted MCP memory server for coding agents
+description: Connect Claude Code, Codex, Cursor and other MCP clients to Loom. Check shared recall through separate writer and reader sessions.
+---
+
+# Connect to Loom's MCP memory server
+
+An MCP memory server lets AI agents save and retrieve durable facts through the
+Model Context Protocol. With Loom, agents in different clients can use the same
+server and recall decisions saved in a namespace they have permission to read.
 
 Loom serves its operations as MCP tools at `<loom>/mcp`. A streamable-HTTP client connects
 with a URL and a bearer token (none on a single-user server; Cursor and VS Code have
@@ -211,7 +220,7 @@ client afterwards.
 | Emacs with mcp.el and gptel                                         | `mcp-hub-servers` in your init file, then `gptel-mcp-connect`                                                                                                                                                                                                                      | `(setq mcp-hub-servers '(("loom" . (:url "URL"))))` (single-user server only: no header field is documented)                                                                                                                                                                                                                                                        |                                                                    |
 | OpenCode                                                            | `opencode.json` or `.opencode/opencode.json` in the project or a folder above it, or `~/.config/opencode/opencode.json`                                                                                                                                                            | `loom install --client opencode`, or `opencode mcp add loom --url URL --header "Authorization=Bearer <JWT>"`, which in OpenCode 2.x writes `{"mcp": {"servers": {"loom": {"type": "remote", "url": "URL", "headers": {…}}}}}`; the 1.x `opencode-ai` npm package takes `{"mcp": {"loom": {"type": "remote", "url": "URL", "headers": {…}}}}`, which 2.x still reads | configuration checked; connectivity unverified                     |
 | Kilo Code (extension and CLI)                                       | `kilo.jsonc` in the project, or `~/.config/kilo/kilo.jsonc`                                                                                                                                                                                                                        | `{"mcp": {"loom": {"type": "remote", "url": "URL", "headers": {…}}}}`                                                                                                                                                                                                                                                                                               | connected (CLI)                                                    |
-| Cline CLI                                                           | `~/.cline/data/settings/cline_mcp_settings.json`                                                                                                                                                                                                                                   | `cline mcp add loom URL --transport http --header "Authorization: Bearer <JWT>" --yes` (the Cline extension: [`loom install`](#what-it-writes-per-client))                                                                                                                                                                                                          | accepted                                                           |
+| [Cline CLI](#use-shared-memory-in-cline-cli)                        | `~/.cline/data/settings/cline_mcp_settings.json`                                                                                                                                                                                                                                   | `cline mcp add loom URL --transport http --header "Authorization: Bearer <JWT>" --yes` (the Cline extension: [`loom install`](#what-it-writes-per-client))                                                                                                                                                                                                          | verified read                                                      |
 | Google Antigravity                                                  | `~/.gemini/config/mcp_config.json`, or `.agents/mcp_config.json` in the workspace                                                                                                                                                                                                  | `{"mcpServers": {"loom": {"serverUrl": "URL", "headers": {…}}}}` (`url` also works)                                                                                                                                                                                                                                                                                 |                                                                    |
 | Devin Desktop and Devin CLI                                         | `.devin/mcp_config.local.json` in the project (git-ignored, for the token), or `~/.config/devin/mcp_config.json`                                                                                                                                                                   | `{"mcpServers": {"loom": {"url": "URL", "transport": "http", "headers": {…}}}}` (`loom install --client windsurf` writes the older `~/.codeium/windsurf/` path)                                                                                                                                                                                                     | accepted (CLI 3000.12.57 configuration only); Desktop unmeasured   |
 | Qwen Code                                                           | `~/.qwen/settings.json`, or `.qwen/settings.json`                                                                                                                                                                                                                                  | `qwen mcp add --transport http loom URL --header "Authorization: Bearer <JWT>"`                                                                                                                                                                                                                                                                                     | connected (`qwen mcp list`)                                        |
@@ -257,13 +266,16 @@ client afterwards.
 - `starts`: the client's check started the extension, which a rejected token stops (goose
   1.59.1).
 - `accepted`: the client wrote or accepted the entry; a successful server connection was
-  not established (Cline CLI 3.0.74, GitHub Copilot CLI 1.0.110, Amp 0.0.1794715238,
+  not established (GitHub Copilot CLI 1.0.110, Amp 0.0.1794715238,
   Auggie CLI 0.37.1, Qoder and Qoder CN 1.1.90, Muse Code 1.4.20, Grok Build 1.0.77,
   Devin CLI 3000.12.57).
   The Qoder, Muse and Grok checks used a nonworking test URL without credentials; their
   token/header handling was not tested.
 - `installed`: version and help were checked, without an MCP connection or successful
   MCP configuration check (Junie 26.11.1, Kimi Code 2.5.3, MiniMax mcode 0.7.7, Kiro CLI 3.3.0).
+- `verified read`: Cline CLI 3.0.75 retrieved a value saved over HTTP from a
+  loopback Loom server. The check used a scripted local model provider to invoke the
+  actual MCP tool.
 - `qualified`: the linked page's qualification cases were run through that entry, with the
   results it tables.
 
@@ -346,6 +358,28 @@ Checked with Copilot CLI 1.0.112: the install, the update, the marketplace insta
 `copilot mcp get loom`, and MCP `initialize` and `tools/list` through the entry pointed at
 a local Loom on another port. A Copilot session needs a sign-in and was not run, so whether
 a session offers the tools to the model is untested.
+
+### Use shared memory in Cline CLI
+
+Start the [single-user quickstart](../../getting-started/quickstart.md), then add its
+Streamable HTTP URL to Cline CLI.
+
+```bash
+cline mcp add loom http://127.0.0.1:7777/mcp --transport http --yes
+```
+
+For a team deployment, use its HTTPS MCP URL and pass
+`--header "Authorization: Bearer $LOOM_API_KEY"` with a token scoped to the namespace
+the client should read. For an isolated CLI test, set `CLINE_MCP_SETTINGS_PATH` to an
+explicit settings file in the test directory before adding the server and keep it set
+when launching Cline.
+
+Save an example fact from another client or through
+[the HTTP quickstart](../../getting-started/quickstart.md#4-first-memory-over-http).
+Start a fresh Cline session and ask it to call `loom_memory_get` with the key. Check
+the tool response for `found: true` and the exact saved value. This checks that Cline
+reads shared memory through the configured server without copying the earlier
+conversation into its prompt.
 
 ### Hosted builders and chat apps
 
@@ -493,6 +527,84 @@ a Loom JWT for the signed-in user. Details: [MCP reference](../../reference/mcp.
   token resolves to the namespace you expect.
 - `loom install --dry-run` shows exactly what would be written, for comparing with a
   config file that behaves unexpectedly.
+
+## Verify shared memory through MCP
+
+Use this check to test a save and recall through two independent MCP sessions.
+Use an [authenticated Loom server](../../getting-started/quickstart.md#2-open-the-dashboard)
+and a disposable memory namespace. Set `LOOM_BASE_URL` to the server URL and set
+`LOOM_ORG` and `LOOM_NAMESPACE` to the scope. Set `LOOM_WRITER_TOKEN` and
+`LOOM_READER_TOKEN` to [tokens for different subjects](../../guides/tokens-and-grants.md#mint-a-token)
+with writer and viewer access to that namespace, respectively.
+
+In a scratch directory, run `npm install @modelcontextprotocol/sdk@1`. Save the
+following as `check-loom-memory.mjs` and run `node check-loom-memory.mjs`:
+
+```js
+import assert from "node:assert/strict";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const url = new URL("/mcp?toolset=core", process.env.LOOM_BASE_URL);
+const fact = {
+  org: process.env.LOOM_ORG,
+  namespace: process.env.LOOM_NAMESPACE,
+  agent: "example-author",
+  memory_key: "example/mcp-memory-check",
+};
+const value = "Review the rollout checklist before deployment.";
+
+async function withClient(name, token, run) {
+  const client = new Client({ name, version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(url, {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  try {
+    await client.connect(transport);
+    await run(client);
+  } finally {
+    try {
+      await transport.terminateSession();
+    } finally {
+      await client.close();
+    }
+  }
+}
+
+await withClient("example-writer", process.env.LOOM_WRITER_TOKEN, async (client) => {
+  const saved = await client.callTool({
+    name: "loom_memory_set",
+    arguments: { ...fact, value, if_match_sha256: "absent" },
+  });
+  assert.ok(!saved.isError && saved.structuredContent?.memory_id, "The write must succeed");
+});
+
+await withClient("example-reader", process.env.LOOM_READER_TOKEN, async (client) => {
+  const read = await client.callTool({ name: "loom_memory_get", arguments: fact });
+  assert.ok(!read.isError && read.structuredContent?.found, "The reader must find the fact");
+  assert.equal(read.structuredContent.value, value);
+  assert.equal(read.structuredContent.agent, fact.agent);
+
+  const denied = await client.callTool({
+    name: "loom_memory_set",
+    arguments: {
+      ...fact,
+      memory_key: "example/mcp-viewer-write",
+      value,
+      if_match_sha256: "absent",
+    },
+  });
+  assert.ok(denied.isError);
+  assert.equal(denied.structuredContent?.code, "AUTH_INSUFFICIENT");
+});
+
+console.log("A separate MCP reader recalled the fact and its write was refused.");
+```
+
+The writer's precondition requires a fresh key. Use a fresh disposable namespace
+for another run. A passing check establishes exact-key recall and the viewer's role
+on that namespace. [Evaluate team memory](../../getting-started/evaluate.md#shared-memory-across-clients)
+for the cross-namespace and revoked-credential checks.
 
 ## Related
 

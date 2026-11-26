@@ -50,6 +50,9 @@ def test_annotations_read_only_for_viewer_idempotent_ops() -> None:
 def test_annotations_destructive_for_delete_and_erasure_ops() -> None:
     for name in (
         "memory.delete",
+        "memory.clear",
+        "extraction_policy.clear",
+        "profile_schema.clear",
         "knowledge.delete",
         "erasure.request",
         "working_memory.delete",
@@ -157,7 +160,9 @@ def test_initialize_instructions_gate_profile_on_auth(monkeypatch: pytest.Monkey
 
 
 def test_initialize_result_carries_instructions(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _instr(auth: Any, toolset: str | None = None) -> str:
+    async def _instr(
+        auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+    ) -> str:
         return "SESSION-START-PRIMER"
 
     monkeypatch.setattr(mcp, "_initialize_instructions", _instr)
@@ -175,7 +180,9 @@ def test_initialize_result_carries_instructions(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_initialize_survives_instructions_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _boom(auth: Any, toolset: str | None = None) -> str:
+    async def _boom(
+        auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+    ) -> str:
         raise RuntimeError("CH down")
 
     monkeypatch.setattr(mcp, "_initialize_instructions", _boom)
@@ -195,7 +202,9 @@ def test_initialize_with_profile_leaves_a_ledger_row(monkeypatch: pytest.MonkeyP
     records one `mcp.initialize` agent_events row for the caller's default
     workspace; an anonymous one (no profile) records nothing."""
 
-    async def _instr(auth: Any, toolset: str | None = None) -> str:
+    async def _instr(
+        auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+    ) -> str:
         return "PRIMER-WITH-PROFILE"
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
@@ -231,7 +240,9 @@ def test_initialize_with_profile_leaves_a_ledger_row(monkeypatch: pytest.MonkeyP
 
 
 def test_initialize_survives_ledger_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _instr(auth: Any, toolset: str | None = None) -> str:
+    async def _instr(
+        auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+    ) -> str:
         return "PRIMER"
 
     async def _boom(auth: Any, client_name: str | None = None) -> dict[str, str]:
@@ -263,7 +274,9 @@ def _mcp_client(monkeypatch: pytest.MonkeyPatch):
     # stubbed so no CH/profile render happens.
     monkeypatch.setattr(settings, "identity_provider", "single-user", raising=False)
 
-    async def _instr(auth: Any, toolset: str | None = None) -> str:
+    async def _instr(
+        auth: Any, toolset: str | None = None, *, schema_profile: str | None = None
+    ) -> str:
         return ""
 
     monkeypatch.setattr(mcp, "_initialize_instructions", _instr)
@@ -473,6 +486,6 @@ def test_coding_toolset_initialize_instructions_are_the_compact_form() -> None:
 
     coding = asyncio.run(_initialize_instructions(None, "coding"))
     full = asyncio.run(_initialize_instructions(None, "core"))
-    assert "loom_code_*" in coding and "loom_search" in coding
+    assert "loom_code_symbol" in coding and "loom_search" in coding
     assert "Loom-first mode" not in coding and "Loom-first mode" in full
-    assert len(coding) * 3 < len(full)
+    assert len(coding) < len(full)

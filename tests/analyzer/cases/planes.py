@@ -892,6 +892,19 @@ async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
     await cost.recorded_turn_times(ORG, NS, "s1", ["m1"], ch=ch)
 
 
+async def _brief_revision(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.store import session_briefs
+
+    scope = (
+        ReadFilters(scope="own_user", user_id="u1", session_id=None)
+        if c["bound"]
+        else WHOLE_NAMESPACE
+    )
+    await session_briefs.by_revision(
+        ch, ORG, NS, "handoff/example", 1, scope=scope, snapshot=c["snapshot"]
+    )
+
+
 async def _rebuild_session_chunks(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The provider rebuild's read of a session's chunks around one stored without a
     vector."""
@@ -1279,6 +1292,12 @@ def cases() -> list[Case]:
                     ]
                 }
             ),
+        ),
+        Case(
+            "session_brief_revision",
+            "server.memory.store.session_briefs",
+            _brief_revision,
+            {"bound": (False, True), "snapshot": (None, (1, "a" * 64))},
         ),
         Case("source_push_repos", "server.knowledge.store.source_push", _source_push, {}),
         Case("ledger_repos", "server.insights.store.audit", _ledgers, {"filters": (False, True)}),

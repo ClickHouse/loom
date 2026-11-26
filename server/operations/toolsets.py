@@ -202,6 +202,8 @@ _MCP_CODING_OPS: frozenset[str] = frozenset(
         "code.bisect_candidates",
         "code.pr_check",
         "code.impact",
+        "code.read",
+        "code.edit_context",
     }
 )
 

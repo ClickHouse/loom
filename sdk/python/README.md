@@ -1,6 +1,6 @@
 # clickhouse-loom
 
-Python SDK for [ClickHouse Loom](https://clickhouse.github.io/loom/), a self-hosted server that gives AI agents shared long-term memory, document search and a code index.
+Python SDK for [ClickHouse Loom](https://loom.clickhouse.com/docs/), a self-hosted server that gives AI agents shared long-term memory, document search and a code index.
 
 This package contains the **client SDK only**. The server runs as the Docker image `ghcr.io/clickhouse/loom` against ClickHouse: on your own machine as a single-user install, or as a team deployment an operator runs.
 
@@ -167,7 +167,7 @@ result = await tools.execute("loom_code_lookup", {"kind": "symbol", "target": "p
 
 Code results preserve valid JSON within the character cap and disclose whole-body or
 row omissions. Honor abstention, ambiguity, source citations and graph lower bounds.
-See the [code tools guide](https://clickhouse.github.io/loom/guides/code-tools/) and
+See the [code tools guide](https://loom.clickhouse.com/docs/guides/code-tools/) and
 [`examples/code_lookup.py`](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/code_lookup.py).
 
 `loom_remember` returns the server's receipt: `stored` confirms a persisted row, while

@@ -17,6 +17,7 @@ from server.core.ch_names import database, quote
 from server.core.repo_base import _CHClient, _default_client
 from server.core.sql_literal import sql_string
 from server.insights.domain import analysis as boundary
+from server.insights.domain.observation_policy import analyst_policy_catalog_allows_writes
 
 log = logging.getLogger(__name__)
 
@@ -242,8 +243,21 @@ async def own_version(
 
 
 _GRANT = re.compile(
-    r"^GRANT SELECT\((?P<columns>[^)]*)\) ON (?P<database>[^.\s]+)\.(?P<table>\S+) TO "
+    r"GRANT SELECT\((?P<columns>[^)]*)\) ON (?P<database>[^.\s]+)\.(?P<table>\S+) TO (?P<user>\S+)"
 )
+
+
+async def _verify_policy_catalog(ch: _CHClient) -> None:
+    # Native SHOW CREATE reads access-storage definitions without system-table row filters.
+    with uncaptured():
+        rows = await ch.query_all(
+            f"SHOW CREATE ROW POLICIES ON {target_database()}.*", settings=boundary.LOG_TEXT_CUT
+        )
+    if any(len(row) != 1 or not isinstance(next(iter(row.values())), str) for row in rows):
+        raise RuntimeError("the native analyst policy catalog was incomplete")
+    statements = tuple(next(iter(row.values())) for row in rows)
+    if not analyst_policy_catalog_allows_writes(statements, database()):
+        raise RuntimeError("the analyst catalog has unverified row policies")
 
 
 async def own_grants(
@@ -257,7 +271,7 @@ async def own_grants(
         _, _, rows = await ch.query_columns("SHOW GRANTS")
     out: set[tuple[str, str]] = set()
     for (line,) in rows:
-        m = _GRANT.match(str(line))
+        m = _GRANT.fullmatch(str(line).removesuffix(" WITH GRANT OPTION"))
         if m is None or m["database"].strip("`") != database():
             out.add(("*", str(line)))
             continue
@@ -272,10 +286,22 @@ async def write_entities(
     They hold the analyst's password and the scope key, so their text stays
     out of system.query_log, and they stay out of the statement capture file."""
     ch = ch or _default_client()
-    if any(sql.startswith("GRANT ") for sql in statements):
-        from server.insights.store.event_cutover import confirm_ordinary_events
-
-        await confirm_ordinary_events(ch=ch)
+    grants = [sql for sql in statements if sql.startswith("GRANT ")]
+    if grants:
+        allowed = boundary.allowed_columns()
+        for sql in grants:
+            grant = _GRANT.fullmatch(sql)
+            if (
+                grant is None
+                or grant["user"].strip("`") != boundary.ANALYST_USER
+                or grant["database"].strip("`") != database()
+                or any(
+                    (grant["table"], name.strip()) not in allowed
+                    for name in grant["columns"].split(",")
+                )
+            ):
+                raise ValueError("an analyst grant is outside the allowlist")
+        await _verify_policy_catalog(ch)
     with uncaptured():
         for sql in statements:
             await ch.execute(sql, settings=boundary.provisioning_settings(names))
@@ -290,6 +316,7 @@ def target_database() -> str:
 # it holds grants on, so the probe asks for what it must not. LIMIT 1: a
 # LIMIT 0 statement can finish before ClickHouse checks columns.
 REFUSED_READS = {
+    "agent_events": "SELECT count() FROM {db}.agent_events",
     "agent_events_private": "SELECT count() FROM {db}.agent_events_private",
     "agent_events_private.upstream_cost_usd": (
         "SELECT upstream_cost_usd FROM {db}.agent_events_private LIMIT 1"

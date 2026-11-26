@@ -112,6 +112,8 @@ async def _success_response(
     elapsed_ms: int,
     idem: tuple[Scope | None, str | None],
     mentor_hint: tuple[str, str] | None,
+    *,
+    toolset: str | None = None,
 ) -> dict[str, Any]:
     """Phase 9 of `_call_tool` (success path): the wire-safe full result,
     the post-handler rows (budget, audit, idempotency — they keep the full
@@ -153,7 +155,7 @@ async def _success_response(
     # for clients that prefer typed access. Both carry the
     # lean shape (hits and content, not ranking) unless the call said
     # explain=true; the ledger and idempotency store above keep the full one.
-    lean_dict = mcp_op_result(op.name, result_dict, arguments, mentor_hint)
+    lean_dict = mcp_op_result(op.name, result_dict, arguments, mentor_hint, toolset=toolset)
     from server.transport.namespace_resolve import RESOLVED
 
     resolved = RESOLVED.get()

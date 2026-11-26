@@ -167,7 +167,8 @@ def test_install_codex_registers_through_codex_mcp_add(
         in out
     )
     assert "[mcp_servers.loom]" in out and 'bearer_token_env_var = "LOOM_API_KEY"' in out
-    assert "export LOOM_API_KEY=T.T.T" in out
+    assert 'export LOOM_API_KEY="<token>"' in out
+    assert "T.T.T" not in out
     # the token never lands in the TOML Codex keeps
     toml = out.split("[mcp_servers.loom]", 1)[1].split("Codex reads", 1)[0]
     assert "T.T.T" not in toml

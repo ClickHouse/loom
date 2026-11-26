@@ -92,6 +92,9 @@ async def test_a_large_retained_definition_has_no_implicit_character_limit() -> 
     text = "def f():\n    return '" + "x" * 12000 + "'\n"
     unit = await _unit(_Repo([_row(text, 10, 11)]), row={**SYM, "end_line": 11})
     assert unit.body == text and not unit.elided
+    mcp = lean_code("code.symbol", {"definitions": [unit.model_dump()]})
+    assert mcp["definitions"][0]["body"] == text
+    assert not mcp["definitions"][0].get("elided")
 
 
 async def test_a_deliberate_pointer_request_reads_no_source() -> None:

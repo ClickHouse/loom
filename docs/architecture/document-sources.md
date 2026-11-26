@@ -623,15 +623,11 @@ the public fallback. No reranking provider receives the provisional pools.
   consumer total.
 - **Private events have separate physical storage.** Ordinary events stay in
   `agent_events`; marked requests and mirror workers write `agent_events_private`.
-  The ordinary table's CHECK excludes marked rows and mirror namespaces. An analyst
-  keeps ordinary signed, namespace-scoped reads and cannot read the private table or
-  its physical metadata. Provisioning verifies the CHECK on every writer, drains
-  the finite set of prepared INSERTs and refuses any existing private contamination
-  before granting access. Checked per-writer HTTP sessions read the native access
-  catalog and prove that policies cannot hide the process or event populations.
-  Unknown visibility, writer routes or metadata refuse. It preserves existing rows
-  for operator resolution. Administrative application uses
-  `loom ch-setup --apply-analyst-sql`; unchecked analyst SQL files refuse.
+  The ordinary table's CHECK excludes marked rows and mirror namespaces. Analysts
+  read ordinary events through a signed, namespace-scoped view. Their grants cover
+  neither physical event table, so its storage metadata is also private.
+  `loom ch-setup --apply-analyst-sql` verifies the native policy definitions in
+  Loom's database before granting access to the views.
 - **Private event reads are folded and masked.** The analytics export and
   `sql_v1_usage_daily` union both stores and fold marked spend into a namespace/day row
   with agent and operation `-`. `sql_v1_agent_events` and the signed

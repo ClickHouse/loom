@@ -4,6 +4,7 @@ fuzzy-symbol vote the hybrid route counts in its route agreement."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -11,8 +12,9 @@ from server.code.app.search.shape import _FILE_LINE_RE, _IDENTIFIER_RE
 from server.code.app.search.state import CodeSearchResult
 from server.code.app.search.window import _exclude
 from server.code.app.spans import code_span, span_attrs
+from server.code.app.symbol.resolve import symbol_body
 from server.code.domain.search_scope import SearchScope
-from server.code.domain.units import CodeUnit, budget_units
+from server.code.domain.units import CodeUnit, _card_of, budget_units
 from server.code.store.index import CodeRepo
 from server.settings import settings
 
@@ -64,9 +66,14 @@ async def _symbol_shaped_route(
     if units:
         for u in units:
             u.via = "symbol"
+        selected = units[:top_k]
         with code_span("search.bodies", route="symbol_exact"):
+            if bodies == "auto":
+                await _fill_symbol_bodies(repo, org, ns, model, selected)
+            else:
+                selected = [_card_of(unit) for unit in selected]
             result.units, result.tokens_returned = budget_units(
-                units[:top_k], token_budget, bodies=bodies
+                selected, token_budget, bodies=bodies
             )
         result.retrieval_risk = "low"
         result.retrieval_confidence = 0.95
@@ -106,6 +113,27 @@ async def _symbol_shaped_route(
         result.constrained = True
         return scoped
     return False
+
+
+async def _fill_symbol_bodies(
+    repo: CodeRepo, org: str, ns: str, model: str, units: list[CodeUnit]
+) -> None:
+    """Exact matches use the same complete retained source as code.symbol."""
+
+    async def fill(unit: CodeUnit) -> None:
+        try:
+            unit.body = await symbol_body(repo, org, ns, unit.model_dump(), model=model)
+        except Exception as error:  # noqa: BLE001 — a source read cannot discard a resolved definition
+            logger.warning("code.search symbol source unavailable: %s", error)
+        if not unit.body:
+            unit.elided = True
+            unit.granularity = "card"
+            unit.next = (
+                f"Read {unit.path} offset={unit.start_line} "
+                f"limit={max(1, unit.end_line - unit.start_line + 1)}"
+            )
+
+    await asyncio.gather(*(fill(unit) for unit in units))
 
 
 def _case_folded_symbol_spelling(query: str) -> str:
