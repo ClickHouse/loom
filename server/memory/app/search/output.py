@@ -90,10 +90,8 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         return empty
     readable = await _readable_namespaces(input.org, input.namespace, payload)
     hits, nxt, stale_dropped = await _parked_slice(input, payload, offset, readable)
-    # Hits from a namespace the caller lost are neither served nor counted; the
-    # first page was never parked. If scope narrowed, only the visible tail can
-    # be counted.
-    parked_rows = payload.get("hits") or []
+    # Count authorized first-page hits as well as the tail when access changed.
+    parked_rows = (payload.get("first_page_scope") or []) + (payload.get("hits") or [])
     withheld = sum(
         1
         for row in parked_rows
@@ -459,6 +457,7 @@ async def _finish_search_output(
                 top_k=int(input.top_k),
                 candidates_total=_output.candidates_total,
                 tail=tail,
+                first_page=_output.results,
                 namespaces_searched=_output.namespaces_searched,
                 namespaces_skipped=_output.namespaces_skipped,
                 replay=input.as_of is not None,

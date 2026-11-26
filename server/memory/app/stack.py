@@ -20,7 +20,7 @@ from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutp
 from server.memory.app.code_link_reads import guidance_code_states
 from server.memory.app.for_file import current_file_rows
 from server.memory.app.stack_knowledge import StackKnowledge
-from server.memory.app.use_guidance import guidance_source_states
+from server.memory.app.use_guidance import guidance_source_states, procedure_status_for_row
 from server.memory.domain.use_guidance import UseGuidance, guidance_for_row
 
 log = logging.getLogger(__name__)
@@ -57,10 +57,7 @@ async def recall_guidance_for_rows(
     statuses = (
         procedure_statuses
         if procedure_statuses is not None
-        else [
-            "unknown" if row.get("memory_type") == "procedural" else "not_applicable"
-            for row in rows
-        ]
+        else [procedure_status_for_row(row) for row in rows]
     )
     return [
         guidance_for_row(row, code_state=code, source_state=source, procedure_status=status)

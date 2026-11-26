@@ -382,3 +382,14 @@ async def test_stack_excludes_mirror_rows_without_matching_postgres_heads(monkey
     reader = stack._stack_pinned if section == "pinned" else stack._stack_recent
     await reader(Mirror(), MemoryStackInput(org="o", namespace="n", agent="a"), fill)
     assert fill.entries == []
+
+
+@pytest.mark.asyncio
+async def test_stack_guidance_recognizes_quarantined_and_candidate_procedures():
+    rows = [
+        {"memory_type": "procedural", "status": "active", "value": '{"quarantined": {}}'},
+        {"memory_type": "procedural", "status": "active", "value": '{"tags": ["mined"]}'},
+    ]
+    guidance = await stack.recall_guidance_for_rows("o", rows)
+    assert [item.lifecycle.procedure_status for item in guidance] == ["quarantined", "candidate"]
+    assert [item.next_step for item in guidance] == ["inspect_only", "validate_lead"]

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -113,6 +114,7 @@ def encode_page(
     namespaces_searched: list[str],
     namespaces_skipped: list[str],
     replay: bool = False,
+    first_page: Sequence[Any] = (),
 ) -> str:
     """`replay`: the search was an `as_of` replay, whose pages the Postgres authority does
     not check (`pg_validation`)."""
@@ -126,6 +128,11 @@ def encode_page(
         "namespaces_skipped": namespaces_skipped,
         "hits": hits,
     }
+    if first_page:
+        # Scope metadata lets later pages count the original hits without keeping their text.
+        page["first_page_scope"] = [
+            {"namespace": hit.namespace, "row_identity": hit._row_identity} for hit in first_page
+        ]
     if replay:
         page["replay"] = True
     return json.dumps(

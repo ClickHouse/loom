@@ -21,13 +21,20 @@ async def test_changed_source_requires_current_access_and_unambiguous_identity(m
     monkeypatch.setattr(source, "request_narrowed", lambda: False)
     rows = [
         {"tags": ["source-changed"], "source_resource_id": "knowledge:" + cite}
-        for cite in ["team/public#intro", "hidden/doc#intro", "team/mirror#part", "team/a#b#part"]
+        for cite in [
+            "team/public#intro",
+            "hidden/doc#intro",
+            "team/mirror#part",
+            "team/a#b#part",
+            "team/public",
+        ]
     ]
     assert await source.guidance_source_states("org", rows) == [
         "changed",
         "unknown",
         "unknown",
         "unknown",
+        "changed",
     ]
     docs.assert_awaited_once_with("org", "team", ["mirror", "public"])
     docs.reset_mock()

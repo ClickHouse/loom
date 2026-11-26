@@ -255,7 +255,16 @@ async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatc
 
     tail = [_hit("b", 0.8, ns="n"), _hit("c", 0.7, ns="team"), _hit("d", 0.6, ns="home")]
     content = _encode(
-        3, 3, tail, namespaces_searched=["n", "team", "home"], namespaces_skipped=["team", "far"]
+        3,
+        6,
+        tail,
+        first_page=[
+            _hit("first", 1, ns="n"),
+            _hit("revoked", 1, ns="team"),
+            _hit("home", 1, ns="home"),
+        ],
+        namespaces_searched=["n", "team", "home"],
+        namespaces_skipped=["team", "far"],
     )
     key = sp.page_blob_key(content)
     patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
@@ -265,7 +274,7 @@ async def test_a_parked_page_drops_hits_the_caller_can_no_longer_read(monkeypatc
     )
     out = await h.handle_memory_search(page)
     assert [(r.memory_key, r.namespace) for r in out.results] == [("b", "n"), ("d", "home")]
-    assert out.candidates_total == 2
+    assert out.candidates_total == 4
     assert out.namespaces_searched == ["n", "home"]
     assert out.namespaces_skipped == [], "neither a lost namespace nor one never readable"
     assert reads == ["o"], "one read of the caller's namespaces per page, however many"

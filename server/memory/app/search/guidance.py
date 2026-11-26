@@ -135,7 +135,9 @@ def _shared_evidence(
         if row is None or row.get("tombstoned_at") is not None or row.get("superseded_by"):
             denied.add(i)
         elif int(row.get("version") or 0) == doc_version(hits[i]):
-            evidence[i] = {"status": "active"}
+            # A promoted row has its own lifecycle. Its private contributors' review
+            # does not attest the shared copy and may not be readable here.
+            evidence[i] = {"status": "active", "source_class": hits[i].source_class}
     return denied, evidence
 
 
