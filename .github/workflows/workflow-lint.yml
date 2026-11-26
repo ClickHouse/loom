@@ -22,15 +22,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install actionlint
+      - name: Install the workflow linter
         working-directory: ${{ runner.temp }}
         run: |
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             --retry 2 --retry-all-errors --retry-max-time 85 --connect-timeout 10 --max-time 40 \
-            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
-            --output actionlint.tar.gz
-          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz' | sha256sum --check --strict
-          tar -xzf actionlint.tar.gz actionlint
+            https://github.com/jdx/jactionlint/releases/download/v2.6.0/jactionlint_2.6.0_linux_amd64.tar.gz \
+            --output jactionlint.tar.gz
+          echo 'd5400967b8f0d3a5ae9a4cee21f56400a50eb3f05d0cbb4ef17184f17f0760c8  jactionlint.tar.gz' | sha256sum --check --strict
+          tar -xzf jactionlint.tar.gz jactionlint
       - name: Install ShellCheck
         working-directory: ${{ runner.temp }}
         run: |
@@ -46,4 +46,4 @@ jobs:
           SHELLCHECK_OPTS: --severity=warning
         run: |
           test -x "$RUNNER_TEMP/shellcheck"
-          "$RUNNER_TEMP/actionlint" -color -shellcheck="$RUNNER_TEMP/shellcheck" -pyflakes=
+          "$RUNNER_TEMP/jactionlint" --profile correctness --color --shellcheck="$RUNNER_TEMP/shellcheck" --pyflakes=
