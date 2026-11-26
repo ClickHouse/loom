@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+from difflib import get_close_matches
 from typing import Any
 
 from server.code.app.common import repo_relative
@@ -88,7 +89,7 @@ async def _symbols_at_location(
     the span came from tree-sitter: scip-clang emits single-line spans, so
     line containment finds the tree-sitter row, and the scip row is what
     carries edges and the tier the caller wants to see."""
-    rows = await repo.functions_for_paths(org, ns, [path], limit=2000)
+    rows = await repo.functions_for_paths(org, ns, [path], limit=2000, with_revision=True)
     picked = _containing(rows, line)[:2]
     out: list[dict[str, Any]] = list(picked)
     seen = {str(r["symbol_id"]) for r in out}
@@ -114,11 +115,24 @@ async def _functions_near(
     return sorted(rows, key=dist)[:limit]
 
 
+def _near_outline_names(
+    outline: list[dict[str, Any]], name: str, *, limit: int
+) -> list[dict[str, Any]]:
+    query = re.split(r"::|\.", name.casefold())
+    by_name: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in outline:
+        qualified = str(row["qualified_name"])
+        suffix = re.split(r"::|\.", qualified.casefold())[-len(query) :]
+        key = "::".join(suffix)
+        by_name.setdefault(key, {}).setdefault(qualified, row)
+    matched = get_close_matches("::".join(query), by_name, n=limit)
+    return [row for key in matched for row in by_name[key].values()][:limit]
+
+
 async def near_misses(
     repo: CodeRepo, org: str, ns: str, name: str, *, fallback: str = "", limit: int = 10
 ) -> list[dict[str, Any]]:
-    """The near-miss list for a name that resolved nothing: symbols whose name contains
-    its bare name, or for a `path:line` the functions in that file nearest the line."""
+    """Suggest declarations related to the missed name or source line."""
     loc = _parse_location(name)
     file_symbol = _parse_file_symbol(name)
     if loc:
@@ -127,6 +141,11 @@ async def near_misses(
         path, local = file_symbol
         needle = local.split("::")[-1].rsplit(".", 1)[-1]
         fuzzy = await repo.symbols_fuzzy(org, ns, needle or fallback, path=path, limit=limit)
+        if not fuzzy and needle:
+            # A guessed or mistyped name can miss substring search. The file the
+            # caller provided bounds the recovery to its own declarations.
+            outline = await repo.outline_for_path(org, ns, path)
+            fuzzy = _near_outline_names(outline, local, limit=limit)
     else:
         fuzzy = await repo.symbols_fuzzy(org, ns, name.split("::")[-1] or fallback)
     return [
@@ -203,6 +222,8 @@ async def symbol_body(
 
 
 def _indexed_commit(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("ascii", "replace").rstrip("\0")
     return str(value or "").rstrip("\0")
 
 

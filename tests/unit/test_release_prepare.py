@@ -963,11 +963,86 @@ def test_the_github_release_notes_start_at_the_previous_final() -> None:
     (checks,) = [s for s in job["steps"] if s.get("id") == "checks"]
     assert 'previous=$(python3 scripts/release/prepare.py previous "$VERSION")' in checks["run"]
     (create,) = [
-        s
-        for s in workflow["jobs"]["github-release"]["steps"]
-        if s.get("uses", "").startswith("softprops/action-gh-release@")
+        step
+        for step in workflow["jobs"]["github-release"]["steps"]
+        if step.get("id") == "publish-release"
     ]
-    assert create["with"]["previous_tag"] == "${{ needs.version.outputs.previous }}"
+    assert create["env"]["PREVIOUS_TAG"] == "${{ needs.version.outputs.previous }}"
+
+
+@pytest.mark.parametrize("outcome", ["absent", "draft", "lookup-error", "publish-error"])
+def test_publish_release_reuses_existing_draft(tmp_path: Path, outcome: str) -> None:
+    steps = _release_workflow()["jobs"]["github-release"]["steps"]
+    (probe,) = [step for step in steps if step.get("id") == "existing"]
+    (publish,) = [step for step in steps if step.get("id") == "publish-release"]
+    files = [
+        "release/python/clickhouse-loom.whl",
+        "release/npm/clickhouse-loom.tgz",
+        "release/plugins/loom.zip",
+        "release/stack/loom-stack.tar.gz",
+        "release/agent/agent-setup.txt",
+    ]
+    for name in files:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    gh = tmp_path / "gh"
+    gh.write_text(
+        """#!/bin/bash
+if [ "$1 $2" = 'api graphql' ]; then
+  case $RELEASE_OUTCOME in
+    draft) echo true; exit 0 ;;
+    lookup-error) echo 'release API unavailable' >&2; exit 1 ;;
+    *) echo false; exit 0 ;;
+  esac
+fi
+printf '%s\\n' "$*" >> "$GH_CALLS"
+if [ "$1 $2" = 'release edit' ] && [ "$RELEASE_OUTCOME" = publish-error ]; then
+  exit 1
+fi
+"""
+    )
+    gh.chmod(0o755)
+    calls = tmp_path / "calls"
+    env = dict(
+        os.environ,
+        PATH=str(tmp_path) + os.pathsep + os.environ["PATH"],
+        GH_CALLS=str(calls),
+        GITHUB_REF_NAME="v1.3.0",
+        GITHUB_REPOSITORY="ClickHouse/loom",
+        PREVIOUS_TAG="v1.2.9",
+        RELEASE_OUTCOME=outcome,
+        GITHUB_OUTPUT=str(tmp_path / "output"),
+        PRERELEASE="false",
+        LATEST="true",
+    )
+    found = subprocess.run(
+        ["bash", "-e", "-c", probe["run"]], env=env, cwd=tmp_path, capture_output=True
+    )
+    if outcome == "lookup-error":
+        assert found.returncode != 0
+        assert not Path(env["GITHUB_OUTPUT"]).exists()
+        return
+    assert found.returncode == 0, found.stderr
+    env["VERSION_EXISTS"] = Path(env["GITHUB_OUTPUT"]).read_text().strip().split("=", 1)[1]
+    result = subprocess.run(
+        ["bash", "-e", "-c", publish["run"]], env=env, cwd=tmp_path, capture_output=True
+    )
+    assert result.returncode == int(outcome == "publish-error"), result.stderr
+    assets, edit = calls.read_text().splitlines()
+    assert edit.startswith("release edit v1.3.0 ")
+    assert "--latest=true" in edit
+    assert "--draft=false" in edit
+    assert all(name in assets for name in files)
+    if outcome == "draft":
+        assert assets.startswith("release upload v1.3.0 ")
+        assert "--clobber" in assets
+        assert "--notes" not in assets + edit
+    else:
+        assert assets.startswith("release create v1.3.0 ")
+        assert "--draft --verify-tag" in assets
+        assert "--notes-start-tag v1.2.9" in assets
+        assert "--generate-notes" in assets
 
 
 def test_a_tag_whose_files_name_another_release_is_an_error_on_the_server_file(

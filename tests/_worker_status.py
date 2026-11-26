@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests._failure_annotations import emit_failed_module
 from tests._native_worker import PIPE_REFUSAL, NativeSession, pipe_refusal_context
 
 if TYPE_CHECKING:
@@ -39,6 +40,7 @@ def _versions() -> dict[str, str]:
 class WorkerStatus:
     def __init__(self, config: pytest.Config) -> None:
         self.config = config
+        self.failed_modules: set[str] = set()
         self.handles: dict[WorkerController, Any] = {}
         self.records = 0
         self.max_records = MAX_RECORDS
@@ -107,6 +109,14 @@ class WorkerStatus:
                 sys.stderr.write("[worker-status] " + line)
         except (OSError, ValueError):
             pass  # Diagnostics must preserve the original pytest result if output closes.
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        emit_failed_module(
+            report,
+            self.failed_modules,
+            sys.stderr.write,
+            enabled=os.environ.get("GITHUB_ACTIONS") == "true",
+        )
 
     @pytest.hookimpl(tryfirst=True)
     def pytest_sessionstart(self) -> None:

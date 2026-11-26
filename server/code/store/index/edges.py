@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.code.domain.index.test_conventions import TEST_PAYLOAD_PATH_PATTERN
+from server.code.domain.index.test_gate import TEST_PATH_PATTERN
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched
 
@@ -92,6 +94,44 @@ class EdgesMixin(CodeRepoBase):
                 r["org"] = org
                 r["namespace"] = ns
                 out.setdefault(str(r["path"]), []).append(r)
+        return out
+
+    async def member_edges_at_locations(
+        self, org: str, ns: str, sites: list[tuple[str, int]], member: str
+    ) -> list[dict[str, Any]]:
+        """Verified candidates for a named member at exact source locations."""
+        out: list[dict[str, Any]] = []
+        for batch in _batched(sites, 200):
+            rows = await self._ch.query_all(
+                """
+                SELECT tier, to_symbol_id, from_symbol_id, path, line, edge_kind,
+                       argMax(from_qualified_name, version) AS from_qualified_name,
+                       argMax(to_qualified_name, version) AS to_qualified_name,
+                       argMax(indexed_commit, version) AS indexed_commit,
+                       argMax(confidence, version) AS confidence,
+                       argMax(tombstoned_at IS NULL, version) AS is_live
+                FROM loom.code_edges
+                WHERE org = {org:String} AND namespace = {ns:String}
+                  AND path IN {paths:Array(String)}
+                  AND (path, line) IN {sites:Array(Tuple(String, UInt32))}
+                  AND ((tier = 'scip' AND edge_kind = 'calls')
+                       OR (tier = 'treesitter' AND edge_kind = 'reads'))
+                GROUP BY tier, edge_kind, to_symbol_id, from_symbol_id, path, line
+                HAVING is_live = 1 AND confidence >= toFloat32(0.8)
+                  AND endsWith(to_qualified_name, {suffix:String})
+                LIMIT 501
+                """,
+                {
+                    "org": org,
+                    "ns": ns,
+                    "paths": sorted({path for path, _ in batch}),
+                    "sites": batch,
+                    "suffix": f"::{member}",
+                },
+            )
+            if len(rows) == 501:
+                return []  # Incomplete candidates cannot establish a unique definition.
+            out.extend(rows)
         return out
 
     async def live_call_misses_for_paths(
@@ -314,7 +354,13 @@ class EdgesMixin(CodeRepoBase):
         return out
 
     async def live_call_misses_for_names(
-        self, org: str, ns: str, names: list[str], *, limit: int = 2000
+        self,
+        org: str,
+        ns: str,
+        names: list[str],
+        *,
+        limit: int = 2000,
+        paths: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Live declined-call rows whose bare callee is one of `names`, full
         mirrored columns (the closure repair tombstones some and the
@@ -323,14 +369,16 @@ class EdgesMixin(CodeRepoBase):
         `callee_name` is the third sort-key column after the tenant pair, so
         an IN list of a few hundred names selects a few granules of the
         6-column key and reads them once; no FINAL, the same argMax/HAVING
-        discipline as live_call_misses_for_path. `limit` bounds a hub name
+        discipline as live_call_misses_for_path. An optional path list
+        restricts that slice before limiting it. `limit` bounds a hub name
         (`parse`, `execute`) that thousands of sites declined — the rows
         beyond it are not lost, their paths re-resolve when the paths
         themselves change."""
-        if not names:
+        if not names or paths == []:
             return []
+        path_sql = "AND path IN {paths:Array(String)}" if paths is not None else ""
         rows = await self._ch.query_all(
-            """
+            f"""
             SELECT
                 callee_name, path, line, from_symbol_id,
                 argMax(from_qualified_name, version) AS from_qualified_name,
@@ -342,14 +390,20 @@ class EdgesMixin(CodeRepoBase):
                 max(version) AS max_version,
                 argMax(tombstoned_at IS NULL, version) AS is_live
             FROM loom.code_call_sites_unresolved
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND callee_name IN {names:Array(String)}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND callee_name IN {{names:Array(String)}} {path_sql}
             GROUP BY callee_name, path, line, from_symbol_id
             HAVING is_live = 1
             ORDER BY callee_name, path, line, from_symbol_id
-            LIMIT {limit:UInt32}
+            LIMIT {{limit:UInt32}}
             """,
-            {"org": org, "ns": ns, "names": names[:1000], "limit": int(limit)},
+            {
+                "org": org,
+                "ns": ns,
+                "names": names[:1000],
+                "limit": int(limit),
+                **({"paths": paths} if paths is not None else {}),
+            },
         )
         for r in rows:
             r["org"] = org
@@ -417,6 +471,9 @@ class EdgesMixin(CodeRepoBase):
         min_confidence: float = 0.0,
         per_match: int | None = None,
         with_revision: bool = False,
+        tests_only: bool = False,
+        caller_revision: str = "",
+        sites_per_caller: int = 1,
     ) -> list[dict[str, Any]]:
         """One hop of live edges. Both tiers returned with tier marked; the
         service layer prefers scip edges per (from,to) pair.
@@ -452,15 +509,31 @@ class EdgesMixin(CodeRepoBase):
         class method, 0.6 unique repo-wide name match; scip is always 1.0).
         On the ClickHouse repository about 12% of parser call edges sit at
         0.6, and those are where `parse`/`check`-style name collisions live;
-        graph expansion that ignores edge confidence ranks worse."""
+        graph expansion that ignores edge confidence ranks worse.
+
+        `tests_only` filters call-site paths before LIMIT so production callers
+        cannot crowd out test examples. `caller_revision` reads live incoming
+        edges at one revision and keeps up to `sites_per_caller` per caller ID.
+        With `tests_only`, that read also excludes fixture and data paths.
+        """
         if not symbol_ids:
             return []
+        if caller_revision and (direction != "callers" or per_match or not with_revision):
+            raise ValueError(
+                "Revision-scoped caller reads require incoming revisioned edges without per_match"
+            )
         match_col = "to_symbol_id" if direction == "callers" else "from_symbol_id"
         kinds = edge_kinds or ["calls"]
         per_match_sql = f"LIMIT {{per_match:UInt32}} BY {match_col}" if per_match else ""
+        if caller_revision:
+            per_match_sql = "LIMIT {caller_sites:UInt32} BY from_symbol_id"
         revision_sql = (
             ", toString(argMax(indexed_commit, version)) AS indexed_commit" if with_revision else ""
         )
+        tests_sql = "AND match(path, {test_path_pattern:String})" if tests_only else ""
+        if tests_only and caller_revision:
+            tests_sql += " AND NOT match(path, {payload_path_pattern:String})"
+        current_sql = "AND indexed_commit = {source_revision:String}" if caller_revision else ""
         rows = await self._ch.query_all(
             f"""
             SELECT tier, edge_kind, to_symbol_id, from_symbol_id, path, line,
@@ -472,8 +545,10 @@ class EdgesMixin(CodeRepoBase):
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND {match_col} IN {{ids:Array(String)}}
               AND edge_kind IN {{kinds:Array(String)}}
+              {tests_sql}
             GROUP BY tier, edge_kind, to_symbol_id, from_symbol_id, path, line
             HAVING is_live = 1 AND confidence >= {{minc:Float32}}
+              {current_sql}
             ORDER BY tier DESC, confidence DESC, path, line, to_qualified_name, from_qualified_name,
                      to_symbol_id, from_symbol_id
             {per_match_sql}
@@ -486,6 +561,17 @@ class EdgesMixin(CodeRepoBase):
                 "kinds": kinds,
                 "limit": limit,
                 "minc": float(min_confidence),
+                **({"test_path_pattern": TEST_PATH_PATTERN} if tests_only else {}),
+                **(
+                    {"source_revision": caller_revision, "caller_sites": sites_per_caller}
+                    if caller_revision
+                    else {}
+                ),
+                **(
+                    {"payload_path_pattern": TEST_PAYLOAD_PATH_PATTERN}
+                    if tests_only and caller_revision
+                    else {}
+                ),
                 **({"per_match": int(per_match)} if per_match else {}),
             },
         )

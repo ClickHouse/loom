@@ -85,6 +85,78 @@ def test_coding_instructions_preserve_the_complete_large_profile() -> None:
     assert text.endswith("Don't re-fetch — it's been delivered.")
 
 
+def test_compact_coding_primer_preserves_scope_and_profile() -> None:
+    full = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "coding", schema_profile="standard")
+    )
+    compact = asyncio.run(
+        mcp_primer._initialize_instructions(object(), "coding", schema_profile="compact")
+    )
+    rules, profile = _split(compact)
+    assert profile == _split(full)[1]
+    assert len(compact) < len(full)
+    assert "repository bound to this connection" in rules
+    assert "`loom_code_edit_context`" in rules
+    edit_read = "If the editor needs a local read first, start with one line near the edit."
+    assert edit_read in rules
+    assert edit_read in _split(full)[0]
+    assert "`loom_code_grep`" in rules
+    assert "`loom_code_read` to read known line ranges together" in rules
+    assert "unindexed paths" in rules
+    assert "ToolSearch" in rules
+    assert "code_state" in rules
+    callers = "`loom_code_callers` for callers and indexed uses of a known definition"
+    assert callers in rules and callers in _split(full)[0]
+    assert "loom_code_impact" not in rules
+
+
+def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) -> None:
+    defaults = {"org": "project", "namespace": "history", "agent": "coding"}
+    bound = mcp_primer._coding_instructions("coding", defaults, compact=True)
+    standard = mcp_primer._coding_instructions("coding", defaults)
+    assert "First step of each task" not in bound
+    assert "For prior decisions or procedures beyond linked code lessons" in bound
+    assert "For prior decisions or procedures beyond linked code lessons" in standard
+    reuse = "For a repeat source lookup, set `include_lessons: false`"
+    activation = asyncio.run(mcp_primer._loom_primer_text(object(), toolset="coding"))
+    assert "For prior decisions or procedures beyond linked code lessons" in activation
+    for primer in (bound, standard, activation):
+        assert primer.index(reuse) < primer.index("with the task as `query`. Skip it when")
+    assert "first with the task" not in activation
+    assert reuse not in mcp_primer._coding_instructions("coding", compact=True)
+    monkeypatch.setattr(mcp_primer, "current_code_scope", lambda: None)
+    unbound = mcp_primer._coding_instructions("coding", defaults, compact=True)
+    assert "First step of each task" in unbound
+
+
+def test_bound_coding_activation_with_no_default_memory_home() -> None:
+    rules = mcp_primer._loom_rules(
+        "coding", {"org": "project", "namespace": "", "agent": "coding", "readable": ["source"]}
+    )
+    first_rule = rules.split("**2. Recall lookup order.**")[0]
+    assert "Read indexed source and its linked lessons" in first_rule
+    assert "loom_context_pack" not in first_rule
+
+
+def test_compact_coding_catalog_describes_the_task_pack_without_ordering() -> None:
+    from server.transport.mcp_tools import _tools_descriptor
+
+    async def describe(profile: str) -> str:
+        tools = await _tools_descriptor(toolset="coding", schema_profile=profile)
+        return next(tool["description"] for tool in tools if tool["name"] == "loom_context_pack")
+
+    standard = asyncio.run(describe("standard"))
+    compact = asyncio.run(describe("compact"))
+    for description in (standard, compact):
+        assert "call first" not in description
+        assert "call it first" not in description
+    assert compact == (
+        "Retrieve task context by passing the task as `query`. It returns memories, decisions, "
+        "procedures, working memory and the profile; `include_knowledge` / `include_conversations` "
+        "add docs and chats."
+    )
+
+
 def test_code_scope_precedes_a_long_memory_workspace_notice(monkeypatch) -> None:
     monkeypatch.setattr(mcp_primer, "_coding_workspace_line", lambda _: "WORKSPACE" * 1000)
     text = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
@@ -92,7 +164,7 @@ def test_code_scope_precedes_a_long_memory_workspace_notice(monkeypatch) -> None
     scope_at = text.index("repository bound to this connection")
     workspace_at = text.index("WORKSPACE" * 1000)
     assert scope_at < workspace_at < text.index(PROFILE)
-    assert text.index("`loom_code_symbol` for a named definition") < scope_at
+    assert text.index("use `loom_code_edit_context` with a definition or literal clues") < scope_at
     assert text.index("`loom_code_grep` for exact text or an error") < scope_at
 
 

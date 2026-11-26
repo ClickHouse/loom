@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 readme = "README.md"
 authors = [{ name = "ClickHouse, Inc." }]
-urls = { Homepage = "https://clickhouse.github.io/loom/", Repository = "https://github.com/ClickHouse/loom" }
+urls = { Homepage = "https://loom.clickhouse.com/docs/", Repository = "https://github.com/ClickHouse/loom" }
 # PEP 541: PyPI rejects uploads whose primary classifier is "Private ::
 # Do Not Upload". Loom's server is a shared-production data plane,
 # deployed multi-user / multi-agent against ClickHouse Cloud or self-
@@ -68,6 +68,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Bounded in-process HTTP schema checks; not installed by the runtime or ordinary unit jobs.
+contract = ["schemathesis==4.33.4"]
 # Lemmagen3 English lemmatizer — covers irregular morphology Snowball misses
 # (went/go, mice/mouse, children/child). Matches ClickHouse's
 # lemmatize('en', ...) byte-for-byte: deploy/lemmagen3/en.bin, which ClickHouse
@@ -84,6 +86,7 @@ dev = [
   "clickhouse-loom-server[aws]",       # the export-analytics tests exercise boto3
   "clickhouse-loom-server[extractor]", # the extractor's parser tests parse every format
   "pytest>=8.0",
+  "hypothesis>=6.170.17,<7",           # bounded domain properties; no service or runtime dependency
   "pytest-asyncio>=0.24",
   "pytest-httpx>=0.32",
   "pytest-rerunfailures>=15.0",
@@ -350,6 +353,7 @@ exclude = [
   "server/code/domain/extract/py_decorated_chunks.py",
   "server/code/domain/extract/py_layouts.py",
   "server/code/domain/extract/py_library_methods.py",
+  "server/code/domain/extract/py_member_reads.py",
   "server/code/domain/extract/py_members.py",
   "server/code/domain/extract/py_receivers.py",
   "server/code/domain/extract/registration.py",

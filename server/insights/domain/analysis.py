@@ -5,8 +5,8 @@ The boundary is the database user, never a parse of the statement. The user
 `loom_analyst` gets column grants on the allowlist below and nothing else, a
 settings profile that pins `readonly`, the caps and the overflow modes, and on
 each physical allowlisted table a row policy that admits a row only when its `org`
-and `namespace` match the request's signed custom settings. The event view masks
-marked protected values and enforces the same signed scope before caller predicates.
+and `namespace` match the request's signed custom settings. The event views
+enforce the same signed scope and mask marked protected values.
 Loom signs the scope
 with HMAC-SHA256 under a random key the first boot made and every replica
 reads (`loom.analysis_secrets`); the policy recomputes the HMAC inside
@@ -33,7 +33,7 @@ from server.core.sql_literal import sql_string
 # profile carries it, and a build writes the entities only when its version is
 # at least the stored one, so during a rolling upgrade build N-1 never puts
 # back its narrower grants over N's (`needs_rewrite`).
-ENTITY_VERSION = 5
+ENTITY_VERSION = 6
 
 # ClickHouse server error codes.
 BAD_ARGUMENTS = 36
@@ -51,7 +51,10 @@ OTHERS_POLICY_NAME = "loom_analyst_others"
 # Private physical tables keep a deny policy, so a partial grant reconciliation
 # cannot make their rows available to the analyst.
 REFUSED_TABLES: tuple[str, ...] = ("agent_events_private",)
+EVENT_STORAGE_TABLES = ("agent_events", *REFUSED_TABLES)
 EVENTS_VIEW = "analysis_agent_events"
+ORDINARY_EVENTS_VIEW = "analysis_ordinary_agent_events"
+EVENT_VIEWS = (ORDINARY_EVENTS_VIEW, EVENTS_VIEW)
 # One row in a reserved scope, under a policy written last with the same key:
 # the probe's signed read of it shows the policies accept this replica's key.
 CANARY_TABLE = "analysis_canary"
@@ -279,11 +282,10 @@ TABLES: tuple[Table, ...] = (
         live="superseded_at IS NULL",
     ),
     Table(
-        "agent_events",
+        ORDINARY_EVENTS_VIEW,
         "ordinary request and worker events",
         "one ordinary row per call: mirrored source and marked request events are absent",
         _EVENT_COLUMNS,
-        live="mirror_marked = 0 AND NOT match(namespace, '^acl-[0-9a-f]{24}$')",
     ),
     Table(
         EVENTS_VIEW,
@@ -301,8 +303,8 @@ def allowlisted_tables() -> tuple[str, ...]:
 
 
 def policy_tables() -> tuple[Table, ...]:
-    """Physical allowlisted tables: the event view enforces the same signed scope itself."""
-    return tuple(t for t in TABLES if t.name != EVENTS_VIEW)
+    """Physical allowlisted tables. The event views enforce signed scope themselves."""
+    return tuple(t for t in TABLES if t.name not in EVENT_VIEWS)
 
 
 def others_policy_tables() -> tuple[str, ...]:
@@ -475,12 +477,11 @@ def caps_settings(caps: Caps) -> list[str]:
 
 
 def caps_sql(names: SettingNames, caps: Caps) -> list[str]:
-    """The statements that write the caps profile, which inherits the main
-    one and is the profile the analyst user carries. A boot writes them, so a
-    cap setting never touches the version."""
+    """Apply the caps and inherited main profile to the analyst account."""
     caps_profile = f"`{CAPS_PROFILE}`"
     stamp = f"{names.caps_digest} = {sql_string(caps_digest(caps))} CONST"
     settings_ = ", ".join([f"INHERIT '{ANALYST_USER}'", *caps_settings(caps), stamp])
+    settings_ += f" TO `{ANALYST_USER}`"
     return [
         f"CREATE SETTINGS PROFILE IF NOT EXISTS {caps_profile} SETTINGS {settings_}",
         f"ALTER SETTINGS PROFILE {caps_profile} SETTINGS {settings_}",
@@ -523,22 +524,21 @@ def policy_sql(db: str, name: str, table: str, using: str, to: str) -> str:
     )
 
 
-def event_view_sql(db: str, names: SettingNames, key: bytes, event_columns: str) -> str:
-    """The typed event mask and signed scope under the provisioner's definer authority.
-
-    `event_columns` is the maintained internal projection, never caller SQL. The analyst
-    has ordinary-row grants but no grant on the physical private stream. Secret-bearing
-    expressions use the existing hidden argument form; metadata and error disclosure remain
-    subject to native isolation checks.
-    """
-    columns = next(t.columns for t in TABLES if t.name == EVENTS_VIEW)
-    selected = ", ".join(c.name for c in columns)
-    return (
-        f"CREATE OR REPLACE VIEW {db}.{EVENTS_VIEW} "
+def event_views_sql(db: str, names: SettingNames, key: bytes, event_columns: str) -> list[str]:
+    """Project signed, masked events without giving the analyst a physical table grant."""
+    selected = ", ".join(c.name for c in _EVENT_COLUMNS)
+    scope = policy_filter(names, key)
+    public_namespace = "NOT match(namespace, '^acl-[0-9a-f]{24}$')"
+    return [
+        f"CREATE OR REPLACE VIEW {db}.{view} "
         "DEFINER = CURRENT_USER SQL SECURITY DEFINER AS "
-        f"SELECT {selected} FROM (SELECT {event_columns} FROM {event_source(db)} AS raw) "
-        f"WHERE {policy_filter(names, key)} AND NOT match(namespace, '^acl-[0-9a-f]{{24}}$')"
-    )
+        f"SELECT {selected} FROM (SELECT {event_columns} FROM {source} AS raw {source_filter}) "
+        f"WHERE {scope} AND {public_namespace}"
+        for view, source, source_filter in (
+            (ORDINARY_EVENTS_VIEW, f"{db}.agent_events", "WHERE raw.mirror_marked = 0"),
+            (EVENTS_VIEW, event_source(db), ""),
+        )
+    ]
 
 
 def entity_sql(
@@ -558,7 +558,7 @@ def entity_sql(
     every other user's before the analyst's so no user is ever left without
     one, then every grant and role the user holds outside the allowlist
     (`granted` and `roles` are what it holds now) is revoked, and then the
-    event view is written, and then the allowlist is granted, since a table's revoke
+    event views are written, and then the allowlist is granted, since a table's revoke
     also takes the column grants
     under it. The profile's pins come after every policy, so on an upgrade
     the older profile's `log_queries = 0` holds until no policy has the pads
@@ -573,9 +573,8 @@ def entity_sql(
 
     out = [
         f"CREATE SETTINGS PROFILE IF NOT EXISTS {user} SETTINGS " + ", ".join(profile),
+        f"CREATE USER IF NOT EXISTS {user} {identified}",
         *caps_sql(names, caps),
-        f"CREATE USER IF NOT EXISTS {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
-        f"ALTER USER {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
     ]
     for t in policy_tables():
         out.append(policy_sql(db, OTHERS_POLICY_NAME, t.name, "1", f"ALL EXCEPT {user}"))
@@ -588,9 +587,15 @@ def entity_sql(
     # Last of the policies: a canary that reads under the key means all of them do.
     out.append(policy_sql(db, POLICY_NAME, CANARY_TABLE, condition, user))
     out.append(f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(profile))
-    out += [_revoke(g, user) for g in sorted(granted) if not _allowed(g)]
+    out.extend(f"REVOKE SELECT ON {db}.{table} FROM {user}" for table in EVENT_STORAGE_TABLES)
+    out.extend(
+        _revoke(g, user)
+        for g in sorted(granted)
+        if not _allowed(g)
+        and not (g.access == "SELECT" and g.home and g.table in EVENT_STORAGE_TABLES)
+    )
     out += [f"REVOKE `{role}` FROM {user}" for role in sorted(roles)]
-    out.append(event_view_sql(db, names, key, event_columns))
+    out.extend(event_views_sql(db, names, key, event_columns))
     out += [
         f"GRANT SELECT({', '.join(c.name for c in t.columns)}) ON {db}.{t.name} TO {user}"
         for t in TABLES
@@ -645,8 +650,12 @@ def structure_digest(event_columns: str) -> str:
     parts = [f"others:{t}" for t in others_policy_tables()]
     parts += [f"refused:{name}" for name in REFUSED_TABLES]
     parts += [f"{t.name}:{t.live}:{','.join(c.name for c in t.columns)}" for t in TABLES]
-    parts += [policy_filter(SettingNames("SQL_"), b"\0" * 32), CANARY_TABLE]
-    parts += [event_view_sql("`loom`", SettingNames("SQL_"), b"\0" * 32, event_columns)]
+    parts += [
+        policy_filter(SettingNames("SQL_"), b"\0" * 32),
+        CANARY_TABLE,
+        f"{CAPS_PROFILE}:TO {ANALYST_USER}",
+    ]
+    parts += event_views_sql("`loom`", SettingNames("SQL_"), b"\0" * 32, event_columns)
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:32]
 
 

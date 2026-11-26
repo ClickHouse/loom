@@ -1190,8 +1190,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # ---- Context pack ----
     "context.pack": (
-        "Task context: call first with a default memory namespace, unless "
-        f"{FIRST_STEP_HOOK}. Pass the task as `query` for memories, decisions, procedures, "
+        "Retrieve task context by passing the task as `query`. "
+        "It returns memories, decisions, procedures, "
         "working memory and the profile; `include_knowledge` / `include_conversations` "
         "add docs and chats. "
         "`include_runs=true` lists recent sessions and runs "
@@ -1358,21 +1358,22 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "per-frame grep-and-open loop."
     ),
     "code.grep": (
-        "Find known text in indexed source. Use code.search for behavior. "
-        "Pass a list in `pattern` to search literal alternatives in one call. "
-        "Matches include bodies by default. "
-        "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
+        "Find indexed text. Batch code and test prefixes in `pattern`. "
+        "Path filters scope the batch. Bodies are on by default. "
+        "Set `include_body: false` for excerpts, `context_lines: 0` for locations. "
+        "Omitted match text is in its excerpt at the same path and line. "
+        "Use code.search for behavior. "
         "Use literal strings or one RE2 string with `regex: true`. "
-        "Filter by `path_prefix`, `path_globs` or `langs`. "
+        "Filter the batch by `path_prefix`, `path_globs` or `langs`. "
         "`neighbours` adds graph links. `deadline_ms` allows partial results. "
         "`mode: 'message'` finds printed error templates. "
         "`mode: 'presence'` checks `namespaces`. "
         "Check coverage. Use code.files for paths and local tools for uncommitted source."
     ),
     "code.read": (
-        "Read exact ranges from indexed files in one call. "
-        'Pass a list such as ["src/app.py:40-70", "src/lib.py:12-19"]. '
-        "Loom verifies source at its indexed revision against the local Git mirror."
+        "Read inclusive, one-based indexed lines. Pass path, start_line, optional end_line "
+        "or ranges of such objects or path:start-end strings. Returns linked notes with "
+        "the source. Set include_lessons=false when you already have them."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
@@ -1442,6 +1443,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`resolved_by` names an alternate binding such as an anonymous namespace, "
         "omitted qualification or SQL registration. `documented_in` lists citing sections."
     ),
+    "code.edit_context": (
+        "Read source, tests, and notes. Batch exact `names` or declaration `clues`. "
+        "Use `name` for one target."
+    ),
     "code.backport_gap": (
         "Which release branches still carry the bug a merged fix removed, "
         "and the exact PR to cherry-pick there. Give `pr_number` (the merged "
@@ -1507,36 +1512,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "entry. `indexed: false` means read the file."
     ),
     "code.callers": (
-        "Who calls this symbol — exact reverse call edges (depth<=3), "
-        "compiler-resolved where available; `edge_kinds: ['inherits']` narrows "
-        "the walk to what implements or extends a type. Use before editing "
-        "shared code; pair "
-        "with code.impact for tests + co-change "
-        "history. Edges carry tier: 'scip' is compiler truth, 'treesitter' "
-        "is name-resolved with a confidence score."
-        " `unresolved_calls` / `ambiguous_calls` size the floor: call sites "
-        "named like this symbol that the fast-tier resolver declined to bind "
-        "and that are NOT in edges. `epistemic` says whether the edges are the whole answer "
-        "('exact': compiler-indexed seed files, nothing declined) or a "
-        "'lower_bound', with `causes` naming why; `by_hop_counts` gives the "
-        "true per-hop totals when `truncated`."
-        " `include_ambiguous: true` widens the answer to what MAY call it: "
-        "the declined sites come back as `candidate_sites` (grouped by written "
-        "scope or file, each with a confidence and the reason it was declined; "
-        "never merged into edges, always lower_bound), and a virtual method's "
-        "callers include callers of its overrides and base declaration, tagged "
-        "`via_override`."
-        " An edge with `via: 'registration'` comes from a registration function "
-        "(`REGISTER_FUNCTION(X)`, `registerAggregateFunctionX`): the class is "
-        "reached through a factory that constructs it and drives its interface, "
-        "the static caller of every factory-registered function. A name spelled "
-        "with `(anonymous namespace)::` or with a namespace the definition does "
-        "not carry still resolves when exactly one definition fits; `resolved_by` "
-        "(`anonymous_namespace` | `tail` | `registration`) says so; a SQL-level "
-        "name (`sumMap`) seeds the class its registration hands over."
-        " `pr_number` (an open PR) merges its post-image over the index: a "
-        "function the PR adds is the seed, its own call sites are edges of "
-        "tier 'overlay' (`overlay: true`)."
+        "Find callers before editing shared code. Walk up to three hops. "
+        "`epistemic` and `causes` disclose exact or lower-bound coverage. "
+        "SCIP edges are compiler-resolved. Tree-sitter edges carry confidence. "
+        "`include_ambiguous: true` adds candidate sites and virtual dispatch via overrides. "
+        "For implementations or subclasses, set `edge_kinds: ['inherits']`. "
+        "Use code.impact for tests and co-change history. "
+        "`by_hop_counts` gives totals when results are truncated. "
+        "`resolved_by` discloses alternate naming, including factory registrations. "
+        "`pr_number` overlays an open change's source and call sites."
     ),
     "code.context_pack": (
         "Briefing at the START of a task, instead of exploring file by file. "
@@ -2180,38 +2164,28 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 # derived from core text so revision and memory guidance stay consistent.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.symbol": (
-        "Read a definition by name or path:line with source and linked lessons. "
-        "Name the enclosing class to read adjacent methods together. "
-        "Use code.read for exact line ranges and code.search for unknown implementations. "
-        "`example_context_lines` adds source near recorded usage sites. Use code.enclosing with "
-        "include_body=true for several known locations. "
-        "`uses_brief: true` adds a compact caller summary for one resolved definition; "
-        "code.callers reads a larger graph. `uses: true` adds the full mention list. "
-        "`near_paths` or `pr_number` rank ambiguous definitions. Check freshness and "
-        "elision disclosures; use local tools for changed or unindexed code."
+        "Inspect a definition by name, path:symbol, or path:line. Includes source and links. "
+        "For an edit, use code.edit_context. Set `include_examples: false` to omit examples. "
+        "`uses_brief: true` summarizes callers. Check freshness and source elision."
     ),
     "code.grep": (
-        "Find known text. Use code.search for behavior. "
-        "Pass a list of stable literal fragments in `pattern` "
-        "to search alternatives in one call. "
-        "Matches include the smallest enclosing bodies by default. "
-        "Use code.symbol for the full class or code.read for exact line ranges. "
-        "Set `include_body: false` for names, locations or short excerpts with `context_lines`. "
-        "`regex: true` uses one RE2 string. "
-        "Scope with `path_prefix`, `path_globs` or `langs`. "
-        "`definitions_partial` flags missing source. Check coverage before inferring absence."
+        "Batch exact code and test literals with path_globs. Keep default bodies for edits. "
+        "For excerpts, set `include_body: false` and `context_lines`. "
+        "Omitted match text is in its excerpt at the same path and line. "
+        "Use mode=files for paths only and regex=true for RE2.\n\n"
+        "Scope with `path_prefix` or `path_globs`. "
+        "For locations, set `include_body: false`, `context_lines: 0`. "
+        "Use code.search for behavior, code.edit_context for a known definition. "
+        "Prefixes and misses can return related source and notes. "
+        "`definitions_partial` flags missing source. Check coverage."
     ),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.
     "code.impact": (
-        "Blast radius of changing a symbol or a diff: reverse call edges (depth<=2), "
-        "the tests mapped to the impacted files, and files that historically co-change "
-        "with them in merged PRs. `epistemic` ('exact' | 'lower_bound' + `causes`) says "
-        "whether the radius is the whole answer; `risk: 'unknown'` means grep before "
-        "deleting or renaming. An empty radius carries a `verdict`: 'no_indexed_paths' "
-        "(with `paths_seen` classing every touched path — all-test = a test-only change), "
-        "'no_seeds_in_hunks', 'no_static_callers' are answers; 'not_covered' / 'no_match' "
-        "abstain. Pass `pr_number` for an open PR to seed from its own range."
+        "Change impact for a symbol or diff: callers up to two hops, mapped tests, "
+        "and files that co-change. `epistemic` distinguishes exact and lower-bound results. "
+        "Grep before deleting or renaming when `risk` is 'unknown'. Empty results carry a "
+        "`verdict` and `paths_seen` classifies touched paths. Pass `pr_number` for an open PR."
     ),
     # The chat client's routing sentence between two memories goes: on the
     # coding tier the scratchpad is the listed working_memory.set. Every

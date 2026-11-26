@@ -16,7 +16,6 @@ from server.insights.domain.analysis import (
     others_policy_tables,
 )
 
-_SYSTEM_SOURCES = frozenset({"processes", "tables", "constraints", "clusters", "row_policies"})
 _NAMES = frozenset({"word", "identifier"})
 _TOKEN = re.compile(
     r"(?P<space>\s+)|(?P<quoted>'(?:[^'\\]|\\.|'')*'|"
@@ -65,12 +64,8 @@ def _words(tokens: list[_Token], words: tuple[str, ...]) -> bool:
     )
 
 
-def _classify(statement: str, database: str) -> tuple[str, str]:
-    """Accept unrelated targets, or a structurally proved non-narrowing policy.
-
-    The caller excludes the analyst user and enabled analyst role. Catalog-level
-    pairing must also prove unrestricted access for every other user.
-    """
+def _permits_rewrite(statement: str, database: str, tables: frozenset[str]) -> bool:
+    """Check the target and recipients before rewriting Loom's own policies."""
     try:
         tokens = _tokens(statement)
         if (
@@ -82,21 +77,23 @@ def _classify(statement: str, database: str) -> tuple[str, str]:
             or tokens[6].kind != "."
             or tokens[7].kind not in _NAMES | {"*"}
         ):
-            return ("refuse", "")
+            return False
         db, table = tokens[5], tokens[7]
         db_wild, table_wild = db.kind == "*", table.kind == "*"
-        relevant = (
-            (db_wild or db.text == database)
-            and (table_wild or table.text in {"agent_events", "agent_events_private"})
-        ) or ((db_wild or db.text == "system") and (table_wild or table.text in _SYSTEM_SOURCES))
-        if not relevant:
-            return ("unrelated", "")
+        if not db_wild and db.text != database:
+            return True
+        if not table_wild and table.text not in tables:
+            return True
+        if db_wild or table_wild:
+            return False
         tail = tokens[8:]
+        if _words(tail[:2], ("AS", "RESTRICTIVE")):
+            return tokens[3].text not in (POLICY_NAME, OTHERS_POLICY_NAME)
         # SHOW CREATE omits the default permissive clause.
         if _words(tail[:2], ("AS", "PERMISSIVE")):
             tail = tail[2:]
         if not _words(tail[:3], ("FOR", "SELECT", "USING")):
-            return ("refuse", "")
+            return False
         opened, separators = [], []
         closing = {")": "(", "]": "[", "}": "{"}
         for index, token in enumerate(tail[3:], 3):
@@ -104,35 +101,23 @@ def _classify(statement: str, database: str) -> tuple[str, str]:
                 opened.append(token.kind)
             elif token.kind in closing:
                 if not opened or opened.pop() != closing[token.kind]:
-                    return ("refuse", "")
+                    return False
             elif not opened and _words([token], ("TO",)):
                 separators.append(index)
         if opened or len(separators) != 1:
-            return ("refuse", "")
+            return False
         split = separators[0]
         expression, recipients = tail[3:split], tail[split + 1 :]
         if not expression:
-            return ("refuse", "")
+            return False
         if (
             len(recipients) == 1
             and recipients[0].kind in _NAMES
             and recipients[0].text == ANALYST_USER
         ):
-            if (
-                not db_wild
-                and db.text == database
-                and not table_wild
-                and table.text in others_policy_tables()
-                and tokens[3].text == POLICY_NAME
-            ):
-                return ("analyst", table.text)
-            return ("refuse", "")
-        unrestricted = (
-            not db_wild
-            and db.text == database
-            and not table_wild
-            and table.text in others_policy_tables()
-            and tokens[3].text == OTHERS_POLICY_NAME
+            return tokens[3].text == POLICY_NAME
+        return (
+            tokens[3].text == OTHERS_POLICY_NAME
             and len(expression) == 1
             and expression[0].kind == "number"
             and expression[0].text == "1"
@@ -141,22 +126,13 @@ def _classify(statement: str, database: str) -> tuple[str, str]:
             and recipients[2].kind in _NAMES
             and recipients[2].text == ANALYST_USER
         )
-        return ("others", table.text) if unrestricted else ("refuse", "")
     except Exception:  # noqa: BLE001 — parser errors can contain secret policy expressions
-        return ("refuse", "")
-
-
-def observer_policies_allow(statements: tuple[str, ...], database: str) -> bool:
-    """Prove an unrestricted observer policy for every relevant policy-bearing table.
-
-    An analyst-only policy can implicitly deny every other user. Its generated
-    unrestricted companion is required even though the analyst role is disabled.
-    System and wildcard policies refuse instead of guessing effective role rules.
-    """
-    classified = [_classify(statement, database) for statement in statements]
-    if any(kind == "refuse" for kind, _table in classified) or len(set(statements)) != len(
-        statements
-    ):
         return False
-    others = {table for kind, table in classified if kind == "others"}
-    return all(kind != "analyst" or table in others for kind, table in classified)
+
+
+def analyst_policy_catalog_allows_writes(statements: tuple[str, ...], database: str) -> bool:
+    """Check native database-scoped definitions before replacing Loom's policies."""
+    tables = frozenset(others_policy_tables())
+    return len(set(statements)) == len(statements) and all(
+        _permits_rewrite(statement, database, tables) for statement in statements
+    )

@@ -40,6 +40,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.version }}-${{ inputs.previous_version }}-${{ inputs.sdks }}
+  cancel-in-progress: false
+
 jobs:
   installer:
     name: One-line installer (${{ matrix.arch }})
@@ -156,7 +160,9 @@ jobs:
       - name: Install the metadata checker separately from the SDKs
         run: |
           python -m venv "$RUNNER_TEMP/metadata-check"
-          "$RUNNER_TEMP/metadata-check/bin/pip" --isolated install --index-url https://pypi.org/simple packaging==24.2
+          printf '%s\n' 'packaging==24.2 --hash=sha256:09abb1bccd265c01f4a3aa3f7a7db064b36514d2cba19a2f694fe6150451a759' > "$RUNNER_TEMP/metadata-check.txt"
+          "$RUNNER_TEMP/metadata-check/bin/pip" --isolated install --index-url https://pypi.org/simple \
+            --require-hashes --only-binary=:all: -r "$RUNNER_TEMP/metadata-check.txt"
       - name: Published SDK metadata matches the release tag
         id: sdk-metadata
         env:

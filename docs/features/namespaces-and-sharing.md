@@ -1,3 +1,9 @@
+---
+description: Use namespaces, roles and scoped credentials to give each AI agent access to the shared memories it needs.
+seo:
+  title: Access controls for shared agent memory
+---
+
 # Namespaces and sharing
 
 A namespace is the unit of isolation and sharing inside an org. Every read is scoped to `(org, namespace)`, every
@@ -82,6 +88,8 @@ Minting tokens, service accounts, read scopes and restricted namespaces are cove
 the [tokens and grants guide](../guides/tokens-and-grants.md).
 
 ## Sharing facts across agents and namespaces
+
+For repository agents that share reviewed team rules, see the [repository sharing exercise](../use-cases/agent-memory.md#share-memory-across-repositories).
 
 Inside a namespace every writer's rows are visible to every reader by default
 (`agent="*"`). Crossing a boundary is always a copy with lineage, never a shared row:

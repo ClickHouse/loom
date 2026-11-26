@@ -34,6 +34,20 @@
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "adoption_telemetry",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.insights.workers.adoption_telemetry:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
    "interval_seconds": 604800,
    "max_pass_seconds": null,
    "name": "recalibration",
@@ -851,6 +865,20 @@
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "adoption_telemetry",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.insights.workers.adoption_telemetry:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
    "interval_seconds": 604800,
    "max_pass_seconds": null,
    "name": "recalibration",
@@ -1404,6 +1432,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.insights.workers.audit_verifier:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 900.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": null,
+   "name": "adoption_telemetry",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.insights.workers.adoption_telemetry:run_pass"
    }
   },
   {

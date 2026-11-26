@@ -19,10 +19,12 @@ import time
 import uuid
 
 import pytest
+from clickhouse_connect.driver.exceptions import DatabaseError
 
 from server.core import ch as ch_mod
 from server.core import rmt_carry
 from server.core.ch import CHClient
+from server.core.ch_errors import error_code
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
 
@@ -103,6 +105,12 @@ async def test_a_killed_writers_insert_holds_the_barrier_until_it_ends(withdrew:
             os.kill(writer.pid, signal.SIGKILL)
         rmt_carry._TABLES.pop(table, None)
         ch_mod.describe_cache_clear()
-        await c.execute(f"KILL QUERY WHERE position(query, '{table}') > 0 SYNC")
+        try:
+            await c.execute(
+                "KILL QUERY WHERE position(query, {table:String}) > 0 SYNC", {"table": table}
+            )
+        except DatabaseError as exc:
+            if error_code(exc) != 785:  # NOTHING_TO_KILL
+                raise
         await c.execute(f"DROP TABLE IF EXISTS {table} SYNC")
         await c.disconnect()

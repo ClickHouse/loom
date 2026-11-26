@@ -21,6 +21,7 @@ file people add to until it matches everything.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -59,6 +60,12 @@ PROVIDER_KEY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("Langfuse secret key", re.compile(r"\b(sk-lf-[0-9a-fA-F-]{16,})")),
     ("Langfuse public key", re.compile(r"\b(pk-lf-[0-9a-fA-F-]{16,})")),
     ("AWS access key id", re.compile(r"\b(AKIA[0-9A-Z]{16})\b")),
+    (
+        "GitHub personal access token",
+        re.compile(r"\b(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82})\b"),
+    ),
+    # Installation tokens can carry an application id and a JWT; retain the full shape.
+    ("GitHub installation token", re.compile(r"\b(ghs_[A-Za-z0-9_.-]{36,})")),
     ("private key block", re.compile(r"(-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)")),
 ]
 SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -111,6 +118,25 @@ class Finding:
     def __str__(self) -> str:
         masked = self.value[:4] + "…" + self.value[-2:] if len(self.value) > 8 else "…"
         return f"{self.path}:{self.line}: {self.label} ({masked})"
+
+    def annotation(self) -> str:
+        """Report location and rule without copying any part of the matched value."""
+
+        def property_value(value: str) -> str:
+            for character, escaped in [
+                ("%", "%25"),
+                ("\r", "%0D"),
+                ("\n", "%0A"),
+                (":", "%3A"),
+                (",", "%2C"),
+            ]:
+                value = value.replace(character, escaped)
+            return value
+
+        return (
+            f"::error file={property_value(self.path)},line={self.line},"
+            f"title={property_value(self.label)}::Possible credential."
+        )
 
 
 def _tracked_files(include_untracked: bool) -> list[str]:
@@ -182,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
     for p in bad_paths:
         print(f"{p}: an env file is tracked — untrack it and add it to .gitignore")
     for finding in findings:
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print(finding.annotation())
         print(finding)
     print(
         f"\n{len(findings) + len(bad_paths)} finding(s). If one is a false positive, "

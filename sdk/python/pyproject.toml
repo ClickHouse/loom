@@ -87,8 +87,8 @@ pipecat = ["pipecat-ai>=1.16,<1.17"]
 dspy = ["dspy>=3.5,<3.6"]
 
 [project.urls]
-Homepage = "https://clickhouse.github.io/loom/"
-Documentation = "https://clickhouse.github.io/loom/reference/python-sdk/"
+Homepage = "https://loom.clickhouse.com/docs/"
+Documentation = "https://loom.clickhouse.com/docs/reference/python-sdk/"
 Repository = "https://github.com/ClickHouse/loom"
 Issues = "https://github.com/ClickHouse/loom/issues"
 

@@ -4,11 +4,18 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
+from server.core.schema.vector_codec_ddl import (
+    CHAIN_SETTING,
+    CODEC_SETTING,
+    EXPERIMENTAL_CODEC_SETTING,
+)
 from server.insights.domain.provider_prepared_ddl import prepared_ddl
 from server.insights.store.provider_prepared import _verify_copy
 from server.insights.store.provider_staging import SourceSchema, StagingNames
@@ -18,13 +25,26 @@ def local_sql(sql):
     executable = shutil.which("clickhouse")
     if executable is None:
         pytest.skip("clickhouse-local is not installed")
-    result = subprocess.run(
-        [executable, "local", "--multiquery", "--query", sql],
-        check=False,
-        text=True,
-        capture_output=True,
-        timeout=60,
-    )
+    with TemporaryDirectory(prefix="loom-clickhouse-local-") as data_path:
+        config = Path(data_path) / "config.xml"
+        config.write_text("<clickhouse/>", encoding="utf-8")
+        result = subprocess.run(
+            [
+                executable,
+                "local",
+                "--path",
+                data_path,
+                "--config-file",
+                str(config),
+                "--multiquery",
+                "--query",
+                sql,
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
     assert result.returncode == 0, result.stderr
     return result.stdout
 
@@ -34,8 +54,15 @@ def local_sql(sql):
 async def test_coded_candidate_retains_metadata_and_cleared_vector_placeholders(dimensions):
     if os.environ.get("LOOM_PROVIDER_CODEC_LOCAL_TEST") != "1":
         pytest.skip("Set LOOM_PROVIDER_CODEC_LOCAL_TEST=1 with a codec-capable clickhouse-local")
+    settings = json.loads(
+        local_sql(
+            f"SELECT count() > 0 AS listed FROM system.settings WHERE name = '{CODEC_SETTING}' "
+            "FORMAT JSONEachRow"
+        )
+    )
+    codec_gate = CODEC_SETTING if settings["listed"] else EXPERIMENTAL_CODEC_SETTING
     source = (
-        "SET allow_experimental_codecs=1; SET allow_suspicious_codecs=1; "
+        f"SET {codec_gate}=1; SET {CHAIN_SETTING}=1; "
         "CREATE DATABASE loom ENGINE=Atomic; "
         "CREATE TABLE loom.memory_embeddings (memory_key String, embedding Array(BFloat16) "
         "CODEC(Quantized('rabitq',8,0),LZ4), embedding_dim UInt16, version UInt64, "

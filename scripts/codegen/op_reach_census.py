@@ -54,6 +54,7 @@ GROUP BY operation
 # ------------------------------------------------------------------ file scan
 
 _SDK_DIR = "sdk/python/loom"
+_RUST_SDK_DIR = "sdk/rust/src"
 _EXAMPLE_DIRS = ("examples", "dev", "scripts")
 _PLUGIN_DIR = "integrations"
 _PLUGIN_SUFFIXES = (".mjs", ".js", ".ts", ".tsx", ".sh", ".py", ".yaml", ".yml", ".json")
@@ -63,6 +64,7 @@ _DASHBOARD_SUFFIXES = (".ts", ".tsx")
 _V1 = re.compile(r"/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b")
 _QUOTED = re.compile(r"""["']([a-z_]+(?:\.[a-z_]+){1,2})["']""")
 _SDK_CALL = re.compile(r"\.([a-z_]+)\.([a-z_]+)\(")
+_RUST_CALL = re.compile(r'\b(?:self|client)\.call\(\s*"([a-z_]+(?:\.[a-z_]+){1,2})"')
 # A dashboard call site: the path as a string literal (`post("/v1/<op>", …)`), outside
 # a comment. A bare op name there is an audit label, not a call.
 _DASHBOARD_CALL = re.compile(r"""["'`]/v1/([a-z_]+(?:\.[a-z_]+){1,2})\b""")
@@ -159,12 +161,19 @@ def derive_static_reach(root: Path | None = None) -> dict[str, tuple[str, ...]]:
     for path in _files(root, _SDK_DIR, (".py",)):
         for m in _V1.finditer(path.read_text(encoding="utf-8")):
             hit(m.group(1), "sdk_method")
+    for path in _files(root, _RUST_SDK_DIR, (".rs",)):
+        code = _without_comments(path.read_text(encoding="utf-8"))
+        for m in _RUST_CALL.finditer(code):
+            hit(m.group(1), "sdk_method")
 
     # sdk_example: literals in examples/ and dev/, plus SDK calls resolved
     # through the Agent attribute → client class → method → op index.
     classes, attrs = _sdk_index(root)
     for rel in _EXAMPLE_DIRS:
         for path in _files(root, rel, (".py", ".sh")):
+            # Generators declare contracts without calling the operations.
+            if rel == "scripts" and path.is_relative_to(root / "scripts/codegen"):
+                continue
             text = path.read_text(encoding="utf-8")
             for m in _V1.finditer(text):
                 hit(m.group(1), "sdk_example")

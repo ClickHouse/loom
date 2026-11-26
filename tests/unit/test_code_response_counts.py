@@ -49,6 +49,39 @@ def test_grep_reports_returned_lines_and_disclosed_lesson_omissions() -> None:
     assert "out_grep_match_lines" not in project_result(result, op_name="code.verify")
 
 
+def test_grep_counts_related_source_separately_from_exact_matches() -> None:
+    counts = code_response_counts(
+        {
+            "matches": [],
+            "related": {
+                "matches": [{}, {}],
+                "definitions": [{"body": "related"}],
+                "dependencies": [{"body": "helper"}],
+            },
+        },
+        op_name="code.grep",
+    )
+    assert counts["grep_match_lines"] == 0 and counts["grep_related_lines"] == 2
+    assert counts["source_bodies"] == 2 and counts["source_chars"] == 13
+
+
+def test_read_counts_verified_windows_and_lessons_without_capturing_content() -> None:
+    result = {
+        "results": [
+            {"windows": [{"text": "private source\n"}]},
+            {"windows": [{"text": "other\n"}, {"text": ""}]},
+            {"windows": []},
+        ],
+        "lessons": [{"excerpt": "private note", "code_state": "fresh"}],
+    }
+    projected = project_result(result, op_name="code.read")
+    assert projected["out_source_windows"] == "2"
+    assert projected["out_source_chars"] == "21"
+    assert projected["out_source_bodies"] == "0"
+    assert projected["out_lesson_fresh"] == "1"
+    assert "private" not in json.dumps(projected)
+
+
 def test_symbol_lessons_and_empty_or_elided_bodies_keep_their_meaning() -> None:
     counts = code_response_counts(
         {

@@ -1,9 +1,35 @@
+---
+title: Procedures and learnings
+description: Use procedural memory to give AI agents reusable steps for recurring tasks. Find matching procedures, inspect prior runs, and review candidate lessons.
+seo:
+  title: Procedural memory for AI agents
+---
+
 # Procedures and learnings
 
-This page covers what an agent learns from doing, as opposed to facts it is told:
-procedures ("how to do X", a graph of steps learned from reported runs), reflections
-(lessons written at the end of a run) and learnings (a review queue of candidate facts an
-admin promotes). Typed records are in [writing memory](./writing.md#typed-records).
+Procedural memory gives AI agents reusable steps for recurring tasks and evidence from
+earlier runs. In Loom, a procedure stores the steps and allowed transitions. An agent
+finds a procedure for its situation, runs the steps, and reports the path and outcome.
+[Reflections](#reflections) keep lessons about specific runs. The
+[learnings review queue](#learnings-review-queue) holds candidate facts for a reviewer.
+Typed records are in [writing memory](./writing.md#typed-records).
+
+## Use procedural memory for a recurring task
+
+For a recurring release check, keep the approval rules and expected test results in the
+versioned runbook or skill. Use a procedure to capture the steps agents follow and the
+branches they take when a check fails or needs human review.
+
+- Before reusing a procedure, match it against the current task and check its author,
+  [trust status](#matching), and prior outcomes. Have the agent check the current runbook
+  revision before following the steps.
+- After the task, report the path and outcome with `procedure.record_run`. Include failed
+  attempts so a later agent can see where earlier runs got stuck. Use
+  [learning from runs](#learning-from-runs) to inspect which paths worked and which steps
+  regularly failed.
+
+Start with the [worked procedure example](#example) to register a procedure, find it by
+situation, and report one execution.
 
 ## Procedures
 
