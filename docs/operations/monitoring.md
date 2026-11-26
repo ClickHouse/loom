@@ -319,11 +319,11 @@ described in [ClickStack](../features/integrations/clickstack.md).
   tables (`deploy/clickstack_sources.sh` scripts that). Where no HyperDX install created
   them, apply `schemas/otel/clickstack_otel_tables.sql` once by hand; every statement is
   `IF NOT EXISTS`.
-- **Two traps the panels avoid.** FastAPI instrumentation emits ASGI child spans named
-  like their parent (`POST /v1/memory.get http send`), which inflates a span-name filter
-  about threefold; only the parent span carries `loom.*` attributes, so filter on
-  `mapContains(SpanAttributes, 'loom.operation')`. And cumulative metrics need a
-  per-series delta: `sum(Value)` over a window sums running totals.
+- **Two traps the panels avoid.** A call can have ASGI child spans with similar names
+  and provider spans that also carry `loom.operation`. Filter request panels on
+  `SpanAttributes['loom.call.root'] = 'true'` so only exported call attempts count.
+  Cumulative metrics need a per-series delta: `sum(Value)` over a window sums running
+  totals.
 - **The code index board.** [`deploy/dashboards/code_plane.json`](../../deploy/dashboards/code_plane.json)
   is the source of truth for the "Loom — Code Plane" dashboard: every tile with its
   source and SQL, and the tiles that carry an `alert` block with threshold and reason.
@@ -476,9 +476,11 @@ Per-call metadata takes precedence over request headers. For example:
 The hook transport declares hook origin even without a prompt ID. Known hook
 entrypoints also identify detached requests without borrowing another turn's
 identity. Optional supplied IDs never change stored session scope, tenant
-identity, authorization, or capture consent. Raw prompts, results and
-credentials are not trace metadata. The supplied conversation ID is
-correlation metadata, not the resolved session used to group traces.
+identity, authorization, or capture consent. Accepted IDs from HTTP headers
+and MCP metadata are exported as supplied. Use opaque, non-sensitive IDs;
+never put credentials, prompt text, or results in these fields. The supplied
+conversation ID is correlation metadata, not the resolved session used to
+group traces.
 
 Call observations cover HTTP operation refusals and MCP catalog, protocol,
 and authorization-screening outcomes after the HTTP bearer gate. Invalid
@@ -486,6 +488,11 @@ JSON, unsupported HTTP protocol headers, whole-batch limits and bearer
 refusals can precede MCP call observations. Private-work diagnostics are
 suppressed by the existing export boundary. Trace sampling and span filters
 still apply, so missing observations do not prove zero calls.
+
+`LOOM_OTEL_EXCLUDED_URLS` suppresses FastAPI instrumentation, not the separate
+Loom call observations. An excluded URL can still record a call for a
+registered HTTP operation or an MCP tool. Do not use URL exclusions to
+prevent those observations from being exported.
 
 Count only observations marked `loom.call.root`, including tool calls inside
 a batch. Do not count wrappers such as `mcp.batch.entry`, HTTP envelopes, or
