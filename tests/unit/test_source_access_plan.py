@@ -14,6 +14,7 @@ from server.core import request_work
 from server.knowledge.app import source_access as app
 from server.knowledge.domain.access_list import AccessList, to_json
 from server.knowledge.domain.serving import Serving
+from server.knowledge.store.source_access import active_sources
 from server.operations.base import Role
 
 SID = "11111111-1111-4111-8111-111111111111"
@@ -82,6 +83,34 @@ def world(monkeypatch):
 
 def candidate(**changes):
     return {"namespace": MIRROR, "source_uri": URI, "doc_version": 10, "revision": 0, **changes}
+
+
+@pytest.mark.parametrize("marked_at_discovery", [True, False])
+async def test_shared_source_with_worker_history_is_never_admitted(
+    world, monkeypatch, marked_at_discovery
+):
+    worker_history = marked_at_discovery
+
+    async def registry(statement, *, params):
+        assert params == {"org": "acme", "names": ["docs"]}
+        if worker_history and "AND NOT (source_kind = 'mcp' OR kind = 'mcp'" in statement:
+            return []
+        return [
+            {"namespace": "docs", "name": "source", "credential_mode": "shared", "source_id": SID}
+        ]
+
+    async def read_registry(org, namespaces):
+        return await active_sources(org, namespaces, ch=ch)
+
+    ch = AsyncMock()
+    ch.query_all.side_effect = registry
+    monkeypatch.setattr(app.store, "active_sources", read_registry)
+    plan = await app.prepare("acme", ["docs"])
+    if not marked_at_discovery:
+        assert len(await plan.check([candidate()], chunks=True)) == 1
+        worker_history = True
+    assert await plan.check([candidate()], chunks=True) == []
+    assert plan.marked is not marked_at_discovery
 
 
 async def test_owner_resolution_is_shared_within_one_batch_and_fresh_in_the_next(world):

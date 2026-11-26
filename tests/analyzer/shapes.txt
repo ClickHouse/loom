@@ -800,6 +800,7 @@
 5b39f4c73106	SELECT memory_key, record_json, created_at, (memory_key, identity_agent, user_id, session_id) IN ( SELECT memory_key, agent, user_id, session_id FROM loom.memory FINAL WHERE org = {org:String} AND nam
 5b4266159703	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 5b82b22d8ce2	SELECT namespace, source_uri FROM loom.documents FINAL WHERE org = {org:String} AND (namespace, source_uri) IN {pairs:Array(Tuple(String, String))} LIMIT {limit:UInt32}
+5b96b3ab8467	SELECT namespace, name, credential_mode, toString(source_id) AS source_id FROM loom.knowledge_sources FINAL WHERE org = {org:String} AND namespace IN {names:Array(String)} AND active AND access = ? AN
 5b9b9bcb4313	SELECT symbol_id, qualified_name, path, fan_in_calls, fan_in_nontest, fan_in_name, caller_files, defined_files, is_test FROM loom.code_symbol_stats FINAL WHERE org = {org:String} AND namespace = {ns:S
 5bcdfad6f454	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 5c174b8803f6	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
@@ -1832,7 +1833,6 @@ cbf399def5b1	SELECT org, namespace, agent, user_id, session_id, memory_key, vers
 cc115227ad18	SELECT count() AS n FROM loom.namespace_guides WHERE org = {org:String} AND namespace = {ns:String}
 cc216db24930	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 cc23f4e1f7d2	SELECT count() AS n FROM loom.memory_chunks FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)}
-cc5e9c8e7936	SELECT namespace, name, credential_mode, toString(source_id) AS source_id FROM loom.knowledge_sources FINAL WHERE org = {org:String} AND namespace IN {names:Array(String)} AND active AND access = ? OR
 cc63d1a2772c	SELECT count() AS n FROM loom.session_summaries FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}
 cc7a1e0e6cae	SELECT count() AS n FROM loom.conflict_allowlist FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND tombstoned_at IS NULL
 cc814212d2f9	SELECT agent, user_id, session_id, memory_key, version FROM loom.memory_embeddings WHERE org = {org:String} AND namespace = {ns:String} AND (agent, user_id, session_id, memory_key, version) IN {ids:Ar

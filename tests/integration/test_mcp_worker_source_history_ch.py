@@ -17,7 +17,7 @@ from server.knowledge.app.connected_accounts import account_lease
 from server.knowledge.app.connected_restore import _metadata
 from server.knowledge.app.sources import sources_lease
 from server.knowledge.domain.sources import mirror_synced, served
-from server.knowledge.store import sources
+from server.knowledge.store import source_access, sources
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
@@ -47,11 +47,14 @@ class Registry:
         namespace: str = NAMESPACE,
         connection_id: str | None = None,
         legacy_only: bool = False,
+        active: bool = False,
+        shared: bool = False,
     ) -> tuple[str, str, str]:
         source_id = str(uuid4())
         connection = UUID(connection_id) if connection_id else uuid4()
         kind = f"mcp:{connection.hex}" if worker else "notion"
         self.owned.append((namespace, name, source_id, kind))
+        mode = "worker" if worker and not legacy_only else "connected"
         row = {
             "org": self.org,
             "namespace": namespace,
@@ -59,14 +62,14 @@ class Registry:
             "source_id": source_id,
             "kind": "mcp" if legacy_only else "",
             "source_kind": "mcp" if worker and not legacy_only else "notion",
-            "credential_mode": "worker" if worker and not legacy_only else "connected",
+            "credential_mode": "shared" if shared else mode,
             "owner_subject": OWNER,
             "connection_id": str(connection) if worker else f"{connection.hex}/0{uuid4().hex[1:]}",
             "access": "mirrored",
             "config_json": RAW_CONFIG if worker else "{}",
             "items_json": RAW_ITEMS if worker else "[]",
             "created_by": OWNER,
-            "active": False,
+            "active": active,
             "pending_delete": False,
         }
         async with self.locked(kind, namespace):
@@ -183,3 +186,17 @@ async def test_damaged_only_namespace_keeps_worker_cleanup_incomplete(registry: 
         with pytest.raises(OverloadedError, match="cleanup is incomplete"):
             await require_sources_erased(*args, ch=registry.ch)
     assert await registry.raw("legacy-marker", damaged) == before
+
+
+async def test_native_mirror_inventory_excludes_legacy_worker_history(registry: Registry) -> None:
+    set_query_tag("test.mcp-worker-source-history.native-mirrors")
+    await registry.seed("damaged", worker=True, legacy_only=True, active=True, shared=True)
+    native_id, _, _ = await registry.seed("native", worker=False, active=True, shared=True)
+    assert await source_access.active_sources(registry.org, [NAMESPACE], ch=registry.ch) == [
+        {
+            "namespace": NAMESPACE,
+            "name": "native",
+            "credential_mode": "shared",
+            "source_id": native_id,
+        }
+    ]

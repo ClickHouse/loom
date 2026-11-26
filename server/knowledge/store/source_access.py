@@ -7,6 +7,7 @@ from typing import Any, NamedTuple
 from server.core import pg
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.serving import Serving
+from server.knowledge.domain.source_bindings import WORKER_HISTORY
 from server.knowledge.store.pg_documents import decode_row
 
 # Content and arbitrary metadata are read only after admission, at the checked version.
@@ -50,7 +51,7 @@ async def active_sources(
         "SELECT namespace, name, credential_mode, toString(source_id) AS source_id "
         "FROM loom.knowledge_sources FINAL "
         "WHERE org = {org:String} AND namespace IN {names:Array(String)} "
-        "AND active AND access = 'mirrored' ORDER BY namespace, name",
+        f"AND active AND access = 'mirrored' AND NOT {WORKER_HISTORY} ORDER BY namespace, name",
         params={"org": org, "names": sorted(set(namespaces))},
     )
 
