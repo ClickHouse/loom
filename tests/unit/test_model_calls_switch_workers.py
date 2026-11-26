@@ -161,15 +161,28 @@ def test_code_embed_recovery_scans_no_repository_of_a_switched_off_org(monkeypat
     monkeypatch.setattr(w, "_recover_table", recover)
     from server.code.store import index as code_index
 
+    read: list[str] = []
+
+    class _Counts:
+        async def shared_counts(self, org: str, ns: str) -> dict[str, int]:
+            read.append(ns)
+            return {"code_chunks_embedded": 0}
+
+        async def chunk_embed_coverage(self, org: str, ns: str) -> tuple[int, int]:
+            return 0, 0
+
     class _CodeRepo(code_index.CodeRepo):  # static row helpers stay real for later importers
         def __new__(cls) -> Any:
-            return object()
+            return _Counts()
 
     monkeypatch.setattr(code_index, "CodeRepo", _CodeRepo)
     monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: object())
+    monkeypatch.setattr(w, "_full_scan_at", 0.0)
+    monkeypatch.setattr(w, "_unpublished", set())
     switch_off("acme")
     asyncio.run(w._run(w.CodeEmbedRecoveryResult()))
     assert scanned and all(r == [("beta", "code-b")] for r in scanned)
+    assert read == ["code-b"]  # the full scan's counts check skips it too
 
 
 def test_an_org_switched_off_mid_code_recovery_pass_keeps_its_stubs_and_attempts() -> None:

@@ -293,7 +293,7 @@ class StatusMixin(CodeRepoBase):
         row published before its counts write failed still counts. False with no
         row, or rows that match the table, such as the zeros a read writes for a
         namespace with no chunks. Two point reads and one chunk aggregate."""
-        published = await self._shared_counts(org, ns)
+        published = await self.shared_counts(org, ns)
         embeddable, embedded = await self.chunk_embed_coverage(org, ns)
         if published is not None and (
             published.get("code_chunks_embeddable", 0),
@@ -370,14 +370,15 @@ class StatusMixin(CodeRepoBase):
         shared = (
             self._parse_shared_counts(shared_state.get("value"))
             if shared_state is not None
-            else await self._shared_counts(org, ns)
+            else await self.shared_counts(org, ns)
         )
         if shared is not None:
             _COUNTS_CACHE[key] = (fingerprint, now, dict(shared))
             return dict(shared)
         return await self.refresh_table_counts(org, ns, fingerprint=fingerprint)
 
-    async def _shared_counts(self, org: str, ns: str) -> dict[str, int] | None:
+    async def shared_counts(self, org: str, ns: str) -> dict[str, int] | None:
+        """The published `table_counts` row, None when there is none or it cannot be read."""
         try:
             row = await self._ch.query_one(
                 """

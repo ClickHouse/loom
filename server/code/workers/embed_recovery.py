@@ -20,7 +20,9 @@ per-repo scan and a per-repo FINAL read every 30 s whatever the backlog.
 
 Vectors written here change the shared `table_counts` and `coverage` rows, which
 only an ingest pass that indexed a commit republishes. So the first idle pass
-after a namespace's stubs were embedded republishes both rows for it.
+after a namespace's stubs were embedded republishes both rows for it, and a
+full-scan idle pass republishes them for any namespace whose published embedded
+count differs from its chunks.
 """
 
 from __future__ import annotations
@@ -163,7 +165,17 @@ async def _republish(
     publishes them after a commit. A namespace whose republish failed stays
     unpublished, so the next idle pass retries it. One this pass did not scan
     (removed, or its org switched off) waits, so a removed one is never written
-    after its purge."""
+    after its purge.
+
+    `_unpublished` lives in memory, so a full-scan pass also notes each namespace
+    whose published embedded count differs from its chunks, so a restart between
+    the last vectors and the drain delays the republish to the next idle full scan."""
+    if result.full_scan:
+        for org, ns in repos - _unpublished:
+            published = (await repo.shared_counts(org, ns) or {}).get("code_chunks_embedded")
+            _, embedded = await repo.chunk_embed_coverage(org, ns)
+            if published != embedded:
+                _unpublished.add((org, ns))
     for org, ns in sorted(_unpublished & repos):
         try:
             await repo.refresh_coverage(org, ns, must_land=True)

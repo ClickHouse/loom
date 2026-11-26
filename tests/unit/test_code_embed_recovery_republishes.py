@@ -239,3 +239,28 @@ async def test_a_namespace_removed_before_the_drain_is_not_republished(
     configured.clear()  # `code.repo.remove`: the namespace's rows are purged next
     await _pass()
     assert table.state_writes == writes
+
+
+async def test_a_restart_before_the_drain_still_republishes_on_the_full_scan_pass(
+    configured: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.workers import embed_recovery as w
+
+    table = _Table(chunks=3, embedded=0)
+    repo = await _namespace(monkeypatch, table)
+    await _pass()  # the last vectors land
+
+    # A restart: the process memory is gone, so the next pass is the boot's full scan.
+    monkeypatch.setattr(w, "_unpublished", set())
+    monkeypatch.setattr(w, "_watermark", {})
+    monkeypatch.setattr(w, "_full_scan_at", 0.0)
+    drained = await _pass()
+    assert drained.idle and drained.full_scan and drained.errors == []
+    counts, coverage_embedded = await _published(repo)
+    assert counts["code_chunks_embedded"] == coverage_embedded == 3
+
+    # Once the rows match, the next full-scan pass reads them and writes nothing.
+    writes = table.state_writes
+    monkeypatch.setattr(w, "_full_scan_at", 0.0)
+    await _pass()
+    assert table.state_writes == writes
