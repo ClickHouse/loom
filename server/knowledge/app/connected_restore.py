@@ -18,7 +18,7 @@ from server.knowledge.app import connected_accounts as accounts
 from server.knowledge.app import source_push
 from server.knowledge.app import sources as source_ops
 from server.knowledge.domain.connected_accounts import CREDENTIAL_PURPOSE, KINDS, ConnectedAccount
-from server.knowledge.domain.sources import KnowledgeSource
+from server.knowledge.domain.sources import KnowledgeSource, worker_connection_id
 from server.knowledge.store import connected_accounts as account_store
 from server.knowledge.store import sources as source_store
 from server.settings import settings
@@ -65,6 +65,19 @@ def _include(
 async def _metadata(
     ch: Any, owner: Owner | None = None
 ) -> tuple[list[Registration], list[KnowledgeSource]]:
+    if owner is not None and (connection := worker_connection_id(owner[2])):
+        sources = await source_store.connected_history(owner=owner, ch=ch)
+        if any(
+            (source.org, source.owner_subject, source.connection_id) != (*owner[:2], connection)
+            or not source.namespace
+            or not source.name
+            or not source.source_id
+            for source in sources
+        ):
+            raise accounts.unavailable()
+        return [(*owner, connection)] if sources else [], sources
+    if owner is None and await source_store.worker_history_exists(ch=ch):
+        raise RuntimeError("worker source history requires worker-aware restore")
     keys = await account_store.restore_keys(owner=owner, ch=ch)
     sources = await source_store.connected_history(owner=owner, ch=ch)
     for source in sources:

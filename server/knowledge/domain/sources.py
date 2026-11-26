@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
+from uuid import UUID
 
 from server.core.errors import BadConfigError
 from server.tracker.domain.sources import SOURCE_NAME_RE
@@ -136,6 +137,8 @@ class KnowledgeSource:
     pending_delete: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # Lifecycle can rewrite an inactive worker row without interpreting its original payload.
+    worker_payload: tuple[str, str] | None = field(default=None, repr=False)
     # The namespace's mirror, which the sync sets before a mirrored source's turn; never
     # stored.
     mirror: str = ""
@@ -562,15 +565,38 @@ def options_in(kind: str, config: dict[str, Any]) -> dict[str, Any]:
     return {"include": include_in(config)} if kind == "gdrive" else {}
 
 
+def worker_connection_id(slot: str) -> str | None:
+    """Resolve a worker slot to the canonical UUID already stored on its source row."""
+    if slot != "mcp" and not slot.startswith("mcp:"):
+        return None
+    if re.fullmatch(r"mcp:[0-9a-f]{32}", slot):
+        connection = UUID(hex=slot[4:])
+        if connection.int != 0:
+            return str(connection)
+    raise ValueError("Invalid worker source slot")
+
+
+def worker_source_marker(kind: str, mode: str) -> bool:
+    """Recognize either marker; a partially written worker row is never native."""
+    return kind == "mcp" or mode == "worker"
+
+
 def served(src: KnowledgeSource) -> bool:
     """Whether this build serves `src`: one shown to every reader of its namespace. A
     mirrored one, or any `access` a later build writes, is that build's."""
-    return src.credential_mode == "shared" and src.access == NAMESPACE_ACCESS
+    return (
+        src.credential_mode == "shared"
+        and src.access == NAMESPACE_ACCESS
+        and src.worker_payload is None
+        and not worker_source_marker(src.kind, src.credential_mode)
+    )
 
 
 def mirror_synced(src: KnowledgeSource) -> bool:
     """Whether the sync worker writes `src` into its namespace's mirror: a mirrored
     folder-store source or a person's connected page/project source."""
+    if src.worker_payload is not None or worker_source_marker(src.kind, src.credential_mode):
+        return False
     return src.access == MIRRORED_ACCESS and (
         src.kind == "gdrive"
         or (src.credential_mode == "connected" and src.kind in {"notion", "linear"})

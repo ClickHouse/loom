@@ -46,6 +46,7 @@ from server.erasure.store.provider_copies import copy_residue
 from server.erasure.store.steps_memory import SESSION_OUTCOME_TABLES, TERM_AGGREGATE_TABLES
 from server.erasure.store.steps_pg import PG_CENSUS, pg_residue
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.knowledge.domain.source_bindings import WORKER_HISTORY, source_account_match
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -842,12 +843,12 @@ async def connected_source_residue(
     ch: _CHClient | None = None,
 ) -> int:
     """Canonical-owner deletion includes historical bindings, without matching user_id."""
+    predicate, binding = source_account_match(kind, include_damaged=True)
     row = await (ch or _default_client()).query_one(
         "SELECT count() AS n FROM loom.knowledge_sources "
         "WHERE org = {org:String} AND namespace = {ns:String} "
-        "AND owner_subject = {owner:String} AND credential_mode = 'connected' "
-        "AND source_kind = {kind:String}",
-        params={"org": org, "ns": namespace, "owner": subject, "kind": kind},
+        f"AND owner_subject = {{owner:String}} AND {predicate}",
+        params={"org": org, "ns": namespace, "owner": subject, "kind": binding},
     )
     if row is None or "n" not in row:
         raise RuntimeError("connected_source_census_unavailable")
@@ -1065,7 +1066,7 @@ async def connected_restore_residue(*, ch: _CHClient | None = None) -> int:
     total = 0
     for table, predicate in (
         ("loom.connected_accounts", "1"),
-        ("loom.knowledge_sources", "credential_mode = 'connected'"),
+        ("loom.knowledge_sources", f"credential_mode = 'connected' OR {WORKER_HISTORY}"),
     ):
         row = await client.query_one(f"SELECT count() AS n FROM {table} WHERE {predicate}")
         if row is None or "n" not in row:
