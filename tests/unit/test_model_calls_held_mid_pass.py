@@ -361,7 +361,7 @@ def test_code_ingest_records_no_error_for_a_held_repository_or_leg(monkeypatch, 
     monkeypatch.setattr(ip, "selected_repos", lambda org, ns: repos)
     monkeypatch.setattr(ip, "_without_unsandboxed", lambda repos, result: repos)
     monkeypatch.setattr(ip, "prefetch_mirrors", nothing)
-    monkeypatch.setattr(ip, "ingest_oldest_first", nothing)
+    monkeypatch.setattr(ip, "ingest_round_robin", nothing)
     monkeypatch.setattr(ip, "_run_repo", _raise(error))
     result = ip.CodeIngestResult()
     asyncio.run(ip._run(result))

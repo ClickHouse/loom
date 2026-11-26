@@ -745,7 +745,7 @@ def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> No
     monkeypatch.setattr(ip, "selected_repos", lambda org, ns: repos)
     monkeypatch.setattr(ip, "_without_unsandboxed", lambda repos, result: repos)
     monkeypatch.setattr(ip, "prefetch_mirrors", nothing)
-    monkeypatch.setattr(ip, "ingest_oldest_first", nothing)
+    monkeypatch.setattr(ip, "ingest_round_robin", nothing)
     monkeypatch.setattr(ip, "_run_repo", run_repo)
     switch_off("acme")
     result = ip.CodeIngestResult()

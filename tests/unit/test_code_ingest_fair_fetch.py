@@ -1,5 +1,5 @@
 """Every entry's mirror is fetched every pass, one fetch per
-mirror; the pass's commits run oldest-first across entries; a commit that
+mirror; the pass's commits run round-robin across entries; a commit that
 cannot finish before the deadline waits for the next pass; and `as_of` says
 stale when the mirror has not fetched.
 
@@ -109,7 +109,7 @@ def test_fetch_many_is_one_git_fetch_with_a_refspec_per_branch(
 
 
 # ---------------------------------------------------------------------------
-# oldest first, across entries
+# round-robin across entries, oldest first within each
 # ---------------------------------------------------------------------------
 
 
@@ -140,12 +140,12 @@ def _plan(ns: str, pending: list[str]) -> tuple[ingest_budget.RepoPass, _StateRe
     return plan, repo
 
 
-def test_the_commit_that_waited_longest_goes_first_whatever_entry_holds_it(
+def test_a_backlog_does_not_hold_the_phase_ahead_of_another_entrys_one_merge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A release tree's backlog of twenty newer commits does not hold the
-    phase ahead of another entry's one older merge; each entry's own commits
-    still land oldest first (the watermark contract)."""
+    """A release tree's backlog of twenty commits does not hold the phase
+    ahead of another entry's one merge: the first round serves both; each
+    entry's own commits still land oldest first (the watermark contract)."""
     clock = _Clock()
     now = int(clock.time())
     backlog = [f"p{i:02d}" for i in range(20)]
@@ -155,8 +155,8 @@ def test_the_commit_that_waited_longest_goes_first_whatever_entry_holds_it(
     loom, loom_repo = _plan("code-loom", ["loom1"])
     result = ingest_budget.CodeIngestResult()
     budget = ingest_budget.PassBudget(started=clock.now, stop_after=clock.now + 1000.0)
-    asyncio.run(ingest_stream.ingest_oldest_first([priv, loom], result, budget))
-    assert ingested[0] == "loom1" and ingested[1:] == backlog
+    asyncio.run(ingest_stream.ingest_round_robin([priv, loom], result, budget))
+    assert ingested[:2] == ["p00", "loom1"] and [s for s in ingested if s != "loom1"] == backlog
     assert loom_repo.state["git_head"] == "loom1" and priv_repo.state["git_head"] == backlog[-1]
     assert (priv.commits, loom.commits) == (20, 1) and result.commits_planned == 21
 
@@ -173,7 +173,7 @@ def test_the_pass_stops_between_commits_and_the_next_pass_continues_from_the_wat
     plan, repo = _plan("code-a", commits)
     result = ingest_budget.CodeIngestResult()
     budget = ingest_budget.PassBudget(started=clock.now, stop_after=clock.now + 250.0)
-    asyncio.run(ingest_stream.ingest_oldest_first([plan], result, budget))
+    asyncio.run(ingest_stream.ingest_round_robin([plan], result, budget))
     # checked before each: 0, 100, 200 start; 300 does not
     assert ingested == commits[:3]
     assert result.commits_planned == 4 and result.commits_done == 3
@@ -188,12 +188,12 @@ def test_the_pass_stops_between_commits_and_the_next_pass_continues_from_the_wat
     nxt_plan.pending = commits[3:]
     nxt = ingest_budget.CodeIngestResult()
     budget = ingest_budget.PassBudget(started=clock.now, stop_after=clock.now + 1000.0)
-    asyncio.run(ingest_stream.ingest_oldest_first([nxt_plan], nxt, budget))
+    asyncio.run(ingest_stream.ingest_round_robin([nxt_plan], nxt, budget))
     assert ingested == commits[3:] and nxt.partial is False
     assert repo.state["git_head"] == commits[3]
 
 
-def test_at_the_budget_every_waiting_entry_is_cut_the_longest_waiting_first(
+def test_at_the_budget_every_waiting_entry_is_cut_the_next_to_serve_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = _Clock()
@@ -206,15 +206,17 @@ def test_at_the_budget_every_waiting_entry_is_cut_the_longest_waiting_first(
     budget = ingest_budget.PassBudget(
         started=clock.now, stop_after=clock.now + 150.0
     )  # two start: 0, 100
-    asyncio.run(ingest_stream.ingest_oldest_first([a, b], result, budget))
+    asyncio.run(ingest_stream.ingest_round_robin([a, b], result, budget))
     assert ingested == ["a1", "b1"]
-    assert result.resume == "code-a:commits@a1+1", "a2 (−40 s) waited longer than b2 (−10 s)"
+    assert result.resume == "code-a:commits@a1+1", "one each landed: entry order breaks the tie"
     assert ingest_budget.cut_points(result.resume) == {"commits": "code-a"}
 
 
-def test_an_old_dated_backlog_ties_at_the_horizon_instead_of_holding_the_phase(
+def test_an_old_dated_backlog_does_not_hold_a_recent_merge_behind_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Commit dates do not order entries: the old backlog's second commit
+    waits for the next round, after the other entry's recent merge."""
     clock = _Clock()
     now = int(clock.time())
     times = {"old1": now - 90 * 86400, "old2": now - 89 * 86400, "new1": now - 60}
@@ -222,20 +224,17 @@ def test_an_old_dated_backlog_ties_at_the_horizon_instead_of_holding_the_phase(
     a, _ = _plan("code-a", ["old1", "old2"])
     b, _ = _plan("code-b", ["new1"])
     asyncio.run(
-        ingest_stream.ingest_oldest_first(
+        ingest_stream.ingest_round_robin(
             [a, b],
             ingest_budget.CodeIngestResult(),
             ingest_budget.PassBudget(clock.now, clock.now + 1000.0),
         )
     )
-    assert ingested == ["old1", "old2", "new1"]  # both old ones are the horizon: entry order
-    assert ingest_stream._OLDEST_FIRST_HORIZON_S == 86_400
+    assert ingested == ["old1", "new1", "old2"]
 
 
-def test_two_old_backlogs_share_the_horizon_round_robin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Commits past the horizon all sort at the floor; `landed` breaks the tie
-    so two entries with old backlogs alternate — entry order alone drained the
-    first one before the second got a commit."""
+def test_two_old_backlogs_alternate_round_robin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two entries with backlogs alternate, one commit each per round."""
     clock = _Clock()
     now = int(clock.time())
     old = now - 30 * 86400
@@ -244,7 +243,7 @@ def test_two_old_backlogs_share_the_horizon_round_robin(monkeypatch: pytest.Monk
     a, _ = _plan("code-a", ["a1", "a2", "a3"])
     b, _ = _plan("code-b", ["b1", "b2", "b3"])
     asyncio.run(
-        ingest_stream.ingest_oldest_first(
+        ingest_stream.ingest_round_robin(
             [a, b],
             ingest_budget.CodeIngestResult(),
             ingest_budget.PassBudget(clock.now, clock.now + 1000.0),
@@ -279,7 +278,7 @@ def test_a_commit_that_would_run_past_the_deadline_is_not_started_unless_it_is_t
     c, _ = _plan("code-c", ["s2"])
     result = ingest_budget.CodeIngestResult()
     budget = ingest_budget.PassBudget(started=clock.now, stop_after=clock.now + 675.0)
-    asyncio.run(ingest_stream.ingest_oldest_first([a, b, c], result, budget))
+    asyncio.run(ingest_stream.ingest_round_robin([a, b, c], result, budget))
     # s1 (first) runs to 450 s; one round of big (25 × 2.5 s) fits → it starts
     # (the fake ingests it whole; the real ingest slices it under the clock)
     assert ingested[:2] == ["s1", "big"]
@@ -296,7 +295,7 @@ def test_a_commit_that_would_run_past_the_deadline_is_not_started_unless_it_is_t
     ingested.clear()
     b2, _ = _plan("code-b", ["big"])
     asyncio.run(
-        ingest_stream.ingest_oldest_first(
+        ingest_stream.ingest_round_robin(
             [b2],
             ingest_budget.CodeIngestResult(),
             ingest_budget.PassBudget(clock.now, clock.now + 675.0),

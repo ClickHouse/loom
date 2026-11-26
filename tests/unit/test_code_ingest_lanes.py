@@ -61,7 +61,7 @@ def test_lanes_run_entries_side_by_side_and_never_one_entry_twice(
     c, rc = _plan("code-c", ["c1"])
     result = ingest_budget.CodeIngestResult()
     asyncio.run(
-        ingest_stream.ingest_oldest_first(
+        ingest_stream.ingest_round_robin(
             [a, b, c], result, ingest_budget.PassBudget(clock.now, clock.now + 1000.0)
         )
     )
@@ -84,7 +84,7 @@ def test_one_lane_is_the_sequential_phase(monkeypatch: pytest.MonkeyPatch) -> No
     a, _ = _plan("code-a", ["a1", "a2"])
     b, _ = _plan("code-b", ["b1"])
     asyncio.run(
-        ingest_stream.ingest_oldest_first(
+        ingest_stream.ingest_round_robin(
             [a, b],
             ingest_budget.CodeIngestResult(),
             ingest_budget.PassBudget(clock.now, clock.now + 1000.0),
@@ -122,7 +122,7 @@ def test_one_entrys_failed_setup_leaves_the_other_entries_their_commits(
     ctx = pass_context.begin("code_ingest")
 
     async def run() -> set[asyncio.Task[Any]]:
-        await ingest_stream.ingest_oldest_first(
+        await ingest_stream.ingest_round_robin(
             [a, b], result, ingest_budget.PassBudget(clock.now, clock.now + 1000.0)
         )
         return {t for t in asyncio.all_tasks() if t is not asyncio.current_task()}

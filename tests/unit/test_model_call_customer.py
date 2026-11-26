@@ -785,7 +785,7 @@ def test_code_ingest_names_each_repos_org_in_its_commits_bootstrap_and_walk(
     monkeypatch.setattr(w, "selected_repos", lambda org, ns: [cfg])
     monkeypatch.setattr(w, "_without_unsandboxed", lambda repos, result: repos)
     monkeypatch.setattr(w, "prefetch_mirrors", nothing)
-    monkeypatch.setattr(w, "ingest_oldest_first", nothing)
+    monkeypatch.setattr(w, "ingest_round_robin", nothing)
     monkeypatch.setattr(w, "_post_steps", nothing)
     monkeypatch.setattr(w, "_run_repo", run_repo)
     monkeypatch.setattr(w, "_bootstrap_leg", leg)
@@ -814,7 +814,7 @@ def test_code_ingest_names_each_entrys_org_for_its_commits(metered, monkeypatch,
     plan, _ = _plan("code-a", ["a1"])
     result = pass_budget.CodeIngestResult()
     budget = pass_budget.PassBudget(clock.now, clock.now + 1000.0)
-    asyncio.run(pass_stream.ingest_oldest_first([plan], result, budget))
+    asyncio.run(pass_stream.ingest_round_robin([plan], result, budget))
     assert seen == [plan.cfg.org] and not result.errors
     _no_refusal_logged(caplog)
 

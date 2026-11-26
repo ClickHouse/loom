@@ -135,7 +135,7 @@ def _pass(
     started = clock.now
     result = ingest_budget.CodeIngestResult()
     budget = ingest_budget.PassBudget(started=started, stop_after=started + 675.0)
-    asyncio.run(ingest_stream.ingest_oldest_first(plans, result, budget))
+    asyncio.run(ingest_stream.ingest_round_robin(plans, result, budget))
     return clock.now - started, result
 
 

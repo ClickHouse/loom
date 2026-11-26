@@ -32,7 +32,7 @@ from server.code.app.index.pass_budget import (
     rotate_to,
 )
 from server.code.app.index.pass_fetch import _publish_clone_head, fetch_entry, prefetch_mirrors
-from server.code.app.index.pass_stream import ingest_oldest_first
+from server.code.app.index.pass_stream import ingest_round_robin
 from server.core.errors import caller_text
 from server.llm import customer
 from server.settings import settings
@@ -192,7 +192,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             continue
         if plan is not None:
             plans.append(plan)
-    await ingest_oldest_first(plans, result, commit_budget)
+    await ingest_round_robin(plans, result, commit_budget)
     await _run_leg(
         result,
         budget,
@@ -445,7 +445,7 @@ async def _run_repo(
         await repo.set_state(org, ns, "git_head", head, detail="watermark reset")
         result.note = "watermark reset (non-ancestor)"
         return plan
-    plan.pending = commits  # Ingested oldest-first across entries
+    plan.pending = commits  # Ingested round-robin across entries
     return plan
 
 
