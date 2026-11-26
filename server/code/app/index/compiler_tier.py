@@ -319,6 +319,25 @@ def _lost_borrowed_objects(checkout: Path) -> bool:
     return refs.returncode == 128
 
 
+def _renew_checkout(checkout: Path, objects: Path) -> str | None:
+    """A new `.git` for a borrowing tree that lost objects. The old one stays aside
+    until the new one is made and goes back otherwise (a full disk, a timeout), so
+    the next pass finds the same tree and retries."""
+    metadata, aside = checkout / ".git", checkout / ".git.lost"
+    shutil.rmtree(aside, ignore_errors=True)
+    metadata.rename(aside)
+    error: str | None = "raised"  # an exception (OSError, TimeoutExpired) restores too
+    try:
+        error = _init_checkout(checkout, objects) or _checkout_metadata_error(checkout)
+    finally:
+        if error:
+            shutil.rmtree(metadata, ignore_errors=True)
+            aside.rename(metadata)
+        else:
+            shutil.rmtree(aside, ignore_errors=True)
+    return error
+
+
 def _prepare_checkout(checkout: Path, objects: Path) -> str | None:
     """Initialize only empty directories, borrowing `objects`; an existing tree must
     own its Git root. A borrowing tree that lost objects gets a new `.git`; its files
@@ -338,7 +357,7 @@ def _prepare_checkout(checkout: Path, objects: Path) -> str | None:
             if error or not _lost_borrowed_objects(checkout):
                 return error
             logger.warning("compiler tier: %s lost borrowed objects; new .git", checkout)
-            shutil.rmtree(checkout / ".git")
+            return _renew_checkout(checkout, objects)
         else:
             set_repo_dir_mode(str(checkout))
         return _init_checkout(checkout, objects) or _checkout_metadata_error(checkout)

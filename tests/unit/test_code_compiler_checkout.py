@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -409,6 +410,43 @@ def test_a_checkout_that_lost_its_borrowed_objects_gets_a_new_git_dir(tmp_path: 
     )
     assert missing is None and head.stdout.strip() == target
     assert (checkout / "build-cache").read_text() == "kept\n"
+
+
+@pytest.mark.parametrize("failure", ["fails", "times-out"])
+def test_a_failed_new_git_dir_restores_the_old_one_and_the_next_pass_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """A full disk fails `git init`: the tree keeps its `.git`, so the next pass finds
+    the same lost objects instead of a tree with no Git metadata."""
+    bare = _bare_repo(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    checkout, _bare, _missing = resolve_checkout(cfg, "python")
+    _fetch_and_check_out(checkout, bare)
+    lost = checkout / ".git" / "refs" / "loom" / "scip-head"
+    lost.write_text("1" * 40 + "\n")
+    real_run = subprocess.run
+
+    def init_fails(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if argv[:2] != ["git", "init"]:
+            return real_run(argv, **kwargs)
+        if failure == "times-out":
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        return subprocess.CompletedProcess(argv, 1, "", "No space left on device")
+
+    with monkeypatch.context() as m:
+        m.setattr("server.code.app.index.compiler_tier.subprocess.run", init_fails)
+        _actual, _bare, missing = resolve_checkout(cfg, "python")
+
+    assert missing is not None and ("timed out" in missing or "No space" in missing)
+    assert lost.read_text() == "1" * 40 + "\n"
+    assert sorted(p.name for p in checkout.iterdir()) == [".git", "main.py"]
+    _actual, _bare, missing = resolve_checkout(cfg, "python")
+    target = _fetch_and_check_out(checkout, bare)
+    head = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True
+    )
+    assert missing is None and head.stdout.strip() == target
+    assert lost.read_text().strip() == target
 
 
 def test_a_checkout_with_its_own_objects_is_left_as_it_is(tmp_path: Path) -> None:
