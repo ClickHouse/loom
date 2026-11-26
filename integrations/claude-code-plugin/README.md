@@ -520,6 +520,8 @@ The event can independently supply a conversation ID, `prompt_id` or `turn_id`,
 tool-call ID and hook event. Missing IDs stay absent; conflicting prompt and
 turn IDs are omitted. There is no shared latest-prompt binding. Trace headers
 carry no prompt text, and identifiers pass through normal secret redaction.
+Set the hook server URL to the final URL. Hook requests that carry invocation
+headers do not follow redirects, even on the same origin.
 
 This labels requests the plugin sends. The host's separate MCP client may
 supply its own per-call metadata; absent origin stays unknown. Neither host

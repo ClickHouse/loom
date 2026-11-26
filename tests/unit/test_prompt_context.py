@@ -523,6 +523,67 @@ def test_public_mcp_refuses_unsupported_protocol_before_routing_catalog(monkeypa
     assert roots[0].attributes["loom.call.outcome"] == "refusal"
 
 
+def test_mcp_http_batch_counts_only_calls_and_keeps_their_context_separate(monkeypatch, spans):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.settings import settings
+    from server.transport import mcp
+    from server.transport.mcp_config import META_PROTOCOL_VERSION, UNSUPPORTED_PROTOCOL_VERSION
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    app = FastAPI()
+    mcp.attach(app)
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            json=[
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "loom_op",
+                        "arguments": {"op": "help"},
+                        "_meta": {"loom": {"origin": "tool", "prompt_id": "first-prompt"}},
+                    },
+                },
+                {"jsonrpc": "2.0", "id": 2, "method": "ping"},
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "loom_op",
+                        "arguments": {"op": "help"},
+                        "_meta": {META_PROTOCOL_VERSION: "9999-01-01"},
+                    },
+                },
+            ],
+        )
+    assert response.status_code == 200
+    results = {item["id"]: item for item in response.json()}
+    assert set(results) == {1, 2, 3}
+    assert not results[1]["result"]["isError"]
+    assert "result" in results[2]
+    assert results[3]["error"]["code"] == UNSUPPORTED_PROTOCOL_VERSION
+
+    finished = spans.get_finished_spans()
+    wrappers = [span for span in finished if span.name == "mcp.batch.entry"]
+    assert len(wrappers) == 3
+    assert all(not span.attributes.get("loom.call.root") for span in wrappers)
+    roots = [span for span in finished if span.attributes.get("loom.call.root")]
+    assert len(roots) == 2
+    assert len({span.context.trace_id for span in roots}) == 2
+    assert len({span.attributes["loom.call.attempt_id"] for span in roots}) == 2
+    assert all(span.parent is None for span in roots)
+    by_outcome = {span.attributes["loom.call.outcome"]: span.attributes for span in roots}
+    assert by_outcome["success"]["loom.call.origin"] == "tool"
+    assert by_outcome["success"]["loom.prompt.prompt_id"] == "first-prompt"
+    assert by_outcome["refusal"]["loom.call.origin"] == "unknown"
+    assert "loom.prompt.prompt_id" not in by_outcome["refusal"]
+
+
 def test_invocation_worker_origin_is_scoped_without_counting_a_received_call(spans):
     from server.observability import otel
 
