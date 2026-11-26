@@ -740,11 +740,13 @@ a provider call, leave the call unverified.
 
 To check the LLM, use
 [repository Q&A](../guides/repository-questions.md) on a readable indexed namespace with
-`synthesize: true` and `no_cache: true`. An abstention can skip synthesis. Use the
-response's `X-Trace-Id` to find a successful [generation span](../features/observability/telemetry.md#traces-and-logs)
-for the intended provider and model. Check `loom.llm.stage` to distinguish answer
-synthesis from model calls made before synthesis. A request span alone does not prove
-the model ran, and a successful call before synthesis verifies provider access only.
+`synthesize: true` and `no_cache: true`. When `LOOM_READS_LLM_FREE=true`, this
+request returns HTTP 409 `READS_LLM_FREE` without synthesis. A spend cap can skip
+synthesis while retrieval still returns results. An abstention can also skip synthesis.
+Use the response's `X-Trace-Id` to find a successful [generation span](../features/observability/telemetry.md#traces-and-logs)
+for the intended provider and model with `loom.llm.stage=code_answer`. A request span
+alone does not prove the model ran, and a successful call before synthesis verifies
+provider access only.
 Without a successful synthesis span, leave answer synthesis unverified. These probes
 make model calls and can incur charges. For a stored memory missing from search, also
 check the embedding backlog described in the smoke guide.
