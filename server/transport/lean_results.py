@@ -254,9 +254,7 @@ def mcp_op_result(
 
         followups: frozenset[str] = frozenset()
         if op_name == "code.grep" and (arguments or {}).get("include_body") is False:
-            candidates = {"loom_code_read"}
-            if toolset == "coding":
-                candidates.add("loom_code_edit_context")
+            candidates = {"loom_code_read", "loom_code_edit_context"}
             followups = frozenset(candidates.intersection(listed_tool_names(toolset)))
         out = lean_code(op_name, out, arguments, followups=followups)
     out = _with_ignored_args(op_name, out, arguments)

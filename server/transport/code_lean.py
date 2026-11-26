@@ -19,6 +19,7 @@ HTTP and SDK shapes are unchanged; `explain=true` skips all trimming.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from io import StringIO
 from typing import Any, NamedTuple
@@ -238,6 +239,18 @@ def _lean_grep(out: dict[str, Any]) -> None:
         out["related"] = lean_code("code.grep", related)
 
 
+_PYTHON_DECLARATION = re.compile(r"^(?:async\s+)?def\s+([^\W\d]\w*)\s*[\[(]")
+
+
+def _python_declaration_at_hit(hit: dict[str, Any], path: str) -> bool:
+    definition = _PYTHON_DECLARATION.match(str(hit.get("text") or "").lstrip())
+    return bool(
+        path.endswith((".py", ".pyi"))
+        and definition
+        and definition[1] == str(hit["scope"]).rsplit("::", 1)[-1]
+    )
+
+
 def _grep_continuation(
     out: dict[str, Any],
     arguments: dict[str, Any],
@@ -247,7 +260,7 @@ def _grep_continuation(
     contexts = out.get("contexts") or []
     if arguments.get("include_body") is not False or not contexts or out.get("definitions"):
         return
-    selections: dict[tuple[str, int, int], CodeReadRangeInput] = {}
+    selections: dict[tuple[str, int, int], tuple[CodeReadRangeInput, bool]] = {}
     for hit in out.get("matches") or []:
         if not isinstance(hit, dict):
             continue
@@ -272,14 +285,20 @@ def _grep_continuation(
             continue
         if not _safe_path(span.path) or "\0" in span.path or is_notebook_path(span.path):
             continue
-        selections.setdefault((span.path, span.start_line, end), span)
+        selections.setdefault(
+            (span.path, span.start_line, end), (span, _python_declaration_at_hit(hit, span.path))
+        )
         if len(selections) == CODE_READ_MAX_RANGES:
             break
     if not selections:
         return
     scope = {key: arguments[key] for key in ("org", "namespace") if arguments.get(key)}
-    if "loom_code_edit_context" in followups:
-        spans = list(selections.values())[:EDIT_CONTEXT_MAX_NAMES]
+    spans = [span for span, _ in selections.values()]
+    if (
+        "loom_code_edit_context" in followups
+        and len(spans) <= EDIT_CONTEXT_MAX_NAMES
+        and all(declaration for _, declaration in selections.values())
+    ):
         names = [f"{span.path}:{span.start_line}" for span in spans]
         if all(
             _parse_location(name) == (span.path, span.start_line)
@@ -296,7 +315,7 @@ def _grep_continuation(
                 )
                 return
     if "loom_code_read" in followups:
-        params = {"ranges": [span.model_dump() for span in selections.values()], **scope}
+        params = {"ranges": [span.model_dump() for span in spans], **scope}
         out["next"] = "For the full source, call loom_code_read with " + json.dumps(params)
 
 

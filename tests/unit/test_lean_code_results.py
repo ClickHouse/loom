@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 import server.transport.lean_results as lr
+from server.settings import settings
 from server.transport.code_lean import lean_code
 
 
@@ -397,10 +398,11 @@ def test_edit_context_keeps_source_when_shared_row_would_exceed_an_original_row(
     assert result["definitions"][1]["examples"] == [short]
 
 
-def test_grep_excerpts_offer_a_batch_for_unread_declarations() -> None:
+def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> None:
     long = {
         "path": "src/a.py",
         "line": 5,
+        "text": "def first(value):",
         "scope": "first",
         "scope_start_line": 5,
         "scope_end_line": 16,
@@ -414,8 +416,9 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations() -> None:
     }
     unusual = ["src/plugins v2/routes.py", "scripts/bootstrap", "docs/overview.md"]
     more = [{**long, "path": path} for path in (*unusual, "examples/demo.IPYNB", "a" * 1025)]
+    async_def = {**long, "path": "src/support.py", "text": "async def first(value):"}
     payload = {
-        "matches": [long, {**long, "line": 7}, long, short, *more],
+        "matches": [long, {**long, "line": 7}, long, short, async_def, *more],
         "contexts": [
             {"path": "src/a.py", "start_line": 4, "end_line": 8, "text": "partial"},
             {"path": "src/b.py", "start_line": 1, "end_line": 4, "text": "complete"},
@@ -424,14 +427,14 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations() -> None:
     arguments = {"include_body": False, "org": "secondary", "namespace": "repo"}
     edit_payload = {
         **payload,
-        "matches": [hit for hit in payload["matches"] if hit["path"] not in unusual[:2]],
+        "matches": [hit for hit in payload["matches"] if hit["path"] not in unusual],
     }
     result = lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset="coding")
     suggestion = result.pop("next")
     label, _, params = suggestion.partition(" with ")
     assert label == "For the definitions and relevant tests, call loom_code_edit_context"
     assert json.loads(params) == {
-        "names": ["src/a.py:5", "docs/overview.md:5"],
+        "names": ["src/a.py:5", "src/support.py:5"],
         "org": "secondary",
         "namespace": "repo",
     }
@@ -440,7 +443,8 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations() -> None:
     assert label == "For the full source, call loom_code_read"
     assert json.loads(params) == {
         "ranges": [
-            {"path": path, "start_line": 5, "end_line": 16} for path in ("src/a.py", *unusual)
+            {"path": path, "start_line": 5, "end_line": 16}
+            for path in ("src/a.py", "src/support.py", *unusual)
         ],
         "org": "secondary",
         "namespace": "repo",
@@ -451,6 +455,39 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations() -> None:
         "code.grep", {**payload, "contexts": []}, arguments, None, toolset="coding"
     )
     assert "next" not in lr.mcp_op_result("code.grep", payload, arguments, None, toolset="core")
+    monkeypatch.setattr(settings, "mcp_toolset", "coding")
+    for toolset in (None, "Coding", "coding+tracker"):
+        assert lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset=toolset) == {
+            **result,
+            "next": suggestion,
+        }
+
+
+def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lookup() -> None:
+    declaration = {
+        "path": "src/a.py",
+        "line": 1,
+        "text": "def worker():",
+        "scope": "worker",
+        "scope_start_line": 1,
+        "scope_end_line": 12,
+    }
+    for matches in (
+        [{**declaration, "text": "@marker"}],
+        [{**declaration, "path": f"src/module{index}.py"} for index in range(9)],
+    ):
+        payload = {
+            "matches": matches,
+            "contexts": [{"path": "src/a.py", "start_line": 1, "end_line": 2, "text": "partial"}],
+        }
+        result = lr.mcp_op_result(
+            "code.grep", payload, {"include_body": False}, None, toolset="coding"
+        )
+        label, _, params = result["next"].partition(" with ")
+        assert label == "For the full source, call loom_code_read"
+        assert json.loads(params) == {
+            "ranges": [{"path": hit["path"], "start_line": 1, "end_line": 12} for hit in matches]
+        }
 
 
 def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:
