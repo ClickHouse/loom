@@ -5,8 +5,10 @@ conversation context, shared team decisions, evidence from source code, or all t
 Then choose who operates the storage and who may read or change it.
 
 The Loom project publishes this guide. It covers memory services and coding-session
-plugins alongside code-intelligence tools that can complement them. The rows describe
-the linked primary sources and their deployment boundaries, rather than a ranked list.
+plugins alongside code-intelligence tools that can complement them. We chose examples
+that differ in how they are deployed, how they share memory, or how they retrieve
+repository context. The rows describe the linked primary sources and their deployment
+boundaries, rather than a ranked list.
 Loom capabilities below refer to release 1.3.0. Check the edition and package you deploy.
 
 ## Where Loom fits
