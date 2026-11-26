@@ -200,8 +200,9 @@ Two more URL parameters shape a connection:
   register `loom-tracker` at `?toolset=tracker` beside `loom` at `?toolset=coding`, for
   example with `loom install --client cursor --name loom-tracker --toolset tracker`.
 
-`loom install --client vscode` writes the editor profile. For a native Copilot
-configuration, follow the [VS Code setup](vscode.md).
+`loom install --client vscode` writes to the [default Stable editor profile](vscode.md#editor-profile-for-the-local-harness)
+at the standard user data location. For a native Copilot configuration, follow the
+[VS Code setup](vscode.md).
 
 ## Other editors and agents
 

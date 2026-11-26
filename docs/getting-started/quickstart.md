@@ -541,8 +541,10 @@ with the token in it. Then:
    before running the dialog's command, which refuses a name that exists.
 
 `loom install --client <name>` writes the MCP entry for Claude Desktop, Claude Code,
-Codex, Cursor, VS Code, Cline, Windsurf, Zed, Gemini CLI and OpenCode; with no flag it wires every client it
-finds. [Connect a coding agent](connect-a-coding-agent.md) covers Codex and Cursor.
+Codex, Cursor, the VS Code editor profile, Cline, Windsurf, Zed, Gemini CLI and
+OpenCode; with no flag it configures every client it finds. For the Copilot harness,
+use the [native VS Code setup](../features/integrations/vscode.md#any-other-server).
+[Connect a coding agent](connect-a-coding-agent.md) covers Codex and Cursor.
 
 Start a new session and say _"Remember that I never deploy on Friday."_ The agent calls
 `loom_memory_set`. In a fresh session, ask _"When can I deploy?"_ The agent calls

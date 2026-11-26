@@ -159,8 +159,8 @@ Run it from your home directory, or another
 [directory only you can write to](./docs/getting-started/quickstart.md#fast-path-released-image-no-clone).
 The installer starts Loom and ClickHouse, applies migrations and prints the dashboard URL:
 **http://localhost:7777/**; on a new install it then checks that a memory saves and reads
-back. On a terminal it also offers to connect the coding agents it finds (Claude Code, Codex,
-VS Code) and, on a new install, opens the dashboard. The image includes the server,
+back. On a terminal it also offers to connect Claude Code, Codex and the VS Code editor
+profile when it finds them and, on a new install, opens the dashboard. The image includes the server,
 workers, dashboard and Python, TypeScript and Go compiler indexers, plus the C++ one on
 `amd64`; TypeScript dependencies are prepared automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
 

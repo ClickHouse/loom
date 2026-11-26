@@ -107,9 +107,9 @@ the Copilot harness to another Loom server, use its
 [personal MCP configuration](../features/integrations/vscode.md#any-other-server).
 For configurations managed by the editor, in the dashboard,
 open **Settings → Tokens**, fill in the **New token** form (press **New token** first if a
-token exists) and press **Create token**, then choose your client (Cursor, VS Code, Cline,
-Windsurf, Zed, Gemini CLI, OpenCode or Claude Desktop) under **Connect**: the dialog shows the entry for its
-config file, with the token in it. For any other MCP client, copy the entry from
+token exists) and press **Create token**, then choose your client under **Connect**.
+The dialog shows the entry for its config file, with the token in it. The **VS Code**
+option gives you the editor profile entry. For any other MCP client, copy the entry from
 [MCP clients](../features/integrations/mcp-clients.md). With the `loom` CLI installed
 (`pip install -e .` from a clone of the repository), one command writes the entry instead:
 
