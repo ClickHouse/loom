@@ -8,6 +8,7 @@ from typing import Any
 
 from server.code.domain.extract.lang_reference import UNEMBEDDED_BY_DESIGN
 from server.code.store.index.base import CodeRepoBase
+from server.core.repo_base import query_all_sliced
 
 
 class EmbedQueueMixin(CodeRepoBase):
@@ -77,8 +78,10 @@ class EmbedQueueMixin(CodeRepoBase):
         keys = [(str(r["path"]), str(r["chunk_id"])) for r in candidates]
         # `* EXCEPT (embedding)`: a stub's vector is empty by definition and the
         # caller writes the new one; under FINAL the column would still be read
-        # for every row of the candidates' granules.
-        return await self._ch.query_all(
+        # for every row of the candidates' granules. Four pages of keys outgrow one
+        # form field: each slice is read, then the rows are ordered and capped together.
+        rows = await query_all_sliced(
+            self._ch,
             f"""
             SELECT * EXCEPT (embedding) FROM loom.code_chunks FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
@@ -90,7 +93,10 @@ class EmbedQueueMixin(CodeRepoBase):
             LIMIT {{limit:UInt32}}
             """,
             {**params, "keys": keys},
+            "keys",
         )
+        rows.sort(key=lambda r: r["created_at"])
+        return rows[: int(limit)]
 
     # The recovery worker's pending scan, for every configured repo in one
     # statement and keyed above a version watermark. The key

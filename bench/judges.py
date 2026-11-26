@@ -59,7 +59,10 @@ async def achat(
         def build() -> dict[str, Any]:
             return _anthropic._payload(model, system, prompt, max_tokens, 0.0)
 
-        learn, starved = _anthropic._learn_from_refusal, _anthropic._thinking_starved
+        def learn(model_name: str, resp: httpx.Response, sent: dict[str, Any]) -> bool:
+            return _anthropic._refusal(model_name, resp, sent) is not None
+
+        starved = _anthropic._thinking_starved
         hidden, cap_field = _anthropic._thinking_tokens, "max_tokens"
     else:
         key = api_key or os.environ.get("OPENAI_API_KEY", "")
