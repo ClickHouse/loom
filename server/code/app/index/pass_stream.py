@@ -41,6 +41,28 @@ async def _slice_done(repo: Any, org: str, ns: str, slice_key: str) -> int:
     return int(n) if key == slice_key and n.isdigit() else 0
 
 
+_fake_llm_warned = False
+
+
+def _llm_is_fake() -> bool:
+    """True when the description writer would run on the fake client, whose echo
+    must never be stored (and embedded) as a chunk's `llm` description. Logs once
+    per process."""
+    from server.llm.client import llm_is_fake
+
+    global _fake_llm_warned
+    if not llm_is_fake():
+        return False
+    if not _fake_llm_warned:
+        _fake_llm_warned = True
+        logger.warning(
+            "code_ingest: LOOM_CODE_CONTEXT_DESCRIPTION_ENABLED is on but the llm "
+            "provider is fake (configured so, or its API key is not set); chunks "
+            "get structural context instead of llm descriptions"
+        )
+    return True
+
+
 class CommitStream:
     """One entry's pending commits, ingested one `step` at a time: the
     per-entry setup — the embedder, the describe gate, the
@@ -99,7 +121,10 @@ class CommitStream:
         describe = settings.code_context_description_enabled
         llm = None
         if describe:
-            if await namespace_over_cap(cfg.org, cfg.namespace):
+            if _llm_is_fake():
+                describe = False
+                self.result.note = "describe skipped: the llm provider is fake"
+            elif await namespace_over_cap(cfg.org, cfg.namespace):
                 describe = False
                 self.result.note = "describe skipped: namespace over budget cap"
             else:

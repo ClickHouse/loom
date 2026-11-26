@@ -445,8 +445,15 @@ async def _describe(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
     from server.embedding.embedder import get_embedder
-    from server.llm.client import get_llm_client
+    from server.llm.client import get_llm_client, llm_is_fake
 
+    if llm_is_fake():
+        print(
+            "refusing to describe with the fake llm (LOOM_LLM_PROVIDER=fake, or its "
+            "API key is not set): its echo would be stored as chunk descriptions",
+            file=sys.stderr,
+        )
+        return 2
     await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     repo = CodeRepo()
