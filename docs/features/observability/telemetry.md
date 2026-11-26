@@ -1,3 +1,9 @@
+---
+description: Trace Loom requests and workers with OpenTelemetry, configure OTLP exports, and find the corresponding ClickHouse queries by request ID.
+seo:
+  title: OpenTelemetry for self-hosted AI agents
+---
+
 # Telemetry
 
 Loom reports on itself in three layers:
