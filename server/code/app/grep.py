@@ -451,6 +451,33 @@ async def _scan_grep_lines(
     )
 
 
+async def _grep_page_context(
+    input: CodeGrepInput, scan: _GrepLineScan, matches: list[dict[str, Any]]
+) -> tuple[dict[str, Any], ContextSource, int]:
+    context_lines = input.context_lines
+    if (
+        scan.related_pattern
+        and matches
+        and not input.include_body
+        and "context_lines" not in input.model_fields_set
+    ):
+        context_lines = RELATED_GREP_CONTEXT_LINES
+    if not context_lines:
+        return {}, {}, 0
+    prefer_complete = input.prefer_complete_context and not input.include_body
+    source = await asyncio.to_thread(
+        collect_contexts,
+        scan.chunks,
+        scan.matches,
+        context_lines,
+        _LINE_SCAN_MAX_CHARS,
+        match_commits=scan.match_commits,
+        prefer_complete_context=prefer_complete,
+    )
+    page = page_contexts(source, matches, context_lines, prefer_complete_context=prefer_complete)
+    return page, source, context_lines
+
+
 async def _grep_lines(
     repo: CodeRepo,
     org: str,
@@ -485,26 +512,7 @@ async def _grep_lines(
     route, related_pattern, note = scan.route, scan.related_pattern, scan.note
     trace_run_id = new_trace_run_id()
     matches = scan.matches[offset : offset + served_limit]
-    context: dict[str, Any] = {}
-    context_source: ContextSource = {}
-    context_lines = input.context_lines
-    if (
-        related_pattern
-        and matches
-        and not input.include_body
-        and "context_lines" not in input.model_fields_set
-    ):
-        context_lines = RELATED_GREP_CONTEXT_LINES
-    if context_lines:
-        context_source = await asyncio.to_thread(
-            collect_contexts,
-            scan.chunks,
-            scan.matches,
-            context_lines,
-            _LINE_SCAN_MAX_CHARS,
-            match_commits=scan.match_commits,
-        )
-        context = page_contexts(context_source, matches, context_lines)
+    context, context_source, context_lines = await _grep_page_context(input, scan, matches)
     bodies = await definitions_for(input, matches, budget, match_commits=scan.match_commits)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
         repo, org, ns, input, matches, route, budget=budget
@@ -1269,6 +1277,7 @@ def _grep_trace_args(input: CodeGrepInput, *, context_lines: int | None = None) 
         "related_on_prefix",
         "include_dependencies",
         "context_lines",
+        "prefer_complete_context",
         context_lines=context_lines,
         paged=bool(input.cursor) or None,
     )
@@ -1387,7 +1396,12 @@ async def _serve_grep_page(
     files = list(dict.fromkeys(m["path"] for m in page))
     context: dict[str, Any] = {}
     if input.context_lines:
-        context = page_contexts(payload.get("context_source") or {}, page, input.context_lines)
+        context = page_contexts(
+            payload.get("context_source") or {},
+            page,
+            input.context_lines,
+            prefer_complete_context=input.prefer_complete_context and not input.include_body,
+        )
     trace_run_id = new_trace_run_id()
     route = route + "+page"
     bodies = await definitions_for(

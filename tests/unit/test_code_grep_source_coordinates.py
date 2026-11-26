@@ -76,6 +76,48 @@ def test_grep_context_unions_overlapping_windows_on_the_served_page() -> None:
     assert not combined["contexts_partial"]
 
 
+@pytest.mark.parametrize("suffix_revision", ["a" * 40, "b" * 40])
+def test_grep_excerpt_uses_retained_lines_to_complete_a_short_definition(
+    suffix_revision: str,
+) -> None:
+    path, revision = "cli.py", "a" * 40
+    preceding = "# Previous function\nbefore()\n\n"
+    declaration = "def target():\n    first()\n    second()\n    third()\n"
+    suffix = "    return done\n"
+    chunks = [
+        {
+            "path": path,
+            "start_line": 2,
+            "end_line": 8,
+            "content": preceding + declaration,
+            "indexed_commit": revision,
+        },
+        {
+            "path": path,
+            "start_line": 9,
+            "end_line": 9,
+            "content": suffix,
+            "indexed_commit": suffix_revision,
+        },
+    ]
+    match = {"path": path, "line": 5, "scope": "target", "scope_start_line": 5, "scope_end_line": 9}
+    pool = collect_contexts(
+        chunks, [match], 3, 1000, match_commits={(path, 5): revision}, prefer_complete_context=True
+    )
+    ordinary = {"path": path, "start_line": 2, "end_line": 8, "text": preceding + declaration}
+    completed = {
+        "path": path,
+        "start_line": 3,
+        "end_line": 9,
+        "text": "before()\n\n" + declaration + suffix,
+    }
+    assert page_contexts(pool, [match], 3)["contexts"] == [ordinary]
+    assert page_contexts(pool, [match], 3, prefer_complete_context=True) == {
+        "contexts": [completed if suffix_revision == revision else ordinary],
+        "contexts_partial": False,
+    }
+
+
 def test_grep_context_discloses_conflicting_lines_from_duplicate_hits() -> None:
     row = {
         "path": "app.py",

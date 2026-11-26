@@ -31,13 +31,43 @@ def match_revisions(
     return {path: commit for path, commit in revisions.items() if commit}
 
 
-def _wanted_lines(matches: list[dict[str, Any]], radius: int) -> dict[str, set[int]]:
+def _complete_excerpt(hit: dict[str, Any], line: int, window: range) -> range:
+    end = hit.get("scope_end_line")
+    if (
+        not hit.get("scope")
+        or hit.get("scope_start_line") != line
+        or not isinstance(end, int)
+        or not window.stop <= end < line + len(window)
+    ):
+        return window
+    return range(end + 1 - len(window), end + 1)
+
+
+def _retains_window(source: dict[str, str | None], window: range) -> bool:
+    last = window.stop - 1
+    return source.get(str(last)) is not None and all(
+        (source.get(str(line)) or "").endswith("\n") for line in range(window.start, last)
+    )
+
+
+def _wanted_lines(
+    matches: list[dict[str, Any]],
+    radius: int,
+    *,
+    prefer_complete_context: bool,
+    source: ContextSource | None = None,
+) -> dict[str, set[int]]:
     wanted: dict[str, set[int]] = {}
     for hit in matches:
         line = int(hit["line"])
-        wanted.setdefault(str(hit["path"]), set()).update(
-            range(max(1, line - radius), line + radius + 1)
-        )
+        path = str(hit["path"])
+        window = range(max(1, line - radius), line + radius + 1)
+        if prefer_complete_context and (complete := _complete_excerpt(hit, line, window)) != window:
+            if source is None:
+                window = range(window.start, complete.stop)
+            elif _retains_window(source.get(path, {}), complete):
+                window = complete
+        wanted.setdefault(path, set()).update(window)
     return wanted
 
 
@@ -48,9 +78,10 @@ def collect_contexts(
     max_chars: int,
     *,
     match_commits: dict[tuple[str, int], str],
+    prefer_complete_context: bool = False,
 ) -> ContextSource:
     """Keep context at each path's verified match revision, with omissions marked."""
-    wanted = _wanted_lines(matches, radius)
+    wanted = _wanted_lines(matches, radius, prefer_complete_context=prefer_complete_context)
     revisions = match_revisions(matches, match_commits)
     by_path: ContextSource = {
         path: {str(line): None for line in lines}
@@ -87,10 +118,16 @@ def collect_contexts(
 
 
 def page_contexts(
-    source: ContextSource, matches: list[dict[str, Any]], radius: int
+    source: ContextSource,
+    matches: list[dict[str, Any]],
+    radius: int,
+    *,
+    prefer_complete_context: bool = False,
 ) -> dict[str, Any]:
     """Render only this page's windows from retained lines that agree."""
-    wanted = _wanted_lines(matches, radius)
+    wanted = _wanted_lines(
+        matches, radius, prefer_complete_context=prefer_complete_context, source=source
+    )
     partial = False
     contexts = []
     for path, lines in wanted.items():

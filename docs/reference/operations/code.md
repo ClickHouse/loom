@@ -771,6 +771,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `include_dependencies` | `bool` | `False` | Include verified argument definitions, helpers, or forwarding call targets. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
+| `prefer_complete_context` | `bool` | `False` | Use the same excerpt width to complete a short declaration. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
 | `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |

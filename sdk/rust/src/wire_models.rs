@@ -10366,6 +10366,12 @@ pub struct CodeGrepInput {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present_value"
     )]
+    pub prefer_complete_context: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
     pub path_prefix: Option<String>,
     #[serde(
         default,
@@ -10458,6 +10464,7 @@ impl CodeGrepInput {
             include_dependencies: None,
             case_sensitive: None,
             context_lines: None,
+            prefer_complete_context: None,
             path_prefix: None,
             cursor: None,
             exclude_unit_ids: None,
@@ -10530,6 +10537,10 @@ impl CodeGrepInput {
     }
     pub fn context_lines(mut self, context_lines: impl Into<Integer>) -> Self {
         self.context_lines = Some(context_lines.into());
+        self
+    }
+    pub fn prefer_complete_context(mut self, prefer_complete_context: bool) -> Self {
+        self.prefer_complete_context = Some(prefer_complete_context);
         self
     }
     pub fn path_prefix(mut self, path_prefix: impl Into<String>) -> Self {
