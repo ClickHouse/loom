@@ -355,17 +355,23 @@ def _grep_continuation(
     followups: frozenset[str],
 ) -> None:
     """Give excerpt callers the source spans covering their matches."""
-    contexts = out.get("contexts") or []
     if (
         arguments.get("include_body") is not False
         or "loom_code_read" not in followups
         or out.get("definitions")
     ):
         return
+    evidence = [out]
+    related = out.get("related")
+    if isinstance(related, dict) and not related.get("definitions"):
+        evidence.append(related)
+    contexts = [window for item in evidence for window in item.get("contexts") or []]
     selections: dict[tuple[str, int, int], _GrepFollowup] = {}
-    hits = [hit for hit in out.get("matches") or [] if isinstance(hit, dict)]
-    # Keep declaration matches ahead of body hits when the read batch fills.
-    hits.sort(key=lambda hit: hit.get("line") != hit.get("scope_start_line"))
+    hits: list[dict[str, Any]] = []
+    # Exact hits come first, with declaration matches first within each group.
+    for item in evidence:
+        matches = [hit for hit in item.get("matches") or [] if isinstance(hit, dict)]
+        hits.extend(sorted(matches, key=lambda hit: hit.get("line") != hit.get("scope_start_line")))
     for hit in hits:
         path, line, start, end = (
             hit.get(key) for key in ("path", "line", "scope_start_line", "scope_end_line")
