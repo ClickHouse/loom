@@ -72,6 +72,7 @@ async def usage_examples(
     context_lines: int = 0,
     tests_only: bool = False,
     ready: list[dict[str, Any]] | None = None,
+    related_names: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Call sites of the symbol, optionally restricted to indexed tests."""
     with_context = bool(context_lines and settings.embedding_model)
@@ -101,7 +102,7 @@ async def usage_examples(
         by_location.setdefault((str(edge["path"]), int(edge["line"])), edge)
     sites = list(by_location.values())
     limit = max(1, limit)
-    ranked = _rank_test_sites(sites) if tests_only else sites
+    ranked = _rank_test_sites(sites, related_names=related_names) if tests_only else sites
 
     def location(edge: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -161,23 +162,43 @@ def _test_name_words(name: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", snake(name))) - {"test", "tests"}
 
 
-def _rank_test_sites(sites: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _test_case(site: dict[str, Any]) -> tuple[str, str]:
+    """Group a Python test's local route handlers under their enclosing test."""
+    caller = site["from_qualified_name"]
+    path = site["path"]
+    if path.endswith(".py"):
+        segments = caller.split("::")
+        for i, name in enumerate(segments[1:], start=1):
+            if name.startswith("test_"):
+                return path, "::".join(segments[: i + 1])
+    return path, caller
+
+
+def _rank_test_sites(
+    sites: list[dict[str, Any]],
+    *,
+    related_names: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
     """Put related test functions first, with one source window per test before repeats."""
     counts: dict[tuple[str, str], int] = defaultdict(int)
+    related_words = {word for name in related_names for word in _test_name_words(name)}
     for site in sites:
-        counts[site["path"], site["from_qualified_name"]] += 1
+        counts[_test_case(site)] += 1
 
-    def key(site: dict[str, Any]) -> tuple[bool, int, int]:
-        caller = site["from_qualified_name"]
+    def key(site: dict[str, Any]) -> tuple[bool, bool, int, int]:
+        path, caller = _test_case(site)
         name = caller.rsplit("::", 1)[-1]
         _, *target = str(site.get("to_qualified_name") or "").split("::")
-        related = _test_name_words(name) & _test_name_words("_".join(target[-2:]))
-        return not snake(name).startswith("test_"), -len(related), -counts[site["path"], caller]
+        target_words = _test_name_words("_".join(target[-2:]))
+        words = _test_name_words(name)
+        related = words & target_words
+        shared = bool(related and ((related_words - target_words) & words))
+        return not snake(name).startswith("test_"), not shared, -len(related), -counts[path, caller]
 
     picked: dict[tuple[str, str], dict[str, Any]] = {}
     repeats = []
     for site in sorted(sites, key=key):
-        caller = site["path"], site["from_qualified_name"]
+        caller = _test_case(site)
         if caller in picked:
             repeats.append(site)
         else:

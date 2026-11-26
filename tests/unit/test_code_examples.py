@@ -165,6 +165,28 @@ def test_indexed_test_examples_prefer_named_tests_and_distinct_callers() -> None
     assert [site["line"] for site in examples] == [25, 10, 40]
 
 
+def test_edit_examples_prefer_a_test_covering_the_related_target() -> None:
+    path = "test_routes.py"
+    edges = [
+        _edge(path, 5, "test_routes::test_url_for_with_scheme"),
+        _edge(path, 10, "test_routes::test_blueprint_url_processors::index"),
+        _edge(path, 14, "test_routes::test_blueprint_url_processors::about"),
+        _edge(path, 30, "test_routes::test_url_for_with_anchor"),
+    ]
+    for edge in edges:
+        edge["to_qualified_name"] = "web.helpers::url_for"
+    repo = _Repo(seeds=[], edges=edges, tests_only=True)
+
+    examples = asyncio.run(
+        usage_examples(
+            repo, "org", "code", ["s"], tests_only=True, related_names=("Blueprint.register",)
+        )  # type: ignore[arg-type]
+    )
+
+    assert [site["line"] for site in examples] == [10, 5, 30]
+    assert examples[0]["caller"] == "test_routes::test_blueprint_url_processors::index"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stale_setup", [False, True])
 async def test_test_examples_keep_current_fallbacks_when_top_callers_are_stale(

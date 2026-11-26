@@ -45,6 +45,7 @@ from server.code.app.symbol.neighbours import (
 from server.code.app.symbol.outline import _container_skeleton, _is_large_container
 from server.code.app.symbol.resolve import (
     _indexed_commit,
+    _parse_file_symbol,
     _parse_location,
     _resolve_symbols,
     _seed_ids_of,
@@ -169,6 +170,7 @@ class _SymbolLegs:
         *,
         for_edit: bool,
         matched_members: bool,
+        related_test_names: tuple[str, ...],
     ) -> None:
         head = rows if matched_members else rows[:10]
         self.hashes = asyncio.ensure_future(_chunk_hashes(repo, org, ns, head))
@@ -204,6 +206,7 @@ class _SymbolLegs:
                 head,
                 for_edit=for_edit,
                 matched_members=matched_members,
+                related_test_names=related_test_names,
             )
         )
         self.documented_in = asyncio.ensure_future(
@@ -359,6 +362,7 @@ async def _enrichment(
     *,
     for_edit: bool = False,
     matched_members: bool = False,
+    related_test_names: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Enrichment of the first definition (recent PRs, usage examples, lessons), the
     three reads gathered, each bounded and degradable; {} when not asked. Keyed on the
@@ -416,6 +420,7 @@ async def _enrichment(
             context_lines=input.example_context_lines,
             tests_only=input.test_examples_only,
             ready=ready_examples,
+            related_names=related_test_names,
         )
         if not (input.test_examples_only and _uses_brief.single_declaration(head)):
             return await callers
@@ -586,6 +591,7 @@ async def _edit_context_for_target(
         matched_rows=target.rows,
         matched_members=target.grouped,
         match_witnesses=target.matches,
+        related_test_names=_other_edit_names(input.names, target.name),
     )
     if target.revision is not None:
         if not out.definitions:
@@ -605,6 +611,14 @@ async def _edit_context_for_target(
                 )
             ]
     return out
+
+
+def _other_edit_names(names: list[str], target: str) -> tuple[str, ...]:
+    return tuple(
+        local[1] if (local := _parse_file_symbol(name)) else name
+        for name in names
+        if name != target and not _parse_location(name)
+    )
 
 
 async def _batched_edit_context(
@@ -771,6 +785,7 @@ async def handle_code_symbol(
     matched_rows: list[dict[str, Any]] | None = None,
     matched_members: bool = False,
     match_witnesses: list[dict[str, Any]] | None = None,
+    related_test_names: tuple[str, ...] = (),
 ) -> CodeSymbolOutput:
     from server.code.app import fan_in as code_fan_in
 
@@ -809,6 +824,7 @@ async def handle_code_symbol(
         rows,
         for_edit=op_name == "code.edit_context",
         matched_members=matched_members,
+        related_test_names=related_test_names,
     )
     try:
         with code_span("symbol.bodies", results=len(head)):
