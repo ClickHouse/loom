@@ -228,6 +228,21 @@ def test_module_literal_receiver_declines_unrelated_calls_and_callee_returns(rec
     assert not any(line == 7 and confidence == 0.9 for line, _, confidence in calls)
 
 
+def test_module_optional_receiver_declaration_preserves_type():
+    files = {
+        "svc/__init__.py": b"",
+        "svc/client.py": b"class Client:\n    def send(self): pass\n",
+        "svc/alternate.py": b"class Alternate:\n    def send(self): pass\n",
+        "svc/service.py": (
+            b"from .client import Client\ntarget: Client | None = None\n"
+            b"def submit():\n    if target is None:\n        raise RuntimeError()\n"
+            b"    target.send()\n"
+        ),
+    }
+    calls, _ = _edges(files, "svc/service.py")
+    assert (6, "svc.client::Client::send", 0.9) in calls
+
+
 @pytest.mark.parametrize("condition", ["False", "TYPE_CHECKING"])
 def test_module_receiver_ignores_nonexecuting_replacement(condition):
     from server.code.domain.extract.py_receivers import PyReceiverTyper

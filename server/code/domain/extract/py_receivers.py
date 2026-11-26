@@ -311,6 +311,8 @@ def _module_invalidations(
         if statement.type == "expression_statement" and statement.named_child_count == 1:
             statement = statement.named_children[0]
         if statement.type == "assignment":
+            if type_name_of(statement.child_by_field_name("type"), source):
+                continue  # a declared receiver type is positive evidence
             names = _literal_write_names(statement, source)
         elif statement.type == "delete_statement":
             names = _bound_identifiers(statement, source)
