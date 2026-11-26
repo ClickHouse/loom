@@ -42,6 +42,7 @@ from server.code.app.index.bootstrap import (
     restrict_if_restricted,
 )
 from server.code.app.index.mirror_locks import fetch_lock_path, partial_mirror, try_lock
+from server.code.app.index.producer_inference import PRODUCERS
 from server.code.domain.index import repos
 from server.code.store import index as code_store
 from server.core import readiness
@@ -436,8 +437,14 @@ async def _named_paths() -> tuple[set[str], set[str]] | None:
         logger.info("mirror sweep skipped: registry unreadable (%s)", e)
         return None
     mirrors = {c.git_dir for c in cfgs} | {repo_registry.git_dir_for(str(r["repo"])) for r in rows}
-    checkouts = {repos.checkout_for(c, p) for c in cfgs for p in ("", *c.scip_extra_producers)}
-    checkouts |= {repo_registry.checkout_dir_for(str(r["namespace"])) for r in rows}
+    # An entry naming no producer runs whichever tiers its tree calls for, so every
+    # tier's tree is named; `checkout_for(c, "")` is no tier's tree.
+    checkouts = {
+        repos.checkout_for(c, p) for c in cfgs for p in (*PRODUCERS, *c.scip_extra_producers)
+    }
+    for r in rows:
+        base = repo_registry.checkout_dir_for(str(r["namespace"]))
+        checkouts |= {base, *(repos.sibling_checkout(base, p) for p in PRODUCERS)}
     return mirrors, checkouts
 
 

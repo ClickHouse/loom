@@ -233,6 +233,11 @@ def checkout_for(cfg: RepoConfig, producer: str) -> str:
     base = cfg.scip_checkout_dir or settings.code_scip_checkout_dir
     if producer == (cfg.scip_producer or "clang"):
         return base
+    return sibling_checkout(base, producer)
+
+
+def sibling_checkout(base: str, producer: str) -> str:
+    """The tree a tier other than the entry's primary one indexes, beside `base`."""
     return f"{base.rstrip('/')}.{producer}"
 
 
