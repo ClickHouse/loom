@@ -305,6 +305,8 @@ setting names the same model.
   busy capture queue backs up; a GPU, or a larger model on a machine with the memory for
   it, helps. For a team server, a hosted model answers better.
 
+For a complete walkthrough of connecting Ollama to Loom and a coding agent, see [Connect Loom to a local model and a coding agent](../guides/local-model-coding-agent.md).
+
 ### Through an inference gateway
 
 A gateway that speaks the OpenAI or Anthropic API in front of the providers
