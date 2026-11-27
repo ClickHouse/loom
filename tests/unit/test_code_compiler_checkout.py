@@ -579,6 +579,34 @@ def test_an_operators_keep_stays_through_a_mirror_rotation(
     assert (pack_dir / f"{stem}.pack").exists()
 
 
+def test_a_shared_pack_gets_its_removed_keep_back_and_an_operators_keep_stays(
+    tmp_path: Path,
+) -> None:
+    """A shared checkout whose `.keep` went missing, reopened with sharing on, has the
+    marker written again, so the checkout gc does not repack the shared files; a `.keep`
+    an operator wrote is left as it is."""
+    from server.code.app.index.compiler_tier import SHARED_PACK_KEEP
+
+    bare = _packed_bare(tmp_path)
+    cfg = repo_config(git_dir=str(bare), scip_checkout_dir=str(tmp_path / "co"))
+    assert _tier_pass(cfg) is None
+    pack_dir = tmp_path / "co.python" / ".git" / "objects" / "pack"
+    (stem,) = {p.stem for p in pack_dir.glob("pack-*.pack")}
+    keep = pack_dir / f"{stem}.keep"
+    assert keep.read_text() == SHARED_PACK_KEEP
+    keep.unlink()
+
+    assert _tier_pass(cfg) is None
+
+    assert keep.read_text() == SHARED_PACK_KEEP
+    assert (pack_dir / f"{stem}.pack").stat().st_nlink > 1
+    keep.write_text("pinned by the operator\n")
+
+    assert _tier_pass(cfg) is None
+
+    assert keep.read_text() == "pinned by the operator\n"
+
+
 @pytest.mark.parametrize("mirror", ["repacked", "cloned-again"])
 def test_a_changed_mirror_is_shared_again_and_the_checkout_keeps_its_objects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mirror: str

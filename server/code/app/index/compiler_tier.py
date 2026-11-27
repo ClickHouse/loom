@@ -327,13 +327,15 @@ def _link_pack(mirror_dir: Path, pack_dir: Path, stem: str) -> bool:
         for src in (mirror_dir / f"{stem}{ext}" for ext in _LINKED)
         if src.suffix != ".rev" or src.exists()
     ]
+    keep = pack_dir / f"{stem}.keep"
     if all(dst.exists() and os.path.samefile(src, dst) for src, dst in files):
+        if not keep.exists():  # a marker that went missing comes back
+            keep.write_text(SHARED_PACK_KEEP)
         return False
     tmps = [pack_dir / f".loom-link-{dst.name}" for _src, dst in files]
     try:
         for (src, _dst), tmp in zip(files, tmps, strict=True):
             os.link(src, tmp)
-        keep = pack_dir / f"{stem}.keep"
         if not keep.exists():  # an operator's own `.keep` stays theirs
             keep.write_text(SHARED_PACK_KEEP)
     except OSError:
