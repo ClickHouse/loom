@@ -10,7 +10,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from server.cli import code_maintenance
-
 from server.code.app.index import describe, round_models
 
 
