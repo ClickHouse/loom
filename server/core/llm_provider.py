@@ -124,9 +124,14 @@ def vertex_route(model: str, project: str, location: str) -> tuple[str, str]:
         raise ValueError(
             "LOOM_VERTEX_LOCATION must be global, a multi-region (eu, us), or a Google Cloud region"
         )
-    prefix = "" if location == "global" else f"{location}-"
+    if location == "global":
+        host = "aiplatform.googleapis.com"
+    elif location in ("eu", "us"):
+        host = f"aiplatform.{location}.rep.googleapis.com"
+    else:
+        host = f"{location}-aiplatform.googleapis.com"
     url = (
-        f"https://{prefix}aiplatform.googleapis.com/v1/projects/{project}/locations/{location}"
+        f"https://{host}/v1/projects/{project}/locations/{location}"
         f"/publishers/google/models/{model_id}:generateContent"
     )
     return f"vertex:{model_id}", url

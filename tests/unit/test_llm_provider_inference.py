@@ -318,8 +318,8 @@ def test_vertex_rejects_malformed_routes_at_settings_load(
     ("location", "expected_host"),
     [
         ("global", "aiplatform.googleapis.com"),
-        ("eu", "eu-aiplatform.googleapis.com"),
-        ("us", "us-aiplatform.googleapis.com"),
+        ("eu", "aiplatform.eu.rep.googleapis.com"),
+        ("us", "aiplatform.us.rep.googleapis.com"),
         ("europe-west1", "europe-west1-aiplatform.googleapis.com"),
     ],
 )
