@@ -442,19 +442,22 @@ by `gpt-5` (reasoning effort `medium`) twice: from the whole chat history in the
 and from `memory.search`'s top 200 hits over the ingested memory. Both are graded by the
 official judge.
 
-| Reader input            | Accuracy | Reader prompt tokens per question |
-| ----------------------- | -------: | --------------------------------: |
-| Whole history           |      90% |                           103,879 |
-| Loom's top 200 memories |  **94%** |                         **9,443** |
+| Reader input            | Accuracy | Prompt tokens per question |
+| ----------------------- | -------: | -------------------------: |
+| Whole history           |      90% |                    103,879 |
+| Loom's top 200 memories |  **94%** |                  **9,443** |
+
+The whole-history count includes reader prompts only. The retrieval count includes
+reader and judge prompts. The reported retrieval count is 91% lower even with judging
+included. Neither count includes memory construction. Building the memory costs about
+1.5 million extraction tokens per history, once, on `gpt-6-luna`. The difference of about
+94,000 prompt tokens per question offsets extraction after about 16 questions over the
+same history. The estimate does not price model calls.
 
 Paired, 87 questions are right both ways, 7 only with memory, 3 only with the whole history.
 The four-point accuracy difference is descriptive: only 10 outcomes disagree, and a
 two-sided exact McNemar test gives p=0.34. This sample does not establish that retrieval is
-more accurate than full history. Memory reads 91% fewer reader prompt tokens per question.
-Those prompt-token totals exclude memory construction. Building the memory costs about
-1.5 M extraction tokens per haystack, once, on `gpt-6-luna`. Against about 94 k
-tokens saved per question, that is repaid after about 16 questions over the same history,
-before the price gap between the extraction model and the reader is counted.
+more accurate than full history.
 
 **Coding agents on ClickHouse, with and without Loom.** Claude Code (`claude-sonnet-5`) answers
 each question twice in a stock session (no user or project settings): with Bash, Read, Grep and
