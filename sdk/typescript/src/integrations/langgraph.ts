@@ -421,6 +421,7 @@ export class LoomStore extends BaseStore {
           top_k: Math.min(2 * want, this.topKCap),
           include_tags: false,
           scope: "private",
+          namespace_scope: "this", // Match the namespace used by memory.bulk_get.
         },
         scope,
       );

@@ -319,7 +319,39 @@ describe("LoomStore search", () => {
     ]);
   });
 
-  it("sends the prefix tag, top_k, private scope and the bound agent", async () => {
+  it("keeps ranked hits in the bound namespace when the server defaults to all_mine", async () => {
+    const key = "lg/users/alice/prefs";
+    const rows = [
+      { namespace: "support", agent: "bot", value: { seat: "aisle" }, similarity: 0.6 },
+      { namespace: "travel", agent: "bot", value: { seat: "window" }, similarity: 0.9 },
+    ];
+    const { agent, calls } = harness({
+      reply(op, body) {
+        if (op === "memory.search") {
+          const scope = body.namespace_scope ?? "all_mine";
+          const matches = rows.filter(
+            (row) =>
+              row.agent === body.agent &&
+              (scope === "all_mine" || row.namespace === body.namespace) &&
+              row.value.seat === body.query,
+          );
+          return { results: matches.map(({ similarity }) => ({ memory_key: key, similarity })) };
+        }
+        expect(op).toBe("memory.bulk_get");
+        expect(body.memory_keys).toEqual([key]);
+        const row = rows.find((row) => row.namespace === body.namespace && row.agent === body.agent);
+        return { results: row ? { [key]: { found: true, value: row.value } } : {} };
+      },
+    });
+    const store = new LoomStore(agent);
+    expect(await store.search(["users", "alice"], { query: "window" })).toEqual([]);
+    expect(calls.map((call) => call.op)).toEqual(["memory.search"]);
+    expect(await store.search(["users", "alice"], { query: "aisle" })).toMatchObject([
+      { key: "prefs", value: { seat: "aisle" }, score: 0.6 },
+    ]);
+  });
+
+  it("sends the prefix tag, top_k, private scope and the bound identity", async () => {
     const { store, calls } = rankedStore();
     await store.search(["users", "alice"], { query: "seat", limit: 3, offset: 1 });
     expect(calls[0].body).toMatchObject({
@@ -331,6 +363,7 @@ describe("LoomStore search", () => {
       top_k: 8,
       include_tags: false,
       scope: "private",
+      namespace_scope: "this",
     });
     calls.length = 0;
     await store.search([], { query: "seat" });
