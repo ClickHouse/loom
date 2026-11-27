@@ -10,7 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import cache
 from time import time_ns
-from typing import Any
+from typing import Any, cast
 
 from server.code.app import memory_links as code
 from server.code.domain.anchor import (
@@ -117,31 +117,23 @@ async def _recheck_repository(
     await rehash.refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
     if head and head != checked:
-        cut = await _progress(org, cns).read()
-        cut_at = cut.get("head", "")
-        # links written after this are not in the pass's reads; a pass the deadline cut keeps
-        # the start of its first run
-        since = min(time_ns(), int(cut.get("since") or time_ns()))
+        cut_at = (await link_pass.recheck_cursor(org, cns).read()).get("head", "")
         if cut_at and cut_at != head and not await files.has(cut_at):
             # gone with a rewrite: what that pass already wrote is in no diff, so every
             # link is rechecked, as after a force-push
-            await _progress(org, cns).clear()
+            await link_pass.recheck_cursor(org, cns).clear()
             await code.set_checked_head(org, cns, "")  # a cut full recheck resumes as one
             checked = ""
         elif cut_at and cut_at != head:
             # a pass the deadline cut at another head finishes there first, so every
             # head is followed in turn and no move it made is left behind
-            await _follow(org, cns, checked, cut_at, files, result, since)
-            await code.set_checked_head(org, cns, cut_at, since)
+            await _follow(org, cns, checked, cut_at, files, result)
+            await code.set_checked_head(org, cns, cut_at)
             checked = cut_at
-        await _follow(org, cns, checked, head, files, result, since)
-        await code.set_checked_head(org, cns, head, since)
+        await _follow(org, cns, checked, head, files, result)
+        await code.set_checked_head(org, cns, head)
+        await link_pass.recheck_cursor(org, cns).clear()  # after the checkpoint: see code_links
     await policy.apply_policies(org, cns, head, files, budget, result)
-
-
-def _progress(org: str, cns: str) -> link_pass.Cursor[dict[str, str]]:
-    """The cursor a repository's recheck records its head and last path done in."""
-    return link_pass.Cursor(f"recheck/{org}/{cns}", {})
 
 
 # paths rechecked between two writes: a pass the deadline cuts keeps what it did
@@ -172,13 +164,15 @@ async def _follow(
     head: str,
     files: link_pass.RepoReads,
     result: link_pass.PassResult,
-    since: int,
 ) -> None:
     """Recheck, path by path, the links `checked..head` may have changed (all of them
     without a range), writing every `_PATHS_PER_WRITE` paths and recording the last one
     done, so a cut pass resumes."""
-    progress = _progress(org, cns)
+    progress = link_pass.recheck_cursor(org, cns)
     done = await progress.read()
+    after = str(done.get("after", "")) if done.get("head") == head else ""
+    # in flight before any link is read: a writer that inserts later sees this cursor
+    await progress.write({"head": head, "after": after})
     changed = await files.range(checked, head) if checked else None
     kept = changed.paths if changed is not None else None
     # old and new paths: a cut pass may have moved links to a new path already
@@ -194,12 +188,14 @@ async def _follow(
         made = [c for c in await code.commits_after(org, cns, checked, head) if c != head]
         if made:
             rows += await store.for_commits(org, [cns], made)
-    unique = {(a["path"], a["qualified_name"], a["memory_id"]): a for a in rows}
+    # a pending link waits for `_reanchor`, not for a range recheck
+    unique = {
+        (a["path"], a["qualified_name"], a["memory_id"]): a for a in rows if a["state"] != "pending"
+    }
     by_path: dict[str, list[LinkRow]] = defaultdict(list)
     for a in unique.values():
         if a["path"]:
             by_path[a["path"]].append(a)
-    after = str(done.get("after", "")) if done.get("head") == head else ""
     paths = [p for p in sorted(by_path) if p > after]
     unparsed, failed = await _unparsed(org, cns), set[str]()
     for i in range(0, len(paths), _PATHS_PER_WRITE):
@@ -212,8 +208,7 @@ async def _follow(
         result.rechecked += len(moves)
         if len(unparsed) > known:  # owed before the cursor moves past them
             await _set_unparsed(org, cns, unparsed)
-        await progress.write({"head": head, "after": part[-1], "since": str(since)})
-    await progress.clear()
+        await progress.write({"head": head, "after": part[-1]})
     if failed:
         result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")
 
@@ -261,7 +256,8 @@ async def _retry_unparsed(
         return
     by_commit: dict[str, list[LinkRow]] = defaultdict(list)
     for a in await store.for_paths(org, [cns], sorted(paths)):
-        by_commit[a["checked_commit"]].append(a)
+        if a["state"] != "pending":
+            by_commit[a["checked_commit"]].append(a)
     still, failed = set[str](), set[str]()
     for commit, rows in by_commit.items():
         changed = await files.range(commit, head) if commit else None
@@ -590,11 +586,46 @@ async def _recheck_pending(
         before=before,
         limit=int(settings.memory_code_links_batch),
     )
-    moves = await _resolve_pending(org, cns, head, files, result, rows)
+    moves = await _reanchor(org, cns, head, files, [r for r in rows if r["path"]])
+    moves += await _resolve_pending(
+        org, cns, head, files, result, [r for r in rows if not r["path"]]
+    )
     await _write_moves(await _current_moves(org, moves), head)
     result.rechecked += len(moves)
     if nxt != after:
         await cursor.write({"before": before, "after": list(nxt)} if nxt else {})
+
+
+async def _reanchor(
+    org: str, cns: str, head: str, files: link_pass.RepoReads, rows: list[PendingLink]
+) -> list[Move]:
+    """The links a writer parked as pending because a recheck pass may not have seen them
+    (they keep their path). Each is rechecked at `head` from the commit it was built at,
+    as the fresh link it was, and written whatever the result: unchanged is fresh at the
+    head, a deleted path is `missing`. A path that does not parse stays pending."""
+    if not head or not rows:
+        return []
+    by_commit: dict[str, list[LinkRow]] = defaultdict(list)
+    for r in rows:
+        by_commit[r["checked_commit"]].append(cast(LinkRow, {**r, "state": "fresh"}))
+    moves: list[Move] = []
+    for commit, group in by_commit.items():
+        by_path: dict[str, list[LinkRow]] = defaultdict(list)
+        for a in group:
+            by_path[a["path"]].append(a)
+        changed = await files.range(commit, head) if commit else None
+        unparsed = set[str]()
+        found = await _recheck_paths(
+            org, cns, by_path, sorted(by_path), changed, head, files, unparsed, set()
+        )
+        moved = {id(m.row) for m in found}
+        moves += found
+        moves += [
+            Move(a, link_pass.link_of(a))
+            for a in group
+            if id(a) not in moved and a["path"] not in unparsed
+        ]
+    return moves
 
 
 def _pending_definitions(

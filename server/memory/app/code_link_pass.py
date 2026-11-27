@@ -301,3 +301,9 @@ class Cursor[T]:
 
 def unparsed_cursor(org: str, namespace: str) -> Cursor[list[str]]:
     return Cursor(f"unparsed/{org}/{namespace}", [])
+
+
+def recheck_cursor(org: str, namespace: str) -> Cursor[dict[str, str]]:
+    """The head a repository's recheck is following and its last path done: set from the
+    pass's start until after its checkpoint, so a link writer can see a pass in flight."""
+    return Cursor(f"recheck/{org}/{namespace}", {})

@@ -141,10 +141,33 @@ async def _link_org(
         result.linked += len(rows_out)
         result.unlinked += len(gone)
         linked += [r["mid"] for r in memories]
-    await store.insert(out)
+    await _insert_unseen(out)
     if linked and rereads:
         read = {r["mid"]: r["inputs"] for memories in todo.values() for r in memories}
         await _relink_rewritten(org, linked, read, result, rereads - 1)
+
+
+async def _insert_unseen(inserted: list[LinkRow]) -> None:
+    """Insert `inserted`, then park as `pending` the links a recheck pass may not have seen.
+
+    A pass writes its `recheck` cursor before it snapshots its links and clears it only
+    after it moves the checked head. A link inserted before the snapshot is in the pass;
+    one inserted after it was inserted after the cursor, so this read, which follows the
+    insert, sees the cursor, or sees the head the pass checked, which differs from the
+    head the link was built at. Either way `_recheck_pending` rechecks it at the head. An
+    empty checked head means no pass has finished: the next one snapshots after this."""
+    await store.insert(inserted)
+    by_repo: dict[tuple[str, str], list[LinkRow]] = defaultdict(list)
+    for r in inserted:
+        if r["path"] and r["state"] != "pending" and r["tombstoned_at"] is None:
+            by_repo[r["org"], r["code_namespace"]].append(r)
+    late: list[LinkRow] = []
+    for (org, cns), rows in by_repo.items():
+        running = bool(await link_pass.recheck_cursor(org, cns).read())
+        checked = await code.checked_head(org, cns)
+        late += [r for r in rows if running or checked not in ("", r["checked_commit"])]
+    if late:
+        await store.insert([store.link_row(r, follows=r["version"], state="pending") for r in late])
 
 
 async def _relink_rewritten(

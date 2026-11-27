@@ -443,26 +443,13 @@ async def refresh_repos() -> None:
 _MARK = "memory_links_checked"
 
 
-async def _checked_mark(org: str, namespace: str) -> tuple[str, int]:
-    head, _, since = (await CodeRepo().get_state(org, namespace, _MARK)).partition("@")
-    return head, int(since) if since.isdigit() else 0
-
-
 async def checked_head(org: str, namespace: str) -> str:
     """The head the namespace's memory links were last checked at."""
-    return (await _checked_mark(org, namespace))[0]
+    return await CodeRepo().get_state(org, namespace, _MARK)
 
 
-async def checked_since(org: str, namespace: str) -> int:
-    """When (`time.time_ns`) the pass that checked `checked_head` began reading its links;
-    0 when the mark does not say. A link row written before it was seen by that pass."""
-    return (await _checked_mark(org, namespace))[1]
-
-
-async def set_checked_head(org: str, namespace: str, head: str, since: int = 0) -> None:
-    """Record `head` as checked by a pass that began reading links at `since`, in one value
-    so a reader never pairs a head with another pass's start."""
-    await CodeRepo().set_state(org, namespace, _MARK, f"{head}@{since}" if since else head)
+async def set_checked_head(org: str, namespace: str, head: str) -> None:
+    await CodeRepo().set_state(org, namespace, _MARK, head)
 
 
 _CURSOR_NS = "memory_code_links"
