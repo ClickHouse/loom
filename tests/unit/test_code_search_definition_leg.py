@@ -1,7 +1,7 @@
 """code.search definition leg: the names a query spells out as code are read from the
 symbol table, and the chunks that define the first few join the fusion as one more
-reciprocal-rank list. A plain word is never looked up, an ambiguous name is dropped,
-and confidence is calibrated without the leg."""
+reciprocal-rank list. A plain word is never looked up, an owner is kept as written,
+an ambiguous name is dropped, and confidence is calibrated without the leg."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from server.code.app.search.definitions import (
     named_definitions,
 )
 from server.code.app.search.fusion import _extra_via_labels, _rrf_fuse
-from server.code.domain.idents import SpelledName, spelled_names
+from server.code.domain.idents import spelled_names
 from server.code.domain.search_scope import build_scope
 from server.code.store.index import CodeRepo
 from server.settings import settings
@@ -29,30 +29,48 @@ from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl, view
 pytestmark = pytest.mark.usefixtures("scalar_code_repo")
 
 
-def _names(query: str, limit: int = 32) -> list[tuple[str, bool]]:
-    return [(".".join(n.parts), n.member_alone) for n in spelled_names(query, limit)]
+def _names(query: str, limit: int = 32) -> list[str]:
+    return [".".join(name) for name in spelled_names(query, limit)]
 
 
 # ---- the names a query spells out ---------------------------------------------------
 
 
 def test_a_called_backticked_qualified_or_code_shaped_name_is_spelled_out() -> None:
-    assert _names("timesince() is off by one month") == [("timesince", True)]
-    assert _names("how does `Field` validate") == [("Field", True)]
-    assert _names("why is bulk_update slow") == [("bulk_update", True)]
-    assert _names("who calls executeStep") == [("executeStep", True)]
-    assert _names("SQLCompiler and S3Queue and _resolve") == [
-        ("SQLCompiler", True),
-        ("S3Queue", True),
-        ("_resolve", True),
+    assert _names("timesince() is off by one month") == ["timesince"]
+    assert _names("how does `Field` validate") == ["Field"]
+    assert _names("why is bulk_update slow") == ["bulk_update"]
+    assert _names("who calls executeStep") == ["executeStep"]
+    assert _names("SQLCompiler and S3Queue and _resolve") == ["SQLCompiler", "S3Queue", "_resolve"]
+    assert _names("PipelineExecutor::executeStep hangs") == ["PipelineExecutor.executeStep"]
+    # a qualified spelling counts whatever its member looks like
+    assert _names("Query.combine drops an alias") == ["Query.combine"]
+    assert _names("see pkg.db.models") == ["pkg.db.models"]
+    # a call chained on an expression names the method by itself
+    assert _names("qs.filter(a=1).values_list('x')") == ["qs.filter", "values_list"]
+
+
+def test_a_receiver_is_no_owner_and_any_other_owner_stays_as_written() -> None:
+    assert _names("self.check_filterable(value) raises") == ["check_filterable"]
+    assert _names("cls.from_db() then this.fooBar() then super.save_base()") == [
+        "from_db",
+        "fooBar",
+        "save_base",
     ]
-    assert _names("PipelineExecutor::executeStep hangs") == [("PipelineExecutor.executeStep", True)]
-    # a qualified spelling whose member is a plain word names a definition only as written
-    assert _names("Query.combine drops an alias") == [("Query.combine", False)]
-    assert _names("see pkg.db.models") == [("pkg.db.models", False)]
-    # a call on an object or on an expression still names the method
-    assert _names("self.check_filterable(value) raises") == [("self.check_filterable", True)]
-    assert _names("qs.filter(a=1).values_list('x')") == [("qs.filter", True), ("values_list", True)]
+    assert _names("`self.save`, Self::build()") == ["save", "build"]
+    # the member behind a receiver is a name only as a bare word would be
+    assert _names("self.cache is stale and self.query.add_q() fails") == ["query.add_q"]
+    # and a receiver is no name by itself, called or backticked
+    assert _names("super().save_base() or cls() or `self`") == ["save_base"]
+    # a library module, a variable or a class is an owner, not a receiver
+    assert _names("json.dumps(payload) and qs.bulk_update(objs)") == [
+        "json.dumps",
+        "qs.bulk_update",
+    ]
+    assert _names("os.path.join() or ModelAdmin.lookup_allowed()") == [
+        "os.path.join",
+        "ModelAdmin.lookup_allowed",
+    ]
 
 
 def test_a_plain_word_is_never_a_name() -> None:
@@ -68,11 +86,9 @@ def test_a_plain_word_is_never_a_name() -> None:
 
 
 def test_names_come_in_reading_order_once_each_and_stop_at_the_limit() -> None:
-    query = "bulk_update() then save_base then bulk_update again and `bulk_update`"
-    assert _names(query) == [("bulk_update", True), ("save_base", True)]
-    assert _names("a_b c_d e_f g_h", limit=2) == [("a_b", True), ("c_d", True)]
-    # a later mention can show the member stands by itself
-    assert _names("Query.combine fails; Query.combine() too") == [("Query.combine", True)]
+    query = "bulk_update() then save_base then self.bulk_update again and `bulk_update`"
+    assert _names(query) == ["bulk_update", "save_base"]
+    assert _names("a_b c_d e_f g_h", limit=2) == ["a_b", "c_d"]
 
 
 # ---- the definitions read for them --------------------------------------------------
@@ -88,13 +104,14 @@ _SYMBOLS = [
     _sym("bulk_update", "tests.q::Helper::bulk_update", "tests/q.py"),
     _sym("combine", "pkg.query::Query::combine", "pkg/query.py"),
     _sym("combine", "pkg.tree::Q::combine", "pkg/tree.py"),
+    _sym("dumps", "pkg.signing::dumps", "pkg/signing.py"),
     _sym("test_combine", "tests.q::T::test_combine", "tests/q.py"),
     *[_sym("save", f"pkg.m{i}::C{i}::save", f"pkg/m{i}.py") for i in range(4)],
 ]
 
 
-def _name(spelling: str, alone: bool = True) -> SpelledName:
-    return SpelledName(tuple(spelling.split(".")), alone)
+def _name(spelling: str) -> tuple[str, ...]:
+    return tuple(spelling.split("."))
 
 
 def test_a_name_keeps_its_definitions_outside_tests_or_its_test_ones() -> None:
@@ -115,20 +132,32 @@ def test_a_name_defined_in_too_many_places_is_dropped() -> None:
 
 
 def test_a_qualified_spelling_names_only_its_own_definition() -> None:
-    assert named_definitions([_name("Query.combine", alone=False)], _SYMBOLS) == [
+    assert named_definitions([_name("Query.combine")], _SYMBOLS) == [
         ("pkg/query.py", "pkg.query::Query::combine")
     ]
     # a module path qualifies too: its dots separate like `::`
     assert named_definitions([_name("query.QuerySet.bulk_update")], _SYMBOLS) == [
         ("pkg/query.py", "pkg.query::QuerySet::bulk_update")
     ]
-    # an owner that is not one (`self.combine()`) falls back to the member by itself
-    assert named_definitions([_name("self.combine")], _SYMBOLS) == [
+    assert named_definitions([_name("signing.dumps")], _SYMBOLS) == [
+        ("pkg/signing.py", "pkg.signing::dumps")
+    ]
+
+
+def test_an_owner_the_symbol_table_does_not_record_names_nothing() -> None:
+    # a module of another library: the repository's `dumps` is not `json.dumps`
+    assert named_definitions(spelled_names("json.dumps(payload) raises", 32), _SYMBOLS) == []
+    # a variable, and a class that only inherits the member
+    assert named_definitions([_name("qs.bulk_update")], _SYMBOLS) == []
+    assert named_definitions([_name("SubQuery.combine")], _SYMBOLS) == []
+    # the same members named alone, or behind a receiver, are read
+    assert named_definitions(spelled_names("dumps(payload) raises", 32), _SYMBOLS) == [
+        ("pkg/signing.py", "pkg.signing::dumps")
+    ]
+    assert named_definitions(spelled_names("self.combine() fails", 32), _SYMBOLS) == [
         ("pkg/query.py", "pkg.query::Query::combine"),
         ("pkg/tree.py", "pkg.tree::Q::combine"),
     ]
-    # but not when the member is a plain word: `models.combine` names nothing
-    assert named_definitions([_name("models.combine", alone=False)], _SYMBOLS) == []
 
 
 def test_definitions_follow_the_query_order_within_the_prefix_and_the_bound() -> None:
@@ -139,9 +168,16 @@ def test_definitions_follow_the_query_order_within_the_prefix_and_the_bound() ->
         "pkg.query::QuerySet::bulk_update",
         "pkg.state::StateApps::bulk_update",
     ]
-    # under a path prefix a name is counted, and served, inside it
+    # under a path prefix the three-definition bound counts inside it
     assert named_definitions([_name("save")], _SYMBOLS, path_prefix="pkg/m1") == [
         ("pkg/m1.py", "pkg.m1::C1::save")
+    ]
+    # the read bound is the namespace's: at it, a name is dropped whatever the prefix
+    crowd = [_sym("put", f"lib.t{i}::put", f"lib/t{i}.py") for i in range(_SYMBOLS_PER_NAME - 1)]
+    one = _sym("put", "pkg.a::put", "pkg/a.py")
+    assert named_definitions([_name("put")], [*crowd, one], path_prefix="pkg/") == []
+    assert named_definitions([_name("put")], [*crowd[1:], one], path_prefix="pkg/") == [
+        ("pkg/a.py", "pkg.a::put")
     ]
     wide = [_sym(f"f_{i}", f"pkg.w::f_{i}", "pkg/w.py") for i in range(_MAX_CANDIDATES + 5)]
     got = named_definitions([_name(f"f_{i}") for i in range(_MAX_CANDIDATES + 5)], wide)
@@ -359,6 +395,15 @@ def test_named_definitions_join_the_fusion_in_the_order_the_query_names_them() -
     assert res.retrieval_confidence == plain.retrieval_confidence
     assert (res.abstain, res.retrieval_risk) == (plain.abstain, plain.retrieval_risk)
     assert res.top_similarity == plain.top_similarity
+
+
+def test_a_name_behind_an_unrecorded_owner_adds_no_definition() -> None:
+    plain = _search(_Repo(), "how does quota enforcement work")
+    repo = _Repo()
+    res = _search(repo, "why does json.parse_quota(payload) fail")
+    assert repo.kw["definitions"] == []
+    assert [(u.unit_id, u.via) for u in res.units] == [(u.unit_id, u.via) for u in plain.units]
+    assert "named_definitions" not in res.retrieval_work
 
 
 def test_the_leg_serves_the_first_few_definitions() -> None:

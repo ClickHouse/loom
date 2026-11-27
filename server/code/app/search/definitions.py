@@ -9,7 +9,7 @@ import re
 from typing import Any
 
 from server.code.app.spans import code_span, span_attrs
-from server.code.domain.idents import SpelledName, spelled_names
+from server.code.domain.idents import spelled_names
 from server.code.domain.search_scope import SearchScope
 from server.code.store.index import CodeRepo, is_noise_path
 
@@ -31,18 +31,20 @@ _MAX_CANDIDATES = 4 * _MAX_DEFINITIONS
 
 
 def named_definitions(
-    names: list[SpelledName], symbols: list[dict[str, Any]], *, path_prefix: str = ""
+    names: list[tuple[str, ...]], symbols: list[dict[str, Any]], *, path_prefix: str = ""
 ) -> list[tuple[str, str]]:
     """The `(path, qualified name)` definitions to read for `names`, from their symbol
     rows, in the order the query mentions the names. A name keeps its definitions
     outside test paths, or its test ones when it has no other, and is dropped when more
-    than `_MAX_DEFINITIONS_PER_NAME` remain."""
+    than `_MAX_DEFINITIONS_PER_NAME` remain under `path_prefix`. The read bound is the
+    namespace's: a name with `_SYMBOLS_PER_NAME` live keys there, both tiers counted,
+    is dropped whatever the prefix."""
     by_name: dict[str, list[dict[str, Any]]] = {}
     for row in symbols:
         by_name.setdefault(str(row["name"]), []).append(row)
     wanted: dict[tuple[str, str], None] = {}
     for name in names:
-        rows = by_name.get(name.parts[-1], [])
+        rows = by_name.get(name[-1], [])
         if len(rows) >= _SYMBOLS_PER_NAME:
             continue  # the read stopped at its bound: more definitions than it returned
         named = {(str(r["path"]), str(r["qualified_name"])) for r in _matching(name, rows)}
@@ -53,18 +55,19 @@ def named_definitions(
     return list(wanted)[:_MAX_CANDIDATES]
 
 
-def _matching(name: SpelledName, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The rows `name` names. A qualified spelling names the rows whose qualified name
-    ends with its parts (`Query.combine` -> `pkg.query::Query::combine`); when none
-    does and its last part is a name by itself (`self.save()`), every row."""
-    if len(name.parts) == 1:
+def _matching(name: tuple[str, ...], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The rows `name` names: every row for a bare name, and for a qualified spelling
+    those whose qualified name ends with its parts (`Query.combine` ->
+    `pkg.query::Query::combine`). An owner the symbol table does not record for the
+    member names nothing: a module of another library (`json.dumps()`), a variable
+    (`qs.filter()`), a class that inherits the member."""
+    if len(name) == 1:
         return rows
-    exact = [
+    return [
         row
         for row in rows
-        if tuple(re.split(r"::|\.", str(row["qualified_name"]))[-len(name.parts) :]) == name.parts
+        if tuple(re.split(r"::|\.", str(row["qualified_name"]))[-len(name) :]) == name
     ]
-    return exact if exact or not name.member_alone else rows
 
 
 async def _definition_leg(
@@ -81,7 +84,7 @@ async def _definition_leg(
 ) -> list[dict[str, Any]]:
     """The definition leg: the chunks that define the first names `query` spells out.
     Two keyed reads, no embedding; `scope` is the constraint's predicate, None when
-    unconstrained."""
+    unconstrained, and filters the chunks after the names are counted."""
     names = spelled_names(query, _MAX_NAMES) if run else []
     if not names:
         return []
@@ -89,7 +92,7 @@ async def _definition_leg(
     with code_span("search.definition_leg") as sp:
         try:
             symbols = await repo.symbols_named(
-                org, ns, sorted({name.parts[-1] for name in names}), per_name=_SYMBOLS_PER_NAME
+                org, ns, sorted({name[-1] for name in names}), per_name=_SYMBOLS_PER_NAME
             )
             wanted = named_definitions(names, symbols, path_prefix=path_prefix)
             order = {definition: rank for rank, definition in enumerate(wanted)}
