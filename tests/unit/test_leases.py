@@ -177,6 +177,39 @@ async def test_a_take_cancelled_after_its_insert_landed_releases_the_key() -> No
     assert ch.keys == {}
 
 
+async def test_a_block_cancelled_while_its_release_is_sent_still_gives_the_key_up() -> None:
+    """A deadline that lands on the release (a refresh's link recheck cut at the end of
+    its wait) must not leave the name held, unrenewed, until its TTL."""
+
+    class SlowRelease(FakeLockTable):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sent = asyncio.Event()
+            self.answer = asyncio.Event()
+
+        async def execute(self, sql: str, params: Any = None, **kw: Any) -> None:
+            if sql == leases.LOCK_RELEASE:
+                self.sent.set()
+                await self.answer.wait()
+            await super().execute(sql, params, **kw)
+
+    ch = SlowRelease()
+
+    async def block() -> None:
+        async with leases.cluster_lease("job", ttl_s=60, ch=ch):
+            pass
+
+    running = asyncio.create_task(block())
+    await ch.sent.wait()
+    assert ch.keys
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    ch.answer.set()
+    await asyncio.gather(*leases._releases)
+    assert ch.keys == {}
+
+
 async def test_a_store_that_cannot_answer_is_unavailable_not_busy() -> None:
     ch = FakeLockTable()
     ch.down = True

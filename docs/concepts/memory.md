@@ -431,7 +431,9 @@ literal, a Python docstring's indentation, parentheses in Python, JavaScript and
 TypeScript) leave it as it was. Joining adjacent string literals, and any other edit, does
 not.
 What a file defines is read from the file at the repository's indexed head in its bare
-git mirror. On every indexed commit the worker follows the commit's renames and edits:
+git mirror. On every indexed commit the worker follows the commit's renames and edits, and
+a [`code.refresh`](../features/code-index/freshness.md#pushing-freshness-from-ci) call
+follows them as soon as its ingest pass ends:
 
 | Link state   | When                                                                                                               |
 | ------------ | ------------------------------------------------------------------------------------------------------------------ |
