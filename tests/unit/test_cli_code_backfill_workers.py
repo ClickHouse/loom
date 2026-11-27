@@ -26,10 +26,12 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from server.cli import code_backfill_workers as pool
+from server.cli._proc import cancel_on_sigterm
 
 # --- the hand-out, against threads on real pipes -------------------------------------
 
@@ -515,6 +517,35 @@ def test_a_worker_whose_retirement_fails_fails_the_command(
     kinds = [e["event"] for e in events]
     watermark = next(i for i, e in enumerate(events) if e.get("key") == "git_head")
     assert "republished" in kinds[watermark:]  # the counts carry the new watermark
+
+
+async def test_sigterm_preserves_batch_cleanup_after_the_parent_pipe_closes() -> None:
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    flushed = asyncio.Event()
+    receiver, sender = multiprocessing.Pipe(duplex=False)
+
+    async def batch() -> None:
+        sender.close()
+        try:
+            await asyncio.Future()
+        finally:
+            # The parent has closed its pipe and the worker now handles the group signal.
+            handle_sigterm = install.call_args.args[1]
+            handle_sigterm()
+            await asyncio.sleep(0)
+            flushed.set()
+
+    with (
+        receiver,
+        sender,
+        patch.object(loop, "add_signal_handler") as install,
+        patch.object(loop, "remove_signal_handler"),
+        pytest.raises(SystemExit, match="the run stopped during its batch"),
+    ):
+        await cancel_on_sigterm(pool._until_closed(receiver, batch(), 1))
+    assert flushed.is_set()
 
 
 @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
