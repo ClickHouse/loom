@@ -178,6 +178,10 @@ def _link(mid: str, *, qn: str = "src.a::Reader::read", state: str = "fresh", **
     }
 
 
+async def _checked_since(org, ns):
+    return 1000  # the pass read its links at 1000; `_link` rows are written at 0
+
+
 def _excerpt(mid: str, key: str, *, pinned: int = 0) -> dict:
     return {
         "mid": mid,
@@ -312,6 +316,7 @@ async def test_code_guidance_reads_only_authorized_repository_bindings(monkeypat
     )
     monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
     monkeypatch.setattr(code_link_reads.code, "checked_head", checked_head)
+    monkeypatch.setattr(code_link_reads.code, "checked_since", _checked_since)
     monkeypatch.setattr(code_link_reads.code, "link_cursor", link_cursor)
     monkeypatch.setattr(code_link_reads.store, "for_memories", links)
     assert await code_link_reads.guidance_code_states(
@@ -365,6 +370,7 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
         code_link_reads.code, "CodeRepo", lambda: SimpleNamespace(all_state_many=all_state_many)
     )
     monkeypatch.setattr(code_link_reads.code, "checked_head", checked_head)
+    monkeypatch.setattr(code_link_reads.code, "checked_since", _checked_since)
     monkeypatch.setattr(code_link_reads.code, "link_cursor", link_cursor)
     assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
     indexed = fetched
@@ -375,6 +381,67 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
     assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
     unparsed = '["src/other.py"]'
     assert await code_link_reads.guidance_code_states("o", [row]) == [state]
+
+
+async def test_positive_code_guidance_needs_evidence_for_each_link(monkeypatch) -> None:
+    from server.memory.app import code_link_reads
+
+    head = "a" * 40
+    old = "c" * 40
+    row = _excerpt("m1", "allowed")
+    stored = []
+
+    async def readable(org, namespaces):
+        return namespaces
+
+    async def links(org, ids):
+        return stored
+
+    async def all_state_many(pairs):
+        return {
+            ("o", "code-a"): {
+                "clone_head": {"value": head, "detail": "main"},
+                "git_head": {"value": head},
+            }
+        }
+
+    async def checked_head(org, ns):
+        return head
+
+    async def link_cursor(name):
+        return ""
+
+    monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda *_: "code-a")
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    monkeypatch.setattr(code_link_reads.store, "for_memories", links)
+    monkeypatch.setattr(
+        code_link_reads.code, "repo_for_namespace", lambda *_: SimpleNamespace(git_branch="main")
+    )
+    monkeypatch.setattr(
+        code_link_reads.code, "CodeRepo", lambda: SimpleNamespace(all_state_many=all_state_many)
+    )
+    monkeypatch.setattr(code_link_reads.code, "checked_head", checked_head)
+    monkeypatch.setattr(code_link_reads.code, "checked_since", _checked_since)
+    monkeypatch.setattr(code_link_reads.code, "link_cursor", link_cursor)
+
+    # written before the pass read its links, still at an older commit: the pass covered it
+    stored[:] = [_link("m1") | {"checked_commit": old, "version": 999}]
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["fresh"]
+    # written after that read from an older commit, then the checkpoint advanced: nothing
+    # checked it at this head
+    stored[:] = [_link("m1") | {"checked_commit": old, "version": 1001}]
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    # written after it but at the head itself
+    stored[:] = [_link("m1") | {"checked_commit": head, "version": 1001}]
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["fresh"]
+    # a mark that does not say when the pass began vouches for nothing it did not check
+    monkeypatch.setattr(code_link_reads.code, "checked_since", lambda *_: _zero())
+    stored[:] = [_link("m1") | {"checked_commit": old, "version": 999}]
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+
+
+async def _zero() -> int:
+    return 0
 
 
 @pytest.mark.asyncio

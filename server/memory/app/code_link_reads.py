@@ -143,9 +143,12 @@ def guidance_link_state(links: Sequence[LinkRow], readable: set[str]) -> str:
     return state or "unknown"
 
 
-async def _guidance_coverage(org: str, cns: str) -> tuple[str, set[str]]:
+async def _guidance_coverage(org: str, cns: str) -> tuple[str, int, set[str]]:
+    # the start first: a pass finishing between the reads leaves an older start with a newer
+    # head, which vouches for less
+    since = await code.checked_since(org, cns)
     checked = await code.checked_head(org, cns)
-    return checked, set(await unparsed_cursor(org, cns).read()) if checked else set()
+    return checked, since, set(await unparsed_cursor(org, cns).read()) if checked else set()
 
 
 async def _guidance_indexed_heads(org: str, namespaces: list[str]) -> dict[str, str]:
@@ -209,8 +212,14 @@ async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> l
             proof = coverage.get(key[2])
             if not isinstance(proof, tuple):
                 continue
-            checked_head, owed = proof
-            if not checked_head or any(link["path"] in owed for link in rows_for_hit):
+            checked_head, since, owed = proof
+            # The head's pass saw a link only if it was rechecked at that head or written
+            # before the pass read its links; a later write may be from an older commit.
+            if not checked_head or any(
+                link["path"] in owed
+                or (link["checked_commit"] != checked_head and link["version"] >= since)
+                for link in rows_for_hit
+            ):
                 continue
             positive[key[2], checked_head].append((index, state))
         else:

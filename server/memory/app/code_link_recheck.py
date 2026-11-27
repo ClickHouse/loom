@@ -117,7 +117,11 @@ async def _recheck_repository(
     await rehash.refingerprint(org, cns, files, result)
     await _retry_unparsed(org, cns, head, files, result)
     if head and head != checked:
-        cut_at = (await _progress(org, cns).read()).get("head", "")
+        cut = await _progress(org, cns).read()
+        cut_at = cut.get("head", "")
+        # links written after this are not in the pass's reads; a pass the deadline cut keeps
+        # the start of its first run
+        since = min(time_ns(), int(cut.get("since") or time_ns()))
         if cut_at and cut_at != head and not await files.has(cut_at):
             # gone with a rewrite: what that pass already wrote is in no diff, so every
             # link is rechecked, as after a force-push
@@ -127,11 +131,11 @@ async def _recheck_repository(
         elif cut_at and cut_at != head:
             # a pass the deadline cut at another head finishes there first, so every
             # head is followed in turn and no move it made is left behind
-            await _follow(org, cns, checked, cut_at, files, result)
-            await code.set_checked_head(org, cns, cut_at)
+            await _follow(org, cns, checked, cut_at, files, result, since)
+            await code.set_checked_head(org, cns, cut_at, since)
             checked = cut_at
-        await _follow(org, cns, checked, head, files, result)
-        await code.set_checked_head(org, cns, head)
+        await _follow(org, cns, checked, head, files, result, since)
+        await code.set_checked_head(org, cns, head, since)
     await policy.apply_policies(org, cns, head, files, budget, result)
 
 
@@ -168,6 +172,7 @@ async def _follow(
     head: str,
     files: link_pass.RepoReads,
     result: link_pass.PassResult,
+    since: int,
 ) -> None:
     """Recheck, path by path, the links `checked..head` may have changed (all of them
     without a range), writing every `_PATHS_PER_WRITE` paths and recording the last one
@@ -207,7 +212,7 @@ async def _follow(
         result.rechecked += len(moves)
         if len(unparsed) > known:  # owed before the cursor moves past them
             await _set_unparsed(org, cns, unparsed)
-        await progress.write({"head": head, "after": part[-1]})
+        await progress.write({"head": head, "after": part[-1], "since": str(since)})
     await progress.clear()
     if failed:
         result.errors.append(f"recheck {org}/{cns}: did not parse: {', '.join(sorted(failed))}")

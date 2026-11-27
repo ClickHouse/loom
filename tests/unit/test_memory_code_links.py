@@ -1253,12 +1253,14 @@ async def test_a_recheck_cut_short_resumes_after_the_last_path_it_wrote(monkeypa
     files = code_link_pass.RepoReads("o", "code-a")
     with pytest.raises(TimeoutError):
         await code_link_recheck._follow(
-            "o", "code-a", "c1", "c2", files, code_link_pass.PassResult()
+            "o", "code-a", "c1", "c2", files, code_link_pass.PassResult(), 0
         )
     first = list(seen)
     seen.clear()
     monkeypatch.setattr(code_link_recheck, "_recheck", lambda *a, **_: _record(seen, a[2]))
-    await code_link_recheck._follow("o", "code-a", "c1", "c2", files, code_link_pass.PassResult())
+    await code_link_recheck._follow(
+        "o", "code-a", "c1", "c2", files, code_link_pass.PassResult(), 0
+    )
     # the first part was written: the next pass starts after it, and ends clean
     assert seen == paths[code_link_recheck._PATHS_PER_WRITE :] and first[0] == paths[0]
     assert cursor["recheck/o/code-a"] == ""
@@ -1968,6 +1970,7 @@ async def test_a_resumed_recheck_reads_the_links_a_cut_pass_already_moved(monkey
         "h2",
         code_link_pass.RepoReads("o", "code-a"),
         code_link_pass.PassResult(),
+        0,
     )
     assert read[0] == ["a.py", "b.py", "gone.py"]
 
@@ -2005,7 +2008,7 @@ def _repository(monkeypatch, *, head: str, checked: str, cursor: str, diffs: dic
     async def checked_head(org, cns):
         return state["checked"]
 
-    async def set_checked_head(org, cns, at):
+    async def set_checked_head(org, cns, at, since=0):
         state["checked"] = at
 
     for module, name in (
@@ -2778,7 +2781,9 @@ async def test_a_link_made_inside_the_range_follows_its_own_commit(
     monkeypatch.setattr(code_link_recheck, "_write_moves", write)
     monkeypatch.setattr(code_link_recheck, "_current_moves", current)
     files = code_link_pass.RepoReads("o", "code-a")
-    await code_link_recheck._follow("o", "code-a", base, head, files, code_link_pass.PassResult())
+    await code_link_recheck._follow(
+        "o", "code-a", base, head, files, code_link_pass.PassResult(), 0
+    )
     assert [(m.link.state, m.link.path) for m in moves] == [after]
 
 
