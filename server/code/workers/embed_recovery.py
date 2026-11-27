@@ -19,10 +19,10 @@ supervisor sleeps `code_embed_recovery_idle_interval_seconds`, instead of a
 per-repo scan and a per-repo FINAL read every 30 s whatever the backlog.
 
 Vectors written here change the shared `table_counts` and `coverage` rows, which
-only an ingest pass that indexed a commit republishes. So the first idle pass
-after a namespace's stubs were embedded republishes both rows for it, and a
-full-scan pass notes any namespace whose published rows trail its chunks for
-the next idle pass.
+only an ingest pass that indexed a commit republishes. So the first pass that
+finds a namespace it embedded with no stubs left republishes both rows for it,
+whatever other namespaces still have to embed, and a full-scan pass notes any
+namespace whose published rows trail its chunks.
 """
 
 from __future__ import annotations
@@ -96,6 +96,8 @@ class CodeEmbedRecoveryResult:
     keys_seen: int = 0
     full_scan: bool = False
     errors: list[str] = field(default_factory=list)
+    # The namespaces this pass wrote chunk vectors to.
+    chunks_landed: set[tuple[str, str]] = field(default_factory=set)
 
     @property
     def idle(self) -> bool:
@@ -157,8 +159,7 @@ async def _run(result: CodeEmbedRecoveryResult) -> None:
             result.summaries_embedded += embedded
     if result.full_scan:
         await _note_behind(repo, set(repos) - _unpublished, result)
-    if result.idle:
-        await _republish(repo, set(repos), result)
+    await _republish(repo, set(repos), embedder, max_attempts, result)
 
 
 async def _note_behind(
@@ -180,16 +181,26 @@ async def _note_behind(
 
 
 async def _republish(
-    repo: Any, repos: set[tuple[str, str]], result: CodeEmbedRecoveryResult
+    repo: Any,
+    repos: set[tuple[str, str]],
+    embedder: Any,
+    max_attempts: int,
+    result: CodeEmbedRecoveryResult,
 ) -> None:
     """The counts and coverage rows of each drained namespace, as the ingest pass
-    publishes them after a commit. A namespace whose republish failed stays
-    unpublished, so the next idle pass retries it. One this pass did not scan
-    (removed, or its org switched off) waits, so a removed one is never written
-    after its purge."""
-    for org, ns in sorted(_unpublished & repos):
+    publishes them after a commit. An idle pass has drained every namespace; on a
+    busy one, a namespace this pass wrote no vectors to is drained when it has no
+    stub left, whatever other namespaces still have to embed. A namespace whose
+    republish failed stays unpublished, so the next pass retries it. One this pass
+    did not scan (removed, or its org switched off) waits, so a removed one is
+    never written after its purge."""
+    for org, ns in sorted((_unpublished & repos) - result.chunks_landed):
         try:
             with sequential_reads():  # a lagging replica must not replace a row with older figures
+                if not result.idle and await repo.pending_embed_chunks(
+                    org, ns, embedder.model_name, max_attempts, 1
+                ):
+                    continue  # its own stubs remain
                 await repo.refresh_coverage(org, ns, must_land=True)
                 await repo.refresh_table_counts(org, ns, must_land=True)
         except Exception as e:  # noqa: BLE001 — never fail a pass over a cache row
@@ -387,6 +398,7 @@ async def _embed_rows(
     result.rows_written += len(replacements)
     if table == "code_chunks":
         _unpublished.update(landed)
+        result.chunks_landed.update(landed)
     return embedded
 
 

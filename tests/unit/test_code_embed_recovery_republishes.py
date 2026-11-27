@@ -1,11 +1,12 @@
 """`code_embed_recovery` fills vectors outside the ingest pass, which is what
-publishes the shared counts and coverage rows a status read serves. When its scan
-comes back empty, it republishes both rows for every configured namespace it
-embedded since the last time; the rows are read back through `CodeRepo`."""
+publishes the shared counts and coverage rows a status read serves. Once a
+namespace it embedded has no stubs left, it republishes both rows for it, whether
+or not other namespaces still have work; the rows are read back through `CodeRepo`."""
 
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import pytest
@@ -86,7 +87,8 @@ class _Table:
 
 class _Namespace(CodeRepo):
     """The real state, counts and coverage code over `_Table`; the recovery scans
-    and the replacement insert are the table's chunk rows."""
+    and the replacement insert are the table's chunk rows, and `summaries` the
+    summary stubs of any namespace."""
 
     def __init__(self, table: _Table) -> None:
         super().__init__(ch=table)  # type: ignore[arg-type]
@@ -94,6 +96,7 @@ class _Namespace(CodeRepo):
         # Stub versions ReplacingMergeTree has not merged away: a scan returns them,
         # and `live_stub_keys` drops them, as the newer embedded version wins.
         self.superseded: list[dict[str, Any]] = []
+        self.summaries: list[dict[str, Any]] = []
 
     async def pending_embed_keys(
         self,
@@ -105,11 +108,25 @@ class _Namespace(CodeRepo):
         *,
         min_version: int = 0,
     ) -> list[dict[str, Any]]:
-        if table != "code_chunks":
-            return []
-        stubs = [c for c in self.table.chunks if not c["embedding_dim"]] + self.superseded
+        if table == "code_summaries":
+            stubs = list(self.summaries)
+        else:
+            stubs = [c for c in self.table.chunks if not c["embedding_dim"]] + self.superseded
         page = sorted((c for c in stubs if c["version"] > min_version), key=lambda c: c["version"])
         return [dict(c) for c in page[:limit]]
+
+    async def pending_embed_chunks(
+        self,
+        org: str,
+        ns: str,
+        model: str,
+        max_attempts: int,
+        limit: int,
+        *,
+        include_poisoned: bool = False,
+    ) -> list[dict[str, Any]]:
+        stubs = [c for c in self.table.chunks if c["namespace"] == ns and not c["embedding_dim"]]
+        return stubs[:limit]
 
     async def live_stub_keys(self, table: str, model: str, keys: Any, max_attempts: int) -> Any:
         return [k for k in keys if k not in self.superseded]
@@ -124,6 +141,10 @@ class _Namespace(CodeRepo):
         return dict(live_row)
 
     async def insert_rows(self, table: str, rows: list[dict[str, Any]]) -> None:
+        if table == "code_summaries":
+            done = {r["scope_path"] for r in rows}
+            self.summaries = [s for s in self.summaries if s["scope_path"] not in done]
+            return
         by_id = {r["chunk_id"]: r for r in rows}
         self.table.chunks = [by_id.get(c["chunk_id"], c) for c in self.table.chunks]
 
@@ -207,6 +228,50 @@ async def test_a_drained_namespace_publishes_the_counts_and_coverage_of_its_tabl
     writes = table.state_writes
     await _pass()
     assert table.state_writes == writes
+
+
+async def test_a_drained_namespace_is_republished_while_another_has_summary_work(
+    configured: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.workers import embed_recovery as w
+
+    class _Other:
+        org, namespace = ORG, "code-b"
+
+    configured.append(_Other())
+    table = _Table(chunks=3, embedded=0)
+    repo = await _namespace(monkeypatch, table)
+    monkeypatch.setattr(w, "_full_scan_at", time.monotonic())  # no full scan in this test
+    republished: list[tuple[str, str]] = []
+    refresh = repo.refresh_coverage
+
+    async def spy(org: str, ns: str, **k: Any) -> Any:
+        republished.append((org, ns))
+        return await refresh(org, ns, **k)
+
+    monkeypatch.setattr(repo, "refresh_coverage", spy)
+
+    landed = await _pass()  # the three vectors land for code-a
+    assert landed.chunks_embedded == 3 and not landed.idle
+    for i in range(3):  # then only code-b's summaries have work
+        repo.summaries.append(
+            {
+                "org": ORG,
+                "namespace": "code-b",
+                "scope_type": "file",
+                "scope_path": f"b/{i}.py",
+                "summary": "what b does",
+                "embed_attempts": 0,
+                "version": 100 + i,
+            }
+        )
+        busy = await _pass()
+        assert busy.summaries_embedded == 1 and busy.chunks_embedded == 0
+        assert not busy.idle and busy.errors == []
+
+    counts, coverage_embedded = await _published(repo)
+    assert counts["code_chunks_embedded"] == coverage_embedded == 3
+    assert republished == [(ORG, NS)]
 
 
 @pytest.mark.parametrize("failing", ["coverage", "table_counts", "aggregate"])

@@ -100,7 +100,7 @@ class StatusMixin(CodeRepoBase):
         open pays once for every process and colour. A cold computation reads
         about 1.2 GB and takes 4 s on a large repository; the row is a point
         read. `must_land`: a failed write raises, for a caller that writes the
-        counts only once this row has landed, or retries until it has."""
+        counts only once this row has landed."""
         if fingerprint is None:
             fingerprint = counts_fingerprint(await self.all_state(org, ns))
         cov = await self.coverage(org, ns)
