@@ -149,10 +149,16 @@ def _retry_example(
     near: dict[str, str | None],
     errors: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], str] | None:
-    has_correction = any(near.values())
-    missing_only = bool(errors) and all(e.get("type") == "missing" for e in errors)
-    if not isinstance(arguments, dict) or not (missing_only or has_correction):
+    if not isinstance(arguments, dict):
         return None
+    has_correction = any(near.values())
+    if not has_correction:
+        fillable = {(field,) for field in required_args(model)}
+        if not errors or any(
+            error.get("type") != "missing" or tuple(error.get("loc") or ()) not in fillable
+            for error in errors
+        ):
+            return None
     call = example(model, arguments, near, fill_missing=not has_correction)
     if call is None:
         return None

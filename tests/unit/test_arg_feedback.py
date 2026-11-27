@@ -168,6 +168,22 @@ def test_a_scope_key_typo_does_not_create_a_retry_scope() -> None:
     assert "example" not in data
 
 
+def test_nested_missing_fields_do_not_get_an_unfilled_example() -> None:
+    text, detail = _fail(
+        "memory.apply",
+        {
+            "target": {"keys": ["test/x/a"]},
+            "action": "label",
+            "reason": "Apply classification",
+            "label": {},
+            "dry_run": False,
+        },
+    )
+    assert "label.tags: Field required" in text
+    assert "example:" not in text
+    assert "example" not in detail
+
+
 def test_a_missing_required_arg_gets_a_placeholder() -> None:
     _, data = _fail("tracker.flaky", {})
     assert data["example"] == {"test_name": "…"}
