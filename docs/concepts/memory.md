@@ -472,9 +472,10 @@ another name reads `moved`; failing that, the only one of its own name with a cl
 reads `changed`, unless a definition of that name that stayed in the changed files is
 close as well. A member reads `changed` there unless its class came with it unchanged. A
 definition under 30 tokens is told by neither its text nor its own name, which any class
-may define: it is followed there only under a related name and with its scope, from
-module level to module level or, once no member of its class is left in its file, into
-the class that is that one renamed or keeps its members. Two definitions that may be it,
+may define: it is followed there only under a name of the same words (`_read_rows` or
+`read_rows_v2` for `read_rows`) and with its scope, from module level to module level
+or, once no member of its class is left in its file, into the class that is that one
+renamed or keeps its members. Two definitions that may be it,
 or one that another removed definition may have become, leave the link `unresolved`. A
 range that changed more than 32 files under the entry's `path_prefixes` is not searched
 this way: the link is read as if nothing was renamed, and the `memory_code_links`

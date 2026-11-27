@@ -10,7 +10,8 @@ answer is uncertain, never a removal.
 Where that search finds nothing, the definition may have been renamed as it moved to
 another file or scope (`elsewhere`): among the definitions the changed files did not have
 before, the one with its exact shape, or the one of its own name with a close text. A
-small definition is told by neither: it is followed there only with its scope.
+small definition is told by neither: it is followed there only with its scope, under a
+name of its own words.
 """
 
 from __future__ import annotations
@@ -153,9 +154,10 @@ def elsewhere(
 
     The one with its exact shape is it renamed alone; else the one of its own name with
     a close text is it edited, when no definition of that name that stayed is close too
-    (`_same_name`). A small definition is followed only with its scope (`_may_be`). A
-    member is carried unless its class came with it unchanged. Several that may be it,
-    or one another removed definition may have become, are uncertain."""
+    (`_same_name`). A small definition is followed only with its scope and under a name
+    of its own words (`_may_be`). A member is carried unless its class came with it
+    unchanged. Several that may be it, or one another removed definition may have
+    become, are uncertain."""
     small = len(_TOKEN.findall(before.text(was))) < _SMALL
     vacated = small and _vacated(_scope_of(was), before, gone)
     arrived = [
@@ -180,11 +182,14 @@ def elsewhere(
 def _may_be(was: Definition, before: Side, d: Definition, now: Side, vacated: bool) -> bool:
     """Whether a small `was` may be `d` in another file or scope. Under `_SMALL` tokens
     a text is mostly its signature, and its own name is one any class may define
-    (`__iter__`, `close`): it goes only under a related name and with its scope, module
-    level to module level or into the successor of its class. A class has one only once
-    no member of it is left in its file (`vacated`): that class renamed alone, or the
-    new one keeping its members."""
-    if not _kin(was, d):
+    (`__iter__`, `close`): it goes only with its scope, module level to module level or
+    into the successor of its class. A class has one only once no member of it is left
+    in its file (`vacated`): that class renamed alone, or the new one keeping its
+    members. And only under a name of its own words (`_read_rows`, `read_rows_v2`): one
+    shared word is no kinship among every changed file, where two stubs have one shape
+    (`class ReadError(Exception): pass`, `RetryError`)."""
+    a, b = _words(was.name), _words(d.name)
+    if not a or _unversioned(a) != _unversioned(b):
         return False
     scope, target = _scope_of(was), _scope_of(d)
     if not scope or not target:

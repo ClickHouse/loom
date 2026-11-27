@@ -679,13 +679,33 @@ def test_a_function_renamed_as_it_moved_to_another_file_is_moved(gone: str | Non
 
 @pytest.mark.parametrize(
     ("name", "state"),
-    [("load_rows", "moved"), ("warm_up", "missing")],
-    ids=["kin-name", "unrelated-name"],
+    [
+        ("_fetch_rows", "moved"),
+        ("fetch_rows_v2", "moved"),
+        ("load_rows", "missing"),
+        ("warm_up", "missing"),
+    ],
 )
-def test_a_small_function_renamed_as_it_moved_needs_a_related_name(name: str, state: str) -> None:
-    # under thirty tokens two definitions look alike by their shape alone
+def test_a_small_function_renamed_as_it_moved_keeps_the_words_of_its_name(
+    name: str, state: str
+) -> None:
+    # under thirty tokens two definitions look alike by their shape alone, and among every
+    # changed file one shared word is no kinship
     after = {"a.py": _KEEP, "b.py": _SMALL_ROWS.replace("fetch_rows", name)}
     assert _elsewhere({"a.py": _KEEP + "\n\n" + _SMALL_ROWS}, after).state == state
+
+
+def test_a_removed_stub_is_not_handed_to_a_new_stub_sharing_a_word_of_its_name() -> None:
+    # two exception stubs have one shape whatever they are for
+    stub = "class ReadError(Exception):\n    pass\n"
+    before = {"errors.py": _KEEP + "\n\n" + stub}
+    after = {"errors.py": _KEEP, "retry.py": stub.replace("ReadError", "RetryError")}
+    got = _elsewhere(before, after, "ReadError")
+    assert (got.state, got.path) == ("missing", "errors.py")
+    # the same stub made private as it moved is still the one the memory names
+    after = {"errors.py": _KEEP, "retry.py": stub.replace("ReadError", "_ReadError")}
+    got = _elsewhere(before, after, "ReadError")
+    assert (got.state, got.qualified_name) == ("moved", "retry::_ReadError")
 
 
 @pytest.mark.parametrize("name", ["Reader", "Reader.fetch_rows", "Reader.close"])
