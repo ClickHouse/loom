@@ -1,0 +1,170 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import { Link } from "@clickhouse/click-ui/Link";
+import { NumberField } from "@clickhouse/click-ui/NumberField";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
+import SiteFrame from "../../components/SiteFrame.astro";
+import { repositoryUrl } from "../../lib/site-identity.mjs";
+
+const workflow = `${repositoryUrl}/actions/workflows/memory-evaluation.yml`;
+---
+
+<SiteFrame
+  title="Code-linked memory Playground | Loom"
+  description="Edit a sample Python function and run Loom’s code-link check to see how a saved lesson responds on two branches."
+  path="/playground/source-change"
+>
+  <Title type="h1" size="xl" family="brand">See when a memory goes stale</Title>
+  <Text className="lead" color="muted" size="lg">Change the retry rule on <code>main</code>, then switch to <code>release</code>. Loom checks the saved lesson against each branch.</Text>
+
+  <section class="workbench" aria-label="Retry rule example">
+    <Panel className="editor" role="region" aria-labelledby="editor-heading" padding="lg" hasBorder>
+      <div class="panel-heading">
+        <Title type="h2" size="md" id="editor-heading">Edit the source</Title>
+        <span class="file"><code>retry.py</code></span>
+      </div>
+      <pre><code><span class="keyword">def</span> should_retry(status: int) -&gt; bool:<br />    <span class="keyword">return</span> status == <span id="retry-code">503</span></code></pre>
+      <form id="edit-retry" hidden>
+        <fieldset>
+          <legend>Branch</legend>
+          <label><input type="radio" name="branch" value="main" checked /> <code>main</code></label>
+          <label><input type="radio" name="branch" value="release" /> <code>release</code></label>
+        </fieldset>
+        <NumberField id="retry-status" name="status" label="Retry on HTTP status" min={100} max={599} step={1} defaultValue={429} required hideControls onChange={() => {}} />
+        <div class="edit-actions">
+          <Button type="primary" htmlType="submit" label="Apply edit and check" />
+          <Button type="secondary" htmlType="reset" label="Reset example" />
+        </div>
+        <p id="check-feedback" class="feedback" role="status" aria-atomic="true"></p>
+      </form>
+      <noscript><p>Enable JavaScript to edit the sample and run checks.</p></noscript>
+    </Panel>
+
+    <Panel className="lesson" role="region" aria-labelledby="lesson-heading" padding="lg" hasBorder>
+      <div class="panel-heading">
+        <Title type="h2" size="md" id="lesson-heading">Saved lesson</Title>
+        <span class="state" id="check-state" hidden></span>
+      </div>
+      <p class="saved-rule"><code>should_retry</code> retries on HTTP 503.</p>
+      <p>Loom compares the source with the code linked to this lesson. A source change flags the lesson for review.</p>
+      <details id="check-receipt" hidden>
+        <summary>View live response</summary>
+        <pre><code id="check-json"></code></pre>
+      </details>
+    </Panel>
+  </section>
+
+  <section id="evaluation" class="site-section run" aria-labelledby="run-heading">
+    <Title type="h2" size="lg" id="run-heading">Run the full Loom evaluation</Title>
+    <p>GitHub Actions starts Loom and a temporary ClickHouse container, runs the memory checks, and publishes a results summary and JSON artifact.</p>
+    <p>Open the workflow and select <strong>Run workflow</strong>. That button requires write access. You can fork Loom and enable Actions in your fork to run it there.</p>
+    <div class="site-actions">
+      <Link className="primary" href={workflow}>Open the GitHub workflow</Link>
+      <Link href={`${repositoryUrl}/fork`}>Fork Loom</Link>
+      <Link href="/docs/guides/compare-coding-agent-memory#reproduce-the-comparison">Run locally</Link>
+    </div>
+  </section>
+</SiteFrame>
+
+<script>
+  const form = document.querySelector<HTMLFormElement>("#edit-retry")!;
+  const editor = document.querySelector<HTMLInputElement>("#retry-status")!;
+  const code = document.querySelector("#retry-code")!;
+  const state = document.querySelector<HTMLElement>("#check-state")!;
+  const feedback = document.querySelector("#check-feedback")!;
+  const receipt = document.querySelector<HTMLDetailsElement>("#check-receipt")!;
+  const json = document.querySelector("#check-json")!;
+  const baseline = Number(code.textContent);
+  const branchStatus = new Map([["main", baseline], ["release", baseline]]);
+  let branch = "main";
+  let pending: AbortController | undefined;
+
+  async function check() {
+    pending?.abort();
+    const request = new AbortController();
+    pending = request;
+    const checkedBranch = branch;
+    const status = branchStatus.get(checkedBranch)!;
+    code.textContent = String(status);
+    state.hidden = true;
+    receipt.hidden = true;
+    feedback.textContent = `Checking ${checkedBranch}…`;
+    try {
+      const response = await fetch(`/api/playground/check?status=${status}`, {
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]),
+      });
+      if (!response.ok) throw new Error(`Check returned HTTP ${response.status}`);
+      const result = await response.json();
+      if (result.code_state !== "fresh" && result.code_state !== "changed") {
+        throw new Error("Unexpected code state");
+      }
+      if (request.signal.aborted) return;
+      state.dataset.state = result.code_state;
+      state.textContent = result.code_state === "fresh" ? "Matches source" : "Source changed";
+      state.hidden = false;
+      feedback.textContent = result.code_state === "fresh"
+        ? `The lesson matches ${checkedBranch}.`
+        : `${checkedBranch} retries on HTTP ${status}. The saved lesson still says HTTP ${baseline}.`;
+      json.textContent = JSON.stringify({ branch: checkedBranch, ...result }, null, 2);
+      receipt.hidden = false;
+    } catch {
+      if (!request.signal.aborted) {
+        feedback.textContent = "The check could not finish. Apply the edit again or run the GitHub workflow below.";
+      }
+    }
+  }
+
+  form.addEventListener("change", ({ target }) => {
+    if (!(target instanceof HTMLInputElement) || target.name !== "branch") return;
+    branch = target.value;
+    editor.value = String(branchStatus.get(branch));
+    void check();
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    branchStatus.set(branch, editor.valueAsNumber);
+    void check();
+  });
+  form.addEventListener("reset", () => {
+    branchStatus.set("main", baseline);
+    branchStatus.set("release", baseline);
+    branch = "main";
+    void check();
+  });
+  form.hidden = false;
+  void check();
+</script>
+
+<style>
+  h1 { max-width: 24ch; font-size: clamp(2.25rem, 4.8vw, 4.5rem); }
+  .lead { max-width: 61ch; }
+  .workbench { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 1rem; margin-top: clamp(1.5rem, 4vw, 2.75rem); }
+  .workbench > section { min-width: 0; }
+  .panel-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.55rem; margin-bottom: 0.95rem; }
+  h2 { margin-top: 0; }
+  .panel-heading h2 { margin-bottom: 0; font-size: 1.25rem; }
+  code { font-family: ui-monospace, monospace; }
+  .file, .feedback { color: var(--muted); }
+  pre { margin: 0; padding: 0.85rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--page); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .keyword { color: var(--click-alert-color-text-info); }
+  #retry-code { color: var(--accent); }
+  fieldset { display: flex; gap: 0.6rem; min-width: 0; margin: 1rem 0; padding: 0; border: 0; }
+  legend { margin-bottom: 0.45rem; font-size: 0.9rem; font-weight: 600; }
+  fieldset label { display: flex; gap: 0.4rem; align-items: center; min-height: 2.75rem; padding: 0.4rem 0.75rem; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+  fieldset label:has(:checked) { border-color: var(--accent); }
+  input[type="radio"] { margin: 0; accent-color: var(--accent); }
+  .edit-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-block-start: 0.7rem; }
+  .state { padding: 0.25rem 0.55rem; border-radius: var(--radius); font-size: 0.79rem; font-weight: 650; }
+  .state[data-state="fresh"] { color: var(--click-feedback-color-success-foreground); background: var(--click-feedback-color-success-background); }
+  .state[data-state="changed"] { color: var(--click-feedback-color-warning-foreground); background: var(--click-feedback-color-warning-background); }
+  .feedback { min-height: 2.75em; margin-bottom: 0; font-size: 0.91rem; }
+  .saved-rule { color: var(--click-global-color-text-default); }
+  summary { display: list-item; padding-block: 0.75rem; width: fit-content; color: var(--accent); cursor: pointer; }
+  details pre { font-size: 0.8rem; }
+  .run { padding: clamp(1.1rem, 3vw, 2.4rem); border: 1px solid var(--line); border-inline-start: 0.2rem solid var(--accent); background: var(--surface); }
+  .run p { max-width: 68ch; margin-top: 0.65rem; }
+  @media (max-width: 48rem) { .workbench { grid-template-columns: minmax(0, 1fr); } }
+</style>

@@ -130,7 +130,7 @@ async def _drop_links_of_erased(ch: _CHClient, rows: list[LinkRow]) -> None:
     for r in rows:
         by_org[r["org"]].add(r["memory_id"])
     erasing = await _erasing(ch, sorted(by_org))
-    await _drop_gone(ch, {org: ids for org, ids in by_org.items() if org in erasing})
+    await _drop_unlinkable(ch, {org: ids for org, ids in by_org.items() if org in erasing})
 
 
 async def _erasing(ch: _CHClient, orgs: list[str]) -> set[str]:
@@ -171,7 +171,7 @@ _KEY_TYPES = ("String",) * 5 + ("UUID",)
 async def sweep_page(
     after: tuple[str, ...] | None, limit: int, *, ch: _CHClient | None = None
 ) -> tuple[tuple[str, ...] | None, int]:
-    """Drop gone memories' links and old tombstones among the next `limit` ×
+    """Drop unlinkable memories' links and old tombstones among the next `limit` ×
     `SWEEP_ROWS_PER_WRITE` link rows after `after`; returns the next page's start (None
     at the table's end) and the memories."""
     ch = ch or _default_client()
@@ -186,7 +186,7 @@ async def sweep_page(
     by_org: dict[str, set[str]] = defaultdict(set)
     for r in rows:
         by_org[str(r["org"])].add(str(r["memory_id"]))
-    dropped = await _drop_gone(ch, by_org)
+    dropped = await _drop_unlinkable(ch, by_org)
     await _purge_tombstones(ch, [tuple(r[c] for c in _KEY_COLUMNS) for r in rows])
     full = len(rows) == rows_per_page
     last = tuple(str(rows[-1][c]) for c in _KEY_COLUMNS) if full else None
@@ -233,34 +233,35 @@ async def _purge_tombstones(ch: _CHClient, keys: list[tuple[Any, ...]]) -> None:
         )
 
 
-async def drop_gone(org: str, memory_ids: set[str], *, ch: _CHClient | None = None) -> int:
-    """Delete the links of those of `memory_ids` that are gone or tombstoned."""
-    return await _drop_gone(ch or _default_client(), {org: memory_ids})
+async def drop_unlinkable(org: str, memory_ids: set[str], *, ch: _CHClient | None = None) -> int:
+    """Delete the links of those of `memory_ids` that are unlinkable."""
+    return await _drop_unlinkable(ch or _default_client(), {org: memory_ids})
 
 
-async def _drop_gone(ch: _CHClient, by_org: dict[str, set[str]]) -> int:
-    """Delete the links older than this read of the memories in `by_org` that are gone or
-    tombstoned; returns how many memories that was."""
+async def _drop_unlinkable(ch: _CHClient, by_org: dict[str, set[str]]) -> int:
+    """Delete the links older than this read of the memories in `by_org` that are
+    unlinkable: gone, tombstoned, or a raw tool observation (a key that starts `obs:`);
+    returns how many memories that was."""
     dropped = 0
     for org, ids in by_org.items():
         before = time.time_ns()
-        live = await query_all_sliced(
+        linkable = await query_all_sliced(
             ch,
             "SELECT DISTINCT toString(memory_id) AS mid FROM loom.memory FINAL "
             "WHERE org = {org:String} AND memory_id IN {ids:Array(UUID)} "
-            "AND tombstoned_at IS NULL",
+            "AND tombstoned_at IS NULL AND NOT startsWith(memory_key, 'obs:')",
             {"org": org, "ids": sorted(ids)},
             "ids",
         )
-        gone = sorted(ids - {str(r["mid"]) for r in live})
-        for part in chunks(gone):
+        unlinkable = sorted(ids - {str(r["mid"]) for r in linkable})
+        for part in chunks(unlinkable):
             await ch.execute(
                 f"DELETE FROM {TABLE} WHERE org = {{org:String}} "
                 "AND memory_id IN {ids:Array(UUID)} AND version < {before:UInt64} "
                 "SETTINGS lightweight_deletes_sync = 2",
                 params={"org": org, "ids": part, "before": before},
             )
-        dropped += len(gone)
+        dropped += len(unlinkable)
     return dropped
 
 
@@ -412,6 +413,10 @@ def _key(r: LinkRow) -> tuple[str, ...]:
     return tuple(row[c] for c in _KEY_COLUMNS)
 
 
+# Columns a read narrows by a bloom filter alone: none is in the sort key.
+_OFF_KEY = frozenset({"former_paths", "anchored_path"})
+
+
 async def _for_code(
     ch: _CHClient,
     org: str,
@@ -435,7 +440,14 @@ async def _for_code(
             params[column] = list(values)
             if column in ("path", "former_paths", "anchored_path", "checked_commit"):
                 long = column
-    sql = f"SELECT * {_LIVE} AND {' AND '.join(where)}"
+    filters = " AND ".join(where)
+    sql = f"SELECT * {_LIVE} AND {filters}"
+    if _OFF_KEY.intersection(narrow):
+        # Under FINAL, ClickHouse widens a skip index's granules to every granule of
+        # every part whose sort-key range overlaps them, most of the table here. The
+        # keys of every version that matches come from the index alone, then FINAL
+        # reads only those keys and judges each by its newest version.
+        sql += f" AND ({_KEY}) IN (SELECT {_KEY} FROM {TABLE} WHERE {filters})"
     return _links(
         await query_all_sliced(ch, sql, params, long) if long else await ch.query_all(sql, params)
     )
@@ -471,16 +483,47 @@ async def stale_fingerprints(
 
 
 async def pending(
-    org: str, code_namespace: str, *, days: int, ch: _CHClient | None = None
-) -> list[PendingLink]:
-    """The namespace's pending names (and `*` markers of memories written before its
-    first index), each with `expired` (older than `days`)."""
+    org: str,
+    code_namespace: str,
+    *,
+    days: int,
+    after: tuple[int, str] | None,
+    before: int,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> tuple[list[PendingLink], tuple[int, str] | None]:
+    """Read pending names and pre-index markers from the current scan cycle."""
+    since = ""
+    params: dict[str, Any] = {
+        "org": org,
+        "cns": code_namespace,
+        "days": int(days),
+        "before": before,
+        "lim": int(limit),
+    }
+    if after:
+        since = "AND (version, scan_digest) > ({after_version:UInt64}, {after_digest:String}) "
+        params.update(after_version=after[0], after_digest=after[1])
+    # Relinking can give several rows one version. Break ties without persisting
+    # the original link key in a cursor that can outlive the memory.
     rows = await (ch or _default_client()).query_all(
-        f"SELECT *, checked_at < now() - INTERVAL {{days:UInt32}} DAY AS expired {_LIVE} "
-        "AND org = {org:String} AND code_namespace = {cns:String} AND state = 'pending'",
-        params={"org": org, "cns": code_namespace, "days": int(days)},
+        "SELECT *, checked_at < toDateTime(fromUnixTimestamp64Nano(toInt64({before:UInt64}))) "
+        "- INTERVAL {days:UInt32} DAY AS expired, "
+        "hex(sipHash128(path, qualified_name, namespace, memory_id)) AS scan_digest "
+        f"{_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
+        "AND state = 'pending' AND version < {before:UInt64} "
+        f"{since}ORDER BY version, scan_digest LIMIT {{lim:UInt32}} "
+        "SETTINGS optimize_move_to_prewhere_if_final = 0",
+        params=params,
     )
-    return cast(list[PendingLink], _links(rows))
+    nxt = (
+        (int(rows[-1]["version"]), str(rows[-1]["scan_digest"]))
+        if len(rows) == int(limit)
+        else None
+    )
+    for row in rows:
+        row.pop("scan_digest")
+    return cast(list[PendingLink], _links(rows)), nxt
 
 
 async def lost(
@@ -512,12 +555,21 @@ async def policy_due(
     return [str(r["mid"]) for r in rows]
 
 
-async def code_namespaces(*, ch: _CHClient | None = None) -> list[tuple[str, str]]:
+async def code_namespaces(
+    among: Sequence[tuple[str, str]] | None = None, *, ch: _CHClient | None = None
+) -> list[tuple[str, str]]:
     """Every (org, code namespace) holding a live link, and maybe one whose links were
-    all tombstoned since: read without FINAL."""
+    all tombstoned since: read without FINAL. With `among`, only those of them, read by
+    the sort key's prefix."""
+    within = (
+        "AND (org, code_namespace) IN {among:Array(Tuple(String, String))} "
+        if among is not None
+        else ""
+    )
     rows = await (ch or _default_client()).query_all(
         f"SELECT DISTINCT org, code_namespace FROM {TABLE} WHERE tombstoned_at IS NULL "
-        "ORDER BY org, code_namespace"
+        f"{within}ORDER BY org, code_namespace",
+        params={"among": sorted(among)} if among is not None else None,
     )
     return [(str(r["org"]), str(r["code_namespace"])) for r in rows]
 
@@ -713,6 +765,40 @@ async def memory_heads(
     )
 
 
+# A memory as a link names it: its identity without the org, then its memory_id.
+LinkedMemory = tuple[str, str, str, str, str, str]
+
+
+def linked_memory(a: LinkRow) -> LinkedMemory:
+    """The memory link `a` was made from, as `heads_by_identity` reads it."""
+    return (
+        a["namespace"],
+        a["agent"],
+        a["user_id"],
+        a["session_id"],
+        a["memory_key"],
+        a["memory_id"],
+    )
+
+
+async def heads_by_identity(
+    org: str, memories: Sequence[LinkedMemory], *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The head rows of these memories, each named by its identity without the org and
+    then its memory_id, as `memory_heads` returns them: read by the identity, the
+    table's sort key, and kept only while it still holds that memory_id."""
+    if not memories:
+        return []
+    return await query_all_sliced(
+        ch or _default_client(),
+        _HEADS + "WHERE org = {org:String} "
+        "AND (namespace, agent, user_id, session_id, memory_key, memory_id) "
+        "IN {memories:Array(Tuple(String, String, String, String, String, UUID))}",
+        {"org": org, "memories": sorted(set(memories))},
+        "memories",
+    )
+
+
 async def code_change_policies(
     org: str, namespaces: Sequence[str], *, ch: _CHClient | None = None
 ) -> dict[str, str]:
@@ -798,6 +884,48 @@ async def stale_of_served(
             "readable": sorted(readable),
             "lim": max(int(limit), 1),
         },
+    )
+
+
+async def linkable_of_namespace(
+    org: str,
+    namespace: str,
+    memory_keys: Sequence[str] | None = None,
+    *,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """Up to `limit` of the namespace's served memories the link pass may link (no raw
+    tool observation: a key that starts `obs:`), those under `memory_keys` when given,
+    the last written first: each one's identity, `mid`, value, tags, files, `sha` and
+    version."""
+    keys = "AND memory_key IN {mks:Array(String)} " if memory_keys is not None else ""
+    return await (ch or _default_client()).query_all(
+        "SELECT namespace, agent, user_id, session_id, memory_key, "
+        "toString(memory_id) AS mid, value, tags, files, "
+        "toString(content_sha256) AS sha, version "
+        "FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} "
+        f"{keys}AND tombstoned_at IS NULL AND status IN ('active', 'conflicted') "
+        "AND NOT startsWith(memory_key, 'obs:') ORDER BY version DESC LIMIT {lim:UInt32}",
+        params={"org": org, "ns": namespace, "mks": list(memory_keys or []), "lim": int(limit)},
+    )
+
+
+async def link_states(
+    org: str, namespace: str, memory_ids: Sequence[str], *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The live links of these memories of `namespace`, each as its `mid`, code_namespace,
+    qualified_name, state and inputs_hash."""
+    if not memory_ids:
+        return []
+    return await query_all_sliced(
+        ch or _default_client(),
+        # `mid`, not `memory_id`: an alias of that name would shadow the column below
+        "SELECT toString(memory_id) AS mid, code_namespace, qualified_name, "
+        f"CAST(state AS String) AS state, inputs_hash {_LIVE} AND org = {{org:String}} "
+        "AND namespace = {ns:String} AND memory_id IN {ids:Array(UUID)}",
+        {"org": org, "ns": namespace, "ids": sorted(set(memory_ids))},
+        "ids",
     )
 
 

@@ -8,12 +8,15 @@ from dataclasses import replace
 from server.code.domain.anchor import (
     Definition,
     Link,
-    fingerprint,
+    cited_fingerprint,
+    cited_lines,
+    cited_names,
     local_name,
     mentions,
     recheck,
     resolve,
 )
+from server.code.domain.anchor_state import fingerprint
 
 
 def _d(path: str, qn: str, body: str = "", line: int = 1) -> Definition:
@@ -41,6 +44,39 @@ def test_a_part_of_a_qualified_name_is_not_a_mention_of_its_own() -> None:
     assert _names("`Missing.read_rows` and Other::fetch_page") == [
         "Missing.read_rows",
         "Other::fetch_page",
+    ]
+
+
+def test_a_pytest_node_id_does_not_name_an_anchor() -> None:
+    assert _names(
+        "`Blueprint.register` can be checked with tests/test_blueprints.py::test_nested_blueprint."
+    ) == ["Blueprint.register"]
+
+
+def test_pytest_class_and_configured_function_selectors_do_not_name_anchors() -> None:
+    assert _names(
+        "`Blueprint.register` can be checked with pytest tests/test_blueprints.py::TestBlueprints "
+        "or tests/test_blueprints.py::TestBlueprints::check_nested."
+    ) == ["Blueprint.register"]
+
+
+def test_pytest_class_nodes_and_parameters_leave_other_names_intact() -> None:
+    assert _names(
+        "`Factory.prepare` and `company.py::test_lookup` use "
+        r"`C:\work\test_cache.py::TestCache::test_lookup[outer[middle[CacheRegion::read]]]`, "
+        "then `Factory.finish`, ::Storage::write and py::test_registry."
+    ) == [
+        "Factory.prepare",
+        "company.py::test_lookup",
+        "Factory.finish",
+        "Storage::write",
+        "py::test_registry",
+    ]
+
+
+def test_unclosed_pytest_parameters_leave_other_mentions_intact() -> None:
+    assert _names("Run `tests/test_cache.py::test_lookup[case` and check `Storage::write`.") == [
+        "Storage::write"
     ]
 
 
@@ -191,6 +227,118 @@ def test_recheck_of_a_file_link() -> None:
     assert recheck(link, path_now="docs/b.md", head="c2").path == "docs/b.md"
     assert recheck(link, path_now="", head="c2").state == "missing"
     assert recheck(link, path_now="docs/a.md", head="c2").state == "fresh"
+
+
+def test_a_file_link_follows_the_lines_its_memory_cites() -> None:
+    names = cited_names(mentions("Dates go through `http_date`; `Reader.get` is unused."))
+    assert names == ["http_date"]  # `get` is a word of any file
+    then = [
+        "from werkzeug.http import http_date",
+        "",
+        "def _default(o):",
+        "    if isinstance(o, date):",
+        "        return http_date(o)",
+        "    return str(o)",
+    ]
+    assert cited_lines(then, names) == [then[0], "return http_date(o)"]
+    written = cited_fingerprint(then, names)
+    link = Link(path="src/p.py", body_hash=written, checked_hash=written)
+
+    # another line edited, the cited ones shifted and indented again: as it was
+    shifted = [
+        then[0],
+        "import uuid",
+        *then[1:4],
+        "            return http_date(o)",
+        "    return 0",
+    ]
+    as_it_was = cited_fingerprint(shifted, names)
+    assert recheck(link, path_now="src/p.py", cited=as_it_was, head="c2") == link
+    assert recheck(link, path_now="lib/p.py", cited=as_it_was, head="c2").state == "moved"
+
+    edited = [line.replace("http_date(o)", "http_date(o).lower()") for line in then]
+    changed = recheck(link, path_now="src/p.py", cited=cited_fingerprint(edited, names), head="c3")
+    assert (changed.state, changed.changed_since, changed.body_hash) == ("changed", "c3", written)
+    # edited again it is still changed since c3, and so it reads once every cited line went
+    assert recheck(changed, path_now="src/p.py", cited="h4", head="c4").changed_since == "c3"
+    assert recheck(link, path_now="src/p.py", cited="", head="c4").state == "changed"
+    back = recheck(changed, path_now="src/p.py", cited=written, head="c5")
+    assert (back.state, back.changed_since) == ("fresh", "")
+
+
+def test_a_file_link_written_against_no_cited_line_takes_the_first_it_finds() -> None:
+    # a rule about the file as a whole cites nothing: no edit to the file changes it
+    rule = "Changelog entries go in CHANGES.rst only for user-visible changes."
+    assert cited_names(mentions(rule)) == []
+    assert cited_fingerprint(["Version 3.1.0", "-   one entry"], []) == ""
+    link = Link(path="CHANGES.rst")
+    assert recheck(link, path_now="CHANGES.rst", cited="", head="c2") == link
+    # a name the file did not hold yet: the lines that bring it are its baseline
+    found = recheck(link, path_now="CHANGES.rst", cited="h1", head="c2")
+    assert (found.state, found.body_hash, found.checked_hash) == ("fresh", "h1", "h1")
+    assert recheck(found, path_now="CHANGES.rst", cited="h2", head="c3").state == "changed"
+    # written against the lines of one name: those that bring a second one change it
+    names = ["http_date", "dump_delta"]
+    then = ["from http import http_date", "def dump(o):", "    return http_date(o)"]
+    written = cited_fingerprint(then, names)
+    one = Link(path="d.py", body_hash=written, checked_hash=written)
+    both = cited_fingerprint([*then, "register(dump_delta)"], names)
+    brought = recheck(one, path_now="d.py", cited=both, head="c2")
+    assert (brought.state, brought.changed_since, brought.body_hash) == ("changed", "c2", written)
+
+
+def test_a_file_link_leaves_out_a_name_on_many_lines_of_its_file() -> None:
+    names = cited_names(mentions("Handlers here must never return `None`; see `MAX_ROWS`."))
+    assert names == ["None", "MAX_ROWS"]
+    handler = ["def {0}(req, key=None):", "    if key is None:", "        return None"]
+    then = [line.format(name) for name in ("get", "put", "drop") for line in handler]
+    then.append("LIMIT = min(n, MAX_ROWS)")
+    assert cited_lines(then, ["None"]) == []  # on nine lines: a word of this file
+    assert cited_lines(then, names) == [then[-1]]
+    written = cited_fingerprint(then, names)
+    link = Link(path="handlers.py", body_hash=written, checked_hash=written)
+    edited = [line.replace("key=None", "key=None, force=None") for line in then]
+    as_it_was = cited_fingerprint(edited, names)
+    assert recheck(link, path_now="handlers.py", cited=as_it_was, head="c2") == link
+    # on eight lines or fewer it is cited: an edit to one of them changes the link
+    few = then[3:]
+    assert len(cited_lines(few, ["None"])) == 6
+    cited = Link(path="handlers.py", body_hash=cited_fingerprint(few, ["None"]))
+    less = cited_fingerprint(few[1:], ["None"])
+    assert recheck(cited, path_now="handlers.py", cited=less, head="c2").state == "changed"
+
+
+def test_a_name_that_crosses_eight_lines_changes_the_lines_a_file_link_follows() -> None:
+    names = ["MAX_ROWS", "handler"]
+    then = ["LIMIT = min(1, MAX_ROWS)", *(f"    return handler(req, {i})" for i in range(9))]
+    assert cited_lines(then, names) == [then[0]]  # `handler` is on nine lines
+    written = cited_fingerprint(then, names)
+    link = Link(path="h.py", body_hash=written, checked_hash=written)
+    # one of the nine goes: the name is followed on its eight lines, no cited line edited
+    assert len(cited_lines(then[:-1], names)) == 9
+    eight = cited_fingerprint(then[:-1], names)
+    assert recheck(link, path_now="h.py", cited=eight, head="c2").state == "changed"
+    # a ninth line takes all of them out again
+    followed = Link(path="h.py", body_hash=eight, checked_hash=eight)
+    assert recheck(followed, path_now="h.py", cited=written, head="c3").state == "changed"
+
+
+def test_the_rules_of_cited_lines_are_under_the_fingerprint_version() -> None:
+    text = "Dates go through `http_date`; `Reader.get` and max_rows never return `None`."
+    lines = [
+        "from werkzeug.http import http_date, http_date_utc",
+        "MAX = max_rows   or 5",
+        *(f"def h{i}(key=None): return get(key)" for i in range(9)),
+        "\treturn  http_date(o)",
+    ]
+    assert (
+        cited_fingerprint(lines, cited_names(mentions(text)))
+        == "bff22e1a1f44b6b0c9625678baf0bcfc5269cbca0f510f7b560060857029acf9"
+    ), (
+        "the names a memory cites or the lines that hold them changed: stored file links "
+        "are hashed under the old rules, so bump `_RULES` in "
+        "server/code/domain/declaration.py and they are re-hashed"
+    )
 
 
 def test_a_rename_keeps_an_earlier_change_and_rebaselines_only_a_current_link() -> None:

@@ -11,9 +11,10 @@ the index is built is in
 The [language support table](#language-support) distinguishes fast-tier symbols and
 edges from compiler-tier coverage.
 
-The code workers are off by default; a deployment turns them on per repository
-([repositories](repositories.md)). The default `core` MCP toolset lists no code tools
-unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
+`code_ingest` is on by default and finds nothing to do until a repository is configured
+([repositories](repositories.md)); [Workers](#workers) lists each worker's default. The
+default `core` MCP toolset lists no code tools unless `LOOM_MCP_CODE_TOOLS=true`;
+`?toolset=coding` always does.
 
 ![The Repositories page: an indexed repository, its branches and its tracker](../../images/dashboard-repositories.png)
 
@@ -98,7 +99,7 @@ answer at once and an exact one when the compiler tier catches up.
 
 | Worker                                          | Default | Does                                              |
 | ----------------------------------------------- | ------- | ------------------------------------------------- |
-| `code_ingest`                                   | off     | fast tier, per merge; builds self-service entries |
+| `code_ingest`                                   | on      | fast tier, per merge; builds self-service entries |
 | `code_embed_recovery`                           | off     | embeds chunks the ingest pass left unembedded     |
 | `code_pr_history`                               | off     | merged PRs, reviews and issues from GitHub        |
 | `code_scip_delta`, `code_scip_{ts,py,go}_delta` | on      | compiler-tier deltas per merge                    |

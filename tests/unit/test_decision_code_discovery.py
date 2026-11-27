@@ -427,6 +427,7 @@ async def test_source_quotations_never_persist_in_code_namespace_telemetry(monke
             started=0,
             embedding_model="fake-ngram-3072",
             memo_key=None,
+            scope=search._scope_of(inp),
         )
 
     async def retrieve(*args, **kwargs):

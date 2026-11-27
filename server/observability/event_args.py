@@ -671,8 +671,7 @@ def _read_outcome_columns(result: dict[str, Any]) -> dict[str, str]:
 def _hits_column(op_name: str, result: dict[str, Any]) -> dict[str, str]:
     """`out_hits`: how many rows an assistant op's call found, the summed length of the
     output lists `ASSISTANT_FOUND_FIELD` names for it ("0" on an abstention). The
-    assistant's label reads it (server/assistant/app/support.py); other ops' rows carry
-    none."""
+    assistant's support label uses it; other ops' rows carry none."""
     fields = ASSISTANT_FOUND_FIELD.get(op_name)
     if not fields:
         return {}
@@ -722,6 +721,9 @@ def project_result(result: Any, *, op_name: str = "") -> dict[str, str]:
         out.update(_retrieval_work_columns(result.get("retrieval_work")))
         out.update(_read_outcome_columns(result))
         out.update(_hits_column(op_name, result))
+        # A conditional poll returns the same id and version as a read of that revision.
+        if op_name == "memory.get" and isinstance(unchanged := result.get("unchanged"), bool):
+            out[RESULT_PREFIX + "unchanged"] = "true" if unchanged else "false"
         if op_name.startswith("code."):
             from server.observability.code_response import code_response_counts
 

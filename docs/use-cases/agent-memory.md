@@ -1,6 +1,6 @@
 ---
 title: Memory for coding agents across sessions and tools
-description: Compare repository instructions, session history, and shared memory for coding agents. Test recall, scoped access, and lessons linked to code.
+description: Choose an AI agent memory tool for user preferences, project rules, or decisions shared across coding agents. Test recall, access, and source changes.
 seo:
   title: Shared memory for coding agents
 ---
@@ -35,6 +35,16 @@ to the function that enforces it. A later agent can retrieve the lesson with the
 function and check the source before changing the retry. Use [memory history and provenance](../features/memory/history-and-provenance.md)
 to see who saved the lesson and how it changed.
 
+## Choose a memory tool for AI agents
+
+Start with who should be able to retrieve the information in a fresh session. For
+an assistant that remembers a person's preferences, test whether storage can scope
+recall and deletion to that user. For an agent that needs approved policy, test whether
+document search returns a passage from the current revision. For a team of agents,
+test whether a decision survives a client switch and whether a reader on another
+project is refused. The [self-hosted comparison](../guides/compare-coding-agent-memory.md)
+shows what a fresh reader could retrieve in one coding example.
+
 ## Choosing a memory tool for coding agents
 
 Choose a source based on what the next agent needs to retrieve and who maintains it.
@@ -54,13 +64,13 @@ definition that implements the change. When the policy comes from a document, us
 
 Check these requirements before choosing Loom:
 
-| Requirement                    | What to check                                                                                                                                  |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Recall after a fresh session   | Save a fact, start another session and require the stored value and writer in the tool response.                                               |
-| Shared context across tools    | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript. |
-| Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false.    |
-| Access and operations          | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers.           |
-| Data portability               | [Export a decision as Markdown and check it in a fresh namespace](../features/integrations/okf.md#test-agent-memory-portability).              |
+| Requirement                    | What to check                                                                                                                                                              |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recall after a fresh session   | Save a fact, start another session and require the stored value and writer in the tool response.                                                                           |
+| Shared context across tools    | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript.                             |
+| Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false.                                |
+| Access and operations          | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers.                                       |
+| Data portability               | [Compare what a fresh reader recovers](../guides/compare-coding-agent-memory.md#move-a-saved-decision-to-a-fresh-setup) after copying the files or importing the decision. |
 
 Follow [coding-agent setup](../getting-started/connect-a-coding-agent.md) for the plugin
 or MCP connection your client supports. Read its capture settings before using private

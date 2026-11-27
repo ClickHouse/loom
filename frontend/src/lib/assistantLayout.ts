@@ -28,7 +28,6 @@ export type AssistantReason =
   | { kind: "narrowed"; scope: string }
   | { kind: "token_expires_soon"; leftS?: number }
   | { kind: "not_configured" }
-  | { kind: "starting" }
   | { kind: "failing" }
   | { kind: "model_calls_off" };
 
@@ -39,8 +38,7 @@ export const SHORT_REASON: Record<AssistantReason["kind"], string> = {
   narrowed: "this token is narrowed",
   token_expires_soon: "this token expires too soon",
   not_configured: "chat not set up",
-  starting: "setting up",
-  failing: "setup failed",
+  failing: "configuration failed",
   model_calls_off: "model calls are off",
 };
 

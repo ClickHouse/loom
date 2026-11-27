@@ -15,6 +15,11 @@
 *.key
 secrets.json
 
+# Qualification state and results can contain credentials.
+/integrations/librechat/qualification/.state.json
+/integrations/librechat/qualification/results.json
+/integrations/librechat/qualification/results-*.json
+
 # ============================================================
 # Frontend (React/Vite dashboard served at /) — node deps + build output
 # ============================================================

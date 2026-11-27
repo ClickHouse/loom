@@ -47,6 +47,13 @@ def forget_header(org: str, ns: str, path: str) -> None:
     _header_cache.pop((org, ns, path), None)
 
 
+def forget_headers() -> None:
+    """Forget every header text this process read, for a process whose headers another
+    one wrote (a `loom code backfill --workers` process moving to its next pass)."""
+    _header_cache.clear()
+    _sibling_includes.clear()
+
+
 def include_candidates(from_path: str, include: str) -> list[str]:
     """Indexed paths an include target may name, nearest first: relative to
     the includer's directory, then to each ancestor directory, `MAX_ANCESTOR_DIRS`

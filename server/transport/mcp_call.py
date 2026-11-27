@@ -51,6 +51,7 @@ from server.transport._common import (
     validation_note,
 )
 from server.transport._common import validation_errors as _validation_errors
+from server.transport.arg_check import IDENTITY_KEYS
 from server.transport.arg_feedback import feedback, refused_result, tool_error
 from server.transport.assistant_call import answer_run, assistant_call, set_assistant_call
 from server.transport.lean_results import lean_result
@@ -244,6 +245,7 @@ async def _call_tool(
     client_name: str | None = None,
     mcp_session_id: str = "",
     toolset: str | None = None,
+    schema_profile: str | None = None,
 ) -> dict[str, Any]:
     """One MCP `tools/call`, in phases (each below this function, in order):
     resolve the tool → session-content admission → bind the caller's identity →
@@ -254,8 +256,7 @@ async def _call_tool(
     that can end the call returns its response and this function returns it
     at once, so no gate runs after a refusal and none runs after the
     handler."""
-    name = params.get("name")
-    arguments = params.get("arguments") or {}
+    name, arguments = params.get("name"), params.get("arguments") or {}
 
     if not name or not isinstance(name, str):
         return _err(req_id, INVALID_PARAMS, "tools/call requires 'name' (string)")
@@ -264,7 +265,9 @@ async def _call_tool(
 
     begin_call()
 
-    tool = await _resolve_connection_tool(req_id, name, arguments, auth, client_name, toolset)
+    tool = await _resolve_connection_tool(
+        req_id, name, arguments, auth, client_name, toolset, schema_profile
+    )
     if isinstance(tool, dict):
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
@@ -275,6 +278,7 @@ async def _call_tool(
     refused = await _another_cells_org(req_id, op, arguments, auth)
     if refused is not None:
         return refused
+    explicit_identity = not IDENTITY_KEYS.isdisjoint(arguments)
     request_id, defaults = await _bind_caller_identity(op, arguments, auth, client_name)
 
     run_caller, stamped_run = _stamp_session_run(op, arguments, defaults, mcp_session_id)
@@ -282,7 +286,12 @@ async def _call_tool(
     client_idem_key = _pop_idempotency_key(op, arguments)
 
     validated = _validated_input(
-        req_id, op, gates.with_resolved_org(op, arguments, auth), request_id, toolset=toolset
+        req_id,
+        op,
+        gates.with_resolved_org(op, arguments, auth),
+        request_id,
+        toolset=toolset,
+        include_example=not explicit_identity,
     )
     if isinstance(validated, dict):
         return validated  # misspelled-argument refusal, or VALIDATION_FAILED
@@ -367,7 +376,7 @@ async def _call_tool(
             with (
                 gates.tenant_slot(auth, target),
                 llm_free.serving(op),
-                hint_naming(toolset) as namer,
+                hint_naming(toolset, schema_profile) as namer,
             ):
                 result = await op.handler(input_obj)
         except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
@@ -393,7 +402,7 @@ async def _call_tool(
         _record_success_telemetry(call, result, elapsed_ms)
 
         return await _success_response(
-            call, result, elapsed_ms, (idem_scope, idem_body_hash), mentor_hint
+            call, result, elapsed_ms, (idem_scope, idem_body_hash), mentor_hint, toolset=toolset
         )
 
 
@@ -486,6 +495,7 @@ async def _resolve_connection_tool(
     auth: Any,
     client_name: str | None,
     toolset: str | None,
+    schema_profile: str | None = None,
 ) -> Operation | dict[str, Any]:
     """`_resolve_tool`, and on the assistant toolset first its refusal of any tool it does
     not carry, then its forced arguments and consumer stamped over the model's own and the
@@ -495,7 +505,7 @@ async def _resolve_connection_tool(
     on_assistant = assistant_connection(toolset)
     set_assistant_call(on_assistant)
     if not on_assistant:
-        return await _resolve_tool(req_id, name, auth, client_name, toolset)
+        return await _resolve_tool(req_id, name, auth, client_name, toolset, schema_profile)
     refused = _assistant_refusal(req_id, name, auth)
     if refused is not None:
         return refused
@@ -516,6 +526,7 @@ async def _resolve_tool(
     auth: Any,
     client_name: str | None,
     toolset: str | None = None,
+    schema_profile: str | None = None,
     *,
     allow_hidden: bool = False,
 ) -> Operation | dict[str, Any]:
@@ -525,7 +536,9 @@ async def _resolve_tool(
     # loom_activate is answered before the registry lookup (it is no op); it
     # still emits observability so its calls aren't invisible.
     if name == _LOOM_ACTIVATE_TOOL_NAME:
-        primer = await _render_primer_and_emit(auth, client_name, "loom_activate", toolset)
+        primer = await _render_primer_and_emit(
+            auth, client_name, "loom_activate", toolset, schema_profile
+        )
         return _ok(
             req_id,
             {
@@ -544,7 +557,7 @@ async def _resolve_tool(
         # The code loom_op answers for a name no op answers to.
         body: dict[str, Any] = {"error": msg, "code": UNKNOWN_OP, "tool": name}
         if op is not None:  # A hidden op says why and what instead
-            body = {**(hidden_refusal(op.name, toolset) or {}), "tool": name}
+            body = {**(hidden_refusal(op.name, toolset, schema_profile) or {}), "tool": name}
             emit_token_refusal(op.name, auth, error_code="OP_NOT_ON_MCP")
             msg = f"{body.get('error', msg)}; instead: {body.get('instead', '')}"
         return _ok(
@@ -773,6 +786,7 @@ def _validated_input(
     request_id: str,
     *,
     toolset: str | None = None,
+    include_example: bool = True,
 ) -> BaseModel | dict[str, Any]:
     """Phase 4 of `_call_tool`: the misspelled-argument refusal, then
     Pydantic validation. Returns the input model, or the refusal response
@@ -802,7 +816,9 @@ def _validated_input(
             error=validation_note(errors),
         ):
             schedule_code_trace_validation_failure(op.name, arguments, errors)
-        return _ok(req_id, tool_error(*feedback(op, arguments, errors)))
+        return _ok(
+            req_id, tool_error(*feedback(op, arguments, errors, include_example=include_example))
+        )
     if (
         isinstance(input_obj, CodeSymbolInput)
         and not input_obj.include_body

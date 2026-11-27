@@ -115,7 +115,7 @@ test("the source line sits between token and auth, names the lookup, and warns w
   const { loomConfigPath, loomTokenPath } = await import("../lib/loom-client.mjs");
   const run = (tokenKind, configUrl, tok = token()) =>
     clientStatus({ serverUrl, token: tok, scope, now, fetchImpl: responses().fetchImpl, tokenKind, configUrl });
-  const pass = await run("env", "https://elsewhere");
+  const pass = await run("env", "");
   assert.deepEqual(
     pass.checks.map((c) => c.name),
     ["server", "token", "source", "auth", "namespace", "flush"],
@@ -128,13 +128,87 @@ test("the source line sits between token and auth, names the lookup, and warns w
   assert.ok(line.detail.includes(loomConfigPath()));
   assert.equal(warn.ok, true); // a WARN never fails the check
   assert.equal((await run("config", `${serverUrl}/`)).checks[2].grade, "PASS");
-  assert.equal((await run("file", "https://elsewhere")).checks[2].detail, `token from ${loomTokenPath()}`);
-  assert.equal((await run("agent", "https://elsewhere")).checks[2].detail, "token from the workload-token exchange");
+  // the helper sends the config's token whatever lookup supplied this one
+  assert.deepEqual((await run("env", "https://elsewhere")).checks[2], {
+    name: "source",
+    grade: "WARN",
+    detail: `token from LOOM_API_KEY; ${loomConfigPath()} names https://elsewhere; this check uses ${serverUrl}`,
+  });
+  assert.equal((await run("file", "")).checks[2].detail, `token from ${loomTokenPath()}`);
+  assert.equal((await run("agent", "")).checks[2].detail, "token from the workload-token exchange");
   const none = await run("", "", "");
   assert.equal(
     none.checks.some((c) => c.name === "source"),
     false,
   );
+});
+
+test("the source line warns when the MCP header helper sends another token than the one checked, or none", async () => {
+  const { loomConfigPath, loomTokenPath } = await import("../lib/loom-client.mjs");
+  const run = (mcpToken, configUrl = "") =>
+    clientStatus({
+      serverUrl,
+      token: token(),
+      scope,
+      now,
+      fetchImpl: responses().fetchImpl,
+      tokenKind: "env",
+      mcpToken,
+      configUrl,
+    });
+  const reads = `token from LOOM_API_KEY; the loom MCP tools read ${loomConfigPath()}, then ${loomTokenPath({})}, and `;
+  // another token wins over the server it was saved for: saving the checked token fixes both
+  const other = await run("saved.tok", "https://elsewhere");
+  assert.deepEqual(other.checks[2], { name: "source", grade: "WARN", detail: `${reads}send another token` });
+  assert.equal(other.checks.find((c) => c.name === "auth").grade, "PASS");
+  assert.equal(JSON.stringify(other).includes("saved.tok"), false);
+  assert.equal((await run("")).checks[2].detail, `${reads}find no token`);
+  assert.equal((await run(token())).checks[2].detail, "token from LOOM_API_KEY");
+});
+
+/** The status script of `plugin` run as a process in a scratch home that
+ *  holds `config`. `hookEnv`: what the SessionStart hook of the Claude Code
+ *  copy saw and saved there. */
+async function statusProcess(plugin, config, env, hookEnv = {}) {
+  const { spawn } = await import("node:child_process");
+  const { saveInstall } = await import("../lib/plugin-options.mjs");
+  const script = fileURLToPath(new URL(`../../${plugin}/bin/loom-client-status.mjs`, import.meta.url));
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-status-proc-")));
+  fs.mkdirSync(path.join(home, ".loom"));
+  fs.writeFileSync(path.join(home, ".loom", "config.json"), JSON.stringify(config));
+  saveInstall(hookEnv, { tmp: home });
+  try {
+    return await new Promise((resolve) => {
+      const child = spawn(process.execPath, [script], {
+        env: hostEnv({ PATH: process.env.PATH, HOME: home, TMPDIR: home, LOOM_BASE_URL: "http://127.0.0.1:9", ...env }),
+      });
+      let stdout = "";
+      child.stdout.on("data", (c) => (stdout += c));
+      child.on("close", () => resolve(stdout));
+    });
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test("for Claude Code's plugin the script compares LOOM_API_KEY with the saved token the helper sends", async () => {
+  // Two tokens the spawned process's own clock reads as live.
+  const live = (extra) => token(Math.floor(Date.now() / 1000) + 3600 + extra);
+  const config = { url: "https://elsewhere.test", token: live(0) };
+  const source = (out) => JSON.parse(out).checks.find((c) => c.name === "source");
+  const plugin = { CLAUDE_PLUGIN_ROOT: "/plugin" };
+  const out = await statusProcess("claude-code-plugin", config, { LOOM_API_KEY: live(60) }, plugin);
+  assert.equal(source(out).grade, "WARN");
+  assert.ok(source(out).detail.endsWith("and send another token"), source(out).detail);
+  assert.equal(out.includes(config.token) || out.includes(live(60)), false);
+  // the same token saved: the server it was saved for is what differs
+  const same = source(await statusProcess("claude-code-plugin", config, { LOOM_API_KEY: config.token }, plugin));
+  assert.match(same.detail, /config\.json names https:\/\/elsewhere\.test; this check uses http:\/\/127\.0\.0\.1:9$/);
+  // an agent's tools send its own token, and a hand-wired client's helper reads the variable
+  const named = { name: "source", grade: "PASS", detail: "token from LOOM_API_KEY" };
+  const agent = { LOOM_API_KEY: live(60), LOOM_CLIENT_ID: "ci", LOOM_WORKLOAD_TOKEN: "proof" };
+  assert.deepEqual(source(await statusProcess("claude-code-plugin", config, agent, plugin)), named);
+  assert.deepEqual(source(await statusProcess("claude-code-plugin", config, { LOOM_API_KEY: live(60) })), named);
 });
 
 test("the agent-mode line names the server the exchange went to, not the one checked", async () => {
@@ -155,36 +229,17 @@ test("the Codex copy checks the hooks' server and makes no source comparison", a
   // Codex's MCP entry may be replaced whole in Codex's own config, which the
   // script cannot read: it checks the hooks' server and the source line only
   // names the lookup.
-  const { spawn } = await import("node:child_process");
-  const codexScript = fileURLToPath(new URL("../../codex-plugin/bin/loom-client-status.mjs", import.meta.url));
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-status-codex-")));
-  fs.mkdirSync(path.join(home, ".loom"));
   // A token the spawned process's own clock reads as live: the server line
   // and the source line are what this test is about, not expiry.
   const live = token(Math.floor(Date.now() / 1000) + 3600);
-  fs.writeFileSync(
-    path.join(home, ".loom", "config.json"),
-    JSON.stringify({ url: "https://elsewhere.test", token: live }),
-  );
-  try {
-    const out = await new Promise((resolve) => {
-      const child = spawn(process.execPath, [codexScript], {
-        env: hostEnv({ PATH: process.env.PATH, HOME: home, TMPDIR: home, LOOM_BASE_URL: "http://127.0.0.1:9" }),
-      });
-      let stdout = "";
-      child.stdout.on("data", (c) => (stdout += c));
-      child.on("close", () => resolve(stdout));
-    });
-    const result = JSON.parse(out);
-    assert.match(result.checks.find((c) => c.name === "server").detail, /127\.0\.0\.1:9/);
-    const source = result.checks.find((c) => c.name === "source");
-    assert.equal(source.grade, "PASS");
-    assert.ok(source.detail.endsWith("config.json"), source.detail);
-    assert.equal(result.checks.find((c) => c.name === "token").grade, "PASS");
-    assert.equal(out.includes(live), false);
-  } finally {
-    fs.rmSync(home, { recursive: true, force: true });
-  }
+  const out = await statusProcess("codex-plugin", { url: "https://elsewhere.test", token: live }, {});
+  const result = JSON.parse(out);
+  assert.match(result.checks.find((c) => c.name === "server").detail, /127\.0\.0\.1:9/);
+  const source = result.checks.find((c) => c.name === "source");
+  assert.equal(source.grade, "PASS");
+  assert.ok(source.detail.endsWith("config.json"), source.detail);
+  assert.equal(result.checks.find((c) => c.name === "token").grade, "PASS");
+  assert.equal(out.includes(live), false);
 });
 
 test("status warns, without failing, about a server older than the plugin's minimum", async () => {

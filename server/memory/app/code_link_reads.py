@@ -76,7 +76,7 @@ async def current_links(org: str, links: list[LinkRow]) -> list[LinkRow]:
     by_mid: dict[str, list[LinkRow]] = defaultdict(list)
     for a in links:
         by_mid[a["memory_id"]].append(a)
-    heads = await store.memory_heads(org, list(by_mid))
+    heads = await store.heads_by_identity(org, [store.linked_memory(a) for a in links])
     return [a for h in heads for a in current(org, h, by_mid.get(str(h["mid"]), []))]
 
 
@@ -259,9 +259,10 @@ async def _annotation_reads(
 
 async def annotate_hits(input: Any, hits: list[Any]) -> None:
     """Set each search hit's `code_state` to its worst link in a repository the caller
-    may read (the links themselves on `_code_links`), mark for a lower rank
-    (`_code_ranked_down`) the hits whose code changed or went, and drop, in place, the
-    hits about code that is gone (`code_change.hidden`)."""
+    may read and `code_changed_since` to the commit of that state
+    (`code_change.worst_commit`; the links themselves on `_code_links`), mark for a lower
+    rank (`_code_ranked_down`) the hits whose code changed or went, and drop, in place,
+    the hits about code that is gone (`code_change.hidden`)."""
     try:
         memories, seen, policies = await _annotation_reads(input, hits)
     except Exception as e:  # noqa: BLE001 — the links are additive to the read
@@ -281,6 +282,7 @@ async def annotate_hits(input: Any, hits: list[Any]) -> None:
         ]
         h._code_links = shown
         h.code_state = code_change.worst([a["state"] for a in shown])
+        h.code_changed_since = code_change.worst_commit(shown)
         # the served window moves it down after the verdict (`code_change.rank_down`)
         h._code_ranked_down = bool(
             m

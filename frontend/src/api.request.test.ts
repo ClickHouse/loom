@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearToken,
   getMySharingSummary,
+  listCodeRepos,
   listTokens,
   onSignInRejected,
   post,
@@ -37,6 +38,14 @@ afterEach(() => {
 });
 
 const failure = '{"detail":{"code":"INTERNAL","message":"sharing rollup failed"}}';
+
+it("requests mirror freshness in the projected repository list", async () => {
+  const fetchMock = stubFetch(200, '{"repos":[]}');
+  await listCodeRepos("acme");
+  const [url, init] = fetchMock.mock.calls[0];
+  expect(url).toBe("/v1/code.repos");
+  expect(JSON.parse(String(init?.body)).fields).toContain("fetch_overdue");
+});
 
 describe("getMySharingSummary", () => {
   it("rejects a 500 with an ApiError carrying the code and request id", async () => {

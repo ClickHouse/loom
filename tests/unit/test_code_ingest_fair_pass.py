@@ -32,11 +32,11 @@ def test_a_cut_per_phase_is_kept_and_the_cursor_lists_them_first_cut_first() -> 
     r.cut("code-s:heal@10/40", cfg=_cfg("code-s"))
     assert r.partial is True
     assert r.cuts == {
-        "commits": "code-p:commits@abcdef123456+3",
-        "walk": "code-r:rechunk@700/22136",
+        "commits": "o/code-p:commits@abcdef123456+3",
+        "walk": "o/code-r:rechunk@700/22136",
     }
-    assert r.resume == "code-p:commits@abcdef123456+3; code-r:rechunk@700/22136"
-    assert ingest_budget.cut_points(r.resume) == {"commits": "code-p", "walk": "code-r"}
+    assert r.resume == "o/code-p:commits@abcdef123456+3; o/code-r:rechunk@700/22136"
+    assert ingest_budget.cut_points(r.resume) == {"commits": "o/code-p", "walk": "o/code-r"}
 
 
 def test_every_leg_the_pass_writes_maps_to_its_phase() -> None:
@@ -120,7 +120,7 @@ def test_the_commit_phase_stops_at_its_share_so_the_walk_runs_in_the_same_pass(
     order, _ = _three(monkeypatch, clock, cost=150.0)
     result = _run_with_cursor("")
     assert order[:4] == ["commits:code-a", "commits:code-b", "commits:code-c", "walk:code-a"]
-    assert result.partial is True and result.resume == "code-b:walk"
+    assert result.partial is True and result.resume == "o/code-b:walk"
 
 
 def test_under_commit_load_the_walk_still_gets_its_share(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,8 +139,8 @@ def test_under_commit_load_the_walk_still_gets_its_share(monkeypatch: pytest.Mon
         "post:code-a",
         "post:code-b",
     ]
-    assert result.resume == "code-c:commits; code-b:walk"
-    assert w.pass_outcome(result)["resume"] == "code-c:commits; code-b:walk"
+    assert result.resume == "o/code-c:commits; o/code-b:walk"
+    assert w.pass_outcome(result)["resume"] == "o/code-c:commits; o/code-b:walk"
 
 
 def test_the_next_pass_starts_each_phase_at_the_entry_the_last_one_cut(
@@ -152,7 +152,7 @@ def test_the_next_pass_starts_each_phase_at_the_entry_the_last_one_cut(
     it already served."""
     clock = _Clock()
     order, _ = _three(monkeypatch, clock, cost=100.0)
-    result = _run_with_cursor("code-c:commits; code-b:walk")
+    result = _run_with_cursor("o/code-c:commits; o/code-b:walk")
     assert order == [
         "commits:code-c",
         "commits:code-a",
@@ -163,7 +163,49 @@ def test_the_next_pass_starts_each_phase_at_the_entry_the_last_one_cut(
         "post:code-a",
         "post:code-b",
     ], order
-    assert result.resume == "code-a:walk"
+    assert result.resume == "o/code-a:walk"
+
+
+def _two_orgs(monkeypatch: pytest.MonkeyPatch, clock: _Clock) -> list[str]:
+    """Two orgs that both run `code-widgets`, each commit phase costing 400 s of
+    a commit share that stops at 350 s: the first org's fetch starts, the second's
+    is cut."""
+    monkeypatch.setattr(settings, "code_ingest_max_pass_seconds", 1000)
+    monkeypatch.setattr(settings, "code_ingest_pass_budget_fraction", 0.5)
+    monkeypatch.setattr(settings, "code_ingest_walk_budget_share", 0.3)
+    cfgs = [_cfg("code-widgets", org="o1"), _cfg("code-widgets", org="o2")]
+    order = _wire_run(monkeypatch, cfgs, {}, clock)
+
+    async def run_repo(cfg: Any, result: Any, budget: Any = None) -> Any:
+        order.append(f"commits:{cfg.org}")
+        clock.now += 400.0
+        return None
+
+    monkeypatch.setattr(w, "_run_repo", run_repo)
+    return order
+
+
+def test_two_orgs_with_one_namespace_name_alternate_across_a_cut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cut names the second org's `code-widgets`; the next pass starts there,
+    not at the first org's entry of the same name."""
+    order = _two_orgs(monkeypatch, _Clock())
+    first = _run_with_cursor("")
+    assert order == ["commits:o1"] and first.partial
+    order.clear()
+    _run_with_cursor(first.resume)
+    assert order[0] == "commits:o2", order
+
+
+def test_a_cursor_from_before_the_org_was_kept_is_dropped_not_misread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Build N-1 left `code-widgets:commits`: it names no org, so the pass keeps the
+    configured order instead of starting at whichever org matches the name first."""
+    order = _two_orgs(monkeypatch, _Clock())
+    _run_with_cursor("code-widgets:commits")
+    assert order[0] == "commits:o1", order
 
 
 def test_an_entry_the_commit_phase_did_not_reach_owes_its_walk_to_the_next_pass(
@@ -174,7 +216,7 @@ def test_an_entry_the_commit_phase_did_not_reach_owes_its_walk_to_the_next_pass(
     for the commits, so the next pass fetches it first and walks it."""
     clock = _Clock()
     order, _ = _three(monkeypatch, clock, cost=200.0)
-    result = _run_with_cursor("code-c:commits; code-b:walk")
+    result = _run_with_cursor("o/code-c:commits; o/code-b:walk")
     assert order == [
         "commits:code-c",
         "commits:code-a",
@@ -182,7 +224,7 @@ def test_an_entry_the_commit_phase_did_not_reach_owes_its_walk_to_the_next_pass(
         "post:code-c",
         "post:code-a",
     ], order
-    assert result.resume == "code-b:commits; code-a:walk"
+    assert result.resume == "o/code-b:commits; o/code-a:walk"
 
 
 def test_a_single_namespace_trigger_is_not_rotated(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,7 +232,7 @@ def test_a_single_namespace_trigger_is_not_rotated(monkeypatch: pytest.MonkeyPat
     clock = _Clock()
     order, cfgs = _three(monkeypatch, clock, cost=1.0)
     monkeypatch.setattr(w, "selected_repos", lambda org="", namespace="": [cfgs[1]])
-    ctx = pass_context.begin("code_ingest", resume_cursor="code-c:commits")
+    ctx = pass_context.begin("code_ingest", resume_cursor="o/code-c:commits")
     try:
         asyncio.run(w.run_pass(org="o", namespace="code-b"))
     finally:

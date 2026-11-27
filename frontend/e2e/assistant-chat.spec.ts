@@ -179,7 +179,7 @@ test("a refusal before the stream and an error event inside it are shown in the 
         },
       });
     // The route's one error inside a stream ends it: no [DONE] follows.
-    const error = { code: "ASSISTANT_UPSTREAM_FAILED", message: "LibreChat ended the answer with an error" };
+    const error = { code: "ASSISTANT_UPSTREAM_FAILED", message: "The native assistant ended the answer with an error" };
     return r.fulfill({
       status: 200,
       contentType: "text/event-stream",
@@ -227,16 +227,21 @@ test("an unavailable assistant is a plain state, not a crash", async ({ page }) 
   await page.route("**/v1/assistant/chat/completions", (r) =>
     r.fulfill({
       status: 503,
-      json: { detail: { code: "ASSISTANT_UNAVAILABLE", message: "the assistant is not set up on this replica yet" } },
+      json: {
+        detail: {
+          code: "ASSISTANT_UNAVAILABLE",
+          message: "the native assistant is disabled",
+          reason: "not_configured",
+        },
+      },
     }),
   );
   await ask(page, "Who owns billing?");
-  // A refusal that names no reason reads as not set up: one empty state, with the link to
-  // the docs on setting up the assistant service, and no question field.
+  // An explicitly disabled assistant shows its configuration guide and no question field.
   const why = panel(page).getByTestId("assistant-unavailable");
   await expect(why).toHaveAttribute("data-reason", "not_configured");
   await expect(why.getByRole("heading", { level: 3 })).toHaveText("Chat isn't set up");
-  await expect(why.getByRole("button", { name: "How to set up the assistant service" })).toBeVisible();
+  await expect(why.getByRole("button", { name: "How to configure the assistant" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Question" })).toHaveCount(0);
   await expect(panel(page).getByRole("checkbox")).toHaveCount(0);
   // Chat not set up is no broken mark on the launcher: its starters still read.
@@ -251,7 +256,7 @@ for (const width of [360, 400]) {
   test.describe(`phone ${width}, coarse pointer`, () => {
     test.use({ viewport: { width, height: 800 }, hasTouch: true, isMobile: true });
 
-    test("the top bar is one row with Ask AI and no New, the bottom nav three tabs, each a 44 px target", async ({
+    test("the top bar is one row with Ask AI and no New, the bottom nav four tabs, each a 44 px target", async ({
       page,
     }) => {
       await installApi(page);
@@ -287,7 +292,7 @@ for (const width of [360, 400]) {
         ask: true,
         newShown: false,
         small: [],
-        items: ["Memories", "Library", "More"].map((text) => ({ text, big: true })),
+        items: ["Memories", "Library", "Runs", "More"].map((text) => ({ text, big: true })),
       });
     });
 

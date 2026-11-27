@@ -248,7 +248,10 @@ export function Spending() {
 
   return (
     <PageContainer>
-      <PageHeader title="Usage">
+      <PageHeader
+        title="Usage"
+        description="Track model spend by agent and operation and see how much of the daily cap is used."
+      >
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
 

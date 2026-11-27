@@ -4,13 +4,14 @@ lookup and the call graph around it, with the edge and candidate-site wire rows.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
     Field,
     PrivateAttr,
     SerializerFunctionWrapHandler,
+    StringConstraints,
     field_validator,
     model_serializer,
     model_validator,
@@ -35,17 +36,29 @@ from server.code.domain.units import CodeUnit
 from server.operations.base import MCP_HIDDEN
 
 EDIT_TEST_CONTEXT_LINES = 10
+# not a setting: the request schema and exact clue batching share this maximum.
+EDIT_CONTEXT_MAX_NAMES = 8
+_EditName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1024)]
 
 
 class CodeEditContextInput(_CodeIdentity, _ResultLessons):
     name: str = Field(
         default="",
-        description="Definition name, path:symbol, or path:line. File path with clues if known.",
+        description="Name, path:symbol, path:line, or file with clues.",
     )
     clues: list[GrepText] = Field(
         default_factory=list,
         max_length=255,
-        description="Literal fragments to find the edit target in a file or across the index.",
+        description="Text fragments or exact declarations.",
+    )
+    names: list[_EditName] = Field(
+        default_factory=list,
+        max_length=EDIT_CONTEXT_MAX_NAMES,
+        description="Exact names or locations.",
+    )
+    include_related_source: bool = Field(
+        default=True,
+        description="Set false after reading extra bodies.",
     )
 
 
@@ -90,7 +103,8 @@ class CodeSymbolInput(_CodeIdentity):
     # `lesson_namespaces` (over MCP the caller's memory home by default) and the
     # repository's team namespace, each with its `code_state` (`fresh`, `moved`, or
     # `changed` when this branch's body differs from the one the memory was written
-    # against).
+    # against). `lessons_unread: true` when the read, or one matched member's, failed or ran
+    # past its bound; the lessons then served may be incomplete.
     include_lessons: bool = True
     # The memory namespaces whose linked memories `lessons` reads besides the repository's
     # team rules (over MCP the caller's memory home by default); one the caller cannot
@@ -171,6 +185,36 @@ class CodeSymbolInput(_CodeIdentity):
         return self
 
 
+class CodeEditContextTarget(BaseModel):
+    name: str
+    status: Literal["resolved", "ambiguous", "dependency", "not_found"]
+    # Zero-based offsets into the shared response definitions, in resolver order.
+    definition_indices: list[int] = Field(default_factory=list)
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    resolved_by: str = ""
+    presence: list[dict[str, Any]] = Field(default_factory=list)
+    hierarchy: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    documented_in: list[dict[str, Any]] = Field(default_factory=list)
+    trace_run_id: str = ""
+
+
+class CodeEditReadSite(BaseModel):
+    path: str
+    symbol: str
+    line: int
+
+
+class CodeEditReadSource(BaseModel):
+    # A member resolved from the receiver's declared type, with retained source.
+    qualified_name: str
+    path: str
+    start_line: int
+    end_line: int
+    commit: str
+    body: str
+    sites: list[CodeEditReadSite]
+
+
 class CodeSymbolOutput(BaseModel):
     @model_serializer(mode="wrap")
     def _drop_empty_presence(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -181,6 +225,10 @@ class CodeSymbolOutput(BaseModel):
         )
         if not data.get("lessons_left_out"):
             data.pop("lessons_left_out", None)
+        if not data.get("edit_targets"):
+            data.pop("edit_targets", None)
+        if not data.get("read_sources"):
+            data.pop("read_sources", None)
         return data
 
     # Up to 10 name matches, or the members matched by file clues, fitted to
@@ -245,6 +293,10 @@ class CodeSymbolOutput(BaseModel):
     # Presence summary: {present, absent, unknown} lists of namespaces; also filled
     # from the entry's `depends_on` namespaces when the name is not defined here.
     summary: dict[str, list[str]] = Field(default_factory=dict)
+    # Per-requested-name resolution for batched edit context only. Definitions are shared.
+    edit_targets: list[CodeEditContextTarget] = Field(default_factory=list)
+    # Edit context only. Cross-file source for indexed member reads and typed forwarding calls.
+    read_sources: list[CodeEditReadSource] | None = None
 
 
 # ============================================================

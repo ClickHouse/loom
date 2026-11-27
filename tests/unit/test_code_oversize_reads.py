@@ -54,6 +54,17 @@ def test_a_blob_over_the_cap_raises_with_its_size_and_id_unread(tmp_path: Path) 
     assert asyncio.run(show_file(git_dir, sha, "big.json", max_bytes=0)) == _BIG  # 0: no cap
 
 
+def test_local_blob_read_requires_a_commit_and_keeps_the_cap(tmp_path: Path) -> None:
+    git_dir, sha = _commit(tmp_path, {"a\nb.py": b"x = 1\n", "large.py": _BIG})
+    tree = subprocess.check_output(
+        ["git", "--git-dir", git_dir, "rev-parse", f"{sha}^{{tree}}"], text=True
+    ).strip()
+    assert asyncio.run(gitrepo.show_local_commit_file(git_dir, sha, "a\nb.py", 6)) == b"x = 1\n"
+    assert asyncio.run(gitrepo.show_local_commit_file(git_dir, tree, "large.py", len(_BIG))) is None
+    with pytest.raises(BlobTooLarge):
+        asyncio.run(gitrepo.show_local_commit_file(git_dir, sha, "large.py", 100))
+
+
 def test_a_capped_read_of_a_missing_path_or_a_directory_is_none(tmp_path: Path) -> None:
     files = {f"src/f{i:03d}.py": b"x = 1\n" for i in range(50)}  # a tree larger than the cap
     git_dir, sha = _commit(tmp_path, files)

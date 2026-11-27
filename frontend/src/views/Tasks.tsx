@@ -704,6 +704,7 @@ export function Tasks() {
     <PageContainer>
       <PageHeader
         title="Tasks"
+        description="Triage work handed off by agents and see what needs a person."
         actions={
           <>
             {/* A narrow page shows the list: a board's columns do not fit it. */}

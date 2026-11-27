@@ -1356,6 +1356,10 @@ def _receiver_text(call: Any, source: bytes) -> str:
         obj = fn.child_by_field_name("object")
         if obj is None:
             return ""
+        if obj.type == "parenthesized_expression":
+            from server.code.domain.extract.py_receivers import unwrap_parentheses
+
+            obj = unwrap_parentheses(obj)
         if obj.type == "identifier":
             return node_text(obj, source)
         if obj.type == "attribute":
@@ -1371,12 +1375,18 @@ def _receiver_text(call: Any, source: bytes) -> str:
             text = node_text(obj, source)
             if all(_PY_NAME_RE.match(part) for part in text.split(".")):
                 return text
+            if "(" in text:
+                from server.code.domain.extract.py_receivers import receiver_chain
+
+                chain = receiver_chain(obj, source)
+                if all(_PY_NAME_RE.match(part) for part in chain.split(".")):
+                    return chain
         if obj.type in ("call", "await"):
             # `get_client().query_all()` — the receiver is the
             # call, spelled `get_client()`; its callee's return type types it
-            from server.code.domain.extract.py_receivers import callee_text as _py_callee
+            from server.code.domain.extract.py_receivers import callee_text
 
-            callee = _py_callee(obj, source)
+            callee = callee_text(obj, source)
             if callee:
                 return callee + "()"
         # a call's, a subscript's or a literal's method (`x.encode().decode()`,
@@ -2979,8 +2989,9 @@ class _CallResolver:
         return None
 
     def declined(self, receiver: str, line: int) -> bool:
-        """`super.m()` inside a class whose base the index
-        does not hold (a library base) is nobody's miss."""
+        """Whether this receiver supplies neither an edge nor an unresolved site."""
+        if self.python and self.typer is not None and self.typer.receiver_replaced(receiver):
+            return True
         if receiver == "super" and not self.go:
             classes = [
                 x for rows in self.local_class_by_name.values() for x in rows

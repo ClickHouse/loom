@@ -1358,22 +1358,19 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "per-frame grep-and-open loop."
     ),
     "code.grep": (
-        "Find known text in indexed source. Use code.search for behavior. "
-        "Batch code and test-name prefixes in a `pattern` list. Path filters scope the batch. "
-        "Matches include bodies by default. "
-        "`include_body: false` omits enclosing bodies. Add `context_lines: 0` for locations. "
+        "Find indexed text. Batch code and test prefixes in `pattern`. "
+        "Path filters scope the batch. Bodies are on by default. "
+        "Set `include_body: false` for excerpts, `context_lines: 0` for locations. "
+        "Omitted match text is in its excerpt at the same path and line. "
+        "Use code.search for behavior. "
         "Use literal strings or one RE2 string with `regex: true`. "
-        "Filter by `path_prefix`, `path_globs` or `langs`. "
+        "Filter the batch by `path_prefix`, `path_globs` or `langs`. "
         "`neighbours` adds graph links. `deadline_ms` allows partial results. "
         "`mode: 'message'` finds printed error templates. "
         "`mode: 'presence'` checks `namespaces`. "
         "Check coverage. Use code.files for paths and local tools for uncommitted source."
     ),
-    "code.read": (
-        "Read inclusive, one-based indexed lines. Pass path, start_line, optional end_line "
-        "or ranges of such objects or path:start-end strings. Returns linked notes with "
-        "the source. Set include_lessons=false when you already have them."
-    ),
+    "code.read": "Read indexed lines. Ranges take path:start-end or path + [[start,end]].",
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
         "(`tests/queries/0_stateless/05138_*`), a basename stem "
@@ -1443,9 +1440,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "omitted qualification or SQL registration. `documented_in` lists citing sections."
     ),
     "code.edit_context": (
-        "Read implementation, indexed tests, and linked notes before editing. "
-        "Give a definition name, path:symbol, or path:line. "
-        "Use literal clues to find the edit target, with the file path if known."
+        "Before editing, read source, tests and notes. Batch exact `names` or declaration `clues`."
     ),
     "code.backport_gap": (
         "Which release branches still carry the bug a merged fix removed, "
@@ -2169,15 +2164,14 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`uses_brief: true` summarizes callers. Check freshness and source elision."
     ),
     "code.grep": (
-        "Read full enclosing definitions for exact text in indexed code. "
-        'For source to edit, use a literal or a list such as ["def parse(", "def test_parse"]. '
-        "Use path_globs to scope code and tests together. Use mode=files for paths only. "
-        "Use regex=true for RE2.\n\n"
+        "Batch exact code and test literals with path_globs. Keep default bodies for edits. "
+        "For excerpts, set `include_body: false` and `context_lines`. "
+        "Omitted match text is in its excerpt at the same path and line. "
+        "Use mode=files for paths only and regex=true for RE2.\n\n"
         "Scope with `path_prefix` or `path_globs`. "
-        "Set `include_body: false` and `context_lines: 0` for match locations. "
-        "Use code.search for behavior or code.edit_context for a known definition. "
-        "Call prefixes and misses can return related source and notes. "
-        "Use code.read for exact lines. "
+        "For locations, set `include_body: false`, `context_lines: 0`. "
+        "Use code.search for behavior, code.edit_context for a known definition. "
+        "Prefixes and misses can return related source and notes. "
         "`definitions_partial` flags missing source. Check coverage."
     ),
     # The coding tier lists blast radius with the sentences a coding session

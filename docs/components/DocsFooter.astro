@@ -1,0 +1,51 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Text } from "@clickhouse/click-ui/Text";
+import data from "blume:data";
+import { withBase } from "blume/components/islands/base-path.ts";
+import { footerLinks } from "blume/components/layout/footer-links.ts";
+import type { BlumeDataConfig } from "blume/core/data.ts";
+import { EN_UI, type UIStrings } from "blume/core/i18n-ui.ts";
+import { routeSetFor } from "blume/core/locale-links.ts";
+import { resolveLocalizable } from "blume/core/localizable.ts";
+import { newTabAttrs } from "blume/core/new-tab.ts";
+
+interface Props {
+  footer?: BlumeDataConfig["footer"];
+  locale?: string;
+  ui?: UIStrings;
+}
+
+const { footer, locale, ui } = Astro.props;
+const links = footerLinks(footer?.links ?? [], {
+  basePath: data.config.basePath,
+  i18n: data.config.i18n,
+  locale,
+  routes: routeSetFor(data.routes),
+});
+const copyright = footer?.copyright && resolveLocalizable(footer.copyright, locale, data.config.i18n?.defaultLocale);
+const consentSettings = data.config.consent && { ...EN_UI.consent, ...ui?.consent }.settings;
+---
+
+{(copyright || links.length > 0 || consentSettings) && (
+  <footer class="docs-footer border-border border-t" data-blume-footer>
+    <div class="flex min-h-16 flex-wrap items-center gap-x-6 gap-y-3 py-3">
+      {(links.length > 0 || consentSettings) && (
+        <ul class="flex flex-wrap items-center gap-x-5 gap-y-2">
+          {links.map(({ href, label }) => (
+            <li><Link href={withBase(href)} size="sm" {...newTabAttrs(href)}>{label}</Link></li>
+          ))}
+          {consentSettings && (
+            <li><Button data-blume-consent-open="" htmlType="button" label={consentSettings} type="empty" /></li>
+          )}
+        </ul>
+      )}
+      {copyright && <Text color="muted" size="sm">{copyright}</Text>}
+    </div>
+  </footer>
+)}
+
+<style>
+  .docs-footer :global(a:not(:hover, :focus)) { color: var(--click-global-color-text-muted); }
+</style>

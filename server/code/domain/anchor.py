@@ -11,12 +11,12 @@ where to look.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
+from server.code.domain.anchor_state import definition_state, fingerprint
 from server.code.domain.extract.lang_detect import detect_by_extension
 from server.code.domain.extract.lang_go import go_dir_scope
 from server.code.domain.extract.lang_rust import module_scope_rust
@@ -25,6 +25,10 @@ from server.code.domain.python_names import import_forms
 
 _TICKS = re.compile(r"`([^`\n]{3,160})`")
 _IDENT = re.compile(r"~?[A-Za-z_]\w*(?:(?:::|\.)~?[A-Za-z_]\w*)*")
+_PYTEST_NODE_ID = re.compile(
+    r"(?<![\w./\\-])(?:[A-Za-z]:)?(?:[\w.-]*[/\\])+[\w.-]+\.py(?:::[^\W\d]\w*)+"
+)
+_PYTEST_PARAM_TOKENS = re.compile(r"[\[\]`\r\n]")
 _QUALIFIED = re.compile(r"\b[A-Za-z_]\w*(?:::~?[A-Za-z_]\w*)+")
 _DOTTED_CALL = re.compile(r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+(?=\()")
 _EMPTY_CALL = re.compile(r"\b[A-Za-z_]\w{3,}(?=\(\))")
@@ -74,7 +78,8 @@ class Definition:
 class Link:
     """One anchor: a symbol (or, with `qualified_name` '', the file) a memory is about.
     `body_hash` is the definition's fingerprint when the memory was written,
-    `checked_hash` at the last check (a new edit to changed code moves it)."""
+    `checked_hash` at the last check (a new edit to changed code moves it); a file
+    link's are those of the lines its memory cites (`cited_fingerprint`)."""
 
     path: str
     qualified_name: str = ""
@@ -129,13 +134,46 @@ class Mention(NamedTuple):
 _RECEIVER = re.compile(r"^(?:self|cls|this)\.")
 
 
+def _pytest_parameter_ends(text: str, start: int) -> dict[int, int]:
+    """Pair nested brackets without crossing lines or backticks."""
+    openings: list[int] = []
+    ends: dict[int, int] = {}
+    for token in _PYTEST_PARAM_TOKENS.finditer(text, start):
+        if token[0] == "[":
+            openings.append(token.start())
+        elif token[0] != "]":
+            openings.clear()
+        elif openings:
+            ends[openings.pop()] = token.end()
+    return ends
+
+
+def _mask_pytest_nodes(text: str) -> str:
+    parts: list[str] = []
+    parameter_ends: dict[int, int] | None = None
+    end = 0
+    for node in _PYTEST_NODE_ID.finditer(text):
+        if node.start() < end:
+            continue
+        parts.append(text[end : node.start()])
+        end = node.end()
+        if text.startswith("[", end):
+            if parameter_ends is None:
+                parameter_ends = _pytest_parameter_ends(text, end)
+            end = parameter_ends.get(end, end)
+        # Keep the span so backticks still pair.
+        parts.append(" " * (end - node.start()))
+    parts.append(text[end:])
+    return "".join(parts)
+
+
 def mentions(text: str, *, cap: int = 16) -> list[Mention]:
     """The first `cap` code-shaped names in `text`, each once: its backticked identifiers
     in text order, then by kind (`A::b`, `a.b(` calls, `f()` calls, camelCase /
     PascalCase, snake_case), each kind in text order; so a backticked name is never
     capped out by one of the prose. Plain words never qualify, and a part of a qualified
     name is not a mention of its own."""
-    text = text or ""
+    text = _mask_pytest_nodes(text or "")
     found: list[tuple[int, int, str, bool]] = []
     for m in _TICKS.finditer(text):
         span = m.group(1).strip().split("(", 1)[0]
@@ -252,11 +290,36 @@ def local_name(qualified_name: str, path: str) -> str:
     return q
 
 
-def fingerprint(texts: Sequence[str]) -> str:
-    """One hash over a definition's texts (its overloads, in order), as given but for line
-    endings ('' when all are empty)."""
-    joined = "\0".join(t.replace("\r\n", "\n") for t in texts)
-    return hashlib.sha256(joined.encode()).hexdigest() if joined.strip("\0") else ""
+def cited_names(found: Sequence[Mention]) -> list[str]:
+    """The bare names of a memory's mentions `found`, each once, of `_MIN_BARE` or more
+    characters: a shorter one, the `get` of `Reader.get`, is a word of any file."""
+    names = (bare_name(m.name).lstrip("~") for m in found)
+    return list(dict.fromkeys(n for n in names if len(n) >= _MIN_BARE))
+
+
+# not a setting: a file link's stored fingerprint is of the lines this selects
+_MAX_CITED_LINES = 8
+
+
+def cited_lines(lines: Sequence[str], names: Sequence[str]) -> list[str]:
+    """The lines of a file that hold one of `names` as a whole word, in file order, runs
+    of whitespace as one space: what a memory linked to the file says of it. An edit to
+    a line that holds none of `names`, a shift of these and a new indentation leave them
+    as they were. A name on more than `_MAX_CITED_LINES` lines is a word of the file
+    (`None`, `self`) and selects none: an edit that takes a name across that count
+    changes the lines selected."""
+    held: set[int] = set()
+    for name in names:
+        word = re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)")
+        on = [i for i, line in enumerate(lines) if word.search(line)]
+        if len(on) <= _MAX_CITED_LINES:
+            held.update(on)
+    return [" ".join(lines[i].split()) for i in sorted(held)]
+
+
+def cited_fingerprint(lines: Sequence[str], names: Sequence[str]) -> str:
+    """A file link's fingerprint: its `cited_lines`; '' when the file holds none."""
+    return fingerprint(cited_lines(lines, names))
 
 
 def locate(
@@ -304,17 +367,29 @@ def recheck(
     elsewhere: Sequence[Definition] = (),
     uncertain: bool = False,
     carried: bool = False,
+    cited: str = "",
     head: str,
 ) -> Link:
     """The link once its code is read at `head`, where its file is `path_now` ('' when
     deleted) defining `here`: found (`locate`), or `unresolved` when `uncertain`, else
     `missing`. A link not found keeps its name and follows its file, so a revert finds
-    it again."""
+    it again. A file link's code is the lines its memory cites, `cited` their
+    fingerprint at `head` (`cited_fingerprint`): it reads `changed` while they are not
+    the ones it was written against, and one written against none takes the first it
+    finds as its baseline."""
     if not link.qualified_name:
         if not path_now:
             return _in_state(link, "missing", head)
-        state = "moved" if link.moved_from_anchor(path_now, "") else "fresh"
-        return replace(_in_state(link, state, head), path=path_now)
+        if link.body_hash and cited != link.body_hash:
+            state = "changed"
+        else:
+            state = "moved" if link.moved_from_anchor(path_now, "") else "fresh"
+        return replace(
+            _in_state(link, state, head),
+            path=path_now,
+            body_hash=link.body_hash or cited,
+            checked_hash=cited,
+        )
     d = locate(link, path_now, here, renamed=renamed, elsewhere=elsewhere)
     if d is None:
         lost = _in_state(link, "unresolved" if uncertain else "missing", head)
@@ -327,9 +402,12 @@ def recheck(
     elif d is renamed and renamed_exactly and link.matched_baseline():
         # only the name changed since a check that matched the baseline: it is the new one
         link = replace(link, body_hash=d.body_hash)
-    changed = link.carried or bool(link.body_hash and d.body_hash and d.body_hash != link.body_hash)
-    moved = link.moved_from_anchor(d.path, d.qualified_name)
-    state = "changed" if changed else "moved" if moved else "fresh"
+    state = definition_state(
+        link.body_hash,
+        d.body_hash,
+        moved=link.moved_from_anchor(d.path, d.qualified_name),
+        carried=link.carried,
+    )
     return replace(
         _in_state(link, state, head),
         path=d.path,

@@ -8,6 +8,11 @@ import json
 from typing import Any
 
 import server.transport.lean_results as lr
+from server.code.api.models_read import CodeReadInput
+from server.code.app.read import _request_ranges
+from server.code.domain.scope import reset_code_scope, set_code_scope
+from server.settings import settings
+from server.transport import mcp_tools
 from server.transport.code_lean import lean_code
 
 
@@ -59,6 +64,50 @@ def test_scip_symbol_drops_rendered_description_already_in_source() -> None:
     assert extra["description"] == rendered + " Bypass startup on empty input."
     assert other["description"] == rendered.replace("class Group", "class Other")
     assert elided["description"] == rendered
+
+
+def test_scip_edit_context_drops_only_repeated_wrapped_function_documentation() -> None:
+    body = '''    def register(self, app: "Flask", name: str = "a  b") -> None:
+        """Register with :meth:`Flask.register_blueprint`.
+
+        Example:
+
+            register(app, "a  b")
+        """
+        pass
+'''
+    rendered = (
+        '```python\ndef register(\n  self,\n  app: Flask,\n  name: str = "a  b"\n) -> None:\n```\n'
+        "Register with :meth:`Flask.register_blueprint`.\n\n        Example:\n\n"
+        '            register(app, "a  b")'
+    )
+    distinct = [
+        rendered.replace("def register", "@setupmethod\ndef register"),
+        rendered.replace("app: Flask", "app: Other"),
+        rendered.replace('= "a  b"', '= "a b"'),
+        rendered.replace('app, "a  b"', 'app, "a b"'),
+        rendered.replace("            register(app", "        register(app"),
+        rendered.replace("  self,", "  self,  # Flag for setup"),
+        rendered.replace("-> None:\n```", "-> None:\n    side_effect()\n```"),
+        rendered + "\nExtra documentation.",
+    ]
+    source = {"symbol": "register", "tier": "scip", "body": body, "description": rendered}
+    large_source = {**source, "body": body + "        pass\n" * 2048}
+    out = lean_code(
+        "code.edit_context",
+        {
+            "definitions": [
+                source,
+                *[{**source, "description": item} for item in distinct],
+                large_source,
+            ]
+        },
+    )
+    repeated, *kept, large = out["definitions"]
+    assert repeated["body"] == body
+    assert "description" not in repeated
+    assert [definition["description"] for definition in kept] == distinct
+    assert large["body"] == large_source["body"] and large["description"] == rendered
 
 
 def test_scip_symbol_keeps_distinct_code_literals_in_docs() -> None:
@@ -317,6 +366,458 @@ def test_grep_scope_drops_its_own_path_and_enclosing_drops_the_repeated_name() -
     assert e["resolved"] == 1 and "took_ms" not in e
 
 
+def test_edit_context_shares_identical_test_source_and_preserves_evidence() -> None:
+    context = {
+        "commit": "a" * 40,
+        "start_line": 1,
+        "end_line": 1,
+        "text": "test source " * 32,
+    }
+    verified = {
+        "path": "tests/test_use.py",
+        "line": 1,
+        "caller": "test_use",
+        "context": context,
+        "tier": "scip",
+    }
+    duplicate = {**verified, "evidence": "indirect_call"}
+    earlier = {**verified, "context": {**context, "commit": "b" * 40}}
+    short = {**verified, "context": {**context, "text": "ok"}}
+    payload = {
+        "definitions": [
+            {"symbol": "entry", "path": "src/entry.py", "examples": [verified, short]},
+            {"symbol": "impl", "path": "src/impl.py", "examples": [duplicate, earlier, short]},
+        ],
+        "edit_targets": [{"name": "entry"}, {"name": "impl"}],
+    }
+
+    result = lr.mcp_op_result("code.edit_context", payload, {}, None)
+    original, repeated = result["definitions"]
+    first, previous, small = repeated["examples"]
+    assert next(iter(result)) == "test_sources"
+    assert result["test_sources"] == [
+        {
+            "excerpts": [
+                {
+                    "path": "tests/test_use.py",
+                    "callers": ["test_use"],
+                    "definitions": [
+                        {"symbol": "entry", "path": "src/entry.py"},
+                        {"symbol": "impl", "path": "src/impl.py"},
+                    ],
+                    "text": context["text"],
+                }
+            ]
+        }
+    ]
+    assert first["evidence"] == "indirect_call"
+    assert first["context"] == {
+        "commit": context["commit"],
+        "start_line": 1,
+        "end_line": 1,
+        "text_ref": "#/test_sources/0/excerpts/0/text",
+    }
+    assert original["examples"][0] == {**verified, "context": first["context"]}
+    assert previous == earlier and small == short
+    assert payload["definitions"][1]["examples"][0] == duplicate
+    assert (
+        "text_ref"
+        not in lr.mcp_op_result("code.symbol", payload, {}, None)["definitions"][1]["examples"][0][
+            "context"
+        ]
+    )
+
+
+def test_edit_context_keeps_source_when_shared_row_would_exceed_an_original_row() -> None:
+    context = {"commit": "a" * 40, "start_line": 1, "end_line": 1}
+    short = {"path": "tests/test_short.py", "context": {**context, "text": "alpha " * 45}}
+    long = {"path": "tests/test_long.py", "context": {**context, "text": "feature " * 100}}
+    payload = {
+        "definitions": [
+            {"symbol": "first", "examples": [short, long]},
+            {"symbol": "second", "examples": [short]},
+            {"symbol": "third", "examples": [long]},
+        ],
+        "edit_targets": [{"name": name} for name in ("first", "second", "third")],
+    }
+
+    result = lr.mcp_op_result("code.edit_context", payload, {}, None)
+    assert "test_sources" not in result
+    assert result["definitions"][1]["examples"] == [short]
+
+
+def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> None:
+    long = {
+        "path": "src/a.py",
+        "line": 5,
+        "text": "def first(value):",
+        "scope": "first",
+        "scope_start_line": 5,
+        "scope_end_line": 16,
+    }
+    short = {
+        "path": "src/b.py",
+        "line": 2,
+        "scope": "quick",
+        "scope_start_line": 2,
+        "scope_end_line": 3,
+    }
+    long_path = "src/" + "a" * 1016 + ".py"
+    unusual = ["src/plugins v2/routes.py", "scripts/bootstrap", "src/sub:routes.py", long_path]
+    more = [{**long, "path": path} for path in (*unusual, "examples/demo.IPYNB", "a" * 1025)]
+    async_def = {**long, "path": "src/support.py", "text": "async def first(value):"}
+    payload = {
+        "matches": [long, {**long, "line": 7}, long, short, async_def, *more],
+        "contexts": [
+            {"path": "src/a.py", "start_line": 4, "end_line": 8, "text": "partial"},
+            {"path": "src/b.py", "start_line": 1, "end_line": 4, "text": "complete"},
+        ],
+    }
+    options = {
+        "org": "secondary",
+        "namespace": "repo",
+        "include_lessons": False,
+        "lesson_namespaces": ["history"],
+    }
+    arguments = {"include_body": False, **options}
+    edit_payload = {
+        **payload,
+        "matches": [hit for hit in payload["matches"] if hit["path"] not in unusual],
+    }
+    result = lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset="coding")
+    edit_step = result.pop("edit_context_next")
+    assert edit_step == {
+        "tool": "loom_code_edit_context",
+        "arguments": {"names": ["src/a.py:5", "src/support.py:5"], **options},
+    }
+    suggestion = result.pop("next")
+    label, _, params = suggestion.partition(" with ")
+    assert label == "For the full source, call loom_code_read"
+    assert json.loads(params) == {
+        "ranges": ["src/a.py:5-16", "src/support.py:5-16"],
+        **options,
+    }
+    with_read = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
+    assert "edit_context_next" not in with_read
+    label, _, params = with_read.pop("next").partition(" with ")
+    assert label == "For the full source, call loom_code_read"
+    arguments_from_hint = json.loads(params)
+    assert arguments_from_hint == {
+        "ranges": [
+            "src/a.py:5-16",
+            "src/support.py:5-16",
+            "src/plugins v2/routes.py:5-16",
+            "scripts/bootstrap:5-16",
+            "src/sub:routes.py:5-16",
+            {"path": long_path, "start_line": 5, "end_line": 16},
+        ],
+        **options,
+    }
+    assert _request_ranges(CodeReadInput.model_validate(arguments_from_hint)) == [
+        (path, 5, 16) for path in ("src/a.py", "src/support.py", *unusual)
+    ]
+    assert with_read == lr.mcp_op_result("code.grep", payload, arguments, None, toolset="all")
+    assert result == lr.mcp_op_result("code.grep", edit_payload, {"include_body": True}, None)
+    assert "next" not in lr.mcp_op_result(
+        "code.grep", {**payload, "contexts": []}, arguments, None, toolset="coding"
+    )
+    assert "next" not in lr.mcp_op_result("code.grep", payload, arguments, None, toolset="core")
+    monkeypatch.setattr(settings, "mcp_toolset", "coding")
+    for toolset in (None, "Coding", "coding+tracker"):
+        assert lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset=toolset) == {
+            **result,
+            "edit_context_next": edit_step,
+            "next": suggestion,
+        }
+    # a bound connection gets the same reply, and the listing of code tools alone
+    # carries both tools the reply names
+    scope = set_code_scope("acme/code-repo")
+    try:
+        bound = lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset="coding")
+        assert bound == {**result, "edit_context_next": edit_step, "next": suggestion}
+        assert {"loom_code_read", edit_step["tool"]} <= mcp_tools.listed_tool_names(
+            "coding", "compact"
+        )
+    finally:
+        reset_code_scope(scope)
+
+
+def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lookup() -> None:
+    declaration = {
+        "path": "src/a.py",
+        "line": 1,
+        "text": "def worker():",
+        "scope": "worker",
+        "scope_start_line": 1,
+        "scope_end_line": 12,
+    }
+    for matches in (
+        [{**declaration, "text": "@marker"}],
+        [{**declaration, "line": 2, "text": "@marker", "scope": "src.a::worker"}],
+        [{**declaration, "path": f"src/module{index}.py"} for index in range(9)],
+    ):
+        payload = {
+            "matches": matches,
+            "contexts": [{"path": "src/a.py", "start_line": 1, "end_line": 2, "text": "partial"}],
+        }
+        result = lr.mcp_op_result(
+            "code.grep", payload, {"include_body": False}, None, toolset="coding"
+        )
+        assert "edit_context_next" not in result
+        label, _, params = result["next"].partition(" with ")
+        assert label == "For the full source, call loom_code_read"
+        assert json.loads(params) == {"ranges": [f"{hit['path']}:1-12" for hit in matches]}
+
+
+def test_grep_offers_scoped_reads_for_related_only_evidence() -> None:
+    related = {
+        "pattern": "request.context",
+        "matches": [
+            {
+                "path": "src/app.py",
+                "line": 7,
+                "scope": "src.app::handle",
+                "scope_start_line": 5,
+                "scope_end_line": 12,
+            }
+        ],
+        "contexts": [{"path": "src/app.py", "start_line": 6, "end_line": 8, "text": "excerpt"}],
+    }
+    payload = {"matches": [], "related": related, "note": "No exact match in the indexed scope."}
+    arguments = {"include_body": False, "org": "secondary", "namespace": "repo"}
+
+    result = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
+
+    assert not result["matches"] and "next" not in result
+    assert result["related"]["pattern"] == related["pattern"]
+    assert result["note"] == payload["note"]
+    assert "next" not in related
+    hint = result["related"]["next"]
+    assert _request_ranges(CodeReadInput.model_validate_json(hint.partition(" with ")[2])) == [
+        ("src/app.py", 5, 12)
+    ]
+    assert json.loads(hint.partition(" with ")[2]) == {
+        "ranges": ["src/app.py:5-12"],
+        "org": "secondary",
+        "namespace": "repo",
+    }
+
+    exact = {**payload, "matches": [{"path": "src/other.py", "line": 2}]}
+    assert (
+        "next"
+        not in lr.mcp_op_result("code.grep", exact, arguments, None, toolset="coding")["related"]
+    )
+
+
+def test_grep_offers_one_read_for_exact_and_related_source() -> None:
+    test_hit = {
+        "path": "tests/test_app.py",
+        "line": 20,
+        "text": "def test_handle():",
+        "scope": "test_handle",
+        "scope_start_line": 20,
+        "scope_end_line": 28,
+    }
+    related_hit = {
+        "path": "src/app.py",
+        "line": 7,
+        "scope": "src.app::handle",
+        "scope_start_line": 5,
+        "scope_end_line": 12,
+    }
+    payload = {
+        "matches": [test_hit],
+        "related": {
+            "pattern": "request.context",
+            "matches": [related_hit, test_hit],
+            "contexts": [{"path": "src/app.py", "start_line": 6, "end_line": 8, "text": "excerpt"}],
+        },
+    }
+    scope = {"org": "secondary", "namespace": "repo", "include_lessons": False}
+
+    result = lr.mcp_op_result(
+        "code.grep", payload, {"include_body": False, **scope}, None, toolset="coding"
+    )
+
+    hint = json.loads(result["next"].partition(" with ")[2])
+    assert hint == {"ranges": ["tests/test_app.py:20-28", "src/app.py:5-12"], **scope}
+    assert result["matches"] == [test_hit]
+    assert result["related"]["pattern"] == "request.context"
+    assert len(result["related"]["matches"]) == 2
+    assert "next" not in result["related"]
+
+
+def test_grep_offers_a_read_for_mixed_locations_without_excerpts() -> None:
+    implementations = [
+        ("src/main.ts", 6, 3, 11, "main::handler"),
+        ("src/helper.ts", 8, 4, 13, "helper::resolve"),
+    ]
+    exact, related = [
+        {
+            "path": path,
+            "line": line,
+            "scope": scope,
+            "scope_start_line": start,
+            "scope_end_line": end,
+        }
+        for path, line, start, end, scope in implementations
+    ]
+    result = lr.mcp_op_result(
+        "code.grep",
+        {"matches": [exact], "related": {"pattern": "req.context", "matches": [related]}},
+        {"include_body": False, "context_lines": 0},
+        None,
+        toolset="coding",
+    )
+
+    assert json.loads(result["next"].partition(" with ")[2]) == {
+        "ranges": ["src/main.ts:3-11", "src/helper.ts:4-13"]
+    }
+    assert "edit_context_next" not in result
+
+
+def test_grep_offers_edit_context_for_declarations_without_context_windows(monkeypatch) -> None:
+    declaration = {
+        "path": "src/a.py",
+        "line": 5,
+        "text": "def worker():",
+        "scope": "worker",
+        "scope_start_line": 5,
+        "scope_end_line": 12,
+    }
+    payload = {"matches": [declaration, {**declaration, "line": 8, "text": "    worker()"}]}
+    result = lr.mcp_op_result("code.grep", payload, {"include_body": False}, None, toolset="coding")
+    assert result["matches"] == payload["matches"]
+    assert result["edit_context_next"] == {
+        "tool": "loom_code_edit_context",
+        "arguments": {"names": ["src/a.py:5"]},
+    }
+    assert json.loads(result["next"].partition(" with ")[2]) == {
+        "ranges": ["src/a.py:5-12"],
+    }
+    token = set_code_scope("attached/repo")
+    try:
+        arguments = {"include_body": False, "org": "attached", "namespace": "repo"}
+        monkeypatch.setattr(settings, "cell", "")
+        assert lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding") == result
+        override = lr.mcp_op_result(
+            "code.grep", payload, {**arguments, "namespace": "other"}, None, toolset="coding"
+        )
+        assert override["edit_context_next"]["arguments"] == {
+            "names": ["src/a.py:5"],
+            "org": "attached",
+            "namespace": "other",
+        }
+        assert json.loads(override["next"].partition(" with ")[2])["namespace"] == "other"
+        monkeypatch.setattr(settings, "cell", "local-cell")
+        on_cell = lr.mcp_op_result("code.grep", payload, arguments, None, toolset="coding")
+        assert on_cell["edit_context_next"]["arguments"] == {
+            "names": ["src/a.py:5"],
+            "org": "attached",
+            "namespace": "repo",
+        }
+        assert json.loads(on_cell["next"].partition(" with ")[2])["org"] == "attached"
+    finally:
+        reset_code_scope(token)
+
+
+def test_grep_follows_matches_inside_an_indexed_scope() -> None:
+    path = "src/config.py"
+    inside = {
+        "path": path,
+        "line": 13,
+        "text": "value = read_config()",
+        "scope": "src.config::Config::load",
+        "scope_start_line": 9,
+        "scope_end_line": 16,
+    }
+    declaration = {
+        "path": path,
+        "line": 22,
+        "text": "def validate():",
+        "scope": "src.config::validate",
+        "scope_start_line": 22,
+        "scope_end_line": 26,
+    }
+    payload = {
+        "matches": [inside, {**inside, "line": 14}, declaration],
+        "contexts": [{"path": path, "start_line": 12, "end_line": 15, "text": "excerpt"}],
+    }
+    result = lr.mcp_op_result("code.grep", payload, {"include_body": False}, None, toolset="coding")
+    assert [hit["scope"] for hit in result["matches"]] == [
+        "Config::load",
+        "Config::load",
+        "validate",
+    ]
+    assert result["edit_context_next"]["arguments"] == {
+        "names": [f"{path}:22", f"{path}:src.config::Config::load"],
+    }
+    assert json.loads(result["next"].partition(" with ")[2]) == {
+        "ranges": [f"{path}:22-26", f"{path}:9-16"],
+    }
+    body_hits = [
+        {**inside, "path": f"src/file{i}.py", "scope": f"src.file{i}::Config::load"}
+        for i in range(9)
+    ]
+    wide = {"matches": [declaration, *body_hits]}
+    result = lr.mcp_op_result("code.grep", wide, {"include_body": False}, None, toolset="coding")
+    assert result["edit_context_next"]["arguments"] == {"names": [f"{path}:22"]}
+    assert json.loads(result["next"].partition(" with ")[2]) == {
+        "ranges": [f"{path}:22-26"],
+    }
+
+
+def test_grep_edit_followup_keeps_the_indexed_python_module() -> None:
+    for path, scope, display in (
+        ("src/demo.py", "src.demo::run", "run"),
+        ("src/demo.pyi", "src.demo.__stub__::run", "src.demo.__stub__::run"),
+        ("src/build-doc.py", "src.build-doc::run", "run"),
+    ):
+        payload = {
+            "matches": [
+                {
+                    "path": path,
+                    "line": 7,
+                    "text": "return value",
+                    "scope": scope,
+                    "scope_start_line": 5,
+                    "scope_end_line": 8,
+                },
+            ],
+        }
+        result = lr.mcp_op_result(
+            "code.grep", payload, {"include_body": False}, None, toolset="coding"
+        )
+        assert result["matches"][0]["scope"] == display
+        assert result["edit_context_next"]["arguments"] == {"names": [f"{path}:{scope}"]}
+
+
+def test_grep_offers_the_exact_range_when_the_scope_cannot_be_named() -> None:
+    for path, scope, text in (
+        ("demo.py", "demo::run", "return value"),
+        ("src/demo.py", "src.demo::run", "@marker"),
+    ):
+        payload = {
+            "matches": [
+                {
+                    "path": path,
+                    "line": 7,
+                    "text": text,
+                    "scope": scope,
+                    "scope_start_line": 5,
+                    "scope_end_line": 8,
+                },
+            ],
+        }
+        result = lr.mcp_op_result(
+            "code.grep", payload, {"include_body": False}, None, toolset="coding"
+        )
+        assert "edit_context_next" not in result
+        assert json.loads(result["next"].partition(" with ")[2]) == {
+            "ranges": [f"{path}:5-8"],
+        }
+
+
 def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:
     match = {
         "path": "server/a.py",
@@ -351,6 +852,46 @@ def test_related_grep_keeps_source_and_compacts_it_like_exact_hits() -> None:
         "count",
         "update",
     ]
+
+
+def test_grep_reuses_exact_match_text_in_the_same_path_and_line() -> None:
+    source = "return submit_job_with_priority(job, priority=DEFAULT_PRIORITY)"
+    match = {"path": "worker.py", "line": 8, "text": source}
+    different_path = {**match, "path": "other.py"}
+    different_text = {**match, "text": "return ..."}
+    context = {
+        "path": "worker.py",
+        "start_line": 7,
+        "end_line": 8,
+        "text": f"def run(job):\r\n    {source}\r\n",
+    }
+    payload = {"matches": [match, different_path, different_text], "contexts": [context]}
+
+    projected = lr.mcp_op_result("code.grep", {**payload, "related": payload}, {}, None)
+    for result in (projected, projected["related"]):
+        assert result["match_text_in_context"] is True
+        assert result["matches"] == [
+            {"path": "worker.py", "line": 8},
+            different_path,
+            different_text,
+        ]
+        assert result["contexts"] == [context]
+    raw = lr.mcp_op_result("code.grep", payload, {"explain": True}, None)
+    assert raw["matches"] == [match, different_path, different_text]
+    assert "match_text_in_context" not in raw
+
+
+def test_grep_keeps_match_text_when_excerpt_coordinates_are_uncertain() -> None:
+    text = "return submit_job_with_priority(job, priority=DEFAULT_PRIORITY)"
+    match = {"path": "worker.py", "line": 8, "text": text}
+    context = {"path": "worker.py", "start_line": 8, "end_line": 8, "text": f"    {text}"}
+    for contexts in (
+        [{**context, "end_line": 9}],
+        [context, {**context, "text": "    return job"}],
+    ):
+        result = lean_code("code.grep", {"matches": [match], "contexts": contexts})
+        assert result["matches"] == [match]
+        assert "match_text_in_context" not in result
 
 
 def test_lean_grep_omits_redundant_metadata_only_with_complete_source() -> None:
@@ -389,6 +930,19 @@ def test_lean_grep_omits_redundant_metadata_only_with_complete_source() -> None:
     assert lean["related"]["definitions"] == [expected]
     assert definition["signature"] == "(self, value: str)"
     assert definition["body_elided"] is False
+
+
+def test_lean_grep_omits_verbatim_multiline_signatures_at_the_declaration() -> None:
+    signature = "(\n        self,\n        value: str,\n    )"
+    body = f"    def inspect{signature}:\n        return value"
+    declaration = {"signature": signature, "body": body}
+    inside_body = {
+        "signature": signature,
+        "body": f"    def inspect(self):\n        call{signature}",
+    }
+    elided = {**declaration, "body_elided": True}
+    result = lean_code("code.grep", {"definitions": [declaration, inside_body, elided]})
+    assert result["definitions"] == [{"body": body}, inside_body, elided]
 
 
 def test_lean_grep_refs_exact_nested_source_without_losing_a_body() -> None:
@@ -581,6 +1135,26 @@ def test_a_class_answer_carries_its_skeleton_once_and_points_at_its_members() ->
     assert cls["body"] and "outline" not in cls
     assert "body" not in ctor and ctor["next"] == "code.symbol name=DB::Changelog::Changelog"
     assert other["body"] == "struct Changelog {};"  # another class's definition keeps its body
+
+
+def test_edit_context_batch_keeps_an_explicit_member_body() -> None:
+    from server.transport.code_lean import lean_code
+
+    member = {"symbol": "DB::Log::flush", "body": "void Log::flush() {}"}
+    result = lean_code(
+        "code.edit_context",
+        {
+            "definitions": [
+                {"symbol": "DB::Log", "granularity": "skeleton", "body": "class Log {};"},
+                member,
+            ],
+            "edit_targets": [
+                {"name": "DB::Log", "definition_indices": [0]},
+                {"name": "DB::Log::flush", "definition_indices": [1]},
+            ],
+        },
+    )
+    assert result["definitions"][1] == member
 
 
 def test_overloads_of_a_function_keep_every_body() -> None:

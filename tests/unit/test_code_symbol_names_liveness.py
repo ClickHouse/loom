@@ -21,6 +21,9 @@ from typing import Any
 
 import pytest
 
+from server.code.app.index.ingest_edges import _edge_names
+from server.code.domain.extract.lang_python import parse_python
+from server.code.domain.extract.py_member_reads import module_types, read_edges
 from server.code.store.index import CodeRepo
 from tests.unit.schema_ddl import column_names, ddl
 
@@ -98,6 +101,69 @@ async def test_no_names_reads_nothing() -> None:
     assert ch.calls == []
 
 
+@pytest.mark.asyncio
+async def test_python_member_read_uses_parser_candidates_even_with_scip() -> None:
+    parsed = parse_python(
+        "src/pkg/client.py",
+        b"""class Client:
+    @property
+    def value(self):
+        return 1
+
+class Remote:
+    pass
+
+def read(client: Client, remote: Remote):
+    return client.value, remote.value, client.refresh()
+""",
+    )
+    member = next(symbol for symbol in parsed.symbols if symbol.name == "value")
+    rows = [
+        {
+            "name": "value",
+            "tier": "treesitter",
+            "qualified_name": member.qualified_name,
+            "symbol_id": member.id,
+            "kind": member.kind,
+        },
+        {
+            "name": "value",
+            "tier": "scip",
+            "qualified_name": member.qualified_name,
+            "symbol_id": "compiler-member",
+            "kind": "method",
+        },
+        {
+            "name": "refresh",
+            "tier": "scip",
+            "qualified_name": "src.pkg.client::Client::refresh",
+            "symbol_id": "compiler-call",
+            "kind": "method",
+        },
+        {
+            "name": "value",
+            "tier": "scip",
+            "qualified_name": "src.pkg.client::Remote::value",
+            "symbol_id": "compiler-only-member",
+            "kind": "method",
+        },
+    ]
+    competing_parser = {**rows[0], "symbol_id": "other-parser-member"}
+    modules = module_types(parsed, {})
+    context = {"py_present": {parsed.path}, "py_roots": ("src",)}
+    for candidates, expected in (
+        (rows, {member.id, "compiler-only-member"}),
+        ([*rows, competing_parser], {"compiler-only-member"}),
+    ):
+        ch = StubCH([candidates])
+        repo = CodeRepo(ch)  # type: ignore[arg-type]
+        names = await _edge_names(repo, "o", "n", parsed, None)
+        edges = read_edges(parsed, names.member_sites, names.reads, {}, {}, modules, context)
+        assert {edge.to_symbol_id for edge in edges if edge.edge_kind == "reads"} == expected
+        assert names.calls["refresh"][0][0] == "compiler-call"
+        assert len(ch.calls) == 1
+
+
 # --------------------------------------------------------------------------
 # the mirror rule
 # --------------------------------------------------------------------------
@@ -131,7 +197,7 @@ def test_schema_dump_carries_the_widened_table_and_view() -> None:
 
 def test_reader_aggregates_only_columns_the_view_mirrors() -> None:
     src = (ROOT / "server/code/store/index/symbols.py").read_text()
-    body = src.split("async def name_candidates(", 1)[1].split("async def ", 1)[0]
+    body = src.split("async def name_candidate_views(", 1)[1].split("async def ", 1)[0]
     used = set(re.findall(r"argMax\((\w+)(?: IS NULL)?, version\)", body))
     assert used == {"kind", "tombstoned_at"}
     assert "GROUP BY name, tier, qualified_name, symbol_id" in body

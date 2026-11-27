@@ -87,19 +87,23 @@ def test_schema_status_returns_drift_shape(
 
 
 @pytest.mark.parametrize(
-    ("missing_view", "extra_view"), [(False, False), (True, False), (False, True)]
+    ("missing_view", "extra_view"),
+    [
+        (None, False),
+        ("analysis_agent_events", False),
+        ("analysis_ordinary_agent_events", False),
+        (None, True),
+    ],
 )
-def test_schema_status_accounts_for_boot_view_and_keeps_missing_and_extra_drift(
+def test_schema_status_accounts_for_boot_views_and_keeps_missing_and_extra_drift(
     client, monkeypatch, tmp_path, missing_view, extra_view
 ):
     from server.insights.app import admin_routes
-    from server.insights.domain.analysis import EVENTS_VIEW
+    from server.insights.domain.analysis import EVENT_VIEWS
 
     (tmp_path / "001_base.sql").write_text("CREATE TABLE loom.memory (value UInt8);")
     monkeypatch.setattr(admin_routes, "MIGRATIONS_DIR", tmp_path)
-    present = ["memory", "_migration_lock"]
-    if not missing_view:
-        present.append(EVENTS_VIEW)
+    present = ["memory", "_migration_lock", *(view for view in EVENT_VIEWS if view != missing_view)]
     if extra_view:
         present.append("unexpected_view")
 
@@ -110,10 +114,10 @@ def test_schema_status_accounts_for_boot_view_and_keeps_missing_and_extra_drift(
     response = client.get("/v1/admin/schema.status")
     assert response.status_code == 200
     body = response.json()
-    assert EVENTS_VIEW in body["expected"]
-    assert body["missing"] == ([EVENTS_VIEW] if missing_view else [])
+    assert set(EVENT_VIEWS) <= set(body["expected"])
+    assert body["missing"] == ([missing_view] if missing_view else [])
     assert body["extra"] == (["unexpected_view"] if extra_view else [])
-    assert body["drift"] is (missing_view or extra_view)
+    assert body["drift"] is bool(missing_view or extra_view)
 
 
 def test_audit_summary_default_window(

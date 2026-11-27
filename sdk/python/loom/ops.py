@@ -6411,6 +6411,8 @@ class CodeEditContextInput(TypedDict, total=False):
     consumer: NotRequired[str]
     name: NotRequired[str]
     clues: NotRequired[list[str]]
+    names: NotRequired[list[str]]
+    include_related_source: NotRequired[bool]
 
 
 class CodeEditContextBody(TypedDict, total=False):
@@ -6423,6 +6425,8 @@ class CodeEditContextBody(TypedDict, total=False):
     consumer: NotRequired[str]
     name: NotRequired[str]
     clues: NotRequired[list[str]]
+    names: NotRequired[list[str]]
+    include_related_source: NotRequired[bool]
 
 
 class CodeSymbolOutput(TypedDict, total=False):
@@ -6444,6 +6448,8 @@ class CodeSymbolOutput(TypedDict, total=False):
     neighbour_tokens: NotRequired[int]
     presence: NotRequired[list[dict[str, Any]]]
     summary: NotRequired[dict[str, list[str]]]
+    edit_targets: NotRequired[list["CodeEditContextTarget"]]
+    read_sources: NotRequired[Optional[list["CodeEditReadSource"]]]
 
 
 class CodeUnit(TypedDict, total=False):
@@ -6465,6 +6471,7 @@ class CodeUnit(TypedDict, total=False):
     recent_prs: NotRequired[list[dict[str, Any]]]
     examples: NotRequired[list[dict[str, Any]]]
     lessons: NotRequired[list[dict[str, Any]]]
+    lessons_unread: NotRequired[bool]
     churn: NotRequired[int]
     amp: NotRequired[int]
     tested: NotRequired[bool]
@@ -6477,6 +6484,34 @@ class CodeUnit(TypedDict, total=False):
     lexical_rank: NotRequired[int]
     vector_rank: NotRequired[int]
     namespace: NotRequired[str]
+
+
+class CodeEditContextTarget(TypedDict, total=False):
+    name: Required[str]
+    status: Required[Literal["resolved", "ambiguous", "dependency", "not_found"]]
+    definition_indices: NotRequired[list[int]]
+    candidates: NotRequired[list[dict[str, Any]]]
+    resolved_by: NotRequired[str]
+    presence: NotRequired[list[dict[str, Any]]]
+    hierarchy: NotRequired[dict[str, list[dict[str, Any]]]]
+    documented_in: NotRequired[list[dict[str, Any]]]
+    trace_run_id: NotRequired[str]
+
+
+class CodeEditReadSource(TypedDict, total=False):
+    qualified_name: Required[str]
+    path: Required[str]
+    start_line: Required[int]
+    end_line: Required[int]
+    commit: Required[str]
+    body: Required[str]
+    sites: Required[list["CodeEditReadSite"]]
+
+
+class CodeEditReadSite(TypedDict, total=False):
+    path: Required[str]
+    symbol: Required[str]
+    line: Required[int]
 
 
 class CodeEnclosingInput(TypedDict, total=False):
@@ -6664,6 +6699,7 @@ class CodeGrepInput(TypedDict, total=False):
     include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
+    prefer_complete_context: NotRequired[bool]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
@@ -6697,6 +6733,7 @@ class CodeGrepBody(TypedDict, total=False):
     include_dependencies: NotRequired[bool]
     case_sensitive: NotRequired[bool]
     context_lines: NotRequired[int]
+    prefer_complete_context: NotRequired[bool]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
@@ -7237,7 +7274,7 @@ class CodeReadInput(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    ranges: NotRequired[Union[list[str], list[Union["CodeReadRangeInput", str]]]]
+    ranges: NotRequired[Union[list[str], list[Union["CodeReadRangeInput", str]], list[list[int]]]]
     path: NotRequired[Optional[str]]
     start_line: NotRequired[Optional[int]]
     end_line: NotRequired[Optional[int]]
@@ -7257,7 +7294,7 @@ class CodeReadBody(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    ranges: NotRequired[Union[list[str], list[Union["CodeReadRangeInput", str]]]]
+    ranges: NotRequired[Union[list[str], list[Union["CodeReadRangeInput", str]], list[list[int]]]]
     path: NotRequired[Optional[str]]
     start_line: NotRequired[Optional[int]]
     end_line: NotRequired[Optional[int]]
@@ -7268,6 +7305,7 @@ class CodeReadOutput(TypedDict, total=False):
     lessons_left_out: NotRequired[int]
     results: Required[list["CodeReadRange"]]
     as_of: Required[dict[str, Any]]
+    trace_run_id: NotRequired[str]
 
 
 class CodeReadRange(TypedDict, total=False):
@@ -13005,6 +13043,7 @@ class MemorySearchHit(TypedDict, total=False):
     code_state: NotRequired[
         Union[Literal["fresh", "moved", "changed", "unresolved", "missing"], Literal[""]]
     ]
+    code_changed_since: NotRequired[str]
     body_truncated: NotRequired[bool]
     next: NotRequired[str]
     source_resource_id: NotRequired[str]

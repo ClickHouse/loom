@@ -235,6 +235,42 @@ async def _published(pg_conn: Any, org: str) -> None:
     await eventually(landed, description="the org's deliveries published")
 
 
+async def _published_or_delivered(pg_conn: Any, org: str) -> int:
+    """`_published`, for writes whose flush a loaded server may not finish within their
+    lease: such a commit is left to the delivery worker, and the server under test may run
+    none. This process publishes the deliveries of `org` whose lease ran out, as the worker
+    would. Returns how many revisions it published."""
+    from server.core import pg
+    from server.core.ch import get_client
+    from server.memory.app.pg_delivery import deliver_namespace
+
+    delivered = 0
+
+    async def landed() -> bool:
+        nonlocal delivered
+        due = await pg_conn.fetch(
+            "SELECT DISTINCT namespace FROM loom.memory_deliveries "
+            "WHERE org = $1 AND NOT settled AND lease_until < now()",
+            org,
+        )
+        for row in due:
+            delivered += await deliver_namespace(org, row["namespace"])
+        # Read after the publishing: the poll that publishes the last delivery ends the wait.
+        owed = await pg_conn.fetchval(
+            "SELECT count(*) FROM loom.memory_deliveries WHERE org = $1 AND NOT settled", org
+        )
+        return owed == 0
+
+    ch = get_client()
+    await ch.connect()
+    try:
+        await eventually(landed, description="the org's deliveries published")
+    finally:
+        await ch.disconnect()
+        await pg.close_pool()
+    return delivered
+
+
 @pytest.mark.usefixtures("pg_authority")
 async def test_a_write_is_listed_and_rolled_back_right_after_it_answers(
     call: Any, org: str
@@ -521,7 +557,7 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
         )
     )
     assert [r.status_code for r in answers] == [200] * 20, [r.text for r in answers]
-    await _published(pg_conn, org)
+    delivered = await _published_or_delivered(pg_conn, org)
     rows = ch_client.query(
         "SELECT count() FROM loom.memory FINAL WHERE org = {o:String} "
         "AND namespace IN {ns:Array(String)}",
@@ -529,7 +565,7 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
         parameters={"o": org, "ns": namespaces},
     ).result_rows[0][0]
     assert rows == 20
-    ch_client.command("SYSTEM FLUSH LOGS")
+    ch_client.command("SYSTEM FLUSH LOGS query_log")
     # The flushes' own inserts, by their query tag: one each, not one per write.
     flushes = ch_client.query(
         "SELECT count() FROM system.query_log WHERE type = 'QueryFinish' "
@@ -538,7 +574,8 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
         "AND query_start_time_microseconds >= fromUnixTimestamp64Micro({t:Int64})",
         parameters={"t": started},
     ).result_rows[0][0]
-    assert 0 < flushes < 20, flushes
+    # A write this process delivered counts for no flush: the others still shared theirs.
+    assert 0 < flushes < 20 - delivered, (flushes, delivered)
 
 
 async def test_a_write_is_the_postgres_head_and_its_clickhouse_rows(

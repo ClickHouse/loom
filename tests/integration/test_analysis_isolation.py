@@ -252,7 +252,7 @@ def test_an_error_quotes_no_value_from_another_scope(
     assert r.status_code in _REFUSED, r.text
     for leaked in ("other-ns/", "other-org/", "deleted/"):
         assert leaked not in r.text, r.text[:300]
-    ch_client.command("SYSTEM FLUSH LOGS")
+    ch_client.command("SYSTEM FLUSH LOGS query_log")
     logged = ch_client.query(
         "SELECT groupArray(exception) FROM system.query_log "
         "WHERE startsWith(query_id, {rid:String}) AND exception != ''",
@@ -326,10 +326,9 @@ def test_a_scope_read_inside_one_statement_reads_nothing_from_another(
             assert f"own/{seed.nonce}" not in str(r.json()["rows"]), r.text
 
 
-def test_ledger_rows_stay_in_scope(control_plane_url: str, seed: _Seed) -> None:
-    r = _query(
-        control_plane_url, seed, "SELECT DISTINCT org, namespace FROM loom.analysis_agent_events"
-    )
+@pytest.mark.parametrize("view", boundary.EVENT_VIEWS)
+def test_ledger_rows_stay_in_scope(control_plane_url: str, seed: _Seed, view: str) -> None:
+    r = _query(control_plane_url, seed, f"SELECT DISTINCT org, namespace FROM loom.{view}")
     assert r.status_code == 200, r.text
     assert r.json()["rows"] == [[seed.org_a, seed.ns_a]]
 
@@ -568,7 +567,7 @@ def test_the_statement_text_stays_out_of_the_query_log(
     for request_id, (statement, accepted) in statements.items():
         r = _query(control_plane_url, seed, statement, request_id=request_id)
         assert r.status_code in accepted, r.text
-    ch_client.command("SYSTEM FLUSH LOGS")
+    ch_client.command("SYSTEM FLUSH LOGS query_log")
     # Each is logged, as on a server that pins log_queries, but not its text.
     for request_id in statements:
         logged = ch_client.query(
@@ -598,7 +597,7 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client, prefix
     secrets = _key_spellings(ch_client)
 
     def refused_since_start() -> bool:
-        ch_client.command("SYSTEM FLUSH LOGS")
+        ch_client.command("SYSTEM FLUSH LOGS query_log")
         return (
             ch_client.query(
                 "SELECT count() FROM system.query_log WHERE event_time >= {start:DateTime} "
@@ -621,6 +620,7 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client, prefix
     ).result_rows[0][0]
     assert logged == 0
     # The server log records each refused read's error, whatever log_queries says.
+    ch_client.command("SYSTEM FLUSH LOGS text_log")
     quoting = ch_client.query(
         "SELECT count() FROM system.text_log WHERE event_time >= {start:DateTime} "
         "AND level = 'Error' AND position(message, {setting_prefix:String}) > 0 "
@@ -892,9 +892,13 @@ def test_marked_event_view_masks_before_result_predicates(
     assert float(found[ordinary_id][4]) == 0.25 and found[ordinary_id][5:] == ["ordinary", ""]
     assert found[marked_id][:4] == [False, 0, 0, 0]
     assert float(found[marked_id][4]) == 0 and found[marked_id][5:] == ["", ""]
-    raw = _query(control_plane_url, seed, f"SELECT {selected} FROM loom.agent_events WHERE {where}")
-    assert raw.status_code == 200, raw.text
-    assert raw.json()["rows"] == [next(row for row in returned if row[0] == ordinary_id)]
+    ordinary = _query(
+        control_plane_url,
+        seed,
+        f"SELECT {selected} FROM loom.analysis_ordinary_agent_events WHERE {where}",
+    )
+    assert ordinary.status_code == 200, ordinary.text
+    assert ordinary.json()["rows"] == [next(row for row in returned if row[0] == ordinary_id)]
     for predicate in ("success", "upstream_cost_usd > 0", "model = 'ordinary'"):
         r = _query(control_plane_url, seed, base + f" AND ({predicate})")
         assert r.status_code == 200, r.text
@@ -906,12 +910,13 @@ def test_marked_event_view_masks_before_result_predicates(
 @pytest.mark.parametrize(
     "sql",
     [
+        "SELECT count() FROM loom.agent_events",
         "SELECT count() FROM loom.agent_events_private",
         "SELECT upstream_cost_usd FROM loom.agent_events_private LIMIT 1",
         "SELECT a.model FROM loom.analysis_agent_events AS v JOIN loom.agent_events_private AS a USING request_id LIMIT 1",
     ],
 )
-def test_analyst_cannot_read_private_event_storage(
+def test_analyst_cannot_read_physical_event_storage(
     control_plane_url: str, seed: _Seed, sql: str
 ) -> None:
     assert (
@@ -928,19 +933,21 @@ def test_analyst_cannot_read_private_event_storage(
     "statement",
     [
         "SELECT name, total_rows, total_bytes FROM system.tables "
-        "WHERE database = 'loom' AND name = 'agent_events_private'",
+        "WHERE database = 'loom' AND name IN ('agent_events', 'agent_events_private')",
         "SELECT name, type, default_expression FROM system.columns "
-        "WHERE database = 'loom' AND table = 'agent_events_private'",
+        "WHERE database = 'loom' AND table IN ('agent_events', 'agent_events_private')",
     ],
 )
-def test_private_physical_event_metadata_is_not_visible(
+def test_physical_event_metadata_is_not_visible(
     control_plane_url: str, seed: _Seed, ch_client, statement: str
 ) -> None:
     assert ch_client.query(
         "SELECT count() FROM system.tables "
         "WHERE database = 'loom' AND name = 'agent_events_private'"
     ).result_rows == [(1,)]
-    ordinary = _query(control_plane_url, seed, "SELECT count() FROM loom.agent_events")
+    ordinary = _query(
+        control_plane_url, seed, "SELECT count() FROM loom.analysis_ordinary_agent_events"
+    )
     assert ordinary.status_code == 200, ordinary.text
     response = _query(control_plane_url, seed, statement)
     assert response.status_code in {200, *_REFUSED}, response.text
@@ -951,9 +958,9 @@ def test_private_physical_event_metadata_is_not_visible(
 @pytest.mark.parametrize(
     "sql",
     [
-        "SELECT create_table_query, as_select FROM system.tables WHERE database = 'loom' AND name = 'analysis_agent_events'",
-        "SELECT default_expression, comment FROM system.columns WHERE database = 'loom' AND table = 'analysis_agent_events'",
-        "SELECT create_table_query FROM system.tables WHERE database = 'loom' AND name = 'analysis_agent_events' SETTINGS format_display_secrets_in_show_and_select = 1",
+        "SELECT create_table_query, as_select FROM system.tables WHERE database = 'loom' AND name IN ('analysis_agent_events', 'analysis_ordinary_agent_events')",
+        "SELECT default_expression, comment FROM system.columns WHERE database = 'loom' AND table IN ('analysis_agent_events', 'analysis_ordinary_agent_events')",
+        "SELECT create_table_query FROM system.tables WHERE database = 'loom' AND name IN ('analysis_agent_events', 'analysis_ordinary_agent_events') SETTINGS format_display_secrets_in_show_and_select = 1",
     ],
 )
 def test_masked_view_metadata_discloses_no_signing_key(
@@ -966,8 +973,8 @@ def test_masked_view_metadata_discloses_no_signing_key(
             pytest.fail("Analysis metadata contains signing key material", pytrace=False)
     if r.status_code == 200 and "create_table_query" in sql:
         # ClickHouse may suppress the entire definition when column metadata is restricted.
-        (row,) = r.json()["rows"]
-        assert row and ("[HIDDEN]" in row[0] or all(value == "" for value in row)), r.text
+        for row in r.json()["rows"]:
+            assert row and ("[HIDDEN]" in row[0] or all(value == "" for value in row)), r.text
 
 
 @pytest.fixture
@@ -1003,12 +1010,9 @@ def event_scope_canaries(seed: _Seed, ch_client) -> tuple[str, str, str]:
     return ids
 
 
-def _event_canary_sql(ids: tuple[str, str, str]) -> str:
+def _event_canary_sql(ids: tuple[str, str, str], view: str = boundary.EVENTS_VIEW) -> str:
     quoted = ", ".join(f"'{item}'" for item in ids)
-    return (
-        "SELECT request_id, org, namespace FROM loom.analysis_agent_events "
-        f"WHERE request_id IN ({quoted})"
-    )
+    return f"SELECT request_id, org, namespace FROM loom.{view} WHERE request_id IN ({quoted})"
 
 
 @pytest.mark.parametrize(
@@ -1022,14 +1026,16 @@ def _event_canary_sql(ids: tuple[str, str, str]) -> str:
         "{p}loom_sig = 5",
     ],
 )
+@pytest.mark.parametrize("view", boundary.EVENT_VIEWS)
 def test_event_view_refuses_unsigned_scope(
     control_plane_url: str,
     seed: _Seed,
     prefix: str,
     event_scope_canaries: tuple[str, str, str],
     setting: str,
+    view: str,
 ) -> None:
-    sql = _event_canary_sql(event_scope_canaries)
+    sql = _event_canary_sql(event_scope_canaries, view)
     own = _query(control_plane_url, seed, sql)
     assert own.status_code == 200, own.text
     assert own.json()["rows"] == [[event_scope_canaries[0], seed.org_a, seed.ns_a]]
@@ -1117,15 +1123,17 @@ def test_event_view_scope_signature_cannot_be_replayed(
         "arrayJoin([toUInt64(model)])",
     ],
 )
+@pytest.mark.parametrize("view", boundary.EVENT_VIEWS)
 def test_event_view_expressions_do_not_evaluate_foreign_values(
     control_plane_url: str,
     seed: _Seed,
     event_scope_canaries: tuple[str, str, str],
     expression: str,
+    view: str,
 ) -> None:
     quoted = ", ".join(f"'{item}'" for item in event_scope_canaries)
     sql = (
-        f"SELECT {expression} FROM loom.analysis_agent_events "
+        f"SELECT {expression} FROM loom.{view} "
         f"WHERE request_id IN ({quoted}) "
         "SETTINGS short_circuit_function_evaluation = 'disable', query_plan_merge_filters = 1"
     )

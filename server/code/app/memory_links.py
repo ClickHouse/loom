@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from server.code.app.index import gitrepo, mirrors
 from server.code.app.index.bootstrap import holds
@@ -317,6 +319,44 @@ async def parsed(
     return await asyncio.to_thread(file_at, path, data, named)
 
 
+async def parsed_link_paths(
+    org: str, namespace: str, commit: str, paths: Sequence[str], *, named: str
+) -> list[FileAt | None]:
+    """Read the files of a mirror already checked for the commit."""
+    return await asyncio.gather(
+        *(parsed(org, namespace, commit, path, named=named) for path in paths)
+    )
+
+
+async def parsed_link_path(
+    org: str, namespace: str, commit: str, path: str, *, named: str
+) -> list[FileAt | None] | None:
+    """Read one lesson file, checking mirror availability if the local read misses."""
+    if local := await _parsed_local_commit(org, namespace, commit, path, named):
+        return [local]
+    if not await mirror_here(org, namespace, commit):
+        return None
+    return [await parsed(org, namespace, commit, path, named=named)]
+
+
+async def _parsed_local_commit(
+    org: str, namespace: str, commit: str, path: str, named: str
+) -> FileAt | None:
+    cfg = repo_for_namespace(org, namespace)
+    git_dir = await mirrors.present_dir(cfg)
+    if not git_dir:
+        return None
+    try:
+        data = await gitrepo.show_local_commit_file(
+            git_dir, commit, path, settings.code_ingest_max_file_bytes
+        )
+    except gitrepo.BlobTooLarge:
+        raise ParseFailed(path, "over code_ingest_max_file_bytes") from None
+    except gitrepo.GitError:
+        return None
+    return await asyncio.to_thread(file_at, path, data, named) if data is not None else None
+
+
 async def _file_at(org: str, namespace: str, commit: str, path: str) -> bytes | None:
     """`path` at `commit` from the bare mirror; None when the commit has no such file. A
     mirror that cannot be read raises; a file over `code_ingest_max_file_bytes` raises
@@ -394,6 +434,19 @@ async def checked_head(org: str, namespace: str) -> str:
 
 async def set_checked_head(org: str, namespace: str, head: str) -> None:
     await CodeRepo().set_state(org, namespace, _MARK, head)
+
+
+async def unchecked_heads(ch: Any | None = None) -> dict[tuple[str, str], str]:
+    """(org, trunk namespace) -> the head its memory links were last checked at ('' =
+    never) for each configured repository whose indexed head is another commit, in one
+    read. Links live in a repository's trunk namespace, so no other is listed."""
+    marks = await CodeRepo(ch).state_values_for_keys(["git_head", _MARK])
+    checked = marks[_MARK]
+    return {
+        entry: checked.get(entry, "")
+        for entry, head in marks["git_head"].items()
+        if head and head != checked.get(entry, "") and trunk_namespace(*entry) == entry[1]
+    }
 
 
 _CURSOR_NS = "memory_code_links"

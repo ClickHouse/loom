@@ -47,7 +47,7 @@ const NS_LABEL = "sr-only xl:not-sr-only text-text-muted";
 /** The one namespace, not a control. A cut name is focusable, whole in a tooltip. */
 function StaticNamespace({ name }: { name: string }) {
   return (
-    <div className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-3 text-sm text-text">
+    <div className="workspace-namespace inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 text-sm text-text">
       <span className={NS_LABEL}>Namespace</span>
       <TextClamp text={name} reach="tooltip" className="font-medium" />
     </div>
@@ -177,7 +177,7 @@ const NamespaceTrigger = forwardRef<
       <button
         ref={ref}
         type="button"
-        className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
+        className="workspace-namespace inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-2 sm:px-3 rounded-sm hover:bg-surface-2 transition-colors text-sm text-text"
         aria-label={`Namespace: ${name}${isCode ? ", repository" : ""}`}
         {...rest}
         // The tooltip only repeats the name the label already says.
@@ -186,15 +186,18 @@ const NamespaceTrigger = forwardRef<
         {isCode ? (
           <Icon name="code" size="sm" aria-hidden="true" />
         ) : (
-          <span className={NS_LABEL} aria-hidden="true">
-            Namespace
-          </span>
+          <>
+            <Icon name="cards" size="sm" aria-hidden="true" className="shrink-0 max-[359px]:hidden xl:hidden" />
+            <span className={NS_LABEL} aria-hidden="true">
+              Namespace
+            </span>
+          </>
         )}
         <span ref={setNameEl} className="font-medium truncate">
           {name}
         </span>
         {isCode && <Badge text="code" state="neutral" size="sm" aria-hidden="true" />}
-        <Icon name="chevron-down" size="xs" aria-hidden="true" />
+        <Icon name="chevron-down" size="xs" aria-hidden="true" className="shrink-0" />
       </button>
     </Tip>
   );

@@ -1318,12 +1318,13 @@ def test_reconcile_records_its_org_on_a_recording_cell_only_when_it_heals(
 
 
 @pytest.mark.parametrize("pending", [False, True])
-def test_the_embed_phase_declares_its_org_only_once_it_has_chunks_to_embed(
+def test_the_embed_phase_declares_its_org_only_once_it_has_work(
     monkeypatch: pytest.MonkeyPatch, pending: bool
 ) -> None:
-    """`loom code backfill --phase embed` reads its first page before it declares its
-    org: a mistyped --org has nothing pending, so a `recording` cell records nothing,
-    and the pass's status row, keyed by namespace, still lands."""
+    """`loom code backfill --phase embed` reads its first page, and whether the
+    published chunk counts trail the table, before it declares its org: a mistyped
+    --org has neither, so a `recording` cell records nothing, and the pass's status
+    row, keyed by namespace, still lands."""
     import argparse
 
     from server.cli import code_backfill
@@ -1341,6 +1342,9 @@ def test_the_embed_phase_declares_its_org_only_once_it_has_chunks_to_embed(
     class _Repo:
         async def pending_embed_chunks(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
             return [{"org": "acme", "namespace": "code-x", "content": "x"}] if pending else []
+
+        async def published_chunks_behind(self, *_a: Any) -> bool:
+            return False  # a mistyped --org has no chunks to be behind
 
     class _Embedder:
         model_name = "m"

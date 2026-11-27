@@ -259,7 +259,7 @@ def test_dispatch_tags_every_clickhouse_query_with_the_command(
 ) -> None:
     import asyncio
 
-    from server.cli.app import _dispatch
+    from server.cli.dispatch import _dispatch
     from server.core.ch import current_query_tag
 
     seen: list[str] = []
@@ -280,7 +280,7 @@ def test_dispatch_tags_every_clickhouse_query_with_the_command(
 def test_serve_runs_with_no_command_context_bound() -> None:
     """The server's writes and reads bind their own actor, class and tag; a
     process-wide `process:cli:serve` would outrank every worker's fallback."""
-    from server.cli.app import _dispatch
+    from server.cli.dispatch import _dispatch
     from server.core.ch import current_query_tag
     from server.memory.app.provenance import writer_actor
     from server.observability.traffic_class import current_traffic_class
@@ -300,7 +300,7 @@ def test_serve_runs_with_no_command_context_bound() -> None:
 def test_a_command_refused_for_another_deployment_prints_one_line_and_exits_2(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from server.cli.app import _dispatch
+    from server.cli.dispatch import _dispatch
     from server.core.pg import AuthorityMismatch
 
     def _func(_: argparse.Namespace) -> int:
@@ -310,6 +310,80 @@ def test_a_command_refused_for_another_deployment_prints_one_line_and_exits_2(
     assert capsys.readouterr().err.strip().splitlines() == [
         "✗ this deployment's memory authority is postgres"
     ]
+
+
+def _unfinished(*_: object, **_declared: object) -> int:
+    from server.core.retirement import UNFINISHED
+
+    error = TimeoutError()
+    error.add_note(UNFINISHED)
+    raise error
+
+
+@pytest.mark.parametrize("proof", ["", "a host proof"])
+def test_a_shutdown_failure_after_the_work_prints_one_line_and_exits_1(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], proof: str
+) -> None:
+    from server.cli.dispatch import _dispatch
+    from server.core.provider_process import process_identity
+    from server.insights.app import provider_command
+
+    monkeypatch.setattr(provider_command, "participant_proof", lambda: proof)
+    assert _dispatch(argparse.Namespace(cmd="decisions", func=_unfinished)) == 1
+    me = process_identity()
+    remedy = (
+        f"retire it with `loom participant retire --participant {me}` on this host"
+        if proof
+        else "no command can retire it: this host gives no process identity"
+    )
+    assert capsys.readouterr().err.strip().splitlines() == [
+        "✗ the command returned, but its shutdown did not complete (TimeoutError): "
+        f"a deferred write may not have landed, and a provider change waits for participant {me}; "
+        f"{remedy}"
+    ]
+
+
+_FEED = ["tracker-feed", "sync", "--org", "o", "--writer-user", "w", "--source", "s", "--repo", "r"]
+
+
+@pytest.mark.parametrize(
+    ("run", "argv"),
+    [
+        ("server.cli.access.run_connected", _MINT),
+        ("server.cli.access.run_connected", ["revoke-token", "--jti", "j", "--reason", "leaked"]),
+        ("server.cli.ch_setup.run_connected", ["ch-setup", "--apply-analyst-sql"]),
+        ("server.cli.tracker_feed._run", _FEED),
+    ],
+)
+def test_a_command_with_its_own_error_line_still_prints_a_failed_shutdown(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], run: str, argv: list[str]
+) -> None:
+    _auth_on_with(monkeypatch, "a-real-secret-that-is-not-the-default")
+    monkeypatch.setattr(run, _unfinished)
+    assert cli.main(argv) == 1
+    err = capsys.readouterr().err.strip()
+    assert err.startswith("✗ the command returned, but its shutdown did not complete")
+
+
+def test_ch_setups_analyst_step_passes_a_failed_shutdown_on(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.cli import ch_setup
+
+    monkeypatch.setattr(ch_setup, "run_connected", _unfinished)
+    with pytest.raises(TimeoutError):
+        ch_setup._write_analyst()
+    assert "not written" not in capsys.readouterr().out
+
+
+def test_any_other_command_error_keeps_its_traceback() -> None:
+    from server.cli.dispatch import _dispatch
+
+    def _func(_: argparse.Namespace) -> int:
+        raise TimeoutError("the command's own deadline")
+
+    with pytest.raises(TimeoutError, match="the command's own deadline"):
+        _dispatch(argparse.Namespace(cmd="decisions", func=_func))
 
 
 def test_a_platform_admin_mint_for_another_deployment_is_refused_as_such(

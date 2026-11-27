@@ -142,6 +142,9 @@ PRECEDENT_KEYS_IN = "hasAny(arrayConcat(window_keys, cited_keys), {keys:Array(St
 # A cached code.ask answer names the memory it quoted (`memory_namespace`, `memory_keys`);
 # MEMORY_NS_EQ contains NS_EQ, so a namespace list rewrites it to `IN` the same way.
 MEMORY_NS_EQ = "memory_namespace = {ns:String}"
+# A cached code.ask answer belongs to an erased namespace when it was asked in it (its
+# text quotes that repository's code) or when it quoted that namespace's memories.
+ANSWER_NS_EQ = f"({NS_EQ} OR {MEMORY_NS_EQ})"
 USER_MEMORY_KEYS = f"hasAny(memory_keys, {USER_QUOTED_KEY_LIST})"
 MEMORY_KEYS_IN = "hasAny(memory_keys, {keys:Array(String)})"
 # A community row names an entity (and a label — the highest-degree member of

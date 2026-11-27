@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { inline } from "../assistant/AnswerText";
-import { HelpText, helpHref } from "./HelpText";
+import { HelpText, helpHref, pageHref } from "./HelpText";
 
 const PAGE = `# Tokens and grants
 
@@ -24,6 +24,11 @@ const OUTLINE = [
 ];
 
 describe("HelpText", () => {
+  it("links to the documentation index without a page parameter", () => {
+    expect(pageHref("index.md")).toBe("/help");
+    expect(helpHref("../index.md#start", "guides/setup.md")).toBe("/help#start");
+  });
+
   it("draws headings with the server's anchors, and only links into the docs", () => {
     const { container } = render(<HelpText path="guides/tokens-and-grants.md" text={PAGE} outline={OUTLINE} />);
     // The title is the page header's: here only its anchor.

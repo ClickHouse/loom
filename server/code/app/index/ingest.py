@@ -54,6 +54,7 @@ from server.code.domain.extract.extractor_stamp import STAGES
 from server.code.domain.extract.lang_reference import (
     REFERENCE_LANG,
     UNEMBEDDED_BY_DESIGN,
+    UNEMBEDDED_EMBED_EXCLUDE,
     reference_head,
 )
 from server.code.domain.extract.lang_sql_model import SQL_LANG
@@ -173,6 +174,7 @@ async def ingest_file(
     are re-derived and key-diffed. A file whose parse degrades in this mode writes
     nothing: a parser fault must not retire edges the last full ingest derived."""
     stats = FileIngestStats(path=path, edges_only=edges_only)
+    rules = denylist if denylist is not None else default_denylist()
     refused, declared_only = await _refused(
         repo,
         org,
@@ -181,7 +183,7 @@ async def ingest_file(
         source=source,
         commit_sha=commit_sha,
         embedding_model=embedding_model,
-        denylist=denylist,
+        rules=rules,
         stats=stats,
     )
     if refused:
@@ -206,6 +208,8 @@ async def ingest_file(
     # A reference fixture has no symbol semantics and no edges: the symbol and edge
     # blocks would read their live rows to write nothing, so they are skipped outright.
     is_reference = pf.lang == REFERENCE_LANG
+    # An embed-excluded path keeps every stage but its chunks get no description or vector.
+    embed_excluded = not is_reference and rules.embed_excluded(path)
     # A SQL test has statement symbols and statement → object edges, but no call guards
     # to derive.
     is_sql = pf.lang == SQL_LANG and _statement_records_on()
@@ -261,6 +265,7 @@ async def ingest_file(
         callers_namespace=callers_namespace,
         callee_stoplist=callee_stoplist,
         is_reference=is_reference,
+        embed_excluded=embed_excluded,
     )
 
     # ---- symbols ----------------------------------------------------------
@@ -327,7 +332,7 @@ async def _refused(
     source: bytes,
     commit_sha: str,
     embedding_model: str,
-    denylist: Denylist | None,
+    rules: Denylist,
     stats: FileIngestStats,
 ) -> tuple[bool, bool]:
     """(refused, declared_only) before the parse: the denylist's refusal tombstones the
@@ -337,7 +342,6 @@ async def _refused(
     from server.settings import settings as _settings
 
     # Denylist first: an excluded path indexes nothing, its existing rows tombstoned
-    rules = denylist if denylist is not None else default_denylist()
     reason = rules.refusal(path, source)  # path layers, binary, generated
     declared_only = _declared_not_searched(reason, stats)
     if reason and not declared_only:
@@ -504,10 +508,12 @@ async def _chunk_stage(
     callers_namespace: str,
     callee_stoplist: frozenset[str],
     is_reference: bool,
+    embed_excluded: bool,
 ) -> bool:
     """The chunk stage of `ingest_file`: a content-addressed reconcile of the file's
-    chunks against its live rows, the new ones described and embedded. True when it
-    wrote a row."""
+    chunks against its live rows, the new ones described and embedded (neither for a
+    reference fixture or an embed-excluded path). True when it wrote a row."""
+    unembedded = is_reference or embed_excluded
 
     # The reconcile compares ids and spans, so it reads only those; the full rows — vector included,
     # a mirrored version must carry every column — are fetched afterwards for just the chunks it
@@ -548,7 +554,7 @@ async def _chunk_stage(
     stats.chunks_tombstoned = len(tombstones)
 
     llm_descriptions = await _describe_new_chunks(
-        llm if describe else None,
+        llm if describe and not unembedded else None,
         to_insert,
         stats,
         card_source=(repo, org, ns, embedding_model, path),
@@ -585,7 +591,7 @@ async def _chunk_stage(
         descriptions = {i: truncated for i in range(len(to_insert)) if truncated}
 
     embed_res = EmbedResult()
-    if embedder is not None and context_texts and not is_reference:
+    if embedder is not None and context_texts and not unembedded:
         embed_res, stats.embed_reused = await _embed_new_chunks(
             repo,
             org,
@@ -598,10 +604,11 @@ async def _chunk_stage(
             context_texts=context_texts,
         )
 
+    marker = UNEMBEDDED_BY_DESIGN if is_reference else UNEMBEDDED_EMBED_EXCLUDE
     chunk_rows = []
     for i, c in enumerate(to_insert):
         vec = embed_res.vectors.get(i, [])
-        err = UNEMBEDDED_BY_DESIGN if is_reference else embed_res.failures.get(i, "")
+        err = marker if unembedded else embed_res.failures.get(i, "")
         chunk_rows.append(
             build_row(
                 "code_chunks",
@@ -623,7 +630,7 @@ async def _chunk_stage(
                 symbol_ids=list(c.symbol_ids),
                 embedding=vec,
                 embedding_dim=len(vec),
-                embed_attempts=1 if err and not is_reference else 0,
+                embed_attempts=1 if err and not unembedded else 0,
                 embed_last_error=err,
                 indexed_commit=commit_sha,
             )
@@ -632,7 +639,7 @@ async def _chunk_stage(
     stats.embedded = len(embed_res.vectors)
     stats.embed_stubs = (
         0
-        if is_reference
+        if unembedded
         else len(embed_res.failures)
         + (
             len(to_insert) - len(embed_res.vectors) - len(embed_res.failures)

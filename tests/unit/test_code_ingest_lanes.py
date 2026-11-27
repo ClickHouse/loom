@@ -1,5 +1,5 @@
 """Commit-phase lanes: `code_ingest_lanes` entries ingest side by side from
-the one oldest-first order, and no entry ever has two commits in flight, so
+the one round-robin order, and no entry ever has two commits in flight, so
 each entry's commits still land oldest first and its watermark only moves
 forward. One lane is the sequential phase."""
 
@@ -44,16 +44,7 @@ def test_lanes_run_entries_side_by_side_and_never_one_entry_twice(
     monkeypatch: pytest.MonkeyPatch, lanes: int
 ) -> None:
     clock = _Clock()
-    now = int(clock.time())
-    times = {
-        "a1": now - 50,
-        "a2": now - 40,
-        "a3": now - 30,
-        "b1": now - 45,
-        "b2": now - 35,
-        "c1": now - 20,
-    }
-    _wire_streams(monkeypatch, clock, times)
+    _wire_streams(monkeypatch, clock)
     seen = _concurrent_ingest(monkeypatch)
     monkeypatch.setattr(settings, "code_ingest_lanes", lanes)
     a, ra = _plan("code-a", ["a1", "a2", "a3"])
@@ -61,7 +52,7 @@ def test_lanes_run_entries_side_by_side_and_never_one_entry_twice(
     c, rc = _plan("code-c", ["c1"])
     result = ingest_budget.CodeIngestResult()
     asyncio.run(
-        ingest_stream.ingest_oldest_first(
+        ingest_stream.ingest_round_robin(
             [a, b, c], result, ingest_budget.PassBudget(clock.now, clock.now + 1000.0)
         )
     )
@@ -76,22 +67,20 @@ def test_lanes_run_entries_side_by_side_and_never_one_entry_twice(
 
 def test_one_lane_is_the_sequential_phase(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = _Clock()
-    now = int(clock.time())
-    times = {"a1": now - 50, "b1": now - 45, "a2": now - 40}
-    _wire_streams(monkeypatch, clock, times)
+    _wire_streams(monkeypatch, clock)
     seen = _concurrent_ingest(monkeypatch)
     monkeypatch.setattr(settings, "code_ingest_lanes", 1)
     a, _ = _plan("code-a", ["a1", "a2"])
     b, _ = _plan("code-b", ["b1"])
     asyncio.run(
-        ingest_stream.ingest_oldest_first(
+        ingest_stream.ingest_round_robin(
             [a, b],
             ingest_budget.CodeIngestResult(),
             ingest_budget.PassBudget(clock.now, clock.now + 1000.0),
         )
     )
     assert seen["max"] == 1
-    assert seen["order"] == ["a1", "b1", "a2"], "oldest first across entries"
+    assert seen["order"] == ["a1", "b1", "a2"], "round-robin across entries"
 
 
 @pytest.mark.parametrize("lanes", [1, 2])
@@ -104,8 +93,7 @@ def test_one_entrys_failed_setup_leaves_the_other_entries_their_commits(
     from server.workers import pass_context
 
     clock = _Clock()
-    now = int(clock.time())
-    _wire_streams(monkeypatch, clock, {"a1": now - 50, "b1": now - 45, "b2": now - 40})
+    _wire_streams(monkeypatch, clock)
     _concurrent_ingest(monkeypatch)
     monkeypatch.setattr(settings, "code_ingest_lanes", lanes)
     real_prepare = ingest_stream.CommitStream._prepare
@@ -122,7 +110,7 @@ def test_one_entrys_failed_setup_leaves_the_other_entries_their_commits(
     ctx = pass_context.begin("code_ingest")
 
     async def run() -> set[asyncio.Task[Any]]:
-        await ingest_stream.ingest_oldest_first(
+        await ingest_stream.ingest_round_robin(
             [a, b], result, ingest_budget.PassBudget(clock.now, clock.now + 1000.0)
         )
         return {t for t in asyncio.all_tasks() if t is not asyncio.current_task()}

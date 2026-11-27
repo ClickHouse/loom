@@ -1,5 +1,5 @@
-"""The commit walk: each namespace's commits as a stream, walked oldest first across
-namespaces under a per-namespace share of the pass budget."""
+"""The commit walk: each namespace's commits as a stream, oldest first within it, and
+the streams served round-robin, one commit per entry per round, under the pass budget."""
 
 from __future__ import annotations
 
@@ -61,8 +61,6 @@ class CommitStream:
         self.commits = list(commits)
         self.index = 0
         self.landed = 0
-        # committer unix seconds per sha: the scheduler's order
-        self.times: dict[str, int] = {}
         self._ctx: dict[str, Any] | None = None
 
     @property
@@ -72,10 +70,6 @@ class CommitStream:
     @property
     def next_sha(self) -> str:
         return self.commits[self.index]
-
-    @property
-    def next_time(self) -> int:
-        return self.times.get(self.next_sha, 0)
 
     async def next_files(self) -> int:
         """Changed files of the next commit (its cost driver); 0 unknown."""
@@ -215,39 +209,35 @@ class CommitStream:
         )
 
 
-# Commits older than this sort as if committed then — an
-# old-dated backlog (a branch re-pointed at old history) ties, in entry
-# order, instead of holding the phase.
-_OLDEST_FIRST_HORIZON_S = 86_400
-
-
-async def ingest_oldest_first(
+async def ingest_round_robin(
     plans: list[RepoPass],
     result: CodeIngestResult,
     budget: PassBudget,
 ) -> None:
-    """The pass's pending commits across EVERY entry, the one
-    that has waited longest first (committer time; merges land with the merge
-    time). Walking each entry's whole backlog in its turn would let one
-    release tree's backlog hold the phase pass after pass while another
-    entry's single merge waits behind it. Oldest
-    first bounds every commit's wait by the work committed before it, which
-    is the least worst-case staleness a budget-bound pass can give; per entry
-    the order stays oldest first, so the watermark contract holds. At the
-    budget every entry still waiting is cut, the longest-waiting first (the
-    next pass starts at its entry). `code_ingest_lanes` lanes pop the same
-    order at once, each a different entry."""
+    """The pass's pending commits across EVERY entry, round-robin: each round
+    serves every entry still waiting one commit, the entry that has landed the
+    fewest this pass first, then in entry order. Per entry the order stays
+    oldest first, so the watermark contract holds. An entry's share of the
+    phase is one commit per round whatever its backlog, so a branch with one
+    new merge lands in the first round instead of waiting behind a sibling's
+    thousand-commit backlog, pass after pass. At the budget every entry still
+    waiting is cut, the one the scheduler would have served next first (a
+    sliced commit counts as its entry's turn, like a landed one); the
+    next pass's entry order starts there (`rotate_to` on the `commits` cut),
+    so a round the budget ends early resumes at the entry it did not reach.
+    `code_ingest_lanes` lanes pop the same order at once, each a different
+    entry."""
     import heapq
 
-    heap, streams = await _commit_streams(plans, result)
+    heap, streams = _commit_streams(plans, result)
     pace = _Pace(budget)
-    deferred: list[CommitStream] = []
+    deferred: list[tuple[int, int, CommitStream]] = []
 
     async def lane() -> None:
         # A stream is off the heap while a lane steps it, so no two lanes
         # ever run one entry's commits: each entry stays oldest first.
         while heap and not budget.exhausted():
-            _, _, order, stream = heapq.heappop(heap)
+            _, order, stream = heapq.heappop(heap)
             try:
                 await lane_step(order, stream)
             except Exception as e:  # one entry never ends the phase for the rest
@@ -262,7 +252,8 @@ async def ingest_oldest_first(
     async def lane_step(order: int, stream: CommitStream) -> None:
         files = await stream.next_files()
         if not pace.fits(files):
-            deferred.append(stream)  # too big for what is left: first next pass
+            # too big for what is left: first next pass
+            deferred.append((stream.landed, order, stream))
             return
         # A commit bigger than a round shares the phase while
         # other entries wait — it gets `code_ingest_slice_share` of the budget
@@ -279,9 +270,11 @@ async def ingest_oldest_first(
         ):
             landed = await stream.step(clock=clock)
         if landed is None:
-            deferred.append(stream)  # sliced: continues next pass
+            # sliced: continues next pass. The slice was its turn, so it sorts
+            # after the entries this round has not reached.
+            deferred.append((stream.landed + 1, order, stream))
         elif landed and stream.remaining:
-            heapq.heappush(heap, (stream.next_time, stream.landed, order, stream))
+            heapq.heappush(heap, (stream.landed, order, stream))
 
     lanes = min(int(settings.code_ingest_lanes), len(heap))
     if lanes > 1:
@@ -292,39 +285,27 @@ async def ingest_oldest_first(
                 tg.create_task(lane())
     else:
         await lane()
-    waiting = deferred + [h[3] for h in heap]
-    for stream in sorted(waiting, key=lambda st: st.next_time):
+    for _, _, stream in sorted(deferred + heap, key=lambda w: (w[0], w[1])):
         stream.cut(budget)
     for plan, stream in streams:
         plan.commits = stream.landed
 
 
-async def _commit_streams(
+def _commit_streams(
     plans: list[RepoPass], result: CodeIngestResult
-) -> tuple[list[tuple[int, int, int, CommitStream]], list[tuple[RepoPass, CommitStream]]]:
+) -> tuple[list[tuple[int, int, CommitStream]], list[tuple[RepoPass, CommitStream]]]:
     """One stream per entry with pending commits, and the heap of them in
-    oldest-first order."""
-    import heapq
-
-    from server.code.app.index import gitrepo
-
-    floor = int(time.time()) - _OLDEST_FIRST_HORIZON_S
-    # (time, landed, entry order): commits older than the horizon share the
-    # floor time, and `landed` breaks that tie round-robin — entry order alone
-    # would serve the first old backlog to exhaustion before the next one.
-    heap: list[tuple[int, int, int, CommitStream]] = []
+    round-robin order: (commits landed this pass, entry order)."""
+    heap: list[tuple[int, int, CommitStream]] = []
     streams: list[tuple[RepoPass, CommitStream]] = []
     for plan in plans:
         if not plan.pending:
             continue
         stream = CommitStream(plan.cfg, plan.repo, plan.head, plan.watermark, plan.pending, result)
         result.commits_planned += len(plan.pending)
-        try:
-            meta = await gitrepo.commit_meta_many(plan.cfg.git_dir, plan.pending)
-        except Exception:  # noqa: BLE001 — unknown times sort first, in entry order
-            meta = {}
-        stream.times = {sha: max(floor, int(meta.get(sha, ("", 0))[1])) for sha in plan.pending}
-        heapq.heappush(heap, (stream.next_time, 0, len(streams), stream))
+        # Entry order is unique, so the tuple never compares two streams;
+        # the plans arrive in heap order already.
+        heap.append((0, len(streams), stream))
         streams.append((plan, stream))
     return heap, streams
 

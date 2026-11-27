@@ -37,7 +37,7 @@ def _alive(pid: int) -> bool:
 
 class _Repo:
     async def get_state(self, org: str, ns: str, key: str) -> str:
-        return {"git_head": "b" * 40, "scip_commit": "a" * 40}[key]
+        return {"git_head": "b" * 40, "scip_commit": "a" * 40}.get(key, "")
 
 
 def _cpp(tmp: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], Awaitable[Any]]:
@@ -69,7 +69,7 @@ def _py(tmp: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], Awaitable[An
 
 def _ts(tmp: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], Awaitable[Any]]:
     monkeypatch.setattr(code_scip_ts_delta, "_harness_env", lambda *a: {})
-    return lambda: code_scip_ts_delta._run_harness(tmp, "a", "b", tmp / "d.json")
+    return lambda: code_scip_ts_delta._run_harness(tmp, "a", "b", tmp / "d.json", (), paths=True)
 
 
 _HARNESSES = {"cpp": _cpp, "go": _go, "py": _py, "ts": _ts}

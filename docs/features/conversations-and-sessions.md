@@ -1,3 +1,9 @@
+---
+description: Search recorded conversation turns and resume a coding agent’s work from a saved session brief.
+seo:
+  title: Agent session history and briefs
+---
+
 # Conversations and sessions
 
 Loom keeps three kinds of session state, each in its own plane:
@@ -248,10 +254,11 @@ alternating `# user` / `# assistant` sections, or a JSON array of `{role, conten
 and appends each turn (`--dry-run` counts them; `--thread-id` sets a stable id).
 
 The plugins also hand the session's turns to `memory.set_from_messages(defer=true)` at
-session end, so facts are extracted whether or not the transcript is recorded, and
-record tool actions as episodic observations through `observe.record` /
-`observe.crystallize` (see [extraction](./memory/extraction.md)). The hook-by-hook
-wiring is in [Claude Code](./integrations/claude-code.md).
+session end, so facts are extracted whether or not the transcript is recorded (a session
+with under 40 bytes of user and assistant text is not sent), and record tool actions as
+episodic observations through `observe.record` / `observe.crystallize` (see
+[extraction](./memory/extraction.md)). The hook-by-hook wiring is in
+[Claude Code](./integrations/claude-code.md).
 
 ## Session briefs
 

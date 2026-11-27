@@ -520,16 +520,6 @@ async def await_warm_up(timeout_s: float, names: tuple[str, ...]) -> list[str]:
     return late
 
 
-async def probe_sandbox() -> None:
-    """Probe the repository-job sandbox before serving. `/v1/health` reports only what
-    this process has probed, and a stack with no repositories never runs a repository
-    job that would probe it, so the first answer would say nothing."""
-    if settings.code_ingest_enabled or settings.code_sandbox_required:
-        from server.code.app.index.sandbox import sandbox_available
-
-        await asyncio.to_thread(sandbox_available)
-
-
 def start_tracker_sources_refresher(ch: Any) -> asyncio.Task[None]:
     """Every process — not only the leader — loads the
     self-service tracker registry at boot and keeps it within
@@ -974,7 +964,7 @@ def register_readiness_checks(ch: Any) -> None:
     # /v1/admin/models routes that finish it (the middleware keeps them open).
     readiness.register("model_work_gate", model_work_gate.readiness_check, required=False)
     # Only where an assistant is configured: a missing check means none is.
-    if settings.assistant_librechat_url:
+    if settings.assistant_enabled:
         readiness.register("assistant", assistant_service.readiness_check, required=False)
     if settings.ready_requires_mirrors:
         readiness.register("mirrors", mirrors.readiness_check, ttl_s=5.0)

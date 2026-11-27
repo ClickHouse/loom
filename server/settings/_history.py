@@ -139,4 +139,26 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "entrypoints. Explicit lists and empty values retain their meaning."
         ),
     ),
+    DefaultChange(
+        version="1.3.1",
+        name="adoption_telemetry_share_domains",
+        old=False,
+        new=True,
+        why=(
+            "Include namespace contact domains and aggregate counts in adoption reports. "
+            "Deployments can disable domain sharing while continuing to send usage totals."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_ingest_enabled",
+        old=False,
+        new=True,
+        why=(
+            "A configured repository is fetched and indexed after every push without a "
+            "setting: a deployment that never set the variable starts polling its "
+            "repositories and embedding what changed. A deployment that indexes only "
+            "when CI calls `code.refresh` sets it to false."
+        ),
+    ),
 )

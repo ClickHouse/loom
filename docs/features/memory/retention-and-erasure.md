@@ -1,3 +1,9 @@
+---
+description: Set retention for AI agent memory, erase a user or namespace, and review the residue check and receipt for a completed erasure.
+seo:
+  title: AI agent memory retention and erasure
+---
+
 # Retention and erasure
 
 Loom deletes no memory unless its writer, the namespace owner or the operator asks. Memory

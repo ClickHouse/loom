@@ -577,7 +577,7 @@ Is this already tested?
 
 ## `code.edit_context`
 
-Read implementation, indexed tests, and linked notes before editing.
+Before editing, read source, tests and notes.
 
 `POST /v1/code.edit_context` · MCP `loom_code_edit_context` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -590,8 +590,10 @@ Read implementation, indexed tests, and linked notes before editing.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `name` | `str` | `''` | Definition name, path:symbol, or path:line. |
-| `clues` | `list[str]` | *(computed)* | Literal fragments to find the edit target in a file or across the index. |
+| `name` | `str` | `''` | Name, path:symbol, path:line, or file with clues. |
+| `clues` | `list[str]` | *(computed)* | Text fragments or exact declarations. |
+| `names` | `list[str]` | *(computed)* | Exact names or locations. |
+| `include_related_source` | `bool` | `True` | Set false after reading extra bodies. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -613,6 +615,8 @@ Read implementation, indexed tests, and linked notes before editing.
 | `neighbour_tokens` | `int` | Estimated tokens the `neighbours` block cost (counted in `tokens_returned`). |
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
+| `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Edit context only. |
 
 ## `code.enclosing`
 
@@ -768,6 +772,7 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `include_dependencies` | `bool` | `False` | Include verified argument definitions, helpers, or forwarding call targets. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `context_lines` | `int` | `0` | Excerpt radius, 6 by default for related hits without bodies, or 0 for match lines only. |
+| `prefer_complete_context` | `bool` | `False` | Use the same excerpt width to complete a short declaration. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
 | `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search when a prioritized batch cursor is unavailable. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |
@@ -959,8 +964,8 @@ Health of the code index: indexed head commit, compiler-tier commit, row counts,
 | `pr_cursor` | `str` | The PR-history poller's cursor: the newest `updated_at` (ISO-8601) of the merged PRs it fetched; '' before its first pass. |
 | `commit_coverage` | `CodeCommitCoverage \| None` | Set when the request named a `commit`. |
 | `clone_head` | `str` | Freshness. clone_head is the bare clone's branch tip as of the last poller fetch (<= interval old); *_lag = first-parent commits between a watermark and that tip, -1 when a watermark is unset or the clone is unreadable. 0 everywhere ==… |
-| `clone_fetched_at` | `str` | When the ingest pass last fetched this entry's mirror (the `clone_head` row's updated_at, ISO-8601 UTC; '' unknown) and whether that is older than `code_fetch_stale_after_seconds`. |
-| `fetch_overdue` | `bool` | True when `clone_fetched_at` is older than `code_fetch_stale_after_seconds`. |
+| `clone_fetched_at` | `str` | When the ingest pass last fetched this entry's mirror (the `clone_head` row's updated_at, ISO-8601 UTC; '' with no fetch on record). |
+| `fetch_overdue` | `bool` | True when the last fetch, or with none on record the `git_head` write, is older than `code_fetch_stale_after_seconds`. |
 | `fast_tier_lag` | `int` | First-parent commits between `git_head` and `clone_head`; -1 when either is unknown. |
 | `scip_lag` | `int` | First-parent commits between `scip_commit` and `clone_head`; -1 when either is unknown. |
 | `scip_py_lag` | `int` | First-parent commits between `scip_commit_py` and `clone_head`; -1 when either is unknown. |
@@ -981,7 +986,7 @@ Health of the code index: indexed head commit, compiler-tier commit, row counts,
 | `symbol_stats_at` | `str` | The newest fan-in pass stamp (ISO-8601 UTC); '' when the pass has not written the table. |
 | `unit_risk_rows` | `int` | The precomputed risk table for this namespace — live rows and the newest stamp (ISO 8601, UTC), so an operator sees the weekly leg's progress and a resumed pass's remainder. 0 / "" = no row written (every served unit is read live). |
 | `unit_risk_at` | `str` | The newest risk-table stamp (ISO-8601 UTC); '' when no row is written. |
-| `chunks_total` | `int` | Live chunks, those carrying a vector, and their ratio (0..1; reference fixtures unembedded by design are outside the denominator). |
+| `chunks_total` | `int` | Live chunks, those carrying a vector, and their ratio (0..1; rows unembedded by design, reference fixtures and `embed_exclude` paths, are outside the denominator). |
 | `chunks_embedded` | `int` | Live chunks that carry an embedding vector. |
 | `embedding_coverage` | `float` | Embedded share of the embeddable chunks (0..1); 1.0 when the counts do not carry it. |
 
@@ -1134,7 +1139,7 @@ A PR draft asks whether a PR like it already exists.
 
 ## `code.read`
 
-Read inclusive, one-based indexed lines.
+Read indexed lines.
 
 `POST /v1/code.read` · MCP `loom_code_read` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -1147,8 +1152,8 @@ Read inclusive, one-based indexed lines.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `ranges` | `list[str] \| list[CodeReadRangeInput \| str]` | *(computed)* | Batch of inclusive one-based ranges as path:start-end strings or objects with path, start_line, and optional end_line. |
-| `path` | `str \| None` | `None` | Repository-relative file for a single range. |
+| `ranges` | `list[str] \| list[CodeReadRangeInput \| str] \| list[list[int]]` | *(computed)* | Inclusive one-based ranges as path:start-end strings, objects with path and line bounds, or [start, end] pairs sharing the top-level path. |
+| `path` | `str \| None` | `None` | Repository-relative file for a single range or a batch of line pairs. |
 | `start_line` | `int \| None` | `None` | First line of a single range, one-based. |
 | `end_line` | `int \| None` | `None` | Inclusive last line, defaulting to start_line. |
 
@@ -1158,6 +1163,7 @@ Read inclusive, one-based indexed lines.
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `results` | `list[CodeReadRange]` |  |
 | `as_of` | `dict[str, Any]` |  |
+| `trace_run_id` | `str` | Joins this read to the code trace and request ledger. |
 
 ## `code.recent_commits`
 
@@ -1192,8 +1198,8 @@ CI calls this right after a merge lands: run one ingest pass now instead of wait
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `expected_head` | `str` | `''` | The commit CI just merged; advisory, recorded in `last_refresh_detail` and never checked. |
-| `wait` | `bool` | `False` | wait=True blocks until the pass completes (CI wants a sync signal); default fire-and-forget returns immediately. |
-| `wait_timeout_seconds` | `int` | `300` | With `wait`: seconds to wait for the pass (10..900); the call fails when the pass outlasts it. |
+| `wait` | `bool` | `False` | wait=True blocks until the pass completes (CI wants a sync signal), then rechecks the memories linked to the namespace's code unless another pass is checking them or the recheck fails; default fire-and-forget returns immediately. |
+| `wait_timeout_seconds` | `int` | `300` | With `wait`: seconds to wait for the pass (10..900); the call fails when the pass outlasts it, and a link recheck that outlasts it is left to the link worker. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1675,6 +1681,8 @@ Find an exact definition by name or path:line.
 | `neighbour_tokens` | `int` | Estimated tokens the `neighbours` block cost (counted in `tokens_returned`). |
 | `presence` | `list[dict[str, Any]]` | presence=true: one row per requested namespace, in request order — {namespace, verdict: present \| absent \| unknown, path, start_line, end_line, tier, indexed_commit, index_status, ms, reason, definitions}. |
 | `summary` | `dict[str, list[str]]` | Presence summary: {present, absent, unknown} lists of namespaces; also filled from the entry's `depends_on` namespaces when the name is not defined here. |
+| `edit_targets` | `list[CodeEditContextTarget]` | Per-requested-name resolution for batched edit context only. |
+| `read_sources` | `list[CodeEditReadSource] \| None` | Edit context only. |
 
 ## `code.symbol_history`
 

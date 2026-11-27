@@ -12,7 +12,7 @@ import { ROLE_LOADING } from "../../../lib/callReason";
 import { useStore } from "../../../lib/state";
 import { lastInventory, startStarter, useCardGate } from "./cardStore";
 import { askState, setAlsoAsk, useStarterPrefs } from "./prefs";
-import { DEFAULT_WINDOW, FIRST_STARTERS, PHONE_STARTERS, startersFor, type Starter } from "./starters";
+import { DEFAULT_WINDOW, FIRST_STARTERS, PHONE_STARTERS, startersFor, type Starter } from "./starterCatalog";
 import type { CardArgs } from "./types";
 
 const SUBJECT_OPTIONS = (Object.keys(SUBJECT_COPY) as InspectSubject[]).map((value) => ({
@@ -25,7 +25,7 @@ const ALSO_ASK_NOTE = "Off: answers from what Loom holds, with no model call. On
 
 /**
  * The starters: one full-width row per question Loom's own reads answer, the page's own
- * first (cards/starters.ts startersFor). Choosing one reads its card with the person's
+ * first. Choosing one reads its card with the person's
  * token and, while "Also ask the model" is on and the assistant can answer, asks the model
  * its question too (which spends a model answer); with the chat off, or while the assistant
  * cannot answer, there is no such box, and a starter reads only Loom. A starter that takes
