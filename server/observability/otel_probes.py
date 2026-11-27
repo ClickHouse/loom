@@ -346,7 +346,13 @@ _CODE_STATE_SQL = """
                toFloat64(toUnixTimestamp(updated_at)) AS v, state_value AS s
         FROM loom.code_index_state FINAL
         WHERE state_key IN ('git_head', 'scip_commit', 'scip_commit_py', 'scip_commit_ts',
-                            'scip_commit_go', 'pr_cursor', 'reconcile')
+                            'scip_commit_go', 'pr_cursor', 'reconcile', 'memory_links_checked')
+        UNION ALL
+        -- The repositories the memory link pass rechecks: those holding a live link, read
+        -- without FINAL as the pass reads them. Only their link lag is a reading.
+        SELECT DISTINCT org, code_namespace AS namespace, 'links' AS k, 0. AS v, '' AS s
+        FROM loom.memory_code_links
+        WHERE tombstoned_at IS NULL
 """
 
 _CODE_COUNTS_SQL = f"""
@@ -369,6 +375,14 @@ _CODE_COUNTS_SQL = f"""
         FROM loom.code_symbols FINAL
         WHERE tombstoned_at IS NULL
         GROUP BY org, namespace, tier
+        UNION ALL
+        -- Memory links by state, per repository: how many read `changed`, `missing` or
+        -- `unresolved`, and how many wait as `pending`.
+        SELECT org, code_namespace AS namespace, concat('links:', toString(state)) AS k,
+               toFloat64(count()) AS v, '' AS s
+        FROM loom.memory_code_links FINAL
+        WHERE tombstoned_at IS NULL
+        GROUP BY org, code_namespace, state
         UNION ALL
         -- Parser-tier edge quality. `edges_unqualified`: call edges whose
         -- target is a bare name (no `::` or `.` qualifier) — the shape a
@@ -870,6 +884,10 @@ def _code_lag_series(
       while git_head moves grows this without bound, whatever the worker's last
       status says.
 
+    A repository holding a live memory link (a `links` row) also reads how far its
+    links trail the index, `memory_links_checked`..git_head, as `memory_link_lag_commits`
+    and `memory_link_lag_seconds`; one holding none reads neither.
+
     -1 commits (unknown) is not observed, nor is a repo whose mirror is not on this
     host (still cloning, or LOOM_GIT_HISTORY=none)."""
     import time as _time
@@ -883,24 +901,33 @@ def _code_lag_series(
         return {}
     now_s = _time.time() if now is None else now
     state: dict[tuple[str, str], dict[str, str]] = {}
+    linked: set[tuple[str, str]] = set()
     for org, namespace, key, _value, text in rows:
         key = str(key)
         if key.startswith("state:"):
             state.setdefault((str(org), str(namespace)), {})[key[len("state:") :]] = str(text or "")
+        elif key == "links":
+            linked.add((str(org), str(namespace)))
     out: dict[str, list[tuple[float, dict[str, str]]]] = {}
+
+    def _lag(git_dir: str, since: str, until: str) -> tuple[float, float] | None:
+        """(commits, seconds) `since` trails `until` by; None when unknown."""
+        n, oldest = lag_of(git_dir, since, until)
+        if n < 0:
+            return None
+        return float(n), max(0.0, now_s - oldest) if n > 0 and oldest > 0 else 0.0
 
     def _emit(
         git_dir: str, series: str, since: str, until: str, base: dict[str, str], tier: str
     ) -> None:
-        n, oldest = lag_of(git_dir, since, until)
-        if n < 0:
+        lag = _lag(git_dir, since, until)
+        if lag is None:
             return
         # the fast tier's commit series carries no tier attribute
         out.setdefault(series, []).append(
-            (float(n), base if tier == "fast" else {**base, "tier": tier})
+            (lag[0], base if tier == "fast" else {**base, "tier": tier})
         )
-        secs = max(0.0, now_s - oldest) if n > 0 and oldest > 0 else 0.0
-        out.setdefault("code_tier_lag_seconds", []).append((secs, {**base, "tier": tier}))
+        out.setdefault("code_tier_lag_seconds", []).append((lag[1], {**base, "tier": tier}))
 
     for cfg in repos:
         st = state.get((cfg.org, cfg.namespace))
@@ -915,6 +942,12 @@ def _code_lag_series(
             if st.get(t.watermark_key):
                 wm = st[t.watermark_key]
                 _emit(cfg.git_dir, "code_scip_lag_commits", wm, head, base, t.producer)
+        if (cfg.org, cfg.namespace) in linked:
+            # '' before the first recheck and while a full one is owed: unknown, no point
+            behind = _lag(cfg.git_dir, st.get("memory_links_checked", ""), head)
+            if behind is not None:
+                out.setdefault("memory_link_lag_commits", []).append((behind[0], base))
+                out.setdefault("memory_link_lag_seconds", []).append((behind[1], base))
     return out
 
 
@@ -967,4 +1000,9 @@ def _code_series_from_rows(rows: Any, *, now: Any) -> dict[str, list[tuple[float
             tier = key[len("symbols:") :]
             tier = tier if tier in ("treesitter", "scip") else "other"
             out.setdefault("code_symbols", []).append((float(value), {**attrs, "tier": tier}))
+        elif key.startswith("links:"):
+            link_state = key[len("links:") :]
+            out.setdefault("memory_code_links", []).append(
+                (float(value), {**attrs, "state": link_state})
+            )
     return out

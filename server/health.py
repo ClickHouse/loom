@@ -96,6 +96,7 @@ def _health_provider_fields(
     from server.insights.app import provider_runtime
     from server.insights.app.analysis import analysis_state
     from server.llm.client import llm_is_fake
+    from server.memory.app import code_link_lag
     from server.observability import instance as _instance
     from server.observability import provider_health
     from server.observability.problems import HealthState, collect_problems, derive_status
@@ -145,6 +146,7 @@ def _health_provider_fields(
             refused_configuration=provider_runtime.refused_configuration(),
             code_tier_failures=tier_health.problem_rows(),
             code_tier_names="unrestricted" if platform_admin else "none",
+            memory_links_behind=code_link_lag.behind(),
         ),
     )
     return {

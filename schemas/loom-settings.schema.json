@@ -5976,7 +5976,7 @@
         "otel_code_counts_cache_s": {
           "default": 3600,
           "type": "integer",
-          "description": "Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols and code_edges, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export."
+          "description": "Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges and memory_code_links, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export."
         },
         "otel_code_grep_replay_cache_s": {
           "default": 3600,

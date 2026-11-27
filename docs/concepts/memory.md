@@ -558,6 +558,22 @@ The links are read where the code is:
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read.
 
+A memory with no link reads exactly as one whose code is current. `namespace.validate`
+counts the served memories that name code (a backticked or qualified name, a call, or
+`files`) and hold no link, by cause, as `info` findings:
+
+| Check                            | The memory                                                                                                                                                                                                                 |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code_unlinked_no_repository`    | names no repository Loom indexes that the caller may read: no `repo:<id>` tag of one, and not written in a code namespace. It is never linked.                                                                             |
+| `code_unlinked_file_not_indexed` | lists `files`, none of which is a path on the indexed trunk (not merged yet, outside the index, or a bare filename two files share), and no name in it is one definition.                                                  |
+| `code_unlinked_name_unresolved`  | lists no `files`, and each name is defined nowhere on trunk or more than once.                                                                                                                                             |
+| `code_unlinked_pending`          | waits for its link; each sample says what it `waits_for`: `link_pass` (the worker has not read this write), `index` (no index yet, or a file that does not parse) or `trunk` (a qualified name trunk does not define yet). |
+
+The counts are of the 2,000 served memories last written (all under `keys` when given),
+and only in an org that indexes a repository. How far each repository's links trail its
+index is a gauge, and a health warning when it lasts
+([monitoring](../operations/monitoring.md#what-to-alert-on)).
+
 ## Time
 
 | Column            | Axis   | Meaning                                                                                 |
