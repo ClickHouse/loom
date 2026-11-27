@@ -159,6 +159,16 @@ const choiceFields = [
       ]
     : []),
 ];
+const preservedFilters =
+  filters.tab === "oss"
+    ? {
+        tab: filters.tab,
+        grain: filters.grain,
+        cohort: filters.cohort,
+        installation: filters.installation,
+        domain: filters.domain,
+      }
+    : { tab: filters.tab };
 ---
 
 <SiteFrame
@@ -178,15 +188,20 @@ const choiceFields = [
     <Link href={adoptionUrl(filters, { tab: "oss" })} aria-current={filters.tab === "oss" ? "page" : undefined}>Open source</Link>
   </nav>
 
-  <form id="adoption-filters" method="get" action="/adoption" class="filters" aria-label="Adoption filters" data-adoption-filters>
-    <input type="hidden" name="tab" value={filters.tab} />
-    <AdoptionFilters client:load fields={choiceFields} form="adoption-filters" />
-    {filters.tab === "oss" && <>
-      <input type="hidden" name="grain" value={filters.grain} />
-      <input type="hidden" name="cohort" value={filters.cohort} />
-      <input type="hidden" name="installation" value={filters.installation} />
-      <input type="hidden" name="domain" value={filters.domain} />
-    </>}
+  <form id="adoption-filters" method="get" action="/adoption" class="filters" aria-label="Adoption filters" data-adoption-filters hidden>
+    {Object.entries(preservedFilters).map(([name, value]) => <input type="hidden" name={name} value={value} />)}
+    <AdoptionFilters client:load fields={choiceFields} form="adoption-filters" fallback="adoption-native-filters" />
+    <Button type="secondary" htmlType="submit" label="Apply filters" />
+  </form>
+  <form id="adoption-native-filters" method="get" action="/adoption" class="filters native-filters" aria-label="Adoption filters" data-adoption-filters>
+    {Object.entries(preservedFilters).map(([name, value]) => <input type="hidden" name={name} value={value} />)}
+    {choiceFields.map(({ label, name, options, value }) => (
+      <label>{label}
+        <select name={name}>
+          {options.map((option) => <option value={option.value} selected={option.value === String(value)}>{option.label}</option>)}
+        </select>
+      </label>
+    ))}
     <Button type="secondary" htmlType="submit" label="Apply filters" />
   </form>
 
@@ -396,8 +411,8 @@ const choiceFields = [
 <script>
   import { omitDefaultAdoptionFilters } from "../lib/adoption-view.mjs";
 
-  document.querySelector<HTMLFormElement>("[data-adoption-filters]")?.addEventListener("formdata", ({ formData }) => {
-    omitDefaultAdoptionFilters(formData);
+  document.querySelectorAll<HTMLFormElement>("[data-adoption-filters]").forEach((form) => {
+    form.addEventListener("formdata", ({ formData }) => omitDefaultAdoptionFilters(formData));
   });
 </script>
 
@@ -434,7 +449,19 @@ const choiceFields = [
     border-radius: var(--radius);
     background: var(--surface);
   }
+  .filters[hidden] { display: none; }
   .filters :global(.adoption-filter) { flex: auto; min-inline-size: min(10.5rem, 100%); }
+  .native-filters label { display: grid; flex: auto; min-inline-size: 0; gap: 0.4rem; }
+  .native-filters select {
+    min-inline-size: 0;
+    min-block-size: 2.75rem;
+    padding: 0.5rem;
+    border: 1px solid var(--click-global-color-stroke-default);
+    border-radius: var(--click-button-radii-all);
+    background: var(--click-global-color-background-default);
+    color: var(--click-global-color-text-default);
+    font: inherit;
+  }
   @media (max-width: 34rem) { .filters { inline-size: 100%; } }
   @media (max-width: 28rem) { .filters :global(.adoption-filter) { flex-basis: 100%; } }
   .card-title { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem 1rem; }

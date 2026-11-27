@@ -13,6 +13,13 @@ Give agents access to shared memory, cited documents, and indexed code through M
 [Install Loom](getting-started/quickstart.md)
 [Try the playground](https://loom.clickhouse.com/playground/source-change)
 
+<div class="docs-fragment-anchors" aria-hidden="true">
+  <a id="1-getting-started"></a>
+  <a id="2-install-and-run-the-server"></a>
+  <a id="3-connect-agents"></a>
+  <a id="4-sdk-and-api"></a>
+</div>
+
 ## Start here
 
 - [Connect a coding agent](getting-started/connect-a-coding-agent.md)
@@ -23,6 +30,13 @@ Give agents access to shared memory, cited documents, and indexed code through M
   Choose the models for retrieval and generation.
 - [Deploy for a team](operations/deployment.md)
   Choose a deployment and set up access for your team.
+
+<div class="docs-fragment-anchors" aria-hidden="true">
+  <a id="5-namespaces-access-and-the-memory-model"></a>
+  <a id="guides"></a>
+  <a id="features"></a>
+  <a id="6-code-index"></a>
+</div>
 
 ## Browse the docs
 
@@ -42,11 +56,21 @@ See how Loom supports [shared agent memory](use-cases/agent-memory.md),
 [code intelligence](use-cases/code-intelligence.md). Browse the
 [use-case library](use-cases/index.md) or [casos de uso en español](https://loom.clickhouse.com/docs/es/use-cases).
 
+<div class="docs-fragment-anchors" aria-hidden="true">
+  <a id="architecture"></a>
+  <a id="benchmarks"></a>
+  <a id="development"></a>
+</div>
+
 ## Evaluate and contribute
 
 [Check whether Loom fits](getting-started/overview.md), [evaluate it with your workload](getting-started/evaluate.md),
 or read the [architecture](architecture/system-overview.md) and [benchmark results](benchmarks/results.md).
 Contributors can start with the [repository guide](development/repository-guide.md).
+
+<div class="docs-fragment-anchors" aria-hidden="true">
+  <a id="also"></a>
+</div>
 
 ## Find a quick answer
 
