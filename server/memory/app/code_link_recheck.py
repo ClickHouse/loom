@@ -275,11 +275,11 @@ async def _retry_unparsed(
 
 
 async def _unparsed(org: str, cns: str) -> set[str]:
-    return set(await link_pass.Cursor[list[str]](f"unparsed/{org}/{cns}", []).read())
+    return set(await link_pass.unparsed_cursor(org, cns).read())
 
 
 async def _set_unparsed(org: str, cns: str, paths: set[str]) -> None:
-    await link_pass.Cursor[list[str]](f"unparsed/{org}/{cns}", []).write(sorted(paths))
+    await link_pass.unparsed_cursor(org, cns).write(sorted(paths))
 
 
 async def _lost(org: str, cns: str, paths: set[str]) -> list[LinkRow]:

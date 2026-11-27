@@ -6,6 +6,7 @@ with the state of its code on the branch read."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -300,6 +301,10 @@ async def test_code_guidance_reads_only_authorized_repository_bindings(monkeypat
         assert ns == "code-a"
         return ""
 
+    async def link_cursor(name):
+        assert name == "unparsed/o/code-a"
+        return ""
+
     monkeypatch.setattr(
         code_link_reads,
         "code_namespace_for",
@@ -307,6 +312,7 @@ async def test_code_guidance_reads_only_authorized_repository_bindings(monkeypat
     )
     monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
     monkeypatch.setattr(code_link_reads.code, "checked_head", checked_head)
+    monkeypatch.setattr(code_link_reads.code, "link_cursor", link_cursor)
     monkeypatch.setattr(code_link_reads.store, "for_memories", links)
     assert await code_link_reads.guidance_code_states(
         "o", [allowed, hidden, unresolved, unbound]
@@ -318,8 +324,10 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
     from server.memory.app import code_link_reads
 
     row = _excerpt("m1", "allowed")
-    indexed = "c2"
-    checked = "c1"
+    indexed = "a" * 40
+    checked = indexed
+    fetched = "b" * 40
+    unparsed = ""
     complete_during_read = False
 
     async def readable(org, namespaces):
@@ -332,20 +340,40 @@ async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, st
             checked = indexed
         return [_link("m1", state=state)]
 
-    async def indexed_head(org, ns):
-        return indexed
+    async def all_state_many(pairs):
+        assert pairs == [("o", "code-a")]
+        return {
+            ("o", "code-a"): {
+                "clone_head": {"value": fetched, "detail": "main"},
+                "git_head": {"value": indexed},
+            },
+        }
 
     async def checked_head(org, ns):
         return checked
 
+    async def link_cursor(name):
+        return unparsed
+
     monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda *_: "code-a")
     monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
     monkeypatch.setattr(code_link_reads.store, "for_memories", links)
-    monkeypatch.setattr(code_link_reads.code, "indexed_head", indexed_head)
+    monkeypatch.setattr(
+        code_link_reads.code, "repo_for_namespace", lambda *_: SimpleNamespace(git_branch="main")
+    )
+    monkeypatch.setattr(
+        code_link_reads.code, "CodeRepo", lambda: SimpleNamespace(all_state_many=all_state_many)
+    )
     monkeypatch.setattr(code_link_reads.code, "checked_head", checked_head)
+    monkeypatch.setattr(code_link_reads.code, "link_cursor", link_cursor)
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    indexed = fetched
     assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
     complete_during_read = True
     assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    unparsed = '["src/a.py"]'
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    unparsed = '["src/other.py"]'
     assert await code_link_reads.guidance_code_states("o", [row]) == [state]
 
 

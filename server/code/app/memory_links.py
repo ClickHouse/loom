@@ -73,6 +73,23 @@ async def indexed_head(org: str, namespace: str) -> str:
     return await CodeRepo().get_state(org, namespace, "git_head")
 
 
+async def caught_up_heads(org: str, namespaces: Sequence[str]) -> dict[str, str]:
+    """Indexed heads that include the latest fetched tip of their branch."""
+    from server.code.app.common import mirror_fetch_overdue
+    from server.code.app.index_status import published_clone_head
+
+    states = await CodeRepo().all_state_many([(org, ns) for ns in namespaces])
+    caught_up = {}
+    for (_, ns), state in states.items():
+        cfg = repo_for_namespace(org, ns)
+        if cfg is None or mirror_fetch_overdue((state.get("clone_head") or {}).get("updated_at")):
+            continue
+        tip = published_clone_head(state, cfg.git_branch)
+        if tip and (state.get("git_head") or {}).get("value") == tip:
+            caught_up[ns] = tip
+    return caught_up
+
+
 async def kept_paths(org: str, namespace: str, base: str, head: str) -> dict[str, str] | None:
     """path -> its path at `head` ('' = deleted) for the paths `base..head` changed;
     None when `base` is not an ancestor of `head` (a force-push) or git cannot tell."""

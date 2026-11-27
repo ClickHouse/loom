@@ -21,7 +21,7 @@ import {
   type SearchHit,
 } from "../api";
 import { isCollectionName } from "../lib/namespace";
-import { namesWriter, rowIdentity } from "../lib/memoriesSearch";
+import { namesWriter, resolveSearchWriter, rowIdentity, type SearchWriter } from "../lib/memoriesSearch";
 import { sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
@@ -43,6 +43,8 @@ const SearchAnswer = lazy(() => loadSearchAnswer().then((m) => ({ default: m.Sea
 const MEMORY_TOP_K = 8;
 const MEMORY_DEBOUNCE_MS = 200;
 const MEMORY_MIN_CHARS = 2;
+
+type HeaderHit = SearchHit & { inspectWriter?: SearchWriter };
 
 interface NsRow {
   namespace: string;
@@ -98,7 +100,7 @@ export function HeaderSearch({
   // Three newest rows for the empty-state "Recent memories" group; the
   // memory group itself comes from memory.search below.
   const [recent, setRecent] = useState<MemoryListEntry[]>([]);
-  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [hits, setHits] = useState<HeaderHit[]>([]);
   const [searching, setSearching] = useState(false);
   const [docs, setDocs] = useState<KnowledgeEntry[]>([]);
   const [profileSections, setProfileSections] = useState<ProfileEntry[]>([]);
@@ -288,8 +290,25 @@ export function HeaderSearch({
       window.setTimeout(() => {
         if (!live()) return;
         searchMemory(identity, memoryQuery, { top_k: MEMORY_TOP_K, tags, signal })
-          .then((r) => {
-            if (live()) setHits(r.results || []);
+          .then(async (r) => {
+            if (!live()) return;
+            const results = r.results || [];
+            setHits(
+              results.map((hit) => ({
+                ...hit,
+                inspectWriter: namesWriter(hit) && !hit.memory_key.startsWith("chunk:") ? hit : undefined,
+              })),
+            );
+            setSearching(false);
+            await Promise.all(
+              results.map(async (hit, index) => {
+                if (namesWriter(hit)) return;
+                const writer = await resolveSearchWriter(identity, hit, signal);
+                if (live() && writer) {
+                  setHits((shown) => shown.map((row, i) => (i === index ? { ...row, inspectWriter: writer } : row)));
+                }
+              }),
+            );
           })
           .catch(() => {
             if (live()) setHits([]);
@@ -344,8 +363,7 @@ export function HeaderSearch({
 
   // A row opens as the one written by its agent, user and session: another session's row of
   // the same key is not it. A listed row that names no writer (an older server) opens by key,
-  // as before. A search hit opens only when it names its writer: a shared or chunk hit, or
-  // one that does not, has no row of its own to open, and is not offered as one.
+  // as before. A ranked hit opens only after its writer is known.
   const openMemory = (
     e: Pick<MemoryListEntry, "memory_key" | "agent" | "user_id" | "session_id"> & { namespace?: string },
   ) => {
@@ -363,8 +381,7 @@ export function HeaderSearch({
     );
     setOpen(false);
   };
-  const openable = (h: SearchHit) => namesWriter(h) && !h.memory_key.startsWith("chunk:");
-  const openHit = (h: SearchHit) => openable(h) && openMemory(h);
+  const openHit = (h: HeaderHit) => h.inspectWriter && openMemory({ memory_key: h.memory_key, ...h.inspectWriter });
 
   const openDocument = (d: KnowledgeEntry) => {
     openDoc(d.source_uri);
@@ -419,7 +436,7 @@ export function HeaderSearch({
     | { kind: "recent"; mem: MemoryListEntry }
     | { kind: "ns"; ns: NsRow }
     | { kind: "profile"; section: ProfileEntry }
-    | { kind: "mem"; mem: SearchHit }
+    | { kind: "mem"; mem: HeaderHit }
     | { kind: "doc"; doc: KnowledgeEntry };
   const activations: Activation[] = useMemo(
     () => [
@@ -792,7 +809,7 @@ export function HeaderSearch({
                       type="button"
                       key={namesWriter(e) ? rowIdentity(identity?.namespace ?? "", e) : idx}
                       {...optionProps(idx)}
-                      aria-disabled={!openable(e) || undefined}
+                      aria-disabled={!e.inspectWriter || undefined}
                       onClick={() => openHit(e)}
                     >
                       <div className="flex items-center gap-2 min-w-0">
@@ -805,7 +822,7 @@ export function HeaderSearch({
                         {e.content_excerpt || "(empty)"}
                       </div>
                       <GuidanceLabel hit={e} />
-                      {!openable(e) && <div className="pl-6 text-xs text-text-muted">Preview only</div>}
+                      {!e.inspectWriter && <div className="pl-6 text-xs text-text-muted">Preview only</div>}
                     </button>
                   );
                 })}

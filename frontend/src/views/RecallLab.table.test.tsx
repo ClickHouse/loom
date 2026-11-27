@@ -154,6 +154,37 @@ describe("Recall Lab: the scores table", () => {
     expect(useStore.getState().inspectedMemoryKey).toBe("deploy_note");
   });
 
+  it.each([false, true])(
+    "opens a legacy ranked-only hit only when its writer is unique (ambiguous: %s)",
+    async (ambiguous) => {
+      searchMemory.mockResolvedValue({ results: [hit("legacy_note", 0.9, { agent: "writer", session_id: "one" })] });
+      const row = { ...entry("legacy_note"), agent: "writer", user_id: "u", session_id: "one" };
+      listMemories.mockImplementation(async (_identity, _limit, opts) => {
+        const entries = !opts?.prefix ? [] : ambiguous ? [row, { ...row, user_id: "other" }] : [row];
+        return { entries, total: entries.length, today: 0, truncated: false };
+      });
+      render(<RecallLab />);
+      const button = within(await score()).getByRole("button", { name: "legacy_note" });
+      await waitFor(() =>
+        expect(listMemories).toHaveBeenCalledWith(
+          expect.objectContaining({ user_id: "*", session_id: "one" }),
+          expect.any(Number),
+          expect.objectContaining({ prefix: "legacy_note", agent: "writer" }),
+        ),
+      );
+      if (ambiguous) expect(button).toBeDisabled();
+      else await waitFor(() => expect(button).toBeEnabled());
+      fireEvent.click(button);
+      if (ambiguous) expect(useStore.getState().inspectedMemoryKey).toBeNull();
+      else
+        expect(useStore.getState()).toMatchObject({
+          inspectedMemoryKey: "legacy_note",
+          inspectedOwner: { user_id: "u", session_id: "one" },
+          inspectedScope: { namespace: "ns", exact: true },
+        });
+    },
+  );
+
   it("keeps chunk, shared and sentinel hits visible without opening a namesake", async () => {
     searchMemory.mockResolvedValue({
       results: [

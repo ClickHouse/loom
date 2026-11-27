@@ -16,6 +16,7 @@ from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import RegistryUnread, configured_repos
 from server.core.hashing import hash_text
 from server.memory.api.models_crud import CodeLink
+from server.memory.app.code_link_pass import unparsed_cursor
 from server.memory.domain import code_change
 from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.store import code_links as store
@@ -142,6 +143,21 @@ def guidance_link_state(links: Sequence[LinkRow], readable: set[str]) -> str:
     return state or "unknown"
 
 
+async def _guidance_coverage(org: str, cns: str) -> tuple[str, set[str]]:
+    checked = await code.checked_head(org, cns)
+    return checked, set(await unparsed_cursor(org, cns).read()) if checked else set()
+
+
+async def _guidance_indexed_heads(org: str, namespaces: list[str]) -> dict[str, str]:
+    if not namespaces:
+        return {}
+    try:
+        return await code.caught_up_heads(org, namespaces)
+    except Exception as error:  # noqa: BLE001 — unavailable coverage leaves guidance uncertain
+        log.debug("Guidance code heads unavailable: %s", type(error).__name__)
+        return {}
+
+
 async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> list[str]:
     """Classify every readable link made from the evidence in the served memory revision."""
     states = ["unknown"] * len(rows)
@@ -174,7 +190,7 @@ async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> l
         # A completion published after the links read cannot vouch for those rows.
         namespaces = sorted(readable)
         checked = await asyncio.gather(
-            *(code.checked_head(org, cns) for cns in namespaces), return_exceptions=True
+            *(_guidance_coverage(org, cns) for cns in namespaces), return_exceptions=True
         )
         coverage = dict(zip(namespaces, checked, strict=True))
         links = await store.for_memories(org, mids)
@@ -185,20 +201,23 @@ async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> l
     for link in links:
         key = (link["memory_id"], link["namespace"], link["code_namespace"], link["inputs_hash"])
         by_revision[key].append(link)
-    positive: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    positive: dict[tuple[str, str], list[tuple[int, str]]] = defaultdict(list)
     for index, key in candidates.items():
-        state = guidance_link_state(by_revision.get(key, ()), readable)
+        rows_for_hit = by_revision.get(key, [])
+        state = guidance_link_state(rows_for_hit, readable)
         if state in {"fresh", "moved"}:
-            if not isinstance(coverage.get(key[2]), str) or not coverage[key[2]]:
+            proof = coverage.get(key[2])
+            if not isinstance(proof, tuple):
                 continue
-            positive[key[2]].append((index, state))
+            checked_head, owed = proof
+            if not checked_head or any(link["path"] in owed for link in rows_for_hit):
+                continue
+            positive[key[2], checked_head].append((index, state))
         else:
             states[index] = state
-    indexed = await asyncio.gather(
-        *(code.indexed_head(org, cns) for cns in positive), return_exceptions=True
-    )
-    for (cns, hits), head in zip(positive.items(), indexed, strict=True):
-        if head == coverage[cns]:
+    indexed = await _guidance_indexed_heads(org, [cns for cns, _ in positive])
+    for (cns, checked_head), hits in positive.items():
+        if indexed.get(cns) == checked_head:
             for index, state in hits:
                 states[index] = state
     return states

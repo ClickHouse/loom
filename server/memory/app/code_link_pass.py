@@ -297,3 +297,7 @@ class Cursor[T]:
 
     async def clear(self) -> None:
         await code.set_link_cursor(self.name, "")
+
+
+def unparsed_cursor(org: str, namespace: str) -> Cursor[list[str]]:
+    return Cursor(f"unparsed/{org}/{namespace}", [])

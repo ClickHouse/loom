@@ -3,6 +3,7 @@
 // holds the query (memory.list `contains`, newest first), then the ranked hits they do
 // not already hold.
 
+import { listMemories, type Identity, type SearchHit } from "../api";
 import { SENTINEL_AGENTS } from "./format";
 
 /** Keyword matches a search shows ahead of the ranked hits (a viewer's list page is 100). */
@@ -12,6 +13,38 @@ export const KEYWORD_PAGE = 100;
  *  (`_shared`, `*`) and a chunk without them do not. */
 export function namesWriter(r: { agent?: string; user_id?: string; session_id?: string }): boolean {
   return Boolean(r.agent && !SENTINEL_AGENTS.has(r.agent) && r.agent !== "_shared" && r.user_id && r.session_id);
+}
+
+export type SearchWriter = Pick<SearchHit, "namespace" | "agent" | "user_id" | "session_id">;
+
+/** Older search responses name the agent but may omit its user or session. */
+export async function resolveSearchWriter(
+  identity: Identity,
+  hit: SearchHit,
+  signal: AbortSignal,
+): Promise<SearchWriter | undefined> {
+  const { agent, user_id, session_id } = hit;
+  if (!agent || SENTINEL_AGENTS.has(agent) || agent === "_shared" || hit.memory_key.startsWith("chunk:")) return;
+  if (namesWriter(hit)) return hit;
+
+  const namespace = hit.namespace || identity.namespace;
+  const page = await listMemories(
+    { ...identity, namespace, user_id: user_id || "*", session_id: session_id || "*" },
+    KEYWORD_PAGE,
+    { agent, prefix: hit.memory_key, include_profile: true, fields: ["agent", "user_id", "session_id"], signal },
+  ).catch(() => null);
+  if (!page || signal.aborted || page.truncated || page.total > page.entries.length) return;
+  const matches = page.entries.filter(
+    (row) =>
+      row.memory_key === hit.memory_key &&
+      (!row.agent || row.agent === agent) &&
+      (!user_id || !row.user_id || row.user_id === user_id) &&
+      (!session_id || !row.session_id || row.session_id === session_id),
+  );
+  const [row] = matches;
+  if (matches.length === 1 && row && namesWriter(row)) {
+    return { agent: row.agent, user_id: row.user_id, session_id: row.session_id, namespace };
+  }
 }
 
 /** A row's own id: `(namespace, agent, user, session, key)`, which is what two rows of one

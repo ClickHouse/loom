@@ -18,7 +18,15 @@ import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
-import { KEYWORD_PAGE, keywordThenRanked, namesWriter, parseSearchQuery, rowIdentity } from "../lib/memoriesSearch";
+import {
+  KEYWORD_PAGE,
+  keywordThenRanked,
+  namesWriter,
+  parseSearchQuery,
+  resolveSearchWriter,
+  rowIdentity,
+  type SearchWriter,
+} from "../lib/memoriesSearch";
 import { signed, termText, whyTerms } from "../lib/whyNote";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 
@@ -269,7 +277,7 @@ interface RecallRow {
   text: string;
   memoryType: string;
   keyword: boolean;
-  writer: Pick<SearchHit, "namespace" | "agent" | "user_id" | "session_id">;
+  writer: SearchWriter;
   hit?: SearchHit;
 }
 
@@ -534,6 +542,16 @@ export function RecallLab() {
         setAbstain(Boolean(r?.abstain) && keyword.size === 0);
         setModel(r?.embedding_model ?? "");
         setRankedError(failure);
+        setLoading(false);
+        await Promise.all(
+          [...ranked].map(async ([id, hit]) => {
+            if (namesWriter(hit)) return;
+            const writer = await resolveSearchWriter(identity, hit, ac.signal);
+            if (!ac.signal.aborted && writer) {
+              setRows((shown) => shown?.map((row) => (row.id === id ? { ...row, writer } : row)) ?? null);
+            }
+          }),
+        );
       } catch (e) {
         if (ac.signal.aborted) return;
         setError(e);

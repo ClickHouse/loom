@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { HeaderSearch } from "./HeaderSearch";
 import { sharedMine } from "../lib/sharedReads";
+import { listMemories } from "../api";
 
 // The header search is a WAI-ARIA combobox: focus stays in the input while ↑↓ move the
 // highlighted option, which the input names through aria-activedescendant.
@@ -20,6 +21,7 @@ const written = vi.hoisted(() => ({
 }));
 const catalog = vi.hoisted(() => ({
   recent: [] as Array<{ memory_key: string; agent: string }>,
+  writerRows: [] as Array<Record<string, unknown>>,
   profile: [] as Array<{ label: string; value: string }>,
   docs: [] as Array<{ source_uri: string; title: string; tags: string[]; chunk_count: number }>,
   // When set, memory.search answers these hits instead of the two coffee ones.
@@ -29,7 +31,10 @@ vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    listMemories: vi.fn(async () => ({ entries: catalog.recent, truncated: false, total: catalog.recent.length })),
+    listMemories: vi.fn(async (_id, _limit, opts) => {
+      const entries = opts?.prefix ? catalog.writerRows : catalog.recent;
+      return { entries, truncated: false, total: entries.length };
+    }),
     listKnowledge: vi.fn(async () => ({ rows: catalog.docs })),
     listProfile: vi.fn(async () => ({ entries: catalog.profile })),
     browseNamespaces: vi.fn(async () => []),
@@ -50,6 +55,7 @@ beforeEach(() => {
   inspect.mockReset();
   inspectProfile.mockReset();
   catalog.recent = [];
+  catalog.writerRows = [];
   catalog.profile = [];
   catalog.docs = [];
   catalog.hits = null;
@@ -62,6 +68,35 @@ beforeEach(() => {
 });
 
 describe("HeaderSearch", () => {
+  it.each([false, true])("opens a legacy hit only when its writer is unique (ambiguous: %s)", async (ambiguous) => {
+    catalog.hits = [{ agent: "a", memory_key: "legacy/note", content_excerpt: "old replica" }];
+    const row = { ...written, memory_key: "legacy/note" };
+    catalog.writerRows = ambiguous ? [row, { ...row, session_id: "another" }] : [row];
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "legacy");
+    const option = await screen.findByRole("option", { name: /legacy\/note/ });
+    await waitFor(() =>
+      expect(listMemories).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: "*", session_id: "*" }),
+        expect.any(Number),
+        expect.objectContaining({ prefix: "legacy/note", agent: "a" }),
+      ),
+    );
+    if (ambiguous) expect(option).toHaveAttribute("aria-disabled", "true");
+    else await waitFor(() => expect(option).not.toHaveAttribute("aria-disabled"));
+    await user.click(option);
+    if (ambiguous) expect(inspect).not.toHaveBeenCalled();
+    else
+      expect(inspect).toHaveBeenCalledWith("legacy/note", {
+        agent: "a",
+        userId: "u",
+        sessionId: "s",
+        namespace: "team",
+        exact: true,
+      });
+  });
+
   // The group heading names the type, so a row leads with the type's icon instead of a
   // coloured "memory" badge and carries no memory-type label (the inspector shows it); line
   // 1 is the key, line 2 the excerpt.
