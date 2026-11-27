@@ -3142,7 +3142,8 @@ async def test_a_file_link_is_rehashed_from_the_lines_its_memory_cites(monkeypat
     src = "from http import http_date\n\n\ndef _default(o):\n    return http_date(o)\n"
     edited = src.replace("return http_date(o)", "return http_date(o).lower()")
     memory = _row("m1", value=json.dumps("Dates are serialized by `http_date`."), files=[path])
-    files, row = _file_link_world(monkeypatch, memory, {"c1": src, "c2": edited, "c3": src})
+    commits = {"c0": src.replace("http_date", "format"), "c1": src, "c2": edited, "c3": src}
+    files, row = _file_link_world(monkeypatch, memory, commits)
     then, now = (cited_fingerprint(text.split("\n"), ["http_date"]) for text in (src, edited))
     # hashed under other rules, which read no change at c2
     old = row | {"body_hash": "old", "checked_hash": "old", "checked_commit": "c2"}
@@ -3162,9 +3163,14 @@ async def test_a_file_link_is_rehashed_from_the_lines_its_memory_cites(monkeypat
     # a file that is gone stays gone, its hashes those of the commit it was last read at
     out = await code_link_rehash._file_rehashed(old | {"state": "missing"}, ["http_date"], files)
     assert out == {"anchored_hash": then, "body_hash": then, "checked_hash": now}
+    # one written at c0 against no cited line, which took c1's: they stay its baseline
+    took = marked | {"anchored_commit": "c0", "baseline_commit": "c1", "baseline_path": path}
+    took |= {"checked_commit": "c2"}
+    out = await code_link_rehash._file_rehashed(took, ["http_date"], files)
+    assert (out["anchored_hash"], out["body_hash"], "state" in out) == ("", then, False)
 
     async def stale(org, cns, version, *, after, limit):
-        return [old], None
+        return [old | {"body_hash": "", "checked_hash": ""}], None  # one that holds no hash
 
     async def policies(org, nss):
         return {"ns": "revise"}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
@@ -115,17 +116,20 @@ async def _file_rehashed(
 ) -> dict[str, Any]:
     """A file link's hashes under the current rules: those of the lines that hold one of
     `names`, which its memory cites, at the commit it was written at and at the one it
-    was last read at, and the state they give. One whose written lines cannot be read
-    takes the lines last read when it matched them, and stays changed when it did not."""
+    was last read at, and the state they give. One written against no cited line keeps
+    the first it took. One whose written lines cannot be read takes the lines last read
+    when it matched them, and stays changed when it did not."""
 
     async def cited_at(commit: str, path: str) -> str:
         file = await files.at(commit, path) if commit and await files.has(commit) else None
-        return cited_fingerprint(file.lines, names) if file else ""
+        # matching lines is CPU work: off the loop
+        return await asyncio.to_thread(cited_fingerprint, file.lines, names) if file else ""
 
     link = link_pass.link_of(a)
     written = await cited_at(a["anchored_commit"], link.anchored_path)
+    first = written or await cited_at(a["baseline_commit"], a["baseline_path"])
     checked = await cited_at(a["checked_commit"], link.path)
-    baseline = written or (checked if link.matched_baseline() else NO_BASELINE)
+    baseline = first or (checked if link.matched_baseline() else NO_BASELINE)
     out = {"anchored_hash": written, "body_hash": baseline, "checked_hash": checked}
     if a["state"] != "missing":  # a file that is gone stays gone
         after = recheck(
