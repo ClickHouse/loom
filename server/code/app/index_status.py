@@ -440,7 +440,7 @@ async def _index_quality(
     git_head: str,
     fetch_overdue: bool,
 ) -> tuple[list[str], list[str]]:
-    from server.code.app.index.producer_inference import tree_producers
+    from server.code.app.index.producer_inference import tree_producers, worker_owns
     from server.code.domain.index.compiler_tiers import TIERS
 
     try:
@@ -461,7 +461,7 @@ async def _index_quality(
         spec = next((tier for tier in TIERS if tier.producer == producer), None)
         if spec is None or value(spec.watermark_key):
             continue
-        if cfg.scip_producer and producer not in (cfg.scip_producer, *cfg.scip_extra_producers):
+        if cfg.scip_producer and not await worker_owns(repo, cfg, producer):
             warnings.append(
                 f"{spec.tool} is detected for this tree. "
                 f"Add {producer} to scip_extra_producers to index it."
