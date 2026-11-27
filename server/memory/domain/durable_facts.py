@@ -160,6 +160,11 @@ _VAGUE = [
     )
 ]
 
+_SOURCE_EXT = r"\.(?:py|ts|tsx|js|mjs|go|rs|cpp|h|hpp)\b"
+# The subject of a fact that is one code location: text with no comma, sentence
+# break, backtick or source path in it.
+_LOCATION_SUBJECT = rf"(?:(?![.;!?]\s|/[\w./-]*{_SOURCE_EXT})[^,`])*"
+
 # --- the session's own tool actions, credited to someone ----
 # Checked last, so an earlier rule keeps naming the class it names. One-shot
 # Claude Code and Codex sessions store the session's own Loom calls as facts
@@ -249,11 +254,12 @@ _SESSION_ACTION = [
         r"^\W*(the )?user (outlined|grepped|searched|scanned) [`'\"]?[\w.-]*/",
         r"^\W*(the )?assistant (explained|deleted|ran|created|updated|read|listed|showed|"
         r"described|summari[sz]ed|removed|called|fetched|checked|noted that it)\b",
-        # one clause that ends at the path: a claim relating several definitions
-        # may say where one of them is and is the verifier's to judge
-        r"^(?:(?![.;!?]\s)[^,]){0,120}?\b(is|are|lives|live|sits) (in|at) "
-        r"`?(server|src|lib|tests?|integrations|frontend|sdk)/"
-        r"[\w./-]+\.(py|ts|tsx|js|mjs|go|rs|cpp|h|hpp)`?[.!]?$",
+        # one clause that ends at the path, with at most one backticked name
+        # before it: a claim relating several definitions may say where one of
+        # them is and is the verifier's to judge
+        rf"^{_LOCATION_SUBJECT}(?:`{_LOCATION_SUBJECT}`{_LOCATION_SUBJECT})?"
+        r"\b(is|are|lives|live|sits) (in|at) "
+        rf"`?(server|src|lib|tests?|integrations|frontend|sdk)/[\w./-]+{_SOURCE_EXT}`?[.!]?$",
     )
 ]
 

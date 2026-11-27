@@ -72,9 +72,9 @@ The rules in `server/memory/domain/durable_facts.py` match sentence shape, not t
 a release changed is kept; whether its CI was green at the time is dropped.
 
 A plugin's session capture (a `source:` tag) is extracted under coding-session rules that
-end the prompt. What the user states is kept as in any conversation. From the work, only
-knowledge about the codebase that a later session in the repository can reuse without
-reading the code again is kept:
+follow the conversation rules and replace their code rules. What the user states is kept
+as in any conversation. From the work, only knowledge about the codebase that a later
+session in the repository can reuse without reading the code again is kept:
 
 - how a behaviour is reached across definitions or files, as one claim for the whole path;
 - a relation between definitions that reading one of them does not show;
@@ -88,8 +88,10 @@ marks it when that code changes. What the session itself edited or added is left
 until it is committed it exists in one working tree, and the commit history records it
 afterwards. The task, test results and anything one lookup answers (where a single name is
 defined, what one function's text says) are left out too. A session that established
-nothing reusable writes no facts, and the extractor is not asked a second time.
-`loom.verify_durable` judges what remains by the same rules.
+nothing reusable writes no facts: the extractor is not asked again, and the coverage sweep
+reads the session only when the namespace or the call turns it on. `loom.verify_durable`
+judges what remains by the same rules. A trajectory replay is extracted under its own
+instructions and verified without the codebase rules.
 
 ## Rules the assistant states about itself
 

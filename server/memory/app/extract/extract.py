@@ -532,8 +532,8 @@ async def extract_from_messages(
     `agent_learnings` asks the same call for the assistant's standing rules about
     itself, returned as facts with `about="agent"` (`_split_agent_rules`).
 
-    `coding_session` marks a coding plugin's session capture: the prompt ends with
-    the coding-session rules, under which zero facts is an answer, not a misfire.
+    `coding_session` marks a coding plugin's session capture: the base prompt ends
+    with the coding-session rules, under which zero facts is an answer, not a misfire.
     """
     if not messages:
         return _no_messages_result()
@@ -577,10 +577,10 @@ async def extract_from_messages(
         operator_policy=operator_policy,
     )
 
-    # Validation gate: retry once on non-trivial-input + zero-facts. A coding
-    # session that established nothing reusable has none, and the retry's
-    # addendum asks for every concrete value its rules leave out.
-    if not facts and not coding_session and _is_nontrivial(messages):
+    # Validation gate: retry once on non-trivial-input + zero-facts. A coding session
+    # that established nothing reusable has none (the retry's addendum asks for every
+    # value its rules leave out); one whose every fact object was discarded misfired.
+    if not facts and (not coding_session or parse_discards) and _is_nontrivial(messages):
         facts, accumulated = await _zero_fact_retry(
             client,
             system=with_policy(base_prompt + _RETRY_PROMPT_ADDENDUM, operator_policy),

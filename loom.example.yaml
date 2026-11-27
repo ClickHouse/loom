@@ -2626,9 +2626,10 @@ settings:
   # items, one concurrent call each (more recall for more tokens). 0 = one call. [live]
   # memory_extract_coverage_sweep_batch_items: 0
 
-  # A coding capture keeps the coverage sweep's density / uncovered auto-gates only with
-  # at least this many user turns (on short sessions the sweep's output is mostly junk).
-  # 0 = always keep. An explicit namespace / per-call switch wins either way. [live]
+  # A trajectory replay keeps the coverage sweep's density / uncovered auto-gates only
+  # with at least this many user turns (on short sessions the sweep's output is mostly
+  # junk); a plugin's session capture never takes them. 0 = always keep. An explicit
+  # namespace / per-call switch wins either way. [live]
   # memory_extract_coding_sweep_min_user_turns: 4
 
   # --- size segments ---

@@ -1978,7 +1978,7 @@ entry is not stored as a memory; do not also emit the rule as a normal fact.
 """
 
 
-# Appended last to the extraction system prompt of a coding plugin's session
+# Appended to the extraction base prompt of a coding plugin's session
 # capture. The rules above are written for conversations: their code rule asks
 # for the concrete diff and a `File.cpp:123` location. Under them alone a coding
 # session yields its own edits, which exist only in a working tree, and one
@@ -2184,13 +2184,19 @@ def compact_extraction_prompt(prompt: str, keep: frozenset[str] = _COMPACT_EXAMP
 # facts (memory/app/durability_verifier.py). Part A is the judge's rubric: the
 # LLM decides real vs junk. A softer wording ("measured results", "when
 # unsure, KEEP") dropped only a small share of what the judge calls junk.
-# Its codebase paragraph is the extractor's coding-session rule, judged again:
-# an edit the session made reads as a fact about the codebase, and is one only
-# once it is committed.
 # Part B is the same-claim folds.
 DURABILITY_VERIFIER_PROMPT_VERSION = "durability-verifier-v2"
 
-DURABILITY_VERIFIER_SYSTEM_PROMPT = """You review facts that an extractor pulled from one AI coding session (Claude Code, Codex) before they are stored in a long-term memory that future sessions search.
+# The extractor's coding-session rule, judged again for a session capture: an
+# edit the session made reads as a fact about the codebase, and is one only
+# once it is committed.
+_VERIFIER_CODEBASE_RULES = """Facts about the codebase. KEEP what a later session in the same repository could reuse instead of reading the code again: how a behaviour is reached across definitions or files, a relation between definitions that reading one of them does not show, an invariant, constraint or pitfall with its reason, which test constrains a definition, the cause of a bug in the code as it was. Such a fact is kept whoever worked it out and from however many lookups. DROP a fact that reports what this session edited or added ("X now does Y", "added a test", "X has a new option", a docstring or changelog line): until the edit is committed it exists in one working tree, and afterwards the commit history records it. DROP a fact one lookup answers: where a single name is defined, what one function's own text says, a line number, a list of names.
+
+"""
+
+
+def _durability_verifier_prompt(codebase_rules: str = "", codebase_kept: str = "") -> str:
+    return f"""You review facts that an extractor pulled from one AI coding session (Claude Code, Codex) before they are stored in a long-term memory that future sessions search.
 
 Do two things.
 
@@ -2198,13 +2204,19 @@ A. For each fact, decide KEEP or DROP.
 KEEP a fact if it would still be true and useful to recall in a week: a fact about the user, their preferences or decisions, the project, the codebase, or the world.
 DROP a fact if it narrates this session's own activity, restates a tool's output or a file's text, records a transient state (a status, a count at a moment, a version just written), is test chatter, or is a vague/garbled fragment.
 
-Facts about the codebase. KEEP what a later session in the same repository could reuse instead of reading the code again: how a behaviour is reached across definitions or files, a relation between definitions that reading one of them does not show, an invariant, constraint or pitfall with its reason, which test constrains a definition, the cause of a bug in the code as it was. Such a fact is kept whoever worked it out and from however many lookups. DROP a fact that reports what this session edited or added ("X now does Y", "added a test", "X has a new option", a docstring or changelog line): until the edit is committed it exists in one working tree, and afterwards the commit history records it. DROP a fact one lookup answers: where a single name is defined, what one function's own text says, a line number, a list of names.
-
-When the session goal and its lookups are shown: a session that asked Loom or a tool to look something up (is this already reported, which PR caused this, search the issues) mostly produces facts that repeat what the lookup returned: an issue's title, state or fix, a PR's number, merge date, versions or author, a workaround quoted from the record. DROP those; the tracker and the code index already hold them. The same holds for a fact whose subject is the assistant, the agent or the user reporting a finding ("Assistant stated…", "Assistant identified…", "User was told…", "The check found…"). KEEP only what the lookup could not have supplied: what the user decided, prefers or said about their own setup, deployment or plans, and a codebase fact of the kind kept above.
+{codebase_rules}When the session goal and its lookups are shown: a session that asked Loom or a tool to look something up (is this already reported, which PR caused this, search the issues) mostly produces facts that repeat what the lookup returned: an issue's title, state or fix, a PR's number, merge date, versions or author, a workaround quoted from the record. DROP those; the tracker and the code index already hold them. The same holds for a fact whose subject is the assistant, the agent or the user reporting a finding ("Assistant stated…", "Assistant identified…", "User was told…", "The check found…"). KEEP only what the lookup could not have supplied: what the user decided, prefers or said about their own setup, deployment or plans{codebase_kept}.
 
 B. List groups of facts that state the SAME claim (the same subject and the same assertion, even in other words; a fact that only adds detail to another is the same claim). Facts that are merely about the same topic are NOT a group. For each group give the number of the most complete member. Also list pairs where a later fact replaces an earlier one (a preference that changed, a bug a later fact says is fixed, a policy that was replaced).
 
 Answer JSON only:
-{"verdicts": [{"i": <n>, "keep": true|false, "why": "<5-12 words>"}],
- "same_claim": [{"members": [<n>, ...], "best": <n>}],
- "superseded": [{"old": <n>, "new": <n>}]}"""
+{{"verdicts": [{{"i": <n>, "keep": true|false, "why": "<5-12 words>"}}],
+ "same_claim": [{{"members": [<n>, ...], "best": <n>}}],
+ "superseded": [{{"old": <n>, "new": <n>}}]}}"""
+
+
+# A trajectory replay's facts are tool actions written under their own
+# instructions, so only a session capture is judged by the codebase rules.
+DURABILITY_VERIFIER_SYSTEM_PROMPT = _durability_verifier_prompt()
+DURABILITY_VERIFIER_SESSION_PROMPT = _durability_verifier_prompt(
+    _VERIFIER_CODEBASE_RULES, ", and a codebase fact of the kind kept above"
+)

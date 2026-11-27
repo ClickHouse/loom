@@ -228,15 +228,16 @@ async def _step_llm_extract(
         if state.coverage_sweep is not None
         else await _resolve_sweep(state.org, state.namespace)
     )
-    # In a one-shot coding session (a lookup, a test run) the
-    # statement-dense reply is a report of tool results; the density/uncovered
-    # auto-gates (tuned on multi-session conversations) fire on it and re-read that
-    # report. A working session keeps the sweep. An explicit namespace/per-call switch still wins.
+    # The density/uncovered auto-gates are tuned on multi-session conversations.
+    # A session capture never takes them: under its coding-session rules a turn
+    # without a fact is the answer, and the sweep's prompt carries none of those
+    # rules. In a short trajectory replay (a lookup, a test run) the
+    # statement-dense turn is a report of tool results; a longer replay keeps the
+    # sweep. An explicit namespace/per-call switch still wins.
     min_turns = int(settings.memory_extract_coding_sweep_min_user_turns)
-    coding_off = (
-        sweep_override is None
-        and _is_coding_capture(state)
-        and _user_turns(state.messages) < min_turns
+    coding_off = sweep_override is None and (
+        _is_session_capture(state)
+        or (_is_coding_capture(state) and _user_turns(state.messages) < min_turns)
     )
     sweep_override = False if coding_off else sweep_override
 
@@ -702,6 +703,7 @@ async def _step_verify_durable(
         timeout_s=float(settings.memory_extract_verify_timeout_s),
         # The goal and what the lookups returned
         context=durability_verifier.capture_context(state.messages, state.session_values),
+        session_capture=_is_session_capture(state),
     )
     state.extracted_facts = [
         {k: v for k, v in f.items() if not k.startswith("_")} for f in result.kept

@@ -1,6 +1,6 @@
 """A coding plugin's session capture keeps reusable codebase knowledge, not the
-session's own edits: the extractor's coding-session rules, the verifier's
-codebase paragraph and the code-location rule."""
+session's own edits: the extractor's coding-session rules, the calls it makes,
+the verifier's prompt and the code-location rule."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import json
 import pytest
 
 from server.llm.client import LLMResult
-from server.memory.app import pipeline, pipeline_state
+from server.memory.app import durability_verifier, pipeline, pipeline_state
 from server.memory.app.extract import ExtractionResult, extract_from_messages
 from server.memory.app.extract.prompts import _extraction_base_prompt
 from server.memory.app.trajectory_notes import TRAJECTORY_EXTRACTION_INSTRUCTIONS
@@ -17,7 +17,6 @@ from server.memory.domain import durable_facts
 from server.memory.domain.extraction_prompts import (
     _CODING_SESSION_PROMPT_BLOCK,
     CODING_SESSION_ANCHOR,
-    DURABILITY_VERIFIER_SYSTEM_PROMPT,
 )
 from server.settings import settings
 from tests.unit.llm_fake import ScriptedLLM
@@ -29,34 +28,16 @@ _MESSAGES = [
 
 
 @pytest.mark.parametrize("compact", [False, True])
-def test_the_coding_rules_end_the_prompt_of_a_coding_session_only(compact: bool) -> None:
+def test_the_coding_rules_follow_the_base_prompt_of_a_coding_session_only(compact: bool) -> None:
     assert CODING_SESSION_ANCHOR not in _extraction_base_prompt(compact)
     prompt = _extraction_base_prompt(compact, agent_learnings=True, coding_session=True)
     assert prompt.endswith(_CODING_SESSION_PROMPT_BLOCK)
 
 
-def test_the_coding_rules_keep_codebase_knowledge_and_leave_out_the_session_edits() -> None:
-    block = _CODING_SESSION_PROMPT_BLOCK
-    for kept in (
-        "how a behaviour is reached",
-        "a relation between definitions in different files",
-        "an invariant, constraint or pitfall",
-        "which test constrains a definition",
-        "the cause of a bug",
-    ):
-        assert kept in block, kept
-    for left_out in (
-        "what this session changed or added",
-        "exists only\n    in this working tree",
-        "what one lookup answers",
-        "Leave\nline numbers out",
-    ):
-        assert left_out in block, left_out
-    assert '{"facts": []} is the right answer' in block
-
-
-async def _calls_for_no_facts(monkeypatch: pytest.MonkeyPatch, coding_session: bool) -> ScriptedLLM:
-    llm = ScriptedLLM([json.dumps({"facts": []})], repeat_last=True)
+async def _calls_for_no_facts(
+    monkeypatch: pytest.MonkeyPatch, coding_session: bool, reply: str = '{"facts": []}'
+) -> ScriptedLLM:
+    llm = ScriptedLLM([reply], repeat_last=True)
     monkeypatch.setattr(settings, "memory_extract_coverage_sweep_auto_min_uncovered", 0)
     monkeypatch.setattr("server.memory.app.extract.extract._extractor_client", lambda **_: llm)
     result = await extract_from_messages(
@@ -80,12 +61,35 @@ async def test_a_coding_session_with_no_facts_is_not_asked_again(
 
 
 @pytest.mark.asyncio
+async def test_a_coding_session_whose_facts_were_all_discarded_is_asked_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reply = json.dumps({"facts": [{"value": "The user deploys from the release branch."}]})
+    llm = await _calls_for_no_facts(monkeypatch, coding_session=True, reply=reply)
+    assert len(llm.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_a_conversation_with_no_facts_is_still_asked_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     llm = await _calls_for_no_facts(monkeypatch, coding_session=False)
     assert len(llm.calls) == 2
     assert CODING_SESSION_ANCHOR not in llm.calls[0].system
+
+
+def _capture(
+    tags: list[str], instructions: str = "", messages: list[dict[str, object]] | None = None
+) -> pipeline_state.WorkflowState:
+    return pipeline_state.WorkflowState(
+        org="o",
+        namespace="n",
+        agent="a",
+        session_id="s",
+        messages=messages or [{"role": "user", "content": "hi"}],
+        extra_tags=tags,
+        extraction_instructions=instructions,
+    )
 
 
 @pytest.mark.asyncio
@@ -109,27 +113,54 @@ async def test_only_a_plugin_session_capture_is_extracted_as_a_coding_session(
         ([], ""),
         (["crystallized", "from_observation"], TRAJECTORY_EXTRACTION_INSTRUCTIONS),
     ):
-        state = pipeline_state.WorkflowState(
-            org="o",
-            namespace="n",
-            agent="a",
-            session_id="s",
-            messages=[{"role": "user", "content": "hi"}],
-            extra_tags=tags,
-            extraction_instructions=instructions,
-        )
-        await pipeline._REGISTRY["loom.llm_extract"](state, {})
+        await pipeline._REGISTRY["loom.llm_extract"](_capture(tags, instructions), {})
     assert seen == [True, True, False, False]
 
 
-def test_the_verifier_keeps_codebase_knowledge_and_drops_the_session_edits() -> None:
-    prompt = DURABILITY_VERIFIER_SYSTEM_PROMPT
-    assert "could reuse instead of reading the code again" in prompt
-    assert "kept whoever worked it out and from however many lookups" in prompt
-    assert "DROP a fact that reports what this session edited or added" in prompt
-    assert "until the edit is committed it exists in one working tree" in prompt
-    assert "DROP a fact one lookup answers" in prompt
-    assert "and a codebase fact of the kind kept above" in prompt
+@pytest.mark.asyncio
+async def test_a_working_session_with_a_list_turn_and_no_facts_makes_one_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _inherit(org: str, namespace: str) -> None:
+        return None
+
+    report = "\n".join(
+        f"- `step_{i}` in src/app/mod_{i}.py validates its input." for i in range(12)
+    )
+    messages: list[dict[str, object]] = [
+        {"role": role, "content": text}
+        for i in range(4)
+        for role, text in (("user", f"Carry on with part {i}."), ("assistant", report))
+    ]
+    llm = ScriptedLLM([json.dumps({"facts": []})], repeat_last=True)
+    monkeypatch.setattr("server.memory.app.coverage_sweep_gate.resolve", _inherit)
+    monkeypatch.setattr("server.memory.app.extract.extract._extractor_client", lambda **_: llm)
+    await pipeline._REGISTRY["loom.llm_extract"](
+        _capture(["source:claude-code"], messages=messages), {}
+    )
+    assert len(llm.calls) == 1
+    # The same turns as a conversation: the retry and the sweep follow the first pass.
+    await pipeline._REGISTRY["loom.llm_extract"](_capture([], messages=messages), {})
+    assert len(llm.calls) == 1 + 3
+
+
+@pytest.mark.asyncio
+async def test_only_a_session_capture_is_verified_by_the_codebase_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm = ScriptedLLM([json.dumps({"verdicts": []})], repeat_last=True)
+    monkeypatch.setattr(pipeline, "_verify_clients", lambda state: [llm])
+    for state in (
+        _capture(["source:claude-code"]),
+        _capture(["from_observation"], TRAJECTORY_EXTRACTION_INSTRUCTIONS),
+    ):
+        state.extracted_facts = [{"key": "k", "value": "`a` in src/a.py calls `b` in src/b.py."}]
+        await pipeline._REGISTRY["loom.verify_durable"](state, {})
+    assert [call.system for call in llm.calls] == [
+        durability_verifier.VERIFIER_SESSION_PROMPT,
+        durability_verifier.VERIFIER_SYSTEM_PROMPT,
+    ]
+    assert llm.calls[0].system != llm.calls[1].system
 
 
 @pytest.mark.parametrize(
@@ -150,8 +181,11 @@ def test_a_fact_that_is_one_code_location_is_not_durable(text: str) -> None:
         "`DefaultJSONProvider` in src/flask/json/provider.py serializes other types through "
         "`_default` in the same file, and its docstring lists the supported types, which has "
         "to be kept in sync with `_default`. The JSON tests are in tests/test_json.py.",
-        "`send` in src/client.py is the only caller of `backoff`, whose tests are in "
+        "`send` in src/client.py is the only caller of `backoff` whose tests are in "
         "tests/test_backoff.py.",
+        "The tests that constrain `_default` in src/flask/json/provider.py are in "
+        "tests/test_json.py.",
+        "`send` is the only caller of `backoff` whose tests are in tests/test_backoff.py.",
         "The handler lives in server/x.py and takes the key lock before it reads.",
     ],
 )
