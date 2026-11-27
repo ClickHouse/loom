@@ -20,7 +20,7 @@ from server.workers import pass_context, status_store
 
 _COLLECTOR_URL = "https://loom.clickhouse.com/api/v1/adoption"
 _WINDOW = timedelta(hours=12)
-# The collector accepts reports up to one MiB.
+# not a setting: the collector accepts reports up to one MiB.
 _MAX_REPORT_BYTES = 1_048_576
 # not a setting: bounds reads of the collector acknowledgement record.
 _MAX_ACK_BYTES = 4096
