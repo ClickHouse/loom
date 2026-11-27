@@ -460,6 +460,7 @@ export async function listMemories(
     known_version?: string;
     fields?: string[];
     previewChars?: number;
+    prefix?: string;
     // Only rows whose value or key holds this text, any case.
     contains?: string;
     // Only rows carrying every one of these tags, in any case.
@@ -489,6 +490,7 @@ export async function listMemories(
       // carries nothing else.
       ...(opts.fields ? { fields: opts.fields } : {}),
       ...(opts.previewChars ? { preview_chars: opts.previewChars } : {}),
+      ...(opts.prefix ? { prefix: opts.prefix } : {}),
       ...(opts.contains ? { contains: opts.contains } : {}),
       ...(opts.pinnedOnly ? { pinned_only: true } : {}),
       ...(opts.conflictedOnly ? { conflicted_only: true } : {}),

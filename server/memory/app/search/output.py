@@ -301,17 +301,11 @@ def move_stale(hits: list[Any], input: Any) -> list[Any]:
     return out
 
 
-async def _shape_final_hits(
+async def _select_served_hits(
     ctx: SearchContext, final_hits: list[_MemorySearchHit]
-) -> tuple[list[_MemorySearchHit], tuple[int, int, int], list[str], bool]:
-    """Phase 22: shape the served hits — decorate, prepend recent/anchor rows, body
-    floor, move down those whose code changed, unit and source bodies, relative-date
-    wording, foreign namespace marks, grounded excerpts, optional fields. Returns the
-    hits, the unit-body counts, the namespaces searched and whether guidance removed rows."""
+) -> tuple[list[_MemorySearchHit], bool]:
+    """Select and authorize the served rows while their retrieval excerpts are intact."""
     input = ctx.input
-    namespaces = ctx.namespaces
-    actual_work = ctx.actual_work
-    _clock = ctx.clock
     _decorate_hits(final_hits, input=input)
     recent, stale_recent = await _prepend_recent(final_hits, input, ctx.stale_versions)
     anchored, stale_anchor = await _prepend_anchor(recent, input, ctx.stale_versions)
@@ -328,8 +322,17 @@ async def _shape_final_hits(
         else:
             final_hits = move_stale(final_hits, input)
     guided_hits = await attach_search_guidance(input, final_hits, replay=input.as_of is not None)
-    guidance_dropped = len(guided_hits) < len(final_hits)
-    final_hits = guided_hits
+    return guided_hits, len(guided_hits) < len(final_hits)
+
+
+async def _shape_final_hits(
+    ctx: SearchContext, final_hits: list[_MemorySearchHit]
+) -> tuple[tuple[int, int, int], list[str]]:
+    """Expand and project the bodies after all verdict inputs have been read."""
+    input = ctx.input
+    namespaces = ctx.namespaces
+    actual_work = ctx.actual_work
+    _clock = ctx.clock
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)
     )
@@ -365,7 +368,7 @@ async def _shape_final_hits(
         actual_work["relative_excerpts_grounded"] = ground_hits(final_hits)
 
     actual_work.update(await _fill_optional_hit_fields(final_hits, input, _namespaces_searched))
-    return final_hits, _unit_bodies, _namespaces_searched, guidance_dropped
+    return _unit_bodies, _namespaces_searched
 
 
 def _build_search_output(

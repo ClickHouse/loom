@@ -3754,6 +3754,8 @@ pub struct MemorySearchHit {
     pub superseded_at: Option<String>,
     #[serde(default = "default_84")]
     pub version: u64,
+    #[serde(default)]
+    pub version_text: Option<String>,
     #[serde(default = "default_85")]
     pub created_at: String,
     #[serde(default = "default_86")]

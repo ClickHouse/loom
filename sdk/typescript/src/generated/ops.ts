@@ -5215,6 +5215,7 @@ export interface MemorySearchHit {
   superseded_by?: string | null;
   superseded_at?: string | null;
   version?: number;
+  version_text?: string;
   created_at?: string;
   namespace?: string;
   code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";

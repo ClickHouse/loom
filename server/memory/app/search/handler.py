@@ -31,6 +31,7 @@ from server.memory.app.search.key_match import _run_key_match_pool, key_match_en
 from server.memory.app.search.output import (
     _build_search_output,
     _finish_search_output,
+    _select_served_hits,
     _serve_parked_page,
     _shape_final_hits,
 )
@@ -344,18 +345,10 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             ctx, run, final_hits
         )
 
-        verdict_hits = final_hits
         final_hits, calibration, abstain_verdict = await _verdict(
-            ctx, run, verdict_hits, evidence_support_count
+            ctx, run, final_hits, evidence_support_count
         )
-
-        final_hits, _unit_bodies, _namespaces_searched, guidance_dropped = await _shape_final_hits(
-            ctx, final_hits
-        )
-        if guidance_dropped:
-            calibration, abstain_verdict = await _verdict_after_guidance(
-                ctx, run, verdict_hits, final_hits, evidence_support_count
-            )
+        _unit_bodies, _namespaces_searched = await _shape_final_hits(ctx, final_hits)
         _output = _build_search_output(
             ctx,
             run,
@@ -371,16 +364,20 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
 
 
 async def _verdict(
-    ctx: SearchContext, run: _SearchRun, final_hits: list[Any], evidence_support_count: int
+    ctx: SearchContext, run: _SearchRun, verdict_hits: list[Any], evidence_support_count: int
 ) -> tuple[list[Any], Any, tuple[bool, str, str]]:
-    """Phase 21: the verdict, then the term leg's governed hits placed first. The verdict
-    and every floor read only the hits that are not governed."""
+    """Calibrate retrieval, seat governed hits and recalculate if guidance drops any row."""
     calibration, abstain_verdict = _calibrate_final_hits(
-        ctx, run, final_hits, evidence_support_count
+        ctx, run, verdict_hits, evidence_support_count
     )
     final_hits, abstain_verdict = await term_leg.join(
-        ctx, run.term_task, final_hits, abstain_verdict
+        ctx, run.term_task, verdict_hits, abstain_verdict
     )
+    final_hits, guidance_dropped = await _select_served_hits(ctx, final_hits)
+    if guidance_dropped:
+        calibration, abstain_verdict = await _verdict_after_guidance(
+            ctx, run, verdict_hits, final_hits, evidence_support_count
+        )
     return final_hits, calibration, abstain_verdict
 
 

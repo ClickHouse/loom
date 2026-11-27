@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   bulkGetMemories,
-  getMemory,
   listMemories,
   searchMemory,
   type Identity,
-  type MemoryDetail,
   type MemoryListEntry,
   type SearchHit,
 } from "../api";
@@ -71,29 +69,29 @@ export function useSameFilter<T extends AnyFilter>(next: T): T {
   return next;
 }
 
-// Shape a memory.get detail as a list entry, so a search hit fetched
-// on-demand (one outside the preloaded window) renders through the same
-// MemoryCard path as preloaded rows.
-function detailToEntry(key: string, d: MemoryDetail): MemoryListEntry {
-  return {
-    memory_key: key,
-    memory_type: d.memory_type || "semantic",
-    confidence: d.confidence ?? 1,
-    version: d.version ?? 0,
-    version_text: d.version_text ?? undefined,
-    created_at: d.created_at || "",
-    updated_at: d.updated_at ?? null,
-    expires_at: d.expires_at ?? null,
-    tombstoned_at: null,
-    pinned: d.pinned,
-    tags: d.tags || [],
-    agent: d.agent,
-    user_id: d.user_id,
-    session_id: d.session_id,
-    value: d.value,
-    source_trace: d.source_trace,
-    status: d.status,
-  };
+// A search card is a list preview even when its row was outside the loaded pages.
+async function readSearchPreview(
+  identity: Identity,
+  hit: SearchHit,
+  signal: AbortSignal,
+): Promise<MemoryListEntry | null> {
+  const writer = namesWriter(hit);
+  const scope = writer ? { ...identity, user_id: hit.user_id, session_id: hit.session_id } : identity;
+  const key = rowIdentity(identity.namespace, hit);
+  for (let offset = 0; !signal.aborted; offset += KEYWORD_PAGE) {
+    const page = await listMemories(scope, KEYWORD_PAGE, {
+      agent: writer ? hit.agent : undefined,
+      prefix: hit.memory_key,
+      offset,
+      fields: MEMORIES_LIST_FIELDS,
+      previewChars: CARD_VALUE_CHARS,
+      signal,
+    });
+    const entry = page.entries.find((row) => rowIds(identity.namespace, row).includes(key));
+    if (entry) return { ...entry, value: entry.value ?? null };
+    if (offset + KEYWORD_PAGE >= page.total) break;
+  }
+  return null;
 }
 
 /**
@@ -204,6 +202,7 @@ export function useMemorySearch(
             top_k: 50,
             explain: true,
             legs: ["memory"],
+            bodies: "none",
             signal: rac.signal,
           });
           // Awaited below; a rejection before then is not unhandled, and is not kept for the
@@ -278,37 +277,15 @@ export function useMemorySearch(
         setSearchAbstain(
           r.abstain && kwKeys.size === 0 ? r.abstain_reason || "No strong match — showing best-effort results." : null,
         );
-        // Server search spans the whole namespace, but the page only preloads
-        // the top `limit` rows. Hydrate hits outside that window so they still
-        // render, instead of being dropped by the key-set intersection below.
-        // agent="*" resolves the row regardless of which agent wrote it, but one row per
-        // key: a hit that names its writer takes that row only if it is the row it names,
-        // else it reads its own.
+        // Keep ranked hits that fell outside the loaded list window.
         const unseen = results.filter((h) => !held.has(idOf(h)));
         if (unseen.length === 0) {
           setSearchExtra(new Map(kwExtra));
           return;
         }
-        // One memory.bulk_get, not one memory.get per hit — the list path below already
-        // reads this way.
-        const missing = [...new Set(unseen.map((h) => h.memory_key))];
-        const bulk = await bulkGetMemories({ ...identity, agent: "*" }, missing, {
-          signal: ac.signal,
-        }).catch(() => ({
-          results: {} as Record<string, MemoryDetail>,
-          missing,
-        }));
-        const rowFor = async (h: SearchHit): Promise<MemoryListEntry | null> => {
-          const d = bulk.results[h.memory_key];
-          const e = d ? detailToEntry(h.memory_key, d) : null;
-          if (e && idsOf(e).includes(idOf(h))) return e;
-          if (!namesWriter(h)) return null;
-          const own = { ...identity, agent: h.agent ?? "", user_id: h.user_id, session_id: h.session_id };
-          const exact = await getMemory(own, h.memory_key, { signal: ac.signal }).catch(() => null);
-          const x = exact?.found ? detailToEntry(h.memory_key, exact) : null;
-          return x && idsOf(x).includes(idOf(h)) ? x : null;
-        };
-        const fetched = await Promise.all(unseen.map(rowFor));
+        const fetched = await Promise.all(
+          unseen.map((hit) => readSearchPreview(identity, hit, ac.signal).catch(() => null)),
+        );
         if (cancelled) return;
         setSearchExtra(
           new Map([

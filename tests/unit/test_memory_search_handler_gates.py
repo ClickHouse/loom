@@ -214,6 +214,25 @@ async def test_verdict_keeps_belief_support_for_a_retained_hit(search_env, monke
     assert result.calibration_explanation == baseline.calibration_explanation
 
 
+async def test_verdict_uses_the_retained_excerpt_when_bodies_are_omitted(search_env, monkeypatch):
+    from server.memory.app.search import guidance
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_identifier_grounding", True)
+    retained = replace(_svc_hit("retained", sim=0.85), content_excerpt="PR 123 needs review")
+    removed = replace(_svc_hit("removed", sim=0.95), identity=("a", "-", "-"), version=42)
+
+    async def heads(keys):
+        return {keys[0]: {"version": 42, "tombstoned_at": "now"}}
+
+    monkeypatch.setattr(guidance, "guidance_heads", heads)
+    search_env.hits = [removed, retained]
+    result = await _run(search_env, query="PR 123", bodies="none")
+
+    assert [(hit.memory_key, hit.content_excerpt) for hit in result.results] == [("retained", "")]
+    assert not result.abstain
+
+
 async def test_belief_support_binds_exact_namespace_and_key_pairs(monkeypatch) -> None:
     from server.memory.app.search import evidence_support
 

@@ -13127,6 +13127,7 @@ class MemorySearchHit(TypedDict, total=False):
     superseded_by: NotRequired[Optional[str]]
     superseded_at: NotRequired[Optional[str]]
     version: NotRequired[int]
+    version_text: NotRequired[str]
     created_at: NotRequired[str]
     namespace: NotRequired[str]
     code_state: NotRequired[

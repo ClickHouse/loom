@@ -18,7 +18,7 @@ import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
-import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
+import { KEYWORD_PAGE, keywordThenRanked, namesWriter, parseSearchQuery, rowIdentity } from "../lib/memoriesSearch";
 import { signed, termText, whyTerms } from "../lib/whyNote";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 
@@ -273,12 +273,8 @@ interface RecallRow {
   hit?: SearchHit;
 }
 
-function hasWriter(row: RecallRow["writer"]): boolean {
-  return Boolean(row.agent && row.agent !== "*" && row.user_id && row.session_id);
-}
-
 function canInspect(row: RecallRow): boolean {
-  return hasWriter(row.writer) && row.writer.agent !== "_shared" && !row.key.startsWith("chunk:");
+  return namesWriter(row.writer) && !row.key.startsWith("chunk:");
 }
 
 function recallRowId(
@@ -286,9 +282,7 @@ function recallRowId(
   row: Pick<SearchHit, "namespace" | "agent" | "user_id" | "session_id" | "memory_key">,
   unidentified: string,
 ): string {
-  return hasWriter(row)
-    ? JSON.stringify([row.namespace || namespace, row.agent, row.user_id, row.session_id, row.memory_key])
-    : unidentified;
+  return namesWriter(row) ? rowIdentity(namespace, row) : unidentified;
 }
 
 // The entity boost has its own column; the other terms that moved a hit sit under its score.

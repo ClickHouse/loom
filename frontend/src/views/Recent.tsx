@@ -450,7 +450,7 @@ function MemoryList() {
       const id = rowIdentity(identity.namespace, row);
       const hit = searchWhy.get(id);
       const at = rank.get(id);
-      if (hit && at && hit.version && row.version && hit.version === row.version) {
+      if (hit && at && hit.version_text && hit.version_text === row.version_text) {
         scores.set(id, <SearchScores hit={hit} />);
         asides.set(id, <SearchWhy hit={hit} rank={at} />);
       } else if (keywordKeys.has(id)) asides.set(id, <SearchWhy contains={keywordFor} />);

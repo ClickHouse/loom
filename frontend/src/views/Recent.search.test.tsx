@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import type { MemoryDetail, MemoryListEntry, MyNamespaceEntry, WhoAmI } from "../api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MemoryListEntry, MyNamespaceEntry, WhoAmI } from "../api";
+import { SENSITIVE_LABEL } from "../lib/format";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { Recent } from "./Recent";
@@ -17,6 +18,7 @@ const entry = (memory_key: string): MemoryListEntry => ({
   memory_type: "semantic",
   confidence: 1,
   version: 1,
+  version_text: "1",
   created_at: "2026-09-18T09:00:00Z",
   expires_at: null,
   pinned: false,
@@ -28,7 +30,7 @@ const entry = (memory_key: string): MemoryListEntry => ({
 });
 
 // A ranked hit as the server names its row: writer in full and the revision it was read at.
-const writer = { agent: "claude-desktop", user_id: "user", session_id: "one", version: 1 };
+const writer = { agent: "claude-desktop", user_id: "user", session_id: "one", version: 1, version_text: "1" };
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -42,6 +44,7 @@ vi.mock("../api", async (importOriginal) => {
         : { entries: [entry("coffee_pref"), entry("tea_pref")], total: 2, today: 2, truncated: false },
     ),
     bulkGetMemories: vi.fn(async () => ({ results: {}, missing: [] })),
+    getMemory: vi.fn(),
     listConflicts: vi.fn(async () => ({ rows: [] })),
     conflictKeys: vi.fn(async (): Promise<string[]> => []),
     listMine: vi.fn(async () => []),
@@ -65,7 +68,7 @@ vi.mock("../api", async (importOriginal) => {
     })),
   };
 });
-import { bulkGetMemories, conflictKeys, listMemories, searchMemory } from "../api";
+import { bulkGetMemories, conflictKeys, getMemory, listMemories, searchMemory } from "../api";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,
@@ -112,7 +115,7 @@ describe("Recent search why-line", () => {
     await waitFor(() => expect(searchMemory).toHaveBeenCalled(), { timeout: 3000 });
     const [, query, opts] = must(vi.mocked(searchMemory).mock.calls.at(-1), "last searchMemory call");
     expect(query).toBe("milk");
-    expect(opts).toMatchObject({ top_k: 50, explain: true, legs: ["memory"] }); // Memory legs only
+    expect(opts).toMatchObject({ top_k: 50, explain: true, legs: ["memory"], bodies: "none" });
 
     // The hit that did not match carries no button and no score; the ranked one shows its
     // scores inside its open button, so they open the row and are read with it.
@@ -160,6 +163,7 @@ describe("Recent search with one key written by two sessions", () => {
     user_id: "user",
     session_id,
     version: 1,
+    version_text: "1",
     use_guidance: { next_step: "validate_lead", reasons: [] },
     ...over,
   });
@@ -217,9 +221,12 @@ describe("Recent search with one key written by two sessions", () => {
   });
 
   it("keeps a ranked row visible but gives it no guidance or score when its revision is not the hit's", async () => {
-    feed(written("one", { version: 2 }));
+    const oldVersion = "1800000000000000000";
+    const newVersion = "1800000000000000002";
+    expect(Number(oldVersion)).toBe(Number(newVersion));
+    feed(written("one", { version: Number(newVersion), version_text: newVersion }));
     vi.mocked(searchMemory).mockResolvedValue({
-      results: [ranked("one", { version: 1 })],
+      results: [ranked("one", { version: Number(oldVersion), version_text: oldVersion })],
       embedding_model: "fake",
     } as never);
     await search();
@@ -232,9 +239,9 @@ describe("Recent search with one key written by two sessions", () => {
   it("does the same for a hit or row that names no revision", async () => {
     for (const gone of ["hit", "row"] as const) {
       cleanup();
-      feed(written("one", gone === "row" ? { version: undefined } : {}));
+      feed(written("one", gone === "row" ? { version_text: undefined } : {}));
       vi.mocked(searchMemory).mockResolvedValue({
-        results: [ranked("one", gone === "hit" ? { version: undefined } : {})],
+        results: [ranked("one", gone === "hit" ? { version_text: undefined } : {})],
         embedding_model: "fake",
       } as never);
       await search();
@@ -256,6 +263,28 @@ describe("Recent search with one key written by two sessions", () => {
     expect(screen.getByText("note of session two")).toBeInTheDocument();
     expect(screen.queryByTestId("search-score")).toBeNull();
     expect(screen.queryByText(/Suggested use/)).toBeNull();
+  });
+
+  it("uses a list preview when an unloaded ranked writer's row becomes high sensitivity", async () => {
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) => {
+      const entries = opts?.prefix
+        ? [written("one", { sensitivity: "high", version: 2, version_text: "2", value: null })]
+        : opts?.contains
+          ? []
+          : [written("two")];
+      return { entries, total: entries.length, today: 0, truncated: false };
+    });
+    vi.mocked(searchMemory).mockResolvedValue({ results: [ranked("one")], embedding_model: "fake" } as never);
+    await search();
+    expect(await screen.findByText(SENSITIVE_LABEL)).toBeInTheDocument();
+    expect(listMemories).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: "user", session_id: "one" }),
+      expect.any(Number),
+      expect.objectContaining({ agent: "claude-desktop", prefix: "deploy_note" }),
+    );
+    expect(bulkGetMemories).not.toHaveBeenCalled();
+    expect(getMemory).not.toHaveBeenCalled();
+    expect(screen.queryByText("note of session one")).toBeNull();
   });
 });
 
@@ -363,13 +392,11 @@ describe("Recent search after a local write", () => {
 
   it("while a write ranks again, keeps no hit read from outside the page before the write", async () => {
     let written = false;
-    vi.mocked(listMemories).mockResolvedValue({ entries: [entry("milk_note")], total: 1, today: 0, truncated: false });
-    onTestFinished(() => {
-      vi.mocked(bulkGetMemories).mockImplementation(async () => ({ results: {}, missing: [] }));
-    });
-    vi.mocked(bulkGetMemories).mockImplementation(async (_id, keys) => ({
-      results: Object.fromEntries(keys.map((k) => [k, { ...entry(k), value: k } as unknown as MemoryDetail])),
-      missing: [],
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) => ({
+      entries: [entry(opts?.prefix || "milk_note")],
+      total: 1,
+      today: 0,
+      truncated: false,
     }));
     vi.mocked(searchMemory).mockImplementation(async () => {
       if (written) return new Promise(() => {}) as never;
@@ -403,18 +430,13 @@ describe("Recent search after a local write", () => {
 
   it("a failed re-rank that kept nothing still forgets its ranking for the next run", async () => {
     let phase = 0;
-    onTestFinished(() => {
-      vi.mocked(bulkGetMemories).mockImplementation(async () => ({ results: {}, missing: [] }));
-    });
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
-      opts?.contains || phase < 2
-        ? { entries: [entry("milk_note")], total: 1, today: 0, truncated: false }
-        : { entries: [entry("milk_note"), entry("far_pref")], total: 2, today: 0, truncated: false },
+      opts?.prefix
+        ? { entries: [entry(opts.prefix)], total: 1, today: 0, truncated: false }
+        : opts?.contains || phase < 2
+          ? { entries: [entry("milk_note")], total: 1, today: 0, truncated: false }
+          : { entries: [entry("milk_note"), entry("far_pref")], total: 2, today: 0, truncated: false },
     );
-    vi.mocked(bulkGetMemories).mockImplementation(async (_id, keys) => ({
-      results: Object.fromEntries(keys.map((k) => [k, { ...entry(k), value: k } as unknown as MemoryDetail])),
-      missing: [],
-    }));
     vi.mocked(searchMemory).mockImplementation(async () => {
       if (phase === 1) throw new Error("search down");
       if (phase === 2) return new Promise(() => {}) as never;

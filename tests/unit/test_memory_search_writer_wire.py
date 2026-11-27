@@ -10,10 +10,12 @@ def test_search_wire_preserves_writer_identity_through_serialization() -> None:
         content_excerpt="aisle",
         distance=0.0,
         similarity=1.0,
+        version=1_800_000_000_000_000_002,
     )
     hit._row_identity = ("writer-b", "alice", "shared")
     wire = MemorySearchOutput(results=[hit], embedding_model="test").model_dump(mode="json")
     assert wire["results"][0]["agent"] == "writer-b"
+    assert wire["results"][0]["version_text"] == "1800000000000000002"
     from loom.memory import _parse_search_hit
 
     assert _parse_search_hit(wire["results"][0]).agent == "writer-b"

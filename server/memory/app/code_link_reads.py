@@ -171,6 +171,12 @@ async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> l
         mids = sorted({mid for mid, _, cns, _ in candidates.values() if cns in readable})
         if not mids:
             return states
+        # A completion published after the links read cannot vouch for those rows.
+        namespaces = sorted(readable)
+        checked = await asyncio.gather(
+            *(code.checked_head(org, cns) for cns in namespaces), return_exceptions=True
+        )
+        coverage = dict(zip(namespaces, checked, strict=True))
         links = await store.for_memories(org, mids)
     except Exception as error:  # noqa: BLE001 — unavailable links leave guidance uncertain
         log.debug("Guidance code links unavailable: %s", type(error).__name__)
@@ -179,8 +185,22 @@ async def guidance_code_states(org: str, rows: Sequence[Mapping[str, Any]]) -> l
     for link in links:
         key = (link["memory_id"], link["namespace"], link["code_namespace"], link["inputs_hash"])
         by_revision[key].append(link)
+    positive: dict[str, list[tuple[int, str]]] = defaultdict(list)
     for index, key in candidates.items():
-        states[index] = guidance_link_state(by_revision.get(key, ()), readable)
+        state = guidance_link_state(by_revision.get(key, ()), readable)
+        if state in {"fresh", "moved"}:
+            if not isinstance(coverage.get(key[2]), str) or not coverage[key[2]]:
+                continue
+            positive[key[2]].append((index, state))
+        else:
+            states[index] = state
+    indexed = await asyncio.gather(
+        *(code.indexed_head(org, cns) for cns in positive), return_exceptions=True
+    )
+    for (cns, hits), head in zip(positive.items(), indexed, strict=True):
+        if head == coverage[cns]:
+            for index, state in hits:
+                states[index] = state
     return states
 
 

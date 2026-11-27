@@ -29,6 +29,7 @@ export interface SearchHit {
   session_id?: string;
   /** The revision the hit (and its guidance) was made for. */
   version?: number;
+  version_text?: string;
   /** Server provenance note for the hit ("fact hit from namespace x;
    *  similarity=0.62; ..."). Rides at k ≤ 15 by default and at any k under
    * `explain: true`. */

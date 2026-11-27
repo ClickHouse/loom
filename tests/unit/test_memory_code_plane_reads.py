@@ -296,16 +296,57 @@ async def test_code_guidance_reads_only_authorized_repository_bindings(monkeypat
         assert ids == ["m1"]
         return [visible, stale]
 
+    async def checked_head(org, ns):
+        assert ns == "code-a"
+        return ""
+
     monkeypatch.setattr(
         code_link_reads,
         "code_namespace_for",
         lambda org, ns, tags: ns if ns.startswith("code-") else "",
     )
     monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    monkeypatch.setattr(code_link_reads.code, "checked_head", checked_head)
     monkeypatch.setattr(code_link_reads.store, "for_memories", links)
     assert await code_link_reads.guidance_code_states(
         "o", [allowed, hidden, unresolved, unbound]
     ) == ["changed", "unknown", "unknown", "not_applicable"]
+
+
+@pytest.mark.parametrize("state", ["fresh", "moved"])
+async def test_positive_code_guidance_waits_for_the_indexed_head(monkeypatch, state) -> None:
+    from server.memory.app import code_link_reads
+
+    row = _excerpt("m1", "allowed")
+    indexed = "c2"
+    checked = "c1"
+    complete_during_read = False
+
+    async def readable(org, namespaces):
+        assert namespaces == {"code-a"}
+        return namespaces
+
+    async def links(org, ids):
+        nonlocal checked
+        if complete_during_read:
+            checked = indexed
+        return [_link("m1", state=state)]
+
+    async def indexed_head(org, ns):
+        return indexed
+
+    async def checked_head(org, ns):
+        return checked
+
+    monkeypatch.setattr(code_link_reads, "code_namespace_for", lambda *_: "code-a")
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    monkeypatch.setattr(code_link_reads.store, "for_memories", links)
+    monkeypatch.setattr(code_link_reads.code, "indexed_head", indexed_head)
+    monkeypatch.setattr(code_link_reads.code, "checked_head", checked_head)
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    complete_during_read = True
+    assert await code_link_reads.guidance_code_states("o", [row]) == ["unknown"]
+    assert await code_link_reads.guidance_code_states("o", [row]) == [state]
 
 
 @pytest.mark.asyncio

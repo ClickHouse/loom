@@ -477,12 +477,20 @@ _USAGE_FIELDS: tuple[str, ...] = (
 TermLegStatus = Literal["complete", "empty", "capped", "timed_out", "failed", "off"]
 
 
+def _omit_schema_default(schema: dict[str, Any]) -> None:
+    schema.pop("default", None)
+
+
 class _MemorySearchHit(BaseModel):
     @model_serializer(mode="wrap")
     def _omit_unrequested(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # `tags` is on the wire only when the request asked for it: None = not
         # requested, so the key is dropped.
         data: dict[str, Any] = handler(self)
+        if not self.version:
+            data.pop("version_text", None)
+        elif "version_text" in data:
+            data["version_text"] = str(self.version)
         identity = self._row_identity
         if identity is not None:
             for name, value in zip(("agent", "user_id", "session_id"), identity, strict=True):
@@ -645,6 +653,8 @@ class _MemorySearchHit(BaseModel):
     superseded_by: str | None = None
     superseded_at: str | None = None
     version: int = 0
+    # Exact decimal revision. Unknown revisions have no wire value or schema default.
+    version_text: str = Field(default="", json_schema_extra=_omit_schema_default)
     # Ingest time (ISO, loom.memory_embeddings.created_at); "" when unknown. The
     # arrival-order recency in memory.ask reads it.
     created_at: str = ""

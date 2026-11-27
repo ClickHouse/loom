@@ -154,17 +154,19 @@ describe("Recall Lab: the scores table", () => {
     expect(useStore.getState().inspectedMemoryKey).toBe("deploy_note");
   });
 
-  it("keeps chunk and shared hits visible without opening a namesake", async () => {
+  it("keeps chunk, shared and sentinel hits visible without opening a namesake", async () => {
     searchMemory.mockResolvedValue({
       results: [
         hit("chunk:s:0", 0.9, { source: "chunk", agent: "writer", user_id: "u", session_id: "s" }),
         hit("definition", 0.8, { agent: "_shared", user_id: "-", session_id: "-" }),
+        hit("sentinel", 0.7, { agent: "-", user_id: "-", session_id: "-" }),
       ],
     });
     render(<RecallLab />);
     const table = within(await score());
     expect(table.getByRole("button", { name: "chunk:s:0" })).toBeDisabled();
     expect(table.getByRole("button", { name: "definition" })).toBeDisabled();
+    expect(table.getByRole("button", { name: "sentinel" })).toBeDisabled();
     fireEvent.click(table.getByText("excerpt of definition"));
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
   });
