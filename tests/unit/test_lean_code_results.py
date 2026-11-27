@@ -12,6 +12,7 @@ from server.code.api.models_read import CodeReadInput
 from server.code.app.read import _request_ranges
 from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.settings import settings
+from server.transport import mcp_tools
 from server.transport.code_lean import lean_code
 
 
@@ -528,6 +529,17 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
             "edit_context_next": edit_step,
             "next": suggestion,
         }
+    # a bound connection gets the same reply, and the listing of code tools alone
+    # carries both tools the reply names
+    scope = set_code_scope("acme/code-repo")
+    try:
+        bound = lr.mcp_op_result("code.grep", edit_payload, arguments, None, toolset="coding")
+        assert bound == {**result, "edit_context_next": edit_step, "next": suggestion}
+        assert {"loom_code_read", edit_step["tool"]} <= mcp_tools.listed_tool_names(
+            "coding", "compact"
+        )
+    finally:
+        reset_code_scope(scope)
 
 
 def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lookup() -> None:

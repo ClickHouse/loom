@@ -382,6 +382,7 @@ function Header({
     <>
       <PageHeader
         title="Your AI profile"
+        description="Manage the context your connected AI clients load at the start of a session."
         actions={
           <Unavailable reason={newReason}>
             <Button type="primary" htmlType="button" iconLeft="plus" onClick={onNew} data-opener="new">
@@ -395,11 +396,6 @@ function Header({
           <ScopeBadge kind="namespace" value={namespace} />
         </span>
       </PageHeader>
-      {/* Left to the title on a phone, where the sections need the room. */}
-      <p className="hidden text-sm text-text-muted sm:block">
-        One profile. Every AI you use reads it before responding.
-      </p>
-
       <div className="flex items-center gap-4 mt-4 text-xs">
         <ActivityChip empty={empty} />
         {entries.length > 0 && (

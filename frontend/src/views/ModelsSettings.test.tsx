@@ -41,6 +41,18 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("shows the environment-managed Vertex AI model without a dashboard save form", async () => {
+  vi.mocked(getModelStatus).mockResolvedValue({
+    ...status,
+    source: "environment",
+    llm_provider: "vertex",
+    llm_model: "gemini-3.5-flash-lite",
+  });
+  render(<ModelsSettings />);
+  expect(await screen.findByText("Vertex AI · gemini-3.5-flash-lite")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Test & apply" })).toBeNull();
+});
+
 describe("Environment configuration reset", () => {
   it("confirms intent and sends the exact displayed revision", async () => {
     vi.mocked(resetModelConfiguration).mockImplementation(async () => {

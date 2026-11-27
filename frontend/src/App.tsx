@@ -40,7 +40,14 @@ import {
 } from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
-import { useStore, pathnameView, linkedNamespace, addressPageNamespace, collectionLinkView } from "./lib/state";
+import {
+  useStore,
+  pathnameView,
+  linkedNamespace,
+  addressPageNamespace,
+  collectionLinkView,
+  urlParam,
+} from "./lib/state";
 import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
 import { NetworkProgress } from "./components/NetworkProgress";
@@ -459,8 +466,7 @@ export default function App() {
         // A Library link to a collection is the collection's: one its namespace denies the
         // reader still opens, on the reader's own namespace, and the Library reads the
         // collection only if collection.list names it.
-        const collectionLink =
-          initial === "knowledge" && isCollectionName(new URLSearchParams(location.search).get("collection"));
+        const collectionLink = initial === "knowledge" && isCollectionName(urlParam("collection"));
         const denied = linked !== null && !readable && !collectionLink ? linked : null;
         const pick = readable ? linked : saved;
         const reach = readable ? [linked] : claims;
@@ -500,13 +506,7 @@ export default function App() {
             denied,
             readable ? linked : null,
           );
-          if (target.view === "setup") {
-            // Setup's notice says how to get in and opens the picker on request; opened here
-            // it would cover that notice's actions.
-            bootView("setup");
-          } else {
-            bootView(target.view ?? "memories");
-          }
+          bootView(target.view ?? "memories");
         }
 
         // Approval-notification check: anything that flipped pending→active since
@@ -584,25 +584,17 @@ export default function App() {
       </>
     );
   }
-  if (!authed && isProxyMode()) {
+  if (!authed || !identity || !whoami_) {
     return (
-      <main className="min-h-screen grid place-items-center text-sm text-text-muted">
+      <main className="min-h-screen grid place-items-center text-sm text-text-muted" aria-busy={authed || undefined}>
         <h1 className="sr-only">Loom</h1>
-        Proxy auth failed — check your gateway session.
-      </main>
-    );
-  }
-  if (!identity || !whoami_) {
-    return (
-      <main className="min-h-screen grid place-items-center text-sm text-text-muted" aria-busy="true">
-        <h1 className="sr-only">Loom</h1>
-        <Loading label="Loading Loom" />
+        {authed ? <Loading label="Loading Loom" /> : "Proxy auth failed — check your gateway session."}
       </main>
     );
   }
 
   return (
-    <div className="h-screen flex flex-col bg-bg text-text">
+    <div className="workspace-shell flex flex-col bg-bg text-text">
       <a href="#main" data-dock-inert="" className={SKIP}>
         Skip to main content
       </a>
@@ -635,13 +627,12 @@ export default function App() {
                 <ProblemsBanner />
               </Suspense>
               <PendingRequestBanner />
-              {/* Keyed by view so each navigation replays the fade-in, and the no-access
-                page is a page of its own: leaving it mounts the view afresh, never under
-                the hidden old page. `h-full`
+              {/* In-app navigation fades in. The first view paints immediately.
+                The no-access page has its own key so leaving it mounts the view afresh. `h-full`
                 gives a view that wants the page's height (the Explorer's
                 three panes) something to resolve against;
                 taller views overflow it and scroll <main> as before. */}
-              <div key={denied ? "no-access" : view} className="animate-view-in h-full">
+              <div key={denied ? "no-access" : view} className={navSeq > 0 ? "animate-view-in h-full" : "h-full"}>
                 {/* Delayed, so a chunk that arrives quickly never flashes a loader. */}
                 <Suspense
                   fallback={

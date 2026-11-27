@@ -76,7 +76,7 @@ class Backfill:
 
 
 async def _link_writes(batch: int, result: PassResult) -> None:
-    """Link the queued writes, the backfill's next page, and sweep erased memories."""
+    """Link the queued writes, the backfill's next page, and sweep unlinkable memories."""
     from server.code.app import memory_links as code
     from server.memory.app import code_link_pass, code_links
     from server.memory.store import code_links as store
@@ -124,7 +124,7 @@ async def _link_writes(batch: int, result: PassResult) -> None:
         if not backfill.done:
             backfill = backfill.read_to(await code_links.backfill(backfill.after, batch, result))
         await backfill_cursor.write(backfill.to_json())
-    swept = await code_links.sweep_erased(await sweep_cursor.read(), batch, result)
+    swept = await code_links.sweep_unlinkable(await sweep_cursor.read(), batch, result)
     await sweep_cursor.write(swept)
 
 

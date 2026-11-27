@@ -8,7 +8,7 @@ from inspect import cleandoc
 from textwrap import dedent
 
 SYMBOL_DESCRIPTION_PREVIEW_CHARS = 500
-# The extra AST comparison runs on the synchronous MCP reply path.
+# not a setting: bounds extra AST work on the synchronous MCP reply path
 _STRUCTURAL_DOC_BODY_MAX_CHARS = 16_000
 
 
