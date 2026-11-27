@@ -171,6 +171,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "server.insights.workers.adoption_telemetry",
         "adoption_telemetry_enabled",
         "adoption_telemetry_interval_seconds",
+        first_pass_due="first_pass_due",
     ),
     _Worker(
         "recalibration",

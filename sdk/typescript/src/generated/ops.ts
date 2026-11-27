@@ -5172,6 +5172,7 @@ export interface MemorySearchHit {
   created_at?: string;
   namespace?: string;
   code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
+  code_changed_since?: string;
   body_truncated?: boolean;
   next?: string;
   source_resource_id?: string;

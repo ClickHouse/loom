@@ -1,4 +1,10 @@
 ---
+import { GridContainer } from "@clickhouse/click-ui/GridContainer";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
 import SiteFrame from "./SiteFrame.astro";
 import { documentationLink } from "./documentation-link";
 import { knowledgeFactoryCopy } from "./knowledge-factory-copy";
@@ -27,32 +33,32 @@ const walkthrough = guide("/use-cases/knowledge-factory#run-a-knowledge-factory-
 ---
 
 <SiteFrame title={copy.title} description={copy.description} path={path} locale={locale} alternates={knowledgeFactoryAlternates}>
-  <h1>{copy.heading}</h1>
-  <p class="lead">{copy.lead}</p>
+  <Title type="h1" size="xl" family="brand">{copy.heading}</Title>
+  <Text color="muted" className="lead">{copy.lead}</Text>
   <div class="site-actions">
-    <a class="primary" href={walkthrough.href} hreflang={walkthrough.hreflang}>{walkthrough.label}<span class="link-arrow" aria-hidden="true">→</span></a>
-    <a class="secondary" href="#pilot-scorecard">{copy.pilotHeading}</a>
+    <Link className="primary" href={walkthrough.href} hrefLang={walkthrough.hreflang}>{walkthrough.label}<Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+    <Link className="secondary" href="#pilot-scorecard">{copy.pilotHeading}</Link>
   </div>
 
   <section class="site-section" aria-labelledby="evidence-title">
     <div class="section-copy">
-      <h2 id="evidence-title">{copy.evidenceHeading}</h2>
+      <Title type="h2" size="lg" id="evidence-title">{copy.evidenceHeading}</Title>
     </div>
-    <div class="site-grid">
+    <GridContainer className="site-grid" isResponsive={false}>
       {evidence.map(({ title, detail, href, hreflang, label }) => (
-        <article class="site-panel">
-          <h3>{title}</h3>
-          <p>{detail}</p>
-          <a href={href} hreflang={hreflang}>{label} <span class="link-arrow" aria-hidden="true">→</span></a>
-        </article>
+        <Panel orientation="vertical" alignItems="start" gap="none" hasBorder role="article" className="site-panel">
+          <Title type="h3" size="md">{title}</Title>
+          <Text color="muted">{detail}</Text>
+          <Link href={href} hrefLang={hreflang}>{label} <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+        </Panel>
       ))}
-    </div>
+    </GridContainer>
   </section>
 
   <section id="pilot-scorecard" class="site-section" aria-labelledby="pilot-title">
     <div class="section-copy">
-      <h2 id="pilot-title">{copy.pilotHeading}</h2>
-      <p>{copy.pilot}</p>
+      <Title type="h2" size="lg" id="pilot-title">{copy.pilotHeading}</Title>
+      <Text color="muted">{copy.pilot}</Text>
     </div>
     <dl class="pilot-checks">
       {copy.pilotChecks.map(({ title, detail }) => (
@@ -63,7 +69,7 @@ const walkthrough = guide("/use-cases/knowledge-factory#run-a-knowledge-factory-
       ))}
     </dl>
     <div class="site-actions">
-      <a class="secondary" href={evaluate.href} hreflang={evaluate.hreflang}>{evaluate.label}<span class="link-arrow" aria-hidden="true">→</span></a>
+      <Link className="secondary" href={evaluate.href} hrefLang={evaluate.hreflang}>{evaluate.label}<Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
     </div>
   </section>
 </SiteFrame>
@@ -74,7 +80,7 @@ const walkthrough = guide("/use-cases/knowledge-factory#run-a-knowledge-factory-
   .pilot-checks { margin: 1.5rem 0 0; }
   .pilot-checks > div {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
+    grid-template-columns: clamp(10rem, 23%, 16rem) minmax(0, 1fr);
     gap: 0.4rem 1.5rem;
     border-top: 1px solid var(--line);
     padding: 0.85rem 0;

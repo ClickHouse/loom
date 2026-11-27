@@ -71,6 +71,15 @@ def _dispatch(args: argparse.Namespace) -> int:
             except AuthorityMismatch as e:
                 print(f"  ✗ {e}", file=sys.stderr)
                 return 2
+            except Exception as e:
+                # Only a returned command's failed shutdown is one line; the rest re-raises.
+                from server.insights.app.provider_command import unfinished_line
+
+                line = unfinished_line(e)
+                if line is None:
+                    raise
+                print(f"  ✗ {line}", file=sys.stderr)
+                return 1
         if hint := dry_run_hint(args, rc):
             # stderr: a command's --json output stays the only thing on stdout
             print(hint, file=sys.stderr)

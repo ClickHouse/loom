@@ -19,6 +19,7 @@ from server.code.domain.scope import current_code_scope
 from server.memory.api.models_loom_search import SearchInput
 from server.memory.app.loom_search.answer_first import withheld_note
 from server.memory.app.loom_search.tracker_leg import tracker_text_lines
+from server.memory.domain import code_change
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import (
@@ -521,12 +522,12 @@ def listed_ops(toolset: str | None) -> list[Operation]:
 def _upfront_tools(configured: str, toolset: str, profile: str) -> set[str]:
     if configured.strip().casefold() != "auto":
         return {name.strip() for name in configured.split(",") if name.strip()}
-    if toolset == "coding" and profile == "compact":
-        return {"code.edit_context", "code.grep"}
-    names = {"code.search", "code.symbol", "code.grep"}
-    if toolset != "coding":
-        names.update({"search.query", LOOM_OP_TOOL_NAME})
-    return names
+    if toolset == "coding":
+        # Outside the compact profile the instructions send a definition lookup to
+        # code.symbol, so it loads with the pre-edit read and literal search.
+        names = {"code.edit_context", "code.grep"}
+        return names if profile == "compact" else names | {"code.symbol"}
+    return {"code.search", "code.symbol", "code.grep", "search.query", LOOM_OP_TOOL_NAME}
 
 
 def _with_loading_hints(descriptors: list[dict[str, Any]], requested: set[str]) -> None:
@@ -808,8 +809,9 @@ def _memory_section_lines(
     order memory.ask would read them, whole excerpts. On the deep-memory bench
     an external reader scored 83.3% over this block against 70.8% over key +
     200-char lines, level with memory.ask at a fifth of the latency. The
-    reading rule rides once, ahead of the block. Without a block (an error)
-    the agent reads the plain hit lines.
+    reading rule rides once, ahead of the block. Without a block (a later
+    page) the agent reads the plain hit lines, which carry the block line's
+    note for stale code (`code_change.note`).
     """
     block = str(memory.get("reader_block") or "").strip()
     out: list[str] = []
@@ -842,9 +844,10 @@ def _memory_section_lines(
     for h in mem_hits[:top_k]:
         excerpt = (h.get("content_excerpt") or "").replace("\n", " ").strip()
         ns_label = h.get("namespace") or "-"
+        code = code_change.note(h.get("code_state") or "", h.get("code_changed_since") or "")
         why = why_note(h) if explain else (h.get("explanation") or "").replace("\n", " ").strip()
         out.append(
-            f"  - [{h.get('memory_key')}] (ns={ns_label}) {excerpt[:200]}"
+            f"  - [{h.get('memory_key')}] (ns={ns_label}){code} {excerpt[:200]}"
             + ((f" [why: {why}]" if explain else f" ({why})") if why else "")
         )
     return out

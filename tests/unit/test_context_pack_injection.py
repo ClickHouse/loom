@@ -95,6 +95,9 @@ def test_a_teammates_memory_in_startup_recall_carries_the_teammate_as_author(
 
     async def _list(ident: Any, *, pinned_only: bool = False, **kw: Any) -> list[Any]:
         row = NS(
+            agent="a",
+            user_id="-",
+            session_id="-",
             memory_key="team/rule",
             value=POISON,
             confidence=1.0,
@@ -654,6 +657,9 @@ def test_an_actor_name_cannot_forge_an_author_in_startup_recall(
 
     async def _list(ident: Any, *, pinned_only: bool = False, **kw: Any) -> list[Any]:
         row = NS(
+            agent="a",
+            user_id="-",
+            session_id="-",
             memory_key="f",
             value="attacker supplied instruction",
             confidence=1.0,

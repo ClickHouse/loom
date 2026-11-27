@@ -1,4 +1,10 @@
 ---
+import { Button } from "@clickhouse/click-ui/Button";
+import { Link } from "@clickhouse/click-ui/Link";
+import { NumberField } from "@clickhouse/click-ui/NumberField";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
 import SiteFrame from "../../components/SiteFrame.astro";
 import { repositoryUrl } from "../../lib/site-identity.mjs";
 
@@ -10,13 +16,13 @@ const workflow = `${repositoryUrl}/actions/workflows/memory-evaluation.yml`;
   description="Edit a sample Python function and run Loom’s code-link check to see how a saved lesson responds on two branches."
   path="/playground/source-change"
 >
-  <h1>See when a memory goes stale</h1>
-  <p class="lead">Change the retry rule on <code>main</code>, then switch to <code>release</code>. Loom checks the saved lesson against each branch.</p>
+  <Title type="h1" size="xl" family="brand">See when a memory goes stale</Title>
+  <Text className="lead" color="muted" size="lg">Change the retry rule on <code>main</code>, then switch to <code>release</code>. Loom checks the saved lesson against each branch.</Text>
 
   <section class="workbench" aria-label="Retry rule example">
-    <section class="site-panel editor" aria-labelledby="editor-heading">
+    <Panel className="editor" role="region" aria-labelledby="editor-heading" padding="lg" hasBorder>
       <div class="panel-heading">
-        <h2 id="editor-heading">Edit the source</h2>
+        <Title type="h2" size="md" id="editor-heading">Edit the source</Title>
         <span class="file"><code>retry.py</code></span>
       </div>
       <pre><code><span class="keyword">def</span> should_retry(status: int) -&gt; bool:<br />    <span class="keyword">return</span> status == <span id="retry-code">503</span></code></pre>
@@ -26,20 +32,19 @@ const workflow = `${repositoryUrl}/actions/workflows/memory-evaluation.yml`;
           <label><input type="radio" name="branch" value="main" checked /> <code>main</code></label>
           <label><input type="radio" name="branch" value="release" /> <code>release</code></label>
         </fieldset>
-        <label class="status-label" for="retry-status">Retry on HTTP status</label>
+        <NumberField id="retry-status" name="status" label="Retry on HTTP status" min={100} max={599} step={1} defaultValue={429} required hideControls onChange={() => {}} />
         <div class="edit-actions">
-          <input id="retry-status" name="status" type="number" min="100" max="599" step="1" value="429" required />
-          <button class="primary" type="submit">Apply edit and check</button>
-          <button class="secondary" type="reset">Reset example</button>
+          <Button type="primary" htmlType="submit" label="Apply edit and check" />
+          <Button type="secondary" htmlType="reset" label="Reset example" />
         </div>
         <p id="check-feedback" class="feedback" role="status" aria-atomic="true"></p>
       </form>
       <noscript><p>Enable JavaScript to edit the sample and run checks.</p></noscript>
-    </section>
+    </Panel>
 
-    <section class="site-panel lesson" aria-labelledby="lesson-heading">
+    <Panel className="lesson" role="region" aria-labelledby="lesson-heading" padding="lg" hasBorder>
       <div class="panel-heading">
-        <h2 id="lesson-heading">Saved lesson</h2>
+        <Title type="h2" size="md" id="lesson-heading">Saved lesson</Title>
         <span class="state" id="check-state" hidden></span>
       </div>
       <p class="saved-rule"><code>should_retry</code> retries on HTTP 503.</p>
@@ -48,17 +53,17 @@ const workflow = `${repositoryUrl}/actions/workflows/memory-evaluation.yml`;
         <summary>View live response</summary>
         <pre><code id="check-json"></code></pre>
       </details>
-    </section>
+    </Panel>
   </section>
 
   <section id="evaluation" class="site-section run" aria-labelledby="run-heading">
-    <h2 id="run-heading">Run the full Loom evaluation</h2>
+    <Title type="h2" size="lg" id="run-heading">Run the full Loom evaluation</Title>
     <p>GitHub Actions starts Loom and a temporary ClickHouse container, runs the memory checks, and publishes a results summary and JSON artifact.</p>
     <p>Open the workflow and select <strong>Run workflow</strong>. That button requires write access. You can fork Loom and enable Actions in your fork to run it there.</p>
     <div class="site-actions">
-      <a class="primary" href={workflow}>Open the GitHub workflow <span class="link-arrow" aria-hidden="true">↗</span></a>
-      <a class="text-link" href={`${repositoryUrl}/fork`}>Fork Loom</a>
-      <a class="text-link" href="/docs/guides/compare-coding-agent-memory#reproduce-the-comparison">Run locally</a>
+      <Link className="primary" href={workflow}>Open the GitHub workflow</Link>
+      <Link href={`${repositoryUrl}/fork`}>Fork Loom</Link>
+      <Link href="/docs/guides/compare-coding-agent-memory#reproduce-the-comparison">Run locally</Link>
     </div>
   </section>
 </SiteFrame>
@@ -147,13 +152,11 @@ const workflow = `${repositoryUrl}/actions/workflows/memory-evaluation.yml`;
   .keyword { color: var(--click-alert-color-text-info); }
   #retry-code { color: var(--accent); }
   fieldset { display: flex; gap: 0.6rem; min-width: 0; margin: 1rem 0; padding: 0; border: 0; }
-  legend, .status-label { margin-bottom: 0.45rem; font-size: 0.9rem; font-weight: 600; }
+  legend { margin-bottom: 0.45rem; font-size: 0.9rem; font-weight: 600; }
   fieldset label { display: flex; gap: 0.4rem; align-items: center; min-height: 2.75rem; padding: 0.4rem 0.75rem; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
   fieldset label:has(:checked) { border-color: var(--accent); }
   input[type="radio"] { margin: 0; accent-color: var(--accent); }
-  .status-label { display: block; }
-  .edit-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; }
-  .edit-actions input { width: 5rem; min-height: 2.75rem; padding: 0.45rem 0.7rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--page); color: inherit; font: inherit; }
+  .edit-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-block-start: 0.7rem; }
   .state { padding: 0.25rem 0.55rem; border-radius: var(--radius); font-size: 0.79rem; font-weight: 650; }
   .state[data-state="fresh"] { color: var(--click-feedback-color-success-foreground); background: var(--click-feedback-color-success-background); }
   .state[data-state="changed"] { color: var(--click-feedback-color-warning-foreground); background: var(--click-feedback-color-warning-background); }

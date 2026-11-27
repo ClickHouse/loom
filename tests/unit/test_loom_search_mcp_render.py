@@ -72,6 +72,33 @@ _TRACKER = {
 }
 
 
+_COMMIT = "c0ffee" * 6 + "abcd"
+
+
+def _code_hits() -> list[Any]:
+    """Search hits as the code annotation leaves them: one whose code changed, one whose
+    code is as it was, one that names no code."""
+    from server.memory.api.models_search import _MemorySearchHit
+
+    def hit(key: str, **code: Any) -> Any:
+        return _MemorySearchHit(
+            memory_key=key,
+            memory_type="semantic",
+            content_excerpt=f"text of {key}",
+            distance=0.2,
+            similarity=0.8,
+            rank_score=0.8,
+            valid_at="2026-03-02T00:00:00",
+            **code,
+        )
+
+    return [
+        hit("evict_rule", code_state="changed", code_changed_since=_COMMIT),
+        hit("fresh_rule", code_state="fresh"),
+        hit("plain_fact"),
+    ]
+
+
 def _payload(kind: str) -> dict[str, Any]:
     base: dict[str, Any] = {
         "memory": copy.deepcopy(_SEARCH["memory"]),
@@ -96,6 +123,15 @@ def _payload(kind: str) -> dict[str, Any]:
             **base,
             "withheld": {"memory": 2, "conversations": 1, "reason": "tracker_verdict_leads"},
         }
+    if kind == "stale_code":
+        from server.memory.app.ask.reader_render import render_reader_block
+
+        hits = _code_hits()
+        base["memory"] = {
+            "results": [h.model_dump() for h in hits],
+            "reader_block": render_reader_block(hits, "q"),
+        }
+        return base
     if kind == "no_block":
         base["memory"].pop("reader_block")
         base["memory"].pop("reader_instructions")
@@ -255,6 +291,37 @@ def test_every_scenario_answers_as_recorded(harness: Any) -> None:
         assert json.dumps(got[name], sort_keys=False) == json.dumps(
             recorded[name], sort_keys=False
         ), name
+
+
+def test_a_hit_whose_code_changed_names_its_state_and_commit_on_both_channels(
+    harness: Any,
+) -> None:
+    call, _ = harness
+    result = call("s-code", {"query": "q"}, "stale_code")
+    block = result["content"][0]["text"].split("Memory hits:\n")[1].split("\n\nKnowledge hits:")[0]
+    assert block.split("\n\n") == [
+        "[2026-03-02] [evict_rule] (semantic) (its code changed since it was written,"
+        " commit c0ffeec0ffee: check before relying on it) text of evict_rule",
+        "[2026-03-02] [fresh_rule] (semantic) text of fresh_rule",
+        "[2026-03-02] [plain_fact] (semantic) text of plain_fact",
+    ]
+    stale, fresh, plain = result["structuredContent"]["memory"]["results"]
+    assert (stale["code_state"], stale["code_changed_since"]) == ("changed", _COMMIT)
+    # a hit whose code is as it was, or that names none, reads as it did without the field
+    unlinked = {
+        "memory_key": "plain_fact",
+        "memory_type": "semantic",
+        "content_excerpt": "text of plain_fact",
+        "rank_score": 0.8,
+        "valid_at": "2026-03-02T00:00:00",
+        "source": "fact",
+    }
+    assert plain == unlinked
+    assert fresh == unlinked | {
+        "memory_key": "fresh_rule",
+        "content_excerpt": "text of fresh_rule",
+        "code_state": "fresh",
+    }
 
 
 def _knowledge_text(bodies: str) -> str:
