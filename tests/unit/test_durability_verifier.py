@@ -183,7 +183,8 @@ def test_parsing_reads_the_stored_restatements_in_range() -> None:
 @pytest.mark.asyncio
 async def test_a_fact_a_stored_memory_states_is_dropped_and_names_it() -> None:
     facts = _facts("The list has a new entry.", "A new claim.")
-    restates = {**_answer(n=2), "stored": [{"i": 0, "s": 1}]}
+    # Fact 1 is listed against a memory read for fact 0 alone: that listing does not count.
+    restates = {**_answer(n=2), "stored": [{"i": 0, "s": 1}, {"i": 1, "s": 1}]}
     primary, other = _Scripted(restates), _Scripted(_answer(n=2))
     near = [("m0", "Another fact."), ("m1", "The list now has an entry.")]
     stored = [near, near[:1]]  # each fact's nearest; a memory near both is shown once
@@ -375,7 +376,7 @@ async def test_a_fact_an_earlier_session_stored_is_not_written_again(
     assert world.events == [("evidence", "id-m1", "o", "n", "a")]
 
 
-_PAST = datetime(2000, 1, 1)
+_LATER = datetime(2999, 1, 1)
 
 
 @pytest.mark.asyncio
@@ -384,11 +385,11 @@ _PAST = datetime(2000, 1, 1)
     [
         {"tags": ["repo:r2"]},  # the other session wrote the key for another repository
         {"status": "superseded"},
-        {"expires_at": _PAST},
-        {"valid_to": _PAST},
+        {"expires_at": _LATER},  # served today, and it ends: the fact would end with it
+        {"valid_to": _LATER},
     ],
 )
-async def test_a_key_whose_newest_row_is_not_a_served_row_of_the_repository_is_not_shown(
+async def test_a_key_whose_newest_row_is_not_an_endless_served_row_of_the_repository_is_not_shown(
     monkeypatch: pytest.MonkeyPatch, newer: dict
 ) -> None:
     # Two sessions hold one key. The hit is the older row; the key read returns the newer.
@@ -402,6 +403,30 @@ async def test_a_key_whose_newest_row_is_not_a_served_row_of_the_repository_is_n
     )
     assert len(st.extracted_facts) == 3 and world.searches and not world.events
     assert "<<memory" not in client.calls[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "validity",
+    [
+        {"valid_at": "2020-01-01"},
+        {"valid_to": "2020-01-01"},
+        {"foresight": {"until": None, "duration_days": 14}},
+    ],
+)
+async def test_a_fact_with_its_own_validity_is_compared_with_no_stored_memory(
+    monkeypatch: pytest.MonkeyPatch, validity: dict
+) -> None:
+    world = _StoredWorld(monkeypatch, [_row("m1", "The list now has an entry.", ["repo:r1"])])
+    # The row is read and shown for fact 1; the answer lists fact 0, which read none.
+    client = _Scripted({**_answer(n=2), "stored": [{"i": 0, "s": 0}]})
+    monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
+    st = _state(["source:claude-code", "repo:r1"], _RESTATED[:2])
+    st.extracted_facts[0].update(validity)
+    st = await mp._REGISTRY["loom.verify_durable"](st, {})
+    assert world.batches == [_RESTATED[1:2]] and len(world.searches) == 1
+    assert client.calls[0].count("<<memory S") == 1
+    assert len(st.extracted_facts) == 2 and not world.events
 
 
 @pytest.mark.asyncio

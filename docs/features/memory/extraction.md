@@ -69,11 +69,12 @@ the user asks to forget something, the matching rows are retired and named in
 finds the memory that states it. `loom.verify_durable` reads the stored memories nearest
 each remaining fact: the writer's agent and user, any session, the capture's repository
 (its `repo:` tag, or its `project:` tag when it has none; a capture with neither is not
-narrowed), never a `high` row. Only the first verifier model is sent them. A fact that it
-lists as stated in full by one of them is dropped, and that memory gets one `evidence`
-usage event instead. Every other fact the step keeps goes on to the
-[write-time conflict check](conflicts-and-refusal.md). An `append_only` namespace skips
-this read.
+narrowed), never a `high` row, and only served rows with no `valid_to` and no expiry. Only
+the first verifier model is sent them. A fact that it lists as stated in full by one of
+its own is dropped, and that memory gets one `evidence` usage event instead. Every other
+fact the step keeps goes on to the [write-time conflict check](conflicts-and-refusal.md).
+A fact the extractor gave a `valid_at`, a `valid_to` or a `foresight` window is compared
+with no stored memory, and an `append_only` namespace skips this read.
 
 **Coding captures** are requests whose `extra_tags` carry `source:claude-code`,
 `source:codex` or `source:cursor` (the plugins tag every capture), or a trajectory replay

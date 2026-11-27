@@ -691,12 +691,14 @@ def _repository_tags(state: WorkflowState) -> list[str]:
 
 
 async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) -> list[list[Any]]:
-    """For each fact, the served rows nearest it among this agent's and user's in any
-    session, of the capture's repository when its tags name one: what an earlier session
-    may already have stored of this capture's claims. One `embed_many` call for the
-    capture, and the reads bounded like the conflict checks of the write that follows.
-    None under `append_only`, where every write is its own event, or under a policy that
-    could not be read. Fail-open: with none, every fact goes on to the write."""
+    """For each fact, the served rows with no end nearest it among this agent's and
+    user's in any session, of the capture's repository when its tags name one: what an
+    earlier session may already have stored of this capture's claims. One `embed_many`
+    call for the capture, and the reads bounded like the conflict checks of the write
+    that follows. None for a fact that carries `valid_at`, `valid_to` or `foresight`:
+    the verifier compares text and sees no validity. None under `append_only`, where
+    every write is its own event, or under a policy that could not be read. Fail-open:
+    with none, every fact goes on to the write."""
     import server.memory.store as memory_repo
     from server.embedding import get_embedder
     from server.memory.app.handlers import nearest_existing_rows
@@ -713,7 +715,11 @@ async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) 
         session_id=state.session_id,
     )
     tags = _repository_tags(state)
-    texts = [str(f.get("value") or "").strip()[:1024] for f in facts]
+    dated = ("valid_at", "valid_to", "foresight")
+    texts = [
+        "" if any(f.get(k) for k in dated) else str(f.get("value") or "").strip()[:1024]
+        for f in facts
+    ]
     wanted = list(dict.fromkeys(t for t in texts if t))
     sem = asyncio.Semaphore(int(settings.bulk_conflict_check_concurrency))
 
@@ -723,8 +729,9 @@ async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) 
                 identity, text, STORED_PER_FACT, query_vec=vec, tags=tags
             )
         # A hit is read back as its key's newest row in any session, which may be a
-        # retired or ended one: only a row reads serve now is shown and reinforced.
-        return [r for r in rows if served_now(r)]
+        # retired one. A row that ends is not shown either: a fact dropped for it would
+        # stop being served when it does.
+        return [r for r in rows if served_now(r) and r.valid_to is None and r.expires_at is None]
 
     try:
         # Document vectors, the space the stored rows are in.

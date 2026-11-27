@@ -78,8 +78,9 @@ def existing_context_limit(msgs: list[dict[str, str]], limit: int) -> int:
     target ranks 1st or 2nd of the namespace's facts, so it gets
     `memory_extract_existing_short_limit` rows (`limit` when that is 0). A long transcript
     gets none: shown the namespace's facts, the extractor links a later session's details to
-    them instead of writing them, and the write path's conflict and canonical-merge checks
-    already catch the true duplicates."""
+    them instead of writing them. The write path's checks catch the exact and near-exact
+    repeats, and `loom.verify_durable` drops a coding capture's restatements of a stored
+    memory."""
 
     short = int(settings.memory_extract_existing_short_limit)
     tier = int(settings.memory_extract_compact_prompt_max_chars)

@@ -294,9 +294,8 @@ async def verify(
     for start in range(0, len(facts), size):
         chunk = facts[start : start + size]
         # The stored memories nearest this slice's facts, each once, for the primary alone.
-        near = list(
-            dict.fromkeys(m for of_fact in (stored or [])[start : start + size] for m in of_fact)
-        )
+        own = (stored or [])[start : start + size]
+        near = list(dict.fromkeys(m for of_fact in own for m in of_fact))
         texts = [text for _, text in near]
         answers = list(
             await asyncio.gather(
@@ -313,7 +312,8 @@ async def verify(
         restated = answers[0].stored if answers[0].ok else {}
         for i, f in enumerate(chunk):
             if i not in drops:
-                if i in restated:
+                # A listing counts only for a memory read for that fact.
+                if i in restated and near[restated[i]] in own[i]:
                     dropped.append(dict(f, _verify=ALREADY_STORED, _stored=near[restated[i]][0]))
                 else:
                     kept.append(f)
