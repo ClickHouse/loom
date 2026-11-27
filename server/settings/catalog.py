@@ -4790,7 +4790,8 @@ class ProviderSettings(ModelSettings):
     bedrock_region: str = ""
     # Google Cloud project that owns the Vertex AI requests, required with the Vertex provider.
     vertex_project: str = ""
-    # Vertex AI location, either a region or "global". Required with the Vertex provider.
+    # Vertex AI location: a region, a multi-region ("eu", "us"), or "global".
+    # Required with the Vertex provider.
     vertex_location: str = ""
     # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
     # <host>:11434/v1, llama.cpp's server <host>:8080/v1).

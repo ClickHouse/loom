@@ -27,7 +27,7 @@ DEFAULT_MODEL_BY_PROVIDER = {
     "fake": "fake-echo-1",
 }
 _VERTEX_PROJECT = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,20}")
-_VERTEX_LOCATION = re.compile(r"[a-z][a-z0-9-]{1,61}[a-z0-9]")
+_VERTEX_LOCATION = re.compile(r"eu|us|[a-z][a-z0-9-]{1,61}[a-z0-9]")
 _VERTEX_MODEL = re.compile(r"gemini-[a-z0-9][a-z0-9.-]{0,127}")
 
 
@@ -121,7 +121,9 @@ def vertex_route(model: str, project: str, location: str) -> tuple[str, str]:
     if not _VERTEX_PROJECT.fullmatch(project):
         raise ValueError("LOOM_VERTEX_PROJECT must name a Google Cloud project ID or number")
     if not _VERTEX_LOCATION.fullmatch(location):
-        raise ValueError("LOOM_VERTEX_LOCATION must be global or a Google Cloud region")
+        raise ValueError(
+            "LOOM_VERTEX_LOCATION must be global, a multi-region (eu, us), or a Google Cloud region"
+        )
     prefix = "" if location == "global" else f"{location}-"
     url = (
         f"https://{prefix}aiplatform.googleapis.com/v1/projects/{project}/locations/{location}"

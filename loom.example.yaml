@@ -424,8 +424,8 @@ settings:
   # provider. [restart]
   # vertex_project: ""
 
-  # Vertex AI location, either a region or "global". Required with the Vertex provider.
-  # [restart]
+  # Vertex AI location: a region, a multi-region ("eu", "us"), or "global". Required
+  # with the Vertex provider. [restart]
   # vertex_location: ""
 
   # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's

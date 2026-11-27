@@ -7420,7 +7420,7 @@
         "vertex_location": {
           "default": "",
           "type": "string",
-          "description": "Vertex AI location, either a region or \"global\". Required with the Vertex provider."
+          "description": "Vertex AI location: a region, a multi-region (\"eu\", \"us\"), or \"global\". Required with the Vertex provider."
         },
         "vertex_project": {
           "default": "",
