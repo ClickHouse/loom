@@ -123,6 +123,35 @@ def test_a_successor_is_named_only_on_corroborated_evidence(after: str, state: s
     assert (link.state, link.qualified_name) == (state, "reader::fetch_rows")
 
 
+@pytest.mark.parametrize(
+    ("after", "uncertain", "unmatched"),
+    [
+        # nothing new in its scope: removed, with no doubt
+        (_KEPT, False, False),
+        # new definitions there, none close to it: it is not among them
+        (_KEPT + '\n\n__all__ = ["other"]\n', True, True),
+        (_KEPT + "\n\ndef warm_up(host, port):\n    connect(host, port).ping()\n", True, True),
+        # two close candidates: it may be either
+        (
+            _KEPT + "\n\ndef load_rows(data):\n    return sorted(data, key=len)[:20]\n\n\n"
+            "def read_rows(data):\n    return sorted(data, key=len)[:30]\n",
+            True,
+            False,
+        ),
+        # a small definition with its text under an unrelated name: not it by the name
+        # rule, but its shape is the same, so it may be
+        (_KEPT + "\n\ndef warm_up(data):\n    return sorted(data, key=len)[:10]\n", True, False),
+    ],
+)
+def test_new_definitions_that_are_not_close_leave_the_old_one_unmatched(
+    after: str, uncertain: bool, unmatched: bool
+) -> None:
+    old, new = _side("reader.py", _GONE), _side("reader.py", after)
+    was = next(d for d in old.defs if d.name == "fetch_rows")
+    found = successor(was, old, new)
+    assert (found.definition, found.uncertain, found.unmatched) == (None, uncertain, unmatched)
+
+
 def test_a_namespace_renamed_with_its_file_is_not_a_renamed_class() -> None:
     # namespaces own their members: sharing names proves nothing about an unchanged move
     def program(ns: str, limit: int) -> str:
@@ -495,7 +524,8 @@ def test_a_rival_too_long_to_compare_may_be_the_one_so_no_successor_is_certain()
     old, new = _side("m.py", before), _side("m.py", after)
     was = next(d for d in old.defs if d.name == "fetch_rows")
     found = successor(was, old, new)
-    assert (found.definition, found.uncertain) == (None, True)
+    # not compared, so not ruled out either
+    assert (found.definition, found.uncertain, found.unmatched) == (None, True, False)
 
 
 def test_a_class_renamed_in_a_file_of_out_of_line_methods_is_unsure() -> None:

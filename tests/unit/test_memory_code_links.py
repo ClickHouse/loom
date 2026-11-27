@@ -2717,6 +2717,142 @@ async def test_a_function_moved_into_another_module_and_edited(
     assert [m.link.state for m in moves] == [state]
 
 
+_EXPORTS = '__all__ = ["keep"]\n'
+_EDITED = _ROWS.replace("append(i)", "append(i * 2)")
+# two new definitions in the old file, each close to the old text
+_TWO_CLOSE = (
+    _ROWS.replace("fetch_rows", "load_rows").replace("append(i)", "append(i + 1)")
+    + "\n\n"
+    + _ROWS.replace("fetch_rows", "read_rows").replace("append(i)", "append(i + 2)")
+)
+
+
+@pytest.mark.parametrize(
+    ("added", "moved_to", "was", "ends"),
+    [
+        # an export list is new where it was: not it, so the move is still followed
+        (_EXPORTS, {"pkg/b.py": _EDITED}, "fresh", [("changed", "pkg/b.py", "pkg.b::fetch_rows")]),
+        # new definitions close to it stay in its file: it may be one of them
+        (
+            _TWO_CLOSE,
+            {"pkg/b.py": _EDITED},
+            "fresh",
+            [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")],
+        ),
+        # deleted beside the export list, its name nowhere else: unsure, as before
+        (_EXPORTS, {}, "fresh", [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")]),
+        # its name is new in another module over an unrelated text: unsure
+        (
+            _EXPORTS,
+            {"pkg/b.py": "def fetch_rows(n):\n    return {'unrelated': n}\n"},
+            "fresh",
+            [("unresolved", "pkg/a.py", "pkg.a::fetch_rows")],
+        ),
+        # a link already missing is not handed to it
+        (_EXPORTS, {"pkg/b.py": _EDITED}, "missing", []),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_moved_and_edited_function_is_followed_past_unrelated_new_definitions(
+    monkeypatch, added, moved_to, was, ends
+) -> None:
+    from server.code.domain.anchor import Definition
+
+    keep = "def keep():\n    return 0\n"
+    commits = {
+        ("c1", "pkg/a.py"): _ROWS + "\n\n" + keep,
+        ("c2", "pkg/a.py"): keep + "\n\n" + added,
+    }
+    commits |= {("c2", p): src for p, src in moved_to.items()}
+    files = code_link_pass.RepoReads("o", "code-a")
+
+    async def at(commit, path):
+        src = commits.get((commit, path))
+        return _file(path, src) if src is not None else None
+
+    async def candidates(org, cns, *, names=None, qualified_names=None):
+        return [
+            Definition(p, p[:-3].replace("/", ".") + "::fetch_rows", "fetch_rows") for p in moved_to
+        ]
+
+    _reads(monkeypatch, files, at)
+    _history(monkeypatch, files, commits)
+    monkeypatch.setattr(code_links.code, "candidates", candidates)
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": "pkg.a::fetch_rows",
+            "body_hash": "h",
+            "checked_hash": "h",
+            "state": was,
+            "changed_since": "" if was == "fresh" else "c2",
+            "checked_commit": "c1",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
+    changed = code_link_pass.Range("c1", {"pkg/a.py": "pkg/a.py"} | {p: p for p in moved_to})
+    moves = await code_link_recheck._recheck("o", "code-a", [row], changed, "c2", files)
+    assert [(m.link.state, m.link.path, m.link.qualified_name) for m in moves] == ends
+
+
+@pytest.mark.asyncio
+async def test_a_link_an_earlier_pass_left_unresolved_is_followed_by_a_later_one(
+    monkeypatch,
+) -> None:
+    from server.code.domain.anchor import Definition
+
+    # c2 moved it to pkg/b.py with an edit and left an export list where it was; the
+    # pass at c2 read it unresolved. c3 edits another file.
+    left = "def keep():\n    return 0\n\n\n" + _EXPORTS
+    commits = {
+        ("c1", "pkg/a.py"): _ROWS + "\n\ndef keep():\n    return 0\n",
+        ("c2", "pkg/a.py"): left,
+        ("c2", "pkg/b.py"): _EDITED,
+        ("c3", "pkg/a.py"): left,
+        ("c3", "pkg/b.py"): _EDITED,
+        ("c3", "pkg/c.py"): "c = 1\n",
+    }
+    files = code_link_pass.RepoReads("o", "code-a")
+
+    async def at(commit, path):
+        src = commits.get((commit, path))
+        return _file(path, src) if src is not None else None
+
+    async def candidates(org, cns, *, names=None, qualified_names=None):
+        return [Definition("pkg/b.py", "pkg.b::fetch_rows", "fetch_rows")]
+
+    async def is_ancestor(ancestor, descendant):
+        return ancestor <= descendant  # one line of history
+
+    _reads(monkeypatch, files, at)
+    _history(monkeypatch, files, commits)
+    monkeypatch.setattr(files, "is_ancestor", is_ancestor)
+    monkeypatch.setattr(code_links.code, "candidates", candidates)
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": "pkg.a::fetch_rows",
+            "body_hash": "h",
+            "checked_hash": "h",
+            "state": "unresolved",
+            "changed_since": "c2",
+            "checked_commit": "c1",  # a lost link keeps the commit its code was last read at
+            "memory_id": "m1",
+            "version": 2,
+        }
+    )
+    changed = code_link_pass.Range("c2", {"pkg/c.py": "pkg/c.py"})
+    moves = await code_link_recheck._recheck("o", "code-a", [row], changed, "c3", files)
+    assert [(m.link.state, m.link.path, m.link.qualified_name) for m in moves] == [
+        ("changed", "pkg/b.py", "pkg.b::fetch_rows")
+    ]
+
+
 @pytest.mark.parametrize(
     "theirs",
     [

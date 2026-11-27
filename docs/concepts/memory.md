@@ -467,7 +467,11 @@ A memory's detail in the dashboard lists these links with their state
 A link follows its definition through file moves, renames (with an edit, when the new
 name is related to the old), and its class's rename within the file. A namesake in
 another class or namespace never inherits a link, and a `missing` link comes back only
-when its own name does. A name gone from its file is looked for in the files changed
+when its own name does. A definition moved to another file under its own name with an edit is followed
+there when its text is close to the one the link last read. A new definition left where
+it was stops that search only when it may be the old one under a new name: an export
+list or an unrelated function added beside it does not. A name gone from its file is
+looked for in the files changed
 since its last check as the mirror holds them, beside the index, so a definition moved by
 a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
 followed when the link is rechecked. When `memory_code_links_mirror_naming_files` or more

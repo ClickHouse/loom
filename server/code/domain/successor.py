@@ -5,7 +5,8 @@ A rename with an edit cannot always be told from a removal plus an unrelated add
 a successor is named only on corroborated evidence: one new definition in the same scope
 (or the scope's own successor) close to the old text, and in its place among the
 definitions that stayed. When new definitions there may be it but none certainly is, the
-answer is uncertain, never a removal.
+answer is uncertain, never a removal. When each of them was compared with it and none is
+close, it is not among them (`unmatched`): it may still have moved to another file.
 """
 
 from __future__ import annotations
@@ -47,6 +48,8 @@ class Successor:
     exact: bool = False
     # new definitions in its scope may be it; none certainly is
     uncertain: bool = False
+    # uncertain, and each of those definitions was compared with it and is not close
+    unmatched: bool = False
     # carried by its renamed class: what surrounds it changed, so it reads changed
     carried: bool = False
 
@@ -121,7 +124,7 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
     ):
         if len(pool) == 1 or _in_place(was, close[0], before, now):
             return Successor(close[0], carried=target != scope)
-    if pool or scope_unsure:
+    if close or unknown or scope_unsure:
         return Successor(None, uncertain=True)
     # a rival's rename alone, that is still close (or too long to tell) to this one too:
     # it may be either
@@ -130,7 +133,9 @@ def successor(was: Definition, before: Side, now: Side) -> Successor:
         for d in in_scope
         if d.shape.exact in taken
     )
-    return Successor(None, uncertain=contested)
+    # new definitions there, each compared with it and none close: it is not among them
+    unmatched = bool(pool) and not contested
+    return Successor(None, uncertain=unmatched or contested, unmatched=unmatched)
 
 
 def _renamed_alone(scope: str, target: str, before: Side, now: Side) -> bool:
