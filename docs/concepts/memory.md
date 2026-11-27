@@ -414,8 +414,9 @@ against that repository's trunk:
   `files`;
 - each file the memory names that holds none of those definitions.
 
-A qualified name trunk does not define yet waits for `memory_code_links_pending_days`
-(14), so a memory about unmerged code links once it merges.
+The worker checks pending names in pages and links them when it finds their definitions
+on trunk. It drops names older than `memory_code_links_pending_days` (14 by default),
+measured when the scan starts.
 
 A memory whose key starts with `obs:` is a raw tool observation (`observe.record` writes
 one per tool call, keyed `obs:<session_id>:<sha8>`). It carries its session's `repo:` tag

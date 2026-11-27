@@ -1,0 +1,60 @@
+---
+import loomLogo from "../public/loom.svg?raw";
+import { documentationOverview } from "./documentation-link";
+import { frameCopy } from "./site-frame-copy";
+import { siteLocales, type SiteLocale } from "./site-locales";
+import "./click-ui-dark.css";
+
+interface Props {
+  locale?: SiteLocale;
+}
+
+const language = Astro.props.locale ?? Astro.currentLocale ?? "en";
+const locale = Object.hasOwn(siteLocales, language) ? (language as SiteLocale) : "en";
+const { href } = siteLocales[locale];
+const overview = documentationOverview(locale);
+const current = Astro.url.pathname.replace(/\/$/, "") === overview.href;
+---
+
+<div class="docs-brand">
+  <a class="brand-home" href={href} aria-label="ClickHouse Loom" lang="en" dir="ltr">
+    <span class="brand-mark" aria-hidden="true" set:html={loomLogo} />
+    <span><span class="brand-publisher">ClickHouse </span><strong>Loom</strong></span>
+  </a>
+  <span class="brand-divider" aria-hidden="true"></span>
+  <a class="docs-overview" href={overview.href} hreflang={overview.hreflang} aria-current={current ? "page" : undefined}>{frameCopy[locale].docs}</a>
+</div>
+
+<style>
+  .docs-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .brand-home, .docs-overview {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+
+  .brand-home {
+    gap: 0.45rem;
+    min-width: 0;
+    color: var(--blume-foreground);
+    font-size: 1.0625rem;
+    font-weight: 560;
+    letter-spacing: -0.025em;
+  }
+
+  .brand-home strong { font-weight: 730; }
+  .brand-home > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+  .brand-mark, .brand-mark :global(svg) { display: block; width: 1.75rem; height: 1.75rem; }
+  .brand-mark, .brand-divider, .docs-overview { flex-shrink: 0; }
+  .brand-divider { width: 1px; height: 1rem; background: var(--blume-border); }
+  .docs-overview { color: var(--blume-muted-foreground); font-size: 0.875rem; }
+  .docs-overview:is(:hover, [aria-current="page"]) { color: var(--blume-foreground); }
+  @media (max-width: 34rem) { .brand-publisher { display: none; } }
+</style>

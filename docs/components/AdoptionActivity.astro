@@ -49,7 +49,7 @@ const hasEstimate = rows.some(({ estimate }) => estimate !== null);
   <figcaption><time datetime={start}>{start}</time><time datetime={end}>{end}</time></figcaption>
   <details>
     <summary>View activity data</summary>
-    <div class="table-scroll">
+    <div class="table-scroll" tabindex="0" role="region" aria-label="Activity data table">
       <table>
         <thead><tr>
           <th scope="col">Period start (UTC)</th><th scope="col">Reporting</th><th scope="col">Active</th>
@@ -75,14 +75,14 @@ const hasEstimate = rows.some(({ estimate }) => estimate !== null);
   .legend li span { width: 0.9rem; height: 0.65rem; border-radius: 2px; }
   .actual-key, .volume { background: var(--accent); }
   .estimate-key, .volume.projection {
-    background: repeating-linear-gradient(-50deg, #716331 0 2px, #332e20 2px 5px);
-    border: 1px solid #877121;
+    background: repeating-linear-gradient(-50deg, color-mix(in srgb, var(--accent), var(--surface) 60%) 0 2px, var(--surface) 2px 5px);
+    border: 1px solid color-mix(in srgb, var(--accent), var(--surface) 60%);
   }
-  .legend li .active-key { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: #a5c1ff; }
+  .legend li .active-key { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--click-alert-color-text-info); }
   .plot { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.55rem; }
   .scale { display: flex; flex-direction: column; justify-content: space-between; font-size: 0.78rem; }
   .scale.requests { color: var(--accent); }
-  .scale.active { color: #a5c1ff; }
+  .scale.active { color: var(--click-alert-color-text-info); }
   .columns {
     display: grid;
     grid-template-columns: repeat(var(--periods), minmax(0, 1fr));
@@ -99,11 +99,11 @@ const hasEstimate = rows.some(({ estimate }) => estimate !== null);
     width: clamp(2px, calc(60vw / var(--periods)), 8px);
     aspect-ratio: 1;
     border-radius: 50%;
-    background: #a5c1ff;
-    outline: 1px solid #141413;
+    background: var(--click-alert-color-text-info);
+    outline: 1px solid var(--surface);
     transform: translate(-50%, 50%);
   }
-  .point.current { border: 1px solid #a5c1ff; background: #141413; }
+  .point.current { border: 1px solid var(--click-alert-color-text-info); background: var(--surface); }
   figcaption { display: flex; justify-content: space-between; margin-top: 0.5rem; color: var(--muted); font-size: 0.82rem; }
   details { margin-top: 0.9rem; }
   summary { cursor: pointer; font-size: 0.88rem; }

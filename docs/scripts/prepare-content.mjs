@@ -311,6 +311,7 @@ const excluded = new Set([
   "components",
   "pages",
   "blume.config.ts",
+  "components.ts",
   "package-lock.json",
   "package.json",
   "vercel.json",
@@ -342,7 +343,7 @@ async function prepareContent() {
     const [locale, ...source] = preparedPath.split("/");
     const sourcePath = source.join("/");
     const localized = locales.includes(locale);
-    const linked = localized ? rewritePublishedDocLinks(text, englishSources) : text;
+    const linked = localized ? prepareTranslatedMarkup(text, englishSources) : text;
     const rendered = localized && sourcePath === "index.md" ? prepareLocalizedLandingDemo(linked) : linked;
     const original = localized ? `i18n/${locale}/docs/${sourcePath}` : `docs/${preparedPath}`;
     const prepared = withContentMetadata(normalizeTranslatedTitle(rendered, localizedSeo[sourcePath]?.[locale]), {
@@ -370,10 +371,10 @@ async function prepareContent() {
     text = rewriteSourceLinks(text, relative(content, file));
     writeFileSync(file, text);
   }
-  await prepareDocsScreenshot();
+  await prepareDocsLandingMedia();
 }
 
-async function prepareDocsScreenshot() {
+async function prepareDocsLandingMedia() {
   const landing = join(content, "index.md");
   const text = readFileSync(landing, "utf8");
   const screenshot = /^!\[([^\n]*)\]\(assets\/screenshots\/document-search\.webp\)$/m;
@@ -390,18 +391,25 @@ async function prepareDocsScreenshot() {
       const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 12);
       const name = `document-search-${candidate}.${hash}.webp`;
       writeFileSync(join(docsMedia, name), bytes);
-      return { url: `/docs/docs-media/${name}`, width: candidate };
+      return { path: `/docs-media/${name}`, width: candidate };
     }),
   );
-  const fullSize = candidates.at(-1).url;
-  const srcset = candidates.map(({ url, width }) => `${url} ${width}w`).join(", ");
-  // Match the documentation column's maximum width and mobile gutters.
-  const sizes = "(max-width: 45rem) calc(100vw - 3rem), 42rem";
-  const markup = `<img src="${fullSize}" srcset="${srcset}" sizes="${sizes}" alt="${escape(match[1])}" width="${width}" height="${height}" loading="lazy" decoding="async" data-zoom-src="${fullSize}" />`;
-  writeFileSync(
-    landing,
-    text.replace(screenshot, () => markup),
-  );
+  const fullSize = candidates.at(-1).path;
+  const srcset = candidates.map(({ path, width }) => `/docs${path} ${width}w`).join(", ");
+  const sizes = "(max-width: 48rem) calc(100vw - 3rem), 54rem";
+  const markup = `<img src="${fullSize}" srcset="${srcset}" sizes="${sizes}" alt="${escape(match[1])}" width="${width}" height="${height}" loading="lazy" decoding="async" data-zoom-src="/docs${fullSize}" />`;
+  const demo = /^\[([^\n]+)\]\((assets\/screenshots\/clip-assistant-answer\.webm)\)$/m;
+  const prepared = text
+    .replace(screenshot, () => markup)
+    .replace(demo, (_, label, media) =>
+      [
+        "<details>",
+        `<summary>${escape(label)}</summary>`,
+        `<video src="${media}" controls preload="none" muted playsinline width="100%" aria-label="Ask AI answering a question about refunds with cited sources"><a href="${media}">Download the cited-answer clip</a></video>`,
+        "</details>",
+      ].join("\n"),
+    );
+  writeFileSync(landing, prepared);
 }
 
 export function prepareLocalizedLandingDemo(text) {
@@ -440,12 +448,19 @@ function publishedDocUrl(url, englishSources) {
   return `${docsSite}${slug ? `/${slug}` : ""}${fragment}`;
 }
 
-/** Keep the translator's choice of English fallback and send it to the published page. */
-export function rewritePublishedDocLinks(text, englishSources) {
+/** Keep translated document links and literal examples readable by Blume. */
+export function prepareTranslatedMarkup(text, englishSources) {
   const pending = [fromMarkdown(text)];
   const replacements = [];
   for (const node of pending) {
     if (node.children) pending.push(...node.children);
+    if (node.type === "inlineCode" && node.position.start.line !== node.position.end.line) {
+      // Blume's link validator masks inline code one line at a time.
+      const { start, end } = node.position;
+      const value = text.slice(start.offset, end.offset).replace(/\r?\n/g, " ");
+      replacements.push({ offset: start.offset, end: end.offset, value });
+      continue;
+    }
     if (node.type !== "link") continue;
     const url = publishedDocUrl(node.url, englishSources);
     if (!url) continue;
@@ -454,14 +469,14 @@ export function rewritePublishedDocLinks(text, englishSources) {
     const searchFrom = text[start.offset] === "<" ? start.offset : (labelEnd ?? start.offset);
     const offset = text.indexOf(node.url, searchFrom);
     if (offset >= 0 && offset + node.url.length <= end.offset) {
-      replacements.push({ offset, end: offset + node.url.length, url });
+      replacements.push({ offset, end: offset + node.url.length, value: url });
     }
   }
 
   let written = "";
   let cursor = 0;
-  for (const { offset, end, url } of replacements.sort((a, b) => a.offset - b.offset)) {
-    written += text.slice(cursor, offset) + url;
+  for (const { offset, end, value } of replacements.sort((a, b) => a.offset - b.offset)) {
+    written += text.slice(cursor, offset) + value;
     cursor = end;
   }
   return written + text.slice(cursor);

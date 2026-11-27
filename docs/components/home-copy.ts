@@ -38,15 +38,15 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
       "Shared memory for Claude Code, Codex, Cursor, and autonomous agents. Recall lessons across sessions, find cited documents, and trace code.",
     deployment: "Open source · Self-hosted on ClickHouse",
     heading: "Shared memory for AI agents",
-    lead: "Loom carries decisions and lessons across sessions. Agents can retrieve what the team learned, check cited documents, and see the source code each lesson applies to.",
-    run: "Run Loom",
+    lead: "Give agents access to past decisions, cited documents, and the source code behind each lesson.",
+    run: "Install Loom",
     product: "Explore the product",
     connect: "Connect coding agents",
     sdk: "Build with the SDKs",
     screenshotAlt:
       "Loom dashboard showing a payment decision linked to its function and a warning when related code has changed",
     screenshotCaption: "A saved decision points to the code it applies to.",
-    contextHeading: "The context behind the next answer",
+    contextHeading: "What agents can retrieve",
     contextDetail:
       "Agents can retrieve all three kinds of context through MCP, HTTP, or the Python and TypeScript SDKs.",
     memory: {
