@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryDetail, MemoryListEntry, MemoryListResponse, MyNamespaceEntry, WhoAmI } from "../api";
 import { ApiError } from "../lib/errors";
 import { useStore } from "../lib/state";
+import { readPlace, rememberPlace, restorePlace } from "../lib/place";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { Recent } from "./Recent";
 import { ToastViewport } from "../components/Toast";
@@ -578,6 +579,18 @@ describe("Memories list chrome", () => {
       expect(open).toHaveLength(1);
       expect(open[0]!.contains(boxes[1]!)).toBe(true);
       useStore.setState({ inspectedMemoryKey: null, inspectedAgent: "", inspectedOwner: null });
+    });
+
+    it("restores focus to the same writer when returning to the list", async () => {
+      const boxes = await show(two());
+      const [first, second] = boxes.map(
+        (box) => box.closest(".list-row")!.querySelector<HTMLElement>("[data-row-open]")!,
+      );
+      second!.focus();
+      rememberPlace({ key: null, agent: "" });
+      first!.focus();
+      restorePlace(readPlace(history.state), false);
+      await waitFor(() => expect(second).toHaveFocus());
     });
   });
 

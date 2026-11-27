@@ -1000,7 +1000,7 @@ function MemoryList() {
                     key={rowId}
                     data-card=""
                     // Back to this page focuses the card that had the focus.
-                    data-focus-key={`memory:${e.memory_key}`}
+                    data-focus-key={`memory:${rowId}`}
                     checked={isSelected}
                     active={isActive}
                     deleted={isTombstoned}

@@ -136,7 +136,7 @@ const FOCUSABLE = "a[href], button, input, select, textarea, [tabindex]";
 /** The element a focus key names, or inside it the row's open button (a list row is
  *  keyed; its stretched `data-row-open` button takes the focus, not its checkbox), else
  *  the first focusable. */
-function keyedTarget(key: string): HTMLElement | null {
+export function keyedTarget(key: string): HTMLElement | null {
   const el = document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`);
   if (!el) return null;
   if (el.matches(FOCUSABLE)) return el;

@@ -52,7 +52,7 @@ import {
 } from "../api";
 import { LockMemoryDialog, RedactVersionDialog, RejectMemoryDialog } from "../flows/MemoryReasonDialogs";
 import { navigationHref, useStore } from "../lib/state";
-import { openerUsable } from "../lib/place";
+import { keyedTarget, openerUsable } from "../lib/place";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { isPublicationPending } from "../lib/errors";
 import { AgentBadge } from "./AgentBadge";
@@ -239,10 +239,12 @@ export function MemoryInspector({
   // first render — before Radix moves focus in — and refocused on close. A
   // Radix modal Dialog otherwise restores to its Trigger, which this
   // drawer has none of, so focus would fall to <body>.
-  const [opener] = useState<HTMLElement | null>(() => {
-    if (typeof document === "undefined") return null;
-    const el = document.activeElement;
-    return el instanceof HTMLElement ? el : null;
+  const [{ opener, focusKey }] = useState(() => {
+    const el = typeof document === "undefined" ? null : document.activeElement;
+    return {
+      opener: el instanceof HTMLElement ? el : null,
+      focusKey: el?.closest("[data-focus-key]")?.getAttribute("data-focus-key"),
+    };
   });
   const [openedAt] = useState(() => useStore.getState().navSeq);
   // Set by "Ask about this", which closes the drawer for the assistant panel's field.
@@ -1023,7 +1025,10 @@ export function MemoryInspector({
             e.preventDefault();
             // A navigation since the drawer opened (a tag, a graph link) moved the focus to
             // its page; an opener in an assistant panel that closed is hidden.
-            if (!leaving.current && useStore.getState().navSeq === openedAt && openerUsable(opener)) opener?.focus();
+            if (leaving.current || useStore.getState().navSeq !== openedAt) return;
+            // Refreshed lists can replace the opener while the drawer is open.
+            const target = opener?.isConnected ? opener : focusKey ? keyedTarget(focusKey) : null;
+            if (openerUsable(target)) target?.focus();
           }}
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}
