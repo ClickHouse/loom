@@ -17,6 +17,10 @@ claimed again forever. A held call (the org switched off, the enqueuer's
 identity refused, asked to wait or unread) marks the row `held` until the
 hold ends, no attempt spent.
 
+What a replay spent on model calls is one `worker.extraction_queue` ledger row
+under the request's org, namespace, agent, user and session, however the
+replay ended, so it counts toward that namespace's and user's daily caps.
+
 On by default: `defer` is opt-in per call, so an enabled worker with an
 empty queue costs one indexed SELECT per interval and no LLM call. Turning
 the worker off while callers defer strands their saves as `pending`.
@@ -27,6 +31,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,6 +42,8 @@ import httpx
 from server.core.errors import caller_text
 from server.llm.gateway import GatewayUnavailable
 from server.memory.app import extraction_queue as q
+from server.observability import cost_accumulator
+from server.workers.cost_event import emit_worker_cost_event_for
 from server.workers.holds import hold_seconds
 from server.workers.status import record_pass
 
@@ -155,6 +164,27 @@ def unreachable(e: BaseException) -> bool:
     return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (502, 503, 504)
 
 
+@contextmanager
+def _billed_to(row: dict[str, Any]) -> Iterator[None]:
+    """Write what one replay spent as a ledger row under its request's identity,
+    however the replay ends. The accumulator is the row's own: namespaces replay at
+    once, and one they shared would bill a tenant for another's calls."""
+    started = time.monotonic()
+    cost_accumulator.begin_op()
+    try:
+        yield
+    finally:
+        emit_worker_cost_event_for(
+            org=str(row.get("org") or "-"),
+            namespace=str(row.get("namespace") or "-"),
+            agent=str(row.get("agent") or "-"),
+            user_id=str(row.get("user_id") or "-"),
+            session_id=str(row.get("session_id") or "-"),
+            operation="worker.extraction_queue",
+            started=started,
+        )
+
+
 def _config_from_settings() -> ExtractionQueueConfig:
     from server.settings import settings
     from server.workers.registry import pass_deadline_seconds
@@ -247,7 +277,8 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
         # Serial inside the namespace: the linking dependency runs this way.
         async with sem:
             for row in group:
-                await _replay_one(row)
+                with _billed_to(row):
+                    await _replay_one(row)
 
     with record_pass("extraction_queue") as rec:
         # A switched-off org's requests stay pending until it is switched back

@@ -42,8 +42,11 @@ flowchart LR
 3. **Worker spend.** A worker pass that spent calls `emit_worker_cost_event_for`
    (`server/workers/cost_event.py`): an `agent_events` row with `kind='worker'` under the
    `(org, namespace)` the work was for, plus the `loom.cost.usd` and `loom.tokens`
-   counters. `LOOM_WORKER_LEDGER_ROWS` (on) also writes a `worker.<name>.pass` row for each
-   pass that spent or failed, with what the pass itself drained on the same counters.
+   counters. The replay of a deferred `memory.set_from_messages` writes one
+   `worker.extraction_queue` row for each request, with the request's agent, user and
+   session as well. `LOOM_WORKER_LEDGER_ROWS` (on) also writes a `worker.<name>.pass` row
+   for each pass that spent or failed, with what the pass itself drained on the same
+   counters.
 4. **Roll-up.** A refreshable materialized view appends to `loom.agent_cost_rollup_daily`
    (`AggregatingMergeTree` on `(org, namespace, agent, day, operation)`) every minute with a
    high-water mark `ts_hwm`. `cost.summary` merges the roll-up with the live tail of
@@ -105,7 +108,9 @@ both means uncapped.
 0 on both tiers disables user caps. `memory.ask`, `code.ask`, `knowledge.synthesize`
 and `code.search` query expansion check both ceilings; `memory.ask` uses their largest spend fraction for budget-pressure
 routing, including whole-document synthesis. Workers and operations that record
-cost without a named user remain namespace-only. These are soft spend controls:
+cost without a named user remain namespace-only. Deferred extraction records each
+request's user, so its spend counts toward that user's allowance and the namespace's.
+These are soft spend controls:
 concurrent calls can overshoot, and the logical user is the request's cost attribution,
 not the authenticated account or a billing identity.
 
