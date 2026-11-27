@@ -1,4 +1,4 @@
-"""Retained member definitions read by the source in an edit-context batch."""
+"""Verified source for member reads in edit context."""
 
 from __future__ import annotations
 
