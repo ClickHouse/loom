@@ -1324,6 +1324,47 @@ async def test_a_repository_another_host_holds_is_skipped(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_repository_whose_recheck_fails_makes_the_pass_partial(monkeypatch) -> None:
+    """A repository whose recheck raises keeps its links at the head last checked: the
+    pass lists the error, rechecks the next repository, and is a partial failure to the
+    supervisor (its failure streak and `loom.worker.partial_failures`), not a clean pass."""
+    import itertools
+    from contextlib import asynccontextmanager
+
+    from server.workers import pass_context
+
+    async def namespaces():
+        return [("o", "code-a"), ("o", "code-b")]
+
+    ran: list[str] = []
+
+    async def recheck(org, cns, budget, result):
+        ran.append(cns)
+        if cns == "code-a":
+            raise RuntimeError("mirror unreadable")
+
+    @asynccontextmanager
+    async def lease(name):
+        yield
+
+    monkeypatch.setattr(code_links.store, "code_namespaces", namespaces)
+    monkeypatch.setattr(code_link_recheck, "_recheck_repository", recheck)
+    monkeypatch.setattr(code_link_pass.repository_locks, "lease", lease)
+    monkeypatch.setattr(code_link_recheck, "repo_for_namespace", lambda org, cns: object())
+    monkeypatch.setattr(code_link_recheck, "_passes", itertools.count())
+    result = code_link_pass.PassResult()
+    ctx = pass_context.begin("memory_code_links")
+    try:
+        await code_link_recheck.recheck_all(result)
+    finally:
+        pass_context.clear()
+    assert ran == ["code-a", "code-b"]
+    assert result.errors == ["recheck o/code-a: mirror unreadable"]
+    assert ctx.count == 1
+    assert ctx.first() == ("code-a:recheck", "RuntimeError", "mirror unreadable")
+
+
+@pytest.mark.asyncio
 async def test_links_of_a_repository_no_longer_configured_are_left_alone(monkeypatch) -> None:
     async def namespaces():
         return [("o", "code-gone"), ("o", "code-a")]
@@ -4047,8 +4088,16 @@ async def test_a_linking_failure_still_rechecks_every_repository(monkeypatch) ->
     monkeypatch.setattr(code_links, "queue_lease", queue_lease)
     monkeypatch.setattr(worker, "_link_writes", link_writes)
     monkeypatch.setattr(code_link_recheck, "recheck_all", recheck_all)
-    assert (await worker.run_pass())["errors"] == 1
+    from server.workers import pass_context
+
+    ctx = pass_context.begin("memory_code_links")
+    try:
+        assert (await worker.run_pass())["errors"] == 1
+    finally:
+        pass_context.clear()
     assert len(rechecked) == 1 and "TimeoutError" in rechecked[0].errors[0]
+    # the failed linking leg is the supervisor's partial failure, not a clean pass
+    assert ctx.count == 1 and ctx.first() == ("link", "TimeoutError", "backfill page timed out")
 
 
 @pytest.mark.asyncio
