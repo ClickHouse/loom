@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 import server.transport.mcp as mcp
 import server.transport.mcp_call as mcp_call
 from server.code.domain.scope import reset_code_scope, set_code_scope
+from server.insights.app.mentor import named_for_caller
 from server.operations.capabilities import capability_snapshot
 from server.operations.reach import catalogue_facets
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
@@ -527,12 +528,14 @@ def test_a_tool_the_listing_of_code_tools_alone_leaves_out_stays_callable(monkey
     """`loom_op`, a memory write and grep's unlisted arguments run on a compact
     `coding` connection bound to a repository."""
     seen: dict[str, Any] = {}
+    hint = "Save with memory.set, read callers with code.callers."
 
     def stub(tool: str) -> None:
         op = mcp_call.TOOLS_BY_NAME[tool]
 
         async def handler(inp: Any) -> Any:
             seen[op.name] = inp
+            seen["hint"] = named_for_caller(hint)
             return op.output_model.model_construct()
 
         monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, tool, dataclasses.replace(op, handler=handler))
@@ -583,6 +586,8 @@ def test_a_tool_the_listing_of_code_tools_alone_leaves_out_stays_callable(monkey
         "next",
         ["py"],
     )
+    # a mentor hint the handler renders names only what this listing carries
+    assert seen.pop("hint") == "Save with memory.set, read callers with loom_code_callers."
     fact = {"memory_key": "repo/decision/listing", "value": "kept"}
     call("loom_memory_set", fact)
     assert seen.pop("memory.set").memory_key == fact["memory_key"]
@@ -599,10 +604,12 @@ def test_a_tool_the_listing_of_code_tools_alone_leaves_out_stays_callable(monkey
     prompt = post("prompts/get", {"name": "loom"})["messages"][0]["content"]["text"]
     resource = post("resources/read", {"uri": "loom://primer"})["contents"][0]["text"]
     assert prompt == resource == primer
-    # a hidden op named through `loom_op` is refused in this listing's names
-    refused = post("tools/call", {"name": "loom_op", "arguments": {"op": "memory.bulk_set"}})
-    assert refused["isError"]
-    assert refused["structuredContent"]["instead"].startswith("call memory.set once per fact")
+    # a hidden op, called by its tool name or through `loom_op`, is refused in this
+    # listing's names
+    for name, arguments in (("loom_memory_bulk_set", {}), ("loom_op", {"op": "memory.bulk_set"})):
+        refused = post("tools/call", {"name": name, "arguments": arguments})
+        assert refused["isError"]
+        assert refused["structuredContent"]["instead"].startswith("call memory.set once per fact")
 
 
 @pytest.mark.parametrize(

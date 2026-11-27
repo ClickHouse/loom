@@ -351,7 +351,7 @@ async def _loom_primer_text(
         return _assistant_primer(await _caller_defaults(auth, assistant=True))
     defaults = await _caller_defaults(auth)
     if code_only_listing(toolset, schema_profile):
-        rules = _coding_instructions(toolset, defaults, compact=True, schema_profile=schema_profile)
+        rules = _coding_instructions(toolset, defaults, schema_profile=schema_profile)
     else:
         rules = _loom_rules(toolset, defaults)
     return rules + await _profile_section(auth, defaults)
@@ -565,11 +565,8 @@ async def _initialize_instructions(
         return _assistant_primer(await _caller_defaults(auth, assistant=True))
     defaults = await _caller_defaults(auth)
     coding = "coding" in toolset_parts(toolset)
-    compact = toolset == "coding" and (
-        resolve_schema_profile(schema_profile, settings.mcp_schema_profile) == "compact"
-    )
     rules = (
-        _coding_instructions(toolset, defaults, compact=compact, schema_profile=schema_profile)
+        _coding_instructions(toolset, defaults, schema_profile=schema_profile)
         if coding
         else _loom_rules(toolset, defaults)
     )
@@ -609,14 +606,17 @@ def _coding_instructions(
     toolset: str | None,
     defaults: dict[str, Any] | None = None,
     *,
-    compact: bool = False,
     schema_profile: str | None = None,
 ) -> str:
     """Code and memory routing for coding clients, including clients without hooks.
-    ``compact`` says the resolved profile is compact; ``schema_profile`` is the
-    URL's own value. A connection that lists the code tools alone
-    (`code_only_listing`) gets the code routing alone, since its listing carries
-    no memory tool and no `loom_op`."""
+    ``schema_profile`` is the URL's own value. A connection that lists the code
+    tools alone (`code_only_listing`) gets the code routing alone, since its
+    listing carries no memory tool and no `loom_op`."""
+    from server.settings import settings
+
+    compact = resolve_toolset(toolset, settings.mcp_toolset) == "coding" and (
+        resolve_schema_profile(schema_profile, settings.mcp_schema_profile) == "compact"
+    )
     tool = _tool_refs(toolset)
     routes = [
         f"{tool[name]} {purpose}"

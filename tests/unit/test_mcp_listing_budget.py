@@ -579,7 +579,7 @@ def test_the_listing_of_code_tools_alone_stays_within_its_budget():
     bound = set_code_scope("acme/code-repo")
     try:
         assert _tok({"tools": _listing("coding", False, "compact")}) <= 3_700
-        routing = _coding_instructions("coding", defaults, compact=True, schema_profile="compact")
+        routing = _coding_instructions("coding", defaults, schema_profile="compact")
         assert len(routing) // 4 <= 200
     finally:
         reset_code_scope(bound)

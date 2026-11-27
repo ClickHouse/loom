@@ -117,8 +117,9 @@ def test_compact_coding_primer_preserves_scope_and_profile() -> None:
 def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) -> None:
     defaults = {"org": "project", "namespace": "history", "agent": "coding"}
     # a compact profile the URL did not ask for: the deployment's default
-    bound = mcp_primer._coding_instructions("coding", defaults, compact=True)
-    standard = mcp_primer._coding_instructions("coding", defaults)
+    monkeypatch.setattr(settings, "mcp_schema_profile", "compact")
+    bound = mcp_primer._coding_instructions("coding", defaults)
+    standard = mcp_primer._coding_instructions("coding", defaults, schema_profile="standard")
     assert "First step of each task" not in bound
     assert "For prior decisions or procedures beyond linked code lessons" in bound
     assert "For prior decisions or procedures beyond linked code lessons" in standard
@@ -128,9 +129,9 @@ def test_bound_coding_primers_use_task_pack_for_additional_history(monkeypatch) 
     for primer in (bound, standard, activation):
         assert primer.index(reuse) < primer.index("with the task as `query`. Skip it when")
     assert "first with the task" not in activation
-    assert reuse not in mcp_primer._coding_instructions("coding", compact=True)
+    assert reuse not in mcp_primer._coding_instructions("coding")
     set_code_scope(None)
-    unbound = mcp_primer._coding_instructions("coding", defaults, compact=True)
+    unbound = mcp_primer._coding_instructions("coding", defaults)
     assert "First step of each task" in unbound
     assert "`loom_op(" in unbound and "`loom_search`" in unbound
 
@@ -139,9 +140,7 @@ def test_bound_compact_coding_primer_routes_code_tools_alone() -> None:
     """Its listing carries the code tools alone, so the text names no other tool."""
 
     def routing(defaults: dict[str, str] | None) -> str:
-        return mcp_primer._coding_instructions(
-            "coding", defaults, compact=True, schema_profile="compact"
-        )
+        return mcp_primer._coding_instructions("coding", defaults, schema_profile="compact")
 
     defaults = {"org": "project", "namespace": "history", "agent": "coding"}
     reuse = "For a repeat source lookup, set `include_lessons: false`"
