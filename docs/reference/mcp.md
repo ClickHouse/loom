@@ -64,10 +64,10 @@ no profile. The lists of a `coding` connection whose URL carries
 `schema_profile=compact` follow that header, so their `cacheScope` is `private`
 with the header or without it.
 
-With the automatic loading policy, compact coding connections load
-`code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
-definition name or location to read implementation, indexed tests, and linked
-lessons together. Supply multiple literal clues from the same definition to
+With the automatic loading policy, coding connections load
+`code.edit_context` and `code.grep` up front on every profile. Use
+`code.edit_context` with a definition name or location to read implementation,
+indexed tests, and linked lessons together. Supply multiple literal clues from the same definition to
 resolve it when individual clues also appear in other definitions. A method
 with no direct tests or lessons can receive
 examples or notes labeled with its verified owning type. Clients can discover

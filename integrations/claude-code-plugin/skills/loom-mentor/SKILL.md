@@ -6,14 +6,9 @@ description: >
   Also use when a loom hint (a tool result's `hint`, an `X-Loom-Hint` header or
   a "Loom mentor" line) names a plane or op you do not know how to use, or
   when the user asks "what can loom do", "how should I be using loom", "am I
-  using loom well", "loom mentor". A hint that already names the op to call
-  needs no skill: call it or carry on with the task. Maps a situation to the
-  loom plane and op that fits — code index, tracker record, documents,
-  records, working memory, offload, the entity graph, runs, decisions,
-  procedures, duplicates, conflicts, bisect — and says what to do about each
-  hint code. NOT for deciding the shape of one write (loom-memory), NOT for
-  grep-vs-code.* in an indexed repo (loom-code), NOT for reworking a
-  namespace that already holds the wrong shape (loom-optimize).
+  using loom well". A hint that already names the op to call needs no skill.
+  NOT for the shape of one write (loom-memory), and NOT for grep-vs-code.* in
+  an indexed repo (loom-code).
 ---
 
 # loom-mentor — the store's advice, and where each plane lives

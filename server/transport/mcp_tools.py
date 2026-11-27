@@ -518,15 +518,14 @@ def listed_ops(toolset: str | None) -> list[Operation]:
     return out
 
 
-def _upfront_tools(configured: str, toolset: str, profile: str) -> set[str]:
+def _upfront_tools(configured: str, toolset: str) -> set[str]:
     if configured.strip().casefold() != "auto":
         return {name.strip() for name in configured.split(",") if name.strip()}
-    if toolset == "coding" and profile == "compact":
+    if toolset == "coding":
+        # A client sends an upfront schema with every request: a coding connection
+        # loads the pre-edit read and literal search, and discovery finds the rest.
         return {"code.edit_context", "code.grep"}
-    names = {"code.search", "code.symbol", "code.grep"}
-    if toolset != "coding":
-        names.update({"search.query", LOOM_OP_TOOL_NAME})
-    return names
+    return {"code.search", "code.symbol", "code.grep", "search.query", LOOM_OP_TOOL_NAME}
 
 
 def _with_loading_hints(descriptors: list[dict[str, Any]], requested: set[str]) -> None:
@@ -661,9 +660,7 @@ async def _tools_descriptor(
         descriptors.append(descriptor)
     if not is_assistant(toolset) and not code_only:
         descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
-    _with_loading_hints(
-        descriptors, _upfront_tools(settings.mcp_always_load_tools, toolset, profile)
-    )
+    _with_loading_hints(descriptors, _upfront_tools(settings.mcp_always_load_tools, toolset))
     # only the full profile sends output schemas
     schemas = ("inputSchema", "outputSchema") if profile == "full" else ("inputSchema",)
     for d in descriptors:

@@ -408,12 +408,7 @@ def test_coding_profiles_load_source_tools_upfront(monkeypatch, profile) -> None
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
     assert len(tools) == 23
     flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
-    expected = (
-        {"loom_code_edit_context", "loom_code_grep"}
-        if profile == "compact"
-        else {"loom_code_symbol", "loom_code_grep", "loom_code_search"}
-    )
-    assert flagged == expected
+    assert flagged == {"loom_code_edit_context", "loom_code_grep"}
     assert {"loom_op", "loom_search", "loom_code_search"} <= {tool["name"] for tool in tools}
     edit = next(tool for tool in tools if tool["name"] == "loom_code_edit_context")
     schema = edit["inputSchema"]
