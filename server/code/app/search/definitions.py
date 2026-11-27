@@ -16,12 +16,12 @@ from server.code.store.index import CodeRepo, is_noise_path
 logger = logging.getLogger(__name__)
 
 # Names read from one query, and name-table keys read per name or qualified spelling.
-_MAX_NAMES = 32
+_MAX_NAMES = 32  # not a setting: a bound on one query's reads, the same on every deployment
 _SYMBOLS_PER_NAME = 32
 # A name defined in more places than this does not say where: `get`, `save`.
-_MAX_DEFINITIONS_PER_NAME = 3
+_MAX_DEFINITIONS_PER_NAME = 3  # not a setting: what an ambiguous name is, not a capacity
 # Names tried for a chunk: a field or a constant has a symbol row and no chunk of its own.
-_MAX_NAMES_TRIED = 4
+_MAX_NAMES_TRIED = 4  # not a setting: a bound on one query's chunk read
 
 
 def named_definitions(
