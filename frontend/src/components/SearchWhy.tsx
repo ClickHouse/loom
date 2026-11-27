@@ -74,7 +74,7 @@ function Ranked({ hit, rank }: { hit: SearchHit; rank: number }) {
     <>
       {hit.use_guidance && (
         <>
-          <p>Matched text: {hit.content_excerpt}</p>
+          {hit.content_excerpt?.trim() && <p>Matched text: {hit.content_excerpt}</p>}
           <GuidanceLabel hit={hit} reasons />
         </>
       )}

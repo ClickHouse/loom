@@ -37,6 +37,14 @@ describe("SearchWhy", () => {
     expect(why).toHaveTextContent("code recheck needed, human review current");
   });
 
+  it("shows suggested use without a matched-text line when the excerpt is empty", async () => {
+    const guidance = { next_step: "recheck_source", reasons: ["code_recheck_needed"] };
+    render(<SearchWhy rank={1} hit={hit({ content_excerpt: "", use_guidance: guidance })} />);
+    const why = await open();
+    expect(why).toHaveTextContent("Suggested use: recheck source");
+    expect(why).not.toHaveTextContent("Matched text:");
+  });
+
   it("is one button until opened; the popover shows rank, similarity, score and the terms by magnitude", async () => {
     const { container } = render(
       <SearchWhy
