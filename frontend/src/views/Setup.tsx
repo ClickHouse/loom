@@ -94,6 +94,7 @@ export function Setup() {
     <PageContainer>
       <PageHeader
         title="Settings"
+        description="Connect agents and manage tokens, memory, and models."
         tab={TAB_LABELS[tab]}
         actions={
           <Button type="secondary" htmlType="button" onClick={() => setView("connected-accounts")}>

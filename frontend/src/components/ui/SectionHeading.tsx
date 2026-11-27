@@ -7,9 +7,8 @@ import { IconButton } from "../IconButton";
  * SectionHeading — the title of a panel, card or pane section (Click UI's
  * `Title`, 14 px semibold), an optional count, an
  * optional visible caption, and an optional hint that opens as a tooltip
- * from a small (i) button. Nothing here truncates: the label is `whitespace-nowrap`, the
- * row wraps its caption to a second line when the pane is narrow, and the hint lives in a
- * tooltip instead of trailing the label into an ellipsis ("MEMORY TYPES inspect…").
+ * from a small (i) button. The title and caption wrap inside a narrow pane, including
+ * headings that contain a namespace or other long identifier.
  *
  * `level` picks the heading element (h2–h4) so the outline of a page is
  * real; the visual is the same at every level. The (i) is Click UI's sm icon button, the
@@ -54,7 +53,13 @@ export function SectionHeading({
     <div
       className={`flex flex-wrap items-center gap-x-inline gap-y-0.5 min-w-0 ${fold && !fold.open ? "" : "mb-1.5"} ${className}`}
     >
-      <Title type={`h${level}`} size="sm" id={id} className="whitespace-nowrap" tabIndex={focusable ? -1 : undefined}>
+      <Title
+        type={`h${level}`}
+        size="sm"
+        id={id}
+        className="min-w-0 wrap-anywhere"
+        tabIndex={focusable ? -1 : undefined}
+      >
         {fold ? (
           <button
             type="button"
@@ -76,7 +81,7 @@ export function SectionHeading({
           <span className="sr-only">{`${count} ${label.toLowerCase()}`}</span>
         </span>
       )}
-      {caption && <span className="caption whitespace-nowrap">{caption}</span>}
+      {caption && <span className="caption min-w-0 wrap-anywhere">{caption}</span>}
       {hint && <IconButton icon="info-in-circle" size="sm" label={`About ${label}`} tooltip={hint} />}
       {actions && <span className="ml-auto inline-flex items-center gap-1 text-xs">{actions}</span>}
     </div>

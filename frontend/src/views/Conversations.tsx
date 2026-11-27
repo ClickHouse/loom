@@ -511,24 +511,17 @@ export function Conversations() {
     <PageContainer>
       {/* The Record conversations switch is the namespace's setting, not a filter: it sits
           with the title. */}
-      <PageHeader title="Conversations" actions={recording || undefined}>
+      <PageHeader
+        title="Conversations"
+        description="Search conversations your agents recorded and open a thread to replay the exchange."
+        actions={recording || undefined}
+      >
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
         <span className="hidden sm:contents">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </span>
       </PageHeader>
       <SessionHandoff identity={identity} />
-      {/* Left to the title on a phone, where the threads need the room. */}
-      <div className="mb-4 hidden items-center gap-1 text-sm text-text-muted sm:flex">
-        The raw chats your agents recorded.
-        <IconButton
-          icon="info-in-circle"
-          size="xs"
-          label="About conversations"
-          tooltip="Search to find what was said; open a thread to replay the full exchange."
-        />
-      </div>
-
       {/* The search and the agent filter, in the bar that stays at the top as the threads
           scroll. */}
       <ListToolbar

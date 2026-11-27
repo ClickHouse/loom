@@ -25,7 +25,9 @@ export function HelpText({
   onFollow?: (e: MouseEvent, href: string) => void;
 }) {
   const spans = (line: string) => withLinks(line, path, onFollow);
-  return <div className="space-y-2 text-sm text-text break-words">{sections(text, outline, spans)}</div>;
+  return (
+    <div className="space-y-3 text-sm leading-relaxed text-text wrap-anywhere">{sections(text, outline, spans)}</div>
+  );
 }
 
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;

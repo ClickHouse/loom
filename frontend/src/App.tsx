@@ -602,7 +602,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-bg text-text">
+    <div className="workspace-shell flex flex-col bg-bg text-text">
       <a href="#main" data-dock-inert="" className={SKIP}>
         Skip to main content
       </a>

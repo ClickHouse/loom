@@ -14,6 +14,8 @@ import { errorRequestId } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import type { GateReason } from "../lib/state";
 import { Alert } from "../components/ui";
+import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL } from "../lib/docsLinks";
+import { LoomBrand } from "../layout/LoomBrand";
 
 interface TokenGateProps {
   onLogin: () => void;
@@ -23,12 +25,6 @@ interface TokenGateProps {
   /** A Loom page sent the browser here to start SSO (`takeSsoAsk` in `lib/boot.ts`). */
   ssoAsked?: boolean;
 }
-
-// No hosted docs site — the repo's Markdown is the documentation (README).
-const REPO_DOCS = "https://github.com/ClickHouse/loom/blob/main/docs";
-export const DOCS_TOKENS_URL = `${REPO_DOCS}/guides/tokens-and-grants.md`;
-export const DOCS_QUICKSTART_URL = `${REPO_DOCS}/getting-started/quickstart.md`;
-export const DOCS_MCP_URL = `${REPO_DOCS}/features/integrations/mcp-clients.md`;
 
 /**
  * Sign-in / sign-up gate.
@@ -109,14 +105,10 @@ function SsoGate({ reason, ssoAsked }: { reason?: GateReason; ssoAsked: boolean 
     goToSso(rememberSignInStart());
   }, [reason, ssoAsked]);
   return (
-    <GateShell>
-      <Panel className="space-y-4">
+    <GateShell title="Sign in to Loom" description="Use your organization's identity provider to open your workspace.">
+      <Panel className="gate-panel">
         <GateNotice reason={reason} />
-        <a
-          href="/oauth/sso"
-          onClick={startSso}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-on-accent hover:opacity-90"
-        >
+        <a href="/oauth/sso" onClick={startSso} className="gate-sso flex w-full items-center justify-center gap-2">
           <Icon name="lock" size="sm" aria-hidden="true" /> Sign in with SSO
         </a>
       </Panel>
@@ -152,9 +144,8 @@ export function LinkTokenConfirm({
   onCancel: () => void;
 }) {
   return (
-    <GateShell>
-      <Panel className="space-y-4">
-        <h2 className="m-0 text-base">Sign in from a link?</h2>
+    <GateShell title="Sign in from a link?">
+      <Panel className="gate-panel">
         {current?.subject ? (
           <p className="m-0 text-sm">
             You are signed in as <strong>{current.subject}</strong>
@@ -185,19 +176,14 @@ export function LinkTokenConfirm({
   );
 }
 
-/** The sign-in page around either gate: the logo and its tagline. */
-function GateShell({ children }: { children: ReactNode }) {
+function GateShell({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-bg px-4">
+    <main className="gate-shell">
       <div className="w-full max-w-md">
-        <header className="mb-6 flex items-center gap-2">
-          <div className="grid h-10 w-10 place-items-center rounded-lg bg-accent text-on-accent" aria-hidden="true">
-            <Icon name="tree-structure" size="md" aria-hidden="true" />
-          </div>
-          <div>
-            <h1 className="m-0 text-xl">Loom</h1>
-            <div className="text-xs text-text-muted">memory for your AI agents</div>
-          </div>
+        <header className="mb-6">
+          <LoomBrand />
+          <h1 className="mt-5">{title}</h1>
+          {description && <p className="mt-1 text-sm text-text-muted">{description}</p>}
         </header>
         {children}
       </div>
@@ -283,8 +269,13 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
   };
 
   return (
-    <GateShell>
-      <Panel className="space-y-4">
+    <GateShell
+      title={mode === "signin" ? "Sign in to Loom" : "Create a Loom account"}
+      description={
+        mode === "signin" ? "Open your agent memory workspace." : "Create a private namespace for your agents."
+      }
+    >
+      <Panel className="gate-panel">
         <GateNotice reason={reason} />
         <Tabs
           value={mode}
@@ -416,22 +407,29 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
         )}
       </Panel>
 
-      <p className="mt-5 text-center text-xs text-text-muted">
-        Loom doesn't email-verify on signup. Run it behind a VPN, intranet, or auth proxy if exposed.
-      </p>
-      <div className="mt-2 text-center text-xs leading-relaxed text-text-muted">
-        Running this yourself? Mint a token with <code>loom mint-token …</code> and open{" "}
-        <code>&lt;server&gt;/me#token=&lt;jwt&gt;</code>, or set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user
-        install. See{" "}
-        <ExternalLink href={DOCS_TOKENS_URL} size="sm">
-          Tokens and grants
-        </ExternalLink>{" "}
-        and the{" "}
-        <ExternalLink href={DOCS_QUICKSTART_URL} size="sm">
-          Quickstart
-        </ExternalLink>
-        .
-      </div>
+      {mode === "signup" && (
+        <p className="mt-3 text-xs text-text-muted">
+          Loom does not verify email addresses. Operators should protect open sign-up with an auth proxy or private
+          network.
+        </p>
+      )}
+      <section aria-labelledby="gate-installation" className="gate-support mt-6">
+        <h2 id="gate-installation" className="mb-1">
+          Running this yourself?
+        </h2>
+        <p className="text-xs leading-relaxed text-text-muted">
+          Mint a token with <code>loom mint-token …</code> and open <code>&lt;server&gt;/me#token=&lt;jwt&gt;</code>, or
+          set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user install.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+          <ExternalLink href={DOCS_QUICKSTART_URL} size="sm">
+            Quickstart
+          </ExternalLink>
+          <ExternalLink href={DOCS_TOKENS_URL} size="sm">
+            Tokens and grants
+          </ExternalLink>
+        </div>
+      </section>
     </GateShell>
   );
 }

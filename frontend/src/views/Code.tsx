@@ -31,6 +31,7 @@ import { fmtInt, relativeTime, listTime, parseChTime, refreshDetail } from "../l
 import { humanizeError, errorLine } from "../lib/errorWords";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { EmptyState } from "../components/EmptyState";
+import { ScopeBadge } from "../components/ScopeBadge";
 import { IconButton } from "../components/IconButton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -615,6 +616,19 @@ function RepositoriesHome({
     <PageContainer>
       <PageHeader
         title="Repositories"
+        description={
+          !empty && (
+            <div className="flex items-center gap-1">
+              Browse indexed Git branches and the trackers linked to them.
+              <IconButton
+                icon="info-in-circle"
+                size="xs"
+                label="About repositories"
+                tooltip="You can search and ask about a branch's code; the tracker is read live. An open repository joins in one click; a restricted one is requested and a maintainer approves."
+              />
+            </div>
+          )
+        }
         actions={
           org && (
             <>
@@ -641,22 +655,9 @@ function RepositoriesHome({
             </>
           )
         }
-      />
-      {!empty && (
-        <p className="text-sm text-text-muted mb-3 max-w-[72ch]">
-          Indexed code branches and their trackers of issues and PRs, read-only.{" "}
-          {/* As tall as the text: a 44 px touch target overflows it instead of stretching the line. */}
-          <span className="inline-flex h-5 items-center align-middle">
-            <IconButton
-              icon="info-in-circle"
-              size="xs"
-              label="About repositories"
-              tooltip="You can search and ask about a branch's code; the tracker is read live. An open repository joins in one click; a restricted one is requested and a maintainer approves."
-            />
-          </span>
-        </p>
-      )}
-
+      >
+        {org && <ScopeBadge kind="org" value={org} />}
+      </PageHeader>
       {pendingRows.length > 0 && (
         <Alert
           className="mb-3"
