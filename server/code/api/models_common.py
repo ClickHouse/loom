@@ -76,9 +76,11 @@ class _LessonsOut(BaseModel):
     # memory was written against; '' for a row that names the file only. `changed_since` is
     # the commit that put its code in a `changed`, `unresolved` or `missing` state, when
     # known; `code_moved` lists its links to code in the file that is now at another path
-    # or symbol than the memory was written against, each {code_namespace, path, symbol,
-    # start_line, end_line, state, was_path, was_symbol} (the memory's text still says
-    # `was_symbol`); `supersedes_key` the key of the older row it replaces.
+    # or symbol than the memory was written against, each a code link's non-empty fields:
+    # where the code is (`path`, with `symbol`, `start_line` and `end_line` for a
+    # definition), its `state` (with `changed_since` when it changed) and what the
+    # memory's text still calls it (`was_path`, with `was_symbol` for a definition);
+    # `supersedes_key` the key of the older row it replaces.
     lessons: list[dict[str, Any]] = Field(default_factory=list)
     # How many rows about those files the lessons' token cap or a cut left out, with
     # the rows another row read for the answer supersedes.

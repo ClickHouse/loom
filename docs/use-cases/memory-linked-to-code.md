@@ -37,10 +37,11 @@ reported commit](#check-a-lesson-after-a-code-edit).
   is replaced by a link to a definition the memory names once the file defines it.
   [Link states](../concepts/memory.md#memories-linked-to-code)
 - **The current name beside a memory written against the old one.** A rename leaves the
-  memory's text as it was written. Every read that serves it names where the code is
-  now: `memory.get`, `memory.search` and the `loom_search` text, `memory.for_file` and
-  the pre-edit block, `lessons` on code answers, `context.pack`, `memory.ask` and the
-  dashboard. A line reads
+  memory's text as it was written. These reads name where the code is now:
+  `memory.get`, `memory.search` and the `loom_search` text, `memory.for_file` and the
+  pre-edit block, `lessons` on code answers, `context.pack` and the dashboard, and, where
+  the deployment sets `memory_ask_code_namespace`, the note `memory.ask` gives its
+  synthesis. A line reads
   ``(code moved: `reader::fetch_rows` is now `reader::load_rows` at src/reader.py:12-40)``,
   and the structured answer carries the same as `code_moved`.
   [What reads name](../concepts/memory.md#memories-linked-to-code)

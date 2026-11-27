@@ -22,7 +22,7 @@ import logging
 import re
 from typing import Any
 
-from server.code.domain.anchor import local_name
+from server.memory.domain import code_change
 from server.memory.store.code_links import LinkRow
 
 logger = logging.getLogger(__name__)
@@ -572,10 +572,12 @@ async def _gate_future_prs(
 async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) -> Any | None:
     """One grounding note for the strongest memories whose linked code has moved,
     changed or gone since they were written, read from their code links
-    (`server.memory.app.code_links`); synthesis then prefers the current code. None
-    when no such memory is in the pool. Fail-open."""
+    (`server.memory.app.code_links`); synthesis then prefers the current code. A link
+    now at another path or symbol than its memory was written against is named as every
+    reader names it (`code_change.moved_note`). None when no such memory is in the
+    pool. Fail-open."""
     from server.memory.api.models_search import _MemorySearchHit
-    from server.memory.app.code_link_reads import hit_memories, readable_namespaces
+    from server.memory.app.code_link_reads import hit_memories, readable_namespaces, relocated
 
     pool = [m for m in memories[:8] if str(getattr(m, "memory_type", "")) != "code"]
     # the search read most hits' links: read only the rest's
@@ -596,14 +598,18 @@ async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) 
     notes: list[str] = []
     for a in links:
         what, key = a["qualified_name"] or a["path"], f"memory [{a['memory_key']}]"
+        now = code_change.moved_note(relocated([a]))
         if a["state"] == "missing":
             notes.append(f"{key} is about {what}, which the code index no longer has")
         elif a["state"] == "changed":
-            notes.append(f"{key} is about {what}, which changed after it was written")
+            notes.append(
+                f"{key} is about {what}, which changed after it was written"
+                + (f"; {now}" if now else "")
+            )
         elif a["state"] == "unresolved":
             notes.append(f"{key} is about {what}, which was renamed or removed: find it again")
-        elif a["state"] == "moved" and (moved := _moved_note(a, what)):
-            notes.append(f"{key} {moved}")
+        elif now:
+            notes.append(f"{key}: {now}")
     if not notes:
         return None
     body = (
@@ -620,20 +626,6 @@ async def _annotate_stale_code_memories(memories: list[Any], search_input: Any) 
         valid_at="",
         source="code_index",
     )
-
-
-def _moved_note(a: LinkRow, what: str) -> str:
-    """What a moved link's memory has wrong against where it was written (its anchor):
-    the name (inside its module), the file, or both; '' when it names neither."""
-    old_name, old_path = a["anchored_name"], a["anchored_path"]
-    new_name, new_path = a["qualified_name"], a["path"]
-    renamed = bool(old_name) and local_name(old_name, old_path or new_path) != local_name(
-        new_name, new_path
-    )
-    parts = [f"names {old_name}; it is now {new_name}"] if renamed else []
-    if old_path and old_path != new_path:
-        parts.append(f"places {what} in {old_path}; it now lives in {new_path}")
-    return ", and ".join(parts)
 
 
 _WARNED: set[str] = set()
