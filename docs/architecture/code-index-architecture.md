@@ -602,18 +602,20 @@ index tokenizer. The score counts only whole app lexemes and rejects partial mat
 from the gate. Underscore-only lexemes use the exact score within the same tenant,
 model and path scope because the text index has no token for them.
 
-For a question about the implementation, ranking demotes test, example and benchmark
-paths and prose files. The lexical leg cuts its pool on its score times the same
-factors, so the rows that ranking demotes do not take the pool from source rows; the
-rows keep the rank of their own score. A query asks for tests or for documentation
-when it carries such a word and fits the lexical term list (32 lexemes). The
-penalties, the kind prior and saturation are then off. A longer query is a pasted
-report: a test or the documentation it mentions is where the problem showed, and the
-priors stay on. A long query that needs tests names them with `path_globs`.
+For a question about the implementation, ranking multiplies the score of a test,
+example or benchmark path and of a prose file by a penalty. A test word in the query
+turns off the test-path penalty, the fan-in prior, the kind prior and saturation, and
+leaves the prose penalty on. A doc word turns off the prose penalty only. The lexical
+leg cuts its pool on its score times the two path penalties in force for the query,
+so the rows that ranking demotes do not take the pool from the rows it keeps. A test
+or prose row whose penalised score misses the pool is not a lexical candidate; it can
+still enter through the vector leg, which is not cut. The rows that make the pool
+keep the rank of their own score. Calibration reads the legs after the cut, so leg
+agreement and the fused head count the rows the pool holds.
 
 After relevance ranking, per-file saturation spreads broad search results across
-files. It is skipped for an explicit path, a symbol route, a question that asks for
-tests, or a code-shaped identifier named in the query that matches a qualified symbol
+files. It is skipped for an explicit path, a symbol route, test intent, or a
+code-shaped identifier named in the query that matches a qualified symbol
 component in the relevance window. This keeps related definitions together for
 questions about a named identifier. An unmatched identifier does not disable
 saturation. Per-symbol deduplication still removes repeated chunks of one definition,

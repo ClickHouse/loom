@@ -109,8 +109,8 @@ async def _gather_legs(
         concept_stats=st.concept_stats,
         llm_legs=llm_legs,
     )
-    # The lexical pool is cut on the path penalties `_rank_units` will apply: none with
-    # the fusion signals off
+    # The lexical pool is cut on the path penalties `_rank_units` will apply (none with
+    # the fusion signals off), so calibration reads the rows the ranking keeps
     path_penalties = (
         pool_penalties(query, prose_eligible=not constrained and shape != "symbol")
         if settings.code_fusion_signals

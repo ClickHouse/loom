@@ -83,8 +83,9 @@ async def _rank_units(
 
     # ---- fusion rank priors: path-noise penalty, query<->path stem affinity, file
     # coherence. Applied to RRF scores BEFORE the outcome boost so both stay
-    # multiplicative-capped priors under relevance; calibration already ran on the raw
-    # fusion, so abstention is unaffected.
+    # multiplicative-capped priors under relevance. Calibration already ran on the
+    # fused legs: of these only the two path penalties reach abstention, through the
+    # pool the lexical leg cut on them (`gather.py`).
     fusion_signals = False
     if settings.code_fusion_signals:
         ranked = _apply_fusion_signals(

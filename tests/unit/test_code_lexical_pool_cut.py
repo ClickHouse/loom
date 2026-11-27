@@ -1,5 +1,5 @@
-"""A test or doc word asks for tests or docs only in a question, and the lexical
-leg cuts its pool on the path penalties the ranking applies."""
+"""The lexical leg cuts its pool on the path penalties the ranking applies to the
+query."""
 
 from __future__ import annotations
 
@@ -14,119 +14,84 @@ from server.code.app.search.priors import (
     _NOISE_PENALTY,
     _apply_fusion_signals,
     _apply_kind_prior,
-    asks_for_docs,
-    asks_for_tests,
+    _prose_penalty,
     pool_penalties,
 )
 from server.code.app.search.window import _saturation_skip_reason
-from server.code.domain.extract.tokenize import code_tokens
-from server.code.domain.index import path_class, query_trim
+from server.code.domain.index import path_class
+from server.code.domain.search_scope import SearchScope
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.code.store.index.sql import path_penalty_sql
+from server.settings import settings
 
-# A bug report as an agent receives it: the reporter says where the fault showed (a
-# failing test, what the documentation promises) and asks for a fix in source.
-_REPORT = (
-    "QuerySet.bulk_update() returns None instead of the number of rows matched. "
-    "Calling update() on a queryset returns the count, and the documentation says "
-    "bulk_update is a convenience wrapper around update(), so the return value should "
-    "be the sum of the counts of each batch. I wrote a failing test for this in my "
-    "project and it reproduces on the main branch with sqlite and postgres backends."
+_IMPLEMENTATION = "how are parts merged"
+_TESTS = "how are flaky tests retried"
+_DOCS = "where is the cache documentation"
+# A prompt of several sentences that asks for tests: its length does not change what
+# it asks for.
+_LONG_TESTS = (
+    "Add a regression test for the cache eviction order when two entries share one "
+    "weight. Look at how the existing tests under tests/unit build the fixture and "
+    "which helper fills the cache, then put the new case next to the similar ones "
+    "for expiry and resize."
 )
 
 
-def test_the_report_is_longer_than_the_lexical_term_list() -> None:
-    assert len(code_tokens(_REPORT)) > query_trim.LEXICAL_TOKEN_CAP
+@pytest.fixture(autouse=True)
+def _prose_penalty_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "code_search_prose_penalty", 0.25)
 
 
 @pytest.mark.parametrize(
-    "query",
+    "query,penalties",
     [
-        "how are flaky tests retried",
-        "which stateless test covers the query cache",
-        "pytest fixture for a fake embedder",
-        # naming a test asks for it: the name carries the word
-        "test_bulk_update_returns_count",
-        "BulkUpdateTests",
-        "tests/queries/0_stateless/02494_query_cache.sql",
-        "src/Common/tests/gtest_lru.cpp",
+        (_IMPLEMENTATION, (_NOISE_PENALTY, 0.25)),
+        (_TESTS, (1.0, 0.25)),
+        (_DOCS, (_NOISE_PENALTY, 1.0)),
+        (_LONG_TESTS, (1.0, 0.25)),
+        ("docs for the test fixtures", (1.0, 1.0)),
     ],
 )
-def test_a_question_with_a_test_word_asks_for_tests(query: str) -> None:
-    assert asks_for_tests(query)
+def test_pool_penalties_follow_the_words_of_the_query(
+    query: str, penalties: tuple[float, float]
+) -> None:
+    assert pool_penalties(query, prose_eligible=True) == penalties
 
 
-@pytest.mark.parametrize(
-    "query",
-    ["bulk_update", "QuerySet.bulk_update", "how are parts merged", "latest contest attestation"],
-)
-def test_a_question_without_a_test_word_does_not(query: str) -> None:
-    assert not asks_for_tests(query)
-
-
-def test_a_test_word_in_a_pasted_report_is_a_mention() -> None:
-    assert "test" in code_tokens(_REPORT)
-    assert not asks_for_tests(_REPORT)
-    # the same sentence alone is a question
-    assert asks_for_tests("I wrote a failing test for bulk_update")
-
-
-def test_the_cut_is_the_lexical_term_list() -> None:
-    words = [f"word{chr(97 + i)}" for i in range(26)] + [f"term{chr(97 + i)}" for i in range(5)]
-    at_cap = " ".join([*words, "tests"])
-    assert len(code_tokens(at_cap)) == query_trim.LEXICAL_TOKEN_CAP
-    assert asks_for_tests(at_cap)
-    assert not asks_for_tests(" ".join([*words, "extra", "tests"]))
-
-
-def test_a_doc_word_follows_the_same_rule() -> None:
-    assert asks_for_docs("where is the cache documentation")
-    assert asks_for_docs("README.md")
-    assert not asks_for_docs("how are parts merged")
-    assert "documentation" in code_tokens(_REPORT)
-    assert not asks_for_docs(_REPORT)
+def test_a_search_the_ranking_applies_no_prose_penalty_to_cuts_on_none() -> None:
+    # constrained to paths, or a symbol lookup
+    assert pool_penalties(_IMPLEMENTATION, prose_eligible=False) == (_NOISE_PENALTY, 1.0)
 
 
 def _u(path: str, score: float, kind: str = "function") -> CodeUnit:
     return CodeUnit(path=path, score=score, kind=kind)
 
 
-def test_a_report_that_mentions_a_test_keeps_the_test_path_penalty() -> None:
-    test = _u("tests/queries/test_bulk_update.py", 0.031)
-    impl = _u("django/db/models/query.py", 0.030)
-    out = _apply_fusion_signals([test, impl], _REPORT)
-    assert out[0].path == impl.path
-    by_path = {u.path: u.score for u in out}
-    assert by_path[test.path] < 0.031 * _NOISE_PENALTY * 1.5
-
-
-def test_a_report_that_mentions_the_documentation_keeps_the_prose_penalty() -> None:
-    notes = _u("docs/ref/models/querysets.txt", 0.031)
-    impl = _u("django/db/models/query.py", 0.030)
-    out = _apply_fusion_signals([notes, impl], _REPORT, prose_penalty=0.25)
-    assert out[0].path == impl.path
-
-
-def test_a_report_that_mentions_a_test_keeps_the_kind_prior_and_saturation() -> None:
-    header = _u("django/db/models/query.py", 0.031, "file_header")
-    impl = _u("django/db/models/query.py", 0.030)
-    out, explain = _apply_kind_prior([header, impl], _REPORT, _KIND_PRIOR_TABLES["default"])
-    assert out[0].kind == "function"
-    assert explain == "kind_prior=default"
-    assert _saturation_skip_reason(route="hybrid", path_prefix="", query=_REPORT) == ""
-
-
-def test_pool_penalties_are_the_factors_the_ranking_applies() -> None:
-    assert pool_penalties("how are parts merged", prose_eligible=True) == (_NOISE_PENALTY, 0.25)
-    assert pool_penalties("how are flaky tests retried", prose_eligible=True) == (1.0, 0.25)
-    assert pool_penalties("where is the cache documentation", prose_eligible=True) == (
-        _NOISE_PENALTY,
-        1.0,
+@pytest.mark.parametrize("query", [_IMPLEMENTATION, _TESTS, _DOCS, _LONG_TESTS])
+def test_the_ranking_multiplies_by_the_factors_the_pool_is_cut_on(query: str) -> None:
+    """One chunk per file and no query word in a path: every unit gets the same
+    coherence share, so the score ratios are the path factors alone."""
+    noise, prose = pool_penalties(query, prose_eligible=True)
+    out = _apply_fusion_signals(
+        [_u("pkg/aaa.py", 0.02), _u("examples/bbb.py", 0.02), _u("guide/ccc.md", 0.02)],
+        query,
+        prose_penalty=_prose_penalty(eligible=True),
     )
-    # a constrained search or a symbol lookup: the ranking applies no prose penalty
-    assert pool_penalties("how are parts merged", prose_eligible=False) == (_NOISE_PENALTY, 1.0)
-    assert pool_penalties(_REPORT, prose_eligible=True) == (_NOISE_PENALTY, 0.25)
+    score = {u.path: u.score for u in out}
+    assert score["examples/bbb.py"] / score["pkg/aaa.py"] == pytest.approx(noise, rel=1e-3)
+    assert score["guide/ccc.md"] / score["pkg/aaa.py"] == pytest.approx(prose, rel=1e-3)
+
+
+def test_a_long_prompt_that_asks_for_tests_keeps_its_test_intent() -> None:
+    header = _u("tests/unit/test_cache.py", 0.031, "file_header")
+    case = _u("tests/unit/test_cache.py", 0.030)
+    out, explain = _apply_kind_prior([header, case], _LONG_TESTS, _KIND_PRIOR_TABLES["default"])
+    assert [u.kind for u in out] == ["file_header", "function"]
+    assert explain == "kind_prior=default:skip_test_intent"
+    assert _saturation_skip_reason(route="hybrid", path_prefix="", query=_LONG_TESTS) == (
+        "test_intent"
+    )
 
 
 @pytest.mark.parametrize(
@@ -134,7 +99,7 @@ def test_pool_penalties_are_the_factors_the_ranking_applies() -> None:
     [
         ("tests/queries/0_stateless/02494_query_cache.sql", True, False),
         ("src/Common/tests/gtest_lru.cpp", True, False),
-        ("django/test/runner.py", True, False),
+        ("pkg/test/runner.py", True, False),
         ("examples/demo.py", True, False),
         ("src/Common/test_lru.cpp", True, False),
         ("src/Common/lru_fuzz.cc", True, False),
@@ -254,21 +219,21 @@ def _asked(query: str, **kw: Any) -> tuple[float, float]:
     return repo.penalties[0]
 
 
-def test_search_hands_the_leg_the_penalties_of_the_query(monkeypatch) -> None:
-    from server.settings import settings
-
+def test_search_hands_the_leg_the_penalties_of_the_query(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "code_fusion_signals", True)
-    monkeypatch.setattr(settings, "code_search_prose_penalty", 0.25)
     monkeypatch.setattr(settings, "code_search_pr_leg", "off")
-    assert _asked("how are parts merged") == (_NOISE_PENALTY, 0.25)
-    assert _asked("how are flaky tests retried") == (1.0, 0.25)
-    assert _asked("where is the cache documentation") == (_NOISE_PENALTY, 1.0)
-    assert _asked(_REPORT) == (_NOISE_PENALTY, 0.25)
+    assert _asked(_IMPLEMENTATION) == (_NOISE_PENALTY, 0.25)
+    assert _asked(_TESTS) == (1.0, 0.25)
+    assert _asked(_DOCS) == (_NOISE_PENALTY, 1.0)
+    assert _asked(_LONG_TESTS) == (1.0, 0.25)
+    # a search scoped to paths: the ranking applies no prose penalty
+    scoped = SearchScope(extensions=("py",))
+    assert _asked(_IMPLEMENTATION, scope=scoped) == (_NOISE_PENALTY, 1.0)
 
 
-def test_the_leg_cuts_on_nothing_the_ranking_does_not_apply(monkeypatch) -> None:
-    from server.settings import settings
-
+def test_the_leg_cuts_on_nothing_the_ranking_does_not_apply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(settings, "code_fusion_signals", False)
     monkeypatch.setattr(settings, "code_search_pr_leg", "off")
-    assert _asked("how are parts merged") == (1.0, 1.0)
+    assert _asked(_IMPLEMENTATION) == (1.0, 1.0)
