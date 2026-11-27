@@ -38,7 +38,8 @@ table holds them; `resolved_by` on the payload discloses the form that bound.
 
 Python import spellings bind through the same bounded bare-name read. A dotted
 module remains one stored scope segment, and a package's `__init__.py` is implicit
-in its import name. Only Python rows participate; ties and incomplete candidate
+in its import name. A verified package initializer can also bind a same-name
+relative re-export. Only Python rows participate; ties and incomplete candidate
 sets decline (`resolved_by: python_module`). Stored names and ids stay intact.
 """
 
@@ -235,7 +236,14 @@ async def _qualified(repo: Any, org: str, ns: str, name: str) -> tuple[list[dict
         if any(str(h.get("kind") or "") in {"class", "struct"} for h in hits):
             classes.add(seg)
     bound = tail_bind(name, rows, class_names=classes)
-    return bound, RESOLVED_TAIL if bound else ""
+    if bound or "." not in name:
+        return bound, RESOLVED_TAIL if bound else ""
+
+    from server.code.app.enrich import bounded
+    from server.code.app.index import python_reexports
+
+    bound = await bounded(python_reexports.resolve(repo, org, ns, name, rows), [])
+    return bound, RESOLVED_PYTHON if bound else ""
 
 
 async def _registration(

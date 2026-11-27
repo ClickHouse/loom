@@ -34,9 +34,10 @@ Every op, grouped by task, is on [operations.md](operations.md).
 
 Python symbol lookups accept dotted import names such as `package.encoder.dumps`
 and package names such as `package::dumps` for a definition in
-`package/__init__.py`. A unique match reports `resolved_by: python_module` and
-retains the stored qualified name and symbol id. Ambiguous matches remain unresolved.
-This name matching reads the existing index and requires no reindexing.
+`package/__init__.py`. Dotted lookups also follow direct, same-name re-exports such
+as `from .encoder import dumps` in a package initializer when the indexed Git source
+verifies the import. A unique match reports `resolved_by: python_module` and returns
+the stored qualified name and symbol id. Ambiguous matches remain unresolved.
 
 ## One namespace is one branch
 
