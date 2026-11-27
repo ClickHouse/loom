@@ -582,8 +582,8 @@ export const useStore = create<AppState>((set, get) => ({
       sessionHandoff: here ? linkedSessionHandoff(view) : null,
       inspectedMemoryKey: inspected ?? opened.inspectedMemoryKey ?? null,
       inspectedAgent: inspected ? (place?.inspectedAgent ?? "") : (opened.inspectedAgent ?? ""),
-      inspectedOwner: inspected ? (place?.inspectedOwner ?? null) : null,
-      inspectedScope: inspected ? (place?.inspectedScope ?? null) : null,
+      inspectedOwner: inspected ? (place?.inspectedOwner ?? null) : (opened.inspectedOwner ?? null),
+      inspectedScope: inspected ? (place?.inspectedScope ?? null) : (opened.inspectedScope ?? null),
     });
     addressPageNamespace();
   },

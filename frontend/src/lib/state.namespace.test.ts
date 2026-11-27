@@ -109,6 +109,28 @@ describe("writing the address", () => {
     expect(useStore.getState()).toMatchObject({ view: "memories", inspectedMemoryKey: "k", inspectedAgent: "bot" });
   });
 
+  it("Forward restores an exact inspection from the address entry without a saved place", async () => {
+    at("/recall?namespace=team", { loomNamespace: "team" });
+    useStore.setState({ view: "recall" });
+    useStore.getState().navigate("memories");
+    useStore.getState().inspect("k", { agent: "bot", userId: "ada", sessionId: "two", namespace: "team", exact: true });
+    expect(readPlace(history.state)).toBeNull();
+
+    await back("recall");
+    expect(useStore.getState().inspectedMemoryKey).toBeNull();
+    await new Promise((resolve) => {
+      window.addEventListener("popstate", resolve, { once: true });
+      history.forward();
+    });
+    useStore.getState().arriveFromHistory("memories", readPlace(history.state));
+    expect(useStore.getState()).toMatchObject({
+      inspectedMemoryKey: "k",
+      inspectedAgent: "bot",
+      inspectedOwner: { user_id: "ada", session_id: "two" },
+      inspectedScope: { namespace: "team", exact: true },
+    });
+  });
+
   it("a switch names the new namespace in place and drops what belonged to the old one", () => {
     at("/memories?namespace=team&memory=k");
     const before = history.length;
