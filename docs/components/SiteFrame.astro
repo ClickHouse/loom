@@ -1,7 +1,7 @@
 ---
 import { publisher, repositoryUrl, software, website } from "../lib/site-identity.mjs";
 import loomLogo from "../public/loom.svg?raw";
-import { documentationLink } from "./documentation-link";
+import { documentationLink, documentationOverview } from "./documentation-link";
 import { frameCopy } from "./site-frame-copy";
 import { enterpriseLink, homeAlternates, siteLocales, type LocaleAlternate, type SiteLocale } from "./site-locales";
 import "./click-ui-dark.css";
@@ -20,13 +20,15 @@ const { title, description, path, home, locale: pageLocale, alternates } = Astro
 const locale = home?.locale ?? pageLocale ?? "en";
 const shortLocale = locale === "zh-CN" ? "简体" : locale === "zh-Hant" ? "繁體" : locale.split("-")[0].toUpperCase();
 const labels = frameCopy[locale];
-const locales = Object.entries(siteLocales).map(([language, value]) => ({ language, ...value }));
+const docsLocales = (Object.keys(siteLocales) as SiteLocale[]).flatMap((language) => {
+  const overview = documentationOverview(language);
+  return overview.hreflang === language ? [{ name: siteLocales[language].name, ...overview }] : [];
+});
 const pageAlternates = home ? homeAlternates : (alternates ?? []);
 const languageMenu = pageAlternates.flatMap(({ language, href }) =>
   language === "x-default" ? [] : [{ language, href, name: siteLocales[language].name }],
 );
 const brandHome = siteLocales[locale].href;
-const docs = siteLocales[locale].docs;
 const start = home?.start ?? documentationLink(locale, "/getting-started/quickstart");
 const canonical = new URL(path, Astro.site);
 const page = {
@@ -54,7 +56,7 @@ const navigation = [
   { label: labels.product, href: "/platform", hreflang: "en" },
   { label: "Playground", href: "/playground/source-change", hreflang: "en" },
   { label: labels.enterprise, ...enterpriseLink(locale) },
-  { label: labels.docs, href: docs ?? siteLocales.en.docs, hreflang: docs ? locale : "en" },
+  { label: labels.docs, ...documentationOverview(locale) },
 ];
 ---
 
@@ -136,8 +138,8 @@ const navigation = [
         </nav>
         <nav class="footer-languages" aria-labelledby="footer-language-label">
           <span id="footer-language-label">{labels.docsLanguages}</span>
-          {locales.map(({ name, language, docs }) => docs && (
-            <a href={docs} lang={language} dir="auto" hreflang={language}>{name}</a>
+          {docsLocales.map(({ name, href, hreflang }) => (
+            <a href={href} lang={hreflang} dir="auto" hreflang={hreflang}>{name}</a>
           ))}
         </nav>
       </div>

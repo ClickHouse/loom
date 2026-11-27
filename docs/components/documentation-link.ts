@@ -10,3 +10,12 @@ export function documentationLink(locale: SiteLocale, path: string) {
     ? { href: `/docs${translated}`, hreflang: locale }
     : { href: `/docs${path}`, hreflang: "en" };
 }
+
+export function documentationOverview(locale: SiteLocale) {
+  const index = documentationLink(locale, "");
+  const firstTab = data.navigation.tabs[0];
+  if (index.hreflang === locale || !firstTab) return index;
+
+  const landing = documentationLink(locale, firstTab.href ?? firstTab.path);
+  return landing.hreflang === locale ? landing : index;
+}

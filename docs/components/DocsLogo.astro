@@ -1,5 +1,6 @@
 ---
 import loomLogo from "../public/loom.svg?raw";
+import { documentationOverview } from "./documentation-link";
 import { frameCopy } from "./site-frame-copy";
 import { siteLocales, type SiteLocale } from "./site-locales";
 import "./click-ui-dark.css";
@@ -8,10 +9,11 @@ interface Props {
   locale?: SiteLocale;
 }
 
-const { locale = "en" } = Astro.props;
-const { href, docs } = siteLocales[locale];
-const overview = docs ?? siteLocales.en.docs;
-const current = Astro.url.pathname.replace(/\/$/, "") === overview;
+const language = Astro.props.locale ?? Astro.currentLocale ?? "en";
+const locale = Object.hasOwn(siteLocales, language) ? (language as SiteLocale) : "en";
+const { href } = siteLocales[locale];
+const overview = documentationOverview(locale);
+const current = Astro.url.pathname.replace(/\/$/, "") === overview.href;
 ---
 
 <div class="docs-brand">
@@ -20,7 +22,7 @@ const current = Astro.url.pathname.replace(/\/$/, "") === overview;
     <span><span class="brand-publisher">ClickHouse </span><strong>Loom</strong></span>
   </a>
   <span class="brand-divider" aria-hidden="true"></span>
-  <a class="docs-overview" href={overview} aria-current={current ? "page" : undefined}>{frameCopy[locale].docs}</a>
+  <a class="docs-overview" href={overview.href} hreflang={overview.hreflang} aria-current={current ? "page" : undefined}>{frameCopy[locale].docs}</a>
 </div>
 
 <style>
