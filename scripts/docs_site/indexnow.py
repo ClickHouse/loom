@@ -64,6 +64,8 @@ PUBLIC_BUILD_INPUTS = (
 )
 BUILD_INPUTS = (
     *SITE_BUILD_INPUTS,
+    "docs/components.ts",
+    "docs/components/DocsBreadcrumb.astro",
     "mkdocs.yml",
     "scripts/codegen/page_summary.py",
     "scripts/docs_site/hooks.py",

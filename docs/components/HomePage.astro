@@ -57,7 +57,7 @@ const useCases = [
         src={dashboard}
         format="webp"
         widths={[360, 480, 640, 800, 960, dashboard.width]}
-        sizes="(max-width: 63rem) 92vw, (max-width: 108rem) 48vw, 52rem"
+        sizes="(max-width: 59rem) 94vw, (min-width: 96rem) 56vw, 46vw"
         loading="eager"
         alt={copy.screenshotAlt}
         fetchpriority="high"
@@ -150,6 +150,9 @@ const useCases = [
   .use-cases .link-arrow { color: var(--accent); }
   .evaluation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.2rem 2rem; padding: clamp(1.25rem, 3.3vw, 2.75rem); border: 1px solid var(--line); border-inline-start: 0.2rem solid var(--accent); background: var(--surface); }
   .evaluation .site-actions { margin-top: 0; }
+  @media (min-width: 96rem) {
+    .hero { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+  }
   @media (max-width: 59rem) {
     .hero { grid-template-columns: minmax(0, 1fr); }
     .hero h1 { max-width: 16ch; }

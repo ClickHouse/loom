@@ -101,6 +101,7 @@ const evaluation = [
   .controls .site-panel { display: flex; flex-direction: column; align-items: start; }
   .controls a { margin-top: auto; }
   .evaluation { padding: clamp(1.1rem, 3vw, 2.45rem); border: 1px solid var(--line); border-inline-start: 0.2rem solid var(--accent); background: var(--surface); }
+  @media (min-width: 85rem) { .controls { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
   @media (max-width: 59rem) { .enterprise-intro { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 39rem) { .controls { grid-template-columns: minmax(0, 1fr); } }
 </style>

@@ -409,6 +409,8 @@ const overview = [
   .switcher a[aria-current] { border-bottom-color: var(--accent); }
   .filters {
     display: flex;
+    inline-size: fit-content;
+    max-inline-size: 100%;
     flex-wrap: wrap;
     align-items: end;
     gap: 0.65rem 0.85rem;
@@ -418,8 +420,9 @@ const overview = [
     border-radius: var(--radius);
     background: var(--surface);
   }
-  .filters label { display: grid; flex: 1 1 8rem; gap: 0.4rem; color: var(--muted); font-size: 0.82rem; font-weight: 600; }
+  .filters label { display: grid; flex: auto; min-width: 0; gap: 0.4rem; color: var(--muted); font-size: 0.82rem; font-weight: 600; }
   select {
+    min-inline-size: 0;
     font: inherit;
     color: inherit;
     background: var(--page);

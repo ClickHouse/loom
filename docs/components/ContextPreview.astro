@@ -23,6 +23,7 @@
 
 <style>
   .context-preview {
+    container-type: inline-size;
     min-width: 0;
     margin: 0;
     border: 1px solid var(--line);
@@ -66,4 +67,25 @@
   pre { margin: 0.55rem 0 0; padding: 0.65rem 0.75rem; border-radius: var(--radius); background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; }
   pre span { color: var(--click-alert-color-text-info); }
   mark { color: var(--accent); background: transparent; }
+
+  @container (min-width: 52rem) {
+    .example {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+      gap: 1.75rem;
+      align-items: start;
+      padding-block: clamp(2.25rem, 5cqi, 4rem);
+    }
+
+    .prompt, .record { margin: 0; }
+
+    .record::before {
+      inset-block: 2rem auto;
+      inset-inline: auto 100%;
+      inline-size: 1.75rem;
+      block-size: 0;
+      border-inline-start: 0;
+      border-block-start: 1px solid var(--accent);
+    }
+  }
 </style>

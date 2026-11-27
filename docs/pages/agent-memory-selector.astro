@@ -206,7 +206,7 @@ const plans: Plan[] = [
 
 <style>
   h1 { max-width: min(22ch, 100%); font-size: clamp(2.25rem, 5vw, 4.9rem); text-wrap: balance; }
-  .selector { display: grid; grid-template-columns: minmax(16rem, 0.9fr) minmax(0, 1.35fr); align-items: start; gap: 1rem; margin-top: 2rem; }
+  .selector { display: grid; grid-template-columns: clamp(16rem, 32vw, 33rem) minmax(0, 1fr); align-items: start; gap: 1rem; margin-top: 2rem; }
   .selector:has(.memory-input[hidden]) { grid-template-columns: minmax(0, 1fr); }
   .recommendations, .verification-links { display: grid; gap: 0.75rem; min-width: 0; }
   .memory-input fieldset { display: grid; gap: 0.25rem; padding: 0; margin: 0; min-width: 0; border: 0; }
