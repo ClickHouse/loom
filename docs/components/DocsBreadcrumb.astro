@@ -1,6 +1,9 @@
 ---
 import data from "blume:data";
 import { withMountedBase } from "blume/components/islands/base-path.ts";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Text } from "@clickhouse/click-ui/Text";
 import { documentationOverview } from "./documentation-link";
 import { frameCopy } from "./site-frame-copy";
 import { siteLocales, type SiteLocale } from "./site-locales";
@@ -47,13 +50,13 @@ const trail = parents.filter(({ href }) => {
     <ol role="list">
       {trail.map(({ label, href }, index) => (
         <li>
-          {index > 0 && <span class="separator" aria-hidden="true">/</span>}
-          {href ? <a href={href}>{label}</a> : <span>{label}</span>}
+          {index > 0 && <Icon aria-hidden="true" name="chevron-right" size="xs" />}
+          {href ? <Link href={href} size="sm">{label}</Link> : <Text component="span" color="muted" size="sm">{label}</Text>}
         </li>
       ))}
       <li>
-        <span class="separator" aria-hidden="true">/</span>
-        <span aria-current="page">{current.label}</span>
+        <Icon aria-hidden="true" name="chevron-right" size="xs" />
+        <Text aria-current="page" component="span" size="sm">{current.label}</Text>
       </li>
     </ol>
   </nav>
@@ -78,17 +81,15 @@ const trail = parents.filter(({ href }) => {
 
   .docs-breadcrumb li {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     min-inline-size: 0;
     gap: 0.5rem;
     overflow-wrap: anywhere;
   }
 
-  .docs-breadcrumb a:hover {
-    color: var(--blume-accent);
-    text-decoration: underline;
+  .docs-breadcrumb :global(a:not(:hover, :focus)) {
+    color: var(--click-global-color-text-muted);
   }
 
-  .docs-breadcrumb [aria-current] { color: var(--blume-foreground); }
-  .separator { user-select: none; }
+  .docs-breadcrumb :global(svg) { flex: none; }
 </style>

@@ -863,3 +863,121 @@ export const homeCopy: Record<SiteLocale, HomeCopy> = {
     deploymentOptions: "查看部署方式（英文）",
   },
 };
+
+type AdoptionCopy = { heading: string; detail: string; metrics: string; domains: string };
+
+export const homeAdoptionCopy: Record<SiteLocale, AdoptionCopy> = {
+  en: {
+    heading: "Self-hosted adoption",
+    detail: "Explore activity reported by self-hosted Loom installations and the contact domains they share.",
+    metrics: "View adoption metrics",
+    domains: "See reported contact domains",
+  },
+  ar: {
+    heading: "استخدام Loom ذاتي الاستضافة",
+    detail: "اطّلع على النشاط الذي تبلغ عنه نسخ Loom ذاتية الاستضافة ونطاقات الاتصال التي تشاركها.",
+    metrics: "عرض مقاييس الاستخدام",
+    domains: "عرض نطاقات الاتصال المبلّغ عنها",
+  },
+  cs: {
+    heading: "Využití vlastních instalací",
+    detail: "Prohlédněte si aktivitu hlášenou vlastními instalacemi Loom a kontaktní domény, které sdílejí.",
+    metrics: "Zobrazit metriky využití",
+    domains: "Zobrazit hlášené kontaktní domény",
+  },
+  de: {
+    heading: "Nutzung selbst gehosteter Installationen",
+    detail: "Sehen Sie, welche Aktivitäten und Kontaktdomains selbst gehostete Loom-Installationen melden.",
+    metrics: "Nutzungskennzahlen ansehen",
+    domains: "Gemeldete Kontaktdomains ansehen",
+  },
+  es: {
+    heading: "Adopción de Loom autoalojado",
+    detail:
+      "Explora la actividad que notifican las instalaciones autoalojadas de Loom y los dominios de contacto que comparten.",
+    metrics: "Ver métricas de adopción",
+    domains: "Ver dominios de contacto notificados",
+  },
+  fr: {
+    heading: "Adoption de Loom auto-hébergé",
+    detail:
+      "Explorez l’activité déclarée par les installations Loom auto-hébergées et les domaines de contact qu’elles partagent.",
+    metrics: "Voir les indicateurs d’adoption",
+    domains: "Voir les domaines de contact déclarés",
+  },
+  hi: {
+    heading: "स्वयं होस्ट किए गए Loom का उपयोग",
+    detail: "स्वयं होस्ट किए गए Loom इंस्टॉलेशन की रिपोर्ट की गई गतिविधि और उनके साझा किए गए संपर्क डोमेन देखें।",
+    metrics: "उपयोग के आँकड़े देखें",
+    domains: "रिपोर्ट किए गए संपर्क डोमेन देखें",
+  },
+  id: {
+    heading: "Adopsi Loom yang dihosting sendiri",
+    detail:
+      "Lihat aktivitas yang dilaporkan oleh instalasi Loom yang dihosting sendiri dan domain kontak yang mereka bagikan.",
+    metrics: "Lihat metrik adopsi",
+    domains: "Lihat domain kontak yang dilaporkan",
+  },
+  it: {
+    heading: "Adozione di Loom self-hosted",
+    detail: "Esplora l’attività segnalata dalle installazioni Loom self-hosted e i domini di contatto che condividono.",
+    metrics: "Vedi le metriche di adozione",
+    domains: "Vedi i domini di contatto segnalati",
+  },
+  ja: {
+    heading: "セルフホスト版 Loom の利用状況",
+    detail: "セルフホスト版 Loom から報告されたアクティビティと、共有された連絡先ドメインを確認できます。",
+    metrics: "利用指標を見る",
+    domains: "報告された連絡先ドメインを見る",
+  },
+  ko: {
+    heading: "자체 호스팅 Loom 도입 현황",
+    detail: "자체 호스팅 Loom 설치에서 보고한 활동과 공유한 연락처 도메인을 확인할 수 있습니다.",
+    metrics: "도입 지표 보기",
+    domains: "보고된 연락처 도메인 보기",
+  },
+  pl: {
+    heading: "Wykorzystanie własnych instalacji Loom",
+    detail: "Zobacz aktywność zgłaszaną przez własne instalacje Loom i udostępniane przez nie domeny kontaktowe.",
+    metrics: "Zobacz wskaźniki wykorzystania",
+    domains: "Zobacz zgłoszone domeny kontaktowe",
+  },
+  "pt-BR": {
+    heading: "Adoção do Loom auto-hospedado",
+    detail:
+      "Explore a atividade informada pelas instalações auto-hospedadas do Loom e os domínios de contato que elas compartilham.",
+    metrics: "Ver métricas de adoção",
+    domains: "Ver domínios de contato informados",
+  },
+  ru: {
+    heading: "Использование Loom на своих серверах",
+    detail: "Посмотрите, какую активность и контактные домены сообщают установки Loom на собственных серверах.",
+    metrics: "Посмотреть показатели использования",
+    domains: "Посмотреть сообщённые контактные домены",
+  },
+  tr: {
+    heading: "Kendi sunucunuzda Loom kullanımı",
+    detail:
+      "Kendi sunucularında barındırılan Loom kurulumlarının bildirdiği etkinliği ve paylaştığı iletişim alan adlarını inceleyin.",
+    metrics: "Kullanım ölçümlerini görüntüle",
+    domains: "Bildirilen iletişim alan adlarını görüntüle",
+  },
+  vi: {
+    heading: "Mức độ sử dụng Loom tự lưu trữ",
+    detail: "Xem hoạt động do các bản cài đặt Loom tự lưu trữ báo cáo và các tên miền liên hệ họ chia sẻ.",
+    metrics: "Xem số liệu sử dụng",
+    domains: "Xem tên miền liên hệ được báo cáo",
+  },
+  "zh-CN": {
+    heading: "自托管 Loom 的使用情况",
+    detail: "查看自托管 Loom 实例报告的活动及其共享的联系域名。",
+    metrics: "查看使用指标",
+    domains: "查看已报告的联系域名",
+  },
+  "zh-Hant": {
+    heading: "自架 Loom 的使用情況",
+    detail: "查看自架 Loom 執行個體回報的活動及其分享的聯絡網域。",
+    metrics: "查看使用指標",
+    domains: "查看已回報的聯絡網域",
+  },
+};

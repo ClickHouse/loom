@@ -239,6 +239,10 @@ main :where(p, dd) {
   max-inline-size: 68ch;
 }
 
+main [hidden] {
+  display: none;
+}
+
 h1,
 h2,
 h3 {
@@ -357,6 +361,10 @@ button:is(.primary, .secondary) {
 
 .site-panel {
   min-width: 0;
+}
+
+form.site-panel,
+section.site-panel {
   padding: clamp(1rem, 2.15vw, 1.85rem);
   border: 1px solid var(--line);
   border-radius: var(--radius);
