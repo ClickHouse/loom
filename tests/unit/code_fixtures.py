@@ -71,6 +71,17 @@ def linear_sample_context() -> dict[str, Any]:
         return {"context_error": type(error).__name__}
 
 
+def mildest(pairs: list[tuple[float, float]]) -> tuple[float, float]:
+    """The (small, big) pair of times that grew least: the one a linear-cost judge reads.
+
+    Each pair is a size and 4 times it, timed back to back, so a step fails only when
+    every pair is over. A minimum taken at each size apart keeps one small-size run that
+    was faster than its neighbours, which no later run can undo, and a linear cost then
+    reads as over 8 times. A slow small-size run in one pair can hide a step; nothing is
+    carried, so the next run reports it."""
+    return min(pairs, key=lambda p: p[1] / max(p[0], 1e-9))
+
+
 def assert_linear(
     cost: Callable[[Any], float],
     small: Any,
@@ -80,9 +91,10 @@ def assert_linear(
     floor: float = 0.0,
 ) -> None:
     """`cost(big)` is under `ratio` times `cost(small)` (8 suits 4 times the size: a
-    quadratic one takes 16) or under `floor` seconds. On a loaded host the best of three
-    runs of each counts. No absolute bound: a linear cost at `big` takes several times
-    as long on a slow runner as on a fast one."""
+    quadratic one takes 16) or under `floor` seconds. The two are timed back to back; a
+    pair over `ratio` is timed twice more and the mildest of the three is judged
+    (`mildest`). No absolute bound: a linear cost at `big` takes several times as long
+    on a slow runner as on a fast one."""
     samples: list[dict[str, Any]] = []
     original = cost
 
@@ -93,9 +105,10 @@ def assert_linear(
         return value
 
     cost = observed
-    a, b = cost(small), cost(big)
-    if b > ratio * a:
-        a, b = min(a, cost(small), cost(small)), min(b, cost(big), cost(big))
+    pairs = [(cost(small), cost(big))]
+    if pairs[0][1] > ratio * pairs[0][0]:
+        pairs += [(cost(small), cost(big)) for _ in range(2)]
+    a, b = mildest(pairs)
     try:
         assert b < ratio * a or b < floor, (a, b)
     except AssertionError as error:

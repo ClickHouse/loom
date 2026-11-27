@@ -10,7 +10,7 @@ import functools
 import time
 from collections.abc import Callable
 
-from tests.unit.code_fixtures import linear_sample_context, untraced
+from tests.unit.code_fixtures import linear_sample_context, mildest, untraced
 
 
 def _markdown(text: str) -> object:
@@ -514,7 +514,9 @@ _WALK_N = 100_000
 def walk_cost(
     name: str, *, diagnostics: list[dict[str, object]] | None = None
 ) -> tuple[float, float]:
-    """The best of three times of the walk at N and 4N characters."""
+    """The times of the walk at N and 4N characters, taken back to back. A pair that
+    grew RATIO times or more is timed twice more and the mildest of the three is returned
+    (`mildest`)."""
     walk, text = next((w[1], w[2]) for w in WALKS if w[0] == name)
 
     def timed_cost(n: int) -> float:
@@ -537,7 +539,13 @@ def walk_cost(
                 {"n": n, "cpu_s": cpu_s, "before": before, "after": linear_sample_context()}
             )
 
-    return min(cost(_WALK_N) for _ in range(3)), min(cost(4 * _WALK_N) for _ in range(3))
+    # Not judged: the first call loads the lane's imports, grammar and caches, which cost
+    # several walks at N and would make the first pair read as no growth at all.
+    timed_cost(_WALK_N)
+    pairs = [(cost(_WALK_N), cost(4 * _WALK_N))]
+    if pairs[0][1] >= RATIO * pairs[0][0]:
+        pairs += [(cost(_WALK_N), cost(4 * _WALK_N)) for _ in range(2)]
+    return mildest(pairs)
 
 
 # The class guard: every lane parser in the ingest's registry (`ingest_parse._PARSERS`)
@@ -732,20 +740,23 @@ def judged_step(
     read as another lane; the time at its two sizes; the bytes tree-sitter parsed at each)
     of one shape, or None when its text at `n` does not read as the lane. `cost(n)` is
     (the time, the bytes parsed, whether the text read as the lane, whether every parse and
-    walk finished). An unlisted shape still over linear after the best of three, from
-    LANE_FLOOR_S to STEP_MAX_S at 4N and under 16 times its N time (pure quadratic growth,
-    which no cache step reaches), is judged from 4N to 16N instead."""
+    walk finished). A step that looks over linear is timed twice more, its two sizes back
+    to back, and its mildest pair is judged (`mildest`). An unlisted shape still over
+    linear then, from LANE_FLOOR_S to STEP_MAX_S at 4N and under 16 times its N time (pure
+    quadratic growth, which no cache step reaches), is judged from 4N to 16N instead."""
     small, bs, lane, _ = cost(n)
     if not lane:
         return None
     if small > N_MAX_S:
         return "N", small, float("inf"), bs, bs
     big, bb, _, _ = cost(4 * n)
-    if (listed and big < LANE_FLOOR_S) or (
-        not listed and big > RETRY_FLOOR_S and big > RATIO * small
-    ):
+    if listed and big < LANE_FLOOR_S:
+        # The minima read at least as steep as the mildest pair, so one mild pair does not
+        # report a listed shape as linear.
         small = min(small, cost(n)[0], cost(n)[0])
         big = min(big, cost(4 * n)[0], cost(4 * n)[0])
+    elif not listed and big > RETRY_FLOOR_S and big > RATIO * small:
+        small, big = mildest([(small, big)] + [(cost(n)[0], cost(4 * n)[0]) for _ in range(2)])
     in_window = LANE_FLOOR_S < big < STEP_MAX_S
     in_band = RATIO * small < big < 16 * small
     if listed or not (in_window and in_band):
@@ -756,9 +767,13 @@ def judged_step(
     huge, bh, lane, finished = cost(16 * n)
     if not (lane and finished):  # a parse or walk that stopped early looks cheap
         return "N, 16N unread", small, big, bs, bb
-    if RATIO * big < huge < BOUND_S:  # timed twice more when it looks over linear
-        again = (cost(16 * n), cost(16 * n))
-        huge = min([huge] + [t for t, _, read, done in again if read and done])
+    if RATIO * big < huge < BOUND_S:  # two more pairs when it looks over linear
+        pairs = [(big, huge)]
+        for _ in range(2):
+            again, (t, _, read, done) = cost(4 * n)[0], cost(16 * n)
+            if read and done:
+                pairs.append((again, t))
+        big, huge = mildest(pairs)
     return "4N", big, huge, bb, bh
 
 
@@ -811,7 +826,7 @@ def registry_cost(
             took = time.process_time() - t0 - parse_s
         lane, finished = getattr(pf, "lang", "") == as_lang, walked and not parse_raised
         if samples is not None:
-            # Keep every attempt: the judge can select CPU minima from separate runs.
+            # Keep every attempt: the judge reads one pair of them.
             samples.append(
                 {
                     "n": n,

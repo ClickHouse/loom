@@ -32,6 +32,7 @@ from collections.abc import Callable
 
 import pytest
 
+from tests.unit.code_fixtures import mildest
 from tests.unit.lane_walks import BOUND_S, LANE_FLOOR_S, RATIO, WALKS
 
 _PACKAGES = ("server.code.domain.extract", "server.code.app.index")
@@ -234,7 +235,7 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
         if _over(*pairs[0]):
             pairs += [(cost(n // 4), cost(n)) for _ in range(2)]
             if all(_over(small, big) for small, big in pairs):
-                small, big = min(pairs, key=lambda p: p[1] / max(p[0], 1e-9))  # the mildest
+                small, big = mildest(pairs)
                 return n, round(small, 4), round(big, 4)
     return None
 
@@ -381,14 +382,37 @@ def test_judged_step_tells_a_cache_step_from_growth_over_linear() -> None:
     assert judged({1: [0.004], 4: [0.045]}) == ("N", False)  # under 50 ms at 4N: not at 16N
     assert judged({1: [1.5]}) == ("N", True)  # over 1 s at N: 4N is not timed
     assert judged({1: [(0.01, "other")]}) is None
+    # One N run about twice as fast as the two after it, as timed on a runner: the first
+    # pair reads 8 to 10 times, the other two under 5.
+    for fast_n in (
+        {1: [0.047, 0.086, 0.087], 4: [0.397, 0.396, 0.398]},
+        {1: [0.058, 0.113, 0.106], 4: [0.498, 0.486, 0.492]},
+        {1: [0.033, 0.065, 0.076], 4: [0.338, 0.319, 0.365]},
+        {1: [0.011, 0.019, 0.019], 4: [0.091, 0.091, 0.100], 16: [(0.001, "stopped")]},
+    ):
+        assert judged(fast_n) == ("N", False)
+    # the step from 4N to 16N likewise: the 4N runs timed next to the later 16N ones count
+    fast_4n = {1: [0.01], 4: [0.1, 0.1, 0.1, 0.2], 16: [0.9, 0.85]}
+    assert judged(fast_4n) == ("4N", False)
+    # quadratic growth is 16 times on every pair, whichever run was fast
+    assert judged({1: [0.01, 0.02, 0.02], 4: [0.32, 0.33, 0.34]}) == ("N", True)
+    assert judged({1: [0.01], 4: [0.12, 0.12, 0.12, 0.24], 16: [1.9, 3.8]}) == ("4N", True)
+    # a pair whose N run was 3 times as slow hides a quadratic step; the next run reports it
+    assert judged({1: [0.02, 0.06, 0.02], 4: [0.32]}) == ("N", False)
     sizes: list[int] = []
+    times = {1: 0.01, 4: 0.1, 16: 0.4}
 
     def counted(n: int) -> tuple[float, int, bool, bool]:
         sizes.append(n)
-        return {1: 0.01, 4: 0.1, 16: 0.4}[n], n, True, True
+        return times[n], n, True, True
 
     judged_step(counted, 1, False)
-    assert sizes.count(16) == 1  # a 16N run that looks linear is timed once
+    # each pair back to back; a 16N run that looks linear is timed once
+    assert sizes == [1, 4, 1, 4, 1, 4, 16]
+    sizes.clear()
+    times.update({4: 0.12, 16: 1.9})
+    judged_step(counted, 1, False)
+    assert sizes == [1, 4, 1, 4, 1, 4, 16, 4, 16, 4, 16]
 
 
 def test_a_lane_parse_that_fails_is_not_finished(monkeypatch: pytest.MonkeyPatch) -> None:
