@@ -64,7 +64,9 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
         ORG, NS, MODEL, SMALL_VEC, path_prefix=prefix, pool=5, skip_tests=True
     )
     # The definition leg's reads: the named symbols, then the chunks that define them
-    await repo.symbols_named(ORG, NS, ["bulk_update", "combine"], per_name=32)
+    await repo.symbols_named(
+        ORG, NS, ["bulk_update", "combine"], qualified=["Query.combine"], per_name=32
+    )
     await repo.definition_chunks(
         ORG, NS, MODEL, [("src/a.py", "pkg.a::Query::combine")], scope=scope
     )

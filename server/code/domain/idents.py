@@ -36,8 +36,10 @@ def embedded_idents(query: str) -> frozenset[str]:
 
 
 _NAME = r"[A-Za-z_]\w*"
-# A name with the owners it is written with: `combine`, `Query.combine`, `DB::Field`.
-_SPELLED_RE = re.compile(rf"(?<!\w){_NAME}(?:(?:\.|::){_NAME})*")
+# A name with the owners it is written with: `combine`, `Query.combine`, `DB::Field`,
+# `parser->actions`.
+_SPELLED_RE = re.compile(rf"(?<!\w){_NAME}(?:(?:\.|::|->){_NAME})*")
+_ACCESS_RE = re.compile(r"\.|::|->")
 _PLURAL_RE = re.compile(r"\(e?s\)")  # "model(s)" is a plural, not a call
 # A capital inside the word: `executeStep`, `QuerySet`, `S3Queue`, `SQLCompiler`; not
 # `Field`, `HTTP` or the plural `URLs`.
@@ -56,13 +58,16 @@ def spelled_names(query: str, limit: int) -> list[tuple[str, ...]]:
     is also a symbol name is not looked up. A path component (`models/query.py`) is not
     a name either. A receiver is dropped (`self.save_base()` spells `save_base`) and is
     no name by itself (`super()`); any other owner stays as written, so `json.dumps()`
-    does not spell `dumps`."""
+    does not spell `dumps`. A member of something that is not a name
+    (`get_parser()._actions`, `rows[0]->name`) has an owner the text does not spell,
+    and is no name."""
     found: dict[tuple[str, ...], None] = {}
     for m in _SPELLED_RE.finditer(query):
-        before, after = query[m.start() - 1 : m.start()], query[m.end() : m.end() + 4]
-        if before == "/" or after.startswith("/"):
+        ahead, after = query[max(m.start() - 2, 0) : m.start()], query[m.end() : m.end() + 4]
+        before = ahead[-1:]
+        if before == "/" or after.startswith("/") or ahead.endswith((".", "::", "->")):
             continue
-        parts = tuple(part for part in re.split(r"::|\.", m.group(0)) if part)
+        parts = tuple(_ACCESS_RE.split(m.group(0)))
         lead = 0
         while lead < len(parts) - 1 and parts[lead] in _RECEIVERS:
             lead += 1

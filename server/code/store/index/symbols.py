@@ -725,38 +725,49 @@ class SymbolsMixin(CodeRepoBase):
         return out
 
     async def symbols_named(
-        self, org: str, ns: str, names: list[str], *, per_name: int
+        self, org: str, ns: str, names: list[str], *, qualified: list[str], per_name: int
     ) -> list[dict[str, Any]]:
         """Live `(name, qualified_name, path)` rows whose bare name is one of `names`, at
         most `per_name` live keys per name: a name with that many says nothing about
-        where it is defined. Keys come from the name-keyed side table (a point read per
-        name) and the live rows from the full key, as in `symbols_by_name`. The side
-        table keeps every version of a key and its dead keys, so the bound is taken
-        after the newest version decides liveness, as in `name_candidate_views`: a
-        caller that gets `per_name` rows for a name knows the read stopped there."""
+        where it is defined. `qualified` holds the dotted spellings a caller reads some
+        of those names by (`Model.save`): the keys whose qualified name ends with one
+        are bounded apart, so the one `save` a spelling names is not lost among the
+        others. Keys come from the name-keyed side table (a point read per name) and
+        the live rows from the full key, as in `symbols_by_name`. The side table keeps
+        every version of a key and its dead keys, so the bound is taken after the
+        newest version decides liveness, as in `name_candidate_views`: a caller that
+        gets `per_name` rows for a name, or for a spelling, knows the read stopped
+        there. Tree-sitter rows only: a chunk's scope is their qualified name (the
+        compiler tier names some differently)."""
         if not names:
             return []
         rows: list[dict[str, Any]] = await self._ch.query_all(
             """
             SELECT name, qualified_name, path
             FROM loom.code_symbols FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-              AND (tier, qualified_name, symbol_id) IN (
-                  SELECT tier, qualified_name, symbol_id
+            WHERE org = {org:String} AND namespace = {ns:String} AND tier = 'treesitter'
+              AND (qualified_name, symbol_id) IN (
+                  SELECT qualified_name, symbol_id
                   FROM (
-                      SELECT name, tier, qualified_name, symbol_id,
+                      SELECT name, qualified_name, symbol_id,
                              argMax(tombstoned_at IS NULL, version) AS is_live
                       FROM loom.code_symbol_names
                       WHERE org = {org:String} AND namespace = {ns:String}
-                        AND name IN {names:Array(String)}
-                      GROUP BY name, tier, qualified_name, symbol_id
+                        AND name IN {names:Array(String)} AND tier = 'treesitter'
+                      GROUP BY name, qualified_name, symbol_id
                       HAVING is_live = 1
-                      LIMIT {per_name:UInt32} BY name
+                      LIMIT {per_name:UInt32} BY name, arrayMap(
+                          spelling -> endsWith(
+                              concat('.', replaceAll(qualified_name, '::', '.')),
+                              concat('.', spelling)
+                          ),
+                          {qualified:Array(String)}
+                      )
                   )
               )
               AND tombstoned_at IS NULL
             """,
-            {"org": org, "ns": ns, "names": names, "per_name": per_name},
+            {"org": org, "ns": ns, "names": names, "qualified": qualified, "per_name": per_name},
         )
         return rows
 

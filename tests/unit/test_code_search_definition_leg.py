@@ -1,5 +1,5 @@
 """code.search definition leg: the names a query spells out as code are read from the
-symbol table, and the chunks that define the first few join the fusion as one more
+symbol table, and the chunks that define the first one join the fusion as one more
 reciprocal-rank list. A plain word is never looked up, an owner is kept as written,
 an ambiguous name is dropped, and confidence is calibrated without the leg."""
 
@@ -13,8 +13,7 @@ import pytest
 
 from server.code.app import search as cs
 from server.code.app.search.definitions import (
-    _MAX_CANDIDATES,
-    _MAX_DEFINITIONS,
+    _MAX_NAMES_TRIED,
     _SYMBOLS_PER_NAME,
     named_definitions,
 )
@@ -46,8 +45,7 @@ def test_a_called_backticked_qualified_or_code_shaped_name_is_spelled_out() -> N
     # a qualified spelling counts whatever its member looks like
     assert _names("Query.combine drops an alias") == ["Query.combine"]
     assert _names("see pkg.db.models") == ["pkg.db.models"]
-    # a call chained on an expression names the method by itself
-    assert _names("qs.filter(a=1).values_list('x')") == ["qs.filter", "values_list"]
+    assert _names("parser->_actions is empty") == ["parser._actions"]
 
 
 def test_a_receiver_is_no_owner_and_any_other_owner_stays_as_written() -> None:
@@ -61,7 +59,7 @@ def test_a_receiver_is_no_owner_and_any_other_owner_stays_as_written() -> None:
     # the member behind a receiver is a name only as a bare word would be
     assert _names("self.cache is stale and self.query.add_q() fails") == ["query.add_q"]
     # and a receiver is no name by itself, called or backticked
-    assert _names("super().save_base() or cls() or `self`") == ["save_base"]
+    assert _names("super() or cls() or `self`") == []
     # a library module, a variable or a class is an owner, not a receiver
     assert _names("json.dumps(payload) and qs.bulk_update(objs)") == [
         "json.dumps",
@@ -71,6 +69,17 @@ def test_a_receiver_is_no_owner_and_any_other_owner_stays_as_written() -> None:
         "os.path.join",
         "ModelAdmin.lookup_allowed",
     ]
+    assert _names("this->executeStep() and self->flush_all()") == ["executeStep", "flush_all"]
+
+
+def test_a_member_of_something_that_is_not_a_name_is_no_name() -> None:
+    # the owner is a call, a subscript or a template: the text does not spell it
+    assert _names("qs.filter(a=1).values_list('x')") == ["qs.filter"]
+    assert _names("get_parser()._actions and parsers[0]._actions") == ["get_parser"]
+    assert _names("requests.get(url).raise_for_status()") == ["requests.get"]
+    assert _names("rows[0]->flush_all() or Foo<T>::do_work()") == []
+    assert _names("super().save_base() and cls().from_db()") == []
+    assert _names("call .save_base() on it") == []
 
 
 def test_a_plain_word_is_never_a_name() -> None:
@@ -116,11 +125,13 @@ def _name(spelling: str) -> tuple[str, ...]:
 
 def test_a_name_keeps_its_definitions_outside_tests_or_its_test_ones() -> None:
     assert named_definitions([_name("bulk_update")], _SYMBOLS) == [
-        ("pkg/query.py", "pkg.query::QuerySet::bulk_update"),
-        ("pkg/state.py", "pkg.state::StateApps::bulk_update"),
+        [
+            ("pkg/query.py", "pkg.query::QuerySet::bulk_update"),
+            ("pkg/state.py", "pkg.state::StateApps::bulk_update"),
+        ]
     ]
     assert named_definitions([_name("test_combine")], _SYMBOLS) == [
-        ("tests/q.py", "tests.q::T::test_combine")
+        [("tests/q.py", "tests.q::T::test_combine")]
     ]
 
 
@@ -133,15 +144,22 @@ def test_a_name_defined_in_too_many_places_is_dropped() -> None:
 
 def test_a_qualified_spelling_names_only_its_own_definition() -> None:
     assert named_definitions([_name("Query.combine")], _SYMBOLS) == [
-        ("pkg/query.py", "pkg.query::Query::combine")
+        [("pkg/query.py", "pkg.query::Query::combine")]
     ]
     # a module path qualifies too: its dots separate like `::`
     assert named_definitions([_name("query.QuerySet.bulk_update")], _SYMBOLS) == [
-        ("pkg/query.py", "pkg.query::QuerySet::bulk_update")
+        [("pkg/query.py", "pkg.query::QuerySet::bulk_update")]
     ]
     assert named_definitions([_name("signing.dumps")], _SYMBOLS) == [
-        ("pkg/signing.py", "pkg.signing::dumps")
+        [("pkg/signing.py", "pkg.signing::dumps")]
     ]
+    # the owner is matched before the bound: one `save` among many is still named
+    crowd = [_sym("save", f"pkg.m{i}::C{i}::save", f"pkg/m{i}.py") for i in range(40)]
+    model = _sym("save", "pkg.base::Model::save", "pkg/base.py")
+    assert named_definitions([_name("Model.save")], [*crowd, model]) == [
+        [("pkg/base.py", "pkg.base::Model::save")]
+    ]
+    assert named_definitions([_name("save")], [*crowd, model]) == []
 
 
 def test_an_owner_the_symbol_table_does_not_record_names_nothing() -> None:
@@ -152,36 +170,33 @@ def test_an_owner_the_symbol_table_does_not_record_names_nothing() -> None:
     assert named_definitions([_name("SubQuery.combine")], _SYMBOLS) == []
     # the same members named alone, or behind a receiver, are read
     assert named_definitions(spelled_names("dumps(payload) raises", 32), _SYMBOLS) == [
-        ("pkg/signing.py", "pkg.signing::dumps")
+        [("pkg/signing.py", "pkg.signing::dumps")]
     ]
     assert named_definitions(spelled_names("self.combine() fails", 32), _SYMBOLS) == [
-        ("pkg/query.py", "pkg.query::Query::combine"),
-        ("pkg/tree.py", "pkg.tree::Q::combine"),
+        [("pkg/query.py", "pkg.query::Query::combine"), ("pkg/tree.py", "pkg.tree::Q::combine")]
     ]
 
 
 def test_definitions_follow_the_query_order_within_the_prefix_and_the_bound() -> None:
-    names = [_name("combine"), _name("bulk_update"), _name("combine")]
-    assert [d[1] for d in named_definitions(names, _SYMBOLS)] == [
-        "pkg.query::Query::combine",
-        "pkg.tree::Q::combine",
-        "pkg.query::QuerySet::bulk_update",
-        "pkg.state::StateApps::bulk_update",
+    names = [_name("combine"), _name("save"), _name("bulk_update")]
+    assert [[d[1] for d in name] for name in named_definitions(names, _SYMBOLS)] == [
+        ["pkg.query::Query::combine", "pkg.tree::Q::combine"],
+        ["pkg.query::QuerySet::bulk_update", "pkg.state::StateApps::bulk_update"],
     ]
     # under a path prefix the three-definition bound counts inside it
     assert named_definitions([_name("save")], _SYMBOLS, path_prefix="pkg/m1") == [
-        ("pkg/m1.py", "pkg.m1::C1::save")
+        [("pkg/m1.py", "pkg.m1::C1::save")]
     ]
     # the read bound is the namespace's: at it, a name is dropped whatever the prefix
     crowd = [_sym("put", f"lib.t{i}::put", f"lib/t{i}.py") for i in range(_SYMBOLS_PER_NAME - 1)]
     one = _sym("put", "pkg.a::put", "pkg/a.py")
     assert named_definitions([_name("put")], [*crowd, one], path_prefix="pkg/") == []
     assert named_definitions([_name("put")], [*crowd[1:], one], path_prefix="pkg/") == [
-        ("pkg/a.py", "pkg.a::put")
+        [("pkg/a.py", "pkg.a::put")]
     ]
-    wide = [_sym(f"f_{i}", f"pkg.w::f_{i}", "pkg/w.py") for i in range(_MAX_CANDIDATES + 5)]
-    got = named_definitions([_name(f"f_{i}") for i in range(_MAX_CANDIDATES + 5)], wide)
-    assert [d[1] for d in got] == [f"pkg.w::f_{i}" for i in range(_MAX_CANDIDATES)]
+    wide = [_sym(f"f_{i}", f"pkg.w::f_{i}", "pkg/w.py") for i in range(_MAX_NAMES_TRIED + 5)]
+    got = named_definitions([_name(f"f_{i}") for i in range(_MAX_NAMES_TRIED + 5)], wide)
+    assert got == [[("pkg/w.py", f"pkg.w::f_{i}")] for i in range(_MAX_NAMES_TRIED)]
 
 
 # ---- the bounded read on a re-indexed table -----------------------------------------
@@ -196,8 +211,8 @@ def _reindexed(live: list[dict[str, Any]], dead: list[dict[str, Any]]) -> CodeRe
 
     def write(rows: list[dict[str, Any]], version: int, tombstoned_at: str) -> str:
         values = ", ".join(
-            f"('o', 'n', 'treesitter', '{r['qualified_name']}', '{r['symbol_id']}', "
-            f"'{r['name']}', '{r['path']}', {tombstoned_at}, {version})"
+            f"('o', 'n', '{r.get('tier', 'treesitter')}', '{r['qualified_name']}', "
+            f"'{r['symbol_id']}', '{r['name']}', '{r['path']}', {tombstoned_at}, {version})"
             for r in rows
         )
         return (
@@ -221,6 +236,18 @@ def _key(name: str, qualified: str, path: str, symbol_id: str = "") -> dict[str,
     return {**_sym(name, qualified, path), "symbol_id": symbol_id or f"id-{qualified}"}
 
 
+async def _read(repo: CodeRepo, spelling: str) -> list[dict[str, Any]]:
+    """The leg's symbol read for one spelling, bare or qualified."""
+    rows: list[dict[str, Any]] = await repo.symbols_named(
+        "o",
+        "n",
+        [spelling.split(".")[-1]],
+        qualified=[spelling] if "." in spelling else [],
+        per_name=_SYMBOLS_PER_NAME,
+    )
+    return rows
+
+
 @needs_clickhouse
 @pytest.mark.asyncio
 async def test_the_read_bound_counts_live_definitions_not_name_table_rows() -> None:
@@ -230,7 +257,7 @@ async def test_the_read_bound_counts_live_definitions_not_name_table_rows() -> N
     # a dead key that sorts first must not take one of the places the bound counts
     dead = [_key("helper", "aa_gone::helper", "pkg/gone.py")]
     for repo in (_reindexed(live, []), _reindexed(live, dead)):
-        rows = await repo.symbols_named("o", "n", ["helper"], per_name=_SYMBOLS_PER_NAME)
+        rows = await _read(repo, "helper")
         assert len(rows) == _SYMBOLS_PER_NAME
         assert all(r["path"] != "pkg/gone.py" for r in rows)
         assert named_definitions([_name("helper")], rows) == []
@@ -243,9 +270,43 @@ async def test_dead_keys_of_a_name_do_not_hide_its_live_definition() -> None:
     combine = ("combine", "pkg.query::Query::combine", "pkg/query.py")
     dead = [_key(*combine, symbol_id=f"old-{i:02d}") for i in range(_SYMBOLS_PER_NAME)]
     repo = _reindexed([_key(*combine, symbol_id="zz-live")], dead)
-    rows = await repo.symbols_named("o", "n", ["combine"], per_name=_SYMBOLS_PER_NAME)
+    rows = await _read(repo, "combine")
     assert rows == [_sym(*combine)]
-    assert named_definitions([_name("combine")], rows) == [("pkg/query.py", combine[1])]
+    assert named_definitions([_name("combine")], rows) == [[("pkg/query.py", combine[1])]]
+
+
+@needs_clickhouse
+@pytest.mark.asyncio
+async def test_a_qualified_spelling_of_a_common_member_is_read_apart_from_the_rest() -> None:
+    live = [_key("save", f"pkg.m{i:02d}::C{i:02d}::save", f"pkg/m{i:02d}.py") for i in range(40)]
+    live.append(_key("save", "pkg.zz::Model::save", "pkg/zz.py"))
+    repo = _reindexed(live, [])
+    rows = await _read(repo, "Model.save")
+    assert named_definitions([_name("Model.save")], rows) == [
+        [("pkg/zz.py", "pkg.zz::Model::save")]
+    ]
+    # the bare name is still one that says nothing about where, with or without it
+    assert named_definitions([_name("save")], rows) == []
+    assert named_definitions([_name("save")], await _read(repo, "save")) == []
+    # and an owner with as many definitions as the bound is dropped like a bare name
+    live = [_key("save", f"pkg.m{i:02d}::Model::save", f"pkg/m{i:02d}.py") for i in range(40)]
+    rows = await _read(_reindexed(live, []), "Model.save")
+    assert named_definitions([_name("Model.save")], rows) == []
+
+
+@needs_clickhouse
+@pytest.mark.asyncio
+async def test_a_definition_both_tiers_record_counts_once() -> None:
+    # the compiler tier records the same two definitions under its own names and a header
+    parser = [_key("combine", f"pkg.{m}::Q::combine", f"pkg/{m}.py") for m in ("query", "tree")]
+    scip = [
+        {**_key("combine", f"scip {m} Q#combine().", f"include/{m}.h"), "tier": "scip"}
+        for m in ("query", "tree")
+    ]
+    rows = await _read(_reindexed([*parser, *scip], []), "combine")
+    assert named_definitions([_name("combine")], rows) == [
+        [("pkg/query.py", "pkg.query::Q::combine"), ("pkg/tree.py", "pkg.tree::Q::combine")]
+    ]
 
 
 # ---- fusion -------------------------------------------------------------------------
@@ -313,10 +374,10 @@ class _Repo:
         ]
 
     async def symbols_named(
-        self, org: str, ns: str, names: list[str], *, per_name: int
+        self, org: str, ns: str, names: list[str], *, qualified: list[str], per_name: int
     ) -> list[dict[str, Any]]:
         self.calls.append("symbols_named")
-        self.kw["names"] = names
+        self.kw["names"], self.kw["qualified"] = names, qualified
         return [
             _sym("parse_quota", "DB::parse_quota", "src/d.cpp"),
             _sym("parse_quota", "DB::Other::parse_quota", "src/other.cpp"),
@@ -369,32 +430,40 @@ def test_a_query_of_plain_words_adds_no_reads() -> None:
     assert [u.unit_id for u in res.units] == ["a", "c", "b"]
 
 
-def test_named_definitions_join_the_fusion_in_the_order_the_query_names_them() -> None:
+def test_the_first_named_definition_joins_the_fusion() -> None:
     plain = _search(_Repo(), "how does quota enforcement work")
     repo = _Repo()
-    res = _search(repo, "why does parse_quota() ignore what load_quota returns")
+    res = _search(repo, "why does parse_quota() ignore what Quota.load_quota returns")
     assert repo.calls == ["symbols_named", "definition_chunks"]
-    assert repo.kw["names"] == ["load_quota", "parse_quota"]
+    assert (repo.kw["names"], repo.kw["qualified"]) == (
+        ["load_quota", "parse_quota"],
+        ["Quota.load_quota"],
+    )
     assert repo.kw["definitions"] == [
         ("src/d.cpp", "DB::parse_quota"),
         ("src/other.cpp", "DB::Other::parse_quota"),
-        ("src/b.cpp", "DB::load_quota"),
     ]
     assert repo.kw["scope"] is None
-    # b: lexical #2 and a named definition, now above vector-only c; d, which only
-    # the definition leg found, enters level with c, a content leg's first hit, and
-    # below a, which both content legs found
+    # d, which only the definition leg found, enters level with c, a content leg's
+    # first hit, and below a, which both content legs found
     assert [u.unit_id for u in plain.units] == ["a", "c", "b"]
-    assert [u.unit_id for u in res.units] == ["a", "b", "c", "d"]
+    assert [u.unit_id for u in res.units] == ["a", "c", "d", "b"]
     assert {u.unit_id: u.score for u in res.units}["d"] == pytest.approx(1 / 61, abs=1e-4)
-    via = {u.unit_id: u.via for u in res.units}
-    assert via["d"] == "definition" and via["b"] == "lexical"
-    assert "named_definitions=2" in res.score_explanation
-    assert res.retrieval_work["named_definitions"] == 2
+    assert {u.unit_id: u.via for u in res.units}["d"] == "definition"
+    assert "named_definitions=1" in res.score_explanation
+    assert res.retrieval_work["named_definitions"] == 1
     # confidence and abstention are read off the other legs
     assert res.retrieval_confidence == plain.retrieval_confidence
     assert (res.abstain, res.retrieval_risk) == (plain.abstain, plain.retrieval_risk)
     assert res.top_similarity == plain.top_similarity
+    # a definition a content leg found adds the vote to its rank: b, lexical #2, passes
+    # vector-only c; the name mentioned second is not read
+    res = _search(_Repo(), "why does load_quota() ignore what parse_quota returns")
+    assert [(u.unit_id, u.via) for u in res.units] == [
+        ("a", "both"),
+        ("b", "lexical"),
+        ("c", "vector"),
+    ]
 
 
 def test_a_name_behind_an_unrecorded_owner_adds_no_definition() -> None:
@@ -406,22 +475,30 @@ def test_a_name_behind_an_unrecorded_owner_adds_no_definition() -> None:
     assert "named_definitions" not in res.retrieval_work
 
 
-def test_the_leg_serves_the_first_few_definitions() -> None:
+def test_the_leg_serves_the_definitions_of_the_first_name_that_has_a_chunk() -> None:
     class _Many(_Repo):
         async def symbols_named(self, *a: Any, **k: Any) -> list[dict[str, Any]]:
-            return [_sym(f"fn_{i}", f"DB::fn_{i}", "src/m.cpp") for i in range(6)]
+            return [
+                *[_sym(f"fn_{i}", f"DB::fn_{i}", "src/m.cpp") for i in range(6)],
+                _sym("fn_1", "DB::Other::fn_1", "src/n.cpp"),
+            ]
 
         async def definition_chunks(
             self, org: str, ns: str, model: str, definitions: list[tuple[str, str]], **k: Any
         ) -> list[dict[str, Any]]:
+            self.kw["definitions"] = definitions
             return [
-                {"chunk_id": f"m{i}", "path": "src/m.cpp", "scope": f"DB::fn_{i}", **_UNIT}
-                for i in reversed(range(1, 6))  # fn_0 has no chunk of its own
+                {"chunk_id": "n1", "path": "src/n.cpp", "scope": "DB::Other::fn_1", **_UNIT},
+                *[  # fn_0 has no chunk of its own
+                    {"chunk_id": f"m{i}", "path": "src/m.cpp", "scope": f"DB::fn_{i}", **_UNIT}
+                    for i in reversed(range(1, 6))
+                ],
             ]
 
-    res = _search(_Many(), "fn_0 fn_1 fn_2 fn_3 fn_4 fn_5 all fail", top_k=10)
-    served = [u.unit_id for u in res.units if u.via == "definition"]
-    assert served == ["m1", "m2", "m3"] and len(served) == _MAX_DEFINITIONS
+    repo = _Many()
+    res = _search(repo, "fn_0 fn_1 fn_2 fn_3 fn_4 fn_5 all fail", top_k=10)
+    assert len(repo.kw["definitions"]) == _MAX_NAMES_TRIED + 1
+    assert [u.unit_id for u in res.units if u.via == "definition"] == ["m1", "n1"]
 
 
 def test_a_vector_only_run_skips_the_leg_and_a_constraint_reaches_its_chunk_read() -> None:

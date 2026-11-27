@@ -103,10 +103,10 @@ def _rrf_fuse(
     history list is fused with the same operator, except that each of its rows
     contributes at most `history_cap` x the top two-leg score: a file the history names
     is lifted among the content legs' candidates, never above the best of them on its
-    own. The definition list has no cap: the definition of a name the query spells out
+    own. The definition list has no cap: a definition of the name the query spells out
     adds a content leg's score at its rank to what the content legs gave it. One that
-    neither content leg found scores as one leg's top hit, so a chunk both legs rank
-    high still scores above it."""
+    neither content leg found scores as one leg's hit at that rank: below a chunk both
+    legs rank high, and level with the lexical leg's own hit when that leg runs alone."""
     scores: dict[str, float] = {}
     rep: dict[str, dict[str, Any]] = {}
     # The lexical list may weigh less than the vector list (a responsibility question's
