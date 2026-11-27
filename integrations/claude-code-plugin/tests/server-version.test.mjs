@@ -60,7 +60,8 @@ test("pluginVersion reads this plugin's own manifest", () => {
   assert.equal(pluginVersion("file:///nonexistent/lib/x.mjs"), "");
 });
 
-/** A fake Loom whose /v1/health answers `health` (`hang` never answers it). */
+/** A fake Loom whose /v1/health answers `health` (`hang` never answers it), with one
+ *  memory to prime a session with, so a hook that ran to its end prints something. */
 async function fakeLoom(health) {
   const sockets = new Set();
   const srv = http.createServer((req, res) => {
@@ -73,7 +74,7 @@ async function fakeLoom(health) {
     req.resume();
     req.on("end", () => {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end("{}");
+      res.end(req.url === "/v1/context.pack" ? JSON.stringify({ rendered: "A saved fact." }) : "{}");
     });
   });
   srv.on("connection", (s) => {

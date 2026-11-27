@@ -24,7 +24,8 @@ const CODEX = [CODEX_HOOK, "SessionStart", "codex"];
 const GENERIC = [HOOK, "SessionStart"];
 const SAVED_FOR = "https://a.example";
 
-/** A Loom stand-in; `sent` holds the Authorization header of each request. */
+/** A Loom stand-in with one memory to prime a session with, so a hook that ran to
+ *  its end prints something; `sent` holds the Authorization header of each request. */
 async function server() {
   const sent = [];
   const srv = http.createServer((req, res) => {
@@ -33,7 +34,11 @@ async function server() {
     req.on("end", () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
-        req.url.startsWith("/oauth/token") ? JSON.stringify({ access_token: "agent.tok", expires_in: 3600 }) : "{}",
+        req.url.startsWith("/oauth/token")
+          ? JSON.stringify({ access_token: "agent.tok", expires_in: 3600 })
+          : req.url === "/v1/context.pack"
+            ? JSON.stringify({ rendered: "A saved fact." })
+            : "{}",
       );
     });
   });
