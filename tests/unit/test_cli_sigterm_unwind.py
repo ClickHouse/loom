@@ -65,7 +65,8 @@ def test_sigterm_unwinds_a_code_subcommand_and_exits_143(tmp_path: Path) -> None
             proc.kill()
 
 
-def test_sigterm_preserves_cleanup_started_by_sigint(tmp_path: Path) -> None:
+@pytest.mark.parametrize("during_setup", [False, True])
+def test_sigterm_preserves_cleanup_started_by_sigint(tmp_path: Path, during_setup: bool) -> None:
     marker = tmp_path / "finally.ran"
     script = textwrap.dedent(
         f"""
@@ -79,10 +80,15 @@ def test_sigterm_preserves_cleanup_started_by_sigint(tmp_path: Path) -> None:
 
         async def run():
             loop = asyncio.get_running_loop()
-            with patch.object(loop, "add_signal_handler") as install:
+            def install_handler(*args):
+                if {during_setup!r}:
+                    os.kill(os.getpid(), signal.SIGINT)
+
+            with patch.object(loop, "add_signal_handler", side_effect=install_handler) as install:
                 async def command():
                     try:
-                        os.kill(os.getpid(), signal.SIGINT)
+                        if not {during_setup!r}:
+                            os.kill(os.getpid(), signal.SIGINT)
                         await asyncio.Future()
                     finally:
                         install.call_args.args[1]()

@@ -82,6 +82,9 @@ async def cancel_on_sigterm[T](aw: Awaitable[T]) -> T:
     try:
         if installed and callable(previous_int):
             signal.signal(signal.SIGINT, _on_int)
+        # Ctrl-C during handler setup reaches the runner before our wrapper does.
+        if task is not None and task.cancelling():
+            stopping = True
         return await aw
     except asyncio.CancelledError:
         if got_term:
