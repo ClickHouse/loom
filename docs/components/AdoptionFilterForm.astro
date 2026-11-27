@@ -1,5 +1,6 @@
 ---
 import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import AdoptionFilters from "./AdoptionFilters.mjs";
 
 interface Props {
@@ -12,13 +13,13 @@ const { fields, days, active } = Astro.props;
 ---
 
 <details class="advanced" open={active}>
-  <summary>Chart settings</summary>
-  <form id="adoption-filters" method="get" action="/adoption" class="filters" aria-label="Chart settings" data-adoption-filters hidden>
+  <summary>Chart settings <Icon aria-hidden="true" className="settings-chevron" name="chevron-down" size="xs" /></summary>
+  <form id="adoption-filters" method="get" action="/adoption#installation-activity" class="filters" aria-label="Chart settings" data-adoption-filters hidden>
     <input type="hidden" name="days" value={days} />
     <AdoptionFilters client:load fields={fields} form="adoption-filters" fallback="adoption-native-filters" />
     <Button type="secondary" htmlType="submit" label="Apply filters" />
   </form>
-  <form id="adoption-native-filters" method="get" action="/adoption" class="filters native" aria-label="Chart settings" data-adoption-filters>
+  <form id="adoption-native-filters" method="get" action="/adoption#installation-activity" class="filters native" aria-label="Chart settings" data-adoption-filters>
     <input type="hidden" name="days" value={days} />
     {fields.map(({ label, name, options, value }) => (
       <label>{label}
@@ -47,13 +48,19 @@ const { fields, days, active } = Astro.props;
     background: var(--surface);
   }
   .advanced summary {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    list-style: none;
     padding: 0.68rem 0.95rem;
     cursor: pointer;
     color: var(--click-global-color-text-default);
     font-size: 0.86rem;
     font-weight: 600;
   }
+  .advanced summary::-webkit-details-marker { display: none; }
   .advanced summary:hover { color: var(--accent); }
+  .advanced[open] :global(.settings-chevron) { rotate: 180deg; }
   .filters {
     display: flex;
     flex-wrap: wrap;

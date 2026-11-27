@@ -1,6 +1,7 @@
 ---
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { BigStat } from "@clickhouse/click-ui/BigStat";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
 import { Link } from "@clickhouse/click-ui/Link";
 import { Panel } from "@clickhouse/click-ui/Panel";
@@ -68,11 +69,9 @@ const lifecycleGroups = [
 }));
 const oss = summarizeOss(openSource, filters.days, today);
 const stars = oss.find(({ id }) => id === "stars");
-const sources = {
-  GitHub: "https://github.com/ClickHouse/loom",
-  PyPI: "https://pypistats.org/packages/clickhouse-loom",
+const packageUrls = {
+  PyPI: "https://pypi.org/project/clickhouse-loom/",
   npm: "https://www.npmjs.com/package/@clickhouse/loom",
-  GHCR: "https://github.com/ClickHouse/loom/pkgs/container/loom",
 };
 if (dataset) {
   const rows = adoptionCsv(dataset, series, lifecycleGroups, oss);
@@ -218,7 +217,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
         <div class="coverage">
           <div>
             <Text className="coverage-title" size="sm" weight="semibold">{totals.days_reported} of {filters.days} days reported</Text>
-            <Text size="sm" color="muted">{number.format(totals.reporting)} installations sent telemetry. The latest report arrived on <time datetime={totals.last_reported}>{shortDate(totals.last_reported)}</time>.</Text>
+            <Text size="sm" color="muted">{number.format(totals.reporting)} installations sent telemetry. Latest reporting date <time datetime={totals.last_reported}>{shortDate(totals.last_reported)}</time> UTC.</Text>
             {totals.operations === 0 && <Text size="sm" color="muted">No successful requests were reported in this window.</Text>}
           </div>
           <ProgressBar className="coverage-meter" type="small" progress={(totals.days_reported / filters.days) * 100} aria-hidden="true" />
@@ -257,7 +256,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
             <Title type="h2" size="lg" id="activity-title">Usage over time</Title>
             <Text size="sm" color="muted">Observed activity in reporting installations for the selected window.</Text>
           </div>
-          {series.length > 0 && <Link size="sm" href={adoptionUrl(filters, { csv: "activity" })}>Download activity CSV</Link>}
+          {series.length > 0 && <Link className="download-link" size="sm" href={adoptionUrl(filters, { csv: "activity" })}><Icon aria-hidden="true" name="download" size="sm" />Download activity CSV</Link>}
         </div>
         <AdoptionFilterForm fields={choiceFields} days={filters.days} active={advanced} />
         {series.length > 0 ? (
@@ -271,7 +270,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
             <Title type="h2" size="lg" id="lifecycle-title">New and returning activity</Title>
             <Text size="sm" color="muted">Compare first-time, retained, and reactivated activity across completed periods.</Text>
           </div>
-          {hasLifecycle && <Link size="sm" href={adoptionUrl(filters, { csv: "lifecycle" })}>Download lifecycle CSV</Link>}
+          {hasLifecycle && <Link className="download-link" size="sm" href={adoptionUrl(filters, { csv: "lifecycle" })}><Icon aria-hidden="true" name="download" size="sm" />Download lifecycle CSV</Link>}
         </div>
         {hasLifecycle ? <div class="two-column">
           {lifecycleGroups.map(({ title, threshold, rows }) => (
@@ -381,14 +380,14 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
             <Title type="h2" size="lg" id="downloads-title">SDK downloads</Title>
             <Text size="sm" color="muted">Compare daily or monthly downloads from reporting package registries.</Text>
           </div>
-          {hasDownloads && <Link size="sm" href={adoptionUrl(filters, { csv: "downloads" })}>Download SDK CSV</Link>}
+          {hasDownloads && <Link className="download-link" size="sm" href={adoptionUrl(filters, { csv: "downloads" })}><Icon aria-hidden="true" name="download" size="sm" />Download SDK CSV</Link>}
         </div>
         <div class="two-column">
           {oss.filter(({ isDownload }) => isDownload).map(({ label, source, monthly, history }) => {
             const useDaily = monthly.length < 3 && history.length >= 3;
             return <Panel className="chart-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
               <Title type="h3" size="sm">{label}</Title>
-              <Link href={sources[source]} size="sm">View package on {source}</Link>
+              <Link href={packageUrls[source]} size="sm">View package on {source}</Link>
               {monthly.length > 0 ? <>
                 <Text size="sm" color="muted">{useDaily ? "Reported downloads by day" : "Reported downloads by month"}</Text>
                 <AdoptionTrend label={label} grain={useDaily ? "day" : "month"} rows={useDaily ? history : monthly} />
@@ -417,7 +416,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
             <Title type="h2" size="lg" id="github-stars-title">Repository interest</Title>
             <Text size="sm" color="muted">Cumulative GitHub stars from daily snapshots.</Text>
           </div>
-          {stars?.history.length > 0 && <Link size="sm" href={adoptionUrl(filters, { csv: "stars" })}>Download stars CSV</Link>}
+          {stars?.history.length > 0 && <Link className="download-link" size="sm" href={adoptionUrl(filters, { csv: "stars" })}><Icon aria-hidden="true" name="download" size="sm" />Download stars CSV</Link>}
         </div>
         <div class="two-column">
           <Panel className="chart-card" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
@@ -546,6 +545,7 @@ const hasDownloads = oss.some(({ isDownload, history }) => isDownload && history
   }
   .contact-domains li { max-inline-size: 100%; }
   .open-source-link { display: inline-flex; align-items: center; min-block-size: 2.75rem; margin-block-start: 0.35rem; }
+  .download-link { display: inline-flex; align-items: center; gap: 0.4rem; }
   .data-section {
     margin-block-start: clamp(1.7rem, 4vw, 3.1rem);
     padding-block-start: clamp(1.3rem, 2.4vw, 2rem);
