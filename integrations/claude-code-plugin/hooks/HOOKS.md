@@ -116,14 +116,25 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   whose shell carries neither.
 - **loom-session-start, primer.** One `context.pack` (mode startup, the
   project's working-memory block first, the recent-runs shortlist only with
-  `LOOM_CONTEXT_RUNS=true`), plus: the repository tag line; in an indexed
-  checkout the code scope line, the arbitration rules and, with a
+  `LOOM_CONTEXT_RUNS=true`), plus: the repository's memory tag; in an indexed
+  checkout the code scope line and, with a
   `LOOM_CODE_MAP_TOKEN_BUDGET` of 100 or more, the repo map; the task inbox line
   (`LOOM_TASK_INBOX_LINE=off`); the saved-briefs line (only with
   `LOOM_SESSION_BRIEF_PRIMER=on`); the collections line
   (`LOOM_COLLECTIONS_LINE=off`); the recording line, which states the
   owner's Record conversations switch; and a once-a-day notice when
-  ~/.claude.json also mounts the same server.
+  ~/.claude.json also mounts the same server. A session with none of these
+  prints nothing.
+- **loom-session-start, the plugin's own MCP entry.** Claude Code runs its
+  plugin's hooks with CLAUDE_PLUGIN_ROOT, and that plugin mounts its own MCP
+  entry: its helper binds loom_code_* calls to the checkout's repository, its
+  URL names the `plugin` profile, whose startup instructions say how to route
+  a lookup, and its toolset is the `toolset` option. There the checkout is one
+  line (the code namespace, the fetch time of a stalled mirror, the memory
+  tag) and the recording line is printed only when the toolset lists the
+  conversation tools (`all`). Any other wiring (Codex, a hand-wired client)
+  mounts an entry the hook cannot read, so its primer keeps the full scope
+  line, the arbitration rules and the recording line.
 - **loom-session-start, collections line.** One `collection.list` for the
   session's org, cached a minute per (server, org, token, toolset); when the token
   reads shared collections, a few lines list up to six (how a search covers
@@ -196,7 +207,10 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   Per prompt in an indexed checkout, one code.search for the request (a
   `<question>`-style wrapper's contents, without sentences that only tell the
   agent how to work or answer; top 3, no bodies) and up to 3 unseen pointers,
-  only when the index is not abstaining and retrieval_confidence ≥ 0.4.
+  only when the index is not abstaining and retrieval_confidence ≥
+  `LOOM_PROMPT_PACK_MIN_CONF` (0.55, from which the index labels its own
+  answer low-risk). The pointers are candidates: the text never tells the
+  model to stop searching.
 - **loom-run.** The run ledger. The first prompt opens a run (goal = the
   prompt, run_id = cc-<session_id>, cx- for Codex; when run.begin answers
   another id, it is kept in the session's run state and every hook uses it;
@@ -222,8 +236,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   block-once reason. Later stops make no call.
 - **loom-test-gate.** With uncommitted changes this session made in a
   loom-indexed repo (dirty paths the transcript shows an edit tool targeted
-  or a shell command named; a tree left dirty before the session gates
-  nothing), sends the change's paths, hunk ranges and function names only
+  or a shell command named, written since the session's first row; a tree
+  left dirty before the session gates nothing), sends the change's paths, hunk ranges and function names only
   (`diffHeaders`) to code.test_gate for its obligations and blocks the stop
   once per distinct change with a reason naming them. A Claude Code stop
   whose transcript already answers the ask to run tests is not blocked
@@ -324,7 +338,7 @@ Switches read on/true/1/yes and off/false/0/no. Defaults in parentheses.
 | `LOOM_SESSION_BRIEF` (on), `LOOM_SESSION_BRIEF_PRIMER` (off), `LOOM_SESSION_BRIEF_KEY`, `LOOM_SESSION_BRIEF_TIMEOUT_MS` (90000)               | session-brief, session-start  | briefs, the primer line, a fixed key, the flusher's bound                                |
 | `LOOM_PROMPT_RECALL` (first)                                                                                                                  | prompt-recall                 | first, on or off                                                                         |
 | `LOOM_PROMPT_RECALL_MIN_CONF` (0.5), `LOOM_PROMPT_RECALL_TOP_K` (3), `LOOM_PROMPT_RECALL_BUDGET` (600), `LOOM_PROMPT_RECALL_MAX_CHARS` (1200) | prompt-recall                 | the confidence bar, hits per plane, pack budget, injected cap                            |
-| `LOOM_PROMPT_PACK` (on), `LOOM_PROMPT_PACK_MIN_CONF` (0.4), `LOOM_PROMPT_PACK_TOP_K` (3), `LOOM_PROMPT_PACK_TIMEOUT_MS` (2500)                | prompt-pack                   | per-prompt code pointers                                                                 |
+| `LOOM_PROMPT_PACK` (on), `LOOM_PROMPT_PACK_MIN_CONF` (0.55), `LOOM_PROMPT_PACK_TOP_K` (3), `LOOM_PROMPT_PACK_TIMEOUT_MS` (2500)               | prompt-pack                   | per-prompt code pointers                                                                 |
 | `LOOM_RUN_LEDGER` (on), `LOOM_PLUGIN_RUN_RETAIN` (server default)                                                                             | run                           | the run ledger; keep, demote or expire the run's rows                                    |
 | `LOOM_OBSERVE_SKIP_TOOLS`, `LOOM_OBSERVE_DEDUPE_S` (60)                                                                                       | capture                       | tools never observed; read dedupe window                                                 |
 | `LOOM_CAPTURE_CONVERSATIONS` (on), `LOOM_CONV_SETTLE_MS` (350)                                                                                | conversation                  | capture; wait for the last reply to flush                                                |

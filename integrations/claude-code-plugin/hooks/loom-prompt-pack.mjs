@@ -7,7 +7,7 @@
 // cache; later prompts may follow working-tree or index changes.
 //
 //   LOOM_PROMPT_PACK=off            disable
-//   LOOM_PROMPT_PACK_MIN_CONF=0.4   skip below this retrieval_confidence
+//   LOOM_PROMPT_PACK_MIN_CONF=0.55  skip below this retrieval_confidence
 //   LOOM_PROMPT_PACK_TOP_K=3        pointers per prompt
 //   LOOM_PROMPT_PACK_TIMEOUT_MS=2500 the search's bound: the prompt waits on it
 
@@ -23,7 +23,7 @@ import {
   scheduleExit,
 } from "../lib/loom-client.mjs";
 import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
-import { accept, codeLookup, lookupBody, packPayload, renderPack } from "../lib/prompt-pack.mjs";
+import { MIN_CONFIDENCE, accept, codeLookup, lookupBody, packPayload, renderPack } from "../lib/prompt-pack.mjs";
 import { symbolAnswerText } from "../lib/code-shunt.mjs";
 import { renderBlast } from "../lib/blast-radius.mjs";
 import { recalledDataBlock } from "../lib/prompt-recall.mjs";
@@ -31,7 +31,7 @@ import { recalledDataBlock } from "../lib/prompt-recall.mjs";
 const ENABLED = envSwitch("LOOM_PROMPT_PACK", true);
 // The user's prompt waits on this search; pointers that arrive later help no one.
 const TIMEOUT_MS = Math.round(envNumber("LOOM_PROMPT_PACK_TIMEOUT_MS", 2500, { min: 200 }));
-const MIN_CONF = envNumber("LOOM_PROMPT_PACK_MIN_CONF", 0.4, { min: 0, max: 1 });
+const MIN_CONF = envNumber("LOOM_PROMPT_PACK_MIN_CONF", MIN_CONFIDENCE, { min: 0, max: 1 });
 const TOP_K = Math.round(envNumber("LOOM_PROMPT_PACK_TOP_K", 3, { min: 1, max: 5 }));
 
 /** The checkout's indexed repository: the resolver every hook shares

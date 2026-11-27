@@ -10,6 +10,7 @@ import {
   recordingCachePath,
   recordingFromAppends,
   recordingFromNamespace,
+  listsConversationTools,
   recordingPrimerLine,
   writeRecording,
 } from "../lib/recording.mjs";
@@ -53,6 +54,13 @@ test("the cache is per server + org + namespace and expires", () => {
   assert.equal(fs.existsSync(recordingCachePath("https://a", "acme", "ns3", dir)), false);
   fs.writeFileSync(recordingCachePath("https://a", "acme", "ns4", dir), "{nope");
   assert.equal(readRecording("https://a", "acme", "ns4", { now, tmp: dir }), null);
+});
+
+test("only a toolset that lists the conversation tools gets the primer's conversation line", () => {
+  for (const toolset of ["all", "ALL", "coding+all", "all,tracker"])
+    assert.equal(listsConversationTools(toolset), true);
+  for (const toolset of ["coding", "coding+tracker", "core", "readonly", "", undefined, "wall"])
+    assert.equal(listsConversationTools(toolset), false, String(toolset));
 });
 
 test("the primer states the switch instead of claiming automatic logging", () => {

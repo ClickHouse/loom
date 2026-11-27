@@ -1,15 +1,10 @@
 ---
 name: loom-code
 description: >
-  Use the moment you are about to grep, glob, or open files to answer a
-  question about a loom-indexed codebase — "where is X", "how does X work",
-  "who calls Y", "is it safe to change Z", "what does this stack trace
-  touch". The tell is linguistic: if you just thought "let me search the
-  codebase", "let me grep for that", or "let me read a few files", that
-  sentence is the trigger — code.grep covers exact literals too. NOT for
-  repos loom hasn't indexed (a code.search that abstains on everything is
-  the tell), and NOT for your own uncommitted files (grep those; pass your
-  diff to code.impact for blast radius). NOT for LOCAL-FIRST sessions.
+  Use before you grep, glob or open files to answer a question about a
+  Loom-indexed codebase: where is X, how does X work, who calls Y, is Z safe
+  to change, what a stack trace touches. NOT for LOCAL-FIRST sessions,
+  unindexed repos or your own uncommitted files.
 ---
 
 # loom-code — the indexed answer before the grep reflex

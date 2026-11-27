@@ -3,9 +3,11 @@
 // printed to stdout, which the host injects as context. Never per turn.
 //
 // The block is `context.pack` (a curated, sectioned primer: pinned slots,
-// profile, relevant memories, procedures, recent runs), plus the code-index
-// orientation for an indexed checkout, the task inbox line, the recording
-// line and first-session notices. Before any of it the hook saves the token
+// profile, relevant memories, procedures, recent runs), plus the checkout's
+// line (its code namespace and memory tag), the task inbox line, the recording
+// line where the toolset lists the conversation tools, and first-session
+// notices. A session with none of these prints nothing: the host re-reads the
+// primer on every request. Before any of it the hook saves the token
 // it was given for the MCP header helper (lib/plugin-options.mjs) and, with no
 // credential at all, signs the machine up (lib/first-session.mjs).
 //
@@ -43,10 +45,18 @@ import {
   renderPrimer,
   matchNoteLine,
   notIndexedLine,
+  ownsMcpEntry,
+  staleMirrorLine,
   startPackBody,
 } from "../lib/session-start.mjs";
 import { checkoutRemotes, lookupIndexedRepo } from "../lib/repo-scope.mjs";
-import { readRecording, recordingFromNamespace, recordingPrimerLine, writeRecording } from "../lib/recording.mjs";
+import {
+  listsConversationTools,
+  readRecording,
+  recordingFromNamespace,
+  recordingPrimerLine,
+  writeRecording,
+} from "../lib/recording.mjs";
 import { teamRulesLine } from "../lib/file-context.mjs";
 import { applyPluginOptions, helperEnvHidden, installTokenNotice, saveInstall } from "../lib/plugin-options.mjs";
 import { cacheIsFresh, countsBody, renderTaskLine, summarizeCounts } from "../lib/task-inbox.mjs";
@@ -105,6 +115,11 @@ async function main() {
     })
     .catch(() => "");
 
+  // The model must not log turns itself: the Stop hook does when the owner's
+  // Record conversations switch is on. The plugin's own entry says it only
+  // where its toolset lists the tools that would.
+  const conversationTools = !ownsMcpEntry() || listsConversationTools(process.env.CLAUDE_PLUGIN_OPTION_TOOLSET);
+
   // The primer's parts are independent bounded reads: run them side by side,
   // so a hung server costs the session one request bound, not one per part.
   const [versionLine, result, codeBlock, taskLine, briefsLine, recording, collectionsText] = await Promise.all([
@@ -119,7 +134,7 @@ async function main() {
     envSwitch("LOOM_CODE_MAP", true) ? buildCodeBlock(scope, token, checkoutDir(payload)) : "",
     envSwitch("LOOM_TASK_INBOX_LINE", true) ? taskInboxLine(scope, token) : "",
     briefPrimerEnabled() ? savedBriefsLine(scope, token) : "",
-    recordingState(scope, token),
+    conversationTools ? recordingState(scope, token) : null,
     envSwitch("LOOM_COLLECTIONS_LINE", true) ? collectionsLine(scope, token) : "",
   ]);
 
@@ -133,9 +148,7 @@ async function main() {
       rendered: result && typeof result.rendered === "string" ? result.rendered : "",
       codeBlock,
       lines: [taskLine, briefsLine, collectionsText],
-      // The model must not log turns itself: the Stop hook does when the owner's
-      // Record conversations switch is on. Always said, even with no primer.
-      recordingLine: recordingPrimerLine(recording, scope.namespace),
+      recordingLine: conversationTools ? recordingPrimerLine(recording, scope.namespace) : "",
     }),
   );
   scheduleExit(0);
@@ -266,16 +279,24 @@ async function buildCodeBlock(scope, token, cwd) {
   };
   // The scope line rides whenever the checkout matched a readable repository,
   // even if index_status is unreachable: the namespace is the fact the model
-  // needs on every direct loom_code_* call.
+  // needs on a direct loom_code_* call no header bound.
   // A match through anything but origin says so first.
-  const matchNote = matchNoteLine(entry, remotes);
-  const scopeLine = [matchNote, codeScopeLine(hit), teamRulesLine(hit)].filter(Boolean).join("\n");
+  const ownEntry = ownsMcpEntry();
+  const scopeLines = (...after) =>
+    [
+      matchNoteLine(entry, remotes),
+      [codeScopeLine(hit, { ownEntry }), ...after].filter(Boolean).join(" "),
+      teamRulesLine(hit),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  const scopeLine = scopeLines();
   const repo = status && typeof status.repo === "string" ? status.repo : "";
-  if (!repo || !status.git_head) return scopeLine ? `${scopeLine}\n\n` : "";
+  if (!repo || !status.git_head) return scopeLine;
   // Local-first mode names the situation and
   // skips the map — the working tree is what this user wants searched, and
   // the guard stands down whatever the commits.
-  if (localFirstOn()) return localFirstBlock(status.git_head, scopeLine) + "\n";
+  if (localFirstOn()) return localFirstBlock(status.git_head, scopeLine);
   const repoName = repo.split("/").pop().toLowerCase();
   // Match on the project directory name OR the matched repository's basename
   // (a fork or an upstream remote matched it).
@@ -284,7 +305,7 @@ async function buildCodeBlock(scope, token, cwd) {
     .pop()
     .toLowerCase();
   const project = (scope.project || "").toLowerCase();
-  if (remoteName !== repoName && project !== repoName) return scopeLine ? `${scopeLine}\n\n` : "";
+  if (remoteName !== repoName && project !== repoName) return scopeLine;
   // The repo map is off unless LOOM_CODE_MAP_TOKEN_BUDGET names a budget (100 or more):
   // the primer is re-read on every turn of the session, and an agent locates code with
   // code.search, not with a hub list.
@@ -295,10 +316,12 @@ async function buildCodeBlock(scope, token, cwd) {
       ? await postBounded("code.map", { token_budget: budget, ...indexStatusBody(hit) }, { token, serverUrl })
       : null;
   const mapText = map && typeof map.map === "string" ? map.map.trim() : "";
-  const arbitration = codeArbitration(status); // Says so when the mirror stalled
-  const head = scopeLine ? `${scopeLine}\n\n${arbitration}` : arbitration;
-  if (!mapText) return head + "\n";
-  return `${head}\n${mapText}\n\n`;
+  // The plugin's own entry says how to route a lookup, so its primer names the
+  // checkout and says when the mirror stalled; another wiring gets the routing here.
+  const head = ownEntry
+    ? scopeLines(staleMirrorLine(status))
+    : [scopeLine, codeArbitration(status).trim()].filter(Boolean).join("\n\n");
+  return mapText ? `${head}\n\n${mapText}` : head;
 }
 
 runHookMain(main);

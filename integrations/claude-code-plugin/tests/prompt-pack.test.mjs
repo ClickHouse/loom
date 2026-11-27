@@ -1,7 +1,16 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { accept, renderPack, searchBody, searchQuery, shouldAsk, codeLookup, lookupBody } from "../lib/prompt-pack.mjs";
+import {
+  MIN_CONFIDENCE,
+  accept,
+  renderPack,
+  searchBody,
+  searchQuery,
+  shouldAsk,
+  codeLookup,
+  lookupBody,
+} from "../lib/prompt-pack.mjs";
 
 const RES = {
   abstain: false,
@@ -24,6 +33,11 @@ test("accept follows the index's own abstain and confidence", () => {
   assert.equal(accept(RES), true);
   assert.equal(accept({ ...RES, abstain: true }), false);
   assert.equal(accept({ ...RES, retrieval_confidence: 0.3 }), false);
+  // Below the index's own low-risk line the pointers are not sent.
+  assert.equal(MIN_CONFIDENCE, 0.55);
+  assert.equal(accept({ ...RES, retrieval_confidence: 0.54 }), false);
+  assert.equal(accept({ ...RES, retrieval_confidence: 0.55 }), true);
+  assert.equal(accept({ ...RES, retrieval_confidence: 0.45 }, 0.4), true);
   assert.equal(accept({ ...RES, results: [] }), false);
   assert.equal(accept(null), false);
 });
@@ -33,9 +47,18 @@ test("renderPack caps and deduplicates one answer without hiding later evidence"
   const first = renderPack(reply, { cap: 3 });
   assert.match(first.text, /confidence 0\.81/);
   assert.match(first.text, /- src\/A.cpp:10-40 DB::A::run — void run\(\)/);
-  assert.equal(first.text.split("\n").length, 5);
+  assert.equal(first.text.split("\n").length, 4);
   assert.equal(first.text.match(/src\/A.cpp/g).length, 1);
-  assert.match(first.text, /do not run the search again/);
+  // Candidates under a prefix the server knows as Loom's own words; nothing tells the model to stop looking.
+  assert.match(
+    first.text,
+    /^Loom index pointers for this prompt \(confidence 0\.81\); Read a line range to check one:\n/,
+  );
+  assert.doesNotMatch(first.text, /do not|search again/i);
+  assert.equal(
+    renderPack(reply, { cap: 1, header: "Callers:" }).text,
+    "Callers:\n- src/A.cpp:10-40 DB::A::run — void run()",
+  );
   assert.doesNotMatch(first.text, /src\/D.cpp/);
   const changed = structuredClone(reply);
   changed.results[0].signature = "void run(bool strict)";

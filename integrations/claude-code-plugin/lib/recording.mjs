@@ -60,6 +60,16 @@ export function recordingFromNamespace(body) {
   return typeof v === "boolean" ? v : null;
 }
 
+/** Whether the session's toolset lists the conversation write tools, which only
+ *  `all` does. A model that cannot see them needs no line telling it to leave
+ *  them alone, and the primer then asks the server nothing about the switch. */
+export function listsConversationTools(toolset) {
+  return String(toolset || "")
+    .toLowerCase()
+    .split(/[+ ,]+/)
+    .includes("all");
+}
+
 /** The primer's conversation line for a known or unknown switch. */
 export function recordingPrimerLine(on, namespace) {
   const dont = "Do NOT call loom_conversation_create / loom_conversation_append yourself";

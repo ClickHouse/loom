@@ -57,11 +57,22 @@ export function startPackBody(scope, payload, { tokenBudget = 1200, runId = "", 
   return body;
 }
 
+/** The line that names the repository's memory tag, or "" without a repository:
+ *  hook captures carry the tag, and a fact the model saves about the repository
+ *  needs it to be recalled with them. */
+export function repoTagLine(repo) {
+  if (!repo || !repo.id) return "";
+  return `Memory about this repository carries tags: ["repo:${repo.id}"].`;
+}
+
 /**
- * The SessionStart output: first-session, server-version and duplicate-mount
- * notices, then (when context.pack rendered one) the memory primer under a
- * heading, the repository tag line, the code block, the task, brief and
- * collections lines, and the recording line, which is always present.
+ * The SessionStart output, "" when the session has nothing of its own to hear:
+ * first-session, server-version and duplicate-mount notices, the checkout's
+ * line (its code namespace, then its memory tag), the memory primer under a
+ * heading when context.pack rendered one, then the task, brief, collections
+ * and recording lines. What holds in every session (how to route a lookup,
+ * which tool does what) is in the MCP instructions and the tool descriptions,
+ * and is not repeated here: the host re-reads this text on every request.
  */
 export function renderPrimer({
   notices = [],
@@ -70,25 +81,21 @@ export function renderPrimer({
   rendered = "",
   codeBlock = "",
   lines = [],
-  recordingLine,
+  recordingLine = "",
 }) {
-  const notice = notices.filter(Boolean).join("\n\n");
-  const repoLine = repo
-    ? `Repository ${repo.slug} — hook captures carry the tag \`repo:${repo.id}\`; ` +
-      `pass tags: ["repo:${repo.id}"] to loom_search to stay within it. ` +
-      `When saving a fact about this repository with loom_memory_set, include tags: ["repo:${repo.id}"] ` +
-      `alongside its other tags. Keep personal facts in your own namespace. Do not add this repository tag to unrelated facts.\n\n`
-    : "";
-  const extra = lines
-    .filter(Boolean)
-    .map((l) => `${l}\n\n`)
-    .join("");
+  const code = codeBlock.trim();
+  const tag = repoTagLine(repo);
+  // One line for the checkout when its code text is one line. Beside a longer
+  // code block, or none, the tag is its own line under a prefix the server
+  // knows as Loom's own words, so capture never reads it as a fact.
+  const checkout =
+    code && !code.includes("\n")
+      ? [code, tag].filter(Boolean).join(" ")
+      : [code, tag && `# Loom memory primer: ${tag}`].filter(Boolean).join("\n\n");
   const primer = rendered.trim();
-  const head = notice ? `${notice}\n\n` : "";
-  const body = primer
-    ? `# Loom memory primer — project: ${project}\n\n${repoLine}${recalledDataBlock(primer)}\n\n`
-    : repoLine;
-  return `${head}${body}${codeBlock}${extra}${recordingLine}\n`;
+  const memory = primer ? `# Loom memory primer — project: ${project}\n\n${recalledDataBlock(primer)}` : "";
+  const parts = [...notices, checkout, memory, ...lines, recordingLine].filter(Boolean);
+  return parts.length ? `${parts.join("\n\n")}\n` : "";
 }
 
 // Code-plane orientation. The checkout's repository is resolved by the
@@ -125,13 +132,30 @@ export function notIndexedLine(remotes = []) {
   return `# Loom code index: ${first}${rest} is not an indexed repository.\n\n`;
 }
 
+/** Whether the session's MCP entry is the Claude Code plugin's own, which
+ *  Claude Code marks by running the plugin's hooks with CLAUDE_PLUGIN_ROOT.
+ *  That entry's helper binds loom_code_* calls to the checkout's repository,
+ *  its URL names the `plugin` profile, whose startup instructions say how to
+ *  route a lookup, and its toolset is the plugin's `toolset` option. Any other
+ *  wiring (Codex, a hand-wired client) mounts an entry these hooks cannot
+ *  read, so its primer says all of it. */
+export function ownsMcpEntry(env = process.env) {
+  return Boolean(env.CLAUDE_PLUGIN_ROOT);
+}
+
 /** One line for the primer naming the code namespace every loom_code_* call
  *  from this checkout must carry. Without it the server
  *  answers from the deployment's default repository — the public index —
  *  which is wrong in every other checkout and silently so. "" when the
  *  checkout matched no readable repository. */
-export function codeScopeLine(hit) {
+export function codeScopeLine(hit, { ownEntry = false } = {}) {
   if (!hit || !hit.org || !hit.namespace) return "";
+  // The plugin's own entry sends the namespace in a header: the line is for
+  // the session whose header lookup missed its bound.
+  if (ownEntry) {
+    const repo = hit.repo ? `${hit.repo}${hit.branch ? ` @ ${hit.branch}` : ""}` : "this checkout";
+    return `# Loom code index: ${repo}; pass namespace "${hit.namespace}" on loom_code_* calls.`;
+  }
   const where = hit.repo ? ` (${hit.repo}${hit.branch ? ` @ ${hit.branch}` : ""})` : "";
   return (
     `Code index scope${where}: pass namespace: "${hit.namespace}" on EVERY loom_code_* call ` +
@@ -169,8 +193,32 @@ export function localFirstBlock(asOf, scopeLine = "") {
   );
 }
 
-// The taught arbitration — short, durable, injected only when the
-// repo is actually indexed so it never confuses sessions on other projects.
+/** The one sentence the Claude Code plugin's primer adds about an index whose mirror has
+ *  not been fetched for `code_fetch_stale_after_seconds`
+ *  (`status.fetch_overdue`), "" for a fresh one. Information, as in
+ *  `codeArbitration`: it names the fetch time and does not send the model to
+ *  grep. */
+export function staleMirrorLine(status) {
+  if (!status || status.fetch_overdue !== true) return "";
+  return (
+    `Its mirror was last fetched at ${fetchedAt(status)}, so the index may be BEHIND this checkout: ` +
+    "name the indexed commit when you report from it, and grep only files with your own uncommitted changes."
+  );
+}
+
+function fetchedAt(status) {
+  return (
+    String(status.clone_fetched_at || "")
+      .replace(/\.\d+/, "")
+      .replace("+00:00", "Z") || "an unknown time"
+  );
+}
+
+// The taught arbitration, for a wiring whose MCP entry this plugin does not
+// mount (Codex, a hand-wired client): the Claude Code plugin's own entry names
+// the `plugin` profile, whose startup instructions carry the routing. Injected
+// only when the repo is actually indexed so it never confuses sessions on
+// other projects.
 const CODE_ARBITRATION =
   "# Loom code index: this repository is indexed (per-merge fresh).\n" +
   "- Use Loom first when indexed evidence is needed: loom_code_symbol for definitions, " +
@@ -193,10 +241,7 @@ const CODE_ARBITRATION =
  *  instead of sending the model to grep. */
 export function codeArbitration(status) {
   if (!status || status.fetch_overdue !== true) return CODE_ARBITRATION;
-  const when =
-    String(status.clone_fetched_at || "")
-      .replace(/\.\d+/, "")
-      .replace("+00:00", "Z") || "an unknown time";
+  const when = fetchedAt(status);
   return CODE_ARBITRATION.replace(
     "# Loom code index: this repository is indexed (per-merge fresh).\n",
     `# Loom code index: this repository is indexed, but its mirror was last fetched at ${when} — ` +

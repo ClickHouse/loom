@@ -14,8 +14,10 @@
 //
 // The change is the session's, not the tree's: `sessionScope` keeps only
 // the dirty paths the transcript shows this session edited or named in a
-// shell command, so a tree left dirty before the session (a branch parked
-// mid-change, a teammate's edits) does not gate a turn that touched nothing.
+// shell command, and `writtenSince` drops the ones last written before the
+// session began, so a tree left dirty before the session (a branch parked
+// mid-change, a teammate's edits) does not gate a turn that changed nothing,
+// even one that read or ran those files.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -61,7 +63,7 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
   const absent = new Set(missing);
   const tests = indexed.filter((t) => !absent.has(String(t.test_path || "")));
   const raw = [...new Set(tests.map((t) => String(t.run || "")).filter(Boolean))];
-  const runs = raw.map((r) => withPython(r, python));
+  const runs = onePytest(raw.slice(0, maxRuns)).map((r) => withPython(r, python));
   const unknown = tests
     .filter((t) => !t.run)
     .map((t) => String(t.test_path || ""))
@@ -69,9 +71,8 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
   const untested = Array.isArray(gate.untested) ? gate.untested : [];
   const parts = [];
   if (runs.length) {
-    const shown = runs.slice(0, maxRuns);
-    const more = runs.length - shown.length;
-    parts.push(`run: ${shown.join(" ; ")}${more > 0 ? ` (+${more} more)` : ""}`);
+    const more = raw.length - maxRuns;
+    parts.push(`run: ${runs.join(" ; ")}${more > 0 ? ` (+${more} more)` : ""}`);
   }
   if (unknown.length) {
     const shown = unknown.slice(0, maxNames);
@@ -96,8 +97,8 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
   const tail = missing.length
     ? "Run the available tests and check the missing paths against the indexed revision (deleted, renamed or different checkout); use current equivalent tests or say why not. Missing tests are not passes."
     : runs.length || unknown.length
-      ? "Run the tests and rely on green, or say why not, before finishing."
-      : "Add a test that reaches it, or say why the change needs none, before finishing.";
+      ? "Run the tests before finishing, or say why not."
+      : "Add a test that reaches it, or say why none is needed.";
   const env =
     python === "" && raw.some(isPytest)
       ? " No Python was found for this checkout (no .venv, venv or VIRTUAL_ENV, no python3 or python on PATH): name the test you would run instead of searching for one."
@@ -106,6 +107,16 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
 }
 
 const isPytest = (run) => /^pytest(\s|$)/.test(String(run || ""));
+
+/** `runs` with every `pytest <path>` folded into the first one: one command to
+ *  copy and one process to start. A run with an option or a second word stays
+ *  its own command. */
+function onePytest(runs) {
+  const plain = runs.filter((r) => /^pytest [^\s-]\S*$/.test(r));
+  if (plain.length < 2) return runs;
+  const merged = `pytest ${plain.map((r) => r.slice(7)).join(" ")}`;
+  return runs.flatMap((r) => (r === plain[0] ? [merged] : plain.includes(r) ? [] : [r]));
+}
 
 /** `pytest …` as this checkout runs it: `<python> -m pytest …` when a
  *  checkout interpreter was found; unchanged when `python` is unknown
@@ -292,6 +303,31 @@ export function sessionScope(changed, objs, { root, cwd } = {}) {
     if (edited.has(rel)) return true;
     const absPaths = roots.flatMap((r) => absoluteForms(path.join(r, rel)));
     return commands.some((c) => commandNames(c, rel, absPaths));
+  });
+}
+
+/** The time of the session's first transcript row, in epoch ms; 0 when no
+ *  row carries one. */
+export function sessionStart(objs) {
+  for (const o of objs || []) {
+    const at = Date.parse((o && o.timestamp) || "");
+    if (Number.isFinite(at)) return at;
+  }
+  return 0;
+}
+
+/** `paths` without the files last written before `since` (epoch ms): a file
+ *  left dirty before the session that a command of this session only read or
+ *  ran is not this session's change. A file that cannot be read (a deleted
+ *  one) stays, and so does every path when `since` is unknown. */
+export function writtenSince(root, paths, since) {
+  if (!since) return paths;
+  return paths.filter((rel) => {
+    try {
+      return fs.statSync(path.join(root, rel)).mtimeMs >= since;
+    } catch {
+      return true;
+    }
   });
 }
 

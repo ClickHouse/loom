@@ -188,8 +188,15 @@ export function searchBody(repo, prompt, { topK = 3, token } = {}) {
   };
 }
 
+// The confidence from which the code index labels its own answer low-risk
+// (`code_search_low_risk_from`). Below it the index rates its top results a
+// medium or high risk, and pointers sent from there missed the file to change
+// more often than they named it, while the model re-reads them on every later
+// request.
+export const MIN_CONFIDENCE = 0.55;
+
 /** Gate on the index's own verdict, not on the caller's optimism. */
-export function accept(res, minConfidence = 0.4) {
+export function accept(res, minConfidence = MIN_CONFIDENCE) {
   if (!res || res.abstain) return false;
   if (!Array.isArray(res.results) || !res.results.length) return false;
   return Number(res.retrieval_confidence || 0) >= minConfidence;
@@ -204,6 +211,7 @@ export function pointerOf(unit) {
 /**
  * Render at most `cap` distinct pointers from this response.
  * Later prompts may need fresh evidence at the same indexed span.
+ * The pointers are candidates: the text never tells the model to stop looking.
  */
 export function renderPack(res, { cap = 3, header } = {}) {
   const seenSet = new Set();
@@ -219,13 +227,9 @@ export function renderPack(res, { cap = 3, header } = {}) {
   }
   if (!lines.length) return { text: "" };
   const conf = Number(res.retrieval_confidence || 0).toFixed(2);
-  const text =
-    (header || `Loom's code index, asked this prompt (confidence ${conf}), ranks these units first:`) +
-    "\n" +
-    `${lines.join("\n")}\n` +
-    `This is the index's answer for this prompt: do not run the search again. To check one, ` +
-    `Read only its line range; call another code tool only for what these leave open.`;
-  return { text };
+  // The default lead opens with a prefix the server knows as Loom's own words.
+  const lead = header || `Loom index pointers for this prompt (confidence ${conf}); Read a line range to check one:`;
+  return { text: `${lead}\n${lines.join("\n")}` };
 }
 
 export function packPayload(text) {
