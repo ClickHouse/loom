@@ -1,6 +1,6 @@
-// The plugin's MCP block authenticates from the same places
-// its hooks do. The helper is run the way Claude Code runs it — as a process,
-// stdout is one JSON object — under each token source and under none.
+// The plugin's MCP block authenticates from the places its hooks do that
+// reach the helper. The helper is run the way Claude Code runs it — as a
+// process, stdout is one JSON object — under each token source and under none.
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -273,6 +273,7 @@ test("no token, sign-up reachable → the helper signs up and sends the bearer",
             TMPDIR: box.tmp,
             LOOM_BASE_URL: url,
             LOOM_MCP_CODE_SCOPE: "off",
+            LOOM_MCP_HOOK_WAIT_MS: "0",
           }),
         },
         (e, so) => (e ? reject(e) : resolve(so)),
@@ -281,6 +282,51 @@ test("no token, sign-up reachable → the helper signs up and sends the bearer",
     assert.deepEqual(JSON.parse(out), { Authorization: "Bearer fresh.tok" });
     const cfg = JSON.parse(fs.readFileSync(path.join(box.home, ".loom", "config.json"), "utf8"));
     assert.equal(cfg.token, "fresh.tok");
+  } finally {
+    srv.close();
+  }
+});
+
+// Claude Code gives a plugin's helper neither LOOM_API_KEY nor the install
+// option: the SessionStart hook, which has them, saves the token, and the
+// helper waits for it even when it knows the server to sign up with.
+test("a known server and no token yet → the helper sends the token the hook saves and signs nobody up", async () => {
+  const http = await import("node:http");
+  let signups = 0;
+  const srv = http.createServer((req, res) => {
+    signups += 1;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ token: "stray.tok", namespace: "agent-x", org: "dev", claim_code: "C" }));
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const box = sandbox();
+  try {
+    const { execFile } = await import("node:child_process");
+    const done = new Promise((resolve, reject) =>
+      execFile(
+        process.execPath,
+        [HELPER],
+        {
+          encoding: "utf8",
+          timeout: 10000,
+          cwd: box.cwd,
+          env: hostEnv({
+            PATH: process.env.PATH,
+            HOME: box.home,
+            TMPDIR: box.tmp,
+            LOOM_BASE_URL: `http://127.0.0.1:${srv.address().port}`,
+            LOOM_MCP_CODE_SCOPE: "off",
+          }),
+        },
+        (e, so) => (e ? reject(e) : resolve(so)),
+      ),
+    );
+    // The hook's save lands after the helper has started.
+    await new Promise((r) => setTimeout(r, 400));
+    fs.mkdirSync(path.join(box.home, ".loom"));
+    fs.writeFileSync(path.join(box.home, ".loom", "config.json"), JSON.stringify({ token: "given.tok" }));
+    assert.deepEqual(JSON.parse(await done), { Authorization: "Bearer given.tok" });
+    assert.equal(signups, 0);
   } finally {
     srv.close();
   }

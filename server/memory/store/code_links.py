@@ -130,7 +130,7 @@ async def _drop_links_of_erased(ch: _CHClient, rows: list[LinkRow]) -> None:
     for r in rows:
         by_org[r["org"]].add(r["memory_id"])
     erasing = await _erasing(ch, sorted(by_org))
-    await _drop_gone(ch, {org: ids for org, ids in by_org.items() if org in erasing})
+    await _drop_unlinkable(ch, {org: ids for org, ids in by_org.items() if org in erasing})
 
 
 async def _erasing(ch: _CHClient, orgs: list[str]) -> set[str]:
@@ -171,7 +171,7 @@ _KEY_TYPES = ("String",) * 5 + ("UUID",)
 async def sweep_page(
     after: tuple[str, ...] | None, limit: int, *, ch: _CHClient | None = None
 ) -> tuple[tuple[str, ...] | None, int]:
-    """Drop gone memories' links and old tombstones among the next `limit` ×
+    """Drop unlinkable memories' links and old tombstones among the next `limit` ×
     `SWEEP_ROWS_PER_WRITE` link rows after `after`; returns the next page's start (None
     at the table's end) and the memories."""
     ch = ch or _default_client()
@@ -186,7 +186,7 @@ async def sweep_page(
     by_org: dict[str, set[str]] = defaultdict(set)
     for r in rows:
         by_org[str(r["org"])].add(str(r["memory_id"]))
-    dropped = await _drop_gone(ch, by_org)
+    dropped = await _drop_unlinkable(ch, by_org)
     await _purge_tombstones(ch, [tuple(r[c] for c in _KEY_COLUMNS) for r in rows])
     full = len(rows) == rows_per_page
     last = tuple(str(rows[-1][c]) for c in _KEY_COLUMNS) if full else None
@@ -233,34 +233,35 @@ async def _purge_tombstones(ch: _CHClient, keys: list[tuple[Any, ...]]) -> None:
         )
 
 
-async def drop_gone(org: str, memory_ids: set[str], *, ch: _CHClient | None = None) -> int:
-    """Delete the links of those of `memory_ids` that are gone or tombstoned."""
-    return await _drop_gone(ch or _default_client(), {org: memory_ids})
+async def drop_unlinkable(org: str, memory_ids: set[str], *, ch: _CHClient | None = None) -> int:
+    """Delete the links of those of `memory_ids` that are unlinkable."""
+    return await _drop_unlinkable(ch or _default_client(), {org: memory_ids})
 
 
-async def _drop_gone(ch: _CHClient, by_org: dict[str, set[str]]) -> int:
-    """Delete the links older than this read of the memories in `by_org` that are gone or
-    tombstoned; returns how many memories that was."""
+async def _drop_unlinkable(ch: _CHClient, by_org: dict[str, set[str]]) -> int:
+    """Delete the links older than this read of the memories in `by_org` that are
+    unlinkable: gone, tombstoned, or a raw tool observation (a key that starts `obs:`);
+    returns how many memories that was."""
     dropped = 0
     for org, ids in by_org.items():
         before = time.time_ns()
-        live = await query_all_sliced(
+        linkable = await query_all_sliced(
             ch,
             "SELECT DISTINCT toString(memory_id) AS mid FROM loom.memory FINAL "
             "WHERE org = {org:String} AND memory_id IN {ids:Array(UUID)} "
-            "AND tombstoned_at IS NULL",
+            "AND tombstoned_at IS NULL AND NOT startsWith(memory_key, 'obs:')",
             {"org": org, "ids": sorted(ids)},
             "ids",
         )
-        gone = sorted(ids - {str(r["mid"]) for r in live})
-        for part in chunks(gone):
+        unlinkable = sorted(ids - {str(r["mid"]) for r in linkable})
+        for part in chunks(unlinkable):
             await ch.execute(
                 f"DELETE FROM {TABLE} WHERE org = {{org:String}} "
                 "AND memory_id IN {ids:Array(UUID)} AND version < {before:UInt64} "
                 "SETTINGS lightweight_deletes_sync = 2",
                 params={"org": org, "ids": part, "before": before},
             )
-        dropped += len(gone)
+        dropped += len(unlinkable)
     return dropped
 
 
