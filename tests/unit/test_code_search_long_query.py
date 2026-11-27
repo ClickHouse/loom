@@ -1,5 +1,5 @@
 """A long code.search query (a pasted issue body) is clipped, never refused:
-the search trims it to its rarest terms itself, and a 422 lost the search."""
+the search trims it to its opening and its identifiers itself, and a 422 lost the search."""
 
 from __future__ import annotations
 

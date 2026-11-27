@@ -121,6 +121,8 @@ CASES: list[tuple[str, Callable[[str], object], str, str]] = [
     ("citations diff prefixes", _then(citations.extract, "x.py"), "", "a/"),
     ("citations fenced citations", citations.extract, "", "```a``` a/b.py "),
     ("query_trim._QUALIFIED_RE", _finditer(query_trim, "_QUALIFIED_RE"), "", "_"),
+    ("query_trim.strip_non_terms links", query_trim.strip_non_terms, "", "http:/"),
+    ("query_trim.strip_non_terms hashes", query_trim.strip_non_terms, "", "abcdef"),
     ("similar.TRACE_SYMBOL_RE", _finditer(similar, "TRACE_SYMBOL_RE"), "", "a_"),
     ("similar.TRACE_FILELINE_RE", _finditer(similar, "TRACE_FILELINE_RE"), "", "a/"),
     ("similar._TRACE_LINE_RE words", _match(similar, "_TRACE_LINE_RE"), "", "a::a"),

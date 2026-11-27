@@ -1,25 +1,28 @@
-"""A long question is asked with its rarest words and its first page.
+"""A long question is asked with its opening, its identifiers and its first page.
 
-An issue-shaped question arrives as the issue body: the template's headings ("Company or
-project name", "Describe what's wrong", "_No response_") come first, the subject comes
-after them, and the reproducer's URL hashes come last. The lexical leg's token list is
-the FIRST 32 lexemes in first-seen order (code_search/), so on such a question the
-headings and the prose stopwords take the slots, the subject words past position 32
-never reach the gate, and the `multiSearchAny` gate admits about half of the corpus
-(44–56 % of 267k chunks on the four longest questions of one consumer's week; the rarest
-32 of the same words admit 7–33 %).
+An issue-shaped question arrives as the issue body: the subject is stated first, then
+come the description, a reproducer, its output and the links. The lexical leg sums idf
+times presence over at most 32 lexemes, so every lexeme the subject's code does not hold
+only adds other chunks to the pool, and the rarest prose of a body is the least likely
+to be there: it is rare in code because it is not code vocabulary. On 29 public issues
+the chunk of the definition to change holds, weighted by idf, 47 % of a question's first
+8 lexemes, 31 % of the next 8 and 23 to 32 % of each later run; it holds 22 % of the
+identifiers after the first line and 2 % of the later words that fewer than one chunk
+in 1,000 holds.
 
 This module is the plan for such a question, pure and unit-testable:
 
 * `strip_boilerplate` removes the template headings by a fixed list — they
   arrive flattened into one line, so the match is a case-insensitive phrase,
   not a line — and counts what it removed.
-* `select_rarest` keeps the K rarest tokens by document frequency from the
-  corpus statistics the leg already reads, never dropping a token that is
-  the whole form of an identifier (camel / snake / `a::b`), and ranking
-  last the tokens that cannot help: hash-like hex fragments, bare numbers,
-  and words the corpus does not contain (df 0 admits no row and scores
-  nothing).
+* `strip_non_terms` removes what names no subject before the tokenizer splits it:
+  URLs, bare numbers and hash-like words.
+* `select_terms` keeps the opening (the question's first lexemes, half the list at
+  most, whatever its line breaks) and the whole forms of the identifiers (camel /
+  snake / `a::b`), never the prose after the opening. Past the cap the opening goes
+  first, identifiers before words, the rarest by document frequency first; a lexeme
+  the corpus does not contain (df 0 admits no row and scores nothing) fills a slot
+  only when nothing better is left.
 * the vector leg embeds the first `EMBED_MAX_WORDS` words of the cleaned
   text instead of the raw body.
 
@@ -53,8 +56,7 @@ BOILERPLATE_HEADINGS: tuple[str, ...] = (
     "_No response_",
 )
 
-# The lexical leg's list is bounded at 32 lexemes; the trim replaces WHICH 32
-# (rarest instead of first), never widens.
+# The lexical leg's list is bounded at 32 lexemes; the trim chooses WHICH, never widens.
 LEXICAL_TOKEN_CAP = 32
 # The vector leg embeds at most this many whitespace words of the cleaned text (~2,000
 # characters of prose: the request cap for `query`).
@@ -75,6 +77,9 @@ _QUALIFIED_RE = re.compile(
 # Tokens that cannot name a subject: a bare number, or a hex fragment of a
 # commit / fiddle hash (letters a–f with at least one digit, 4+ chars).
 _NOISE_RE = re.compile(r"^(?:[0-9]+|(?=.*[0-9])[0-9a-f]{4,})$")
+# An address, not a subject: its host, route words, hash and line anchor.
+_URL_RE = re.compile(r"https?://\S+")
+_WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,7 @@ class TrimPlan:
     tokens_in: int = 0
     all_tokens: list[str] = field(default_factory=list)
     keep: frozenset[str] = frozenset()
+    lead: frozenset[str] = frozenset()
     cap: int = LEXICAL_TOKEN_CAP
     boilerplate_dropped: int = 0
 
@@ -119,25 +125,37 @@ def is_noise_token(tok: str) -> bool:
     return bool(_NOISE_RE.match(tok))
 
 
-def select_rarest(
-    tokens: list[str], df: dict[str, int], k: int, keep: frozenset[str] = frozenset()
+def strip_non_terms(text: str) -> str:
+    """The text without what names no subject: URLs, bare numbers and hash-like words.
+    A hash goes whole, before the tokenizer splits it at its letter-digit edges into
+    letter-only pieces that read as rare words."""
+    return _WORD_RE.sub(
+        lambda m: " " if is_noise_token(m.group(0).lower()) else m.group(0),
+        _URL_RE.sub(" ", text),
+    )
+
+
+def select_terms(
+    tokens: list[str],
+    df: dict[str, int],
+    k: int,
+    keep: frozenset[str],
+    lead: frozenset[str],
 ) -> list[str]:
-    """The `k` tokens the lexical gate keeps, in their first-seen order:
-    identifier forms first (always), then prose tokens the corpus knows by
-    ascending df (ties by position), then noise and unknown tokens (df 0),
-    which fill remaining slots only when nothing better is left."""
+    """At most `k` tokens for the lexical gate, in their first-seen order: those of the
+    opening (`lead`) and the identifier forms (`keep`), never the prose after the
+    opening. Past `k` the opening goes first, identifiers before words, then ascending
+    df (ties by position); noise and unknown tokens (df 0) rank after everything the
+    corpus knows."""
     k = max(int(k), 1)
-    kept = [t for t in tokens if t in keep][:k]
-    room = k - len(kept)
-    rest = [t for t in tokens if t not in keep]
-    good = [t for t in rest if df.get(t, 0) > 0 and not is_noise_token(t)]
-    good.sort(key=lambda t: (df[t], tokens.index(t)))
-    chosen = set(kept) | set(good[:room])
-    if len(chosen) < k:
-        for t in rest:
-            if len(chosen) >= k:
-                break
-            chosen.add(t)
+    position = {t: i for i, t in enumerate(tokens)}
+
+    def rank(t: str) -> tuple[bool, bool, bool, int, int]:
+        known = df.get(t, 0) > 0 and not is_noise_token(t)
+        return (not known, t not in lead, t not in keep, df.get(t, 0), position[t])
+
+    eligible = [t for t in tokens if t in lead or t in keep]
+    chosen = set(sorted(eligible, key=rank)[:k])
     return [t for t in tokens if t in chosen]
 
 
@@ -154,17 +172,21 @@ def plan(
     code_search_query_max_tokens) <= 0 turns the trim off;
     otherwise a question whose tokenizer output exceeds it is stripped of
     boilerplate, its vector text is the cleaned first page, and its lexical
-    gate will take the rarest `min(max_tokens, LEXICAL_TOKEN_CAP)` tokens
-    once the corpus statistics arrive (select_rarest). `work` receives the
-    disclosure counters only when the trim is active."""
+    gate will take at most `min(max_tokens, LEXICAL_TOKEN_CAP)` tokens once the
+    corpus statistics arrive (select_terms): its opening, which is the first
+    half of that many lexemes, and its identifiers. `extra_terms` are a
+    caller's own choice of terms: they are kept like the opening. `work`
+    receives the disclosure counters only when the trim is active."""
     lexical_query = query if not extra_terms else query + " " + " ".join(extra_terms)
     raw_tokens = code_tokens(lexical_query)
     cap = int(max_tokens)
     if cap <= 0 or len(raw_tokens) <= cap:
         return TrimPlan(lexical_query, query, raw_tokens[:LEXICAL_TOKEN_CAP])
     cleaned_q, dropped = strip_boilerplate(query)
-    cleaned_lex = cleaned_q if not extra_terms else cleaned_q + " " + " ".join(extra_terms)
+    extra = " ".join(extra_terms or ())
+    cleaned_lex = strip_non_terms(cleaned_q if not extra else cleaned_q + " " + extra)
     all_tokens = code_tokens(cleaned_lex)
+    cap = min(cap, LEXICAL_TOKEN_CAP)
     work["query_trimmed_tokens_in"] = len(raw_tokens)
     work["query_trimmed_boilerplate_lines_dropped"] = dropped
     return TrimPlan(
@@ -175,6 +197,7 @@ def plan(
         tokens_in=len(raw_tokens),
         all_tokens=all_tokens,
         keep=identifier_forms(cleaned_lex),
-        cap=min(cap, LEXICAL_TOKEN_CAP),
+        lead=frozenset(all_tokens[: max(cap // 2, 1)]) | frozenset(code_tokens(extra)),
+        cap=cap,
         boilerplate_dropped=dropped,
     )

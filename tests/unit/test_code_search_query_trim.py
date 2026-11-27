@@ -1,7 +1,8 @@
-"""A long question is asked with its rarest words and its first page
+"""A long question is asked with its opening, its identifiers and its first page
 : server/code/domain/index/query_trim.py and its seam in
-code_search.search — byte-identical inputs under the cap, the rarest-K gate
-and the cleaned embedding text over it, and the disclosure counters."""
+code_search.search — byte-identical inputs under the cap, the opening and the
+identifiers at the gate and the cleaned embedding text over it, and the
+disclosure counters."""
 
 from __future__ import annotations
 
@@ -65,36 +66,70 @@ def test_noise_tokens_are_numbers_and_hash_fragments() -> None:
     assert not qt.is_noise_token("aes256") and not qt.is_noise_token("u64")
 
 
-def test_select_rarest_keeps_identifiers_ranks_by_df_and_noise_last() -> None:
+def test_strip_non_terms_drops_urls_numbers_and_whole_hashes() -> None:
+    text = (
+        "the culprit is in https://github.com/o/r/blob/2eed554c3fd75dae1beade79f357ffd18d3c4fdf"
+        "/db/query.py#L673 since commit 2EED554C3FD75DAE with id 1290012 in aes256 and deadbeef"
+    )
+    tokens = code_tokens(qt.strip_non_terms(text))
+    # the address goes whole: host, route words, hash pieces and the line anchor
+    assert {"https", "github", "blob", "query", "py", "l673"}.isdisjoint(tokens)
+    # a hash goes before the tokenizer splits it: no letter-only piece of it is left
+    assert {"eed", "fd", "dae", "2eed554c3fd75dae", "1290012"}.isdisjoint(tokens)
+    assert tokens == [
+        *("the", "culprit", "is", "in", "since", "commit", "with", "id"),
+        *("aes256", "aes", "256", "and", "deadbeef"),
+    ]
+    q = "where SETTINGS secret values are masked"
+    assert qt.strip_non_terms(q) == q
+
+
+def test_select_terms_keeps_the_opening_and_identifiers_not_later_prose() -> None:
     tokens = [
-        "or",
-        "name",
-        "jaccard",
-        "index",
-        "98b4",
-        "arrays",
-        "unknownword",
-        "parsequotakey",
-        "the",
+        *("jaccard", "index", "wrong", "the"),  # the opening
+        *("culprit", "arrays", "98b4", "unknownword", "parsequotakey", "newname", "or"),
     ]
     df = {
-        "or": 32000,
-        "name": 60000,
         "jaccard": 12,
         "index": 9000,
-        "98b4": 1,
-        "arrays": 400,
+        "wrong": 700,
         "the": 76000,
+        "culprit": 1,
+        "arrays": 400,
+        "98b4": 1,
         "parsequotakey": 3,
+        "or": 32000,
     }
-    out = qt.select_rarest(tokens, df, 4, keep=frozenset({"parsequotakey"}))
-    # first-seen order preserved; identifier kept; the three rarest words after it
-    assert out == ["jaccard", "index", "arrays", "parsequotakey"]
-    # noise and df-0 tokens fill only when nothing else is left
-    out2 = qt.select_rarest(["98b4", "unknownword", "jaccard"], df, 3)
-    assert out2 == ["98b4", "unknownword", "jaccard"]
-    # the cap is never exceeded and identifiers count against it
-    assert len(qt.select_rarest(tokens, df, 2, keep=frozenset({"parsequotakey", "the"}))) == 2
+    lead = frozenset({"jaccard", "index", "wrong", "the"})
+    keep = frozenset({"parsequotakey", "newname"})
+    # first-seen order; the opening whole, common words included; the identifiers; no
+    # later prose, however rare; an identifier the corpus lacks only where room is left
+    assert qt.select_terms(tokens, df, 32, keep, lead) == [
+        *("jaccard", "index", "wrong", "the"),
+        *("parsequotakey", "newname"),
+    ]
+    assert qt.select_terms(tokens, df, 5, keep, lead) == [
+        *("jaccard", "index", "wrong", "the"),
+        "parsequotakey",
+    ]
+    # past the cap the opening goes first, its rarest words first
+    assert qt.select_terms(tokens, df, 2, keep, lead) == ["jaccard", "wrong"]
+    # in the opening an identifier goes before a word, and the known before the unknown
+    lead2 = lead | {"parsequotakey", "unknownword"}
+    assert qt.select_terms(tokens, df, 2, keep, lead2) == ["jaccard", "parsequotakey"]
+    assert qt.select_terms(tokens, df, 5, keep, lead2) == [
+        *("jaccard", "index", "wrong", "the"),
+        "parsequotakey",
+    ]
+    # identifiers after the opening: the rarest first
+    many = ["open", "call_command", "max_length", "check_filterable"]
+    dfs = {"open": 50, "call_command": 530, "max_length": 2700, "check_filterable": 5}
+    ids = frozenset(many[1:])
+    assert qt.select_terms(many, dfs, 3, ids, frozenset({"open"})) == [
+        *("open", "call_command", "check_filterable")
+    ]
+    # the cap is never exceeded
+    assert len(qt.select_terms(tokens, df, 1, keep, lead)) == 1
 
 
 def test_plan_under_the_cap_is_the_raw_input() -> None:
@@ -119,8 +154,21 @@ def test_plan_over_the_cap_cleans_counts_and_bounds() -> None:
     assert p.active and p.tokens_in == len(code_tokens(_ISSUE)) > 32
     assert p.cap == 32 and p.boilerplate_dropped == 6
     assert "company" not in p.all_tokens and "response" not in p.all_tokens
-    assert p.embed_text == qt.strip_boilerplate(_ISSUE)[0]
+    # the link is no term; the vector text keeps it
+    assert {"https", "fiddle", "clickhouse", "com", "bdfa"}.isdisjoint(p.all_tokens)
+    assert p.embed_text == qt.strip_boilerplate(_ISSUE)[0] and "fiddle" in p.embed_text
     assert {"arrayjaccardindex", "executeimpl", "parsequotakey"} <= p.keep
+    # the opening is the first 16 lexemes, half the list
+    assert p.lead == frozenset(p.all_tokens[:16])
+    assert "arrayjaccardindex" in p.lead and "lives" not in p.lead
+    assert qt.plan(_ISSUE, None, 20, {}).lead == frozenset(p.all_tokens[:10])
+    # line breaks do not move it: a greeting or a heading line is not the whole opening
+    broken = qt.plan("Hi,\n\n" + _ISSUE.replace(". ", ".\n"), None, 32, {})
+    assert broken.lead == frozenset(["hi", *p.all_tokens[:15]])
+    # a caller's own terms are kept like the opening
+    extra = qt.plan(_ISSUE, ["retry", "QuotaKey"], 32, {})
+    assert extra.lead == p.lead | {"retry", "quotakey", "quota", "key"}
+    assert extra.all_tokens[-2:] == ["retry", "quotakey"]
     assert work == {
         "query_trimmed_tokens_in": p.tokens_in,
         "query_trimmed_boilerplate_lines_dropped": 6,
@@ -247,30 +295,32 @@ def test_a_short_question_is_byte_identical_with_the_trim_on_or_off() -> None:
         assert "query_trimmed" not in res.score_explanation
 
 
-def test_a_long_question_asks_with_its_rarest_words_and_its_cleaned_page() -> None:
+def test_a_long_question_asks_with_its_opening_its_identifiers_and_its_cleaned_page() -> None:
     repo, emb = _Repo(_DF), _Emb()
     res = _run(repo, _ISSUE, emb, max_tokens=32)
     cleaned = qt.strip_boilerplate(_ISSUE)[0]
-    all_tokens = code_tokens(cleaned)
-    # the stats read probes every token of the cleaned question, none of the headings
+    all_tokens = code_tokens(qt.strip_non_terms(cleaned))
+    # the stats read probes every token of the cleaned question: no heading, no link
     assert repo.stats_tokens == all_tokens
     assert "company" not in repo.stats_tokens and "response" not in repo.stats_tokens
-    # the scan keeps 32 of them: the identifiers always, the common words never
-    assert len(repo.scan_tokens) == 32 == len(repo.scan_idfs)
-    assert {"arrayjaccardindex", "executeimpl", "parsequotakey"} <= set(repo.scan_tokens)
-    assert {"or", "name", "the", "is", "in", "and", "as"}.isdisjoint(repo.scan_tokens)
-    assert repo.scan_tokens == qt.select_rarest(all_tokens, _DF, 32, qt.identifier_forms(cleaned))
-    assert "jaccard" in repo.scan_tokens and "incorrectly" in repo.scan_tokens
-    # noise fragments of the fiddle hash are not among the 32 (enough words remain)
-    assert "98b4bdfa" not in repo.scan_tokens and "7c05008562fe" not in repo.scan_tokens
+    assert "fiddle" not in repo.stats_tokens and "bdfa" not in repo.stats_tokens
+    # the scan keeps the opening, common words included, and the identifiers after it
+    assert repo.scan_tokens == [
+        *("xai", "ai", "jaccard", "index", "calculated", "incorrectly", "when", "two"),
+        *("same", "arrays", "are", "passed", "as", "arguments", "select"),
+        *("arrayjaccardindex", "executeimpl", "parsequotakey"),
+    ]
+    assert len(repo.scan_idfs) == 18
+    # no prose after the opening, however rare
+    assert {"lives", "unrelated", "function", "execute", "quota"}.isdisjoint(repo.scan_tokens)
     # the vector leg embedded the cleaned text
     assert emb.texts == [cleaned]
     w = res.retrieval_work
     assert w["query_trimmed_tokens_in"] == len(code_tokens(_ISSUE))
-    assert w["query_trimmed_tokens_used"] == 32
+    assert w["query_trimmed_tokens_used"] == 18
     assert w["query_trimmed_boilerplate_lines_dropped"] == 6
     assert (
-        f"query_trimmed(tokens_in={w['query_trimmed_tokens_in']}, tokens_used=32, "
+        f"query_trimmed(tokens_in={w['query_trimmed_tokens_in']}, tokens_used=18, "
         "boilerplate_lines_dropped=6)"
     ) in res.score_explanation
 
@@ -311,7 +361,7 @@ def test_the_setting_drives_the_trim_and_zero_turns_it_off() -> None:
                 legs="lexical",
             )
         )
-    assert on.retrieval_work["query_trimmed_tokens_used"] == 32
+    assert on.retrieval_work["query_trimmed_tokens_used"] == 18
     assert "query_trimmed_tokens_in" not in off.retrieval_work
     assert off_repo.scan_tokens == code_tokens(_ISSUE)[:32]
     assert off_repo.scan_tokens[0] == "company"  # the reading-order list, as before
