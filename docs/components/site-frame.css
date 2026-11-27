@@ -2,6 +2,7 @@
   color-scheme: dark;
   --page-gutter: clamp(1rem, 3.2vw, 4rem);
   --site-header-height: 4.5rem;
+  scroll-padding-block-start: calc(var(--site-header-height) + 0.75rem);
   --page: color-mix(in srgb, var(--click-global-color-background-default), black 44%);
   --surface: var(--click-global-color-background-default);
   --surface-raised: var(--click-global-color-background-muted);
@@ -266,7 +267,6 @@ html[dir="rtl"] .link-arrow {
 main {
   min-height: 58vh;
   padding-block: clamp(2.75rem, 5vw, 5.25rem);
-  scroll-margin-block-start: var(--site-header-height);
 }
 
 main:focus {
@@ -426,7 +426,11 @@ section.site-panel {
   color: var(--click-global-color-text-link-hover);
 }
 
-@media (max-width: 70rem) {
+@media (max-width: 78rem) {
+  :root[data-cui-theme="dark"]:not(:has(.site-header[data-menu-ready])) {
+    scroll-padding-block-start: 0.75rem;
+  }
+
   .header-inner {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: minmax(var(--site-header-height), auto) auto;

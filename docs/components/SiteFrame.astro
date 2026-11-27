@@ -144,6 +144,11 @@ const navigation = [
       if (!header.contains(target)) closeMenu();
       if (language && !language.contains(target)) language.open = false;
     });
+    header.addEventListener("focusout", ({ relatedTarget }) => {
+      if (!(relatedTarget instanceof Node) || header.contains(relatedTarget)) return;
+      closeMenu();
+      if (language) language.open = false;
+    });
     header.addEventListener("keydown", ({ key }) => {
       if (key !== "Escape") return;
       if (language?.open) {
