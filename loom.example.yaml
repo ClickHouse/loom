@@ -1316,8 +1316,9 @@ settings:
   # code_path_prefixes: ""
 
   # Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter
-  # symbols/edges → context pack → advance watermark. [restart]
-  # code_ingest_enabled: false
+  # symbols/edges → context pack → advance watermark. It polls every configured
+  # repository; False = nothing polls, and `code.refresh` is the only trigger. [restart]
+  # code_ingest_enabled: true
 
   # Seconds between fast-tier ingest passes; extra-branch fetches of a shared mirror are
   # spaced by 0.9 of it (at least 30 s). [restart]

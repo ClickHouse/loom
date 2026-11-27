@@ -521,10 +521,15 @@ async def await_warm_up(timeout_s: float, names: tuple[str, ...]) -> list[str]:
 
 
 async def probe_sandbox() -> None:
-    """Probe the repository-job sandbox before serving. `/v1/health` reports only what
-    this process has probed, and a stack with no repositories never runs a repository
-    job that would probe it, so the first answer would say nothing."""
-    if settings.code_ingest_enabled or settings.code_sandbox_required:
+    """Probe the repository-job sandbox before serving, where a repository job can be
+    owed: a repository is configured and the poller is on, or the deployment requires
+    the sandbox. `/v1/health` reports only what this process has probed, and a web
+    process runs no repository job that would probe it, so the first answer would say
+    nothing. A deployment with no repository spawns no probe; adding the first one
+    probes (`code.repo.add`)."""
+    from server.code.domain.index.repos import known_repo_count
+
+    if settings.code_sandbox_required or (settings.code_ingest_enabled and known_repo_count()):
         from server.code.app.index.sandbox import sandbox_available
 
         await asyncio.to_thread(sandbox_available)

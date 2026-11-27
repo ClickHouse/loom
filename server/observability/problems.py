@@ -119,6 +119,13 @@ class HealthState:
     # reads a restricted namespace) or `all` (the doctor, run on the host with the
     # deployment's own credentials).
     code_tier_names: Literal["none", "unrestricted", "all"] = "none"
+    # Repository entries this process knows are configured (`repos.known_repo_count`);
+    # None = not counted here.
+    code_repos: int | None = None
+    # Configured repositories nothing indexes: the poller is off, the worker ledger
+    # holds no ingest pass and the entry has no `code.refresh` on record
+    # (`ingest_trigger.untriggered`). None = not read here.
+    code_repos_untriggered: int | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -781,8 +788,11 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     host; self-registered ones get none, are not fetched over the network, and
     adding one is refused. LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED lifts the last
     two, and the warning stays: their git jobs then reach the remote with
-    nothing vetting its address."""
+    nothing vetting its address. Nothing is reported while no repository is
+    configured, unless the deployment requires the sandbox: no job is owed."""
     if not settings.code_ingest_enabled:
+        return []
+    if state.code_repos == 0 and not settings.code_sandbox_required:
         return []
     problems = _layout_problems(state)
     if state.repo_sandbox is not False:
@@ -824,6 +834,32 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
             f"in LOOM_CODE_REPOS_JSON — {_SANDBOX_DOCS}.",
             source="runtime",
         ),
+    ]
+
+
+def _ingest_trigger_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """Repositories are configured and nothing indexes them: the poller is switched
+    off, no process of the deployment has recorded an ingest pass and no CI job has
+    called `code.refresh` for them, so their index never follows a push. A count
+    only: `/v1/health` answers anyone, and `code.repos` names each entry to whoever
+    may read it."""
+    count = state.code_repos_untriggered or 0
+    if settings.code_ingest_enabled or not count:
+        return []
+    noun, them = ("repository is", "it") if count == 1 else ("repositories are", "them")
+    return [
+        Problem(
+            "code_repos_untriggered",
+            "error",
+            f"{count} configured {noun} not indexed after a push: LOOM_CODE_INGEST_ENABLED "
+            f"is false, no ingest pass is on record and code.refresh was never called for "
+            f"{them}.",
+            "Set LOOM_CODE_INGEST_ENABLED=true (its default) so the code_ingest worker "
+            "polls every configured repository, or call code.refresh from the CI job that "
+            "runs after each push — 'Pushing freshness from CI' in "
+            "docs/features/code-index/freshness.md.",
+            source="workers",
+        )
     ]
 
 
@@ -1072,6 +1108,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _otel_problems(settings, st)
         + _drift_problems(st)
         + _sandbox_problems(settings, st)
+        + _ingest_trigger_problems(settings, st)
         + _git_proxy_problems(settings, st)
         + _reader_user_problems(settings, st)
         + _analysis_problems(settings, st)

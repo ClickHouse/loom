@@ -88,8 +88,9 @@ def _health_provider_fields(
     from server.assistant.app.service import assistant_state
     from server.auth import claims as signin_claims
     from server.auth import keyring, revocation
-    from server.code.app.index import tier_health
+    from server.code.app.index import ingest_trigger, tier_health
     from server.code.app.index.sandbox import LAYOUT_REFUSED, layout_refusal, sandbox_state
+    from server.code.domain.index.repos import known_repo_count
     from server.core.ch import reader_user_error, reader_user_state
     from server.core.vectors import codes_state
     from server.embedding.embedder import effective_embedding_dim, embedder_is_fake
@@ -145,6 +146,8 @@ def _health_provider_fields(
             refused_configuration=provider_runtime.refused_configuration(),
             code_tier_failures=tier_health.problem_rows(),
             code_tier_names="unrestricted" if platform_admin else "none",
+            code_repos=known_repo_count(),
+            code_repos_untriggered=ingest_trigger.untriggered(),
         ),
     )
     return {

@@ -842,7 +842,8 @@ and what it leaves:
   own `LOOM_*_ENABLED` setting, which this switch does not change; with no repository and no
   tracker source configured, they find nothing to do: each pass reads a few rows and ends.
   The git mirror warm-up and host loop do not run, and boot probes the repository-job
-  sandbox only when `LOOM_CODE_INGEST_ENABLED` or `LOOM_CODE_SANDBOX_REQUIRED` is on. Every
+  sandbox only when a repository is configured with `LOOM_CODE_INGEST_ENABLED` on, or
+  `LOOM_CODE_SANDBOX_REQUIRED` is on. Every
   process still re-reads the repository registry while `LOOM_CODE_SELF_SERVICE_ENABLED` is
   on and the tracker sources while `LOOM_TRACKER_SELF_SERVICE_ENABLED` is on: one small read
   per interval (`LOOM_CODE_REPOS_REFRESH_SECONDS`, `LOOM_TRACKER_SOURCES_REFRESH_SECONDS`).

@@ -44,6 +44,7 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
+| 1.3.1 | `LOOM_CODE_INGEST_ENABLED` | `False` | `True` | A configured repository is fetched and indexed after every push without a setting: a deployment that never set the variable starts polling its repositories and embedding what changed. A deployment that indexes only when CI calls `code.refresh` sets it to false. |
 | 1.3.1 | `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS` | `False` | `True` | Include namespace contact domains and aggregate counts in adoption reports. Deployments can disable domain sharing while continuing to send usage totals. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | `'auto'` | Keep source lookups upfront on the coding toolset. General search and the dispatcher are available through discovery. Other toolsets retain their entrypoints. Explicit lists and empty values retain their meaning. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'search.query,code.search,code.symbol,loom_op'` | `'search.query,code.search,code.symbol,code.grep,loom_op'` | Make literal code search callable without a preliminary tool lookup. An explicit list still replaces the defaults; an empty value leaves loading to the host. |
@@ -383,7 +384,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_PATH_PREFIXES` | `str` | `''` |  | CSV path prefixes of the scalar entry that are indexed; everything else is skipped. Empty = the whole tree (the ingest denylist still applies). |
 | `LOOM_CODE_GITHUB_TOKEN` | `str` | *(unset)* |  | GitHub token for the default repository: git fetches of a private remote, the PR-history and issue mirrors, and fork lookups. Empty = the REST calls go anonymously (60 requests/h per IP, public repos only; one warning) and the issue mirror is skipped. |
-| `LOOM_CODE_INGEST_ENABLED` | `bool` | `False` |  | Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. |
+| `LOOM_CODE_INGEST_ENABLED` | `bool` | `True` |  | Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. It polls every configured repository; False = nothing polls, and `code.refresh` is the only trigger. |
 | `LOOM_CODE_INGEST_INTERVAL_SECONDS` | `int` | `120` |  | Seconds between fast-tier ingest passes; extra-branch fetches of a shared mirror are spaced by 0.9 of it (at least 30 s). |
 | `LOOM_CODE_INGEST_LIVE_PATHS_TTL_S` | `float` | `60.0` |  | Seconds an ingesting process caches the namespace's live path set (the import-resolution oracle); files it writes join at once. |
 
