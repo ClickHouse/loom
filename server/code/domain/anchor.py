@@ -304,10 +304,10 @@ _MAX_CITED_LINES = 8
 def cited_lines(lines: Sequence[str], names: Sequence[str]) -> list[str]:
     """The lines of a file that hold one of `names` as a whole word, in file order, runs
     of whitespace as one space: what a memory linked to the file says of it. An edit to
-    any other line, a shift of these and a new indentation leave them as they were. A
-    name on more than `_MAX_CITED_LINES` lines is a word of the file (`None`, `self`)
-    and selects none. The bound is a count: a share of the file would be crossed by an
-    edit to any other line."""
+    a line that holds none of `names`, a shift of these and a new indentation leave them
+    as they were. A name on more than `_MAX_CITED_LINES` lines is a word of the file
+    (`None`, `self`) and selects none: an edit that takes a name across that count
+    changes the lines selected."""
     held: set[int] = set()
     for name in names:
         word = re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)")

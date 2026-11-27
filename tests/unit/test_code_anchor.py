@@ -308,6 +308,39 @@ def test_a_file_link_leaves_out_a_name_on_many_lines_of_its_file() -> None:
     assert recheck(cited, path_now="handlers.py", cited=less, head="c2").state == "changed"
 
 
+def test_a_name_that_crosses_eight_lines_changes_the_lines_a_file_link_follows() -> None:
+    names = ["MAX_ROWS", "handler"]
+    then = ["LIMIT = min(1, MAX_ROWS)", *(f"    return handler(req, {i})" for i in range(9))]
+    assert cited_lines(then, names) == [then[0]]  # `handler` is on nine lines
+    written = cited_fingerprint(then, names)
+    link = Link(path="h.py", body_hash=written, checked_hash=written)
+    # one of the nine goes: the name is followed on its eight lines, no cited line edited
+    assert len(cited_lines(then[:-1], names)) == 9
+    eight = cited_fingerprint(then[:-1], names)
+    assert recheck(link, path_now="h.py", cited=eight, head="c2").state == "changed"
+    # a ninth line takes all of them out again
+    followed = Link(path="h.py", body_hash=eight, checked_hash=eight)
+    assert recheck(followed, path_now="h.py", cited=written, head="c3").state == "changed"
+
+
+def test_the_rules_of_cited_lines_are_under_the_fingerprint_version() -> None:
+    text = "Dates go through `http_date`; `Reader.get` and max_rows never return `None`."
+    lines = [
+        "from werkzeug.http import http_date, http_date_utc",
+        "MAX = max_rows   or 5",
+        *(f"def h{i}(key=None): return get(key)" for i in range(9)),
+        "\treturn  http_date(o)",
+    ]
+    assert (
+        cited_fingerprint(lines, cited_names(mentions(text)))
+        == "bff22e1a1f44b6b0c9625678baf0bcfc5269cbca0f510f7b560060857029acf9"
+    ), (
+        "the names a memory cites or the lines that hold them changed: stored file links "
+        "are hashed under the old rules, so bump `_RULES` in "
+        "server/code/domain/declaration.py and they are re-hashed"
+    )
+
+
 def test_a_rename_keeps_an_earlier_change_and_rebaselines_only_a_current_link() -> None:
     renamed = _d("src/a.py", "src.a.load_rows", "h3")
     changed = Link(

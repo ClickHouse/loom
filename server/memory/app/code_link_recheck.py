@@ -58,10 +58,11 @@ class _Read:
 
 @dataclass
 class Move:
-    """A link's stored row and the link it becomes."""
+    """A link's stored row and the link it becomes; None for a file link that is dropped
+    (the memory has a finer link in that file)."""
 
     row: LinkRow
-    link: Link
+    link: Link | None
 
 
 # a link not found keeps the commit it was last read at
@@ -333,9 +334,9 @@ async def _recheck(
     in_files = await links.file_links(org, cns, [(r.row, r.now) for r in found], head, files)
     moves: list[Move] = []
     for r, file in zip(found, in_files, strict=True):
-        if file and file.defined:
+        if file and file.replaced:
             # the file now defines what the memory names: the finer links replace it
-            moves += [_anchored(r.row, d, head) for d in file.defined]
+            moves += [_anchored(r.row, d, head) for d in file.defined] or [Move(r.row, None)]
             continue
         renamed, far = r.renamed, []
         candidates: list[Definition] = []
@@ -729,9 +730,12 @@ async def _write_moves(moves: list[Move], head: str) -> None:
     revised = await policy.revised_namespaces([m.row for m in moves])
     for m in moves:
         a, link = m.row, m.link
-        relinked = (link.path, link.qualified_name) != (a["path"], a["qualified_name"])
+        was = (a["path"], a["qualified_name"])
+        relinked = link is None or (link.path, link.qualified_name) != was
         if relinked:
-            gone[(a["namespace"], a["memory_id"], a["path"], a["qualified_name"])] = a
+            gone[(a["namespace"], a["memory_id"], *was)] = a
+        if link is None:
+            continue
         # a file link leaves no former identity: a read matches one by its name
         moved_from = relinked and bool(a["path"]) and bool(a["qualified_name"])
         # a correction holds only for a changed method its class did not carry: the
@@ -763,8 +767,10 @@ async def _write_moves(moves: list[Move], head: str) -> None:
                 **_baseline_moved(a, link, head),
                 suggestion=a["suggestion"] if corrected else "",
                 judged_hash=a["judged_hash"] if corrected else "",
+                # a file link is never due: `revise` judges definitions
                 policy_due=int(
                     link.state == "changed"
+                    and bool(link.qualified_name)
                     and (a["org"], a["namespace"]) in revised
                     and (_edited(a, link) or bool(a["policy_due"]))
                 ),

@@ -2906,11 +2906,152 @@ async def test_a_file_link_becomes_a_link_to_the_definition_its_memory_names(mon
     assert (move.row["path"], move.row["qualified_name"]) == (path, "")  # the link it replaces
 
     # a link the memory already has to that definition keeps its own state, and the
-    # file link stays, following the lines that now hold the name
+    # file link is dropped: none beside a finer link
     held = _full(row | {"qualified_name": move.link.qualified_name, "state": "changed"})
     files, row = _file_link_world(monkeypatch, memory, commits, linked=[held])
-    (kept,) = await code_link_recheck._recheck("o", "code-a", [row], changed, "c2", files)
-    assert (kept.link.qualified_name, kept.link.state) == ("", "fresh")
+    (dropped,) = await code_link_recheck._recheck("o", "code-a", [row], changed, "c2", files)
+    assert dropped.row == row and dropped.link is None
+
+
+@pytest.mark.asyncio
+async def test_a_file_link_is_dropped_once_the_pending_name_of_its_memory_is_linked(
+    monkeypatch,
+) -> None:
+    from server.code.domain.anchor import mentions
+
+    path, name = "pkg/mod.py", "pkg.mod::dump_delta"
+    claim = "`pkg.mod.dump_delta` returns seconds"
+    # a qualified name trunk does not define waits as pending beside the file link
+    planned = code_links._plan(mentions(claim), {}, [path], {path: path})
+    assert ([d.qualified_name for d in planned[0]], planned[1]) == ([""], ["pkg.mod.dump_delta"])
+    src = "def dump(o):\n    return str(o)\n"
+    commits = {"c1": src, "c2": src + "\n\ndef dump_delta(o):\n    return o.total_seconds()\n"}
+    memory = _row("m1", value=json.dumps(claim), files=[path])
+    # the pass links the pending name the merge defines before it reads the file link
+    link = {"org": "o", "code_namespace": "code-a", "memory_id": "m1", "path": path}
+    resolved = _full(link | {"qualified_name": name, "anchored_path": path, "anchored_name": name})
+    files, row = _file_link_world(monkeypatch, memory, commits, linked=[resolved])
+    changed = code_link_pass.Range("c1", {path: path})
+    (dropped,) = await code_link_recheck._recheck("o", "code-a", [row], changed, "c2", files)
+    assert dropped.row == row and dropped.link is None
+    written = await _moves_written(monkeypatch, [dropped])
+    assert [(r["qualified_name"], r["tombstoned_at"] is None) for r in written] == [("", False)]
+
+
+@pytest.mark.asyncio
+async def test_a_file_link_leaves_a_name_with_the_link_made_for_it(monkeypatch) -> None:
+    # `helper` was defined in c.py alone when the memory was linked; a.py now defines one
+    memory = _row("m1", value=json.dumps("`helper` returns one"), files=["a.py"])
+    commits = {"c1": "from c import helper\n", "c2": "def helper():\n    return 2\n"}
+    index = [Definition("c.py", "c::helper", "helper")]
+    link = {"org": "o", "code_namespace": "code-a", "memory_id": "m1", "path": "c.py"}
+    made = {"anchored_path": "c.py", "anchored_name": "c::helper"}
+    changed = code_link_pass.Range("c1", {"a.py": "a.py"})
+    # where the link is now does not matter: it followed a rename since
+    for now in ("c::helper", "c::helper_v2"):
+        held = _full(link | made | {"qualified_name": now})
+        files, row = _file_link_world(monkeypatch, memory, commits, index=index, linked=[held])
+        (move,) = await code_link_recheck._recheck("o", "code-a", [row], changed, "c2", files)
+        # still the file's link, reading the lines that hold the name
+        assert (move.link.qualified_name, move.link.state) == ("", "changed")
+    # with no link made for the name, the one in the memory's file is linked
+    files, row = _file_link_world(monkeypatch, memory, commits, index=index)
+    (move,) = await code_link_recheck._recheck("o", "code-a", [row], changed, "c2", files)
+    assert move.link.qualified_name == "a::helper"
+
+
+async def _moves_written(monkeypatch, moves, revise=()) -> list[dict[str, Any]]:
+    """The rows `_write_moves` writes for `moves`, the (org, namespace) pairs in `revise`
+    under that policy."""
+    written: list[dict[str, Any]] = []
+
+    async def insert(rows):
+        written.extend(rows)
+
+    async def revised(links):
+        return set(revise)
+
+    monkeypatch.setattr(code_links.store, "insert", insert)
+    monkeypatch.setattr(code_link_policy, "revised_namespaces", revised)
+    await code_link_recheck._write_moves(moves, "c2")
+    return written
+
+
+@pytest.mark.asyncio
+async def test_a_changed_file_link_is_never_due_for_its_policy(monkeypatch) -> None:
+    from server.code.domain.anchor import Link
+
+    row = {"org": "o", "namespace": "ns", "path": "m.py", "memory_id": "m1", "version": 4}
+    moves = [
+        code_link_recheck.Move(
+            _full(row | {"qualified_name": qn, "body_hash": "h1", "checked_hash": "h1"}),
+            Link("m.py", qn, "h1", state="changed", changed_since="c2", checked_hash="h2"),
+        )
+        for qn in ("", "m::f")
+    ]
+    written = await _moves_written(monkeypatch, moves, revise=[("o", "ns")])
+    # `revise` judges definitions: a file link left due would be read and written for nothing
+    assert [(r["qualified_name"], r["policy_due"]) for r in written] == [("", 0), ("m::f", 1)]
+
+
+@pytest.mark.asyncio
+async def test_a_file_link_is_rehashed_from_the_lines_its_memory_cites(monkeypatch) -> None:
+    from server.code.domain.anchor import cited_fingerprint
+
+    path = "src/provider.py"
+    src = "from http import http_date\n\n\ndef _default(o):\n    return http_date(o)\n"
+    edited = src.replace("return http_date(o)", "return http_date(o).lower()")
+    memory = _row("m1", value=json.dumps("Dates are serialized by `http_date`."), files=[path])
+    files, row = _file_link_world(monkeypatch, memory, {"c1": src, "c2": edited, "c3": src})
+    then, now = (cited_fingerprint(text.split("\n"), ["http_date"]) for text in (src, edited))
+    # hashed under other rules, which read no change at c2
+    old = row | {"body_hash": "old", "checked_hash": "old", "checked_commit": "c2"}
+    old |= {"namespace": "ns", "fingerprint_version": "other"}
+    assert await code_link_rehash._file_rehashed(old, ["http_date"], files) == {
+        "anchored_hash": then,
+        "body_hash": then,
+        "checked_hash": now,
+        "state": "changed",
+        "changed_since": "c2",
+    }
+    # and a change they read at c3 that these rules do not
+    marked = old | {"checked_hash": "old-3", "checked_commit": "c3"}
+    marked |= {"state": "changed", "changed_since": "c3"}
+    out = await code_link_rehash._file_rehashed(marked, ["http_date"], files)
+    assert (out["body_hash"], out["state"], out["changed_since"]) == (then, "fresh", "")
+    # a file that is gone stays gone, its hashes those of the commit it was last read at
+    out = await code_link_rehash._file_rehashed(old | {"state": "missing"}, ["http_date"], files)
+    assert out == {"anchored_hash": then, "body_hash": then, "checked_hash": now}
+
+    async def stale(org, cns, version, *, after, limit):
+        return [old], None
+
+    async def policies(org, nss):
+        return {"ns": "revise"}
+
+    written: list[dict[str, Any]] = []
+
+    async def insert(rows):
+        written.extend(rows)
+
+    monkeypatch.setattr(code_links.store, "stale_fingerprints", stale)
+    monkeypatch.setattr(code_links.store, "code_change_policies", policies)
+    monkeypatch.setattr(code_links.store, "insert", insert)
+    await code_link_rehash.refingerprint("o", "code-a", files, code_link_pass.PassResult())
+    (link,) = written  # the names are the memory's; a file link is not due under `revise`
+    assert (link["body_hash"], link["checked_hash"], link["state"]) == (then, now, "changed")
+    assert (link["policy_due"], link["fingerprint_version"]) == (0, fingerprint_version())
+
+    # the commit it was written at went with a rewrite: one that matched takes the
+    # lines last read, a changed one stays changed
+    async def has(commit):
+        return commit != "c1"
+
+    monkeypatch.setattr(files, "has", has)
+    out = await code_link_rehash._file_rehashed(old, ["http_date"], files)
+    assert (out["body_hash"], out["checked_hash"], "state" in out) == (now, now, False)
+    out = await code_link_rehash._file_rehashed(marked, ["http_date"], files)
+    assert (out["body_hash"], "state" in out) == (NO_BASELINE, False)
 
 
 @pytest.mark.asyncio
@@ -2987,19 +3128,9 @@ async def test_a_file_link_is_written_against_the_lines_its_memory_cites(monkeyp
 async def test_a_file_link_that_becomes_two_definitions_is_dropped_once(monkeypatch) -> None:
     from server.code.domain.anchor import Link
 
-    written: list[dict[str, Any]] = []
-
-    async def insert(rows):
-        written.extend(rows)
-
-    async def revised(links):
-        return set()
-
-    monkeypatch.setattr(code_links.store, "insert", insert)
-    monkeypatch.setattr(code_link_policy, "revised_namespaces", revised)
     row = _full({"org": "o", "namespace": "ns", "path": "m.py", "memory_id": "m1", "version": 4})
     moves = [code_link_recheck.Move(row, Link("m.py", qn, "h")) for qn in ("m::f", "m::g")]
-    await code_link_recheck._write_moves(moves, "c2")
+    written = await _moves_written(monkeypatch, moves)
     assert [(r["qualified_name"], r["tombstoned_at"] is None, r["version"]) for r in written] == [
         ("", False, 5),
         ("m::f", True, 5),

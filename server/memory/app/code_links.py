@@ -283,11 +283,13 @@ async def at_head(
 class FileLink:
     """A file link read at a head."""
 
-    # the definitions its memory names that the file holds there and the memory is not
-    # linked to yet: each replaces the link
-    defined: list[Definition]
     # the fingerprint of the file's lines that hold a name its memory cites
     cited: str
+    # the definitions its memory names that the file holds there and the memory has no
+    # link for: each gets one
+    defined: list[Definition]
+    # a finer link takes its place: one of `defined`, or one the memory has already
+    replaced: bool
 
 
 async def file_links(
@@ -299,8 +301,9 @@ async def file_links(
 ) -> list[FileLink | None]:
     """Each of `links` (a link's row and its file's path at `head`) as a file link read
     there; None for a symbol link, and for a file link whose file or memory is gone. A
-    name resolves as when the memory is linked (`_plan`), among the index's candidates
-    and the file's own definitions, to a definition the file holds at `head`."""
+    name the memory has no link for resolves as when the memory is linked (`_plan`),
+    among the index's candidates and the file's own definitions, to a definition the
+    file holds at `head`."""
     mine = [(a, path) for a, path in links if not a["qualified_name"] and path]
     if not mine:
         return [None] * len(links)
@@ -318,31 +321,28 @@ async def file_links(
     by_name: dict[str, list[Definition]] = defaultdict(list)
     for d in await code.candidates(org, cns, names=names) if names else []:
         by_name[d.name].append(d)
-    out: list[FileLink | None] = []
+    read: list[tuple[dict[str, Definition], str] | None] = []
     for a, path in links:
         memory = memories.get(a["memory_id"]) if not a["qualified_name"] else None
         file = await files.at(head, path) if memory and path else None
         if memory is None or file is None:
-            out.append(None)
+            read.append(None)
             continue
         # the link followed its file here: it is one of the memory's files, whatever
         # path they name
         refs = [*(str(f) for f in memory.get("files") or []), path]
-        out.append(
+        read.append(
             await asyncio.to_thread(_file_link, named[a["memory_id"]], by_name, refs, file, path)
         )
-    # a definition the memory is linked to already keeps the link it has
-    naming = [a["memory_id"] for (a, _), f in zip(links, out, strict=True) if f and f.defined]
-    held = {
-        (a["memory_id"], a["path"], a["qualified_name"])
-        for a in await store.for_memories(org, naming)
-        if a["code_namespace"] == cns
-    }
-    for i, ((a, _), f) in enumerate(zip(links, out, strict=True)):
-        if f and f.defined:
-            new = [d for d in f.defined if (a["memory_id"], d.path, d.qualified_name) not in held]
-            out[i] = replace(f, defined=new)
-    return out
+    naming = [a["memory_id"] for (a, _), f in zip(links, read, strict=True) if f and f[0]]
+    held: dict[str, list[LinkRow]] = defaultdict(list)
+    for a in await store.for_memories(org, naming):
+        if a["code_namespace"] == cns and a["qualified_name"]:
+            held[a["memory_id"]].append(a)
+    return [
+        _beside(*f, held[a["memory_id"]]) if f else None
+        for (a, _), f in zip(links, read, strict=True)
+    ]
 
 
 def _file_link(
@@ -351,10 +351,11 @@ def _file_link(
     refs: list[str],
     file: code.FileAt,
     path: str,
-) -> FileLink:
-    """The file link of a memory naming `names` and the files `refs`, read in `file` at
-    `path`: `by_name` holds the index's candidates under their bare names."""
-    defined: dict[str, Definition] = {}
+) -> tuple[dict[str, Definition], str]:
+    """Of a memory naming `names` and the files `refs`, read in `file` at `path`: the
+    file's definitions it names, under the name it gives each, and the fingerprint of
+    the lines it cites. `by_name` holds the index's candidates under their bare names."""
+    named: dict[str, Definition] = {}
     for m in names:
         bare = bare_name(m.name)
         own = [x for x in file.defs if x.name == bare]
@@ -364,8 +365,37 @@ def _file_link(
         # the file's own, fingerprinted: one only the index has is not at the head
         here = [x for x in own if x.qualified_name == target.qualified_name]
         if here:
-            defined.setdefault(target.qualified_name, here[0])
-    return FileLink(list(defined.values()), cited_fingerprint(file.lines, cited_names(names)))
+            named[m.name] = here[0]
+    return named, cited_fingerprint(file.lines, cited_names(names))
+
+
+def _beside(named: dict[str, Definition], cited: str, held: list[LinkRow]) -> FileLink:
+    """The file link of a memory that names the file's definitions `named` and has the
+    symbol links `held`. A definition linked already keeps its link, and a name another
+    link was made for (it names where that link was written) stays with that link: a
+    commit never moves a link to a namesake."""
+    at = {(h["path"], h["qualified_name"]) for h in held}
+    new: dict[str, Definition] = {}
+    for name, d in named.items():
+        theirs = any(names_symbol(name, h["anchored_name"], h["anchored_path"]) for h in held)
+        if (d.path, d.qualified_name) not in at and not theirs:
+            new.setdefault(d.qualified_name, d)
+    linked = any((d.path, d.qualified_name) in at for d in named.values())
+    return FileLink(cited, list(new.values()), replaced=bool(new) or linked)
+
+
+async def cited(org: str, memory_ids: Sequence[str]) -> dict[str, list[str]]:
+    """The names each of these memories cites in a file it is linked to, by memory id."""
+    if not memory_ids:
+        return {}
+    heads = await store.memory_heads(org, list(memory_ids))
+    # reading names is CPU work: off the loop
+    return await asyncio.to_thread(
+        lambda: {
+            h["mid"]: cited_names(mentions(link_pass.text_of(h["value"]), cap=_MAX_MENTIONS))
+            for h in heads
+        }
+    )
 
 
 def _plan(

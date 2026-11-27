@@ -720,9 +720,12 @@ async def test_a_file_link_follows_its_cited_lines_and_the_definition_its_memory
     claim = "dates go through `http_date`"
     cited = await _remember(MEM, "dates", claim, files=[path])
     named = await _remember(MEM, "delta", "`dump_delta` returns seconds", files=[path])
+    # a qualified name waits as pending beside the file link
+    waited = await _remember(MEM, "millis", "`dates.dump_delta` is in seconds", files=[path])
     rule = await _remember(MEM, "tiny", "keep this module tiny", files=[path])
     await _pass()
-    for mid in (cited, named, rule):  # the file holds no definition any of them names
+    # the file holds no definition any of them names
+    for mid in (cited, named, waited, rule):
         assert [(link["symbol"], link["state"]) for link in await _links(mid)] == [("", "fresh")]
 
     # c2: the function a memory names merges; the lines another one cites stay
@@ -730,8 +733,9 @@ async def test_a_file_link_follows_its_cited_lines_and_the_definition_its_memory
     c2 = repo.commit({path: merged})
     await _index(TRUNK, repo, c2, [path])
     await _pass()
-    (link,) = await _links(named)
-    assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("dump_delta", "fresh")
+    for mid in (named, waited):  # the definition's link alone: no file link beside it
+        (link,) = await _links(mid)
+        assert (link["symbol"].rsplit("::", 1)[-1], link["state"]) == ("dump_delta", "fresh")
     for mid in (cited, rule):
         assert [(link["symbol"], link["state"]) for link in await _links(mid)] == [("", "fresh")]
 
@@ -740,7 +744,7 @@ async def test_a_file_link_follows_its_cited_lines_and_the_definition_its_memory
     c3 = repo.commit({path: edited.replace("o.total_seconds()", "o.total_seconds() * 1000")})
     await _index(TRUNK, repo, c3, [path])
     await _pass()
-    for mid in (cited, named):
+    for mid in (cited, named, waited):
         assert [(link["state"], link["changed_since"]) for link in await _links(mid)] == [
             ("changed", c3)
         ]
