@@ -172,11 +172,20 @@ async def _model(
 
 
 def _append(
-    messages: list[dict[str, Any]], calls: list[models.ToolCall], receipts: list[Receipt]
+    messages: list[dict[str, Any]],
+    calls: list[models.ToolCall],
+    receipts: list[Receipt],
+    *,
+    vertex_parts: list[dict[str, Any]] | None = None,
 ) -> None:
-    messages.append(
-        {"role": "assistant", "content": "", "tool_calls": [call.wire() for call in calls]}
-    )
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [call.wire() for call in calls],
+    }
+    if vertex_parts is not None:
+        message["vertex_parts"] = vertex_parts
+    messages.append(message)
     for call, receipt in zip(calls, receipts, strict=True):
         messages.append(
             {
@@ -288,5 +297,5 @@ async def run(
                 origin=receipt.origin,
                 duration_ms=receipt.duration_ms,
             )
-        _append(messages, turn.calls, receipts)
+        _append(messages, turn.calls, receipts, vertex_parts=turn.vertex_parts)
     raise AssistantUpstreamError("the answer exhausted its model step budget")

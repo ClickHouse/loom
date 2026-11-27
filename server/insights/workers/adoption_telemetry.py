@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import httpx
@@ -15,12 +15,27 @@ from server.core.pg_profile import recorded_authority
 from server.identity.app.directory import configured_restricted_pairs
 from server.insights.store.adoption_telemetry import window_report
 from server.settings import settings
-from server.workers import pass_context
+from server.workers import pass_context, status_store
 
 _COLLECTOR_URL = "https://loom.clickhouse.com/api/v1/adoption"
 _WINDOW = timedelta(hours=12)
 # not a setting: bounds reads of the collector acknowledgement record.
 _MAX_ACK_BYTES = 4096
+
+
+def _reporting_window() -> tuple[datetime, datetime]:
+    # Give the ledger time to flush before reading the previous window.
+    cutoff = utc_now() - timedelta(hours=1)
+    end = cutoff.replace(hour=cutoff.hour // 12 * 12, minute=0, second=0, microsecond=0)
+    return end - _WINDOW, end
+
+
+async def first_pass_due() -> bool:
+    """Give the latest unacknowledged window a chance on each lease acquisition."""
+    if not settings.adoption_telemetry_enabled:
+        return False
+    start, _ = _reporting_window()
+    return await status_store.resume_cursor("adoption_telemetry") < start.isoformat()
 
 
 async def run_pass() -> None:
@@ -36,10 +51,7 @@ async def run_pass() -> None:
     installation_id = uuid5(NAMESPACE_URL, f"loom/adoption/v1/{UUID(authority['deployment_id'])}")
     pass_context.record_outcome("adoption_telemetry", {"installation_id": str(installation_id)})
 
-    # Give the ledger time to flush before reading the previous window.
-    cutoff = utc_now() - timedelta(hours=1)
-    end = cutoff.replace(hour=cutoff.hour // 12 * 12, minute=0, second=0, microsecond=0)
-    start = end - _WINDOW
+    start, end = _reporting_window()
     cursor = start.isoformat()
     if pass_context.resume_cursor() >= cursor:
         return

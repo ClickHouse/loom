@@ -104,11 +104,14 @@ def _status_values(saved: ProviderSetupInput | None) -> dict[str, Any]:
         if saved
         else {},
         "verification_models": saved.llm.verification_models if saved else None,
-        # `local` (a model server the operator runs, or the bundled embedder) needs no key.
+        # Local models, Bedrock and Vertex do not use provider keys.
         "requires_setup": (
-            llm_provider not in ("openai", "anthropic", "local", "bedrock")
+            llm_provider not in ("openai", "anthropic", "local", "bedrock", "vertex")
             or embedding_provider not in ("openai", "gemini", "compatible", "local", "bedrock")
-            or (llm_provider not in ("local", "bedrock") and not keys.get(llm_provider, False))
+            or (
+                llm_provider not in ("local", "bedrock", "vertex")
+                and not keys.get(llm_provider, False)
+            )
             or (
                 embedding_provider not in ("local", "bedrock")
                 and not keys.get(embedding_provider, False)

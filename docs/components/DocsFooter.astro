@@ -1,0 +1,76 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Text } from "@clickhouse/click-ui/Text";
+import data from "blume:data";
+import BlumeIcon from "blume/components/Icon.astro";
+import { withBase } from "blume/components/islands/base-path.ts";
+import { footerLinks } from "blume/components/layout/footer-links.ts";
+import { footerSocialLinks } from "blume/components/layout/footer-socials.ts";
+import type { BlumeDataConfig } from "blume/core/data.ts";
+import { EN_UI, type UIStrings } from "blume/core/i18n-ui.ts";
+import { routeSetFor } from "blume/core/locale-links.ts";
+import { resolveLocalizable } from "blume/core/localizable.ts";
+import { newTabAttrs } from "blume/core/new-tab.ts";
+import type { Navigation } from "blume/core/types.ts";
+
+interface Props {
+  footer?: BlumeDataConfig["footer"];
+  locale?: string;
+  navigation?: Navigation;
+  ui?: UIStrings;
+}
+
+const { footer, locale, navigation, ui } = Astro.props;
+const repoUrl = navigation?.repoUrl;
+const socials = footerSocialLinks(
+  footer?.socials ?? {},
+  repoUrl ? { href: repoUrl, label: { ...EN_UI.nav, ...ui?.nav }.githubRepository } : null,
+);
+const github = footer?.socials?.github ?? repoUrl;
+const links = footerLinks(footer?.links ?? [], {
+  basePath: data.config.basePath,
+  i18n: data.config.i18n,
+  locale,
+  routes: routeSetFor(data.routes),
+});
+const copyright = footer?.copyright && resolveLocalizable(footer.copyright, locale, data.config.i18n?.defaultLocale);
+const consentSettings = data.config.consent && { ...EN_UI.consent, ...ui?.consent }.settings;
+---
+
+{(copyright || links.length > 0 || socials.length > 0 || consentSettings) && (
+  <footer class="docs-footer border-border border-t" data-blume-footer>
+    <div class="flex min-h-16 flex-wrap items-center gap-x-6 gap-y-3 py-3">
+      {(links.length > 0 || consentSettings) && (
+        <ul class="flex flex-wrap items-center gap-x-5 gap-y-2">
+          {links.map(({ href, label }) => (
+            <li><Link href={withBase(href)} size="sm" {...newTabAttrs(href)}>{label}</Link></li>
+          ))}
+          {consentSettings && (
+            <li><Button data-blume-consent-open="" htmlType="button" label={consentSettings} type="empty" /></li>
+          )}
+        </ul>
+      )}
+      {copyright && <Text color="muted" size="sm">{copyright}</Text>}
+      {socials.length > 0 && (
+        <ul class="ms-auto flex flex-wrap items-center gap-3">
+          {socials.map(({ href, label, path, icon }) => (
+            <li>
+              <Link aria-label={label} className="social-link" href={withBase(href)} title={label} {...newTabAttrs(href)}>
+                {href === github ? <Icon aria-hidden="true" name="github" size="sm" theme="dark" /> : path ? (
+                  <svg aria-hidden="true" fill="currentColor" height="18" viewBox="0 0 24 24" width="18"><path d={path} /></svg>
+                ) : <BlumeIcon name={icon} size={18} />}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  </footer>
+)}
+
+<style>
+  .docs-footer :global(a:not(:hover, :focus)) { color: var(--click-global-color-text-muted); }
+  .docs-footer :global(.social-link) { padding: 0.375rem; }
+</style>

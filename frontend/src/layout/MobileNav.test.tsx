@@ -2,10 +2,11 @@ import { render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { MyNamespaceEntry } from "../api";
-import { useStore, viewHref } from "../lib/state";
+import { useStore, viewHref, type View } from "../lib/state";
 import { useNewDialogs } from "../lib/newDialogs";
 import { MAIN, ADMIN_BASE, ADMIN_OPERATOR_ONLY } from "./Sidebar";
 import { MobileNav } from "./MobileNav";
+import { PRIMARY_IDS } from "./mobileTabs";
 import { mobileMoreItems } from "./MobileMore";
 
 // The phone's "More" sheet is generated from the sidebar's nav arrays, so every route the
@@ -31,15 +32,15 @@ beforeEach(() => {
 describe("mobileMoreItems", () => {
   it("lists every sidebar route: MAIN, the admin drawer and Setup", () => {
     const ids = mobileMoreItems(admin, null, NS, null).flatMap((g) => g.items.map((i) => i.id));
-    const primary = ["memories", "knowledge"];
-    const expected = [
+    const expected: View[] = [
       ...MAIN.map((m) => m.id),
       ...ADMIN_BASE.map((m) => m.id),
       ...ADMIN_OPERATOR_ONLY.map((m) => m.id),
       "setup",
+      "help",
     ];
     for (const id of expected) {
-      if (primary.includes(id)) continue;
+      if (PRIMARY_IDS.includes(id)) continue;
       expect(ids, `sidebar route ${id} is missing from the phone nav`).toContain(id);
     }
   });
@@ -49,7 +50,7 @@ describe("mobileMoreItems", () => {
       mobileMoreItems(admin, null, NS, null).flatMap((g) => g.items.map((i) => [i.id, i.label] as const)),
     );
     for (const m of [...MAIN, ...ADMIN_BASE]) {
-      if (["memories", "knowledge"].includes(m.id)) continue;
+      if (PRIMARY_IDS.includes(m.id)) continue;
       expect(labels.get(m.id)).toBe(m.label);
     }
     expect(labels.get("code")).toBe("Repositories");
@@ -79,10 +80,10 @@ describe("mobileMoreItems", () => {
   it("follows the sidebar's 8540 gate: no Admin group for a writer or viewer of the namespace", () => {
     const groups = (role: MyNamespaceEntry["role"]) =>
       mobileMoreItems(writer, [row(role)], NS, null).map((g) => g.group);
-    // The sheet carries the rail's groups, then Settings, then Admin for an admin
-    expect(groups("admin")).toEqual(["Memory", "Activity", "Sources", "Settings", "Admin"]);
-    expect(groups("writer")).toEqual(["Memory", "Activity", "Sources", "Settings"]);
-    expect(groups("viewer")).not.toContain("Admin");
+    expect(groups("admin")).toEqual(["Context", "Agent activity", "Sources", "Review", "Observe", "Workspace"]);
+    expect(groups("writer")).toEqual(["Context", "Agent activity", "Sources", "Workspace"]);
+    expect(groups("viewer")).not.toContain("Review");
+    expect(groups("viewer")).not.toContain("Observe");
   });
 });
 
@@ -94,7 +95,7 @@ describe("MobileNav", () => {
     await user.click(screen.getByRole("button", { name: "More" }));
     const sheet = await screen.findByRole("dialog", { name: "More" });
     for (const m of [...MAIN, ...ADMIN_BASE, ...ADMIN_OPERATOR_ONLY]) {
-      if (["memories", "knowledge"].includes(m.id)) continue;
+      if (PRIMARY_IDS.includes(m.id)) continue;
       const link = within(sheet).getByRole("link", { name: m.label });
       expect(link).toHaveAttribute("href", viewHref(m.id));
     }
@@ -120,10 +121,10 @@ describe("MobileNav", () => {
 });
 
 describe("the tabs", () => {
-  it("are Memories, Library and More: the assistant opens from the top bar", () => {
+  it("are Memories, Library, Runs and More: the assistant opens from the top bar", () => {
     render(<MobileNav />);
     const nav = screen.getByRole("navigation", { name: "Sections" });
-    expect([...nav.children].map((e) => e.textContent?.trim())).toEqual(["Memories", "Library", "More"]);
+    expect([...nav.children].map((e) => e.textContent?.trim())).toEqual(["Memories", "Library", "Runs", "More"]);
     expect(nav.querySelector('[data-focus-key="assistant-launcher"]')).toBeNull();
   });
 });

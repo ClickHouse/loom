@@ -8,12 +8,12 @@ from dataclasses import replace
 from server.code.domain.anchor import (
     Definition,
     Link,
-    fingerprint,
     local_name,
     mentions,
     recheck,
     resolve,
 )
+from server.code.domain.anchor_state import fingerprint
 
 
 def _d(path: str, qn: str, body: str = "", line: int = 1) -> Definition:

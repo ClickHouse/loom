@@ -8,7 +8,9 @@ use std::{fmt, future::Future, pin::Pin, sync::Arc, thread, time::Duration};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::mpsc;
 
-use crate::{CallFailure, CallOptions, CallResult, Error, RetryPolicy};
+use crate::{
+    CallFailure, CallOptions, CallResult, Error, RetryPolicy, RouteRequest, RouteResponse,
+};
 
 type Job = Box<dyn FnOnce(crate::Client) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
@@ -172,24 +174,67 @@ impl Client {
         request: &impl Serialize,
         mut options: CallOptions,
     ) -> Result<CallResult<T>, CallFailure> {
-        if tokio::runtime::Handle::try_current().is_ok() {
-            return Err(Error::Configuration(
-                "blocking calls require a thread outside a Tokio runtime; use the async client"
-                    .into(),
-            )
-            .into());
-        }
+        outside_runtime()?;
         let body = serde_json::to_value(request)
             .map_err(|e| Error::Input(format!("cannot encode request: {e}")))?;
         let op = op.to_owned();
         if options.retry.is_none() {
             options.retry.clone_from(&self.retry);
         }
+        self.submit(move |client| async move { client.call(&op, &body, options).await })
+    }
+
+    /// Send a request to a route outside the op registry, as the async client's
+    /// [`crate::Client::request`] does.
+    pub fn request(&self, request: RouteRequest) -> Result<RouteResponse, Error> {
+        self.request_with_options(request, CallOptions::default())
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+
+    /// Request with per-request controls and final-attempt metadata.
+    pub fn request_with_options(
+        &self,
+        request: RouteRequest,
+        options: CallOptions,
+    ) -> Result<CallResult<RouteResponse>, CallFailure> {
+        self.submit(
+            move |client| async move { client.request_with_options(request, options).await },
+        )
+    }
+
+    /// [`Client::request`], decoding the route's JSON body as `T`.
+    pub fn request_json<T: DeserializeOwned + Send + 'static>(
+        &self,
+        request: RouteRequest,
+    ) -> Result<T, Error> {
+        self.request_json_with_options(request, CallOptions::default())
+            .map(|result| result.data)
+            .map_err(|failure| failure.error)
+    }
+
+    /// `request_json` with per-request controls and final-attempt metadata.
+    pub fn request_json_with_options<T: DeserializeOwned + Send + 'static>(
+        &self,
+        request: RouteRequest,
+        options: CallOptions,
+    ) -> Result<CallResult<T>, CallFailure> {
+        self.submit(move |client| async move {
+            client.request_json_with_options(request, options).await
+        })
+    }
+
+    /// Run one job on the worker and wait for its result.
+    fn submit<T: Send + 'static, F, Fut>(&self, job: F) -> Result<T, CallFailure>
+    where
+        F: FnOnce(crate::Client) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, CallFailure>> + Send + 'static,
+    {
+        outside_runtime()?;
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let job: Job = Box::new(move |client| {
             Box::pin(async move {
-                let result = client.call(&op, &body, options).await;
-                let _ = sender.send(result);
+                let _ = sender.send(job(client).await);
             })
         });
         self.worker
@@ -204,6 +249,15 @@ impl Client {
 
 fn worker_error() -> CallFailure {
     Error::Configuration("blocking client worker stopped".into()).into()
+}
+
+fn outside_runtime() -> Result<(), Error> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(Error::Configuration(
+            "blocking calls require a thread outside a Tokio runtime; use the async client".into(),
+        ));
+    }
+    Ok(())
 }
 
 macro_rules! setting {

@@ -128,4 +128,4 @@ Two or more answers in the right-hand column mean Loom is probably the wrong too
 [Evaluate Loom](evaluate.md) separates a product smoke test from a real quality
 evaluation. [Quickstart](quickstart.md) runs the local stack.
 [Deployment](../operations/deployment.md) runs it for a team. The
-[documentation map](../index.md) lists every page in reading order.
+[documentation home](../index.md) links to guides, features, and reference pages.

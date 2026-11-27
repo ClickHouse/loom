@@ -768,12 +768,14 @@ export interface CodeEditContextInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  /** Definition name, path:symbol, or path:line. File path with clues if known. */
+  /** Name, path:symbol, path:line, or file with clues. */
   name?: string;
-  /** Fragments for one target, or exact declaration fragments across files. */
+  /** Text fragments or exact declarations. */
   clues?: string[];
-  /** Batch name, path:symbol or path:line. Replaces name and clues. */
+  /** Exact names or locations. */
   names?: string[];
+  /** Set false after reading extra bodies. */
+  include_related_source?: boolean;
 }
 
 export interface CodeUnit {
@@ -5170,6 +5172,7 @@ export interface MemorySearchHit {
   created_at?: string;
   namespace?: string;
   code_state?: "fresh" | "moved" | "changed" | "unresolved" | "missing" | "";
+  code_changed_since?: string;
   body_truncated?: boolean;
   next?: string;
   source_resource_id?: string;

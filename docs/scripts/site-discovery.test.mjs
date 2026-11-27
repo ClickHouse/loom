@@ -178,8 +178,10 @@ test("redirects missing translations and leaves translated and unknown paths alo
     t,
     `<urlset xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url><loc>https://loom.clickhouse.com/docs</loc><xhtml:link hreflang="en" /><xhtml:link hreflang="x-default" /></url>
+  <url><loc>https://loom.clickhouse.com/docs/es/getting-started/overview</loc><xhtml:link hreflang="es" /></url>
   <url><loc>https://loom.clickhouse.com/docs/es/use-cases</loc><xhtml:link hreflang="es" /></url>
   <url><loc>https://loom.clickhouse.com/docs/ja</loc><xhtml:link hreflang="ja" /></url>
+  <url><loc>https://loom.clickhouse.com/docs/ko/use-cases</loc><xhtml:link hreflang="ko" /></url>
   <url><loc>https://loom.clickhouse.com/docs/concepts/memory</loc></url>
   <url><loc>https://loom.clickhouse.com/docs/ja/concepts/memory</loc></url>
   <url><loc>https://loom.clickhouse.com/docs/api/v1.2</loc></url>
@@ -193,14 +195,22 @@ test("redirects missing translations and leaves translated and unknown paths alo
     return route ? [route.status, path.replace(new RegExp(route.src), route.headers.Location)] : null;
   };
 
-  assert.deepEqual(redirect("/docs/es"), [307, "/docs/es/use-cases"]);
-  assert.deepEqual(redirect("/docs/es.mdx"), [307, "/docs/es/use-cases.mdx"]);
+  assert.deepEqual(redirect("/docs/es"), [307, "/docs/es/getting-started/overview"]);
+  assert.deepEqual(redirect("/docs/es/"), [307, "/docs/es/getting-started/overview"]);
+  assert.deepEqual(redirect("/docs/es.md"), [307, "/docs/es/getting-started/overview.md"]);
+  assert.deepEqual(redirect("/docs/es.mdx"), [307, "/docs/es/getting-started/overview.mdx"]);
+  assert.deepEqual(redirect("/docs/ko"), [307, "/docs"]);
+  assert.deepEqual(redirect("/docs/ko.md"), [307, "/docs/index.md"]);
+  assert.deepEqual(redirect("/docs/ko.mdx"), [307, "/docs/index.mdx"]);
   assert.deepEqual(redirect("/docs/es/concepts/memory/"), [307, "/docs/concepts/memory"]);
   assert.deepEqual(redirect("/docs/es/concepts/memory.md"), [307, "/docs/concepts/memory.md"]);
   assert.deepEqual(redirect("/docs/es/api/v1.2.mdx"), [307, "/docs/api/v1.2.mdx"]);
   for (const path of [
+    "/docs/es/getting-started/overview",
+    "/docs/es/getting-started/overview.md",
     "/docs/es/use-cases",
     "/docs/ja",
+    "/docs/ja.md",
     "/docs/ja/concepts/memory",
     "/docs/ja/concepts/memory.md",
     "/docs/en/concepts/memory",
@@ -209,6 +219,7 @@ test("redirects missing translations and leaves translated and unknown paths alo
     "/docs/es/api/v102",
     "/docs/es/platform",
     "/docs/es/unknown",
+    "/docs/ko/use-cases",
   ]) {
     assert.equal(redirect(path), null, path);
   }
