@@ -10,7 +10,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from server.code.api.models_status import (
     CodeCommitCoverage,
@@ -40,6 +40,9 @@ from server.code.domain.index.state import IndexState, shown_detail
 from server.code.store.index import CodeRepo
 from server.core.background import create_deferred_task
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.code.domain.index.repos import RepoConfig
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +434,7 @@ async def _repo_status(cfg: Any, *, state: IndexState | None = None) -> CodeInde
 
 async def _index_quality(
     repo: CodeRepo,
-    cfg: Any,
+    cfg: RepoConfig,
     state: IndexState,
     *,
     git_head: str,
@@ -456,7 +459,14 @@ async def _index_quality(
         warnings.append("The repository mirror is overdue for a fetch.")
     for producer in candidates:
         spec = next((tier for tier in TIERS if tier.producer == producer), None)
-        if spec and not value(spec.watermark_key):
+        if spec is None or value(spec.watermark_key):
+            continue
+        if cfg.scip_producer and producer not in (cfg.scip_producer, *cfg.scip_extra_producers):
+            warnings.append(
+                f"{spec.tool} is detected for this tree. "
+                f"Add {producer} to scip_extra_producers to index it."
+            )
+        else:
             names = ", ".join(spec.workers)
             warnings.append(f"{spec.tool} is available for this tree but has not run ({names}).")
     return candidates, warnings
