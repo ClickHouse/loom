@@ -1,0 +1,28 @@
+{
+  "path": "src/subject.py",
+  "symbol": "normalize_method",
+  "visible": [
+    {
+      "args": [" get "],
+      "expected": "GET"
+    },
+    {
+      "args": ["POST"],
+      "expected": "POST"
+    }
+  ],
+  "hidden": [
+    {
+      "args": ["\tpatch\n"],
+      "expected": "PATCH"
+    },
+    {
+      "args": ["delete"],
+      "expected": "DELETE"
+    },
+    {
+      "args": [""],
+      "expected": ""
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "task_id": "path-composition",
+  "kind": "authored-expression-fixture",
+  "repository": "authored/offline-fixtures",
+  "base_commit": "sha256:85fc3f3d4c748b89a579733f20748eacb035d28b5d38f8a0c1fbbd257207f566",
+  "namespace": "fixture-path-composition",
+  "problem": "Join prefix and path with exactly one slash at the boundary. Preserve interior slashes.",
+  "symbol": "join_path",
+  "files": {
+    "src/subject.py": "def join_path(prefix, path):\n    return prefix + path\n"
+  },
+  "source_sha256": "85fc3f3d4c748b89a579733f20748eacb035d28b5d38f8a0c1fbbd257207f566"
+}

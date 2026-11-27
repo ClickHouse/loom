@@ -1,0 +1,13 @@
+{
+  "task_id": "name-validation",
+  "kind": "authored-expression-fixture",
+  "repository": "authored/offline-fixtures",
+  "base_commit": "sha256:126fc1454a2a885740dd8befbee94c6857776754b4af8c5668222f5b1545f4f8",
+  "namespace": "fixture-name-validation",
+  "problem": "Accept nonempty names only when they contain no dot.",
+  "symbol": "valid_name",
+  "files": {
+    "src/subject.py": "def valid_name(name):\n    return bool(name)\n"
+  },
+  "source_sha256": "126fc1454a2a885740dd8befbee94c6857776754b4af8c5668222f5b1545f4f8"
+}

@@ -1,0 +1,57 @@
+"""Freeze coverage-based retrieval guidance for the Loom agent image."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+TEMPLATE = Path(__file__).with_name("project-guidance.md")
+SUBMISSION_HEADING = "\n\n## Submission\n\n"
+
+
+SUBMISSION_NOTE = (
+    "The evaluator grades the application implementation. "
+    "Keep the patch to runtime source and tests. Run the relevant tests before submitting."
+)
+# Exact public text used by existing frozen study protocols.
+PUBLIC_SUBMISSION_NOTES = frozenset(
+    {
+        SUBMISSION_NOTE,
+        "The evaluator grades the application implementation. "
+        "Submit the source fix and use local tests to verify it.",
+    }
+)
+
+
+def task_instruction(issue: str) -> str:
+    return issue + SUBMISSION_HEADING + SUBMISSION_NOTE + "\n"
+
+
+def guidance(source_roots):
+    text = TEMPLATE.read_text() + "\nIndexed source roots, when Loom is configured: "
+    text += ", ".join(source_roots) + ". Other paths may require local reads.\n"
+    return {
+        "cohort": "loom-coverage-based-project-instructions",
+        "path": "/workspace/CLAUDE.md",
+        "text": text,
+        "sha256": hashlib.sha256(text.encode()).hexdigest(),
+        "applies_to": "loom-enabled",
+    }
+
+
+def stage(workspace: Path, destination: Path, instructions: dict) -> Path:
+    existing = workspace / "CLAUDE.md"
+    # A profile with existing project instructions needs an explicit composition policy.
+    if existing.exists() or existing.is_symlink():
+        raise PermissionError("Refusing to overwrite repository project instructions")
+    destination.mkdir()
+    target = destination / "CLAUDE.md"
+    target.write_text(instructions["text"])
+    if hashlib.sha256(target.read_bytes()).hexdigest() != instructions["sha256"]:
+        raise PermissionError("Project instructions differ from the frozen protocol")
+    return target
+
+
+def agent_image(images: dict, slot: dict) -> str:
+    variant = "baseline" if slot["mode"] == "baseline" else "loom"
+    return images[slot["task_id"]]["agent"][variant]

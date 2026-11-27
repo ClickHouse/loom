@@ -1,0 +1,12 @@
+services:
+  main:
+    network_mode: none
+    pids_limit: 64
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+      - KILL
+    security_opt:
+      - no-new-privileges:true

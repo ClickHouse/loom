@@ -95,6 +95,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "code.index_status": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
@@ -693,6 +694,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.link": ("sdk_method",),
     "memory.list": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
@@ -813,7 +815,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "memory.update": ("sdk_method",),
+    "memory.update": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "memory.update_by_id": (
         "sdk_method",
         "sdk_example",

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "kind": "factory-public-results",
+  "complete": true,
+  "files": {
+    ".public-export.json": "78d911b6d4d30cff1a371cf8af7bf10c1e1be8d932497ca28362fdc0bf5c8c4d",
+    "README.md": "9536d0a85579801d906128be39d4ff27b86d914cf2c0f6ad1da3488ba85fb666",
+    "attempts.csv": "63064c7ddf78023dde940e36fe6c7c3233b9a0185d19f1f321e8d74300a8ba82",
+    "attempts.json": "4e39f11856a597b0d6c301927deb467ec2dad552c0b243b98827ac776943f1cb",
+    "charts/reports/charts.html": "08d5e823cff1b8c2c6670ea30888f9385c79cad561348e826d4d1c9f48953bd3",
+    "charts/reports/charts.json": "48b7e1a841adfd236888ef010f90e8e4cc237234da170c1e8dbe2a7a884a9aa5",
+    "charts/tasks.json": "374e78ce6bba656018229e08dd9bad511dac2464d310ec0acacc72d5c4ed7699",
+    "evaluators.json": "72e6a38877513195814a791783ab3d5bbdd5c7d18b1162bad17113f0f3616963",
+    "protocol.json": "e97b979238074b152b9e8d52a0ec10f18006ca0a0cf73dd0778ecf4cbba95c75",
+    "provenance.json": "868283d33065ad1d2f379d1675f0aa69b200efec3f318dc82873905cf2074375",
+    "scenarios.json": "516884b4d48931336fca744968be592ab4a5ba090efe85c6c41ccc3e0e9a06ae",
+    "summary.json": "824d88d2eacc4ef385a466b1433ce41466e5e37753586097df1e529860e5dce2"
+  }
+}

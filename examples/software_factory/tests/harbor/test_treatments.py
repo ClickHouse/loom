@@ -1,0 +1,112 @@
+"""The scheduled memory treatment cannot be confused with code-only retrieval."""
+
+import copy
+import unittest
+from collections import Counter
+
+from examples.software_factory.harbor.arms import (
+    PRIMARY,
+    contrasts,
+    validate_schedule,
+)
+from examples.software_factory.harbor.charts import paired_orders
+from examples.software_factory.harbor.judging import pair_slots
+from examples.software_factory.harbor.live_support import schedule
+
+
+class TreatmentContracts(unittest.TestCase):
+    def test_explicit_pilot_requires_exactly_one_task_and_all_five_arms(self):
+        full = schedule(["a", "b", "c"], seed=741)
+        rows = [
+            {**row, "order": i, "pilot": True}
+            for i, row in enumerate(r for r in full if r["task_id"] == "a" and r["repeat"] == 0)
+        ]
+        self.assertEqual(validate_schedule(rows), ["a"])
+        for bad in (
+            rows[:-1],
+            rows + [rows[0]],
+            [{k: v for k, v in r.items() if k != "pilot"} for r in rows],
+        ):
+            with self.assertRaises(ValueError):
+                validate_schedule(bad)
+        altered = copy.deepcopy(rows)
+        altered[0]["task_id"] = "b"
+        with self.assertRaises(ValueError):
+            validate_schedule(altered)
+        altered = copy.deepcopy(rows)
+        altered[0]["pilot"] = 1
+        with self.assertRaises(ValueError):
+            validate_schedule(altered)
+
+    def test_six_families_keep_all_arms_and_repeats(self):
+        tasks = [f"scenario-{i}" for i in range(6)]
+        rows = schedule(tasks, seed=741)
+        self.assertEqual(len(rows), 90)
+        self.assertEqual(validate_schedule(rows), tasks)
+        self.assertEqual(rows, schedule(list(reversed(tasks)), seed=741))
+        self.assertEqual(
+            Counter(row["arm"] for row in rows),
+            dict.fromkeys(PRIMARY, 18),
+        )
+        for task in tasks:
+            for repeat in range(3):
+                block = [r for r in rows if r["task_id"] == task and r["repeat"] == repeat]
+                self.assertEqual([r["arm"] for r in block], list(PRIMARY))
+        self.assertEqual([row["repeat"] for row in rows], sorted(row["repeat"] for row in rows))
+
+        reordered = copy.deepcopy(rows)
+        reordered[0], reordered[1] = reordered[1], reordered[0]
+        for index, row in enumerate(reordered):
+            row["order"] = index
+        with self.assertRaisesRegex(ValueError, "five-arm order"):
+            validate_schedule(reordered)
+
+    def test_schedule_pairs_each_issue_and_repeat(self):
+        tasks = ["a", "b", "c"]
+        rows = schedule(tasks, seed=741)
+        self.assertEqual(validate_schedule(rows), tasks)
+        self.assertEqual(len(rows), 45)
+        groups = list(pair_slots(rows))
+        self.assertEqual(Counter(map(len, groups)), {len(PRIMARY): 9})
+        chart_rows = [
+            {**row, "task": row["task_id"], "state": "complete"}
+            for row in rows
+            if row["arm"] in PRIMARY
+        ]
+        self.assertEqual(paired_orders(chart_rows, PRIMARY), {row["order"] for row in chart_rows})
+        first = chart_rows[0]
+        chart_rows[0] = {**first, "state": "pending"}
+        excluded = {
+            row["order"]
+            for row in chart_rows
+            if (row["task"], row["repeat"]) == (first["task"], first["repeat"])
+        }
+        self.assertEqual(
+            paired_orders(chart_rows, PRIMARY), {r["order"] for r in chart_rows} - excluded
+        )
+
+    def test_memory_cannot_be_silently_enabled_or_aliased_to_a_tier(self):
+        rows = schedule(["a", "b", "c"], seed=741)
+        for arm, field, wrong in (
+            ("loom-treesitter", "memory_enabled", True),
+            ("loom-scip-memory", "memory_enabled", False),
+            ("loom-scip-memory", "index_tier", "scip-memory"),
+            ("baseline", "index_tier", "treesitter"),
+        ):
+            with self.subTest(arm=arm, field=field):
+                altered = copy.deepcopy(rows)
+                next(row for row in altered if row["arm"] == arm)[field] = wrong
+                with self.assertRaisesRegex(ValueError, "identity"):
+                    validate_schedule(altered)
+
+    def test_missing_and_duplicate_attempts_refuse(self):
+        rows = schedule(["a", "b", "c"], seed=741)
+        for altered in (rows[:-1], rows + [rows[0]]):
+            with self.assertRaisesRegex(ValueError, "every scenario"):
+                validate_schedule(altered)
+
+    def test_memory_is_paired_with_its_own_compiler_and_baseline(self):
+        pairs = set(contrasts())
+        for tier in ("treesitter", "scip"):
+            self.assertIn((f"loom-{tier}-memory", f"loom-{tier}"), pairs)
+            self.assertIn((f"loom-{tier}-memory", "baseline"), pairs)

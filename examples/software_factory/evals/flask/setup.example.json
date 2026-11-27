@@ -1,0 +1,57 @@
+{
+  "assets": ".benchmark-artifacts/public-flask",
+  "loom_url": "http://127.0.0.1:7777",
+  "server_container": "your-owned-loom-server",
+  "server_source_root": ".",
+  "container_source_root": "/app",
+  "server_commit": "REPLACE_WITH_FULL_SERVING_COMMIT",
+  "org": "factory-example",
+  "credentials_file": ".benchmark-secrets/anthropic.env",
+  "source_writers_stopped": false,
+  "backend_generation_disabled": false,
+  "publish_charts": true,
+  "judge": {
+    "enabled": true,
+    "model_id": "claude-haiku-5-5",
+    "seed": 741,
+    "output_tokens": 4096
+  },
+  "tasks": {
+    "pallets__flask-4074": {
+      "indexes": {
+        "treesitter": {
+          "namespace": "code-flask-4074-treesitter",
+          "reader_token_file": ".benchmark-secrets/flask-4074-treesitter.token"
+        },
+        "scip": {
+          "namespace": "code-flask-4074-scip",
+          "reader_token_file": ".benchmark-secrets/flask-4074-scip.token"
+        }
+      }
+    },
+    "pallets__flask-4230": {
+      "indexes": {
+        "treesitter": {
+          "namespace": "code-flask-4230-treesitter",
+          "reader_token_file": ".benchmark-secrets/flask-4230-treesitter.token"
+        },
+        "scip": {
+          "namespace": "code-flask-4230-scip",
+          "reader_token_file": ".benchmark-secrets/flask-4230-scip.token"
+        }
+      }
+    },
+    "pallets__flask-4642": {
+      "indexes": {
+        "treesitter": {
+          "namespace": "code-flask-4642-treesitter",
+          "reader_token_file": ".benchmark-secrets/flask-4642-treesitter.token"
+        },
+        "scip": {
+          "namespace": "code-flask-4642-scip",
+          "reader_token_file": ".benchmark-secrets/flask-4642-scip.token"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,783 @@
+"""Incremental study reports and derived native Harbor views; no executions."""
+
+from __future__ import annotations
+
+import copy
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from statistics import fmean
+from urllib.parse import quote, urlencode
+from uuid import UUID, uuid5
+
+from .arms import PRIMARY
+from .cohorts import comparison_cohorts
+
+PRIMARY_VIEWS = {name: "no-loom" if name == "baseline" else name for name in PRIMARY}
+VIEW_KIND = "factory-derived-harbor-comparison"
+NORMALIZED_FIELDS = [
+    "result.task_name",
+    "result.task_checksum",
+    "lock.task.name",
+    "lock.task.digest",
+]
+
+
+def _read(path):
+    return json.loads(Path(path).read_text())
+
+
+def _hash(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def _atomic(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = (
+        value if isinstance(value, str) else json.dumps(value, indent=2, ensure_ascii=False) + "\n"
+    )
+    with tempfile.NamedTemporaryFile(
+        "w", dir=path.parent, prefix="." + path.name, delete=False
+    ) as file:
+        temporary = Path(file.name)
+        try:
+            file.write(text)
+            file.flush()
+            os.fsync(file.fileno())
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _tree_hashes(folder):
+    result = {}
+    for path in sorted(folder.rglob("*")):
+        if path.is_symlink():
+            raise PermissionError("Reporting refuses symlinked trial assets")
+        if path.is_file():
+            result[str(path.relative_to(folder))] = _hash(path)
+    return result
+
+
+def _groups(schedule):
+    groups = {arm: [s for s in schedule if s["arm"] == arm] for arm in PRIMARY_VIEWS}
+    unknown = {s["arm"] for s in schedule} - set(PRIMARY_VIEWS)
+    if unknown:
+        raise ValueError("Schedule contains an unsupported comparison arm")
+    return groups
+
+
+def _settings(protocol):
+    output = Path(protocol["output_root"]).resolve()
+    settings = protocol.get("reporting", {})
+    jobs = Path(settings.get("viewer_jobs_root", output / "jobs")).expanduser().resolve()
+    prefix = settings.get("job_prefix")
+    if prefix is None:
+        prefix = (
+            "" if jobs == output / "jobs" else output.name + "-" + _digest(str(output))[:8] + "-"
+        )
+    if not isinstance(prefix, str) or not re.fullmatch(r"[A-Za-z0-9_.-]*", prefix):
+        raise ValueError(
+            "Report job_prefix must contain only letters, numbers, dots, dashes or underscores"
+        )
+    base_url = settings.get("viewer_base_url", "http://127.0.0.1:8080").rstrip("/")
+    names = {arm: prefix + name for arm, name in PRIMARY_VIEWS.items()}
+    return output, jobs, base_url, names
+
+
+def _pair_identity(protocol, slot):
+    task_id = slot["task_id"]
+    public = next(
+        row for row in _read(protocol["historical_manifest"])["tasks"] if row["task_id"] == task_id
+    )
+    spec = protocol["harbor_specs"][task_id]
+    identity = {
+        "kind": "paired-primary-presentation-identity",
+        "task_id": task_id,
+        "repeat_index": slot["repeat"],
+        "base_commit": public["base_commit"],
+        "source_sha256": spec["source_sha256"],
+        "grader_sha256": spec["grader_sha256"],
+    }
+    name = f"{task_id}--repeat-{slot['repeat'] + 1}"
+    return name, _digest(identity), identity
+
+
+def _copy_trial(source, destination, raw, slot, protocol):
+    from harbor.models.job.lock import TrialLock
+    from harbor.models.trial.result import TrialResult
+
+    source_hash = _hash(source / "result.json")
+    source_lock = _read(source / "lock.json")
+    derived, lock = copy.deepcopy(raw), copy.deepcopy(source_lock)
+    identity = None
+    if slot["arm"] in PRIMARY_VIEWS:
+        name, checksum, identity = _pair_identity(protocol, slot)
+        derived.update(task_name=name, task_checksum=checksum)
+        lock["task"].update(name=name, digest="sha256:" + checksum)
+    TrialResult.model_validate(derived)
+    TrialLock.model_validate(lock)
+    provenance = {
+        "kind": VIEW_KIND,
+        "not_new_execution": True,
+        "order": slot["order"],
+        "arm": slot["arm"],
+        "task_id": slot["task_id"],
+        "repeat": slot["repeat"],
+        "source_trial": str(source),
+        "original_trial_id": raw["id"],
+        "original_trial_name": raw["trial_name"],
+        "original_task_name": raw["task_name"],
+        "original_task_checksum": raw["task_checksum"],
+        "original_task_id": raw["task_id"],
+        "original_task_lock": source_lock["task"],
+        "original_result_sha256": source_hash,
+        "original_config_sha256": _hash(source / "config.json"),
+        "presentation_task_name": derived["task_name"],
+        "presentation_checksum": derived["task_checksum"],
+        "pair_identity": identity,
+        "normalized_fields": NORMALIZED_FIELDS if identity else [],
+    }
+    marker = destination / "presentation-provenance.json"
+    if destination.exists():
+        if not marker.exists() or _read(marker).get("original_result_sha256") != source_hash:
+            raise PermissionError("Derived trial conflicts with its immutable measured result")
+        cached = _read(marker)
+        if any(cached.get(key) != value for key, value in provenance.items()):
+            raise PermissionError("Derived trial provenance changed")
+        if (
+            _read(destination / "result.json") != derived
+            or _read(destination / "lock.json") != lock
+        ):
+            raise PermissionError("Derived trial metrics or presentation identity changed")
+        if _tree_hashes(source) != cached["source_files"]:
+            raise PermissionError("Immutable measured trial assets changed")
+        for relative, expected in cached["source_files"].items():
+            if relative not in {"result.json", "lock.json"}:
+                if (
+                    _hash(destination / relative) != expected
+                    or _hash(source / relative) != expected
+                ):
+                    raise PermissionError("Immutable trial asset changed")
+        return derived, lock, cached, False
+    staging = destination.parent.parent / ".factory-report-staging" / _digest(str(destination))
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    stage_marker = staging / ".factory-report-stage.json"
+    stage_identity = {"kind": VIEW_KIND, "source": str(source), "source_sha256": source_hash}
+    if staging.exists():
+        if not stage_marker.exists() or _read(stage_marker) != stage_identity:
+            raise PermissionError("Unowned reporting staging directory")
+        shutil.rmtree(staging)
+    staging.mkdir()
+    _atomic(stage_marker, stage_identity)
+    before = _tree_hashes(source)
+    try:
+        for item in source.iterdir():
+            if item.is_symlink():
+                raise PermissionError("Reporting refuses symlinked trial assets")
+            if item.is_dir():
+                shutil.copytree(item, staging / item.name)
+            else:
+                shutil.copy2(item, staging / item.name)
+        if _tree_hashes(source) != before:
+            raise PermissionError("Measured trial changed during reporting")
+        copied = _tree_hashes(staging)
+        if any(copied.get(path) != value for path, value in before.items()):
+            raise PermissionError("Copied trial assets differ from measured assets")
+        _atomic(staging / "result.json", derived)
+        _atomic(staging / "lock.json", lock)
+        provenance["source_files"] = before
+        _atomic(staging / "presentation-provenance.json", provenance)
+        stage_marker.unlink()
+        staging.rename(destination)
+    except BaseException:
+        # A marked staging directory can be recovered by the next report call.
+        raise
+    return derived, lock, provenance, True
+
+
+def _native_views(protocol, observed, groups, jobs, names, job_name):
+    from harbor.models.job.config import JobConfig
+    from harbor.models.job.lock import JobLock
+    from harbor.models.job.result import JobResult, JobStats
+    from harbor.models.trial.result import TrialResult
+
+    source = Path(protocol["output_root"]).resolve() / "jobs" / job_name
+    if not (source / "result.json").exists():
+        return {"status": "awaiting_source_job", "copied_trials": 0, "views": {}}
+    source_result = _read(source / "result.json")
+    source_config, source_lock = _read(source / "config.json"), _read(source / "lock.json")
+    source_id = UUID(source_result["id"])
+    jobs.mkdir(parents=True, exist_ok=True)
+    copied, views = 0, {}
+    for arm, slots in groups.items():
+        name = names[arm]
+        destination = jobs / name
+        owner = {
+            "kind": VIEW_KIND,
+            "source_job": str(source),
+            "source_job_id": str(source_id),
+            "arm": arm,
+        }
+        marker = destination / ".factory-report-view.json"
+        if destination.exists():
+            if not marker.exists() or _read(marker) != owner:
+                raise PermissionError("Refuse to overwrite an unrelated Harbor job")
+        else:
+            destination.mkdir()
+            _atomic(marker, owner)
+        results, locks, origins = [], [], []
+        for slot in slots:
+            entry = observed.get(slot["order"])
+            if entry is None:
+                continue
+            folder = Path(entry["result"]["harbor_trial"]).resolve()
+            if not folder.is_relative_to(source):
+                raise PermissionError("Trial belongs to a different measured job")
+            raw = _read(folder / "result.json")
+            if raw["trial_name"] != folder.name or not raw.get("finished_at"):
+                raise PermissionError("Only finalized measured trials may enter a view")
+            derived, lock, provenance, fresh = _copy_trial(
+                folder, destination / folder.name, raw, slot, protocol
+            )
+            copied += fresh
+            results.append(TrialResult.model_validate(derived))
+            locks.append(lock)
+            origins.append(provenance)
+        stats = JobStats.from_trial_results(results, n_total_trials=len(slots))
+        for evaluation in stats.evals.values():
+            values = [
+                reward
+                for reward, trials in evaluation.reward_stats.get("reward", {}).items()
+                for _ in trials
+            ]
+            evaluation.metrics = [{"mean": fmean(values)}] if values else []
+        records = [observed[s["order"]]["result"] for s in slots if s["order"] in observed]
+        stats.cost_usd = _known_sum(records, "generation_cost_usd")
+        complete = len(results) == len(slots)
+        started = min(
+            (r.started_at for r in results),
+            default=datetime.fromisoformat(source_result["started_at"]),
+        )
+        updated = max((r.finished_at for r in results), default=started)
+        aggregate = JobResult(
+            id=uuid5(source_id, "derived-view:" + name),
+            started_at=started,
+            updated_at=updated,
+            finished_at=updated if complete else None,
+            n_total_trials=len(slots),
+            stats=stats,
+        )
+        config = copy.deepcopy(source_config)
+        config["job_name"] = name
+        config["tasks"] = [copy.deepcopy(source_config["tasks"][s["order"]]) for s in slots]
+        JobConfig.model_validate(config)
+        lock = copy.deepcopy(source_lock)
+        lock["trials"] = locks
+        JobLock.model_validate(lock)
+        _atomic(destination / "config.json", config)
+        _atomic(destination / "lock.json", lock)
+        _atomic(destination / "result.json", aggregate.model_dump(mode="json"))
+        info = {
+            "job_name": name,
+            "derived_job_id": str(aggregate.id),
+            "expected": len(slots),
+            "observed": len(results),
+            "pending": len(slots) - len(results),
+            "trials": origins,
+        }
+        _atomic(destination / "presentation-provenance.json", {**owner, "view": info})
+        views[arm] = info
+    return {"status": "ready", "copied_trials": copied, "views": views}
+
+
+def _trace_table(record):
+    fields = (
+        ("First prompt input", "first_prompt_input_tokens"),
+        ("First prompt cache reads", "first_cache_read_tokens"),
+        ("First prompt cache writes", "first_cache_write_tokens"),
+        ("First prompt uncached input", "first_uncached_input_tokens"),
+        ("Qualified Loom instructions (bytes)", "loom_mcp_instruction_bytes"),
+        ("Qualified Loom catalog (bytes)", "loom_mcp_catalog_bytes"),
+        ("Tools with upfront loading hints", "loom_mcp_upfront_hint_tool_count"),
+        (
+            "Descriptors with upfront loading hints (bytes)",
+            "loom_mcp_upfront_hint_descriptor_bytes",
+        ),
+        ("Solver tokens", "model_total_tokens"),
+        ("Solver uncached input", "model_uncached_input_tokens"),
+        ("Solver cache reads", "model_cache_read_tokens"),
+        ("Solver cache writes", "model_cache_write_tokens"),
+        ("Solver five-minute cache writes", "model_cache_write_5m_tokens"),
+        ("Solver one-hour cache writes", "model_cache_write_1h_tokens"),
+        ("Solver output", "model_output_tokens"),
+        ("Loom provider input", "loom_provider_input_tokens"),
+        ("Loom provider output", "loom_provider_output_tokens"),
+        ("Loom embedding tokens", "loom_embedding_tokens"),
+        ("Full-suite failing tests", "full_suite_failed_tests"),
+        ("Main-session model responses", "model_turns_main"),
+        ("Main-session parallel tool groups", "parallel_tool_groups_main"),
+        ("Main-session discovery calls", "tool_discovery_calls_main"),
+        ("Native CLI duration (s)", "claude_cli_time_s"),
+        ("Native model API duration (s)", "claude_api_time_s"),
+        ("Index fingerprint before the trial (s)", "index_snapshot_before_s"),
+        ("Index fingerprint after the trial (s)", "index_snapshot_after_s"),
+        ("Main-session Loom errors", "loom_errors_main"),
+        ("Main-session Loom result characters", "loom_result_chars_main"),
+        ("Main-session Loom body characters", "loom_source_chars_main"),
+        ("Main-session Loom line-match characters", "loom_match_chars_main"),
+        ("Main-session Loom grep context characters", "loom_context_chars_main"),
+        ("Main-session Loom caller context characters", "loom_caller_context_chars_main"),
+        ("Main-session lesson characters", "loom_lesson_chars_main"),
+        ("Main-session repeated lesson characters", "loom_repeated_lesson_chars_main"),
+        ("Fresh linked lesson rows", "loom_fresh_linked_lesson_rows_main"),
+        ("Other explicit link states", "loom_nonfresh_linked_lesson_rows_main"),
+        ("First fresh linked lesson stream event", "first_fresh_linked_lesson_result_event_main"),
+        ("First potential edit stream event", "first_possible_edit_request_event_main"),
+    )
+    rows = "\n".join(f"| {label} | {_number(record.get(key))} |" for label, key in fields)
+    return (
+        "\n| Diagnostic | Value |\n| --- | ---: |\n" + rows + "\n\n"
+        "API time includes model, network and queuing. Concurrent tools can share one "
+        "model response. Character and byte counts describe content. "
+        "MCP qualification measures the server listing and its loading hints. "
+        "The client selects which schemas to send. Provider receipts supply token totals. "
+        "Stream events are one-based JSONL line numbers. Shell and delegated tool requests "
+        "count as potential edits even when they only read.\n\n"
+    )
+
+
+def _model_response_table(usage, trace):
+    if not usage["turns"]:
+        return ""
+    calls = {call["tool_call_id"]: call for call in trace["calls"]}
+    fields = (
+        "input_tokens",
+        "uncached_input_tokens",
+        "cache_write_tokens",
+        "cache_read_tokens",
+        "output_tokens",
+    )
+    lines = [
+        "### Model responses",
+        "",
+        "| Step | Tools | Result chars | Input | Uncached | Cache writes | Cache reads | Output |",
+        "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for turn in usage["turns"]:
+        requested = [calls.get(call_id, {}) for call_id in turn["tool_call_ids"]]
+        names = ", ".join(call.get("tool", "unknown") for call in requested)
+        chars = ", ".join(_number(call.get("result_chars"), 0) for call in requested)
+        usage_cells = " | ".join(_number(turn.get(field), 0) for field in fields)
+        lines.append(f"| {turn['step_id']} | {names or '—'} | {chars or '—'} | {usage_cells} |")
+    return "\n".join(lines) + "\n"
+
+
+def _summary(slots, observed):
+    records = [observed[s["order"]]["result"] for s in slots if s["order"] in observed]
+    costs = [r.get("generation_cost_usd") for r in records]
+    complete = len(records) == len(slots)
+    resolved = sum(r["resolved"] for r in records)
+    session_cost = _known_sum(records, "generation_cost_usd")
+    agent_time = _known_sum(records, "agent_time_s")
+    return {
+        "expected": len(slots),
+        "observed": len(records),
+        "pending": len(slots) - len(records),
+        "resolved": resolved,
+        "success_rate": resolved / len(slots) if complete and slots else None,
+        "infrastructure_errors": sum(not r.get("harbor_reward_valid", False) for r in records),
+        "generation_cost_usd": session_cost,
+        "mean_claude_cost_usd": session_cost / len(records) if session_cost is not None else None,
+        "mean_agent_time_s": agent_time / len(records) if agent_time is not None else None,
+        "total_provider_cost_usd": _known_sum(records, "total_provider_cost_usd"),
+        "claude_cost_per_solve_usd": session_cost / resolved
+        if session_cost is not None and resolved
+        else None,
+        "loom_provider_cost_usd": _known_sum(records, "loom_provider_cost_usd"),
+        "known_generation_cost_usd": sum(c for c in costs if c is not None) if costs else None,
+        "unknown_generation_costs": sum(c is None for c in costs),
+        "mean_end_to_end_s": fmean(r["end_to_end_s"] for r in records) if records else None,
+        "mean_native_duration_s": fmean(r["native_duration_s"] for r in records)
+        if records
+        else None,
+        "selected_loom_calls": _known_sum(records, "model_selected_loom_requests"),
+        "agent_time_s": agent_time,
+        "agent_test_requests": _known_sum(records, "agent_test_requests"),
+        "agent_test_runs": _known_sum(records, "agent_test_runs"),
+        "loom_tool_calls": _known_sum(records, "loom_tool_calls"),
+        "memory_rows_written": _known_sum(records, "memory_rows_written"),
+        "full_suite_regressions": _known_sum(records, "full_suite_regressions"),
+        "judge_fixed": _known_sum(records, "judge_fixed"),
+        **{
+            key: _known_sum(records, key)
+            for key in (
+                "model_input_tokens",
+                "model_output_tokens",
+                "model_total_tokens",
+                "model_cache_read_tokens",
+                "model_cache_write_tokens",
+            )
+        },
+        "unknown_loom_counts": sum(r.get("loom_physical_requests") is None for r in records),
+    }
+
+
+def _known_sum(records, key):
+    values = [r.get(key) for r in records]
+    return sum(values) if values and None not in values else None
+
+
+def _number(value, digits=3):
+    return "pending / unknown" if value is None else f"{value:.{digits}f}"
+
+
+def _table(arms):
+    lines = [
+        "| Arm | Observed / expected | Hidden-test passes | Mean Claude Code cost (USD) "
+        "| USD per verified solve | Mean agent time (s) | Mean end-to-end (s) |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for arm, info in arms.items():
+        per_solve = _number(info["claude_cost_per_solve_usd"], 7) if info["resolved"] else "—"
+        lines.append(
+            f"| {PRIMARY[arm].label} | {info['observed']} / {info['expected']} "
+            f"| {info['resolved']} | {_number(info['mean_claude_cost_usd'], 7)} "
+            f"| {per_solve} | {_number(info['mean_agent_time_s'])} "
+            f"| {_number(info['mean_end_to_end_s'])} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def generate_reports(
+    protocol, entries, *, job_name="live", fairness_verified=None, loom_source_verified=None
+):
+    """Regenerate aggregates and add each finalized trial's native assets once.
+
+    Protocol `reporting` optionally sets viewer_jobs_root, viewer_base_url and
+    job_prefix. Pending cells stay null; derived views are never new executions.
+    """
+    if job_name != "live":
+        return None
+    output, jobs, base, names = _settings(protocol)
+    output.mkdir(parents=True, exist_ok=True)
+    with (output / "reporting.lock").open("a") as guard:
+        fcntl.flock(guard, fcntl.LOCK_EX)
+        return _generate(
+            protocol,
+            entries,
+            output,
+            jobs,
+            base,
+            names,
+            job_name,
+            fairness_verified,
+            loom_source_verified,
+        )
+
+
+def _generate(
+    protocol, entries, output, jobs, base, names, job_name, fairness_verified, loom_source_verified
+):
+    from examples.software_factory.harbor.cache_start import study_cache_verified
+    from examples.software_factory.harbor.charts import generate_charts
+
+    schedule = protocol["schedule"]
+    slots_by_order = {slot["order"]: slot for slot in schedule}
+    if len(slots_by_order) != len(schedule):
+        raise ValueError("Duplicate schedule slots")
+    observed = {}
+    for entry in entries:
+        order = entry["order"]
+        if order not in slots_by_order or order in observed:
+            raise ValueError("Duplicate or unscheduled measured result")
+        slot, record = slots_by_order[order], copy.deepcopy(entry["result"])
+        if (
+            record["task_id"] != slot["task_id"]
+            or record["mode"] != slot["mode"]
+            or record.get("arm") != slot["arm"]
+            or record.get("index_tier") != slot.get("index_tier")
+        ):
+            raise ValueError("Measured result differs from its scheduled identity")
+        raw = _read(Path(record["harbor_trial"]) / "result.json")
+        if record.get("generation_cost_source") != "claude-code-reported":
+            record["generation_cost_usd"] = None
+        valid = raw["reward_valid"] is True
+        resolved = (
+            valid and ((raw.get("verifier_result") or {}).get("rewards") or {}).get("reward") == 1
+        )
+        if record["resolved"] is not resolved or record.get("harbor_reward_valid") is not valid:
+            raise ValueError("Study success differs from the immutable native reward")
+        start, finish = (datetime.fromisoformat(raw[key]) for key in ("started_at", "finished_at"))
+        record["native_duration_s"] = (finish - start).total_seconds()
+        observed[order] = {"order": order, "result": record}
+    groups = _groups(schedule)
+    native = _native_views(protocol, observed, groups, jobs, names, job_name)
+    url = base + "/compare?" + urlencode([("job", names[arm]) for arm in PRIMARY_VIEWS])
+    links = {"comparison": url, "native_time": url + "&color=time"}
+    if len(observed) == len(schedule) and all(
+        entry["result"].get("generation_cost_usd") is not None for entry in observed.values()
+    ):
+        links["cost"] = url + "&color=cost"
+    views_manifest = {
+        "kind": VIEW_KIND,
+        "source_job": str(output / "jobs" / job_name),
+        "viewer_jobs_root": str(jobs),
+        "views": native["views"],
+        "links": links,
+        "observed_attempts": len(observed),
+        "fairness_verified": fairness_verified,
+        "loom_source_verified": loom_source_verified,
+        "prompt_cache_isolation": protocol.get("prompt_cache_isolation"),
+        "prompt_cache_verified": study_cache_verified(protocol, entries),
+        "complete": len(observed) == len(schedule),
+        "evaluation_complete": len(observed) == len(schedule)
+        and (output / "provider-costs.json").exists()
+        and (
+            not protocol.get("judge", {}).get("enabled")
+            or (output / "judgements/summary.json").exists()
+        ),
+        "report": str(output / "reports" / "comparison.json"),
+    }
+    charts = generate_charts(protocol, list(observed.values()), views_manifest)
+    links["charts"] = charts["url"] or charts["html"]
+    views_manifest["charts"] = charts
+    attempts = []
+    report_dir = output / "reports"
+    for slot in schedule:
+        order = slot["order"]
+        entry = observed.get(order)
+        view_name = names[slot["arm"]]
+        item = {**slot, "state": "observed" if entry else "pending", "metrics": None, "links": {}}
+        model_responses = ""
+        if entry:
+            record = entry["result"]
+            folder = Path(record["harbor_trial"])
+            prefix = (
+                base
+                + "/api/jobs/"
+                + quote(view_name, safe="")
+                + "/trials/"
+                + quote(folder.name, safe="")
+            )
+            item["metrics"] = record
+            item["links"] = {"native_job": base + "/jobs/" + quote(view_name, safe="")}
+            assets = {
+                "trajectory": ("agent/trajectory.json", prefix + "/trajectory"),
+                "verifier": ("verifier/grade.json", prefix + "/files/verifier/grade.json"),
+                "junit": ("verifier/junit.xml", prefix + "/files/verifier/junit.xml"),
+                "factory_result": (
+                    "agent/factory-result.json",
+                    prefix + "/files/agent/factory-result.json",
+                ),
+            }
+            for label, (path, url) in assets.items():
+                if (folder / path).exists():
+                    item["links"][label] = url
+            diagnostics = {}
+            for label, suffix in (
+                ("model usage by turn", "-model-usage"),
+                ("Loom retrieval stages and request ledger", "-code-traces"),
+                ("tool response summary", ""),
+            ):
+                name = f"attempt-{order:02d}{suffix}.json"
+                diagnostic = output / "diagnostics" / name
+                if diagnostic.is_file():
+                    item["links"][label] = "../../diagnostics/" + name
+                    diagnostics[label] = diagnostic
+            usage_path = diagnostics.get("model usage by turn")
+            trace_path = diagnostics.get("tool response summary")
+            if usage_path and trace_path:
+                try:
+                    model_responses = _model_response_table(_read(usage_path), _read(trace_path))
+                except (OSError, ValueError, KeyError, TypeError):
+                    model_responses = "Model response details unavailable.\n"
+                item["model_response_table_sha256"] = hashlib.sha256(
+                    model_responses.encode()
+                ).hexdigest()
+        attempts.append(item)
+        path = report_dir / "attempts" / f"attempt-{order:02d}.json"
+        if not path.exists() or _read(path) != item or not path.with_suffix(".md").exists():
+            text = (
+                f"# Attempt {order}\n\n{slot['task_id']} · repeat {slot['repeat']} "
+                f"· {slot['arm']} · {item['state']}\n\n"
+            )
+            if entry:
+                record = entry["result"]
+                text += (
+                    f"Resolved: {record['resolved']}. "
+                    f"Full end-to-end: {_number(record['end_to_end_s'])}s. "
+                    f"Native Harbor: {_number(record['native_duration_s'])}s. "
+                    f"Claude Code cost (USD) {_number(record.get('generation_cost_usd'), 7)}. "
+                    "Loom provider cost (USD) "
+                    f"{_number(record.get('loom_provider_cost_usd'), 7)}.\n\n"
+                )
+                text += (
+                    " · ".join(f"[{key}]({value})" for key, value in item["links"].items()) + "\n"
+                )
+                text += _trace_table(record)
+                text += model_responses
+            else:
+                text += "No measured result yet. Cost, time and success remain unknown.\n"
+            _atomic(path.with_suffix(".md"), text)
+            _atomic(path, item)
+    all_scenarios = {
+        arm: _summary(slots, observed) for arm, slots in groups.items() if arm in PRIMARY_VIEWS
+    }
+    cohorts = comparison_cohorts(protocol)
+    cohort_reports = {}
+    for family, cohort in cohorts["groups"].items():
+        slots = [s for s in schedule if s["task_id"] in cohort["task_ids"]]
+        cohort_reports[family] = {
+            **cohort,
+            "arms": {
+                arm: _summary([s for s in slots if s["arm"] == arm], observed)
+                for arm in PRIMARY_VIEWS
+            },
+        }
+    primary = cohort_reports[cohorts["default"]]["arms"]
+    primary_tasks = set(cohorts["groups"][cohorts["default"]]["task_ids"])
+    paired = sorted(
+        {
+            (s["task_id"], s["repeat"])
+            for s in schedule
+            if s["arm"] in PRIMARY_VIEWS and s["task_id"] in primary_tasks
+        }
+    )
+    rows = [
+        {
+            "task_id": task,
+            "repeat": repeat,
+            "cells": {
+                arm: next(
+                    (
+                        item["metrics"]
+                        for item in attempts
+                        if item["task_id"] == task
+                        and item["repeat"] == repeat
+                        and item["arm"] == arm
+                    ),
+                    None,
+                )
+                for arm in PRIMARY_VIEWS
+            },
+        }
+        for task, repeat in paired
+    ]
+    scenarios, scenario_links = {}, []
+    for task in sorted({s["task_id"] for s in schedule}):
+        selected = [s for s in schedule if s["task_id"] == task]
+        info = {
+            "task_id": task,
+            "arms": {
+                arm: _summary([s for s in selected if s["arm"] == arm], observed)
+                for arm in PRIMARY_VIEWS
+            },
+            "attempts": [a for a in attempts if a["task_id"] == task],
+            "comparison_links": links,
+        }
+        scenarios[task] = info
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", task) + "-" + _digest(task)[:8]
+        scenario_links.append((task, "scenarios/" + safe_name + ".md"))
+        _atomic(report_dir / "scenarios" / (safe_name + ".json"), info)
+        attempt_links = "\n".join(
+            f"- [Attempt {a['order']}](../attempts/attempt-{a['order']:02d}.md): "
+            f"{a['arm']}, repeat {a['repeat']}, {a['state']}"
+            for a in info["attempts"]
+        )
+        _atomic(
+            report_dir / "scenarios" / (safe_name + ".md"),
+            f"# Scenario {task}\n\n"
+            + _table(info["arms"])
+            + "\n"
+            + " · ".join(f"[{key}]({value})" for key, value in links.items())
+            + "\n\n"
+            + attempt_links
+            + "\n",
+        )
+    report = {
+        "schema_version": 1,
+        "not_new_executions": True,
+        "model_requests": 0,
+        "complete": len(observed) == len(schedule),
+        "expected_attempts": len(schedule),
+        "observed_attempts": len(observed),
+        "fairness_verified": fairness_verified,
+        "loom_source_verified": loom_source_verified,
+        "prompt_cache_isolation": views_manifest["prompt_cache_isolation"],
+        "prompt_cache_verified": views_manifest["prompt_cache_verified"],
+        "pending_orders": sorted(set(slots_by_order) - set(observed)),
+        "scenario_count": len(scenarios),
+        "expected_primary_pair_rows": len(rows),
+        "primary_arms": primary,
+        "primary_cohort": cohorts["default"],
+        "cohorts": cohort_reports,
+        "pooled_headline": False,
+        "all_scenarios_arms": all_scenarios,
+        "paired_rows": rows,
+        "scenarios": scenarios,
+        "attempts": attempts,
+        "native_views": native,
+        "charts": charts,
+        "links": links,
+        "timing": (
+            "Native Harbor duration is finished_at minus started_at. Full study end-to-end "
+            "also includes post-trial index audit. Neither is replaced by the other."
+        ),
+        "cost_basis": protocol.get("cost_basis"),
+        "normalization": (
+            "Only derived task display names/checksums and task lock names/digests change. "
+            "Original UUIDs, config paths, metrics, costs and timestamps remain unchanged."
+        ),
+    }
+    _atomic(report_dir / "comparison.json", report)
+    text = (
+        f"# Factory comparison\n\n{len(observed)}/{len(schedule)} attempts observed across "
+        f"{len(scenarios)} distinct scenarios. {len(rows)} task/repeat rows are expected "
+        f"in the primary comparison: {cohorts['groups'][cohorts['default']]['label']}.\n\n"
+        "Historical issues and authored experiments are reported separately. "
+        "Native Harbor comparison links include all scenarios.\n\n"
+    )
+    if fairness_verified is False:
+        text += "Trial configuration failed the fairness audit.\n\n"
+    if loom_source_verified is False:
+        text += "At least one Loom session completed without recorded indexed source.\n\n"
+    if report["prompt_cache_verified"] is False:
+        text += "Provider receipts failed the configured prompt-cache verification.\n\n"
+    text += _table(primary) + "\n"
+    text += " · ".join(f"[{key}]({value})" for key, value in links.items())
+    for family, cohort in cohort_reports.items():
+        if family != cohorts["default"]:
+            text += "\n\n## " + cohort["label"] + "\n\n"
+            text += _table(cohort["arms"])
+    text += (
+        "\n\n"
+        + report["timing"]
+        + "\n\nCost uses Claude Code session totals. Spend per verified solve includes "
+        "spend on failed attempts. Provider cache reads and writes are recorded as observed.\n"
+    )
+    text += "\n" + "\n".join(f"- [{task}]({path})" for task, path in scenario_links)
+    _atomic(report_dir / "COMPARISON.md", text)
+    _atomic(
+        output / "reporting-manifest.json",
+        {
+            **views_manifest,
+            "expected_primary_pair_rows": len(rows),
+        },
+    )
+    return report

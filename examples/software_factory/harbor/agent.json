@@ -1,0 +1,6 @@
+{
+  "name": "claude-code",
+  "version": "2.1.326",
+  "integration": "mcp-only",
+  "append_system_prompt": "When Loom is connected, its code tools can retrieve indexed definitions, callers, tests, and linked project history. Local tools are available for exact checks in known files, working-copy changes, Git, edits, and running tests."
+}

@@ -92,7 +92,7 @@ jobs:
           uv sync --locked --python "${PYTHON_PATH}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: ruff
-        run: ruff check server extractor sdk/python tests scripts .claude
+        run: ruff check server extractor sdk/python tests scripts .claude examples/software_factory
       - name: Install Rust formatter for generated contracts
         run: |
           rustup toolchain install "$RUST_CODEGEN_VERSION" --profile minimal --component rustfmt
@@ -306,6 +306,13 @@ jobs:
       # The published benchmark harnesses' scoring and dataset readers.
       - name: pytest bench harnesses
         run: pytest bench -q -p randomly --randomly-seed="${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
+      - name: Offline software factory contracts
+        env:
+          PYTHON_PATH: ${{ steps.python.outputs.python-path }}
+        run: |
+          uv venv --python "${PYTHON_PATH}" .factory-venv
+          uv pip install --python .factory-venv/bin/python --require-hashes -r examples/software_factory/harbor/requirements.txt
+          PYTHONPATH="$PWD/sdk/python:$PWD" .factory-venv/bin/python -m unittest discover -s examples/software_factory/tests -t . -v
       # The generic ingest script's dry run goes through this checkout's CLI.
       - name: generic integration sample
         run: PYTHON=python bash integrations/generic/test.sh

@@ -1,0 +1,917 @@
+"""Prepare, run and report a frozen repository cohort with Harbor."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import csv
+import hashlib
+import importlib.metadata
+import json
+import os
+import shutil
+import subprocess
+import time
+import uuid
+from contextlib import closing
+from datetime import UTC, datetime
+from functools import partial
+from pathlib import Path
+from statistics import fmean
+from urllib.parse import urlsplit
+
+from harbor.job import Job
+from harbor.models.job.config import JobConfig
+
+from examples.software_factory.factory.model import digest
+from examples.software_factory.harbor.index import MUTABLE_STATE_KEYS, select_snapshot, snapshot
+from examples.software_factory.harbor.paired import ARMS, analyze, analyze_cohorts
+from examples.software_factory.harbor.reporting import generate_reports
+from examples.software_factory.harbor.runtime import read, task_inputs, verify, write
+
+from .billing import FIELDS as BILLING_FIELDS
+from .billing import audit_provider_costs
+from .cache_start import (
+    DEFAULT_CACHE_TTL_S,
+    observed_cache_ttl_s,
+    study_cache_verified,
+    wait_for_expiry,
+)
+from .fairness import audit_fairness, fairness_status
+from .judging import load_verdicts, run_judging
+from .launch import native_model
+from .mcp_qualification import STARTUP_COUNTS, verify_catalog
+from .metrics import known_total, paid_token_totals
+from .native_environment import (
+    PROXY_ENV,
+    agent_settings,
+    claude_code_options,
+    load_credentials,
+    mcp_settings,
+)
+from .native_metrics import measurements
+from .profiles import load_profile
+from .project_guidance import SUBMISSION_NOTE, agent_image, guidance, task_instruction
+from .project_guidance import stage as stage_guidance
+from .public_export import export_public
+from .scopes import selected_scopes
+from .spending import Spending
+from .workspace import API_KEY, CUSTOM_HEADERS, solver_environment
+
+ROOT = Path(__file__).resolve().parents[3]
+HERE = Path(__file__).resolve().parent
+PACKAGE_ROOT = HERE.parent
+
+
+def file_hash(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def verified_input_files(plan):
+    paths = set()
+    for identity in (
+        plan["public_inputs"],
+        plan["server_source_identity"]["files"],
+        plan["controller_source_identity"]["files"],
+    ):
+        if not identity:
+            raise PermissionError("Public input and server source fingerprints are required")
+        for name, expected in identity.items():
+            path = Path(name)
+            if not path.is_absolute() or file_hash(path) != expected:
+                raise PermissionError("A public input or server source changed before freezing")
+            paths.add(path)
+    return paths
+
+
+def verify_qualifications(protocol):
+    output = Path(protocol["output_root"])
+    expected = digest(protocol)
+    for kind in ("base", "reference"):
+        receipt = read(output / (kind + "-qualification.json"))
+        results = [entry["result"] for entry in receipt.get("attempts", [])]
+        if (
+            receipt.get("qualified") is not True
+            or receipt.get("protocol_sha256") != expected
+            or len(results) != len(protocol["tasks"])
+            or {r["task_id"] for r in results} != set(protocol["tasks"])
+            or any(
+                r.get("protocol_sha256") != expected
+                or r.get("harbor_reward_valid") is not True
+                or r.get("resolved") is not (kind == "reference")
+                or r.get("provider_physical_requests") != 0
+                or (r.get("full_suite") or {}).get("valid") is not True
+                or (kind == "reference" and r.get("full_suite_regressions") != 0)
+                for r in results
+            )
+        ):
+            raise PermissionError("Native Harbor controls do not qualify this exact protocol")
+
+
+def stage_sandbox_policy(
+    folder: Path, *, verifier: bool = False, network: str | None = None
+) -> Path:
+    relative = Path("tests/docker-compose.yaml") if verifier else Path("sandbox-compose.yaml")
+    target = folder / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if verifier:
+        shutil.copyfile(HERE / "sandbox-compose.yaml", target)
+    else:
+        if not network:
+            raise ValueError("Native agents require their owned Loom network")
+        target.write_text(
+            json.dumps(
+                {
+                    "services": {
+                        "main": {
+                            "pids_limit": 512,
+                            "cap_drop": ["ALL"],
+                            "cap_add": ["SETUID", "SETGID", "KILL"],
+                            "security_opt": ["no-new-privileges:true"],
+                        },
+                        "harbor-docker-egress-control-sidecar": {"networks": ["default", "loom"]},
+                    },
+                    "networks": {"loom": {"external": True, "name": network}},
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+    return target
+
+
+def _inspect_image(reference: str) -> dict:
+    return json.loads(
+        subprocess.run(
+            ["docker", "image", "inspect", reference],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )[0]
+
+
+def _build_runtime(folder: Path, build_image, *, network: str, target: str = "") -> str:
+    suffix = f"-{target}" if target else ""
+    receipt = folder / f"image{suffix}.id"
+    tag = "loom-factory-harbor:" + uuid.uuid4().hex
+    flags = [f"--network={network}", "--label", "loom.factory.harbor=task-runtime"]
+    if target:
+        flags.extend(("--target", target))
+    return build_image(tag, folder, receipt, flags=flags)["Id"]
+
+
+def build_image(
+    folder: Path, dependency: str, *, project_instructions: dict, build_owned_image
+) -> str | dict[str, str]:
+    inspected = _inspect_image(dependency)
+    if inspected["Id"] != dependency or not inspected.get("RepoTags"):
+        raise PermissionError("Dependency image has no verified local build reference")
+    reference = inspected["RepoTags"][0]
+    native = (folder / "workspace").is_dir()
+    if native:
+        stage_guidance(folder / "workspace", folder / "loom-guidance", project_instructions)
+        version = read(HERE / "agent.json")["version"]
+        recipe = (
+            "FROM " + reference + " AS baseline\nUSER root\n"
+            "RUN git --version && curl --version && bash --version && ps --version\n"
+            "RUN useradd --create-home --uid 1000 agent "
+            "&& mkdir -p /workspace && chown 1000:1000 /workspace\nUSER agent\n"
+            "RUN curl -fsSL https://downloads.claude.ai/claude-code-releases/bootstrap.sh "
+            "| bash -s -- " + version + "\n"
+            'ENV PATH="/home/agent/.local/bin:${PATH}"\nRUN claude --version\n'
+            "COPY --chown=1000:1000 workspace /workspace\n"
+            "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/workspace/src\n"
+            "WORKDIR /workspace\nRUN test -w /workspace\n"
+            "FROM baseline AS loom\n"
+            "COPY --chown=1000:1000 loom-guidance/CLAUDE.md /workspace/CLAUDE.md\n"
+        )
+    else:
+        recipe = (
+            "FROM " + reference + "\nUSER root\nCOPY factory /factory\n"
+            "COPY factory/tests /tests\n"
+            "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/factory/lib\n"
+            "RUN python -c \"import runpy; runpy.run_path('/factory/grader.py', "
+            "run_name='grader_import_check')\"\nWORKDIR /workspace\n"
+        )
+    (folder / "Dockerfile").write_text(recipe)
+    image: str | dict[str, str]
+    if native:
+        image = {
+            target: _build_runtime(folder, build_owned_image, network="default", target=target)
+            for target in ("baseline", "loom")
+        }
+        baseline, loom = (_inspect_image(image[target]) for target in ("baseline", "loom"))
+        if (
+            loom["RootFS"]["Layers"][:-1] != baseline["RootFS"]["Layers"]
+            or loom["Config"] != baseline["Config"]
+        ):
+            raise PermissionError("Loom agent image must add only the project instructions layer")
+    else:
+        image = _build_runtime(folder, build_owned_image, network="none")
+    if _inspect_image(reference)["Id"] != dependency:
+        raise PermissionError("Dependency image changed during the build")
+    return image
+
+
+def prepare(
+    previous: Path,
+    output: Path,
+    *,
+    build_owned_image,
+    isolate_prompt_cache: bool = False,
+    workspace_ids=(),
+    disable_prompt_caching: bool = False,
+) -> Path:
+    plan = read(previous)
+    if not plan.get("public_reproduction"):
+        raise ValueError("A public reproduction manifest is required")
+    inputs = verified_input_files(plan)
+    verify_catalog(plan)
+    endpoint = urlsplit(plan["loom_url"])
+    if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
+        raise ValueError("An explicit HTTP(S) Loom endpoint is required")
+    if not plan.get("server_container"):
+        raise ValueError("The owned server container must be supplied separately from its URL")
+    output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    original = json.loads(json.dumps(plan))
+    sandbox_policy = stage_sandbox_policy(output, network=plan["runtime_network"])
+    plan["sandbox_policy"] = {"path": str(sandbox_policy), "sha256": file_hash(sandbox_policy)}
+    plan.update(
+        output_root=str(output),
+        working_directory=str(ROOT),
+        pythonpath=str(ROOT) + ":" + str(ROOT / "sdk/python"),
+        docker_binary=shutil.which("docker"),
+        controller="harbor",
+        harbor_version=importlib.metadata.version("harbor"),
+    )
+    if plan["harbor_version"] != "0.27.0":
+        raise PermissionError("Install the pinned Harbor version")
+    frozen = read(plan["index_content_file"])
+    current = snapshot(plan["server_container"], selected_scopes(plan))
+    if current != frozen:
+        raise PermissionError("Source index changed since the original frozen snapshot")
+    write(output / "index-content.json", current)
+    plan["index_content_sha256"] = digest(current)
+    plan["index_monitor"] = {
+        "ignored_state_keys": sorted(MUTABLE_STATE_KEYS),
+        "source_snapshot_matches_original": True,
+        "reason": (
+            "Exclude status caches and the memory-link worker's checked-head marker; "
+            "source heads, units and unknown state keys remain fingerprinted."
+        ),
+    }
+    plan["preparation"] = {
+        "input_protocol_sha256": digest(original),
+        "execution": (
+            "Harbor native Docker agent environments and separate Docker verifiers; "
+            "unmodified built-in Claude Code agent."
+        ),
+        "unchanged": [
+            "model_id",
+            "schedule",
+            "schedule_sha256",
+            "tasks",
+            "attempt_budget",
+            "visible_test_call_limit",
+        ],
+        "timing": (
+            "Harbor trial wall time includes setup, agent execution, artifact transfer, "
+            "hidden verification and teardown. End-to-end also includes both index audits."
+        ),
+        "retry_policy": ("Harbor max_retries=0; Claude Code keeps its native provider behavior."),
+    }
+    assert all(plan[k] == original[k] for k in plan["preparation"]["unchanged"])
+    plan["harbor_specs"], images = {}, {}
+    plan["project_guidance"] = guidance(plan["suite"]["source_roots"])
+    plan["public_reproduction"]["project_guidance"] = plan["project_guidance"]
+    plan["public_reproduction"]["submission_note"] = SUBMISSION_NOTE
+    if disable_prompt_caching:
+        plan["prompt_cache_isolation"] = "disabled"
+    elif workspace_ids:
+        if len(workspace_ids) != len(plan["schedule"]) or len(set(workspace_ids)) != len(
+            workspace_ids
+        ):
+            raise ValueError("Every scheduled attempt requires a distinct Anthropic workspace")
+        plan["prompt_cache_isolation"] = "dedicated-anthropic-workspace-per-attempt"
+        plan["anthropic_workspace_ids"] = list(workspace_ids)
+    elif isolate_prompt_cache:
+        plan["prompt_cache_isolation"] = "provider-expiry-between-attempts"
+    builder = partial(
+        build_image,
+        project_instructions=plan["project_guidance"],
+        build_owned_image=build_owned_image,
+    )
+    for task_id in sorted(plan["tasks"]):
+        plan["harbor_specs"][task_id], images[task_id] = load_profile(plan).stage_task(
+            plan, task_id, output, builder
+        )
+    plan["harbor_images"] = images
+    write(output / "images.json", images)
+    tasks = []
+    for slot in plan["schedule"]:
+        task_dir = output / "tasks" / f"slot-{slot['order']:02d}"
+        task_dir.mkdir(parents=True)
+        # Harbor clears job overlays for separate verifiers; their task definition owns it.
+        stage_sandbox_policy(task_dir, verifier=True)
+        _, _, task, _ = task_inputs(plan, slot["task_id"])
+        (task_dir / "instruction.md").write_text(task_instruction(task.problem))
+        image = images[slot["task_id"]]
+        (task_dir / "task.toml").write_text(
+            'schema_version = "1.4"\n'
+            '[[artifacts]]\nsource = "/workspace/src/flask"\ndestination = "implementation"\n'
+            'exclude = ["__pycache__", "*.pyc"]\n'
+            + agent_settings(plan, slot)
+            + "[environment]\ndocker_image = "
+            + json.dumps(agent_image(images, slot))
+            + '\ncpus = 1\nmemory_mb = 2048\nnetwork_mode = "public"\nbuild_timeout_sec = inf\n'
+            + mcp_settings(plan, slot)
+            + '[verifier]\ntimeout_sec = inf\nenvironment_mode = "separate"\n'
+            "[verifier.environment]\ndocker_image = "
+            + json.dumps(image["verifier"])
+            + '\ncpus = 1\nmemory_mb = 512\nnetwork_mode = "no-network"\nbuild_timeout_sec = inf\n'
+        )
+        tasks.append({"path": str(task_dir)})
+    protocol_path = output / "protocol.json"
+    solver = read(HERE / "agent.json")
+    plan["solver"] = solver
+    agent = {
+        "name": solver["name"],
+        "model_name": plan["model_id"],
+        "kwargs": claude_code_options(solver),
+        "override_setup_timeout_sec": float("inf"),
+        "env": {
+            **PROXY_ENV,
+            **({"DISABLE_PROMPT_CACHING": "1"} if disable_prompt_caching else {}),
+            **(
+                {API_KEY: "${" + API_KEY + "}", CUSTOM_HEADERS: "${" + CUSTOM_HEADERS + "}"}
+                if workspace_ids
+                else {}
+            ),
+        },
+    }
+    controls = {}
+    for name in ("base", "reference"):
+        controls[name] = []
+        for task_id in sorted(plan["tasks"]):
+            position = next(
+                s["order"]
+                for s in plan["schedule"]
+                if s["task_id"] == task_id and s["mode"] == "baseline"
+            )
+            target = output / "controls" / name / f"slot-{position:02d}"
+            shutil.copytree(Path(tasks[position]["path"]), target)
+            solution = target / "solution"
+            solution.mkdir()
+            commands = "#!/bin/sh\nset -eu\ncd /workspace\n"
+            if name == "reference":
+                private = next(
+                    row
+                    for row in read(plan["reference_controls_file"])
+                    if row["instance_id"] == task_id
+                )
+                (solution / "reference.patch").write_text(private["patch"])
+                commands += "git apply /solution/reference.patch\n"
+            (solution / "solve.sh").write_text(commands + "true\n")
+            (solution / "solve.sh").chmod(0o755)
+            controls[name].append({"path": str(target)})
+    for name, control in (("live", None), ("base", "base"), ("reference", "reference")):
+        selected = tasks if control is None else controls[control]
+        config = JobConfig.model_validate(
+            {
+                "job_name": name,
+                "jobs_dir": str(output / "jobs"),
+                "n_attempts": 1,
+                "n_concurrent_trials": 1,
+                "retry": {"max_retries": 0},
+                "environment": {
+                    "type": "docker",
+                    "delete": True,
+                    "extra_docker_compose": [str(sandbox_policy)],
+                },
+                "agents": [
+                    agent
+                    if control is None
+                    else {"name": "oracle", "override_setup_timeout_sec": float("inf")}
+                ],
+                "tasks": selected,
+                "quiet": True,
+            }
+        )
+        write(output / (name + "-job.json"), config.model_dump(mode="json"))
+    paths = [
+        p
+        for p in PACKAGE_ROOT.rglob("*")
+        if p.suffix in {".py", ".json", ".txt", ".html", ".js", ".yaml", ".in"}
+        and "__pycache__" not in p.parts
+    ]
+    paths += list((ROOT / "sdk/python/loom").rglob("*.py"))
+    if verified_input_files(plan) != inputs:
+        raise PermissionError("Input identities changed during preparation")
+    paths += list(inputs)
+    paths += [Path(plan["historical_manifest"])]
+    paths += [Path(c["evaluation_file"]) for c in plan["tasks"].values()]
+    paths += [Path(plan["reference_controls_file"])]
+    paths += [HERE / "sandbox-compose.yaml", sandbox_policy]
+    paths += [p for p in (output / "tasks").rglob("*") if p.is_file()]
+    paths += [p for p in (output / "controls").rglob("*") if p.is_file()]
+    paths += [output / (n + "-job.json") for n in ("live", "base", "reference")]
+    paths += [output / "index-content.json", output / "images.json"]
+    paths += list((output / "builds").rglob("Dockerfile"))
+    paths += list((output / "builds").glob("*/agent/loom-guidance/CLAUDE.md"))
+    plan["files"] = {str(p): file_hash(p) for p in sorted(set(paths))}
+    plan.pop("source_archive", None)
+    write(protocol_path, plan)
+    return protocol_path
+
+
+def result_record(slot: dict, raw: dict, folder: Path, *, task_kind: str, model_id: str) -> dict:
+    agent = (raw.get("agent_info") or {}).get("name")
+    if agent not in {"claude-code", "oracle"}:
+        raise PermissionError("Expected Harbor's native Claude Code or qualification agent")
+    observed = (
+        measurements(raw, folder)
+        if agent == "claude-code"
+        else {
+            "solver": "oracle",
+            "generation_cost_usd": 0,
+            "model_input_tokens": 0,
+            "model_output_tokens": 0,
+            "model_total_tokens": 0,
+            "model_cache_read_tokens": 0,
+            "model_cache_write_tokens": 0,
+            "loom_tool_calls": 0,
+            "tool_total_requests": 0,
+            "provider_physical_requests": 0,
+        }
+    )
+    result = {
+        "task_id": slot["task_id"],
+        "mode": slot["mode"],
+        "arm": slot["arm"],
+        "index_tier": slot["index_tier"],
+        "memory_enabled": slot["memory_enabled"],
+        "kind": task_kind,
+        "provider": "claude-code:" + model_id,
+        "status": "completed" if raw.get("exception_info") is None else "agent_error",
+        **observed,
+    }
+    result["model_selected_loom_requests"] = result.get("loom_tool_calls")
+    if slot["mode"] == "baseline" or agent == "oracle":
+        if result.get("loom_tool_calls") not in (0, None):
+            raise PermissionError("No-Loom or qualification agent called Loom")
+        result.update(loom_logical_requests=0, loom_physical_requests=0, memory_rows_written=0)
+    if not slot["memory_enabled"]:
+        result["memory_rows_written"] = 0
+    grade_path = folder / "verifier/grade.json"
+    result["hidden_grade"] = read(grade_path) if grade_path.exists() else None
+    suite_path = folder / "verifier/full-suite.json"
+    result["full_suite"] = read(suite_path) if suite_path.exists() else None
+    result["full_suite_failed_tests"] = (result["full_suite"] or {}).get("failed")
+    rewards = (raw.get("verifier_result") or {}).get("rewards") or {}
+    result["resolved"] = raw.get("reward_valid") is True and rewards.get("reward") == 1
+    result["status"] = (
+        "infrastructure_error" if not raw.get("reward_valid") else result.get("status", "completed")
+    )
+    result["harbor_exception"] = raw.get("exception_info")
+    from datetime import datetime
+
+    start, finish = (datetime.fromisoformat(raw[k]) for k in ("started_at", "finished_at"))
+    result["end_to_end_s"] = (finish - start).total_seconds()
+    result["harbor_wall_s"] = result["end_to_end_s"]
+    measurement = folder / "factory-measurement.json"
+    if measurement.exists():
+        result.update(read(measurement))
+    result["harbor_trial"] = str(folder)
+    result["schedule_order"] = slot["order"]
+    result["pairing_key"] = [slot["task_id"], slot["repeat"]]
+    result["harbor_reward_valid"] = raw.get("reward_valid") is True
+    return result
+
+
+def enrich_evaluations(protocol, entries, job_name):
+    profile = load_profile(protocol)
+    base_path = Path(protocol["output_root"]) / "base-qualification.json"
+    bases = {}
+    if job_name != "base" and base_path.exists():
+        receipt = read(base_path)
+        if receipt.get("protocol_sha256") != digest(protocol):
+            raise PermissionError("Full-suite baseline belongs to another protocol")
+        bases = {
+            entry["result"]["task_id"]: entry["result"].get("full_suite")
+            for entry in receipt["attempts"]
+        }
+    verdicts = load_verdicts(protocol) if job_name == "live" else {}
+    mcp_receipts = verify_catalog(protocol) if job_name == "live" else {}
+    billing = {}
+    bill_path = Path(protocol["output_root"]) / "provider-costs.json"
+    if job_name == "live" and bill_path.exists():
+        receipt = read(bill_path)
+        if receipt.get("protocol_sha256") != digest(protocol):
+            raise PermissionError("Provider costs belong to another protocol")
+        billing = receipt["attempts"]
+    for entry in entries:
+        result = entry["result"]
+        mcp = mcp_receipts.get(str(entry["order"]), {})
+        result.update({key: mcp.get(key) for key in STARTUP_COUNTS})
+        billed = billing.get(str(entry["order"]), {})
+        if billed.get("proof_status") != "known":
+            billed = {}
+        result.update({key: billed.get(key) for key in BILLING_FIELDS})
+        if job_name == "live" and billed.get("memory_rows_written") is not None:
+            result["memory_rows_written"] = billed["memory_rows_written"]
+        result.update(paid_token_totals(result))
+        components = [result.get("generation_cost_usd"), result.get("loom_provider_cost_usd")]
+        result["total_provider_cost_usd"] = sum(components) if None not in components else None
+        full = result.get("full_suite")
+        changed = profile.full_suite_regressions(
+            full if job_name == "base" else bases.get(result["task_id"]), full
+        )
+        result["full_suite_regressions"] = len(changed) if changed is not None else None
+        result["full_suite_regression_tests"] = changed
+        result["judge_fixed"] = None
+        judged = verdicts.get(str(entry["order"]))
+        state = (result.get("hidden_grade") or {}).get("state")
+        if judged and state and judged["candidate_state"] == state:
+            result["judge_fixed"] = judged["judge_fixed"]
+
+
+def export(protocol: dict, job_name="live") -> dict:
+    output = Path(protocol["output_root"])
+    entries = []
+    for folder in sorted((output / "jobs" / job_name).glob("*")):
+        path = folder / "result.json"
+        if not path.exists() or not (folder / "config.json").exists():
+            continue
+        raw = read(path)
+        order = int(Path(raw["config"]["task"]["path"]).name.removeprefix("slot-"))
+        result = result_record(
+            protocol["schedule"][order],
+            raw,
+            folder,
+            task_kind=load_profile(protocol).TASK_KIND,
+            model_id=protocol["model_id"],
+        )
+        result["protocol_sha256"] = digest(protocol)
+        if job_name == "live" and protocol.get("anthropic_workspace_ids"):
+            intent = read(output / f"live-intent-{order:02d}.json")
+            reached = intent.get("anthropic_workspace_id")
+            if reached != protocol["anthropic_workspace_ids"][order]:
+                raise PermissionError("Recorded workspace differs from the scheduled scope")
+            result["anthropic_workspace_preflight_id"] = reached
+        entries.append({"order": order, "result": result})
+    entries.sort(key=lambda e: e["order"])
+    enrich_evaluations(protocol, entries, job_name)
+    write(output / (job_name + "-attempts.json"), entries)
+    if job_name != "live":
+        return {
+            "attempts": entries,
+            "protocol_sha256": digest(protocol),
+            "qualified": len(entries) == len(protocol["tasks"])
+            and all(
+                e["result"]["harbor_reward_valid"]
+                and e["result"]["resolved"] == (job_name == "reference")
+                and e["result"].get("provider_physical_requests") == 0
+                and (e["result"].get("full_suite") or {}).get("valid") is True
+                and (job_name != "reference" or e["result"]["full_suite_regressions"] == 0)
+                for e in entries
+            ),
+        }
+    report = analyze(
+        {"attempts": protocol["schedule"], "schedule_sha256": protocol["schedule_sha256"]}, entries
+    )
+    report.update(analyze_cohorts(protocol, entries))
+    fairness_verified = fairness_status(protocol)
+    source_verified = (
+        all(
+            protocol["schedule"][entry["order"]]["mode"] == "baseline"
+            or type(entry["result"].get("first_loom_source_result_event_main")) is int
+            for entry in entries
+        )
+        if len(entries) == len(protocol["schedule"])
+        else None
+    )
+    cache_policy = protocol.get("prompt_cache_isolation")
+    cache_verified = study_cache_verified(protocol, entries)
+    cache_field = (
+        "prompt_cache_disabled_verified"
+        if cache_policy == "disabled"
+        else "fresh_prompt_cache_verified"
+    )
+    for comparison in (report, *report["cohorts"].values()):
+        comparison["fairness_verified"] = fairness_verified
+        comparison["loom_source_verified"] = source_verified
+        comparison[cache_field] = cache_verified
+        if fairness_verified is not True or cache_verified is False:
+            comparison["observed_targets"]["efficiency_vs_no_loom"] = {}
+            comparison["observed_targets"]["memory_vs_code_index"] = {}
+    write(output / "paired-report.json", report)
+    summary = {
+        "complete": report["complete"],
+        "observed": len(entries),
+        "scheduled": len(protocol["schedule"]),
+        cache_field: cache_verified,
+        "arms": {},
+    }
+    if protocol.get("anthropic_workspace_ids"):
+        summary["workspace_preflight_source"] = "Anthropic Models API response headers"
+    for arm in ARMS:
+        records = [e["result"] for e in entries if protocol["schedule"][e["order"]]["arm"] == arm]
+        costs = [r.get("generation_cost_usd") for r in records]
+        summary["arms"][arm] = {
+            "attempts": len(records),
+            "resolved": sum(r["resolved"] for r in records),
+            "infrastructure_errors": sum(not r["harbor_reward_valid"] for r in records),
+            "mean_end_to_end_s": fmean(r["end_to_end_s"] for r in records) if records else None,
+            "generation_cost_usd": sum(costs) if records and None not in costs else None,
+            "model_selected_loom_calls": known_total(records, "model_selected_loom_requests"),
+            **{
+                key: known_total(records, key)
+                for key in (
+                    "agent_time_s",
+                    "agent_test_requests",
+                    "agent_test_runs",
+                    "tool_total_requests",
+                    "loom_tool_calls",
+                    "memory_rows_written",
+                    "full_suite_regressions",
+                    "judge_fixed",
+                    "loom_provider_cost_usd",
+                    "total_provider_cost_usd",
+                    "model_input_tokens",
+                    "model_uncached_input_tokens",
+                    "model_output_tokens",
+                    "model_total_tokens",
+                    "model_cache_read_tokens",
+                    "model_cache_write_tokens",
+                )
+            },
+            "unknown_loom_counts": sum(r.get("loom_physical_requests") is None for r in records),
+        }
+    write(output / "summary.json", summary)
+    if entries:
+        columns = (
+            "order",
+            "task_id",
+            "arm",
+            "repeat",
+            "resolved",
+            "status",
+            "end_to_end_s",
+            "duration_s",
+            "generation_cost_usd",
+            "generation_cost_source",
+            "solver_token_source",
+            "anthropic_workspace_preflight_id",
+            "loom_provider_cost_usd",
+            "total_provider_cost_usd",
+            "total_cost_usd",
+            "agent_time_s",
+            "agent_test_requests",
+            "agent_test_runs",
+            "tool_total_requests",
+            "loom_tool_calls",
+            "memory_rows_written",
+            "full_suite_regressions",
+            "judge_fixed",
+            "model_input_tokens",
+            "model_uncached_input_tokens",
+            "model_output_tokens",
+            "model_total_tokens",
+            "model_cache_read_tokens",
+            "model_cache_write_tokens",
+            "model_cache_write_5m_tokens",
+            "model_cache_write_1h_tokens",
+            "first_prompt_input_tokens",
+            "first_uncached_input_tokens",
+            "first_cache_read_tokens",
+            "first_cache_write_tokens",
+            *STARTUP_COUNTS,
+            "loom_provider_input_tokens",
+            "loom_provider_output_tokens",
+            "loom_embedding_tokens",
+            "model_selected_loom_requests",
+            "loom_physical_requests",
+            "provider_physical_requests",
+        )
+        with (output / "attempts.csv").open("w") as stream:
+            writer = csv.DictWriter(stream, fieldnames=columns)
+            writer.writeheader()
+            for entry in entries:
+                merged = {**entry["result"], **protocol["schedule"][entry["order"]]}
+                writer.writerow({k: merged.get(k) for k in columns})
+    summary["reporting"] = generate_reports(
+        protocol,
+        entries,
+        job_name=job_name,
+        fairness_verified=fairness_verified,
+        loom_source_verified=source_verified,
+    )
+    summary["fairness_verified"] = fairness_verified
+    summary["loom_source_verified"] = source_verified
+    if protocol.get("public_reproduction"):
+        summary["public_export"] = export_public(protocol, output / "public-results")
+    write(output / "summary.json", summary)
+    return summary
+
+
+async def run(protocol_path: Path, kind: str, *, meter=None, cache_quiet_since=None, workspaces=()):
+    protocol = read(protocol_path)
+    verify(protocol)
+    output = Path(protocol["output_root"])
+    if (output / "jobs" / kind).exists():
+        raise PermissionError(
+            "Job already exists; reconcile interruptions instead of replaying trials"
+        )
+    if kind == "live":
+        verify_qualifications(protocol)
+    config = JobConfig.model_validate(read(output / (kind + "-job.json")))
+    if kind == "live":
+        load_credentials(protocol)
+        if [binding.id for binding in workspaces] != protocol.get("anthropic_workspace_ids", []):
+            raise PermissionError("Workspace bindings differ from the frozen protocol")
+    if config.n_concurrent_trials != 1 or config.retry.max_retries != 0:
+        raise PermissionError("Frozen trial order requires serial execution without retries")
+    timers = {}
+    frozen_snapshot = read(output / "index-content.json")
+    next_orders = [int(Path(t.path).name.removeprefix("slot-")) for t in config.tasks]
+    wait_for_cache = (
+        kind == "live"
+        and protocol.get("prompt_cache_isolation") == "provider-expiry-between-attempts"
+    )
+
+    async def start(event):
+        started = time.monotonic()
+        verify(protocol)
+        order = int(event.config.task.path.name.removeprefix("slot-"))
+        if meter is not None:
+            if meter.blocked:
+                raise PermissionError("Unsettled provider billing stops the cohort")
+            meter.set_phase(f"{kind}:{order}")
+        if not next_orders or order != next_orders.pop(0):
+            raise PermissionError("Harbor changed the frozen trial order")
+        scopes = selected_scopes(protocol, protocol["schedule"][order]) if kind == "live" else []
+        audit_started = time.monotonic()
+        current = await asyncio.to_thread(snapshot, protocol["server_container"], scopes)
+        timers[event.trial_name] = (started, time.monotonic() - audit_started)
+        write(output / f"{kind}-index-before-{order:02d}.json", current)
+        if current != select_snapshot(frozen_snapshot, scopes):
+            raise PermissionError("Source index changed before the Harbor trial")
+        intent = output / f"{kind}-intent-{order:02d}.json"
+        with intent.open("x") as stream:
+            json.dump(
+                {
+                    "slot": protocol["schedule"][order],
+                    "trial_name": event.trial_name,
+                    "protocol_sha256": digest(protocol),
+                    **({"anthropic_workspace_id": workspaces[order].id} if workspaces else {}),
+                },
+                stream,
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    async def end(event):
+        order = int(event.config.task.path.name.removeprefix("slot-"))
+        scopes = selected_scopes(protocol, protocol["schedule"][order]) if kind == "live" else []
+        audit_started = time.monotonic()
+        current = await asyncio.to_thread(snapshot, protocol["server_container"], scopes)
+        snapshot_after_s = time.monotonic() - audit_started
+        write(output / f"{kind}-index-after-{order:02d}.json", current)
+        if current != select_snapshot(frozen_snapshot, scopes):
+            raise PermissionError("Source index changed during the Harbor trial")
+        trial_folder = event.config.trials_dir / event.trial_name
+        started, snapshot_before_s = timers.pop(event.trial_name)
+        write(
+            trial_folder / "factory-measurement.json",
+            {
+                "end_to_end_s": time.monotonic() - started,
+                "index_snapshot_before_s": snapshot_before_s,
+                "index_snapshot_after_s": snapshot_after_s,
+                "harbor_wall_s": (
+                    event.result.finished_at - event.result.started_at
+                ).total_seconds(),
+            },
+        )
+        summary = export(protocol, kind)
+        if kind == "live":
+            from .native_metrics import capture_turn_usage
+            from .native_trace import summarize
+            from .trace_capture import capture_or_report
+
+            diagnostics = output / "diagnostics"
+            diagnostics.mkdir(exist_ok=True)
+            write(diagnostics / f"attempt-{order:02d}.json", summarize(trial_folder))
+            await asyncio.to_thread(
+                audit_provider_costs, protocol, read(output / "live-attempts.json")
+            )
+            await asyncio.to_thread(
+                capture_turn_usage,
+                trial_folder,
+                diagnostics / f"attempt-{order:02d}-model-usage.json",
+            )
+            await asyncio.to_thread(capture_or_report, protocol, order)
+            summary = export(protocol, kind)
+        print(
+            json.dumps(
+                {
+                    "job": kind,
+                    "order": order,
+                    "arm": protocol["schedule"][order]["arm"],
+                    "reward_valid": event.result.reward_valid,
+                    "reward": event.result.verifier_result.rewards
+                    if event.result.verifier_result
+                    else None,
+                    "observed": summary.get("observed", len(summary.get("attempts", []))),
+                }
+            ),
+            flush=True,
+        )
+        if workspaces and next_orders:
+            workspaces[next_orders[0]].activate()
+        if wait_for_cache and next_orders:
+            entry = next(
+                row for row in read(output / "live-attempts.json") if row["order"] == order
+            )
+            elapsed = (datetime.now(UTC) - event.result.finished_at).total_seconds()
+            await wait_for_expiry(observed_cache_ttl_s(entry["result"]) - elapsed, next_orders[0])
+
+    with solver_environment():
+        if workspaces:
+            workspaces[next_orders[0]].activate()
+        job = await Job.create(config)
+        job.on_trial_started(start).on_trial_ended(end)
+        if kind == "live":
+            export(protocol, kind)
+        if wait_for_cache:
+            elapsed = time.monotonic() - cache_quiet_since if cache_quiet_since is not None else 0
+            await wait_for_expiry(DEFAULT_CACHE_TTL_S - elapsed, next_orders[0])
+        await job.run()
+    summary = export(protocol, kind)
+    if kind == "live":
+        costs = await asyncio.to_thread(
+            audit_provider_costs, protocol, read(output / "live-attempts.json")
+        )
+        await asyncio.to_thread(
+            audit_fairness, protocol, read(output / "live-attempts.json"), billing=costs
+        )
+        summary = export(protocol)
+        if not summary["fairness_verified"]:
+            raise PermissionError(
+                "A trial failed the configuration audit. See fairness-audit.json."
+            )
+        await asyncio.to_thread(
+            run_judging,
+            protocol,
+            read(output / "live-attempts.json"),
+            meter=meter,
+            on_update=lambda: export(protocol),
+        )
+        summary = export(protocol)
+    if kind != "live":
+        write(output / (kind + "-qualification.json"), summary)
+    return summary
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "command", choices=("base", "reference", "live", "report", "audit", "judge")
+    )
+    parser.add_argument("--protocol", type=Path, required=True)
+    args = parser.parse_args()
+    if args.command == "report":
+        print(json.dumps(export(read(args.protocol)), indent=2))
+    elif args.command in {"audit", "judge"}:
+        protocol = read(args.protocol)
+        verify(protocol)
+        entries = read(Path(protocol["output_root"]) / "live-attempts.json")
+        if args.command == "audit":
+            costs = audit_provider_costs(protocol, entries)
+            audit_fairness(protocol, entries, billing=costs)
+        else:
+            if fairness_status(protocol) is not True:
+                raise PermissionError(
+                    "Judging requires a passing fairness-audit.json for this protocol."
+                )
+            root = Path(protocol["output_root"]).resolve().parent
+            journal = root / "spending.jsonl"
+            if not journal.is_file():
+                raise PermissionError("The judge requires the run's spending journal")
+            launch = read(root / "launch.json")
+            with closing(
+                Spending(
+                    journal,
+                    dollars=launch["budget_usd"],
+                    model=protocol["model_id"],
+                    native_model=native_model(Path(launch["source_root"])),
+                )
+            ) as meter:
+                run_judging(protocol, entries, meter=meter, on_update=lambda: export(protocol))
+        print(json.dumps(export(protocol), indent=2))
+    else:
+        print(json.dumps(asyncio.run(run(args.protocol.resolve(), args.command)), indent=2))
+
+
+if __name__ == "__main__":
+    main()
