@@ -26,9 +26,9 @@ class CodeRefreshInput(_CodeIdentity):
 
     # The commit CI just merged; advisory, recorded in `last_refresh_detail` and never checked.
     expected_head: str = ""
-    # wait=True blocks until the pass completes and the memories linked to the namespace's code
-    # are rechecked against the new head (CI wants a sync signal); default fire-and-forget
-    # returns immediately.
+    # wait=True blocks until the pass completes (CI wants a sync signal), then rechecks the
+    # memories linked to the namespace's code unless another pass is checking them or the
+    # recheck fails; default fire-and-forget returns immediately.
     wait: bool = False
     # With `wait`: seconds to wait for the pass (10..900); the call fails when the pass outlasts
     # it, and a link recheck that outlasts it is left to the link worker.

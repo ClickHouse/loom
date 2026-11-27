@@ -1198,7 +1198,7 @@ CI calls this right after a merge lands: run one ingest pass now instead of wait
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `expected_head` | `str` | `''` | The commit CI just merged; advisory, recorded in `last_refresh_detail` and never checked. |
-| `wait` | `bool` | `False` | wait=True blocks until the pass completes and the memories linked to the namespace's code are rechecked against the new head (CI wants a sync signal); default fire-and-forget returns immediately. |
+| `wait` | `bool` | `False` | wait=True blocks until the pass completes (CI wants a sync signal), then rechecks the memories linked to the namespace's code unless another pass is checking them or the recheck fails; default fire-and-forget returns immediately. |
 | `wait_timeout_seconds` | `int` | `300` | With `wait`: seconds to wait for the pass (10..900); the call fails when the pass outlasts it, and a link recheck that outlasts it is left to the link worker. |
 
 | Output field | Type | Meaning |
