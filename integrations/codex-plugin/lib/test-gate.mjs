@@ -9,6 +9,8 @@
 // in review. The second stop on the
 // same change passes: the agent has seen the obligation and either ran the
 // tests or chose not to, and a gate that nags is a gate that gets disabled.
+// A stop whose transcript already answers the ask is not blocked at all
+// (`runAnswered`): a block costs the session one more model request.
 //
 // The change is the session's, not the tree's: `sessionScope` keeps only
 // the dirty paths the transcript shows this session edited or named in a
@@ -17,7 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { commandText, extractFiles, normalizeToolName, pathUnder } from "./loom-client.mjs";
+import { commandText, contentText, extractFiles, normalizeToolName, pathUnder } from "./loom-client.mjs";
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit", "str_replace_editor", "apply_patch"]);
 
@@ -291,6 +293,202 @@ export function sessionScope(changed, objs, { root, cwd } = {}) {
     const absPaths = roots.flatMap((r) => absoluteForms(path.join(r, rel)));
     return commands.some((c) => commandNames(c, rel, absPaths));
   });
+}
+
+// The prompt's last sentence, whole: "Do not run the test suite.", "Please
+// don't run any tests". A sentence that says more (`do not run
+// tests/test_slow.py`, "If lint fails, do not run the tests.") or that is not
+// the last does not rule the run out.
+const DECLINES =
+  /(?:^|[.!?]\s+)(?:please\s+)?(?:do\s+not|don['’]?t|never)\s+run\s+(?:(?:the|any)\s+)?(?:tests|test\s+suite)[.!]*$/i;
+
+/** True when the person's latest prompt ends by telling the agent not to run
+ *  tests. Only the latest: "now run them" in a later prompt takes the earlier
+ *  one back. Tool results and rows the client injected (isMeta: hook
+ *  feedback, a skill body) are not the person speaking. */
+export function declinesTests(objs) {
+  let prompt = "";
+  for (const o of objs || []) {
+    if (!o || o.type !== "user" || o.isSidechain || o.isMeta || o.isCompactSummary) continue;
+    const content = o.message && o.message.content;
+    if (Array.isArray(content) && content.some((b) => b && b.type === "tool_result")) continue;
+    prompt = contentText(content).trim();
+  }
+  return DECLINES.test(prompt);
+}
+
+// A pytest invocation and its arguments up to the end of the simple command.
+// `import pytest` in a heredoc is not one.
+const PYTEST = /(?<=^|[\s/])(?<!import\s)py\.?test(?=\s|$)([^\n;|&)]*)/g;
+// What may stand between the start of that simple command and pytest when it
+// ran in this checkout: variable assignments, env, timeout, a runner, an
+// interpreter. `docker exec app pytest` ran elsewhere; so did a script
+// handed to one of ELSEWHERE (`ssh host 'cd repo; pytest tests'`).
+const LAUNCHER = /^\s*(?:(?:env|-u\s+\w+|\w+=\S*|timeout\s+\S+|(?:uv|poetry)\s+run)\s+)*(?:\S+\s+-m\s+|\S*\/)?$/;
+const ELSEWHERE = /\b(?:ssh|docker|podman|kubectl)\s/;
+/** True when `head`, a command's text up to a pytest run, shows the run
+ *  started in this checkout. */
+const ranHere = (head) => !ELSEWHERE.test(head) && LAUNCHER.test(head.split(/[;&|(\n]/).pop());
+// pytest's last line, whose order is fixed: failed, passed, skipped,
+// deselected, xfailed, xpassed, warnings, errors. A clean line starts at
+// "passed" and names nothing deselected, so a -k subset is not one. --lf
+// leaves tests out at collection and prints the line of a full run.
+const SUMMARY = /\b\d+ (?:passed|failed|errors?)\b.* in [\d.]+s\b/;
+const CLEAN = /^=*\s*\d+ passed(?:, \d+ (?:skipped|xfailed|xpassed|warnings?))* in [\d.]+s(?: \([\d:]+\))?\s*=*$/;
+// The directory a command moves to before it runs something, and any move.
+const CD = /(?:^|[;&|(\n])\s*cd\s+([^\s;&|)]+)/g;
+const MOVE = /\b(?:cd|pushd|popd)\s/g;
+const unquoted = (word) => word.replace(/^["']|["']$/g, "");
+// pytest flags known to take no value. The word after any other flag written
+// without `=` may be its value (`--cov src`, `--rootdir sub`), not a path
+// that ran.
+const BARE = /^-[qvxsl]+$/;
+
+/** True when `text` closes a parenthesis it did not open. */
+function closesParen(text) {
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")" && --depth < 0) return true;
+  }
+  return false;
+}
+// What a command may hold from its first pytest on: pytest runs, and tail,
+// head, grep and echo, with no backquote and no redirect but one between
+// descriptors or to /dev/null. Anything else may change a file, and the
+// command's result row is later than that change. Quotes are not read, so
+// a `|` or `;` inside one ends the simple command there.
+const OUTPUT = /^\s*(?:(?:tail|head|grep|echo)(?=\s|$)|$)/;
+const onlyRuns = (tail) =>
+  tail
+    .replace(/\d?>(?:&\d|\s*\/dev\/null(?=[\s;&|)]|$))/g, " ")
+    .split(/[;&|()\n]/)
+    .every((part) => !/[<>`]/.test(part) && (OUTPUT.test(part) || part.match(PYTEST)));
+
+/** True when the output holds a clean pytest summary for each of `runs`
+ *  invocations and no other summary: `| tail -5; echo exit=$?` hides the
+ *  exit status, the summary line survives it. */
+function allPassed(output, runs) {
+  const lines = String(output || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length < 300 && SUMMARY.test(l));
+  return lines.length >= runs && lines.every((l) => CLEAN.test(l));
+}
+
+/**
+ * The repo-relative files and directories pytest ran clean on the tree as
+ * it stands, read in transcript order (Claude Code rows; sidechains
+ * skipped). A run counts when its Bash command finished no earlier than
+ * `since`, the newest time of an uncommitted or untracked file, so an edit
+ * by a subagent or a script the transcript never shows forgets it. An edit
+ * tool or any other shell command after it forgets every earlier run: it
+ * may have deleted a file or put one back as HEAD has it, which leaves no
+ * newer time. A command may change files and then test them
+ * (`cat >> tests/test_a.py <<EOF … EOF; pytest tests`), but not after its
+ * first pytest (`onlyRuns`), and one that holds anything before that pytest
+ * but its launcher forgets every earlier run. A run's paths are read from
+ * the directory it ran in: the row's own cwd, moved by at most one `cd`
+ * before the first run.
+ */
+function cleanRuns(objs, { root, cwd, since } = {}) {
+  const rows = (objs || []).filter((o) => o && !o.isSidechain && Array.isArray(o.message && o.message.content));
+  const results = new Map();
+  for (const o of rows) {
+    if (o.type !== "user") continue;
+    for (const b of o.message.content) {
+      if (b && b.type === "tool_result") {
+        results.set(b.tool_use_id, { output: contentText(b.content), at: Date.parse(o.timestamp) });
+      }
+    }
+  }
+  let clean = [];
+  for (const o of rows) {
+    if (o.type !== "assistant") continue;
+    for (const b of o.message.content) {
+      if (!b || b.type !== "tool_use") continue;
+      const name = normalizeToolName(b.name);
+      if (EDIT_TOOLS.has(name)) clean = [];
+      if (name !== "Bash" && name !== "PowerShell") continue;
+      const command = commandText(b.input);
+      // Bash only: this reader follows no PowerShell move (`Set-Location`).
+      const runs = name === "Bash" ? [...command.matchAll(PYTEST)] : [];
+      if (!runs.length) {
+        clean = [];
+        continue;
+      }
+      const before = command.slice(0, runs[0].index);
+      const cd = [...before.matchAll(CD)];
+      const result = results.get(b.id) || {};
+      // --ignore, --deselect, --lf and --sw leave out tests a clean summary
+      // does not count; a quoted argument may be a flag's value in several
+      // words; a move the reader cannot follow (a second `cd`, one between
+      // two runs, one in a subshell that closed before the run, `pushd`)
+      // leaves the paths unknown.
+      const ran =
+        allPassed(result.output, runs.length) &&
+        result.at >= since &&
+        runs.every((run) => !/["']/.test(run[1]) && ranHere(command.slice(0, run.index))) &&
+        cd.length < 2 &&
+        (command.match(MOVE) || []).length === cd.length &&
+        cd.every((m) => !closesParen(before.slice(m.index + m[0].length))) &&
+        !/--(?:ignore|deselect|lf|last-failed|sw|stepwise)\b/.test(command) &&
+        onlyRuns(command.slice(runs[0].index));
+      if (!ran) {
+        clean = [];
+        continue;
+      }
+      // What the command did before its first pytest may have changed the
+      // tree the earlier runs tested, with no newer file time to show it.
+      if (!LAUNCHER.test(before)) clean = [];
+      const dir = o.cwd || cwd;
+      const base = cd.length ? path.resolve(dir || root || "", unquoted(cd[0][1])) : dir;
+      for (const run of runs) {
+        let value = false;
+        for (const word of run[1].split(/\s+/)) {
+          const flag = word.startsWith("-");
+          const rel = flag || value ? "" : relativeToRoot(root, word, base);
+          if (rel) clean.push(rel);
+          value = flag && !word.includes("=") && !BARE.test(word);
+        }
+      }
+    }
+  }
+  return clean;
+}
+
+/**
+ * True when the gate's ask is to run tests this checkout has and the
+ * transcript already answers it: the person's latest prompt ends by saying
+ * not to run tests, or `cleanRuns` holds every named test (its file, or a
+ * directory above it); `lastModified()` is the tree's newest file time in
+ * epoch ms. The stop then names no untested function either. A gate that
+ * names a test missing from the checkout, or only untested functions, still
+ * asks; so does one whose tests another runner runs, unless the person
+ * ruled the run out. A Codex rollout answers nothing, so its stop blocks.
+ */
+export function runAnswered(gate, objs, { root, cwd, testExists, lastModified } = {}) {
+  const tests = gate && Array.isArray(gate.tests) ? gate.tests : [];
+  const paths = [...new Set(tests.map((t) => String(t.test_path || "")))];
+  if (!paths.length || !paths.every((p) => p && testExists(p))) return false;
+  if (declinesTests(objs)) return true;
+  if (!tests.every((t) => isPytest(t.run))) return false;
+  const clean = cleanRuns(objs, { root, cwd, since: lastModified() });
+  return paths.every((p) => clean.some((c) => p === c || p.startsWith(`${c}/`)));
+}
+
+/** The newest modification time, in epoch ms, of `files` under `root`.
+ *  Infinity when the list is unknown (null) or a file cannot be read (a
+ *  deleted tracked file), so that no test run counts as later. */
+export function newestChange(root, files) {
+  if (!files) return Infinity;
+  let last = 0;
+  try {
+    for (const file of files) last = Math.max(last, fs.statSync(path.join(root, file)).mtimeMs);
+  } catch {
+    return Infinity;
+  }
+  return last;
 }
 
 /** The checkout root as `cwd` spells it, when that differs from git's: a
