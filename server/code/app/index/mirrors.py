@@ -427,16 +427,15 @@ async def _named_paths() -> tuple[set[str], set[str]] | None:
     if repos.config_error_count():
         return None
     try:
-        # An access row's entry uses its own clone, so its self-service paths name nothing.
-        rows = [
-            r
+        registry = [
+            repo_registry.row_to_config(r)
             for r in await code_store.CodeRepo().registry_rows()
-            if r.get("active") and r.get("row_kind") != "access"
+            if r.get("active") and (r.get("row_kind") != "access" or r.get("index_options_json"))
         ]
     except Exception as e:  # noqa: BLE001 — unknown registry: sweep nothing
         logger.info("mirror sweep skipped: registry unreadable (%s)", e)
         return None
-    mirrors = {c.git_dir for c in cfgs} | {repo_registry.git_dir_for(str(r["repo"])) for r in rows}
+    mirrors = {c.git_dir for c in (*cfgs, *registry)}
     # An entry naming no producer runs whichever tiers its tree calls for, so every
     # tier's tree is named; one naming its producer runs that tier and its extras.
     checkouts = {
@@ -448,8 +447,8 @@ async def _named_paths() -> tuple[set[str], set[str]] | None:
             else (*PRODUCERS, *c.scip_extra_producers)
         )
     }
-    for r in rows:
-        base = repo_registry.checkout_dir_for(str(r["namespace"]))
+    for c in registry:
+        base = c.scip_checkout_dir
         checkouts |= {base, *(repos.sibling_checkout(base, p) for p in PRODUCERS)}
     return mirrors, checkouts
 

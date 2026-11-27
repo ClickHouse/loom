@@ -136,10 +136,10 @@ Rules:
 - A private repository's token is stored encrypted with a key derived from
   `LOOM_JWT_SECRET` and never returned. Rotating that secret makes stored tokens
   unusable until a maintainer enters them again.
-- `code.repo.remove` retires the registry rows and purges every `code_*` row of the
-  namespace through a resumable erasure saga. The mirror is deleted when no other branch
-  uses it. An operator-configured entry is refused with `REPO_FROM_CONFIG`.
-- `LOOM_CODE_SELF_SERVICE_ENABLED=false` removes the feature (`SELF_SERVICE_OFF`).
+- `code.repo.remove` retires a registered index and purges its indexed rows through
+  a resumable erasure saga. The mirror is deleted when no other branch uses it.
+- `LOOM_CODE_SELF_SERVICE_ENABLED=false` disables adding repositories from the page
+  (`SELF_SERVICE_OFF`). Existing indexes stay in the registry.
 - `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY=true` leaves `code.repo.remote_branches`,
   `code.repo.add` and `code.repo.add_branch` to platform admins, beyond the role each op
   asks for: any other caller is refused with `AUTH_INSUFFICIENT` before a remote is asked.

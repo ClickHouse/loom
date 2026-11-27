@@ -684,7 +684,7 @@ module ClickHouse
         end
 
         # `code.repo.remove` (admin, writes, Idempotency-Key).
-        # Retire a repository index a person added. `confirm` must equal the namespace. The
+        # Retire a repository index. `confirm` must equal the namespace. The
         # Required: org, namespace.
         def repo_remove(body = nil, request_options: nil, **fields)
           call_op("code.repo.remove", body, fields, request_options)

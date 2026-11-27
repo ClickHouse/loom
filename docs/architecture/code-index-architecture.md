@@ -56,24 +56,16 @@ the point (any host answers history reads after a move or a scale-out) and the c
 turns it off: only the worker's host clones, and a history read anywhere else answers
 `no_git_mirror`.
 
-Repository entries come from two sources, merged:
-
-| Source            | Read by                           | Notes                                                                                                      |
-| ----------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Environment       | `code/domain/index/repos.py`      | `LOOM_CODE_REPOS_JSON`, or the scalar `LOOM_CODE_*` settings.                                              |
-| `loom.code_repos` | `code/app/index/repo_registry.py` | Self-service rows, by `row_kind` (below). A private remote's token is stored encrypted and never returned. |
-
-A `loom.code_repos` row's `row_kind` says what it is:
-
-- `page`: a branch added from the page. It keeps an operator entry off its namespace,
-  removed or not.
-- `access`: an operator entry's classification and join policy.
-- `''`: a row written before the column, read as the access row of an operator entry's
-  namespace and as a branch added from the page elsewhere.
+`loom.code_repos` holds the repository entries. The Repositories page registers a
+branch directly. Deployment settings provision an entry for each remaining namespace,
+using `LOOM_CODE_REPOS_JSON` or the scalar `LOOM_CODE_*` settings. Provisioning holds
+the same namespace claim as add and retire. It carries an existing access decision
+into the entry and stores the fetch token encrypted. Later provisioning reads respect
+existing registry rows, including retirement records.
 
 `configured_repos()` reads an in-process snapshot refreshed at boot, on every ingest
 pass and after an add. Until the snapshot's first read it raises `RegistryUnread`
-(self-service on), since the entries a page namespace skips are not known yet; the
+(including with enrollment off), since the registered entries are not known yet. The
 modules that decide access read `config_entries()`, which lists the entries before that
 read with none org-readable (`tests/unit/test_repo_snapshot_contract.py`). An op that
 needs the full list answers 503 in that window; memory reads, search and

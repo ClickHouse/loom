@@ -171,7 +171,8 @@ def test_the_accessors_refuse_until_the_registry_is_read(monkeypatch) -> None:
     assert repos.configured_repos() == [entry]
     monkeypatch.setattr(settings, "code_self_service_enabled", False)
     monkeypatch.setattr(repos, "_registry_loaded", False)
-    assert repos.configured_repos() == [entry]  # no registry to wait for
+    with pytest.raises(repos.RegistryUnread):
+        repos.configured_repos()
 
 
 @pytest.mark.asyncio

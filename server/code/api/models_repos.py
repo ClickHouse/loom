@@ -259,11 +259,10 @@ class CodeRepoAddBranchInput(BaseModel):
 
 
 class CodeRepoRemoveInput(BaseModel):
-    """Retire a repository index a person added. `confirm` must equal the namespace. The
+    """Retire a repository index. `confirm` must equal the namespace. The
     registry row and the directory row go inactive at once; every code_* table keyed by
     the namespace is purged (asynchronous mutations); the bare mirror is deleted when no
-    other branch of the repository uses it. Operator-configured entries are refused
-    (REPO_FROM_CONFIG)."""
+    other branch of the repository uses it."""
 
     org: str
     namespace: str

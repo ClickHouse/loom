@@ -301,8 +301,8 @@ One code namespace indexes one repository. No repository is configured by defaul
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CODE_REPOS_JSON` | `str` | *(unset)* |  | Multi-repo: JSON array of repo configs (code/domain/index/repos.py); empty = the scalar single-repo settings. Missing per-entry fields fall back to the scalars. |
-| `LOOM_CODE_SELF_SERVICE_ENABLED` | `bool` | `True` |  | Repositories added from the Repositories page (loom.code_repos) merge with the configured entries (`code_repos_json` and the scalar entry); a configured entry for a namespace a member added from the page is skipped. Off = the operator's JSON is the only source. |
+| `LOOM_CODE_REPOS_JSON` | `str` | *(unset)* |  | Repository entries to provision in the registry as a JSON array. Empty uses the scalar single-repo settings. Existing registry entries take precedence. |
+| `LOOM_CODE_SELF_SERVICE_ENABLED` | `bool` | `True` |  | Allow adding repositories and branches from the Repositories page. Existing entries are served from the registry in either setting. |
 | `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` | `bool` | `False` |  | True leaves code.repo.remote_branches, code.repo.add and code.repo.add_branch to platform admins: a token scoped to namespaces, or a trusted caller acting for another subject, is refused too. False: each op's own role decides. |
 | `LOOM_CODE_REPOS_ROOT` | `str` | `'var/code_repos/self'` |  | Where the code ingest worker clones a self-service entry's bare mirror (one per GitHub repository, shared by its branches). |
 | `LOOM_CODE_REPOS_SHARED_GID` | `int \| None` | `None` |  | Numeric gid of the prepared var/code_repos: mirror and checkout directories in it 2770, locks 0660, server and `loom code` umask 007. Unset: 0700, 0600, the caller's umask. |

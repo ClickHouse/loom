@@ -2227,7 +2227,7 @@
         "code_self_service_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Repositories added from the Repositories page (loom.code_repos) merge with the configured entries (`code_repos_json` and the scalar entry); a configured entry for a namespace a member added from the page is skipped. Off = the operator's JSON is the only source."
+          "description": "Allow adding repositories and branches from the Repositories page. Existing entries are served from the registry in either setting."
         },
         "code_self_service_git_unsandboxed": {
           "default": false,

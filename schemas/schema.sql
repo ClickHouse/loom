@@ -925,7 +925,8 @@ CREATE TABLE IF NOT EXISTS loom.code_repos
     `exclude_generated` Bool DEFAULT false,
     `scip_producer` LowCardinality(String) DEFAULT '',
     `row_kind` LowCardinality(String) DEFAULT '',
-    `git_proxy_identity` String DEFAULT ''
+    `git_proxy_identity` String DEFAULT '',
+    `index_options_json` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace)

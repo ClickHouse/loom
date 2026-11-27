@@ -32,6 +32,7 @@ class CodeReposMixin(CodeRepoBase):
                    toString(join_policy) AS join_policy,
                    if(active, github_token_enc, '') AS github_token_enc,
                    if(active, git_proxy_identity, '') AS git_proxy_identity,
+                   if(active, index_options_json, '') AS index_options_json,
                    exclude_generated, toString(scip_producer) AS scip_producer,
                    row_kind, active
             FROM loom.code_repos FINAL
@@ -43,9 +44,10 @@ class CodeReposMixin(CodeRepoBase):
 
     async def active_code_repo_count(self, org: str) -> int:
         row = await self._ch.query_one(
-            # An operator entry's access row is not a repository the org added.
+            # An access-only row has no repository entry of its own.
             "SELECT count() AS n FROM loom.code_repos FINAL"
-            " WHERE org = {org:String} AND active AND row_kind != 'access'",
+            " WHERE org = {org:String} AND active"
+            " AND (row_kind != 'access' OR index_options_json != '')",
             params={"org": org},
         )
         return int((row or {}).get("n") or 0)
@@ -80,7 +82,9 @@ class CodeReposMixin(CodeRepoBase):
         await self._ch.execute(
             """
             INSERT INTO loom.code_repos
-            SELECT * REPLACE (false AS active, now() AS updated_at, toUInt64({v:UInt64}) AS version)
+            SELECT * REPLACE (false AS active,
+                              if(index_options_json != '', 'page', row_kind) AS row_kind,
+                              now() AS updated_at, toUInt64({v:UInt64}) AS version)
             FROM (
                 SELECT * FROM loom.code_repos FINAL
                 WHERE org = {org:String} AND namespace = {ns:String} AND active

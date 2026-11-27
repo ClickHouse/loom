@@ -1059,3 +1059,11 @@ review; an explicit false field on an ordinary rejected fact preserves its corre
 Clients accepting proposals must send `approved_sha256` for each key and use an
 authenticated human administrator independent of the proposer. Automatic policies continue
 to reject failed proposals and leave passing proposals pending human review.
+
+## Repository provisioning
+
+Keep the deployment's repository declarations through the rollback window. An
+imported active entry stores its indexing options with an access row so a build
+that reads an index from deployment settings still sees its options and access
+policy. Retirement writes the same inactive reservation as a dashboard-added
+branch. Both builds honor that reservation when they next read the registry.

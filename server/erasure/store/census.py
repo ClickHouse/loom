@@ -658,7 +658,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "event seq, attempts, next try, last HTTP status) — identifiers only, no task text."
     ),
     "loom.code_repos": (
-        "A repository entry a person added (GitHub owner/name, branch, "
+        "A registered repository entry (remote, branch, index options, "
         "join rule, an encrypted fetch token) — deployment configuration keyed by "
         "(org, namespace), holding no memory or source content; retired by active=false."
     ),

@@ -720,11 +720,6 @@ module ClickHouse
       CODE = "REPO_EXISTS"
     end
 
-    # `REPO_FROM_CONFIG`: Server code
-    class RepoFromConfig < Error
-      CODE = "REPO_FROM_CONFIG"
-    end
-
     # `REPO_NOT_INDEXED`: Server code
     class RepoNotIndexed < Error
       CODE = "REPO_NOT_INDEXED"
@@ -970,7 +965,7 @@ module ClickHouse
       CODE = "WRONG_CELL"
     end
 
-    # The Error subclass for each server code (193 codes); a code not
+    # The Error subclass for each server code (192 codes); a code not
     # listed raises Error itself.
     ERROR_CLASSES = {
       "ACTIVITY_UNAVAILABLE" => ActivityUnavailable,
@@ -1116,7 +1111,6 @@ module ClickHouse
       "RECALL_REQUIRES_FILTER" => RecallRequiresFilter,
       "REMOTE_REFUSED" => RemoteRefused,
       "REPO_EXISTS" => RepoExists,
-      "REPO_FROM_CONFIG" => RepoFromConfig,
       "REPO_NOT_INDEXED" => RepoNotIndexed,
       "REPO_QUOTA" => RepoQuota,
       "REQUEST_INTERRUPTED" => RequestInterrupted,

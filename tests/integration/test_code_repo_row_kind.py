@@ -5,6 +5,7 @@ and an operator entry's access row is not counted against the org's quota."""
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -61,6 +62,40 @@ async def _add(org: str, namespace: str) -> None:
         exclude=[],
         created_by="member",
     )
+
+
+async def test_registry_provisions_and_retires_a_declared_index(org: str, monkeypatch) -> None:
+    namespace = "code-provisioned"
+    declared = json.dumps(
+        [
+            {
+                "org": org,
+                "namespace": namespace,
+                "repo": "it/provisioned",
+                "scip_extra_producers": ["go"],
+                "scip_checkout_dir": "var/provisioned-checkout",
+            }
+        ]
+    )
+    monkeypatch.setattr(settings, "code_repos_json", declared)
+    assert await reg.read_registry()
+    first = await CodeRepo().code_repo_row(org, namespace)
+    assert first and first["active"] and first["row_kind"] == "access"
+    assert await reg.active_count(org) == 1
+
+    monkeypatch.setattr(settings, "code_repos_json", "")
+    assert await reg.read_registry()
+    config = repos.repo_for_namespace(org, namespace)
+    assert config and config.scip_checkout_dir == "var/provisioned-checkout"
+    assert config.scip_extra_producers == ("go",)
+    assert await CodeRepo().code_repo_row(org, namespace) == first
+
+    assert await CodeRepo().deactivate_code_repo(org, namespace)
+    monkeypatch.setattr(settings, "code_repos_json", declared)
+    assert await reg.read_registry()
+    assert repos.repo_for_namespace(org, namespace) is None
+    retired = await CodeRepo().code_repo_row(org, namespace)
+    assert retired and not retired["active"] and retired["row_kind"] == "page"
 
 
 async def test_a_removed_page_branch_keeps_its_namespace_from_the_operator(org: str) -> None:
@@ -171,6 +206,7 @@ async def test_an_operator_entry_over_an_inactive_access_row_writes_a_fresh_one(
         "scip_producer": "",
         "row_kind": "access",
         "git_proxy_identity": "",
+        "index_options_json": "",
     }
 
 

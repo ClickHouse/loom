@@ -33,6 +33,7 @@ class _CH:
         self.executed: list[str] = []
         self.inserted: list[tuple[str, list[dict[str, Any]]]] = []
         self.registry_active = True
+        self.registry_row: dict[str, Any] = {}
         self.columns = {
             "code_files": ["org", "namespace", "path"],
             "code_chunks": ["org", "namespace", "chunk_id"],
@@ -52,6 +53,10 @@ class _CH:
         self, sql: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         if "loom.code_repos" in sql:
+            if sql.startswith("SELECT *"):
+                if self.registry_active and (params or {}).get("ns") == "code-widgets":
+                    return self.registry_row
+                return None
             return {"n": 1 if self.registry_active else 0}
         if "loom.namespaces" in sql:
             return {
@@ -100,6 +105,14 @@ async def test_mirror_outside_the_self_service_root_is_never_deleted(tmp_path, m
     mine = tmp_path / "self" / "acme__w.git"
     mine.mkdir(parents=True)
     cfg2 = SimpleNamespace(org=ORG, namespace="code-w", git_dir=str(mine), label="w")
+    alias = tmp_path / "alias"
+    alias.symlink_to(mine.parent, target_is_directory=True)
+    shared = SimpleNamespace(org=ORG, namespace="code-other", git_dir=str(alias / mine.name))
+    assert await retire.remove_mirror_if_orphaned(cfg2, [cfg2, shared]) is False and mine.exists()
+    external = mine.parent / "external"
+    external.symlink_to(operator.parent, target_is_directory=True)
+    cfg.git_dir = str(external / operator.name)
+    assert await retire.remove_mirror_if_orphaned(cfg, [cfg]) is False and operator.exists()
     assert await retire.remove_mirror_if_orphaned(cfg2, [cfg2]) is True and not mine.exists()
 
 
@@ -131,7 +144,9 @@ def plane(monkeypatch):
         "classification": "standard",
         "join_policy": "open",
         "github_token_enc": "",
+        "active": True,
     }
+    ch.registry_row = row
     state = {"rows": [row]}
 
     async def _refresh(*, force: bool = False, ch: Any = None):
@@ -203,7 +218,12 @@ def plane(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_remove_retires_registry_directory_and_rows(plane) -> None:
+@pytest.mark.parametrize("provisioned", [False, True], ids=["added", "provisioned"])
+async def test_remove_retires_registry_directory_and_rows(plane, provisioned) -> None:
+    if provisioned:
+        cfg = reg.row_to_config(plane.registry_row)
+        row = reg._provisioned_row(cfg, None)
+        plane.registry_row.update(row)
     out = await admin.handle_code_repo_remove(
         CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
     )
@@ -235,11 +255,11 @@ async def test_remove_refusals(plane) -> None:
             CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="nope")
         )
     assert ei.value.to_detail()["code"] == "CONFIRM_REQUIRED"
-    with pytest.raises(ValidationError) as ei:  # the operator's entry
+    with pytest.raises(ValidationError) as ei:  # a namespace without a registered row
         await admin.handle_code_repo_remove(
             CodeRepoRemoveInput(org=ORG, namespace="code-clickhouse", confirm="code-clickhouse")
         )
-    assert ei.value.to_detail()["code"] == "REPO_FROM_CONFIG"
+    assert ei.value.to_detail()["code"] == "NOT_A_REPO"
     with pytest.raises(ValidationError) as ei:
         await admin.handle_code_repo_remove(
             CodeRepoRemoveInput(org=ORG, namespace="nothing", confirm="nothing")

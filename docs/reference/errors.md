@@ -792,10 +792,6 @@ Raised in `server/code/app/repo_admin.py`.
 
 Raised in `server/code/app/repo_admin.py`.
 
-#### `REPO_FROM_CONFIG`
-
-Raised in `server/code/app/repo_admin.py`.
-
 #### `REPO_NOT_INDEXED`
 
 Raised in `server/code/app/repo_admin.py`.

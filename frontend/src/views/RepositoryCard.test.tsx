@@ -563,26 +563,27 @@ describe("RepositoryCard: the branch table", () => {
     expect(code.onCancel).toHaveBeenCalledWith(b257);
   });
 
-  it("a maintainer removes a branch added from the dashboard, and adds one from the table's foot", async () => {
-    const user = userEvent.setup();
-    const { code, card } = mount([branch({ my_status: "member", my_role: "admin", source: "registry" })], []);
-    const master = must(card.code, "code").branches[0];
-    const menu = await openBranchMenu(user, "master");
-    await user.click(within(menu).getByRole("menuitem", { name: "Remove branch" }));
-    expect(code.onRemove).toHaveBeenCalledWith(master);
-    const add = screen.getByRole("button", { name: "Add branch" });
-    expect(screen.getAllByRole("button", { name: "Add branch" })).toHaveLength(1);
-    await user.click(add);
-    expect(code.onAddBranch).toHaveBeenCalledWith(card.code);
-  });
+  it.each(["config", "registry"] as const)(
+    "a maintainer removes a %s branch and adds one from the table's foot",
+    async (source) => {
+      const user = userEvent.setup();
+      const { code, card } = mount([branch({ my_status: "member", my_role: "admin", source })], []);
+      const master = must(card.code, "code").branches[0];
+      const menu = await openBranchMenu(user, "master");
+      await user.click(within(menu).getByRole("menuitem", { name: "Remove branch" }));
+      expect(code.onRemove).toHaveBeenCalledWith(master);
+      const add = screen.getByRole("button", { name: "Add branch" });
+      expect(screen.getAllByRole("button", { name: "Add branch" })).toHaveLength(1);
+      await user.click(add);
+      expect(code.onAddBranch).toHaveBeenCalledWith(card.code);
+    },
+  );
 
-  it("no Remove branch for a configured branch, no Add branch for a reader or where the page cannot add", async () => {
+  it("readers cannot add or remove branches", async () => {
     const user = userEvent.setup();
-    mount([branch({ my_status: "member", my_role: "admin" })], []);
+    mount([branch({ my_status: "member" })], []);
     const menu = await openBranchMenu(user, "master");
     expect(within(menu).queryByRole("menuitem", { name: "Remove branch" })).toBeNull();
-    cleanup();
-    mount([branch({ my_status: "member" })], []);
     expect(screen.queryByRole("button", { name: "Add branch" })).toBeNull();
     cleanup();
     const a = actions();

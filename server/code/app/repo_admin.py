@@ -511,9 +511,8 @@ def repo_add_audit_subject(input: CodeRepoAddInput, response: Any) -> dict[str, 
 
 async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveOutput:
     """A maintainer retires a repository index. The transport's ADMIN gate on the namespace is
-    who may call. Refuses an entry the operator's LOOM_CODE_REPOS_JSON owns — that one is
-    retired by editing the deployment — and needs `confirm` equal to the namespace, so a
-    mis-clicked op cannot purge an index. The rows leave through an erasure saga: a detached
+    who may call. Requires `confirm` equal to the namespace, so a mis-clicked op cannot
+    purge an index. The rows leave through an erasure saga: a detached
     `namespace_list` purge over the one namespace, loom-only, checkpointed, resumed by
     erasure_recovery if the process dies, and proven by the residue census."""
     # Not behind the code switch: a retirement only deletes, so a maintainer can
@@ -534,12 +533,6 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     cfg = repo_for_namespace(input.org, input.namespace)
     if cfg is None:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
-    if cfg.source != "registry":
-        raise ValidationError(
-            f"{input.namespace} comes from the deployment's LOOM_CODE_REPOS_JSON; remove the "
-            "entry there and swap — the page cannot retire an operator-owned index",
-            code="REPO_FROM_CONFIG",
-        )
     from server.knowledge.app.sources import deactivate_namespace_sources, sources_lease
 
     ch = get_client()
@@ -548,6 +541,10 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
         sources_lease(input.org, input.namespace),
         account_change(input.org, input.namespace),
     ):
+        if await reg.live_row(cfg, ch) is None:
+            raise ValidationError(
+                f"{input.namespace} has no active repository entry", code="NOT_A_REPO"
+            )
         # First, so a failed clear stops the removal while it can be retried.
         await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
         # Sources before the registry row, so a failure in between leaves the repository

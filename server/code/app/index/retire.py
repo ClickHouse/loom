@@ -110,16 +110,20 @@ async def deactivate_registry_row(ch: Any, org: str, namespace: str) -> bool:
 
 def mirror_still_used(git_dir: str, org: str, namespace: str, repos: list[Any]) -> bool:
     """True when another active entry (config or registry) shares the mirror."""
+    mirror = os.path.realpath(git_dir)
     return any(
-        c.git_dir == git_dir and not (c.org == org and c.namespace == namespace) for c in repos
+        c.git_dir
+        and os.path.realpath(c.git_dir) == mirror
+        and (c.org, c.namespace) != (org, namespace)
+        for c in repos
     )
 
 
 def _under_self_service_root(git_dir: str) -> bool:
     from server.settings import settings
 
-    root = os.path.abspath(settings.code_repos_root)
-    return bool(git_dir) and os.path.abspath(git_dir).startswith(root + os.sep)
+    root = os.path.realpath(settings.code_repos_root)
+    return bool(git_dir) and os.path.realpath(git_dir).startswith(root + os.sep)
 
 
 async def remove_mirror_if_orphaned(cfg: Any, repos: list[Any]) -> bool:

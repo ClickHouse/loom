@@ -98,11 +98,16 @@ when the deployment indexes more than one repository.
 
 ## Configure the entry
 
-`LOOM_CODE_REPOS_JSON` is a JSON array with one object per indexed branch. Fields an
-entry leaves out fall back to the scalar `LOOM_CODE_*` settings; an entry for a
+`LOOM_CODE_REPOS_JSON` provisions the repository registry from a JSON array with one
+object per branch. Fields an entry leaves out fall back to the scalar `LOOM_CODE_*`
+settings. An entry for a
 repository other than the scalar `LOOM_CODE_REPO` derives its `git_remote`
 (`https://github.com/<owner>/<name>.git`) and `git_dir` (`<name>.git` beside the scalar
 clone, or under `var/code_repos` when there is no scalar repository) from `repo`.
+
+Once a branch is registered, its settings and lifecycle are stored in the registry.
+An existing entry takes precedence over a provisioning declaration for the same
+namespace. Retire an index from its **Access** tab or with `code.repo.remove`.
 
 ```bash
 LOOM_CODE_REPOS_JSON='[
@@ -1152,9 +1157,9 @@ has a gold question set; it is never run in CI, whose embedder is fake
 - **Retire a repository.** A maintainer uses **Retire…** on the repository's Access tab
   (`code.repo.remove` with `confirm` set to the namespace). The entry goes inactive, an
   erasure saga purges every `loom.code_*` table for the namespace, and the bare mirror is
-  deleted when no other branch uses it. Search telemetry is kept. An operator-configured
-  entry is refused with `REPO_FROM_CONFIG`: remove it from `LOOM_CODE_REPOS_JSON`
-  instead. With `LOOM_CODE_INTEL_ENABLED=false` the page cannot list repositories, but
+  deleted when no other branch uses it. Search telemetry is kept. A retired branch
+  stays retired across restarts, including when its provisioning declaration remains.
+  With `LOOM_CODE_INTEL_ENABLED=false` the page cannot list repositories, but
   `code.repo.remove` over HTTP, MCP or the SDK is still served; the other replicas then
   sweep their copy of the mirror only once code intelligence is on again.
 - **Erase an index.** `erasure.request` with `scope_type = namespace` on a code namespace

@@ -184,9 +184,9 @@ def test_a_branch_row_with_no_repository_entry_is_not_followed(monkeypatch) -> N
     assert binding.tracker_namespaces_for(ORG_X, branch) == []
     _set_registry(monkeypatch, [_entry(ORG_X, branch)])
     assert binding.tracker_namespaces_for(ORG_X, branch) == ["tracker-widgets"]
-    # self-service switched off: the registry reads empty, and the row is not followed
+    # Turning off enrollment keeps the existing branch and its tracker binding.
     monkeypatch.setattr(settings, "code_self_service_enabled", False)
-    assert binding.tracker_namespaces_for(ORG_X, branch) == []
+    assert binding.tracker_namespaces_for(ORG_X, branch) == ["tracker-widgets"]
 
 
 def test_the_registry_namespaces_follow_each_snapshot(monkeypatch) -> None:
@@ -196,7 +196,7 @@ def test_the_registry_namespaces_follow_each_snapshot(monkeypatch) -> None:
     repos.set_registry_repos([_entry(ORG_Y, "code-widgets-26-8")], frozenset())
     assert repos.registry_namespaces() == {(ORG_Y, "code-widgets-26-8")}
     monkeypatch.setattr(settings, "code_self_service_enabled", False)
-    assert repos.registry_namespaces() == frozenset()
+    assert repos.registry_namespaces() == {(ORG_Y, "code-widgets-26-8")}
 
 
 def test_a_refresh_read_before_forget_links_keeps_nothing(monkeypatch) -> None:

@@ -1326,7 +1326,7 @@ What a Git remote shows before anything is written — every branch with its hea
 
 ## `code.repo.remove`
 
-Retire a repository index a person added.
+Retire a repository index.
 
 `POST /v1/code.repo.remove` · MCP `loom_code_repo_remove` · role `admin` · idempotent · audited
 

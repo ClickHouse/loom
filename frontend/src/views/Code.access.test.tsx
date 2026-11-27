@@ -50,6 +50,16 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
+it.each(["writer", "platform_admin"])("lets a %s with access retire a provisioned index", async (role) => {
+  useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "dev", roles: [role] } });
+  listGrants.mockResolvedValue({ rows: role === "writer" ? [grant("alice", { role: "admin" })] : [] });
+  const repo = { org: "dev", namespace: "code-app", repo: "acme/app", branch: "main", source: "config" } as never;
+  render(<AccessTab id={{ org: "dev", namespace: "code-app" }} repo={repo} />);
+  const retire = await screen.findByRole("button", { name: "Retire…" });
+  expect(retire).toBeEnabled();
+  expect(retire).not.toHaveAttribute("aria-disabled", "true");
+});
+
 describe("AccessTab rows", () => {
   it("draws a request's wait and a reader's grant time with ListTime", async () => {
     render(<AccessTab id={{ org: "dev", namespace: "code-app" }} />);

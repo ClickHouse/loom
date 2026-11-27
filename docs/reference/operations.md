@@ -223,7 +223,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.repo.add`](operations/code.md#coderepoadd) | Add a repository's branch as a new read-only index. | viewer | write | yes | yes |
 | [`code.repo.add_branch`](operations/code.md#coderepoadd_branch) | Index another branch of a repository the caller maintains. | admin | write | yes | yes |
 | [`code.repo.remote_branches`](operations/code.md#codereporemote_branches) | What a Git remote shows before anything is written — every branch with its head, the default branch, the ones that look like release branches, and the ones indexed here already — so the add dialog… | viewer | read | yes |  |
-| [`code.repo.remove`](operations/code.md#codereporemove) | Retire a repository index a person added. | admin | idempotent | yes | yes |
+| [`code.repo.remove`](operations/code.md#codereporemove) | Retire a repository index. | admin | idempotent | yes | yes |
 | [`code.repo.set_access`](operations/code.md#codereposet_access) | A maintainer sets a repository's access — its classification (`standard` \| `restricted`) and join policy (`open` \| `approval` \| `closed`). | admin | idempotent | no | yes |
 | [`code.repo.set_source`](operations/code.md#codereposet_source) | A maintainer sets the trackers this repository reads (records of issues, PRs, tests and incidents registered with `tracker.source.add`), in order. | admin | idempotent | no | yes |
 | [`code.repos`](operations/code.md#coderepos) | Lists the code namespaces (repo@branch entries) configured on this deployment that the caller is authorized to read, across orgs — each row carries its org. | viewer | read | yes |  |

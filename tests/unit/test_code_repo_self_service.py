@@ -153,7 +153,7 @@ def test_configured_repos_appends_registry_and_operator_wins(
     assert got["code-acme"].source == "config", "the operator's entry wins on a collision"
     assert got["code-other"].source == "registry"
     monkeypatch.setattr(settings, "code_self_service_enabled", False)
-    assert [c.namespace for c in repos.configured_repos()] == ["code-acme"]
+    assert {c.namespace for c in repos.configured_repos()} == {"code-acme", "code-other"}
     reg.reset_for_tests()
 
 
@@ -307,7 +307,7 @@ async def test_code_repo_add_registers_and_makes_the_caller_maintainer(plane) ->
     )
     tables = [t for t, _ in plane.ch.inserted]
     assert "loom.code_repos" in tables and "loom.namespaces" in tables
-    row = next(r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows)
+    row = _registered(plane)[0]
     assert (
         row["repo"] == "acme/widgets"
         and row["created_by"] == "alice@x"
@@ -338,7 +338,7 @@ async def test_code_repo_add_restricted_is_never_open_and_stores_the_token_encry
         )
     )
     assert out.join_policy == "approval" and out.classification == "restricted"
-    row = next(r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows)
+    row = _registered(plane)[0]
     assert row["github_token_enc"] and "ghp_zzz" not in row["github_token_enc"]
 
 
@@ -519,7 +519,7 @@ async def test_platform_admin_only_admits_a_platform_admin_to_the_three_ops(
     assert listed.default_branch == "main"
     assert (added.namespace, added.my_role) == ("code-widgets", "admin")
     assert branch.namespace == "code-widgets-release-1-2"
-    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    rows = _registered(plane)
     assert [r["created_by"] for r in rows] == ["ops@x", "ops@x"]
 
 
@@ -636,7 +636,7 @@ async def test_the_git_waiver_admits_the_three_ops_without_the_sandbox(
     set_current_auth(_platform_admin())
     listed, added, branch = await _add_side_calls("code-widgets")
     assert listed.default_branch == "main" and added.index_stage == "queued"
-    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    rows = _registered(plane)
     assert [r["git_branch"] for r in rows] == ["main", "release/1.2"]
     assert branch.namespace == "code-widgets-release-1-2"
     assert len(probes) == 3 and threading.main_thread() not in probes
@@ -684,7 +684,7 @@ async def test_code_repo_add_branch_inherits_the_repository(plane) -> None:
         CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.2")
     )
     assert out.namespace == "code-widgets-release-1-2" and out.join_policy == "open"
-    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    rows = _registered(plane)
     assert rows[-1]["path_prefixes"] == ["src/"] and rows[-1]["git_branch"] == "release/1.2"
     assert [r["row_kind"] for r in rows] == ["page", "page"]
     with pytest.raises(ValidationError) as ei:
@@ -1101,7 +1101,7 @@ async def test_a_branch_of_an_entry_restricted_by_its_directory_row_is_restricte
         CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.2")
     )
     assert out.join_policy == "approval"
-    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    rows = _registered(plane)
     assert rows[-1]["classification"] == "restricted"
     assert rows[-1]["join_policy"] == "approval"
     # restricted by a row newer than this process's snapshot
@@ -1114,7 +1114,7 @@ async def test_a_branch_of_an_entry_restricted_by_its_directory_row_is_restricte
     out = await admin.handle_code_repo_add_branch(
         CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.4")
     )
-    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    rows = _registered(plane)
     assert out.join_policy == "approval" and rows[-1]["classification"] == "restricted"
     directory["state"] = "unreadable"
 
@@ -1157,7 +1157,7 @@ async def test_a_branch_of_a_closed_entry_is_closed(plane, monkeypatch: pytest.M
         CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.2")
     )
     assert out.join_policy == "closed"
-    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    rows = _registered(plane)
     assert rows[-1]["join_policy"] == "closed"
 
 
@@ -1170,7 +1170,7 @@ async def test_an_extra_branch_past_the_quota_runs_no_remote_job(
 
     async def active_count(org: str) -> int:
         # 0 before the primary branch is registered, the quota once it is
-        registered = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+        registered = _registered(plane)
         return 3 if registered else 0
 
     asked: list[str] = []
@@ -1213,7 +1213,7 @@ async def test_add_branch_of_a_configured_entry_waits_for_its_first_index(plane)
             CodeRepoAddBranchInput(org=ORG, namespace="code-clickhouse", branch="26.8")
         )
     assert ei.value.to_detail()["code"] == "REPO_NOT_INDEXED"
-    assert not [t for t, _ in plane.ch.inserted if t == "loom.code_repos"]
+    assert not _registered(plane)
 
 
 @pytest.mark.asyncio
@@ -1242,7 +1242,7 @@ async def test_a_branch_already_indexed_under_another_name_is_refused(
         CodeRepoAddInput(org=ORG, repo="ClickHouse/ClickHouse", branch="26.8", branches=["master"])
     )
     assert out.skipped == [{"branch": "master", "reason": "already indexed here"}]
-    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    rows = _registered(plane)
     assert [r["git_branch"] for r in rows] == ["26.8"]
 
 
@@ -1301,7 +1301,7 @@ async def test_add_branch_finds_a_branch_held_by_an_entry_spelled_differently(
                 CodeRepoAddBranchInput(org=ORG, namespace=ns, branch=branch)
             )
         assert ei.value.to_detail()["code"] == "REPO_EXISTS"
-    assert not [t for t, _ in plane.ch.inserted if t == "loom.code_repos"]
+    assert not _registered(plane)
 
 
 @pytest.mark.asyncio
@@ -1471,7 +1471,7 @@ async def test_an_add_without_the_sandbox_is_refused(
             CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main")
         )
     assert ei.value.to_detail()["code"] == "SANDBOX_UNAVAILABLE"
-    assert not [t for t, _ in plane.ch.inserted if t == "loom.code_repos"]
+    assert not _registered(plane)
 
 
 # --- git proxy identity -----------------------------------------------------------------
@@ -1497,7 +1497,13 @@ def _probes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def _registered(plane: Any) -> list[dict[str, Any]]:
-    return [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    return [
+        r
+        for t, rows in plane.ch.inserted
+        if t == "loom.code_repos"
+        for r in rows
+        if r.get("row_kind") == "page"
+    ]
 
 
 @pytest.mark.asyncio

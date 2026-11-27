@@ -171,6 +171,7 @@ def test_the_journal_files() -> None:
         "113_oauth_verified_email.sql",
         "114_memory_proposal_review.sql",
         "115_memory_refusals.sql",
+        "116_code_repo_index_options.sql",
     ]
 
 
