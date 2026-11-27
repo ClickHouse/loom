@@ -18,6 +18,7 @@ still to fix."""
 
 from __future__ import annotations
 
+import functools
 import importlib
 import itertools
 import json
@@ -33,7 +34,7 @@ from collections.abc import Callable
 import pytest
 
 from tests.unit.code_fixtures import mildest
-from tests.unit.lane_walks import BOUND_S, LANE_FLOOR_S, RATIO, WALKS
+from tests.unit.lane_walks import BOUND_S, LANE_FLOOR_S, RATIO, WALKS, lane_over
 
 _PACKAGES = ("server.code.domain.extract", "server.code.app.index")
 _N = 50_000
@@ -160,6 +161,12 @@ def _cost(p: re.Pattern, text: str | bytes) -> float:
     return time.process_time() - t0
 
 
+def _over(small: float, big: float, floor: float = _FLOOR_S / 10) -> bool:
+    """Whether `big`, the time at 4 times `small`'s size, grows over linear: over the
+    bound, or over `floor` (10 ms for a composite text) and over 8 times `small`."""
+    return big > BOUND_S or (big > floor and big > RATIO * small)
+
+
 _ALL = _patterns()
 
 
@@ -173,21 +180,47 @@ def test_the_scan_finds_the_patterns() -> None:
 @pytest.mark.parametrize("name,pattern", _ALL, ids=[n for n, _ in _ALL])
 def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
     as_bytes = isinstance(pattern.pattern, bytes)
+    over = functools.partial(_over, floor=_FLOOR_S)
     slow = []
     for unit in _units(pattern):
-        small = _cost(pattern, _text(unit, _N, as_bytes))
+
+        def cost(n: int, unit: str = unit) -> float:
+            return _cost(pattern, _text(unit, n, as_bytes))
+
+        small = cost(_N)
         if small > BOUND_S:
             slow.append((unit, small, None))
             continue
-        big = _cost(pattern, _text(unit, 4 * _N, as_bytes))
-        if big > BOUND_S or (big > _FLOOR_S and big > RATIO * small):
-            # Timers jitter on a loaded host: the best of three runs of each counts.
-            for _ in range(2):
-                small = min(small, _cost(pattern, _text(unit, _N, as_bytes)))
-                big = min(big, _cost(pattern, _text(unit, 4 * _N, as_bytes)))
-            if big > BOUND_S or (big > _FLOOR_S and big > RATIO * small):
+        pairs = [(small, cost(4 * _N))]
+        if over(*pairs[0]):
+            # Timers jitter on a loaded host: two more pairs, and `mildest` reads one.
+            pairs += [(cost(_N), cost(4 * _N)) for _ in range(2)]
+            small, big = mildest(pairs, over)
+            if over(small, big):
                 slow.append((unit, round(small, 3), round(big, 3)))
     assert not slow, f"{name}: (unit, N s, 4N s) {slow}"
+
+
+def test_the_pattern_judge_reads_pairs_timed_back_to_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def passes(times: list[float]) -> bool:
+        """Whether a pattern passes when its runs, N then 4N in turn, take `times`."""
+        runs = iter(times)
+        monkeypatch.setitem(globals(), "_units", lambda p: ["a"])
+        monkeypatch.setitem(globals(), "_cost", lambda p, text: next(runs))
+        try:
+            test_a_pattern_costs_linear_time("p", re.compile("a"))
+        except AssertionError:
+            return False
+        return next(runs, None) is None  # every run was asked for
+
+    assert passes([0.05, 0.2])  # a pair under 8 times is not timed again
+    assert passes([0.01, 0.09])  # nor one under 0.1 s at 4N
+    # one N run twice as fast as the two after it: its pair reads 9 times, the others 4.5
+    assert passes([0.05, 0.45, 0.1, 0.45, 0.1, 0.45])
+    assert not passes([0.05, 0.8, 0.1, 1.6, 0.05, 0.8])  # 16 times on every pair
+    assert not passes([2.5])  # over the bound at N: 4N is not timed
 
 
 # A run after a prefix the pattern spells: a pattern that splits a run of spaces k ways
@@ -216,12 +249,6 @@ def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:
     return shapes + keyed + [(" ".join(words) + " a ", unit, "b") for unit in units]
 
 
-def _over(small: float, big: float) -> bool:
-    """Whether `big`, the time at 4 times `small`'s size, grows over linear: over the
-    bound, or over 10 ms and over 8 times `small`."""
-    return big > BOUND_S or (big > _FLOOR_S / 10 and big > RATIO * small)
-
-
 def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
     """(n, the time at n / 4, the time at n) where the text first grows over linear, from
     the pair that grew least.
@@ -234,8 +261,8 @@ def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
         pairs = [(cost(n // 4), cost(n))]
         if _over(*pairs[0]):
             pairs += [(cost(n // 4), cost(n)) for _ in range(2)]
-            if all(_over(small, big) for small, big in pairs):
-                small, big = mildest(pairs)
+            small, big = mildest(pairs, _over)
+            if _over(small, big):
                 return n, round(small, 4), round(big, 4)
     return None
 
@@ -295,7 +322,8 @@ import faulthandler, json, sys
 faulthandler.dump_traceback_later({_WALK_DEADLINE_S}, exit=True)
 from tests.unit.lane_walks import walk_cost
 samples = []
-print(json.dumps({{"costs": walk_cost(sys.argv[1], diagnostics=samples), "samples": samples}}))
+costs = walk_cost(sys.argv[1], floor={_FLOOR_S}, diagnostics=samples)
+print(json.dumps({{"costs": costs, "samples": samples}}))
 """
 
 
@@ -333,11 +361,6 @@ print(json.dumps({{"timed": timed, "diagnostics": diagnostics}}))
 """
 
 
-def _lane_over(small: float, big: float) -> bool:
-    """Whether a shape grows over linear from `small` to `big`, at 4 times the size."""
-    return big > BOUND_S or (big > LANE_FLOOR_S and big > RATIO * small)
-
-
 def test_judged_step_tells_a_cache_step_from_growth_over_linear() -> None:
     from tests.unit.lane_walks import judged_step
 
@@ -354,7 +377,7 @@ def test_judged_step_tells_a_cache_step_from_growth_over_linear() -> None:
             return t, n, how != "other", how != "stopped"
 
         got = judged_step(cost, 1, listed)
-        return got and (got[0], _lane_over(got[1], got[2]))
+        return got and (got[0], lane_over(got[1], got[2]))
 
     def quadratic(*at_16n: Run) -> dict[int, list[Run]]:
         return {1: [0.01], 4: [0.12], 16: list(at_16n) or [1.9]}  # 12 times, then 16
@@ -364,7 +387,8 @@ def test_judged_step_tells_a_cache_step_from_growth_over_linear() -> None:
     assert judged({1: [(0.01, "stopped")], 4: [0.04]}) == ("N", False)
     assert judged({1: [0.01], 4: [(0.1, "stopped")], 16: [0.4]}) == ("4N", False)
     assert judged({1: [0.01], 4: [0.1], 16: [0.4]}) == ("4N", False)  # 10 times once, then 4
-    assert judged({1: [0.01], 4: [0.1], 16: [0.9, 0.4]}) == ("4N", False)  # 16N best of 3
+    # 9 times once, then 4 on the two pairs after
+    assert judged({1: [0.01], 4: [0.1], 16: [0.9, 0.4]}) == ("4N", False)
     assert judged(quadratic()) == ("4N", True)
     # the bytes parsed come from the two sizes judged (the fake parses n bytes at n)
     got = judged_step(lambda n: ({1: 0.01, 4: 0.12, 16: 1.9}[n], n, True, True), 1, False)
@@ -399,6 +423,12 @@ def test_judged_step_tells_a_cache_step_from_growth_over_linear() -> None:
     assert judged({1: [0.01], 4: [0.12, 0.12, 0.12, 0.24], 16: [1.9, 3.8]}) == ("4N", True)
     # a pair whose N run was 3 times as slow hides a quadratic step; the next run reports it
     assert judged({1: [0.02, 0.06, 0.02], 4: [0.32]}) == ("N", False)
+    # A pair is over by the class guard's whole test, not by its growth alone. One under
+    # 50 ms at 4N is not over, though the pairs beside it grew less.
+    assert judged({1: [0.007, 0.003, 0.007], 4: [0.060, 0.045, 0.060]}) == ("N", False)
+    # Nor is one that grew under 8 times, though a pair over 2 s at 16N grew less.
+    spiked = {1: [0.01], 4: [0.12, 0.12, 0.12, 0.12, 0.4], 16: [1.0, 0.95, 2.1]}
+    assert judged(spiked) == ("4N", False)
     sizes: list[int] = []
     times = {1: 0.01, 4: 0.1, 16: 0.4}
 
@@ -531,7 +561,7 @@ def test_a_registered_lane_costs_linear_time(lang: str) -> None:
     assert len(timed) >= len(SHAPES) // 2 and set(known) <= {t[0] for t in timed}, lang
     slow, linear, reparsed = {}, set(), {}
     for shape, step, small, big, parsed_small, parsed_big in timed:
-        if _lane_over(small, big):
+        if lane_over(small, big):
             slow[shape] = (step, round(small, 3), round(big, 3))
         if big < LANE_FLOOR_S and big < 4 * small:
             linear.add(shape)

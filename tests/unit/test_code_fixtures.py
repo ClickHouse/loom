@@ -34,6 +34,8 @@ def test_untraced_leaves_the_collector_as_it_found_it() -> None:
         # One small run about twice as fast as the two after it, as timed on a runner: the
         # first pair reads over 8 times, the other two under 5.
         ([0.262, 2.161, 0.463, 2.242, 0.451, 2.223], ["small", "big"] * 3, 8.0, 0.0),
+        # The second pair is under the floor, though the two beside it grew less.
+        ([0.007, 0.060, 0.003, 0.045, 0.007, 0.060], ["small", "big"] * 3, 8.0, 0.05),
     ],
 )
 def test_linear_cost_success_does_not_collect_failure_context(
@@ -375,6 +377,9 @@ def test_sql_failure_keeps_the_complete_sample_context(
         # One N run about twice as fast as the other two, as timed on a runner: with it in
         # the first pair that pair reads 8 times, the other two under 5.
         ([0.0188, 0.1506, 0.0425, 0.1507, 0.0353, 0.1525], (0.0425, 0.1507), True),
+        # The second pair is under the floor, though the two beside it grew less.
+        ([0.012, 0.11, 0.004, 0.09, 0.012, 0.11], (0.004, 0.09), True),
+        ([0.004, 0.09], (0.004, 0.09), True),  # a pair under the floor is not timed again
     ],
 )
 def test_walk_samples_preserve_judged_costs_and_boundary_context(
@@ -423,7 +428,7 @@ def test_walk_samples_preserve_judged_costs_and_boundary_context(
     monkeypatch.setattr(lane_walks, "time", SimpleNamespace(process_time=lambda: next(clocks)))
     monkeypatch.setattr(lane_walks, "linear_sample_context", snapshot)
     samples: list[dict[str, object]] = []
-    small, big = lane_walks.walk_cost("observed", diagnostics=samples)
+    small, big = lane_walks.walk_cost("observed", floor=0.1, diagnostics=samples)
     assert (small, big) == pytest.approx(judged)
     assert (big < 0.1 or big < 8.0 * small) == linear
     sizes = [100_000, 400_000] * (len(values) // 2)
@@ -525,8 +530,10 @@ def test_walk_child_publishes_the_complete_sample_packet(
         )
     ]
 
-    def walk_cost(name: str, *, diagnostics: list[dict[str, object]]) -> tuple[float, float]:
-        assert name == "observed"
+    def walk_cost(
+        name: str, *, floor: float, diagnostics: list[dict[str, object]]
+    ) -> tuple[float, float]:
+        assert name == "observed" and floor == costs._FLOOR_S
         diagnostics.extend(samples)
         return 1.0, 4.0
 

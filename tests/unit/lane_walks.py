@@ -223,7 +223,7 @@ def _edges(
     """A file's call edges, against a name table of `table_size` definitions of `a` and of a
     class `Base` (with `own`, the file's own definitions too, as a re-index reads them)
     and the ingest's lane `context` (its present Python paths, as the file's includes).
-    The parse is kept per text, so the best of three times the edges alone; its deadline
+    The parse is kept per text, so a text's later runs time the edges alone; its deadline
     is lifted in the walk's child process, where a loaded host would trip it."""
     parsed: dict[str, object] = {}
 
@@ -512,11 +512,11 @@ _WALK_N = 100_000
 
 
 def walk_cost(
-    name: str, *, diagnostics: list[dict[str, object]] | None = None
+    name: str, *, floor: float = 0.0, diagnostics: list[dict[str, object]] | None = None
 ) -> tuple[float, float]:
-    """The times of the walk at N and 4N characters, taken back to back. A pair that
-    grew RATIO times or more is timed twice more and the mildest of the three is returned
-    (`mildest`)."""
+    """The times of the walk at N and 4N characters, taken back to back. A pair is over at
+    `floor` seconds or more at 4N and RATIO times its N time or more; one that is over is
+    timed twice more, and the pair `mildest` reads is returned."""
     walk, text = next((w[1], w[2]) for w in WALKS if w[0] == name)
 
     def timed_cost(n: int) -> float:
@@ -539,13 +539,16 @@ def walk_cost(
                 {"n": n, "cpu_s": cpu_s, "before": before, "after": linear_sample_context()}
             )
 
+    def over(small: float, big: float) -> bool:
+        return big >= floor and big >= RATIO * small
+
     # Not judged: the first call loads the lane's imports, grammar and caches, which cost
     # several walks at N and would make the first pair read as no growth at all.
     timed_cost(_WALK_N)
     pairs = [(cost(_WALK_N), cost(4 * _WALK_N))]
-    if pairs[0][1] >= RATIO * pairs[0][0]:
+    if over(*pairs[0]):
         pairs += [(cost(_WALK_N), cost(4 * _WALK_N)) for _ in range(2)]
-    return mildest(pairs)
+    return mildest(pairs, over)
 
 
 # The class guard: every lane parser in the ingest's registry (`ingest_parse._PARSERS`)
@@ -719,7 +722,7 @@ def _extract(
 
 _REGISTRY_N = 5_000
 # Shared with test_code_regex_cost.py: RATIO and BOUND_S judge every timing test there,
-# LANE_FLOOR_S the class guard (`_lane_over`).
+# LANE_FLOOR_S the class guard (`lane_over`).
 RATIO = 8.0
 LANE_FLOOR_S = 0.05
 BOUND_S = 2.0
@@ -733,6 +736,11 @@ N_MAX_S = 1.0
 RETRY_FLOOR_S = 0.02
 
 
+def lane_over(small: float, big: float) -> bool:
+    """Whether a shape grows over linear from `small` to `big`, at 4 times the size."""
+    return big > BOUND_S or (big > LANE_FLOOR_S and big > RATIO * small)
+
+
 def judged_step(
     cost: Callable[[int], tuple[float, int, bool, bool]], n: int, listed: bool
 ) -> tuple[str, float, float, int, int] | None:
@@ -741,9 +749,10 @@ def judged_step(
     of one shape, or None when its text at `n` does not read as the lane. `cost(n)` is
     (the time, the bytes parsed, whether the text read as the lane, whether every parse and
     walk finished). A step that looks over linear is timed twice more, its two sizes back
-    to back, and its mildest pair is judged (`mildest`). An unlisted shape still over
-    linear then, from LANE_FLOOR_S to STEP_MAX_S at 4N and under 16 times its N time (pure
-    quadratic growth, which no cache step reaches), is judged from 4N to 16N instead."""
+    to back, and is over only when every pair is (`mildest`, by `lane_over`). An unlisted
+    shape still over linear then, from LANE_FLOOR_S to STEP_MAX_S at 4N and under 16 times
+    its N time (pure quadratic growth, which no cache step reaches), is judged from 4N to
+    16N instead."""
     small, bs, lane, _ = cost(n)
     if not lane:
         return None
@@ -756,7 +765,8 @@ def judged_step(
         small = min(small, cost(n)[0], cost(n)[0])
         big = min(big, cost(4 * n)[0], cost(4 * n)[0])
     elif not listed and big > RETRY_FLOOR_S and big > RATIO * small:
-        small, big = mildest([(small, big)] + [(cost(n)[0], cost(4 * n)[0]) for _ in range(2)])
+        pairs = [(small, big)] + [(cost(n)[0], cost(4 * n)[0]) for _ in range(2)]
+        small, big = mildest(pairs, lane_over)
     in_window = LANE_FLOOR_S < big < STEP_MAX_S
     in_band = RATIO * small < big < 16 * small
     if listed or not (in_window and in_band):
@@ -773,7 +783,7 @@ def judged_step(
             again, (t, _, read, done) = cost(4 * n)[0], cost(16 * n)
             if read and done:
                 pairs.append((again, t))
-        big, huge = mildest(pairs)
+        big, huge = mildest(pairs, lane_over)
     return "4N", big, huge, bb, bh
 
 

@@ -71,15 +71,20 @@ def linear_sample_context() -> dict[str, Any]:
         return {"context_error": type(error).__name__}
 
 
-def mildest(pairs: list[tuple[float, float]]) -> tuple[float, float]:
-    """The (small, big) pair of times that grew least: the one a linear-cost judge reads.
+def mildest(
+    pairs: list[tuple[float, float]], over: Callable[[float, float], bool]
+) -> tuple[float, float]:
+    """The (small, big) pair of times a linear-cost judge reads. `over` is the judge's own
+    test of one pair: the pair read is the one that grew least among those not over, or
+    among them all when every one is over.
 
     Each pair is a size and 4 times it, timed back to back, so a step fails only when
     every pair is over. A minimum taken at each size apart keeps one small-size run that
     was faster than its neighbours, which no later run can undo, and a linear cost then
     reads as over 8 times. A slow small-size run in one pair can hide a step; nothing is
     carried, so the next run reports it."""
-    return min(pairs, key=lambda p: p[1] / max(p[0], 1e-9))
+    passed = [pair for pair in pairs if not over(*pair)]
+    return min(passed or pairs, key=lambda p: p[1] / max(p[0], 1e-9))
 
 
 def assert_linear(
@@ -92,7 +97,7 @@ def assert_linear(
 ) -> None:
     """`cost(big)` is under `ratio` times `cost(small)` (8 suits 4 times the size: a
     quadratic one takes 16) or under `floor` seconds. The two are timed back to back; a
-    pair over `ratio` is timed twice more and the mildest of the three is judged
+    pair over `ratio` is timed twice more, and the cost fails only when every pair does
     (`mildest`). No absolute bound: a linear cost at `big` takes several times as long
     on a slow runner as on a fast one."""
     samples: list[dict[str, Any]] = []
@@ -104,13 +109,16 @@ def assert_linear(
         samples.append({"cost_s": value, "before": before, "after": linear_sample_context()})
         return value
 
+    def over(a: float, b: float) -> bool:
+        return b >= ratio * a and b >= floor
+
     cost = observed
     pairs = [(cost(small), cost(big))]
     if pairs[0][1] > ratio * pairs[0][0]:
         pairs += [(cost(small), cost(big)) for _ in range(2)]
-    a, b = mildest(pairs)
+    a, b = mildest(pairs, over)
     try:
-        assert b < ratio * a or b < floor, (a, b)
+        assert not over(a, b), (a, b)
     except AssertionError as error:
         try:
             # JSON encoding and cumulative context follow the failed judge.
