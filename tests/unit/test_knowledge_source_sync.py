@@ -425,7 +425,7 @@ def _source(name: str = "decks", **kw: Any) -> KnowledgeSource:
 
 
 @pytest.mark.parametrize("worker_marked", [False, True], ids=["native", "worker-history"])
-@pytest.mark.parametrize("path", ["document", "turn-state", "extraction-state"])
+@pytest.mark.parametrize("path", ["document", "turn-state", "extraction-state", "full-request"])
 def test_native_sync_rechecks_worker_history(world: _World, worker_marked: bool, path: str) -> None:
     source = _source()
     fresh = source_sync.store._source(
@@ -452,6 +452,8 @@ def test_native_sync_rechecks_worker_history(world: _World, worker_marked: bool,
 
     if path == "turn-state":
         asyncio.run(source_sync._write_state(source, {}, source_sync.TurnResult()))
+    elif path == "full-request":
+        asyncio.run(source_sync.source_ops.request_full_sync(source))
     else:
         asyncio.run(source_sync._write_mined(source, None, [], pending=2))
 
@@ -459,6 +461,8 @@ def test_native_sync_rechecks_worker_history(world: _World, worker_marked: bool,
         assert source.name not in world.states
     elif path == "turn-state":
         assert _detail(world)["status"] == "ok"
+    elif path == "full-request":
+        assert _detail(world)["full"] is True
     else:
         assert _detail(world)["pending_extract"] == 2
 

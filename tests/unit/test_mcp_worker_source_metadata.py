@@ -84,6 +84,21 @@ async def test_active_worker_does_not_repair_a_damaged_selection(raw_items):
     assert source.worker_history is not None and source.worker_history.items_json == raw_items
 
 
+async def test_unreadable_worker_config_does_not_block_native_sync_inventory():
+    raw_config = '{"child":' * 10_000 + "{}" + "}" * 10_000
+    worker_row = dict(_row(), active=True, access="mirrored", config_json=raw_config)
+    native_row = dict(
+        _row(), name="native", source_kind="gdrive", credential_mode="shared", active=True
+    )
+    ch = RecordingCH().on("loom.knowledge_sources FINAL", [worker_row, native_row])
+
+    worker, native = await sources.all_active_sources(ch=ch)
+
+    assert worker.config == {} and not served(worker) and not mirror_synced(worker)
+    assert worker.worker_history is not None and worker.worker_history.config_json == raw_config
+    assert native.name == "native" and served(native)
+
+
 async def test_inactive_worker_rewrite_keeps_the_legacy_only_marker():
     row = dict(
         _row(),

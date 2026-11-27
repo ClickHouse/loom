@@ -1259,17 +1259,10 @@ def ours(src: KnowledgeSource, doc: documents.DocumentRow) -> bool:
     return doc.actor == SYNC_WORKER_ACTOR and tag in doc.tags
 
 
-async def _current_native_source(src: KnowledgeSource) -> KnowledgeSource | None:
-    fresh = await store.get_source(src.org, src.namespace, src.name)
-    if fresh is None or fresh.source_id != src.source_id or is_worker_source(fresh):
-        return None
-    return fresh
-
-
 async def require_current(src: KnowledgeSource) -> None:
     """Raise SourceGone before a write if the native registration is no longer active."""
     with sequential_reads():
-        fresh = await _current_native_source(src)
+        fresh = await source_ops.current_native_source(src)
     if fresh is None or not fresh.active:
         raise SourceGone(_cursor_of(src))
     if src.credential_mode == "connected":
@@ -1406,7 +1399,7 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
     derived from the mirror's documents, so it goes under the mirror (`mirror_state`)."""
     async with source_ops.sources_lease(src.org, src.namespace):
         with sequential_reads():
-            if await _current_native_source(src) is None:
+            if await source_ops.current_native_source(src) is None:
                 return
             states = await store.read_states(src.org, src.namespace, [src.name])
             mirror_row = await mirror_state(src, turn.mirror) if turn.mirror else {}
@@ -1929,7 +1922,7 @@ async def _write_mined(
     as `extract_error`. Nothing is written when none of it changed."""
     async with source_ops.sources_lease(src.org, src.namespace):
         with sequential_reads():
-            if await _current_native_source(src) is None:
+            if await source_ops.current_native_source(src) is None:
                 return
             states = await store.read_states(src.org, src.namespace, [src.name])
         current = states.get(src.name) or {}

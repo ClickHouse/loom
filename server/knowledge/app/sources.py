@@ -1112,15 +1112,27 @@ async def handle_knowledge_source_sync_now(
     )
 
 
+async def current_native_source(src: KnowledgeSource) -> KnowledgeSource | None:
+    """Read the active native registration before writing for a source read earlier."""
+    fresh = await store.get_source(src.org, src.namespace, src.name)
+    if fresh is None or fresh.source_id != src.source_id or domain.is_worker_source(fresh):
+        return None
+    return fresh
+
+
 async def request_full_sync(src: KnowledgeSource) -> None:
     """Record a full sync request for `src`, as `sync_now(full=true)` does, unless
     one is already waiting: `loom knowledge sync --full` run again while a turn
     has not finished the request goes on with it rather than starting over."""
     async with sources_lease(src.org, src.namespace):
-        state = await _read_state(src)
+        with sequential_reads():
+            fresh = await current_native_source(src)
+        if fresh is None:
+            return
+        state = await _read_state(fresh)
         if _full_request_waiting(state):
             return
-        await _update_state(src, state, {"requested_at": _now_iso(), "full": True})
+        await _update_state(fresh, state, {"requested_at": _now_iso(), "full": True})
 
 
 def _full_request_waiting(state: dict[str, str]) -> bool:

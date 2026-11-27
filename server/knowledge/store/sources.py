@@ -76,6 +76,13 @@ def _items(raw: str, *, strict: bool = False) -> list[dict[str, Any]]:
     return [] if strict and len(items) != len(data) else items
 
 
+def _worker_config(raw: str) -> dict[str, Any]:
+    try:
+        return json_object(raw)
+    except RecursionError:
+        return {}
+
+
 def _source(row: dict[str, Any]) -> KnowledgeSource:
     created = row.get("created_at")
     updated = row.get("updated_at")
@@ -98,7 +105,7 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
         and not pending_delete
     )
     if current_worker:
-        config, items = json_object(raw_config), _items(raw_items, strict=True)
+        config, items = _worker_config(raw_config), _items(raw_items, strict=True)
     elif worker_row:
         config, items = {}, []
     else:
