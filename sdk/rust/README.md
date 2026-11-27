@@ -46,8 +46,8 @@ toolchain.
 application's dependencies. The crate name is `clickhouse-loom`; Rust imports it
 as `clickhouse_loom`.
 
-Runtime deps: reqwest with Rustls and HTTP/2, serde, serde_json, Tokio, rand, uuid,
-httpdate, log and derive_more.
+The repository build uses reqwest with Rustls and HTTP/2. It also depends on
+serde, serde_json, Tokio, rand, uuid, httpdate, log and derive_more.
 
 ## Use
 

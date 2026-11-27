@@ -19,9 +19,9 @@ dependencies can require a newer toolchain. The library leaves dependency lockin
 to the application; commit your application's `Cargo.lock`.
 
 The published `0.1.1` crate does not enable HTTP/2 by default. Its async and
-blocking clients do not have `request` or `request_json`. Use
-[docs.rs](https://docs.rs/clickhouse-loom) to check the API for the version you
-installed.
+blocking clients do not have `request` or `request_json`. For `0.1.1`, see the
+[async API reference](https://docs.rs/clickhouse-loom/0.1.1/clickhouse_loom/) or the
+[source for the optional blocking client](https://docs.rs/crate/clickhouse-loom/0.1.1/source/src/blocking.rs).
 
 The SDK in this repository offers both direct route methods and negotiates
 HTTP/2 over ALPN for HTTPS connections, with a fallback to HTTP/1.1. Plain HTTP
