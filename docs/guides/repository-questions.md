@@ -44,17 +44,18 @@ embedding provider. To let Loom draft the answer, set `synthesize` to `true` wit
 to let Loom reuse a cached draft. The corresponding MCP tool is
 [`loom_code_ask`](../reference/operations/code.md#codeask).
 
-To inspect a citation that points inside a function, pass its `path:start_line` as
-`name` to [`code.symbol`](../reference/operations/code.md#codesymbol). For example,
-a citation at line 42 of `src/cache.py` becomes `name: "src/cache.py:42"`. Use the
-same organization and code namespace, and set `include_body: true`.
-Find a returned definition whose path and line span match the citation, then
-check whether its body supports the claim. Use `code.index_status` to compare the
-commit of [the definition's index tier](../features/code-index/freshness.md) with
-the answer's `as_of.commit`. Matching revisions are a consistency check. To verify
-the citation, open the file and line range at `as_of.commit` in the repository
-browser and check that those lines support the claim. If the answer has no
-recorded commit or you cannot read those lines, report the citation as unchecked.
+To verify a citation, open its file and line range in the repository browser at
+the result's `as_of.commit`. Check that those lines support the claim. If the
+result has no recorded commit or you cannot read those lines, report the citation
+as unchecked.
+
+For more context around a cited function, try passing `path:start_line` as `name`
+to [`code.symbol`](../reference/operations/code.md#codesymbol) with
+`include_body: true`. For example, use `name: "src/cache.py:42"`. Use the same
+organization and code namespace. If a returned definition covers the cited line
+in that file, inspect its body. Comparing the commit for
+[the definition's index tier](../features/code-index/freshness.md) in
+`code.index_status` with the result's `as_of.commit` is a consistency check.
 
 Use `as_of` when available to check the indexed branch and commit behind the result.
 Check `abstain`, `partial` and their reasons before displaying an answer. To test
