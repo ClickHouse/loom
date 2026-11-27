@@ -1,4 +1,5 @@
 ---
+description: Check which languages Loom indexes and where compiler data resolves definitions and callers.
 seo:
   title: Code intelligence by language
 ---
