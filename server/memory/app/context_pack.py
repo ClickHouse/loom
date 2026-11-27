@@ -412,9 +412,8 @@ async def _pack_startup_recall(st: _PackState) -> None:
         for r in [*pinned, *recent]  # pins first, then recency
         if r.status in ("active", "conflicted")
     ]
-    # Before the dedup by key and the cut to k: a memory left out because its code is
-    # gone gives its place to the next row, which may hold its key. The recent listing
-    # has k rows to spare, so up to k rows left out are replaced.
+    # Before the dedup by key and the cut to k, so a memory left out for gone code gives its
+    # place to the next listed row; the recent listing is 2k rows and is not read again.
     await annotate_hits(input, hits)
     by_key: dict[str, Any] = {}
     for h in hits:
