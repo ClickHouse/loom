@@ -72,6 +72,31 @@ test("too little to remember is null; the tail is kept under the bound", () => {
   assert.ok(long.messages[0].content.length <= 6000 && long.messages[0].content.endsWith("[truncated]"));
 });
 
+test("a session with under 40 bytes of user and assistant text is not sent", () => {
+  const body = (user, reply, ...more) =>
+    sessionMemoryBody(scope, { session_id: "s1" }, [
+      { role: "user", content: user },
+      { role: "assistant", content: reply },
+      ...more,
+    ]);
+  assert.equal(body("Reply with the single word ok.", "ok"), null);
+  assert.equal(body("x".repeat(38), "y"), null);
+  assert.equal(body("x".repeat(39), "y").messages.length, 2);
+  assert.equal(body("Use pnpm here, never npm.", "Understood: pnpm for installs.").messages.length, 2);
+  // 38 characters, 100 bytes.
+  assert.equal(body("今後このリポジトリではnpmではなくpnpmを使ってください。", "了解しました。").messages.length, 2);
+  // An image placeholder is not text the user or the assistant wrote, whether a
+  // tool's turn or a pasted image's line. A body that is sent keeps it.
+  assert.equal(
+    body("what is this?", "A red bar.", { role: "tool", content: "[image: 1 image result returned by a tool]" }),
+    null,
+  );
+  assert.equal(body("ok?\n[image: image/png]\n[image: image/png https://example.com/a.png]", "ok"), null);
+  assert.equal(body("ok?\n[image: image/png http://[::1]/a.png]", "ok"), null);
+  assert.equal(body("x".repeat(37) + "\n[image: image/png]", "y"), null);
+  assert.ok(body("x".repeat(39) + "\n[image: image/png]", "y").messages[0].content.endsWith("[image: image/png]"));
+});
+
 test("transcriptTurns keeps the pointer to a pasted image and to an image a tool returned", () => {
   const png = { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } };
   const turns = transcriptTurns([
@@ -101,7 +126,7 @@ test("the session-memory body carries the keys the session recalled, deduped and
   const scope = { org: "o", namespace: "jdoe-ns", agent: "claude-code", tags: [] };
   const turns = [
     { role: "user", content: "what is my coffee type?", timestamp: "2026-09-20T08:00:00Z" },
-    { role: "assistant", content: "Espresso.", timestamp: "2026-09-20T08:00:05Z" },
+    { role: "assistant", content: "Espresso, as you told me.", timestamp: "2026-09-20T08:00:05Z" },
     { role: "user", content: "thanks", timestamp: "2026-09-20T08:00:09Z" },
   ];
   const b = sessionMemoryBody(scope, { session_id: "s1" }, turns, {

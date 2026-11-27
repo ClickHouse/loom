@@ -33,7 +33,7 @@ import SiteFrame from "../components/SiteFrame.astro";
         The server sends reports over HTTPS to <code>loom.clickhouse.com/api/v1/adoption</code>.
         Reports are retained for 400 days.
       </Text>
-      <Text color="muted">The <Link href="/adoption#reported-contact-domains">public adoption page</Link> lists namespace contact domain names from version 2 reports with successful requests in the last 90 complete UTC days.</Text>
+      <Text color="muted">The <Link href="/adoption#reported-contact-domains">public adoption page</Link> lists namespace contact domain names from version 2 reports with successful requests in completed reporting windows today or in the previous 90 UTC days.</Text>
     </section>
     <Link className="text-link" href="/docs/features/observability/telemetry#self-hosted-adoption">Read the telemetry field reference <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
     </div>

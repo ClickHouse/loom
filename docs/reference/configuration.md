@@ -329,6 +329,7 @@ One code namespace indexes one repository. No repository is configured by defaul
 | `LOOM_CODE_GIT_FETCH_TIMEOUT_S` | `float` | `3600.0` | live | Seconds one fetch, full-tree `ls-tree`, forced checkout or whole-range diff may run; the first fetch after a shallow clone of a large repository can exceed ten minutes. |
 | `LOOM_CODE_MIRROR_GC_INTERVAL_H` | `float` | `168.0` |  | Hours between `git gc` runs of each mirror on this host (low CPU and IO priority, only with room for a second copy plus `code_mirror_gc_margin_gb`). 0 = never. |
 | `LOOM_CODE_MIRROR_GC_MARGIN_GB` | `float` | `5.0` |  | Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without it the gc waits another interval. |
+| `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS` | `bool` | `False` |  | Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its working tree, not a second copy. An older build's git jobs could write the shared packs: turn it on only once no older replica serves, and off before a rollback. |
 
 ### Repository job sandbox
 
@@ -1693,7 +1694,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_AUDIT_CHECKPOINT_VERIFY_WINDOWS` | `int` | `24` |  | Most recent sealed windows recounted every pass (at least 1). |
 | `LOOM_AUDIT_CHECKPOINT_MAX_SEAL_PER_PASS` | `int` | `48` |  | Most windows one pass seals; a backlog is sealed over later passes. |
 | `LOOM_OTEL_EXPORTER` | `'' \| 'ch' \| 'otlp'` | `''` |  | OTel exporter, for spans and metrics: "ch" writes to `otel_traces` and `otel_metrics_*` in `clickstack_database` (`default` when empty) on the same service, "otlp" ships to otel_exporter_otlp_endpoint (headers: comma-separated K=V), "" = auto (otlp when the endpoint is set, else ch). |
-| `LOOM_OTEL_CODE_COUNTS_CACHE_S` | `int` | `3600` |  | Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols and code_edges, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export. |
+| `LOOM_OTEL_CODE_COUNTS_CACHE_S` | `int` | `3600` |  | Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges and memory_code_links, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export. |
 | `LOOM_OTEL_CODE_GREP_REPLAY_CACHE_S` | `int` | `3600` |  | Seconds between recounts of the code.grep wrong-abstain gauge (a `content` scan per namespace with abstains). 0 = gauge off. |
 | `LOOM_OTEL_AGENT_LABELS_MAX_NAMESPACES` | `int` | `20` |  | Max namespaces `loom.memory.agent_labels_24h` names per probe (top N by label total); the rest sum under `loom.namespace = "other"`. 0 = no cap. |
 | `LOOM_OTEL_INVARIANTS_PROBE_S` | `int` | `3600` |  | Seconds between the state probe's whole-table readings (embed backlog, integrity invariants), taken on the lease holder only. The invariants read 0 and exist to catch drift, so an hour is enough; each reading is one FINAL pass over memory, memory_embeddings and entity_vectors. |

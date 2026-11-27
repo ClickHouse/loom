@@ -1024,6 +1024,10 @@ class CodeSettings(BaseModel):
     # Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without
     # it the gc waits another interval.
     code_mirror_gc_margin_gb: float = 5.0
+    # Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its
+    # working tree, not a second copy. An older build's git jobs could write the shared
+    # packs: turn it on only once no older replica serves, and off before a rollback.
+    code_compiler_share_mirror_packs: bool = False
     # Resource limits (rlimits) for each process of a sandboxed repository job
     # (clone, fetch, dependency install, compiler-tier harness;
     # code/app/index/sandbox.py). They bound each process, not a job's total
@@ -4371,9 +4375,10 @@ class ObservabilitySettings(BaseModel):
     # K=V), "" = auto (otlp when the endpoint is set, else ch).
     otel_exporter: Annotated[Literal["", "ch", "otlp"], CaseFolded] = ""
     # Seconds between refreshes of the per-namespace code-plane COUNT gauges
-    # (one FINAL scan each of code_files, code_chunks, code_symbols and
-    # code_edges, on the lease holder). The counts move once an index run, so
-    # an hour is enough; each refresh reads every live code row. 0 = every export.
+    # (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges
+    # and memory_code_links, on the lease holder). The counts move once an index
+    # run, so an hour is enough; each refresh reads every live code row. 0 = every
+    # export.
     otel_code_counts_cache_s: int = 3600
     # Seconds between recounts of the code.grep wrong-abstain gauge (a
     # `content` scan per namespace with abstains). 0 = gauge off.

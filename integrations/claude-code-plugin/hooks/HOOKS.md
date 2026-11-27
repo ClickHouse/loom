@@ -255,13 +255,14 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 - **loom-session-memory.** Hands the session's user prompts and assistant
   text (the last 8 MB of the transcript, else the turn journal) to
   memory.set_from_messages(defer=true) once, through the flusher; the server
-  extracts the facts and the summary. It then removes the session's
-  recalled-key stash, whatever it sent (loom-capture removes its code-trace
-  stash). The turn journal stays, because the other SessionEnd hooks run
-  alongside it and read it too; loom-session-start removes this user's tmp
-  state files untouched for 24 hours. Every tmp state file the hooks keep is
-  mode 0600, and none is read or written through a symlink or from a file
-  another user owns.
+  extracts the facts and the summary. A session with fewer than two turns, no
+  user prompt or under 40 bytes of user and assistant text is not sent. The
+  hook removes the session's recalled-key stash, whatever it sent
+  (loom-capture removes its code-trace stash). The turn journal stays, because
+  the other SessionEnd hooks run alongside it and read it too;
+  loom-session-start removes this user's tmp state files untouched for 24
+  hours. Every tmp state file the hooks keep is mode 0600, and none is read or
+  written through a symlink or from a file another user owns.
 
 ## SessionEnd budget
 

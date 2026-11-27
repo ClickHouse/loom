@@ -119,6 +119,10 @@ class HealthState:
     # reads a restricted namespace) or `all` (the doctor, run on the host with the
     # deployment's own credentials).
     code_tier_names: Literal["none", "unrestricted", "all"] = "none"
+    # Repositories whose memory links have trailed their indexed head for longer than a
+    # link pass may take (`server.memory.app.code_link_lag.behind`): None = not read
+    # here, or linking is off.
+    memory_links_behind: int | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -1050,6 +1054,29 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
     ]
 
 
+def _memory_link_problems(st: HealthState) -> list[Problem]:
+    """One `memory_links_behind` warning for the repositories whose memory links trail
+    their indexed head: a count, since `/v1/health` answers anyone."""
+    count = st.memory_links_behind
+    if not count:
+        return []
+    noun = "repository" if count == 1 else "repositories"
+    return [
+        Problem(
+            "memory_links_behind",
+            "warn",
+            f"The memory links of {count} {noun} have trailed the indexed code for longer "
+            "than a link pass may take: a memory linked there reads `fresh`, `changed` or "
+            "`missing` as of an older commit.",
+            "Read the memory_code_links worker's last passes in /v1/admin/workers.status: "
+            "a failed leg names the repository, and a pass cut at its deadline needs a "
+            "longer LOOM_MEMORY_CODE_LINKS_MAX_PASS_SECONDS "
+            "(loom.memory.code_link_lag_commits says how far each repository trails).",
+            source="workers",
+        )
+    ]
+
+
 # Problems about the data a deployment holds, not the deployment: they are listed, and
 # never make `status` degraded (a repository's failing code-index tier would otherwise
 # fail `loom up`, `helm test` and every health gate over a missing token).
@@ -1079,6 +1106,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _oauth_claim_problems(settings, st)
         + _participant_problems(st)
         + _code_tier_problems(st)
+        + _memory_link_problems(st)
     )
     # within a severity, the deployment's own problems first
     return sorted(

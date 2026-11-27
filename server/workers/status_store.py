@@ -496,14 +496,18 @@ WHERE worker = {{worker:String}} AND resume_cursor != ''
 """
 
 
-async def latest_rows(*, ch: Any = None, days: int = 7) -> list[dict[str, Any]]:
+async def latest_rows(
+    *, ch: Any = None, days: int = 7, strict: bool = False
+) -> list[dict[str, Any]]:
     """Latest pass per (worker, instance_label) within `days`, as plain dicts
     with ISO timestamps. Empty on any error (one WARNING) — the handler still
-    answers from the registry."""
+    answers from the registry — unless `strict`, which raises it."""
     try:
         client = ch if ch is not None else _client()
         rows = await client.query_all(LATEST_SQL, {"days": max(int(days), 1)})
-    except Exception as e:  # noqa: BLE001 — the admin read must not 500 on the store
+    except Exception as e:
+        if strict:
+            raise
         log.warning("worker_status: latest rows not read (%s: %s)", type(e).__name__, str(e)[:200])
         return []
     out: list[dict[str, Any]] = []
