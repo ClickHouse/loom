@@ -325,6 +325,14 @@ text rates for its listed Vertex models. A model outside that table has unknown 
 See [Vertex setup](../getting-started/models-and-keys.md#vertex-ai) for deployment and
 rollout.
 
+The [native assistant](../operations/assistant.md) selects its own Vertex model
+with `LOOM_ASSISTANT_PROVIDER=vertex` and uses `streamGenerateContent` with the
+same project, location and credential source. It replays model-generated parts
+with their thought signatures when returning tool results within an answer.
+Stream usage comes from the provider's token counts, including cached input
+and reasoning. The assistant uses the canonical `vertex:<model>` price key
+to reserve budget and account for each turn.
+
 ### Protocol
 
 `LLMClient` has `provider`, `model` and one method:

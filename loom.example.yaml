@@ -274,7 +274,8 @@ settings:
   # profile). Empty uses assistant_model. The operator verifies its rate. [restart]
   # assistant_price_model: ""
 
-  # Native streaming provider. Empty disables native model admission. [restart]
+  # Native streaming provider. Vertex uses Google Application Default Credentials. Empty
+  # disables native model admission. [restart]
   # assistant_provider: ""
 
   # Model to answer with when a client's provider is still unavailable after its retries

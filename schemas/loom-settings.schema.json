@@ -161,11 +161,12 @@
             "anthropic",
             "openai",
             "bedrock",
+            "vertex",
             "local",
             "fake"
           ],
           "type": "string",
-          "description": "Native streaming provider. Empty disables native model admission."
+          "description": "Native streaming provider. Vertex uses Google Application Default Credentials. Empty disables native model admission."
         },
         "audit_checkpoint_grace_seconds": {
           "default": 600,

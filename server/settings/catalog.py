@@ -4127,8 +4127,11 @@ class ModelSettings(BaseModel):
     # Price-table model used for assistant route aliases (for example a Bedrock
     # inference profile). Empty uses assistant_model. The operator verifies its rate.
     assistant_price_model: str = ""
-    # Native streaming provider. Empty disables native model admission.
-    assistant_provider: Literal["", "anthropic", "openai", "bedrock", "local", "fake"] = ""
+    # Native streaming provider. Vertex uses Google Application Default Credentials.
+    # Empty disables native model admission.
+    assistant_provider: Literal["", "anthropic", "openai", "bedrock", "vertex", "local", "fake"] = (
+        ""
+    )
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
     # (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are
@@ -5133,14 +5136,21 @@ class ProviderSettings(ModelSettings):
         resolved = resolve_llm_provider(self.llm_provider, self.llm_model)
         if resolved.provider == "bedrock" and not resolved.model:
             raise ValueError("LOOM_LLM_PROVIDER=bedrock requires LOOM_LLM_MODEL")
-        if resolved.provider == "vertex":
-            if not resolved.model:
-                raise ValueError("LOOM_LLM_PROVIDER=vertex requires LOOM_LLM_MODEL")
+        if resolved.provider == "vertex" and not resolved.model:
+            raise ValueError("LOOM_LLM_PROVIDER=vertex requires LOOM_LLM_MODEL")
+        if self.assistant_provider == "vertex" and not self.assistant_model.strip():
+            raise ValueError("LOOM_ASSISTANT_PROVIDER=vertex requires LOOM_ASSISTANT_MODEL")
+        if "vertex" in (resolved.provider, self.assistant_provider):
             if not self.vertex_project.strip() or not self.vertex_location.strip():
                 raise ValueError(
                     "The Vertex provider requires LOOM_VERTEX_PROJECT and LOOM_VERTEX_LOCATION"
                 )
+        if resolved.provider == "vertex":
             vertex_route(resolved.model, self.vertex_project, self.vertex_location)
+        if self.assistant_provider == "vertex":
+            self.assistant_model, _ = vertex_route(
+                self.assistant_model, self.vertex_project, self.vertex_location
+            )
         self.llm_provider = resolved.provider
         self.llm_model = resolved.model
         self._llm_provider_source = resolved.source
