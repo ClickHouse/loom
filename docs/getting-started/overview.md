@@ -1,3 +1,7 @@
+---
+description: See how Loom stores searchable memory, documents, and code for agents, and choose what to share across tools and teams.
+---
+
 # Overview
 
 Loom is a server that stores memory, documents, conversations, an entity graph and a
