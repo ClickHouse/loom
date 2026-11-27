@@ -285,22 +285,14 @@ export function sessionScope(changed, objs, { root, cwd } = {}) {
       }
     }
   }
-  const names = pathNamer(root, cwd);
-  return dirty.filter((rel) => edited.has(rel) || commands.some((c) => names(c, rel)));
-}
-
-/** `(command, rel)`: does the shell command name repo-relative `rel`, as
- *  written or under either spelling of the checkout root? */
-function pathNamer(root, cwd) {
   const roots = root ? [root] : [];
   const logical = root ? logicalRoot(root, cwd) : "";
   if (logical && logical !== root) roots.push(logical);
-  return (command, rel) =>
-    commandNames(
-      command,
-      rel,
-      roots.flatMap((r) => absoluteForms(path.join(r, rel))),
-    );
+  return dirty.filter((rel) => {
+    if (edited.has(rel)) return true;
+    const absPaths = roots.flatMap((r) => absoluteForms(path.join(r, rel)));
+    return commands.some((c) => commandNames(c, rel, absPaths));
+  });
 }
 
 // The prompt's last sentence, whole: "Do not run the test suite.", "Please
@@ -339,7 +331,8 @@ const ELSEWHERE = /\b(?:ssh|docker|podman|kubectl)\s/;
 const ranHere = (head) => !ELSEWHERE.test(head) && LAUNCHER.test(head.split(/[;&|(\n]/).pop());
 // pytest's last line, whose order is fixed: failed, passed, skipped,
 // deselected, xfailed, xpassed, warnings, errors. A clean line starts at
-// "passed" and names nothing deselected, so a -k or --lf subset is not one.
+// "passed" and names nothing deselected, so a -k subset is not one. --lf
+// leaves tests out at collection and prints the line of a full run.
 const SUMMARY = /\b\d+ (?:passed|failed|errors?)\b.* in [\d.]+s\b/;
 const CLEAN = /^=*\s*\d+ passed(?:, \d+ (?:skipped|xfailed|xpassed|warnings?))* in [\d.]+s(?: \([\d:]+\))?\s*=*$/;
 // The directory a command moves to before it runs something, and any move.
@@ -361,14 +354,14 @@ function closesParen(text) {
   return false;
 }
 // What a command may hold from its first pytest on: pytest runs, and tail,
-// head, grep and echo, with no file redirect or backquote. Anything else may
-// change a file, and the command's result row is later than that change.
-// Quotes are not read, so a `|` or `;` inside one ends the simple command
-// there.
+// head, grep and echo, with no backquote and no redirect but one between
+// descriptors or to /dev/null. Anything else may change a file, and the
+// command's result row is later than that change. Quotes are not read, so
+// a `|` or `;` inside one ends the simple command there.
 const OUTPUT = /^\s*(?:(?:tail|head|grep|echo)(?=\s|$)|$)/;
 const onlyRuns = (tail) =>
   tail
-    .replace(/\d?>&\d/g, " ")
+    .replace(/\d?>(?:&\d|\s*\/dev\/null(?=[\s;&|)]|$))/g, " ")
     .split(/[;&|()\n]/)
     .every((part) => !/[<>`]/.test(part) && (OUTPUT.test(part) || part.match(PYTEST)));
 
@@ -425,17 +418,19 @@ function cleanRuns(objs, { root, cwd, since } = {}) {
       const before = command.slice(0, runs[0].index);
       const cd = [...before.matchAll(CD)];
       const result = results.get(b.id) || {};
-      // --ignore drops a path the summary never mentions; a move the reader
-      // cannot follow (a second `cd`, one between two runs, one in a subshell
-      // that closed before the run, `pushd`) leaves the paths unknown.
+      // --ignore, --deselect, --lf and --sw leave out tests a clean summary
+      // does not count; a quoted argument may be a flag's value in several
+      // words; a move the reader cannot follow (a second `cd`, one between
+      // two runs, one in a subshell that closed before the run, `pushd`)
+      // leaves the paths unknown.
       const ran =
         allPassed(result.output, runs.length) &&
         result.at >= since &&
-        runs.every((run) => ranHere(command.slice(0, run.index))) &&
+        runs.every((run) => !/["']/.test(run[1]) && ranHere(command.slice(0, run.index))) &&
         cd.length < 2 &&
         (command.match(MOVE) || []).length === cd.length &&
         cd.every((m) => !closesParen(before.slice(m.index + m[0].length))) &&
-        !command.includes("--ignore") &&
+        !/--(?:ignore|deselect|lf|last-failed|sw|stepwise)\b/.test(command) &&
         onlyRuns(command.slice(runs[0].index));
       if (!ran) {
         clean = [];
@@ -447,7 +442,7 @@ function cleanRuns(objs, { root, cwd, since } = {}) {
         let value = false;
         for (const word of run[1].split(/\s+/)) {
           const flag = word.startsWith("-");
-          const rel = flag || value ? "" : relativeToRoot(root, unquoted(word), base);
+          const rel = flag || value ? "" : relativeToRoot(root, word, base);
           if (rel) clean.push(rel);
           value = flag && !word.includes("=") && !BARE.test(word);
         }
@@ -459,16 +454,13 @@ function cleanRuns(objs, { root, cwd, since } = {}) {
 
 /**
  * True when the gate's ask is to run tests this checkout has and the
- * transcript already answers it, so the gate has nothing to add: the
- * person's latest prompt ends by saying not to run tests, or the session's
- * last shell commands ran every named test clean with pytest (its file, or
- * a directory above it), no edit tool was called after them and no file is
- * newer: `lastModified()` is the tree's newest file time in epoch ms. The
- * stop then names no untested function either. A gate that names a test
- * missing from the checkout, or only untested functions, still asks; so
- * does one whose tests another runner runs, unless the person ruled the run
- * out. Read from Claude Code transcript rows: a Codex rollout answers
- * nothing, so its stop blocks.
+ * transcript already answers it: the person's latest prompt ends by saying
+ * not to run tests, or `cleanRuns` holds every named test (its file, or a
+ * directory above it); `lastModified()` is the tree's newest file time in
+ * epoch ms. The stop then names no untested function either. A gate that
+ * names a test missing from the checkout, or only untested functions, still
+ * asks; so does one whose tests another runner runs, unless the person
+ * ruled the run out. A Codex rollout answers nothing, so its stop blocks.
  */
 export function runAnswered(gate, objs, { root, cwd, testExists, lastModified } = {}) {
   const tests = gate && Array.isArray(gate.tests) ? gate.tests : [];

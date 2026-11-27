@@ -525,6 +525,7 @@ test("a run before the tree's last change, an edit or another shell command answ
     "pytest tests -q\npython scripts/gen.py",
     "pytest tests -q | tee out.log",
     "pytest tests -q > out.log",
+    "pytest tests -q 2>/dev/null.log",
     "pytest tests -q; echo x > src/new.py",
     "pytest tests -q; echo $(rm src/helper.py)",
     "pytest tests -q; echo `rm src/helper.py`",
@@ -537,6 +538,7 @@ test("a run before the tree's last change, an edit or another shell command answ
     "pytest tests -q 2>&1 | tail -20",
     "pytest tests -q | head -50 && echo OK || echo FAIL",
     "pytest tests -q 2>&1 | grep passed; echo exit=$?",
+    "pytest tests -q 2>/dev/null | tail -5",
     "(cd /r && pytest tests -q)",
   ]) {
     assert.equal(answered([edit(), bash(shown, "3 passed in 0.10s")]), true, shown);
@@ -556,6 +558,10 @@ test("a run that failed, ran a subset or ran another file answers nothing", () =
   assert.equal(answered([edit(), bash("pytest tests -q -k new", "1 passed, 4 deselected in 0.10s")]), false);
   assert.equal(answered([edit(), bash("pytest tests/test_a.py::test_new -q", "1 passed in 0.10s")]), false);
   assert.equal(answered([edit(), bash("pytest tests --ignore=tests/test_a.py -q", "9 passed in 0.10s")]), false);
+  // Flags that leave tests out; --lf does it at collection, so its summary counts nothing as deselected.
+  for (const subset of ["--lf", "--last-failed", "--sw", "--stepwise", "--deselect tests/test_a.py::test_x"]) {
+    assert.equal(answered([edit(), bash(`pytest tests ${subset} -q`, "1 passed in 0.10s")]), false, subset);
+  }
   assert.equal(answered([edit(), bash("pytest tests/test_b.py -q", "2 passed in 0.10s")]), false);
   assert.equal(answered([edit(), bash("pytest tests 2>&1 | grep -B5 NameError | head", "")]), false);
   assert.equal(
@@ -569,6 +575,8 @@ test("a run that failed, ran a subset or ran another file answers nothing", () =
     assert.equal(answered([edit(), bash(flagged, "3 passed in 0.10s")]), true, flagged);
   }
   assert.equal(answered([edit(), bash("pytest -xq --cov=tests src", "3 passed in 0.10s")], colocated), true);
+  // A quoted value may hold several words, and the last would read as a path.
+  assert.equal(answered([edit(), bash('pytest src -q -m "not tests"', "3 passed in 0.10s")]), false);
   // -qq prints no summary: one clean line cannot speak for two runs.
   assert.equal(
     answered([edit(), bash("pytest tests/test_a.py -qq; pytest tests/test_b.py -q", "2 passed in 0.10s")]),

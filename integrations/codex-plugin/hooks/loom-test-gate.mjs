@@ -147,7 +147,7 @@ async function main() {
     scheduleExit(0);
     return;
   }
-  // Saved only now: a stop that showed nothing has not used the change's one block.
+  // An answered stop returned above, so it keeps the change's one block.
   writeSessionState("testgate", payload.session_id, decision.cache);
   const needsPython = (gate?.tests || []).some((t) => /^pytest(\s|$)/.test(String(t?.run || "")));
   const out = gatePayload(renderGate(gate, { python: needsPython ? checkoutPython(root) : undefined, testExists }));
