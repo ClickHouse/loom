@@ -99,6 +99,31 @@ test("activity compares only days with both reporting windows", () => {
   assert.deepEqual(metricGrowth(points, "week", "gauge"), []);
 });
 
+test("opening activity uses separate total coverage and skips gauge comparisons", () => {
+  const rows = [
+    {
+      period: "2026-01-01",
+      active: 10,
+      operations: 14,
+      days_reported: 31,
+      complete_days_reported: 31,
+      selected_days_reported: 2,
+      current: false,
+      opening: true,
+    },
+    { period: "2026-02-01", active: 18, days_reported: 28, complete_days_reported: 28, current: false },
+    { period: "2026-03-01", active: 20, days_reported: 31, complete_days_reported: 31, current: false },
+  ];
+  assert.deepEqual(activityPoints(rows, "operations", "month"), [
+    { day: "2026-01-01", value: 14, days: 2, current: false, partial: true },
+  ]);
+  const points = activityPoints(rows, "active", "month");
+  assert.deepEqual(points[0], { day: "2026-01-01", value: 10, days: 31, current: false, partial: true });
+  assert.deepEqual(metricGrowth(points, "month", "gauge"), [
+    { day: "2026-03-01", value: 2, days: 31, current: false, partial: false },
+  ]);
+});
+
 test("missing activity fields stay unknown while observed zero still plots", () => {
   const rows = [
     { period: "2026-01-05", requests: 0, days_reported: 7, complete_days_reported: 7, current: false },

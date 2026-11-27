@@ -10,15 +10,11 @@ interface Props {
 }
 
 const { rows, grain, rangeStart, rangeEnd } = Astro.props;
-const includesOpeningPeriod = rows[0]?.period < rangeStart;
-const description =
-  "Each installation counts once at its first successful request in retained telemetry." +
-  (includesOpeningPeriod ? " The first period starts before the selected window." : "");
 ---
 
 <AdoptionMetricPair
-  label="Self-hosted installation growth"
-  {description}
+  label="Installations"
+  description="Each installation counts once at its first successful request in retained telemetry."
   {grain}
   rows={rows.map(({ period, first_active, current }) => ({ day: period, value: first_active, current }))}
   growthRows={rows.map(({ period, cumulative_active, current }) => ({ day: period, value: cumulative_active, current }))}

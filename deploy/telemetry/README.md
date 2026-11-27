@@ -101,8 +101,9 @@ feature, transport, model, and installation measures by day, week, and month
 using the same complete-day cutoff.
 
 The first report date and its Loom and ClickHouse versions come from the earliest
-eligible retained window. The software version charts count each reporting
-installation under its most recent observed version for each reporting period.
+eligible retained window. The version charts count installations with successful
+requests and use the Loom and ClickHouse versions from each installation's latest
+active day in the period.
 Public metrics exclude internal installations and reports with the smoke test
 version in either software field.
 

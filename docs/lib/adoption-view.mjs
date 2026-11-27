@@ -52,6 +52,14 @@ export const usageMetricGroups = /** @type {const} */ ([
   },
 ]);
 
+/** @type {Set<string>} */
+export const activityTotalKeys = new Set([
+  "operations",
+  ...usageMetricGroups.flatMap(({ metrics }) =>
+    metrics.map(([key]) => key).filter((key) => !key.startsWith("median_")),
+  ),
+]);
+
 export function daysBefore(day, days) {
   return new Date(Date.parse(day) - days * dayMs).toISOString().slice(0, 10);
 }
@@ -106,6 +114,29 @@ export function relativeChange(current, previous) {
   return previous > 0 ? (current - previous) / previous : null;
 }
 
+function openingActivity(days) {
+  const totals = Object.fromEntries(
+    Array.from(activityTotalKeys, (key) => {
+      const values = days.map((row) => row[key]).filter(Number.isFinite);
+      return [key, values.length ? values.reduce((total, value) => total + value, 0) : null];
+    }),
+  );
+  const peakActivity = (key, coverage, installations) => {
+    const reported = days.filter((row) => Number.isFinite(row[key]));
+    const peak = reported.reduce((highest, row) => {
+      if (!highest || row[key] > highest[key] || (row[key] === highest[key] && row.period > highest.period)) return row;
+      return highest;
+    }, null);
+    return { [key]: peak?.[key] ?? null, [coverage]: reported.length, [installations]: peak?.[installations] ?? null };
+  };
+  return {
+    ...totals,
+    ...peakActivity("active_accounts", "accounts_days_reported", "account_reporting_installations"),
+    ...peakActivity("serving_processes", "processes_days_reported", "process_reporting_installations"),
+    selected_days_reported: days.length,
+  };
+}
+
 export function activityForRange(rows, filters, today) {
   const start = daysBefore(today, filters.days);
   return rows
@@ -114,6 +145,12 @@ export function activityForRange(rows, filters, today) {
     .map((row) => {
       const current = row.period_end > today;
       const opening = row.period < start;
+      if (opening) {
+        const daily = rows.filter(
+          ({ period, grain }) => grain === "day" && period >= start && period < row.period_end && period < today,
+        );
+        return { ...row, ...openingActivity(daily), estimate: null, current, opening };
+      }
       const elapsed = (Date.parse(today) - Date.parse(row.period)) / dayMs;
       const duration = (Date.parse(row.period_end) - Date.parse(row.period)) / dayMs;
       const estimate =

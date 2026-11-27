@@ -155,6 +155,12 @@ const versionSeries = Array.from(versionDates, (day) => {
   };
 });
 
+const hasOpeningPeriod =
+  events.some(({ opening }) => opening) ||
+  growth.some(({ period }) => period < cutoff) ||
+  domainSeries.some(({ day }) => day < cutoff) ||
+  versionSeries.some(({ day }) => day < cutoff);
+
 const lifecycleGrain = filters.cohort;
 const lifecycleThresholds = Object.entries(thresholds).map(([value, label]) => ({
   value,
@@ -237,7 +243,11 @@ const state = Object.fromEntries(
     </nav>
     <div class="adoption-controls">
       <AdoptionFilterForm {path} {state} {days} {grain} />
-      <Text size="sm" color="muted">{dateRange} UTC</Text>
+      <div class="adoption-window">
+        <Text size="sm" color="muted">{dateRange} UTC</Text>
+        {tab === "self-hosted" && hasOpeningPeriod &&
+          <Text size="sm" color="muted">The first chart period starts before this date range.</Text>}
+      </div>
     </div>
 
     {tab === "self-hosted" ? <>
@@ -292,9 +302,6 @@ const state = Object.fromEntries(
           <Title type="h2" size="lg" id="activity-title">Activity over time</Title>
           {events.length > 0 && <AdoptionDownload {path} {state} dataset="activity" label="Export activity CSV" />}
         </div>
-        {(events.some(({ opening }) => opening) || domainSeries.some(({ day }) => day < cutoff)) && <Text className="coverage" size="sm" color="muted">
-          The first calendar period starts before the selected window.
-        </Text>}
         <div class="activity-details">
           <AdoptionMetricPair
             label="Active domains"
@@ -492,6 +499,7 @@ const state = Object.fromEntries(
   .adoption-controls, .section-heading, .section-controls, .coverage, .sdk-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; }
   .adoption-controls, .section-heading { justify-content: space-between; }
   .adoption-controls { padding-block: 0.9rem clamp(1rem, 2.5vw, 1.65rem); }
+  .adoption-window { display: grid; gap: 0.2rem; text-align: end; }
   .overview { margin-block-end: clamp(1.35rem, 3vw, 2.25rem); }
   .metrics, .sdk-metrics, .two-column { display: grid; gap: 0.75rem; }
   .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -529,6 +537,7 @@ const state = Object.fromEntries(
   .adoption-cta { margin-block-start: clamp(1.4rem, 3vw, 2.75rem); }
   @media (max-width: 60rem) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 43rem) { .two-column, .sdk-metrics { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 38rem) { .adoption-window { text-align: start; } }
   @media (max-width: 26rem) {
     .metrics :global(.adoption-stat) { padding: 0.75rem; }
     .metrics :global(.metric-value > :last-child) { font-size: clamp(1.125rem, 6vw, 1.5rem); }

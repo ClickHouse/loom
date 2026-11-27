@@ -167,15 +167,99 @@ test("keeps a reported opening calendar month that overlaps the rolling window",
   ];
   const filters = adoptionFilters(new URLSearchParams("days=30&grain=month"));
   assert.deepEqual(
-    activityForRange(rows, filters, "2027-01-01").map(({ period, reporting, active, operations, opening }) => [
-      period,
-      reporting,
-      active,
-      operations,
-      opening,
-    ]),
-    [["2026-12-01", 2, 0, 0, true]],
+    activityForRange(rows, filters, "2027-01-01").map(
+      ({ period, reporting, active, operations, active_accounts, serving_processes, opening }) => [
+        period,
+        reporting,
+        active,
+        operations,
+        active_accounts,
+        serving_processes,
+        opening,
+      ],
+    ),
+    [["2026-12-01", 2, 0, null, null, null, true]],
   );
+});
+
+test("clips opening totals and daily peaks to the selected days", () => {
+  const rows = [
+    {
+      grain: "month",
+      period: "2026-04-01",
+      period_end: "2026-05-01",
+      reporting: 7,
+      active: 6,
+      median_agents: 17,
+      operations: 104,
+      requests: 106,
+      memory_requests: 99,
+      mcp_requests: 40,
+      llm_calls: 91,
+      server_errors: 2,
+      active_accounts: 30,
+      accounts_days_reported: 3,
+      serving_processes: 9,
+      days_reported: 3,
+    },
+    {
+      grain: "day",
+      period: "2026-04-02",
+      operations: 99,
+      requests: 101,
+      memory_requests: 99,
+      mcp_requests: 40,
+      llm_calls: 91,
+      server_errors: 2,
+      active_accounts: 30,
+      serving_processes: 9,
+    },
+    {
+      grain: "day",
+      period: "2026-04-10",
+      operations: 5,
+      requests: 5,
+      memory_requests: 0,
+      mcp_requests: 0,
+      llm_calls: 0,
+      server_errors: 0,
+      active_accounts: 0,
+      account_reporting_installations: 1,
+      serving_processes: 3,
+      process_reporting_installations: 2,
+    },
+    {
+      grain: "day",
+      period: "2026-04-11",
+      operations: 0,
+      active_accounts: 0,
+      account_reporting_installations: 2,
+      serving_processes: 1,
+      process_reporting_installations: 1,
+    },
+    { grain: "day", period: "2026-05-01", operations: 200, memory_requests: 200 },
+  ];
+  const filters = adoptionFilters(new URLSearchParams("days=30&grain=month"));
+  const [opening] = activityForRange(rows, filters, "2026-05-09");
+  assert.equal(opening.operations, 5);
+  assert.equal(opening.requests, 5);
+  assert.equal(opening.memory_requests, 0);
+  assert.equal(opening.mcp_requests, 0);
+  assert.equal(opening.llm_calls, 0);
+  assert.equal(opening.server_errors, 0);
+  assert.equal(opening.code_requests, null);
+  assert.equal(opening.active_accounts, 0);
+  assert.equal(opening.accounts_days_reported, 2);
+  assert.equal(opening.account_reporting_installations, 2);
+  assert.equal(opening.serving_processes, 3);
+  assert.equal(opening.processes_days_reported, 2);
+  assert.equal(opening.process_reporting_installations, 2);
+  assert.equal(opening.median_agents, 17);
+  assert.equal(opening.reporting, 7);
+  assert.equal(opening.active, 6);
+  assert.equal(opening.days_reported, 3);
+  assert.equal(opening.selected_days_reported, 2);
+  assert.equal(opening.estimate, null);
 });
 
 test("exports lifecycle thresholds at the selected interval", () => {

@@ -1,4 +1,4 @@
-import { daysBefore, periodOffset } from "./adoption-view.mjs";
+import { activityTotalKeys, daysBefore, periodOffset } from "./adoption-view.mjs";
 
 /** @typedef {"day" | "week" | "month"} ChartGrain */
 /** @typedef {"additive" | "gauge"} ChartKind */
@@ -91,7 +91,7 @@ export function metricGrowth(rows, grain, kind) {
 
 /**
  * @template {string} Metric
- * @param {ReadonlyArray<{period: string, days_reported: number, complete_days_reported?: number, accounts_days_reported?: number, processes_days_reported?: number, current: boolean} & Partial<Record<Metric, number | null>>>} rows
+ * @param {ReadonlyArray<{period: string, days_reported: number, complete_days_reported?: number, selected_days_reported?: number, accounts_days_reported?: number, processes_days_reported?: number, current: boolean, opening?: boolean} & Partial<Record<Metric, number | null>>>} rows
  * @param {Metric} key
  * @param {ChartGrain} grain
  * @param {"days_reported" | "accounts_days_reported" | "processes_days_reported"} [coverage]
@@ -102,7 +102,10 @@ export function activityPoints(rows, key, grain, coverage = "days_reported") {
     const value = row[key];
     if (typeof value !== "number" || !Number.isFinite(value)) return [];
     const { period: day, current } = row;
-    const days = row[coverage];
+    const days =
+      coverage === "days_reported" && row.opening && activityTotalKeys.has(key)
+        ? row.selected_days_reported
+        : row[coverage];
     const completeDays = coverage === "days_reported" ? row.complete_days_reported : days;
     return [
       {
@@ -110,7 +113,10 @@ export function activityPoints(rows, key, grain, coverage = "days_reported") {
         value,
         days,
         current,
-        partial: completeDays === undefined || completeDays < periodOffset(day, periodEnd(day, grain), "day"),
+        partial:
+          row.opening === true ||
+          completeDays === undefined ||
+          completeDays < periodOffset(day, periodEnd(day, grain), "day"),
       },
     ];
   });
