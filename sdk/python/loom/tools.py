@@ -329,7 +329,9 @@ class AgentTools:
                 or max_result_chars < 256
             ):
                 raise LoomError("code tools require max_result_chars of at least 256")
-        self.code_namespace = code_namespace.strip() if code_namespace is not None else None
+        self.code_namespace: str | None = (
+            code_namespace.strip() if code_namespace is not None else None
+        )
         available = ("loom_code_lookup", *TOOL_NAMES) if self.code_namespace else TOOL_NAMES
         if keep is not None:
             available = (*available, "loom_update")

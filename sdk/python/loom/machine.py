@@ -67,7 +67,7 @@ class MachineLogin(httpx.Auth):
         key_source: tuple[str, str] | None = None,
         audience: str = "",
     ) -> None:
-        self.server = server.rstrip("/")
+        self.server: str = server.rstrip("/")
         self.profile = client_id  # how the transport names the credential
         # (env var, value): where the key comes from; key_file is the file one.
         self._key_source = key_source or (("LOOM_CLIENT_KEY_FILE", key_file) if key_file else None)

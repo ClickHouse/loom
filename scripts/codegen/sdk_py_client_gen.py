@@ -116,7 +116,7 @@ def build() -> str:
         "",
         "    def __init__(self, agent: Agent) -> None:",
     ]
-    out += [f"        self.{g} = {pascal(g)}Ops(agent)" for g in sorted(groups)]
+    out += [f"        self.{g}: {pascal(g)}Ops = {pascal(g)}Ops(agent)" for g in sorted(groups)]
     return _ruff_format("\n".join(out).rstrip("\n") + "\n")
 
 

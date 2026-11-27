@@ -79,11 +79,11 @@ class Session:
         self.user_id = user_id
         self.run_id = run_id
         #: Turns buffered before `memory.set_from_messages` runs; 0 = only on flush()/close().
-        self.flush_every = max(0, int(flush_every))
+        self.flush_every: int = max(0, int(flush_every))
         #: Also write every turn to the conversation transcript.
-        self.transcript = bool(transcript)
+        self.transcript: bool = bool(transcript)
         #: Turns from the previous flush handed to the extractor as `last_messages`.
-        self.carry_over = max(0, int(carry_over))
+        self.carry_over: int = max(0, int(carry_over))
         self._extraction: dict[str, Any] = dict(extraction or {})
         self._pending: list[dict[str, Any]] = []
         self._last_flushed: list[dict[str, Any]] = []
