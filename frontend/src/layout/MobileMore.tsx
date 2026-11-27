@@ -6,7 +6,7 @@ import { canWrite, needsRole, useNamespaceRole } from "../lib/namespaceRole";
 import { openNewDialog } from "../lib/newDialogs";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore, viewHref, type AdminBadges } from "../lib/state";
-import { adminItems, NavBadge, RAIL_GROUPS, SETTINGS_ITEM, type NavItem } from "./Sidebar";
+import { adminItems, groupAdminItems, NavBadge, RAIL_GROUPS, SETTINGS_ITEM, DOCS_ITEM, type NavItem } from "./Sidebar";
 import { ACTIVE, PRIMARY_IDS } from "./mobileTabs";
 
 // The sheet is generated from the sidebar's own nav arrays rather than a second hand-written
@@ -23,24 +23,13 @@ export function mobileMoreItems(
   namespace: string,
   badges: AdminBadges | null,
 ): Array<{ group: string; items: NavItem[] }> {
-  // The sheet shows the rail's own groups; the two primary tabs are left out of theirs,
-  // and Settings closes the list. An unlabelled rail group (Profile) joins the first
-  // labelled one on the phone rather than heading a one-item group of its own.
-  const groups: Array<{ group: string; items: NavItem[] }> = [];
-  let carry: NavItem[] = [];
-  for (const g of RAIL_GROUPS) {
-    const items = [...carry, ...g.items.filter((m) => !PRIMARY_IDS.includes(m.id))];
-    if (!g.label) {
-      carry = items;
-      continue;
-    }
-    carry = [];
-    if (items.length > 0) groups.push({ group: g.label, items });
-  }
-  if (carry.length > 0) groups.push({ group: "Main", items: carry });
-  groups.push({ group: "Settings", items: [SETTINGS_ITEM] });
-  const admin = adminItems(whoami, mine, namespace, badges);
-  if (admin.length > 0) groups.push({ group: "Admin", items: admin });
+  const groups = RAIL_GROUPS.map(({ label, items }) => ({
+    group: label,
+    items: items.filter(({ id }) => !PRIMARY_IDS.includes(id)),
+  }));
+  const admin = groupAdminItems(adminItems(whoami, mine, namespace, badges));
+  groups.push(...admin.map(({ label, items }) => ({ group: label, items })));
+  groups.push({ group: "Workspace", items: [SETTINGS_ITEM, DOCS_ITEM] });
   return groups;
 }
 
@@ -106,7 +95,7 @@ export default function MoreSheet({ onClose }: { onClose: () => void }) {
       {groups.map((g) => (
         <nav key={g.group} aria-label={g.group} className="mb-4">
           <div className="section-label mb-1.5 px-1">{g.group}</div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {g.items.map((m) => {
               const active = view === m.id || (m.id === "setup" && view === "connected-accounts");
               return (
@@ -120,12 +109,12 @@ export default function MoreSheet({ onClose }: { onClose: () => void }) {
                     onClose();
                   }}
                   aria-current={active ? "page" : undefined}
-                  className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-sm transition-colors no-underline hover:no-underline text-text ${
+                  className={`flex min-h-11 items-center gap-2 border border-border p-2.5 rounded-sm transition-colors no-underline hover:no-underline text-text ${
                     active ? `${ACTIVE} font-medium` : "bg-surface-2 hover:bg-surface-3"
                   }`}
                 >
                   <Icon name={m.icon} size="md" aria-hidden="true" />
-                  <span className="text-xs font-medium text-center">{m.label}</span>
+                  <span className="min-w-0 text-xs font-medium">{m.label}</span>
                   {!!m.badge && <NavBadge count={m.badge} tone={m.badgeTone ?? "default"} collapsed={false} />}
                 </a>
               );

@@ -121,6 +121,7 @@ LOOM_CODE_REPOS_JSON='[
 | `git_branch`                         | the branch this namespace tracks                                                                                              |
 | `path_prefixes`                      | comma-separated prefixes to index; an entry without it indexes the whole tree minus the built-in denylist                     |
 | `exclude`                            | globs never indexed (list or comma-separated)                                                                                 |
+| `embed_exclude`                      | globs indexed but never described or embedded (see below): symbols, edges, the test map and the lexical leg keep them         |
 | `exclude_generated`                  | refuse files whose content marks them generated (`Code generated … DO NOT EDIT.`, `@generated`)                               |
 | `include_contrib_paths`              | vendored `contrib/` paths to index anyway, so their definitions bind the repository's call sites                              |
 | `depends_on`                         | other code namespaces this code calls into; a definition missing here is looked up there                                      |
@@ -137,11 +138,38 @@ Name a `git_remote` host in ASCII, as punycode for an internationalised name: a 
 add refuses any other, so the two spell a host alike.
 
 A git server under a private certificate authority needs `LOOM_CODE_GIT_CA_FILE`: a PEM
-bundle git verifies https remotes with in place of the image's default roots, so include
-the public roots when other remotes are public. Repository jobs read no system or global
-git config and inherit no `GIT_SSL_CAINFO` or `SSL_CERT_FILE`, so this setting is how a
-bundle reaches them. Put it under `/etc/ssl`, which the repository-job sandbox mounts.
-Through the forward proxy, `LOOM_CODE_GIT_PROXY_CA_FILE` takes its place when set.
+bundle git verifies https remotes with in place of the image's default roots. The bundle
+applies to every git a repository job runs, the compiler tier's dependency fetches and
+submodule updates included, not only the entry's remote, so include the public roots
+when any of those reach a public host. Repository jobs read no system or global git
+config and inherit no `GIT_SSL_CAINFO` or `SSL_CERT_FILE`, so this setting is how a
+bundle reaches them. Loom does not check the path when it loads the setting: name an
+absolute path to a file the job can see. The sandbox mounts `/etc/ssl`,
+`/etc/ca-certificates` and `/usr` read-only, so `/etc/ssl` is the place to put the
+bundle; a link works when its target is inside one of those trees too. A relative path,
+a `~/` path, or a link whose target is outside them resolves differently there than on
+the host, and git fails the job with its own words. Through the forward proxy, `LOOM_CODE_GIT_PROXY_CA_FILE` takes its
+place when set.
+
+The setting settles trust, not reach. In the sandbox the egress proxy refuses a remote
+whose name resolves to a loopback, private or link-local address, whatever bundle is
+set, and no setting admits one. A forge on a private address therefore indexes only as an
+operator repository on a host that does not run the sandbox (see _Without the sandbox_).
+
+`embed_exclude` (`LOOM_CODE_EMBED_EXCLUDE` for the scalar entry, and for a
+`LOOM_CODE_REPOS_JSON` entry without its own list) applies to configured entries only: a
+self-service entry has none and is embedded in full. The chunks of a matching path carry
+the `unembedded by design: reference (embed_exclude)` marker: no writer describes or
+embeds them, and the coverage counts leave them out. The `code_summary` pass writes no
+card for such a file. The globs apply to chunks written after they change:
+
+1. Adding a glob leaves the path's existing vectors in place until a chunk's content
+   changes, and its existing card in place until the file changes.
+2. Removing a glob leaves the path's chunks without a vector and outside the coverage
+   denominator, so `code.repos` still reports them covered. No writer re-embeds an
+   unchanged chunk: a chunk is embedded when its content changes, and to embed them all,
+   index the repository into a new namespace with `loom code backfill`. The file's card
+   comes back at the next `code_summary` pass.
 
 An entry whose `git_remote` is a local path or `file://` mirror is known by its `repo`,
 which a page add of the same repository must match: name a mirror of a repository on a
@@ -225,10 +253,36 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   the work, since the unembedded rows are the embed phase's queue. `--commit <sha>` pins
   the tree (and implies `--no-fetch`); `--concurrency N` parallelises files; `--limit N`
   indexes a sample.
+- One process parses and extracts at about one core. `--workers N` runs the index
+  phase's batches of 200 files and the edge pass in N more processes. Each worker is the
+  same command, started with the same arguments, so it runs as the command does: as
+  `background` traffic, under the command's query tag and operation, enrolled and
+  admitted for model work, with its own connection and `--concurrency`, its own
+  `cli.code.backfill` root span (stamped `loom.cli.worker`) and its own start and exit
+  log lines. The cursor moves past a batch once every earlier one is written, the header
+  batches are all written before the first source batch starts, and after a held batch
+  nothing more is handed out. A worker resolves names and imports against what it last
+  read of the index, so during the index phase it misses what the other workers are
+  writing; each worker reads the index again at the sources and at the edge pass, and
+  such a run owes the edge pass whatever the flags say (`--paths-file` and
+  `--no-edges-second-pass` runs included), so the pass binds them against the finished
+  index. One difference remains: a Python call or base class that resolves through
+  another file's inherited members reads the `inherits` edges the pass has rewritten so
+  far, which one process reads in tree order and the workers in the order they finish,
+  so a few such edges can carry another confidence (the same edge, its target found by
+  another rule). A later `loom code backfill` that finds the pass owed runs it; the
+  server's own first index does not. Each worker parses in its own child, so the run holds up to N
+  times the parse memory (`LOOM_CODE_PARSE_MEMORY_MB`) plus one server process per
+  worker. Stopping the command (SIGTERM or Ctrl-C, to the command or its whole process
+  group) or killing it stops every worker inside its batch before the worker retires,
+  and a worker that fails, its retirement included, fails the command with its batch
+  named, after the command has written its own end of the run.
 - The first full backfill of a namespace also re-derives every file's edges after the
   name table is complete, so cross-file references bind (`--no-edges-second-pass` skips
-  it). `--dialect-folder-pass` lets SQL files of undecided dialect take the dialect their
-  directory agrees on.
+  it). The run records that it owes the pass before its first batch and clears the record
+  once the pass is done, so a resumed run, or a rerun after an interrupted pass, still
+  runs it. `--dialect-folder-pass` lets SQL files of undecided dialect take the dialect
+  their directory agrees on.
 - `backfill-prs` loads merged-PR history from GitHub, resumable by cursor and bounded by
   GitHub's rate limit (`LOOM_CODE_PR_BACKFILL_MONTHS`, default 12). `backfill-reviews`
   adds inline review comments, `backfill-assignees` requested reviewers, and
@@ -360,9 +414,14 @@ memory the workers process has. The full index of such a tree takes about an hou
   delta over a cap, or one that does not parse, fails the entry's pass before anything
   is applied. The caps hold as read when the delta is opened; a changed value reaches
   the next pass. A delta tier whose delta was refused over a cap, or as a link or a
-  non-regular file, holds at that commit: later passes skip the entry without running
-  the harness, its failing record stands, and a raised cap or a new branch head
-  releases it on the next pass.
+  non-regular file, holds that run: later passes skip the entry without running the
+  harness, and its failing record stands. The hold keeps the run's inputs: the window
+  (the tier's watermark to the branch head), the caps, the entry fields and settings
+  the tier's harness reads (`exclude_generated`, `scip_ts_projects`,
+  `LOOM_CODE_SCIP_TS_PATHS`, `LOOM_CODE_SCIP_DELTA_MAX_TUS`) and the Loom release. A
+  change to any of them releases it on the next pass: a raised cap, a new branch head,
+  a watermark another run moved (`loom code scip-full`, a batch apply), a changed entry
+  field or an upgrade. An indexer upgraded within one Loom release does not.
   - `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` (180 MiB) bounds the file's bytes and
     `LOOM_CODE_SCIP_DELTA_MAX_NODES` (6,000,000) its counted bytes, which bound the JSON
     values the parses build. They bound the work of a pass. Its memory is the round
@@ -860,8 +919,11 @@ uses the proxy, repository jobs are plain processes, so a compiler tier's build 
 Loom's user and can read the token file. Run compiler tiers there only for repositories
 you trust.
 
-**The CA bundles.** There are two, one for each TLS connection, and neither stands in
-for the other. `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo` (in git
+**The CA bundles.** There are three.
+`LOOM_CODE_GIT_CA_FILE` (above) is git's `http.sslCAInfo` for the remotes with no proxy,
+and through the proxy while `LOOM_CODE_GIT_PROXY_CA_FILE` is unset. The proxy's own
+certificate is always `LOOM_CODE_GIT_PROXY_TLS_CA_FILE`, never one of the other two.
+`LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo` (in git
 since release 2.27, older than the git every repository job already needs): the bundle
 git verifies an `https://` proxy's own certificate with, before it sends the identity
 and the token. Without it git checks the proxy against its default roots, so a proxy
@@ -1163,7 +1225,7 @@ the output to read.
 | compiler-tier apply fails                                                                                           | batch `failed` with the error                                                                                                                                                                                                                                                            | `loom code scip-retry <batch_id>`                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | a compiler-tier pass fails or hangs                                                                                 | the harness's timeout ends a hang, and the pass deadline (that timeout plus headroom for the git steps and the apply) cancels anything else; the entry lock is freed; a failure the pass reports (the harness's own timeout included) is recorded with its kind and fix in `tier_health` | the next pass; `workers.status` names the timeout                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | compiler-tier window base unknown (history rewritten, pruned mirror)                                                | every `scripts/scip_harness/` tier exits 3, never an empty delta; the Python, TypeScript and Go workers clear the tier's watermark                                                                                                                                                       | the next run is a full index for that tier (`code_scip_full` for C/C++)                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| a compiler-tier delta is a link, not a regular file, or oversize, or the Go harness writes more deltas than modules | the delta is refused (`FileRefused`, or `Go harness wrote more deltas than its N module(s)`) and the entry's pass fails; the watermark stays, and a refused delta holds the tier at that commit (no harness runs) until a cap or the branch head changes                                 | oversize: raise `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` and `LOOM_CODE_SCIP_DELTA_MAX_NODES` (they bound work and the path text kept); for a file entry over the round budget raise `LOOM_CODE_SCIP_DELTA_ROUND_MAX_NODES`, within the worker's memory; a file entry over the fixed character cap is named, and no setting changes that cap: the file it indexes is what to split; a link, a non-regular file or extra deltas keep the failure until the repository changes or the entry is removed |
+| a compiler-tier delta is a link, not a regular file, or oversize, or the Go harness writes more deltas than modules | the delta is refused (`FileRefused`, or `Go harness wrote more deltas than its N module(s)`) and the entry's pass fails; the watermark stays; a `FileRefused` delta holds the tier (no harness runs) until an input of its run changes (above), extra deltas rerun every pass            | oversize: raise `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` and `LOOM_CODE_SCIP_DELTA_MAX_NODES` (they bound work and the path text kept); for a file entry over the round budget raise `LOOM_CODE_SCIP_DELTA_ROUND_MAX_NODES`, within the worker's memory; a file entry over the fixed character cap is named, and no setting changes that cap: the file it indexes is what to split; a link, a non-regular file or extra deltas keep the failure until the repository changes or the entry is removed |
 | GitHub rate limit                                                                                                   | the pass ends, cursor unmoved                                                                                                                                                                                                                                                            | the next pass                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | branch force-pushed (watermark no longer an ancestor)                                                               | watermark reset to the new head, logged                                                                                                                                                                                                                                                  | `loom code backfill` to re-derive                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | weekly graph stats fail                                                                                             | last week's ranks keep serving                                                                                                                                                                                                                                                           | the next weekly pass                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |

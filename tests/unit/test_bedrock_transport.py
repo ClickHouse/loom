@@ -18,7 +18,10 @@ from server.llm import customer
 from server.settings import settings
 
 
-def test_signing_reads_refreshable_credentials_for_each_request(monkeypatch):
+@pytest.mark.parametrize(
+    "operation,suffix", [("converse", "converse"), ("converse_stream", "converse-stream")]
+)
+def test_signing_reads_refreshable_credentials_for_each_request(monkeypatch, operation, suffix):
     span = Mock()
     monkeypatch.setattr("opentelemetry.trace.get_current_span", lambda: span)
     credentials = Mock()
@@ -35,13 +38,13 @@ def test_signing_reads_refreshable_credentials_for_each_request(monkeypatch):
         "modelId": "us.anthropic.example:0",
         "messages": [{"role": "user", "content": [{"text": "hello"}]}],
     }
-    first = bedrock._signed("converse", payload, {}, "us-east-1")
-    second = bedrock._signed("converse", payload, {}, "us-east-1")
+    first = bedrock._signed(operation, payload, {}, "us-east-1")
+    second = bedrock._signed(operation, payload, {}, "us-east-1")
     assert "example-one/" in first[2]["Authorization"]
     assert "example-two/" in second[2]["Authorization"]
     assert first[2]["X-Amz-Security-Token"] == "token-one"
     assert second[2]["X-Amz-Security-Token"] == "token-two"
-    assert first[0].endswith("/model/us.anthropic.example%3A0/converse")
+    assert first[0].endswith(f"/model/us.anthropic.example%3A0/{suffix}")
     assert "modelId" not in json.loads(first[1])
     assert credentials.get_frozen_credentials.call_count == 2
     span.set_attributes.assert_called_with(
@@ -53,7 +56,8 @@ def test_signing_reads_refreshable_credentials_for_each_request(monkeypatch):
     )
 
 
-def test_private_identity_headers_are_filtered_before_signing(monkeypatch):
+@pytest.mark.parametrize("operation", ["converse", "converse_stream"])
+def test_private_identity_headers_are_filtered_before_signing(monkeypatch, operation):
     credentials = Mock()
     credentials.get_frozen_credentials.return_value = ReadOnlyCredentials(
         "example", "not-a-real-key", None
@@ -64,7 +68,7 @@ def test_private_identity_headers_are_filtered_before_signing(monkeypatch):
     monkeypatch.setattr(bedrock, "_connection", lambda region: connection)
     monkeypatch.setattr(settings, "inference_identity_headers_json", '{"X-Identity":"{subject}"}')
     _, _, headers = bedrock._signed(
-        "converse", {"modelId": "model"}, {"X-Identity": "private", "X-Customer": "org"}, ""
+        operation, {"modelId": "model"}, {"X-Identity": "private", "X-Customer": "org"}, ""
     )
     assert "X-Identity" not in headers
     assert headers["X-Customer"] == "org"

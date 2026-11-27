@@ -232,8 +232,8 @@ class CodeIndexStatusOutput(BaseModel):
     unit_risk_rows: int = 0
     # The newest risk-table stamp (ISO-8601 UTC); '' when no row is written.
     unit_risk_at: str = ""
-    # Live chunks, those carrying a vector, and their ratio (0..1; reference fixtures
-    # unembedded by design are outside the denominator). Below
+    # Live chunks, those carrying a vector, and their ratio (0..1; rows unembedded by design,
+    # reference fixtures and `embed_exclude` paths, are outside the denominator). Below
     # LOOM_CODE_READY_EMBED_COVERAGE the search is lexical-only and code.search says so.
     chunks_total: int = 0
     # Live chunks that carry an embedding vector.

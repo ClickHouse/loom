@@ -149,13 +149,15 @@ def test_a_failed_retrieval_is_not_saved_as_a_continuation(
     monkeypatch.setattr(handler, "_search_params_hash", lambda *args: "params")
     monkeypatch.setattr(search_cursor, "put_pool", lambda *args, **kwargs: stored.append(args))
     monkeypatch.setattr(search_cursor, "encode", lambda **kwargs: "cursor")
+    inp = CodeSearchInput(query="how are queries executed")
     cursor = handler._issue_search_cursor(
-        CodeSearchInput(query="how are queries executed"),
+        inp,
         "org",
         "namespace",
         result,
         run_id="trace",
         embedding_model="embedder",
         indexed_commit="c" * 40,
+        scope=handler._scope_of(inp),
     )
     assert cursor == "" and stored == []

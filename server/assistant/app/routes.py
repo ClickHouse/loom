@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.requests import ClientDisconnect
 
-from server.assistant.app import bridge, citations, service
+from server.assistant.app import runtime, service
 from server.auth.authz import check_acted_for
 from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.context import set_current_auth
@@ -41,7 +41,7 @@ from server.core.ratelimit import admit_route
 from server.identity.app.caller_home import default_namespace
 from server.identity.app.restricted_access import note_restricted_access
 from server.identity.app.traffic_class_registry import classify
-from server.observability import cost_accumulator, sli
+from server.observability import cost_accumulator, genai, sli
 from server.observability.budgets import effective_budget_ms
 from server.observability.ledger import emit_agent_event
 from server.observability.run_context import set_ledger_run
@@ -97,6 +97,16 @@ class _Row:
         with request_work.bind(self.work):
             self._write(error)
 
+    def bind_identity(self, auth: AuthInfo, org: str, namespace: str) -> None:
+        self.org, self.namespace = org, namespace
+        genai.set_identity(
+            org=org,
+            namespace=namespace,
+            session_id=auth.session_id,
+            operation=runtime.ASSISTANT_OP,
+            capture_level="off",
+        )
+
     def _write(self, error: BaseException | None) -> None:
         if self.written:
             return
@@ -114,7 +124,7 @@ class _Row:
         try:
             slo_class, budget_ms = _sli()
             emit_agent_event(
-                op_name=bridge.ASSISTANT_OP,
+                op_name=runtime.ASSISTANT_OP,
                 identity={
                     "org": self.org,
                     "namespace": self.namespace or "-",
@@ -148,7 +158,7 @@ async def _classify(auth: AuthInfo, org: str, namespace: str, payload: Any) -> N
     try:
         cls, source = await classify(auth, org, namespace, payload)
     except Exception as e:  # noqa: BLE001 — FAILS OPEN: classification never refuses a call
-        fail_open.note("traffic_class", bridge.ASSISTANT_OP, e)
+        fail_open.note("traffic_class", runtime.ASSISTANT_OP, e)
         cls, source = "interactive", "default"
     set_current_traffic_class(cls, source)
 
@@ -158,7 +168,7 @@ def _sli() -> tuple[str, int]:
     (`transport._common.sli_columns`), so the route's rows and the op's fall in one."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
-    op = OPERATIONS_BY_NAME[bridge.ASSISTANT_OP]
+    op = OPERATIONS_BY_NAME[runtime.ASSISTANT_OP]
     admin = op.required_role >= Role.ADMIN
     slo = sli.slo_class(op.name, writes=not op.read_only, admin=admin)
     return slo, effective_budget_ms(op.name, op.budget_p99_ms)
@@ -168,9 +178,9 @@ class _Held:
     """What one admitted answer holds until its response ends: its slot in this web
     process, one of the org's in-flight slots, and its row."""
 
-    def __init__(self, ticket: bridge.Ticket, row: _Row, slots: contextlib.ExitStack) -> None:
+    def __init__(self, ticket: runtime.Ticket, row: _Row, slots: contextlib.ExitStack) -> None:
         self.ticket, self.row, self.slots = ticket, row, slots
-        self.answer = bridge.Answer(mirrored=ticket.mirrored)
+        self.answer = runtime.Answer(mirrored=ticket.mirrored)
         self.finished = False  # the stream reached its end, or its error event
 
     def close(self, error: BaseException | None) -> None:
@@ -196,12 +206,7 @@ class _AnswerStream(StreamingResponse):
         self.held = held
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        lifetime = (
-            request_tail.streaming_scope()
-            if self.held.ticket.mirrored
-            else contextlib.nullcontext()
-        )
-        async with lifetime:
+        async with request_tail.streaming_scope():
             await self._serve(scope, receive, send)
 
     async def _serve(self, scope: Any, receive: Any, send: Any) -> None:
@@ -251,7 +256,7 @@ async def chat_completions(request: Request) -> Any:
         set_current_auth(auth)
         bind_claimed_class(auth)  # a refusal's row carries the token's class claim
         row.auth = auth
-        bridge.refuse_org_wide(auth)  # before anything reads under the org
+        runtime.refuse_org_wide(auth)  # before anything reads under the org
         try:
             payload = await request.json()
         except ValueError as e:
@@ -262,22 +267,22 @@ async def chat_completions(request: Request) -> Any:
         namespace = row.namespace or await default_namespace(auth, org)
         if not namespace:
             raise ValidationError("name a namespace (X-Loom-Namespace)")
-        row.org, row.namespace = org, namespace
-        messages = bridge.admitted_messages(payload.get("messages"))
+        row.bind_identity(auth, org, namespace)
+        messages = runtime.admitted_messages(payload.get("messages"))
         await check_acted_for(auth, org)
-        await bridge.authorize(auth, org, namespace)
+        await runtime.authorize(auth, org, namespace)
         await _classify(auth, org, namespace, payload)
         # Drawn once the caller is authorized and before any cost check, as the op
         # transport draws them; the org's in-flight slot too, before a token is minted.
         admit_route(
-            bridge.ASSISTANT_OP,
+            runtime.ASSISTANT_OP,
             namespace,
             org=org,
             actor=auth.subject,
             traffic_class=current_traffic_class(),
         )
         slots.enter_context(tenant_slots.hold(org))
-        ticket = await bridge.open_answer(auth, org, namespace)
+        ticket = await runtime.open_answer(auth, org, namespace)
     except (LoomServerError, HTTPException, PermissionError) as e:
         slots.close()
         refused = _refusal(e)
@@ -291,7 +296,7 @@ async def chat_completions(request: Request) -> Any:
     held = _Held(ticket, row, slots)
     try:
         await note_restricted_access(
-            auth, op=bridge.ASSISTANT_OP, org=org, namespace=namespace, transport="http"
+            auth, op=runtime.ASSISTANT_OP, org=org, namespace=namespace, transport="http"
         )
     except BaseException as e:
         held.close(e)
@@ -299,26 +304,34 @@ async def chat_completions(request: Request) -> Any:
     # Only a streamed answer sends its steps and the end of its text while it runs (a whole
     # one sends neither).
     if payload.get("stream"):
-        chunks = bridge.stream(ticket, messages, held.answer, live=True)
+        chunks = runtime.stream(ticket, messages, held.answer, live=True)
         return _AnswerStream(_streamed(chunks, held), held)
-    return await _whole(bridge.stream(ticket, messages, held.answer), held)
+    return await _whole(runtime.stream(ticket, messages, held.answer), held)
 
 
 async def _streamed(chunks: AsyncIterator[bytes], held: _Held) -> AsyncIterator[bytes]:
     try:
-        async for chunk in chunks:
+        while True:
+            # A disconnect can close this iterator from another task. Finish the
+            # publication context before yielding control to the response sender.
+            with request_tail.publication_group() as publication:
+                try:
+                    chunk = await anext(chunks)
+                except StopAsyncIteration:
+                    break
+                publication.commit()
             if chunk == b"data: [DONE]\n\n":
                 await chunks.aclose()  # type: ignore[attr-defined]
                 held.close(None)
-                await request_tail.settle_current()
+                await request_tail.publish_current()
             yield chunk
     except LoomServerError as e:
-        # The status is sent: LibreChat's failure goes out as an error event, and on the row.
+        # Headers are sent: the error event and the row carry the runtime failure.
         await chunks.aclose()  # type: ignore[attr-defined]
         held.close(e)
         await request_tail.settle_current()
         held.finished = True
-        yield bridge.error_event(e)
+        yield runtime.error_event(e)
         return
     finally:
         await chunks.aclose()  # type: ignore[attr-defined]
@@ -328,14 +341,16 @@ async def _streamed(chunks: AsyncIterator[bytes], held: _Held) -> AsyncIterator[
 async def _whole(chunks: AsyncIterator[bytes], held: _Held) -> JSONResponse:
     answer = held.answer
     error: BaseException | None = None
-    try:
-        async for _ in chunks:
-            pass
-    except BaseException as e:
-        error = e
-        raise
-    finally:
-        held.close(error)
+    with request_tail.publication_group() as publication:
+        try:
+            async for _ in chunks:
+                pass
+        except BaseException as e:
+            error = e
+            raise
+        finally:
+            held.close(error)
+        publication.commit()
     return JSONResponse(
         {
             **({"mirrored": True} if answer.mirrored else {}),
@@ -364,4 +379,6 @@ async def _whole(chunks: AsyncIterator[bytes], held: _Held) -> JSONResponse:
 
 def attach(app: Any) -> None:
     app.include_router(router)
-    citations.set_app(app)  # each citation is checked through Loom's own routes
+    from server.assistant.app import tools
+
+    tools.set_app(app)

@@ -48,6 +48,7 @@ class _Repo:
                 "summary": "card",
                 "embedding": [0.1],
                 "pagerank": 0.1,
+                "version": 7,
             }
             for p in paths
         ]
@@ -103,3 +104,58 @@ def _async(value: Any) -> Any:
         return value
 
     return f
+
+
+def test_rank_write_does_not_restore_a_card_retired_after_the_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ranks leg reads a live card, then a tombstone lands before the rank
+    copy is inserted. Both rows share one ReplacingMergeTree key and FINAL keeps
+    the higher version, so the rank copy must sit just above the card it read,
+    not at the clock: the tombstone has to win."""
+    from server.code.domain.index import pagerank as pr
+    from server.code.store import index as code_repo
+    from server.code.store.index import CodeRepo
+
+    live_version = 1_000
+    store: list[dict[str, Any]] = []
+
+    class Repo(_Repo):
+        async def live_file_cards(
+            self, org: str, ns: str, model: str, paths: list[str]
+        ) -> list[dict[str, Any]]:
+            live = {
+                "scope_path": "src/b.cpp",
+                "scope_type": "file",
+                "summary": "card",
+                "version": live_version,
+                "pagerank": 0.1,
+            }
+            # the file changed meanwhile: its card is retired after this read
+            store.append(CodeRepo.tombstone_of("code_summaries", live))
+            return [live]
+
+        async def insert_rows(self, table: str, rows: list[dict[str, Any]]) -> None:
+            store.extend(rows)
+
+    class Cls:
+        def __new__(cls, *a: Any, **k: Any) -> Repo:
+            return Repo()
+
+        tombstone_of = staticmethod(CodeRepo.tombstone_of)
+
+    monkeypatch.setattr(code_repo, "CodeRepo", Cls)
+    monkeypatch.setattr(w, "_git_head", _async(""))
+    monkeypatch.setattr(pr, "pagerank", lambda edges: {"src/a.cpp": 0.5, "src/b.cpp": 0.9})
+    monkeypatch.setattr(pr, "degrees", lambda edges: {"src/a.cpp": (0, 1), "src/b.cpp": (1, 0)})
+    monkeypatch.setattr(
+        "server.embedding.embedder.get_embedder", lambda: SimpleNamespace(model_name="m")
+    )
+    asyncio.run(w._run_repo("o", "n", w.CodeGraphStatsResult()))
+    rank_row = next(
+        r for r in store if r["scope_path"] == "src/b.cpp" and r["tombstoned_at"] is None
+    )
+    assert rank_row["pagerank"] == 0.9 and rank_row["version"] == live_version + 1
+    card = [r for r in store if r["scope_path"] == "src/b.cpp"]
+    kept = max(card, key=lambda r: r["version"])  # what FINAL serves
+    assert kept["tombstoned_at"] is not None, "the rank write restored a retired card"

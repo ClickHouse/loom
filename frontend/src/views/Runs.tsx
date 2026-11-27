@@ -782,7 +782,7 @@ export function Runs() {
         >
           {RUN_FILTERS.map((f) => (
             <Select.Item key={f || ALL_STATUSES} value={f || ALL_STATUSES}>
-              {f ? STATUS_META[f].label : "Every status"}
+              {f ? STATUS_META[f].label : "Status"}
             </Select.Item>
           ))}
         </Select>
@@ -801,7 +801,7 @@ export function Runs() {
           triggerProps={{ "aria-label": "Agent" }}
           className={phone ? "min-w-0 flex-1" : "w-44 shrink-0"}
         >
-          <Select.Item value={ALL_AGENTS}>Every agent</Select.Item>
+          <Select.Item value={ALL_AGENTS}>{phone ? "Agent" : "Every agent"}</Select.Item>
           {agents.map((a) => (
             <Select.Item key={a} value={a}>
               {displayAgent(a)}
@@ -817,7 +817,7 @@ export function Runs() {
   const viewMenu = (
     <Dropdown modal={false}>
       <MenuTrigger>
-        {/* An icon: with a word beside them the two selects cut their values ("Every s…"). */}
+        {/* The compact menu leaves space for the status and agent filters. */}
         <IconButton
           icon="eye"
           label="View"
@@ -849,24 +849,20 @@ export function Runs() {
     <PageContainer>
       <PageHeader
         title="Runs"
+        description={ABOUT}
         actions={
-          // On a phone the description waits behind the info button, so the runs start
-          // higher; the top bar already names the namespace.
-          phone && <IconButton icon="info-in-circle" size="sm" label="About runs" tooltip={`${ABOUT} ${ABOUT_MORE}`} />
+          <IconButton
+            icon="info-in-circle"
+            size="sm"
+            label="About runs"
+            tooltip={phone ? `${ABOUT} ${ABOUT_MORE}` : ABOUT_MORE}
+          />
         }
       >
         <span className="hidden sm:contents">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </span>
       </PageHeader>
-      {/* The icon sits beside the sentence's box, so a wrapped sentence never strands it. */}
-      {!phone && (
-        <div className="mb-4 flex items-start gap-1">
-          <p className="max-w-[72ch] text-sm text-text-muted">{ABOUT}</p>
-          <IconButton icon="info-in-circle" size="sm" label="About runs" tooltip={ABOUT_MORE} />
-        </div>
-      )}
-
       <ListToolbar label="Search and filters" count={count}>
         <ListToolbarSearch>
           <DraftSearch

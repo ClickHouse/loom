@@ -1517,9 +1517,11 @@ and drops a hit of any other, so every excerpt is the bound namespace's. The
 `loom.code_answers` row of such an answer carries `memory_namespace` and the excerpts'
 `memory_keys`: a fact's own key, a chunk's parent fact key. Its `namespace` is the code
 namespace the question was asked in. The `code_answers.delete` step deletes every version
-of the rows whose `memory_namespace` is an erased namespace or whose `memory_keys` hold
-one of an erased user's keys, tombstones included, since a tombstone version mirrors the
-text; `memory.redact` deletes the rows that hold the redacted key.
+of the rows whose `namespace` or `memory_namespace` is an erased namespace (an answer asked
+in an erased code namespace quotes its repository's code, whatever memory it quoted) or
+whose `memory_keys` hold one of an erased user's keys, tombstones included, since a
+tombstone version mirrors the text; `memory.redact` deletes the rows that hold the redacted
+key.
 
 An answer is memoized only when its memory namespace is in the asking org and every
 excerpt is a fact the user's keys reach or a chunk with a parent key, so these predicates
@@ -1531,16 +1533,20 @@ one whose search could not read a fact's tags (`retrieval_work.tags_unread`). No
 cached while an erasure of the org had not completed when the ask began, or completed
 since (`ledger_reads.unfinished_since`): that saga's `code_answers.delete` step may
 already have passed. A failed erasure holds this until it completes, so while one waits
-for `erasure_recovery` or a re-verify, no answer of the org that quoted memory is cached;
+for `erasure_recovery` or a re-verify, no answer of the org is cached, an abstain's
+negative entry included, which holds the question;
 a census that counts an answer whose own delete has not landed yet fails it that way.
 Nor is one that quoted a key with a redacted version, ever, since a stamp does not say
 when the redact finished scrubbing; every user's profile shares a profile key. An
 erasure registers its request, and a redact stamps the version, before either deletes the
 cached answers, so code.ask reads both again after storing an answer and, finding
-either, tombstones it and deletes the answers quoting its keys; a process killed between
-the two leaves the answer unchecked. A tombstone of an entry
-keeps no answer text, so one written after such a delete brings nothing back. Answers
-drawn from the code index alone name no memory and stay.
+either, tombstones it and deletes the answers quoting its keys; an answer that quoted no
+memory is only checked against the erasure ledger, and is deleted by its own key. A
+process killed between the two leaves the answer unchecked. A tombstone of an entry
+keeps no answer text, only the question, which a namespace erasure's census counts until its delete runs again. Answers
+drawn from the code index alone name no memory: a redact or a user erasure leaves them,
+and a namespace erasure deletes them with the code namespace they were asked in; its
+census counts every version that holds an answer, citations or a question.
 
 An answer or tombstone written by a build before the columns existed names nothing, and so
 does a tombstone that build writes of a stamped entry while both builds serve; an erasure

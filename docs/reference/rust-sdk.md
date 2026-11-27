@@ -18,6 +18,9 @@ crates.io installation. The SDK source supports Rust 1.84+, but resolved
 dependencies can require a newer toolchain. The library leaves dependency locking
 to the application; commit your application's `Cargo.lock`.
 
+The client speaks HTTP/2 to an `https` address, negotiating it over ALPN with a
+fallback to HTTP/1.1, and HTTP/1.1 to a plain `http` address.
+
 The crate has an independent version in its
 [manifest](https://github.com/ClickHouse/loom/blob/main/sdk/rust/Cargo.toml).
 Use [docs.rs](https://docs.rs/clickhouse-loom) for the API of a published version,
@@ -130,6 +133,29 @@ objects. Known operations retain generated identity and retry policies.
 Unknown operations receive bound org and namespace, and retry only connection
 failures before dispatch. The server authorizes every call.
 
+## Routes outside the op registry
+
+`request` and `request_json` reach the routes the operation registry does not
+hold, such as `/v1/whoami` and `/v1/knowledge.upload`. A `RouteRequest` carries
+the method, a path on the server the client is bound to, query parameters and
+a JSON or raw body, all sent as given:
+
+```rust
+use clickhouse_loom::RouteRequest;
+use serde_json::{json, Value};
+
+let chosen: Value = client
+    .request_json(RouteRequest::post("/v1/me/set-default-namespace").json(&json!({"namespace": "eng"})))
+    .await?;
+```
+
+`request` returns the status, headers and bytes of a response below 400.
+`request_json` decodes the body as the requested type. A status of 400 or
+higher is `Error::Api`. The SDK resends on a 429 after the server's hint and
+within the client's pacing budget. A refused HTTP/2 stream returns
+`Error::Transport` without a retry. See the
+[route contract](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md#routes-outside-the-op-registry).
+
 ## Call options, errors and retries
 
 Methods return typed responses and `Error`. Their `*_with_options` variants,
@@ -209,8 +235,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The blocking client owns a runtime thread and offers the same generated
-operations and call options. Call it from an ordinary OS thread. Calling
-from a thread entered into Tokio returns `Error::Configuration`.
+operations, call options and routes outside the op registry. Call it from an
+ordinary OS thread. Calling from a thread entered into Tokio returns
+`Error::Configuration`.
 
 ## Capabilities and examples
 

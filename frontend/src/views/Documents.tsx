@@ -1007,9 +1007,9 @@ export function Documents() {
   }, [canFindPassages]);
   const passagesToggle = (className: string) => (
     <Button
-      type="empty"
+      type="secondary"
       htmlType="button"
-      iconLeft={passagesOpen ? "chevron-down" : "chevron-right"}
+      iconLeft={passagesOpen ? "chevron-down" : "search"}
       className={className}
       aria-expanded={passagesOpen}
       aria-controls={passagesOpen ? PASSAGES_PANEL_ID : undefined}
@@ -1487,6 +1487,7 @@ export function Documents() {
     <PageContainer>
       <PageHeader
         title="Library"
+        description={collection === null ? "Browse documents and find the passages your agents can cite." : undefined}
         tab={all ? "All documents" : placeTitle(shown, repeated, ownShelf && !resolving ? picked.namespace : null)}
         actions={
           <>
@@ -1636,7 +1637,7 @@ export function Documents() {
           under it. */}
       <div className="-mt-1 mb-3 flex items-center justify-end gap-2 sm:hidden">
         {canFindPassages && passagesToggle("mr-auto")}
-        {sortSelect("w-40")}
+        {sortSelect("w-32 shrink sm:w-40")}
       </div>
       {scopeLine}
       {readNotes}

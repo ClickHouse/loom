@@ -172,7 +172,11 @@ def test_another_namespace_is_named_per_call() -> None:
 
 
 def test_an_error_event_after_the_text_raises_the_typed_error() -> None:
-    error = {"code": "ASSISTANT_UPSTREAM_FAILED", "message": "LibreChat failed", "status": 503}
+    error = {
+        "code": "ASSISTANT_UPSTREAM_FAILED",
+        "message": "the native provider failed",
+        "status": 503,
+    }
     body = _sse(_chunk("Deploys "), {"error": error})
     seen: list[Any] = []
 
@@ -189,7 +193,11 @@ def test_an_error_event_after_the_text_raises_the_typed_error() -> None:
 
 @pytest.mark.parametrize("status", [None, "busy", 0])
 def test_an_error_event_without_a_readable_status_raises_as_a_503(status: Any) -> None:
-    error = {"code": "ASSISTANT_UPSTREAM_FAILED", "message": "LibreChat failed", "status": status}
+    error = {
+        "code": "ASSISTANT_UPSTREAM_FAILED",
+        "message": "the native provider failed",
+        "status": status,
+    }
     body = _sse(_chunk("Deploys "), {"error": error})
     with pytest.raises(BackendUnavailable) as caught:
         _collect(_agent(lambda r: httpx.Response(200, content=body)))

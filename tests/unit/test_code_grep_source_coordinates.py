@@ -16,6 +16,7 @@ from server.code.app.grep_source import (
     verify_complete_contexts,
 )
 from server.code.app.symbol.uses import _uses_lines
+from server.code.domain.search_scope import SearchScope
 from server.code.store.index import CodeRepo
 
 
@@ -238,27 +239,38 @@ async def test_cursor_does_not_recover_across_mixed_source_revisions(
     )
     assert first == {"contexts": [], "contexts_partial": True}
 
-    async def pool(*_):
-        return {
-            "payload": {
-                "line_mapping": grep._GREP_LINE_MAPPING_VERSION,
-                "matches": hits,
-                "match_commits": list(commits.values()),
-                "context_source": source,
-            }
-        }
+    stored = {}
+
+    async def pool(org, ns, key, fields):
+        return {"payload": stored[key]}
 
     async def empty(*_, **__):
         return {}
 
-    monkeypatch.setattr(search_cursor, "decode", lambda *_, **__: {"o": 1, "r": "pool"})
-    monkeypatch.setattr(search_cursor, "expired", lambda _: False)
+    monkeypatch.setattr(search_cursor, "enabled", lambda: True)
+    monkeypatch.setattr(
+        search_cursor, "put_pool", lambda org, ns, key, payload, **_: stored.update({key: payload})
+    )
     monkeypatch.setattr(grep, "_read_pool_settling", pool)
     monkeypatch.setattr(grep, "definitions_for", empty)
     monkeypatch.setattr(grep, "index_as_of", empty)
     monkeypatch.setattr(grep, "schedule_code_trace", lambda **_: None)
+    scope = SearchScope()
+    cursor = grep._issue_grep_cursor(
+        query,
+        "org",
+        "ns",
+        hits,
+        served=1,
+        run_id="pool",
+        chunks_matched=2,
+        truncated=False,
+        context_source=source,
+        match_commits=commits,
+        scope=scope,
+    )
     second, _, offset = await grep._serve_grep_page(
-        query.model_copy(update={"cursor": "pool"}), "org", "ns", repo, "grep", 0
+        query.model_copy(update={"cursor": cursor}), "org", "ns", repo, "grep", 0, scope=scope
     )
     assert offset == 1
     assert second is not None and second.matches == hits[1:]

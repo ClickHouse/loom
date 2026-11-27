@@ -598,6 +598,7 @@ async def test_a_failed_worker_pass_shows_a_viewer_its_kind_not_its_text(
         index_status._ledger_passes_cache.clear()
     assert out.workers["code_pr_history"].last_error == "RuntimeError"
     assert "AS last_error_class," in _Ledger.sql and "AS last_error," not in _Ledger.sql
+    assert "Index workers reporting errors: code_pr_history." not in out.quality_warnings
 
     async def _none(days: int = 14):
         return {}

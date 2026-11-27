@@ -2,6 +2,7 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { sampleCpuPair } from "./cpu-linearity.mjs";
 import { envNumber, envSwitch, normalizePayload } from "../lib/loom-client.mjs";
 
 test("a Claude Code payload passes through unchanged", () => {
@@ -148,15 +149,7 @@ test("redaction is linear: the same bytes cost the same in 80 KB outputs as in 1
     const wallStart = performance.now();
     const first = Math.min(cpuMs(largeText, 1), performance.now() - wallStart);
     assert.ok(first < 200, `${name}: one 80 KB redaction took ${first.toFixed(1)} ms`);
-    let n = 1;
-    while (cpuMs(smallText, 8 * n) < 100) n *= 2;
-    // The best of three each, interleaved, for what noise is left.
-    let small = Infinity;
-    let large = Infinity;
-    for (let round = 0; round < 3; round++) {
-      small = Math.min(small, cpuMs(smallText, 8 * n));
-      large = Math.min(large, cpuMs(largeText, n));
-    }
+    const { n, small, large } = sampleCpuPair(cpuMs, smallText, largeText);
     const shown = `${name}: ${n} x 80 KB took ${large.toFixed(1)} ms, ${8 * n} x 10 KB ${small.toFixed(1)} ms`;
     assert.ok(large < 3 * small, shown);
   }

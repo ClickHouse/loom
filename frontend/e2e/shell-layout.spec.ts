@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installApi, ROUTES } from "./fixtures";
+import { installApi, NAMESPACE, ROUTES } from "./fixtures";
 
 // The shell scrolls only its content: the header, sidebar and phone nav stay put, so the
 // document itself never scrolls, on any route, at either width. Each route's title and
@@ -53,7 +53,7 @@ for (const width of [1400, 375]) {
           })),
         );
         for (const t of tabs) expect(t).toEqual({ inside: true, wrapped: [] });
-        // Every page is titled by PageHeader: a 20 px h1 with no icon.
+        // The title uses Click UI's large product heading on desktop and compact heading on phones.
         const title = await page
           .locator(PAGE)
           .locator("h1")
@@ -63,7 +63,7 @@ for (const width of [1400, 375]) {
             icon: !!h.querySelector("svg"),
             size: getComputedStyle(h).fontSize,
           }));
-        expect(title).toEqual({ header: true, icon: false, size: "20px" });
+        expect(title).toEqual({ header: true, icon: false, size: width >= 768 ? "32px" : "20px" });
       });
     }
   });
@@ -86,4 +86,19 @@ test("headings use Click UI's title type, the xl step at 27 px", async ({ page }
     return out;
   });
   expect(type).toEqual({ h1: "700 20px/30px", h2: "700 18px/27px", h3: "600 16px/24px", xl: "27px" });
+});
+
+test("an organization name fits in the page scope at 320 px", async ({ page }) => {
+  const org = "platformarchitectureworkflowintegrationsecurityengineeringteams";
+  await page.setViewportSize({ width: 320, height: 800 });
+  await installApi(page);
+  await page.route("**/v1/whoami", (route) =>
+    route.fulfill({ json: { authenticated: true, org, namespaces: [NAMESPACE], roles: ["PLATFORM_ADMIN"] } }),
+  );
+  await page.goto("/repositories");
+  const scope = page.locator("main [data-page-header]").getByText(org, { exact: true });
+  await expect(scope).toBeVisible();
+  const box = await scope.boundingBox();
+  expect(box && box.x + box.width).toBeLessThanOrEqual(320);
+  expect(await page.locator("main").evaluate((el) => el.scrollWidth)).toBeLessThanOrEqual(320);
 });
