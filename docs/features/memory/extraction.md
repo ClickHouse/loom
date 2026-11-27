@@ -82,16 +82,16 @@ session in the repository can reuse without reading the code again is kept:
   definition;
 - the cause of a bug in the code as it was before the session's edits.
 
-Each claim names its definitions in backticks beside their file paths and carries no line
-numbers, so the [code link pass](../../use-cases/memory-linked-to-code.md) links it and
-marks it when that code changes. What the session itself edited or added is left out:
-until it is committed it exists in one working tree, and the commit history records it
-afterwards. The task, test results and anything one lookup answers (where a single name is
-defined, what one function's text says) are left out too. A session that established
-nothing reusable writes no facts: the extractor is not asked again, and the coverage sweep
-reads the session only when the namespace or the call turns it on. `loom.verify_durable`
-judges what remains by the same rules. A trajectory replay is extracted under its own
-instructions and verified without the codebase rules.
+The rules ask for each claim to name its definitions in backticks beside their file paths,
+without line numbers: those names and paths are what the
+[code link pass](../../use-cases/memory-linked-to-code.md) links a memory by. What the
+session itself edited or added is left out: until it is committed it exists in one working
+tree, and the commit history records it afterwards. The task, test results and anything
+one lookup answers (where a single name is defined, what one function's text says) are
+left out too. An empty fact list from a session capture is an answer: the extractor is not
+asked again, and the coverage sweep reads the capture only when the namespace or the call
+turns it on. `loom.verify_durable` judges what remains by the same rules. A trajectory
+replay is extracted under its own instructions and verified without the codebase rules.
 
 ## Rules the assistant states about itself
 

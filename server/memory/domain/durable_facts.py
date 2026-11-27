@@ -162,13 +162,15 @@ _VAGUE = [
 
 _SOURCE_EXT = r"\.(?:py|ts|tsx|js|mjs|go|rs|cpp|h|hpp)\b"
 # The subject of a fact that is one code location: text with no comma, sentence
-# break, backtick or source path in it. The path's length is bounded so that a
-# long run of slashes is read once, not once per slash.
+# break, backtick or source path in it. The path's length is bounded, so a long
+# run of slashes is not read to its end from every slash.
 _SUBJECT_END = rf"[.;!?]\s|/[\w./-]{{0,200}}{_SOURCE_EXT}"
 _LOCATION_SUBJECT = rf"(?:(?!{_SUBJECT_END})[^,`])*"
-# The same beside a backticked name, and without the word "test": which test
-# constrains a definition is a relation, not that definition's location.
-_NAMED_SUBJECT = rf"(?:(?!{_SUBJECT_END}|\btests?\b)[^,`])*"
+# The same around a backticked name, unless it names that name's tests ("tests
+# for `name`", "`name`'s tests"): which test constrains a definition is a
+# relation, not a location.
+_BEFORE_NAME = rf"(?:(?!{_SUBJECT_END}|\btests? (?:for|of|that)\b)[^,`])*"
+_AFTER_NAME = rf"(?!['’]s (?:\w+ )?tests?\b){_LOCATION_SUBJECT}"
 
 # --- the session's own tool actions, credited to someone ----
 # Checked last, so an earlier rule keeps naming the class it names. One-shot
@@ -262,7 +264,7 @@ _SESSION_ACTION = [
         # one clause that ends at the path, with at most one backticked name
         # before it: a claim relating several definitions may say where one of
         # them is and is the verifier's to judge
-        rf"^(?:{_LOCATION_SUBJECT}|{_NAMED_SUBJECT}`{_LOCATION_SUBJECT}`{_NAMED_SUBJECT})"
+        rf"^(?:{_LOCATION_SUBJECT}|{_BEFORE_NAME}`{_LOCATION_SUBJECT}`{_AFTER_NAME})"
         r"\b(is|are|lives|live|sits) (in|at) "
         rf"`?(server|src|lib|tests?|integrations|frontend|sdk)/[\w./-]+{_SOURCE_EXT}`?[.!]?$",
     )
