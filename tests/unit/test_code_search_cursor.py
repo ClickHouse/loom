@@ -21,6 +21,7 @@ from server.code.domain.search_scope import SearchScope
 from server.code.domain.units import CodeUnit
 from server.core.errors import ValidationError
 from server.settings import settings
+from tests.unit.clock_fake import ManualClock
 
 
 @pytest.fixture(autouse=True)
@@ -259,18 +260,34 @@ def _drive(monkeypatch: pytest.MonkeyPatch, inp: CodeSearchInput, row: dict[str,
     return repo, _get_pool
 
 
+def _fixture_pool_id(inp: CodeSearchInput, run_id: str) -> str:
+    return f"{run_id}.{paging.search_scope_digest(shared._scope_of(inp))}"
+
+
+def _fixture_search_cursor(
+    inp: CodeSearchInput, *, offset: int, run_id: str = "run1", commit: str = ""
+) -> str:
+    return paging.encode(
+        kind="s",
+        run_id=_fixture_pool_id(inp, run_id),
+        offset=offset,
+        params=_ph(inp),
+        indexed_commit=commit,
+    )
+
+
 def test_page_two_is_a_point_read_with_zero_embedding_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inp = _inp(top_k=2, exclude_unit_ids=["c3"])
     ph = paging.params_hash(inp, rerank="", embedding_model="m")
-    cursor = paging.encode(kind="s", run_id="run1", offset=2, params=ph, indexed_commit="a" * 40)
+    cursor = _fixture_search_cursor(inp, offset=2, commit="a" * 40)
     row = {"payload": _payload(6), "indexed_commit": "a" * 40, "created_at": None}
     repo, get_pool = _drive(monkeypatch, inp.model_copy(update={"cursor": cursor}), row)
 
     out = asyncio.run(h.handle_code_search(inp.model_copy(update={"cursor": cursor})))
 
-    assert get_pool.keys == [("o", "n", "cursor:s:run1")]  # one point read, identity-scoped
+    assert get_pool.keys == [("o", "n", paging.pool_key("s", _fixture_pool_id(inp, "run1")))]
     assert repo.key_reads == [[("src/f2.cpp", "c2"), ("src/f4.cpp", "c4")]]  # by full key
     assert [u.unit_id for u in out.results] == ["c2", "c4"]
     assert out.results[0].body == "body of c2" and out.results[0].score == 0.98
@@ -280,13 +297,12 @@ def test_page_two_is_a_point_read_with_zero_embedding_calls(
     assert out.as_of["page_commit"] == "a" * 40
     assert out.has_more and out.next_cursor
     nxt = paging.decode(out.next_cursor, kind="s", params=ph)
-    assert nxt["o"] == 5 and nxt["r"] == "run1"
+    assert nxt["o"] == 5 and nxt["r"] == _fixture_pool_id(inp, "run1")
 
 
 def test_last_page_has_no_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
     inp = _inp(top_k=5)
-    ph = paging.params_hash(inp, rerank="", embedding_model="m")
-    cursor = paging.encode(kind="s", run_id="run1", offset=4, params=ph, indexed_commit="")
+    cursor = _fixture_search_cursor(inp, offset=4)
     row = {"payload": _payload(6), "indexed_commit": "", "created_at": None}
     _drive(monkeypatch, inp, row)
     out = asyncio.run(h.handle_code_search(inp.model_copy(update={"cursor": cursor})))
@@ -302,7 +318,7 @@ def test_small_page_budget_keeps_results_before_optional_annotations(
     monkeypatch.setattr(settings, "code_risk_annotations", True)
     monkeypatch.setattr(settings, "code_search_token_budget", budget if use_default else 0)
     inp = _inp(top_k=top_k, token_budget=None if use_default else budget)
-    cursor = paging.encode(kind="s", run_id="r", offset=1, params=_ph(inp), indexed_commit="")
+    cursor = _fixture_search_cursor(inp, offset=1)
     row = {"payload": _payload(12), "indexed_commit": "", "created_at": None}
     _drive(monkeypatch, inp, row)
     out = asyncio.run(h.handle_code_search(inp.model_copy(update={"cursor": cursor})))
@@ -333,7 +349,7 @@ def test_page_two_of_a_symbol_query_is_budgeted_as_page_one(
 
     monkeypatch.setattr(settings, "code_search_token_budget", default)
     inp = _inp(query="MergeTreeData::loadDataParts", top_k=2)
-    cursor = paging.encode(kind="s", run_id="run1", offset=2, params=_ph(inp), indexed_commit="")
+    cursor = _fixture_search_cursor(inp, offset=2)
     row = {"payload": _payload(6), "indexed_commit": "", "created_at": None}
     _drive(monkeypatch, inp, row)
     budgets: list[int] = []
@@ -363,14 +379,144 @@ def test_cursor_for_another_query_is_a_400(monkeypatch: pytest.MonkeyPatch) -> N
         asyncio.run(h.handle_code_search(inp))
 
 
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"path_globs": ["other/**"]},
+        {"exclude_globs": ["src/**"]},
+        {"langs": ["go"]},
+        {"pattern": "other"},
+        {"regex": True},
+        {"case_sensitive": True},
+    ],
+)
+@pytest.mark.parametrize("state", ["live", "missing", "expired"])
+def test_search_cursor_rejects_changed_filters_before_pool_or_research(
+    monkeypatch: pytest.MonkeyPatch, changed: dict[str, Any], state: str
+) -> None:
+    clock = ManualClock(100)
+    monkeypatch.setattr(paging, "time", clock)
+    monkeypatch.setattr(settings, "code_search_memo_ttl_s", 60)
+    inp = _inp(path_globs=["src/**"], exclude_globs=["test/**"], langs=["cpp"], pattern="needle")
+    cursor = _issue_fixture_search_cursor(monkeypatch, inp)
+    clock.advance(61 if state == "expired" else 4)
+    row = {"payload": _payload(6), "indexed_commit": "", "created_at": None}
+    repo, get_pool = _drive(monkeypatch, inp, None if state == "missing" else row)
+
+    with pytest.raises(ValidationError, match="different search filters"):
+        asyncio.run(h.handle_code_search(inp.model_copy(update={"cursor": cursor, **changed})))
+    assert get_pool.keys == [] and repo.key_reads == []
+
+
+def _issue_fixture_search_cursor(monkeypatch: pytest.MonkeyPatch, inp: CodeSearchInput) -> str:
+    from server.code.app.search import CodeSearchResult
+
+    units = [CodeUnit(unit_id=f"c{i}", path=f"src/f{i}.cpp", score=1.0) for i in range(6)]
+    result = CodeSearchResult(units=units[:2], pool=units, route="hybrid")
+    monkeypatch.setattr(paging, "put_pool", lambda *args, **kw: None)
+    return h._issue_search_cursor(
+        inp,
+        "o",
+        "n",
+        result,
+        run_id="run1",
+        embedding_model="m",
+        indexed_commit="",
+        scope=shared._scope_of(inp),
+    )
+
+
+def test_search_cursor_continues_with_equivalent_filters(monkeypatch: pytest.MonkeyPatch) -> None:
+    inp = _inp(
+        path_globs=["src/**", "test/**"], exclude_globs=["generated/**"], langs=["python", "cpp"]
+    )
+    cursor = _issue_fixture_search_cursor(monkeypatch, inp)
+    row = {"payload": _payload(6), "indexed_commit": "", "created_at": None}
+    repo, get_pool = _drive(monkeypatch, inp, row)
+    continuation = inp.model_copy(
+        update={
+            "cursor": cursor,
+            "path_globs": ["test/**", " src/** ", "test/**"],
+            "exclude_globs": [" generated/** ", "generated/**"],
+            "langs": [" CPP ", ".PY"],
+            "regex": True,
+            "case_sensitive": True,
+            "top_k": 1,
+            "token_budget": 300,
+            "bodies": "none",
+            "exclude_unit_ids": ["c2"],
+        }
+    )
+    out = asyncio.run(h.handle_code_search(continuation))
+    assert [u.unit_id for u in out.results] == ["c3"]
+    assert out.results[0].elided and out.results[0].body == ""
+    assert out.as_of["page_offset"] == 2 and "page_fallback" not in out.as_of
+    assert get_pool.keys == [("o", "n", paging.pool_key("s", _fixture_pool_id(inp, "run1")))]
+    assert repo.key_reads == [[("src/f3.cpp", "c3")]] and _Embedder.calls == 0
+
+
+@pytest.mark.parametrize("state", ["legacy", "missing", "expired"])
+def test_search_cursor_research_preserves_verified_offset(
+    monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    from server.code.app import search as service
+
+    clock = ManualClock(100)
+    monkeypatch.setattr(paging, "time", clock)
+    monkeypatch.setattr(settings, "code_search_memo_ttl_s", 60)
+    inp = _inp(path_globs=["src/**"], pattern="needle", bodies="none")
+    cursor = (
+        paging.encode(kind="s", run_id="legacy", offset=2, params=_ph(inp), indexed_commit="")
+        if state == "legacy"
+        else _issue_fixture_search_cursor(monkeypatch, inp)
+    )
+    clock.advance(4 if state == "missing" else 61)
+    _, get_pool = _drive(monkeypatch, inp, None)
+    searched: list[SearchScope] = []
+
+    async def search(*args, top_k, scope, **kwargs):
+        searched.append(scope)
+        units = [CodeUnit(unit_id=f"c{i}", path=f"src/f{i}.cpp", score=1.0) for i in range(6)]
+        return service.CodeSearchResult(units=units[:top_k], pool=units, route="hybrid")
+
+    async def thresholds(*args):
+        return (0, 0)
+
+    async def coverage_note(*args):
+        return "Index coverage note."
+
+    monkeypatch.setattr(h, "resolve_code_thresholds", thresholds)
+    monkeypatch.setattr(h, "embedding_coverage_note", coverage_note)
+    monkeypatch.setattr(h, "_search_embedder", lambda inp: (None, "m"))
+    monkeypatch.setattr(paging, "put_pool", lambda *args, **kw: None)
+    monkeypatch.setattr(service, "search", search)
+    out = asyncio.run(h.handle_code_search(inp.model_copy(update={"cursor": cursor})))
+    offset = 0 if state == "legacy" else 2
+    expected_fallback = {
+        "legacy": "search_scope_unrecorded",
+        "missing": "pool_not_found",
+        "expired": "expired",
+    }
+    assert out.as_of["page_offset"] == offset
+    assert out.as_of["page_fallback"] == expected_fallback[state]
+    assert [u.unit_id for u in out.results] == [f"c{offset}", f"c{offset + 1}"]
+    assert searched == [shared._scope_of(inp)]
+    assert len(get_pool.keys) == (1 if state == "missing" else 0)
+    assert out.note.startswith("Index coverage note.")
+    assert ("Pagination restarted" in out.note) is (state == "legacy")
+    assert out.next_cursor
+    reissued = paging.decode(out.next_cursor, kind="s", params=_ph(inp))
+    assert reissued["o"] == offset + 2
+    assert reissued["r"].endswith(f".{paging.search_scope_digest(shared._scope_of(inp))}")
+
+
 @pytest.mark.parametrize("budget", [None, 0, 3000, 20000])
 def test_missing_pool_row_falls_back_to_a_disclosed_research(
     monkeypatch: pytest.MonkeyPatch, budget: int | None
 ) -> None:
     monkeypatch.setattr(settings, "code_search_token_budget", 0)
     inp = _inp(top_k=2, token_budget=budget)
-    ph = paging.params_hash(inp, rerank="", embedding_model="m")
-    cursor = paging.encode(kind="s", run_id="gone", offset=2, params=ph, indexed_commit="")
+    cursor = _fixture_search_cursor(inp, offset=2, run_id="gone")
     _drive(monkeypatch, inp, None)
     seen: list[CodeSearchInput] = []
 
@@ -420,10 +566,11 @@ def test_issue_skips_abstain_symbol_routes_and_exhausted_pools(
     units = [CodeUnit(unit_id=f"c{i}", path=f"p{i}", score=1.0, body="b") for i in range(6)]
     res = CodeSearchResult(units=units[:2], pool=units, route="hybrid")
     inp = _inp(top_k=2)
+    scope = shared._scope_of(inp)
     c = h._issue_search_cursor(
-        inp, "o", "n", res, run_id="r", embedding_model="m", indexed_commit="a" * 40
+        inp, "o", "n", res, run_id="r", embedding_model="m", indexed_commit="a" * 40, scope=scope
     )
-    assert c and puts[0][0] == "cursor:s:r"
+    assert c and puts[0][0] == paging.pool_key("s", _fixture_pool_id(inp, "r"))
     assert [e["id"] for e in puts[0][1]["pool"]] == [f"c{i}" for i in range(6)]
     assert all("body" not in e for e in puts[0][1]["pool"])  # ids and headers, never bodies
     f = paging.decode(
@@ -442,6 +589,7 @@ def test_issue_skips_abstain_symbol_routes_and_exhausted_pools(
             run_id="r",
             embedding_model="m",
             indexed_commit="",
+            scope=scope,
         )
         == ""
     )
@@ -454,6 +602,7 @@ def test_issue_skips_abstain_symbol_routes_and_exhausted_pools(
             run_id="r",
             embedding_model="m",
             indexed_commit="",
+            scope=scope,
         )
         == ""
     )
@@ -466,13 +615,14 @@ def test_issue_skips_abstain_symbol_routes_and_exhausted_pools(
             run_id="r",
             embedding_model="m",
             indexed_commit="",
+            scope=scope,
         )
         == ""
     )
     monkeypatch.setattr(settings, "code_search_cursor_enabled", False)
     assert (
         h._issue_search_cursor(
-            inp, "o", "n", res, run_id="r", embedding_model="m", indexed_commit=""
+            inp, "o", "n", res, run_id="r", embedding_model="m", indexed_commit="", scope=scope
         )
         == ""
     )
