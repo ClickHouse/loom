@@ -213,8 +213,9 @@ Building the memory used about 1.5 million extraction tokens per history. The be
 counts reader and judge prompts for retrieval and only reader prompts for the whole
 history. Even with the judge prompts included for retrieval, the difference is about
 94,000 prompt tokens per question. Those averages give an estimated break-even
-of 16 questions over the same history. The benchmark used one question per history
-and did not price model calls.
+of 16 questions over the same history. The benchmark used one question per history.
+The estimate omits query embedding, reranking and answer output tokens, and does not
+price model calls.
 [With and without Loom](../benchmarks/results.md#with-and-without-loom)
 
 ## Pass a coding task's review rule to the next session
