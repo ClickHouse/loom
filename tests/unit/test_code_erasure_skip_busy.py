@@ -204,16 +204,13 @@ async def test_an_unreadable_ledger_skips_the_namespace(monkeypatch: pytest.Monk
 
 
 def _entries(monkeypatch: pytest.MonkeyPatch) -> None:
-    from types import SimpleNamespace
-
     import server.code.domain.index.repos as repos
+    from tests.unit.code_fixtures import repo_config
 
     monkeypatch.setattr(
         repos,
         "configured_repos",
-        lambda: [
-            SimpleNamespace(org="o", namespace=n, label=f"o/{n}") for n in ("code-a", "code-b")
-        ],
+        lambda: [repo_config(org="o", namespace=n) for n in ("code-a", "code-b")],
     )
 
     async def being_erased(org: str, ns: str) -> bool:

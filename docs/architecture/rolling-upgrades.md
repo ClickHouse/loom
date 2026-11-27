@@ -940,7 +940,19 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     its ingest embeds a matching path's new chunks, its `code_summary` pass writes their
     cards, and its `loom code reembed` and provider rebuild embed the marked rows under the
     target model. A chunk N-1 embedded keeps its vector until its content changes.
-64. **A code namespace being erased** (`server/code/app/index/erasing.py`): N's code
+
+64. **A compiler tier's checkout shares its mirror's packs** by hard link, each kept by
+    a `.keep` file, only with `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS`, off by default.
+    N-1's git jobs mount the checkout writable and no shared pack read-only, so they
+    could write the mirror's packs: turn it on only once no N-1 replica serves, and
+    before a rollback turn it off and remove the tier checkouts, which N-1 recreates
+    with its own objects. Off, N's checkout holds its own objects as N-1's does. In
+    `tests/unit/test_code_compiler_checkout.py`, a pass of N, then N-1's fetch,
+    `checkout --force` with the mirror out of sight and gc command, then N again, run
+    on one repository volume with no checkout file shared, and a pass of N with the
+    setting on then shares the packs.
+
+65. **A code namespace being erased** (`server/code/app/index/erasing.py`): N's code
     writers skip a namespace an unfinished erasure may reach, and N's `code_index.purge`
     refuses, retryably, while work begun before the erasure was recorded may still write
     it. N-1's writers do neither and N-1's purge does not wait, so an erasure during the
