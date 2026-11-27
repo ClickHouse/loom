@@ -111,9 +111,7 @@ def provider_for_model(model: str, default: str) -> str:
     return default
 
 
-def vertex_route(
-    model: str, project: str, location: str, *, stream: bool = False
-) -> tuple[str, str]:
+def vertex_route(model: str, project: str, location: str) -> tuple[str, str]:
     """Validate the Google resource identifiers and return the model label and endpoint."""
     model_id, project, location = model.strip(), project.strip(), location.strip()
     if model_id.lower().startswith("vertex:"):
@@ -125,9 +123,8 @@ def vertex_route(
     if not _VERTEX_LOCATION.fullmatch(location):
         raise ValueError("LOOM_VERTEX_LOCATION must be global or a Google Cloud region")
     prefix = "" if location == "global" else f"{location}-"
-    method = "streamGenerateContent" if stream else "generateContent"
     url = (
         f"https://{prefix}aiplatform.googleapis.com/v1/projects/{project}/locations/{location}"
-        f"/publishers/google/models/{model_id}:{method}"
+        f"/publishers/google/models/{model_id}:generateContent"
     )
     return f"vertex:{model_id}", url

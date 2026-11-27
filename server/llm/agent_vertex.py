@@ -193,9 +193,8 @@ class _VertexStream:
 
 class VertexAgentModel:
     def __init__(self, model: str) -> None:
-        _, self._url = vertex_route(
-            model, settings.vertex_project, settings.vertex_location, stream=True
-        )
+        _, endpoint = vertex_route(model, settings.vertex_project, settings.vertex_location)
+        self._url = endpoint.removesuffix(":generateContent") + ":streamGenerateContent"
 
     async def stream(
         self,

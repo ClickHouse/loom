@@ -90,6 +90,9 @@ async def test_vertex_assistant_replays_parallel_and_sequential_calls(
             ]
 
     first, second, third = requests
+    [tools] = first["tools"]
+    [memory_get] = [fn for fn in tools["functionDeclarations"] if fn["name"] == "loom_memory_get"]
+    assert "memory_key" in memory_get["parametersJsonSchema"]["properties"]
     [user_content] = first["contents"]
     assert user_content["role"] == "user"
     assert user_content["parts"][0] == {"text": question}
