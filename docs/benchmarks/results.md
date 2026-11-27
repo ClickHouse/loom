@@ -449,10 +449,11 @@ official judge.
 
 The whole-history count includes reader prompts only. The retrieval count includes
 reader and judge prompts. The reported retrieval count is 91% lower even with judging
-included. Neither count includes memory construction. Building the memory costs about
-1.5 million extraction tokens per history, once, on `gpt-6-luna`. The difference of about
-94,000 prompt tokens per question offsets extraction after about 16 questions over the
-same history. The estimate does not price model calls.
+included. Neither count includes memory construction. The [ingest run](#longmemeval-s) reports about 1.5 million extraction input and output
+tokens per history on `gpt-6-luna` (`longmemeval_s_ingest.csv`). Dividing that average by
+about 94,000 fewer prompt tokens per question gives an estimate of 16 questions over
+the same history. The benchmark used one question per history; the estimate does not
+measure repeated use or price model calls.
 
 Paired, 87 questions are right both ways, 7 only with memory, 3 only with the whole history.
 The four-point accuracy difference is descriptive: only 10 outcomes disagree, and a
