@@ -147,7 +147,8 @@ const overview = [
 const date = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const shortDate = (day: string) => date.format(Date.parse(day));
 const windowLabel = date.formatRange(new Date(cutoff), new Date(lastCompleteDate)) + " UTC";
-const selfHostedWindowLabel = date.formatRange(new Date(cutoff), new Date(totals?.last_reported === today ? today : lastCompleteDate)) + " UTC";
+const selfHostedWindowLabel =
+  date.formatRange(new Date(cutoff), new Date(totals?.last_reported === today ? today : lastCompleteDate)) + " UTC";
 const thresholdsLabel = (threshold: number) =>
   threshold ? thresholds[threshold] + " successful requests" : thresholds[threshold];
 const labeledOptions = (labels: Record<string, string>) =>
