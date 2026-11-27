@@ -358,6 +358,20 @@ async def test_vertex_does_not_retry_iam_refusal_or_expose_its_message(
     assert len(sent) == 1
 
 
+async def test_vertex_refuses_an_oversized_response_before_decoding(
+    credentials: Credentials,
+    model_responses: tuple[list[httpx.Request], list[httpx.Response]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent, responses = model_responses
+    monkeypatch.setattr(vertex, "_MAX_RESPONSE_BYTES", 32)
+    responses.append(httpx.Response(200, content=b"x" * 33))
+
+    with pytest.raises(ValueError, match="response exceeds the model response limit"):
+        await vertex.VertexLLMClient(_MODEL).complete("", "my note")
+    assert len(sent) == 1
+
+
 async def test_token_limit_and_prompt_safety_survive_translation(
     credentials: Credentials, model_responses: tuple[list[httpx.Request], list[httpx.Response]]
 ) -> None:

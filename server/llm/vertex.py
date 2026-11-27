@@ -25,7 +25,7 @@ from server.observability.genai import generation_span
 from server.observability.provider_health import recording
 
 _SOURCE = "vertex:generateContent"
-_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+_MAX_RESPONSE_BYTES = 16 * 1024 * 1024  # not a setting: fixed model-response decoder memory ceiling
 _STOP_REASONS = {
     "STOP": "stop",
     "MAX_TOKENS": "length",
