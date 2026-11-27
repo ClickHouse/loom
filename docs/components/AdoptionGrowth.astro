@@ -1,0 +1,54 @@
+---
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Table } from "@clickhouse/click-ui/Table";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
+import AdoptionTrend from "./AdoptionTrend.astro";
+
+interface Props {
+  rows: { period: string; first_active: number; cumulative_active: number; current: boolean }[];
+  grain: "day" | "week" | "month";
+}
+
+const { rows, grain } = Astro.props;
+const numbers = new Intl.NumberFormat("en-US");
+---
+
+<Panel className="growth-chart" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
+  <Title type="h3" size="sm">Observed installations over time</Title>
+  <Text size="sm" color="muted">Each installation enters the total once, at its first successful Loom request in retained telemetry. The line shows the cumulative total at each period.</Text>
+  <AdoptionTrend
+    rows={rows.map(({ period, cumulative_active, current }) => ({ day: period, value: cumulative_active, current }))}
+    label="Observed installations"
+    grain={grain}
+    mode="line"
+    showTable={false}
+  />
+  <details>
+    <summary>View installation growth data</summary>
+    <Table
+      aria-label="Installation growth"
+      size="sm"
+      mobileLayout="scroll"
+      headers={[
+        { label: "Period start (UTC)", scope: "col" },
+        { label: "First observed in period", scope: "col" },
+        { label: "Cumulative observed", scope: "col" },
+      ]}
+      rows={rows.map(({ period, first_active, cumulative_active, current }) => ({
+        id: period,
+        items: [
+          { label: period + (current ? " to date" : "") },
+          { label: numbers.format(first_active) },
+          { label: numbers.format(cumulative_active) },
+        ],
+      }))}
+    />
+  </details>
+</Panel>
+
+<style>
+  .growth-chart { min-inline-size: 0; }
+  details { inline-size: 100%; margin-block-start: 0.5rem; }
+  summary { padding-block: 0.45rem; cursor: pointer; color: var(--click-global-color-text-link-default); font-size: 0.86rem; }
+</style>

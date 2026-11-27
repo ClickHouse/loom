@@ -77,10 +77,12 @@ to omit domains while sending aggregate usage. In a settings file, set
 The [collector deployment guide](../../../deploy/telemetry/README.md) covers the
 warehouse and dashboard setup. The public [adoption page](https://loom.clickhouse.com/adoption)
 shows aggregate self-hosted usage and open-source distribution metrics. The
-self-hosted summary includes today's completed reporting windows. The public
-list shows self-reported contact domain names from version 2 reports with
-successful requests today or in the previous 90 UTC days. Use the
-domain-sharing setting above to omit domains from your reports.
+self-hosted summary includes today's completed reporting windows. The directory
+shows every self-reported contact domain from version 2 reports with attributed
+successful requests in today's completed reporting windows or the previous 30 or
+90 UTC days. The directory orders names by those requests. The one-year view
+uses the 90-day directory, the longest period under the public domain-sharing
+notice. Use the domain-sharing setting above to omit domains from your reports.
 `loom_adoption_windows` contains one report per
 `(installation_id, window_start)`. The daily rollup adds request counts and
 uses the peak half-day distinct count for each installation.
@@ -100,41 +102,50 @@ columns:
 
 Track the managed stage from pilot requests and conversations with the company. A company
 can enroll several installations under one company ID. The Self-hosted tab shows
-reporting coverage, activity, feature usage, versions, weekly retention, and the
-number of verified companies with an active installation. Monthly and weekly
-activity count distinct installations with a successful request and sum
-successful requests. Lifecycle charts count arrivals, consecutive activity,
-returns after gaps, and absence of qualifying activity in completed periods.
-An installation that stops reporting can appear inactive. Domain lifecycle
-uses only attributed requests from deployments with domain sharing enabled.
+reporting coverage, deployment growth, activity, feature and transport usage,
+model usage, installation size, versions, retention, and the number of verified
+companies with an active installation. Growth, activity and period comparisons
+use complete UTC days. Growth counts each installation once at its first
+successful request in retained telemetry. Changes to coverage and report expiration
+can change the observed total. Activity counts installations with a successful
+request in each period and sums successful requests.
+Installation size uses the median of the daily counts for active installations.
+Lifecycle charts count arrivals, consecutive activity, returns after gaps, and
+absence of qualifying activity in completed periods. An installation that stops
+reporting can appear inactive. Domain lifecycle uses attributed requests from
+deployments with domain sharing enabled.
 Choose a 30-, 90-, or 365-day lookback. Activity shows daily, weekly, or
 monthly buckets. Lifecycle thresholds apply to each selected week or month.
-Projected request volume uses the daily average when every completed day in
-the current period has data. Chart links carry the selection, and CSV exports
-contain aggregate values.
+The activity table and CSV include projected request volume when every
+completed day in the current period has data. The projection uses the daily
+average. Chart links carry the selection, and CSV exports contain aggregate
+values.
 
 The restricted `loom_adoption_top_domains_30d` view ranks the top 50 domains by
 attributed successful requests and includes the number of active installations
 and the sum of latest account counts across installations. A contact reported
-by several installations can contribute more than once. Company records, domain
-rankings, and pilot stages stay in the access-controlled warehouse.
+by several installations can contribute more than once. Company records,
+attributed counts for each domain, and pilot stages stay in the access-controlled
+warehouse.
 
 ## Open-source adoption
 
-The OSS tab shows distribution metrics collected outside the Loom server. The
-site fetches repository and release counts from GitHub and daily SDK
-downloads from PyPI Stats and npm. Load other registry metrics into `oss_metrics`. The `loom_oss_metrics_daily` view returns one row per
+The Open source tab shows distribution metrics collected outside the Loom
+server. The site fetches repository and release counts from GitHub and daily SDK
+downloads from PyPI Stats, npm, and crates.io. Load registry history into
+`oss_metrics`. The `loom_oss_metrics_daily` view returns one row per
 `(day, source, artifact, metric)`. Use a UTC `Date` for `day`, `String` for
 dimensions and `UInt64` for `value`. The collector snapshots GitHub stars and
 forks daily.
 
-| Source                                | Artifact                  | Metrics                                          |
-| ------------------------------------- | ------------------------- | ------------------------------------------------ |
-| GitHub repository API                 | `ClickHouse/loom`         | `stars`, `forks` snapshots                       |
-| GitHub releases API                   | `ClickHouse/loom`         | `release_asset_downloads_total` snapshots        |
-| Python Package Index download dataset | `clickhouse-loom`         | `sdk_downloads` per UTC day                      |
-| npm downloads API                     | `@clickhouse/loom`        | `sdk_downloads` per UTC day                      |
-| Container registry statistics         | `ghcr.io/clickhouse/loom` | `container_pulls_total` snapshots when available |
+| Source                                | Artifact                  | Metrics                                           |
+| ------------------------------------- | ------------------------- | ------------------------------------------------- |
+| GitHub repository API                 | `ClickHouse/loom`         | `stars`, `forks` snapshots                        |
+| GitHub releases API                   | `ClickHouse/loom`         | `release_asset_downloads_total` snapshots         |
+| Python Package Index download dataset | `clickhouse-loom`         | `sdk_downloads` per UTC day                       |
+| npm downloads API                     | `@clickhouse/loom`        | `sdk_downloads` per UTC day                       |
+| crates.io downloads API               | `clickhouse-loom`         | `sdk_downloads` per UTC day across crate versions |
+| Container registry statistics         | `ghcr.io/clickhouse/loom` | `container_pulls_total` snapshots when available  |
 
 For snapshot counters, use the date the source was read. For download increments,
 use the date the registry reports. Leave missing observations absent. Package

@@ -18,7 +18,7 @@ def test_domain_sharing_is_enabled_by_default() -> None:
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-def test_public_adoption_query_includes_completed_windows_from_today() -> None:
+def test_public_adoption_query_covers_current_and_complete_periods() -> None:
     telemetry = ROOT / "deploy" / "telemetry"
     clock = "toDateTime('2026-11-27 18:00:00', 'UTC')"
     warehouse = (telemetry / "warehouse.sql").read_text().strip().removesuffix(";")
@@ -30,49 +30,101 @@ def test_public_adoption_query_includes_completed_windows_from_today() -> None:
         """,
         """
         INSERT INTO loom_product_analytics.adoption_reports
-            (installation_id, window_start, window_end, day, schema_version,
-             requests, successful_requests, memory_requests, user_domains)
-        WITH toDate('2026-11-27') - days_ago AS report_day
+            (installation_id, window_start, window_end, day, schema_version, loom_version,
+             clickhouse_version, requests, successful_requests, memory_requests, user_domains)
+        WITH
+            toDate('2026-11-27') - days_ago AS report_day,
+            toDateTime(report_day, 'UTC') + toIntervalHour(if(instance = 'unfinished', 12, 0)) AS report_start
         SELECT
-            instance, toDateTime(report_day, 'UTC'), toDateTime(report_day, 'UTC') + INTERVAL 12 HOUR,
-            report_day, version, request_count, request_count, request_count,
+            instance, report_start, report_start + INTERVAL 12 HOUR,
+            report_day, version, if(instance = 'smoke', '0.0.0-smoke', '1.0.0'),
+            if(instance = 'smoke', '0.0.0-smoke', '26.0.0'), request_count, request_count, request_count,
             [(domain, toUInt64(1), request_count)]
         FROM VALUES(
             'instance String, days_ago Int16, version UInt8, domain String, request_count UInt64',
             ('present', 1, 2, 'active.example', 1),
+            ('present', 3, 2, 'zeta.example', 8),
+            ('present', 30, 2, 'near-cutoff.example', 1),
+            ('present', 31, 2, 'midrange.example', 1),
             ('duplicate', 2, 2, 'active.example', 2),
             ('previous', 31, 2, 'previous.example', 3),
             ('boundary', 90, 2, 'boundary.example', 1),
+            ('boundary', 57, 2, 'boundary.example', 8),
+            ('boundary', 1, 2, 'boundary.example', 0),
             ('expired', 91, 2, 'old.example', 1),
             ('today', 0, 2, 'today.example', 5),
+            ('unfinished', 0, 2, 'unfinished.example', 99),
             ('future', -1, 2, 'future.example', 1),
             ('legacy', 1, 1, 'private.example', 1),
             ('idle', 1, 2, 'idle.example', 0),
-            ('internal', 1, 2, 'internal.example', 1)
+            ('internal', 1, 2, 'internal.example', 1),
+            ('smoke', 1, 2, 'smoke.example', 1)
         )
+        """,
+        """
+        INSERT INTO loom_product_analytics.oss_metrics (day, source, artifact, metric, value)
+        VALUES
+            (toDate('2026-11-26'), 'crates.io', 'clickhouse-loom', 'sdk_downloads', 2),
+            (toDate('2026-11-26'), 'crates.io', 'unrelated', 'sdk_downloads', 9)
         """,
     ]
 
     [report] = run(setup, (telemetry / "public-adoption.sql").read_text())
 
-    assert report["domains"] == [
-        "active.example",
-        "boundary.example",
-        "previous.example",
-        "today.example",
-    ]
     totals = {
         row["comparison"]: row
         for row in map(json.loads, report["totals"])
         if row["range_days"] == 30
     }
     assert set(totals) == {"current", "current_complete", "previous_complete"}
-    assert totals["current"]["memory_requests"] == 9
+    assert totals["current"]["memory_requests"] == 18
     assert totals["current"]["last_reported"] == "2026-11-27"
-    assert totals["current_complete"]["memory_requests"] == 4
+    assert totals["current_complete"]["memory_requests"] == 13
     assert totals["current_complete"]["last_reported"] == "2026-11-26"
-    assert totals["current"]["days_reported"] == totals["current_complete"]["days_reported"] == 2
-    assert totals["previous_complete"]["memory_requests"] == 3
+    assert totals["current"]["days_reported"] == totals["current_complete"]["days_reported"] == 4
+    assert totals["previous_complete"]["memory_requests"] == 12
+
+    assert [json.loads(row) for row in report["domain_directories"]] == [
+        {
+            "range_days": 30,
+            "domains": ["zeta.example", "today.example", "active.example", "near-cutoff.example"],
+        },
+        {
+            "range_days": 90,
+            "domains": [
+                "boundary.example",
+                "zeta.example",
+                "today.example",
+                "active.example",
+                "previous.example",
+                "midrange.example",
+                "near-cutoff.example",
+            ],
+        },
+    ]
+    [rust] = [json.loads(row) for row in report["oss"]]
+    assert (rust["source"], rust["artifact"], rust["metric"], rust["value"]) == (
+        "crates.io",
+        "clickhouse-loom",
+        "sdk_downloads",
+        2,
+    )
+
+    growth = [json.loads(row) for row in report["growth"]]
+    for grain in ("day", "week", "month"):
+        bucketed = sorted(
+            (row for row in growth if row["grain"] == grain), key=lambda row: row["period"]
+        )
+        assert sum(row["first_active"] for row in bucketed) == 6
+        assert bucketed[-1]["cumulative_active"] == 6
+    assert max(row["period"] for row in growth if row["grain"] == "day") == "2026-11-26"
+
+    activity = [json.loads(row) for row in report["activity"]]
+    assert sum(row["memory_requests"] for row in activity if row["grain"] == "day") == 27
+    reported = {(row["grain"], row["period"]) for row in activity}
+    observed = {(row["grain"], row["period"]) for row in growth}
+    assert reported <= observed
+    assert any(row["grain"] == "week" and row["first_active"] == 0 for row in growth)
 
 
 async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.MonkeyPatch) -> None:
