@@ -261,7 +261,7 @@ GENERIC_SQL_EXCLUSIONS = {
     },
     "server/memory/store/code_links.py": {
         ("_purge_tombstones", "DELETE FROM", "{TABLE}"): 1,
-        ("_drop_gone", "DELETE FROM", "{TABLE}"): 1,
+        ("_drop_unlinkable", "DELETE FROM", "{TABLE}"): 1,
     },
     "server/memory/store/graph_projections.py": {("KeeperLayout", "INSERT INTO", "{TABLE}"): 1},
     "server/memory/store/lifecycle.py": {("_tombstone_where", "ALTER TABLE", "{table}"): 1},

@@ -161,11 +161,12 @@
             "anthropic",
             "openai",
             "bedrock",
+            "vertex",
             "local",
             "fake"
           ],
           "type": "string",
-          "description": "Native streaming provider. Empty disables native model admission."
+          "description": "Native streaming provider. Vertex uses Google Application Default Credentials. Empty disables native model admission."
         },
         "audit_checkpoint_grace_seconds": {
           "default": 600,
@@ -866,6 +867,11 @@
           "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds a code-table compaction waits for its OPTIMIZE to finish."
+        },
+        "code_compiler_share_mirror_packs": {
+          "default": false,
+          "type": "boolean",
+          "description": "Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its working tree, not a second copy. An older build's git jobs could write the shared packs: turn it on only once no older replica serves, and off before a rollback."
         },
         "code_context_description_enabled": {
           "default": true,
@@ -4489,7 +4495,7 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Memory writes one pass links (at least 1)."
+          "description": "Rows per page of memory writes to link or pending links to recheck (at least 1)."
         },
         "memory_code_links_enabled": {
           "default": true,
@@ -4524,7 +4530,7 @@
           "default": 14,
           "minimum": 1,
           "type": "integer",
-          "description": "Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped."
+          "description": "Days to retry a code-shaped name absent from trunk, measured when each pending scan starts."
         },
         "memory_code_links_revise_per_pass": {
           "default": 20,
@@ -4760,7 +4766,7 @@
         "memory_extract_coding_sweep_min_user_turns": {
           "default": 4,
           "type": "integer",
-          "description": "A coding capture keeps the coverage sweep's density / uncovered auto-gates only with at least this many user turns (on short sessions the sweep's output is mostly junk). 0 = always keep. An explicit namespace / per-call switch wins either way."
+          "description": "A trajectory replay keeps the coverage sweep's density / uncovered auto-gates only with at least this many user turns (on short sessions the sweep's output is mostly junk); a plugin's session capture never takes them. 0 = always keep. An explicit namespace / per-call switch wins either way."
         },
         "memory_extract_compact_prompt_max_chars": {
           "default": 1200,
@@ -5975,7 +5981,7 @@
         "otel_code_counts_cache_s": {
           "default": 3600,
           "type": "integer",
-          "description": "Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols and code_edges, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export."
+          "description": "Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges and memory_code_links, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export."
         },
         "otel_code_grep_replay_cache_s": {
           "default": 3600,
@@ -7420,7 +7426,7 @@
         "vertex_location": {
           "default": "",
           "type": "string",
-          "description": "Vertex AI location, either a region or \"global\". Required with the Vertex provider."
+          "description": "Vertex AI location: a region, a multi-region (\"eu\", \"us\"), or \"global\". Required with the Vertex provider."
         },
         "vertex_project": {
           "default": "",

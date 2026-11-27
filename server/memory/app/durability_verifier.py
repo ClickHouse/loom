@@ -32,6 +32,9 @@ from server.memory.domain.extraction_prompts import (
     DURABILITY_VERIFIER_PROMPT_VERSION as VERIFIER_PROMPT_VERSION,
 )
 from server.memory.domain.extraction_prompts import (
+    DURABILITY_VERIFIER_SESSION_PROMPT as VERIFIER_SESSION_PROMPT,
+)
+from server.memory.domain.extraction_prompts import (
     DURABILITY_VERIFIER_SYSTEM_PROMPT as VERIFIER_SYSTEM_PROMPT,
 )
 from server.memory.domain.prompt_fence import FENCE_NOTE, fence, new_nonce
@@ -40,6 +43,7 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 __all__ = [
     "VERIFIER_PROMPT_VERSION",
+    "VERIFIER_SESSION_PROMPT",
     "VERIFIER_SYSTEM_PROMPT",
     "decide",
     "parse_verdicts",
@@ -235,14 +239,15 @@ async def _ask(
     client: Any,
     facts: list[dict[str, Any]],
     timeout_s: float,
-    context: CaptureContext | None = None,
+    context: CaptureContext | None,
+    system: str,
     stored: list[str] | None = None,
 ) -> Verdicts:
     try:
         result = await asyncio.wait_for(
             client.complete(
                 # The note that says what the markers mean, only when something is fenced.
-                system=VERIFIER_SYSTEM_PROMPT + (f"\n\n{FENCE_NOTE}" if stored else ""),
+                system=system + (f"\n\n{FENCE_NOTE}" if stored else ""),
                 user=_user_prompt(facts, context, stored),
                 max_tokens=90 * len(facts) + 400,
                 response_format={"type": "json_object"},
@@ -277,16 +282,19 @@ async def verify(
     *,
     timeout_s: float = 45.0,
     context: CaptureContext | None = None,
+    session_capture: bool = False,
     stored: list[list[tuple[str, str]]] | None = None,
 ) -> VerifyResult:
     """Judge `facts` with every client in `clients` (the first is primary).
     A dropped fact carries `_verify` (the reason) and, when folded,
-    `_duplicate_of` (the key of the fact that carries its claim). `stored` holds,
+    `_duplicate_of` (the key of the fact that carries its claim). A plugin's
+    `session_capture` is also judged by the codebase rules. `stored` holds,
     for each fact, the `(memory id, text)` of the stored memories nearest it; a fact
     the primary lists against one of them is dropped with `_stored`, that memory's id,
     unless an earlier kept fact has its key."""
     if len(facts) < 1 or not clients:
         return VerifyResult(kept=list(facts), dropped=[])
+    system = VERIFIER_SESSION_PROMPT if session_capture else VERIFIER_SYSTEM_PROMPT
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
     t_in = t_out = 0
@@ -301,7 +309,7 @@ async def verify(
         answers = list(
             await asyncio.gather(
                 *(
-                    _ask(c, chunk, timeout_s, context, None if n else texts)
+                    _ask(c, chunk, timeout_s, context, system, None if n else texts)
                     for n, c in enumerate(clients)
                 )
             )

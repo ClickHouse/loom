@@ -84,6 +84,28 @@ from the observe plane. Only these run `loom.drop_non_durable` and `loom.verify_
 The rules in `server/memory/domain/durable_facts.py` match sentence shape, not topic words: what
 a release changed is kept; whether its CI was green at the time is dropped.
 
+A plugin's session capture (a `source:` tag) is extracted under coding-session rules that
+follow the conversation rules and replace their code rules. What the user states is kept
+as in any conversation. From the work, only knowledge about the codebase that a later
+session in the repository can reuse without reading the code again is kept:
+
+- how a behaviour is reached across definitions or files, as one claim for the whole path;
+- a relation between definitions that reading one of them does not show;
+- an invariant, constraint or pitfall with its reason, and which test constrains a
+  definition;
+- the cause of a bug in the code as it was before the session's edits.
+
+The rules ask for each claim to name its definitions in backticks beside their file paths,
+without line numbers: those names and paths are what the
+[code link pass](../../use-cases/memory-linked-to-code.md) links a memory by. What the
+session itself edited or added is left out: until it is committed it exists in one working
+tree, and the commit history records it afterwards. The task, test results and anything
+one lookup answers (where a single name is defined, what one function's text says) are
+left out too. An empty fact list from a session capture is an answer: the extractor is not
+asked again, and the coverage sweep reads the capture only when the namespace or the call
+turns it on. `loom.verify_durable` judges what remains by the same rules. A trajectory
+replay is extracted under its own instructions and verified without the codebase rules.
+
 ## Rules the assistant states about itself
 
 A chat bot's replies carry rules about its own behaviour: "I escalate any refund over
@@ -241,6 +263,11 @@ before the queue's 30-day TTL is dropped with a `loom.memory_drops` record.
 `running`, `held`, `done`, `failed`); a token bounded to one user sees only that user's
 batches. Until a batch runs, `memory.search` and `memory.ask` report
 `pending_extraction`. With the worker off, deferred saves stay `pending`.
+
+Model spend is recorded as one `worker.extraction_queue` ledger row for each replay that
+spent, under the request's namespace, agent, user and session, whether the replay
+finished, failed or was cut short. It counts toward the namespace's and the user's
+[daily spend caps](../observability/cost-and-usage.md#daily-spend-caps).
 
 `memory.extraction_status` is an HTTP and SDK view, hidden from MCP. An agent follows up
 on its own batches over MCP, through `loom_op`, with two ops that take the `queue_id`s

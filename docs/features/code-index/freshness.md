@@ -55,6 +55,13 @@ status ops report the mirror's age:
   fix: not failing, and not in `as_of.failing_tiers`.
 - `code.repos` rows carry `searchable`: `embedding_coverage` has reached
   `LOOM_CODE_READY_EMBED_COVERAGE`.
+- The chunk counts and coverage are republished by an ingest pass that indexed a
+  commit, and by the first `code_embed_recovery` pass that finds no stub left in
+  a namespace it wrote vectors to, whatever other namespaces still have to embed;
+  a long backlog in one namespace shows at its end. A pass that scanned from zero
+  (the first after a restart, then every
+  `LOOM_CODE_EMBED_RECOVERY_FULL_SCAN_SECONDS`) also has recovery republish a
+  namespace whose published counts or coverage trail its chunks.
 
 `compiler_tiers` has one card per tier the entry runs (`producer`, `tool`, `label`,
 `commit`, `lag`, `workers`). `code.index_status` answers compactly over MCP and whenever
@@ -134,6 +141,13 @@ curl -fsS -X POST "$LOOM_BASE_URL/v1/code.refresh" \
 - `expected_head` is only logged. `wait=true` blocks until the pass ends (up to
   `wait_timeout_seconds`, default 300); the answer carries `triggered`,
   `already_running`, `head_before` and `head_after`.
+- A pass that ran to its end is followed by a recheck of the
+  [memories linked to the namespace's code](../../concepts/memory.md#memories-linked-to-code),
+  so with `wait=true` their link state is that of `head_after` when the call returns. The
+  recheck calls no model: a claim the `revise` policy has to judge stays due for the
+  `memory_code_links` worker. A recheck that fails, that the link worker or another
+  refresh is already running, or that the wait cuts short never fails the call; the
+  worker's next pass finishes it.
 - The call is best-effort; the poller heals a missed trigger.
 
 Operators watch `loom.code.tier_lag_seconds{tier}`; the lagging-tier runbook is in

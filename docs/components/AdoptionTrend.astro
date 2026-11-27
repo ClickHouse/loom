@@ -1,78 +1,162 @@
 ---
+import { Table } from "@clickhouse/click-ui/Table";
 import { periodOffset } from "../lib/adoption-view.mjs";
 
 interface Props {
-  rows: { day: string; value: number; days?: number }[];
+  rows: { day: string; value: number; days?: number; estimate?: number | null; current?: boolean }[];
   label: string;
   grain?: "month" | "week" | "day";
+  mode?: "line" | "bars";
+  color?: "accent" | "info";
+  showTable?: boolean;
 }
 
-const { rows, label, grain = "day" } = Astro.props;
+const { rows, label, grain = "day", mode = "bars", color = "accent", showTable = true } = Astro.props;
 const first = rows[0].day;
 const last = rows[rows.length - 1].day;
-const maximum = Math.max(1, ...rows.map(({ value }) => value));
-const dayIndex = (day: string) => periodOffset(first, day, grain) + 1;
-const periodLabel = (day: string) => (grain === "month" ? day.slice(0, 7) : day);
-const showCoverage = rows.some(({ days }) => days !== undefined);
-const numbers = new Intl.NumberFormat("en-US");
+const offset = (day: string) => periodOffset(first, day, grain);
+const intervals = offset(last);
+const rawMaximum = Math.max(1, ...rows.map(({ value, estimate }) => Math.max(value, estimate ?? value)));
+const tick = 10 ** Math.floor(Math.log10(Math.max(1, rawMaximum / 2)));
+const maximum = Math.ceil(rawMaximum / (2 * tick)) * 2 * tick;
+const yPosition = (value: number) => 100 - (value * 100) / maximum;
+const xPosition = (day: string) => (intervals ? (offset(day) * 100) / intervals : 50);
+const date = new Intl.DateTimeFormat("en", {
+  month: "short",
+  ...(grain === "month"
+    ? { year: "numeric" }
+    : { day: "numeric", ...(first.slice(0, 4) !== last.slice(0, 4) && { year: "numeric" }) }),
+  timeZone: "UTC",
+});
+const formatDay = (day: string) => date.format(Date.parse(day));
+const number = new Intl.NumberFormat("en-US");
+const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const coverage = rows.some(({ days }) => days !== undefined);
+const forecast = rows.some(({ value, estimate }) => estimate != null && estimate > value);
+const pending = rows.some(({ current }) => current);
+const missing = rows.length < intervals + 1;
 ---
 
-<figure>
-  <div class="bars" style={`--days:${dayIndex(last)}`} aria-hidden="true">
-    {rows.map(({ day, value }) => (
-      <span title={`${periodLabel(day)} · ${numbers.format(value)}`} style={`grid-column:${dayIndex(day)}; --height:${value / maximum * 100}%`}></span>
-    ))}
+<figure class:list={["trend", color, mode]} aria-label={label + " by " + grain}>
+  <div class="plot" aria-hidden="true">
+    <div class="scale">
+      <span>{compact.format(maximum)}</span>
+      <span>{compact.format(maximum / 2)}</span>
+      <span>0</span>
+    </div>
+    {mode === "line" ? (
+      <div class="marks">
+        {rows.map(({ day, value, current }, index) => {
+          const next = rows[index + 1];
+          const left = xPosition(day);
+          const top = yPosition(value);
+          const right = next && xPosition(next.day);
+          const bottom = next && yPosition(next.value);
+          const edge = (x: number, y: number, shift: string) => x + "% calc(" + y + "% " + shift + " 1px)";
+          return <>
+            {next && offset(next.day) === offset(day) + 1 && (
+              <span
+                class:list={["segment", { partial: next.current }]}
+                style={"clip-path:polygon(" + [edge(left, top, "-"), edge(right, bottom, "-"), edge(right, bottom, "+"), edge(left, top, "+")].join(",") + ")"}
+              />
+            )}
+            <span class:list={["point", { current }]} title={formatDay(day) + " · " + number.format(value)} style={"left:" + left + "%;top:" + top + "%"} />
+          </>;
+        })}
+      </div>
+    ) : (
+      <div class="marks columns" style={"--intervals:" + (intervals + 1)}>
+        {rows.map(({ day, value, current, estimate }) => (
+          <div class="column" title={formatDay(day) + " · " + number.format(value)} style={"grid-column:" + (offset(day) + 1)}>
+            <span class:list={["bar", { current }]} style={"--height:" + (100 - yPosition(value)) + "%"} />
+            {estimate != null && estimate > value && <span class="bar projection" style={"--height:" + (100 - yPosition(estimate - value)) + "%"} />}
+          </div>
+        ))}
+      </div>
+    )}
   </div>
   <figcaption>
-    <time datetime={first}>{periodLabel(first)}</time>
-    {last !== first && <time datetime={last}>{periodLabel(last)}</time>}
+    <div class="dates" aria-hidden="true">
+      <time datetime={first}>{formatDay(first)}</time>
+      {last !== first && <time datetime={last}>{formatDay(last)}</time>}
+    </div>
+    {(pending || forecast || missing) && <div class="plot-note">
+      {pending && <span><i class="partial-key"></i>Period in progress</span>}
+      {forecast && <span><i class="forecast-key"></i>Projected remainder</span>}
+      {missing && <span>Gaps show periods with no report.</span>}
+    </div>}
   </figcaption>
-  <details>
-    <summary>{label} by {grain}</summary>
-    <table>
-      <thead><tr>
-        <th scope="col">UTC period</th>
-        <th scope="col">{label}</th>
-        {showCoverage && <th scope="col">Days reported</th>}
-      </tr></thead>
-      <tbody>
-        {rows.map(({ day, value, days }) => <tr>
-          <th scope="row">{periodLabel(day)}</th><td>{numbers.format(value)}</td>
-          {showCoverage && <td>{days}</td>}
-        </tr>)}
-      </tbody>
-    </table>
-  </details>
+  {showTable && <details>
+    <summary aria-label={"View data table for " + label}>View data table</summary>
+    <Table
+      aria-label={label + " by " + grain}
+      size="sm"
+      mobileLayout="scroll"
+      headers={[{ label: "UTC period", scope: "col" }, { label, scope: "col" }, ...(coverage ? [{ label: "Days reported", scope: "col" }] : [])]}
+      rows={rows.map(({ day, value, days }) => ({
+        id: day,
+        items: [{ label: day }, { label: number.format(value) }, ...(coverage ? [{ label: days ?? "—" }] : [])],
+      }))}
+    />
+  </details>}
 </figure>
 
 <style>
-  figure { margin: 1.45rem 0 0; }
-  .bars {
-    height: 8rem;
-    display: grid;
-    grid-template-columns: repeat(var(--days), minmax(0, 1fr));
-    align-items: end;
-    gap: min(0.25rem, calc(20% / var(--days)));
-    border-bottom: 1px solid var(--line);
+  .trend {
+    --plot-color: var(--accent);
+    margin: 0.85rem 0 0;
+    inline-size: 100%;
+    min-inline-size: 0;
+    font-variant-numeric: tabular-nums;
   }
-  .bars span {
-    height: var(--height);
-    min-height: 1px;
-    grid-row: 1;
-    background: var(--accent);
-    border-radius: 2px 2px 0 0;
-  }
-  figcaption {
+  .trend.info { --plot-color: var(--click-alert-color-text-info); }
+  .plot { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.65rem; }
+  .scale {
     display: flex;
+    flex-direction: column;
     justify-content: space-between;
-    gap: 1rem;
-    margin-top: 0.4rem;
-    font-size: 0.78rem;
+    align-items: end;
+    align-self: stretch;
+    margin-block: -0.5em;
+    font-size: 0.75rem;
     color: var(--muted);
   }
-  details { margin-top: 0.9rem; color: var(--muted); }
-  summary { cursor: pointer; font-size: 0.85rem; }
-  table { margin-top: 0.7rem; width: 100%; border-collapse: collapse; }
-  th, td { padding: 0.45rem 0; border-bottom: 1px solid var(--line); text-align: left; }
-  td, thead th:last-child { text-align: right; }
+  .marks {
+    position: relative;
+    block-size: clamp(7rem, 13vw, 13rem);
+    background: linear-gradient(var(--line), var(--line)) top / 100% 1px no-repeat,
+      linear-gradient(var(--line), var(--line)) center / 100% 1px no-repeat,
+      linear-gradient(var(--line), var(--line)) bottom / 100% 1px no-repeat;
+  }
+  .segment { position: absolute; inset: 0; background: var(--plot-color); pointer-events: none; }
+  .segment.partial { opacity: 0.45; }
+  .point {
+    position: absolute;
+    inline-size: clamp(0.23rem, 1vw, 0.4rem);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--plot-color);
+  }
+  .point.current { border: 1px solid var(--plot-color); background: var(--surface); }
+  .columns {
+    display: grid;
+    gap: min(0.5rem, calc(20% / var(--intervals)));
+    grid-template-columns: repeat(var(--intervals), minmax(0, 1fr));
+  }
+  .column { grid-row: 1; display: flex; flex-direction: column-reverse; min-inline-size: 0; }
+  .bar { inline-size: 100%; max-inline-size: 2.5rem; block-size: var(--height); margin-inline: auto; background: var(--plot-color); }
+  .bar.current { background: color-mix(in srgb, var(--plot-color) 48%, var(--surface)); }
+  .bar.projection, .forecast-key {
+    background: repeating-linear-gradient(135deg, var(--plot-color) 0 1px, var(--surface) 1px 4px);
+  }
+  .dates { display: flex; justify-content: space-between; gap: 0.45rem; padding-inline-start: 2rem; margin-block-start: 0.45rem; }
+  figcaption { color: var(--muted); font-size: 0.77rem; }
+  .plot-note { display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; margin-block-start: 0.6rem; }
+  .plot-note span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .plot-note i { inline-size: 0.7rem; block-size: 0.55rem; border: 1px solid var(--plot-color); border-radius: 1px; }
+  .partial-key { background: color-mix(in srgb, var(--plot-color) 48%, var(--surface)); }
+  .line .partial-key { border-radius: 50%; background: var(--surface); }
+  details { margin-block-start: 0.8rem; }
+  summary { cursor: pointer; padding-block: 0.5rem; color: var(--click-global-color-text-link-default); font-size: 0.86rem; }
 </style>

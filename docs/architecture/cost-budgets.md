@@ -7,8 +7,10 @@ namespace ceiling. Admission refuses paid synthesis when either is reached, and 
 routing uses the larger spend fraction. `memory.ask`, including its whole-document
 route, `code.ask`, `knowledge.synthesize` and `code.search` query expansion supply the
 logical user recorded in the ledger. Namespace-wide workers keep their namespace accounting;
-a token subject is never substituted for an unattributed user. These soft controls do
-not reserve spend or establish a billing identity.
+a token subject is never substituted for an unattributed user. The extraction queue
+is the exception: a replay's row carries the user the deferred request named, so its
+spend counts toward that user's cap and can refuse that user's paid synthesis. These
+soft controls do not reserve spend or establish a billing identity.
 
 `cost.budget_status` shares the policy and spend read with the guards. User mode requires
 a namespace and reports the user's cap and verdict, plus `namespace_over_cap`. Exact

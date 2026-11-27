@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { loadAdoption } from "./adoption-data.mjs";
+import { createAdoptionReader, loadPublishedAdoption } from "./adoption-data.mjs";
 import { summarizeOss } from "./adoption-view.mjs";
 
 test("calls the saved aggregate endpoint and reports monthly coverage and missing data", async (t) => {
   const queried = [];
+  const registries = [];
   t.mock.method(globalThis, "fetch", async (input, init) => {
     const url = new URL(input);
     if (url.hostname === "queries.clickhouse.cloud") {
@@ -27,11 +28,14 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
               { day: "2026-10-01", source: "pypi", metric: "sdk_downloads", value: 3 },
               { day: "2026-11-03", source: "pypi", metric: "sdk_downloads", value: 4 },
               { day: "2026-11-08", source: "github", metric: "stars", value: 60 },
+              { day: "2026-11-10", source: "github", metric: "stars", value: 64 },
+              { day: "2026-11-07", source: "github", metric: "stars", value: 51 },
             ].map((row) => JSON.stringify(row)),
           },
         ],
       });
     }
+    registries.push(url.hostname);
     assert.equal(init.headers, undefined);
     if (url.hostname === "github.com") {
       return new Response('<span class="label">Total downloads</span><h3 title="1869">1.87K</h3>');
@@ -49,7 +53,7 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
     }
     return new Response(null, { status: 502 });
   });
-  const result = await loadAdoption(
+  const read = createAdoptionReader(
     {
       LOOM_ADOPTION_QUERY_ENDPOINT_URL:
         "https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001?format=CSV",
@@ -58,6 +62,15 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
     },
     new Date("2026-11-10T08:00:00Z"),
   );
+  const selfHosted = await read("self-hosted");
+  assert.deepEqual(selfHosted.selfHosted.domains, ["company.example", "other.example"]);
+  assert.deepEqual(selfHosted.archivedStars, { day: "2026-11-10", source: "github", metric: "stars", value: 64 });
+  assert.deepEqual(selfHosted.openSource, []);
+  assert.deepEqual(registries, []);
+
+  const published = read("oss");
+  assert.equal(read("oss"), published);
+  const result = await published;
 
   assert.deepEqual(queried, ["https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001?format=JSON"]);
   assert.deepEqual(result.selfHosted.domains, ["company.example", "other.example"]);
@@ -76,6 +89,7 @@ test("calls the saved aggregate endpoint and reports monthly coverage and missin
   assert.equal(byLabel["TypeScript SDK downloads"].value, null);
   assert.equal(byLabel["Container pulls"].value, 1869);
   assert.deepEqual(byLabel["GitHub stars"].history, [
+    { day: "2026-11-07", value: 51 },
     { day: "2026-11-08", value: 60 },
     { day: "2026-11-10", value: 77 },
   ]);
@@ -88,7 +102,7 @@ test("keeps Query API credentials off unrecognized endpoint URLs", async (t) => 
     requests.push([new URL(input).hostname, init.headers?.Authorization]);
     return new Response(null, { status: 502 });
   });
-  const result = await loadAdoption(
+  const read = createAdoptionReader(
     {
       LOOM_ADOPTION_QUERY_ENDPOINT_URL: "https://external.example/run/00000000-0000-0000-0000-000000000001",
       LOOM_ADOPTION_QUERY_KEY_ID: "fixture-id",
@@ -96,7 +110,66 @@ test("keeps Query API credentials off unrecognized endpoint URLs", async (t) => 
     },
     new Date("2026-11-10T08:00:00Z"),
   );
+  const result = await read("oss");
   assert.ok(requests.every(([host, authorization]) => host !== "external.example" && authorization === undefined));
   assert.equal(result.selfHosted.totals, undefined);
   assert.equal(result.selfHosted.domains, null);
+});
+
+test("refreshes warehouse data within thirty seconds and reuses registry metrics", async (t) => {
+  let now = Date.UTC(2026, 10, 27, 18);
+  t.mock.method(Date, "now", () => now);
+  const originalEnv = process.env;
+  t.after(() => {
+    process.env = originalEnv;
+  });
+  process.env = {
+    ...originalEnv,
+    LOOM_ADOPTION_QUERY_ENDPOINT_URL: "https://queries.clickhouse.cloud/run/00000000-0000-0000-0000-000000000001",
+    LOOM_ADOPTION_QUERY_KEY_ID: "fixture-id",
+    LOOM_ADOPTION_QUERY_KEY_SECRET: "fixture-secret",
+  };
+  t.mock.method(console, "warn", () => {});
+  const timeoutBySignal = new Map();
+  t.mock.method(AbortSignal, "timeout", (delay) => {
+    const { signal } = new AbortController();
+    timeoutBySignal.set(signal, delay);
+    return signal;
+  });
+  const warehouseTimeouts = [];
+  const registryTimeouts = [];
+  t.mock.method(globalThis, "fetch", async (input, init) => {
+    if (new URL(input).hostname !== "queries.clickhouse.cloud") {
+      registryTimeouts.push(timeoutBySignal.get(init.signal));
+      return new Response(null, { status: 502 });
+    }
+    warehouseTimeouts.push(timeoutBySignal.get(init.signal));
+    const attempt = warehouseTimeouts.length;
+    if (attempt === 2) throw new DOMException("Warehouse timed out", "TimeoutError");
+    return Response.json({
+      data: [
+        {
+          totals: [],
+          versions: [],
+          retention: [],
+          activity: [],
+          lifecycle: [],
+          oss: [],
+          domains: attempt === 1 ? [] : ["today.example"],
+        },
+      ],
+    });
+  });
+
+  assert.deepEqual((await loadPublishedAdoption("oss")).selfHosted.domains, []);
+  now += 30_000;
+  const timedOut = loadPublishedAdoption("self-hosted");
+  assert.equal(loadPublishedAdoption("self-hosted"), timedOut);
+  assert.equal((await timedOut).selfHosted.domains, null);
+  now += 14_999;
+  assert.equal(loadPublishedAdoption("self-hosted"), timedOut);
+  now += 1;
+  assert.deepEqual((await loadPublishedAdoption("oss")).selfHosted.domains, ["today.example"]);
+  assert.deepEqual(warehouseTimeouts, [30_000, 30_000, 30_000]);
+  assert.deepEqual(registryTimeouts, Array(6).fill(5_000));
 });

@@ -330,7 +330,10 @@ after a merge. It runs the same ingest pass immediately for that namespace on th
 that received it, under the namespace's lease (`code_refresh:<org>/<namespace>`), so
 triggers landing on different replicas coalesce into one pass. It answers 404 for a
 namespace no entry configures, so the pusher never decides what gets indexed. It works
-with the poller disabled.
+with the poller disabled. After the pass it rechecks the memories linked to the
+namespace's code under the link worker's per-repository lease, with no model call, so
+link state does not wait for the `memory_code_links` interval; a busy lease or a failed
+recheck is logged and left to that worker.
 
 Open pull requests are not indexed; the working tree stays the client's own.
 
@@ -367,6 +370,20 @@ the rest of the C/C++ toolchain but no scip-clang: point `LOOM_CODE_SCIP_CLANG_P
 your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each worker
 initializes a missing or empty working tree directory as a Git repository and fetches
 each commit into it from the entry's mirror, so a new leader starts from nothing.
+With `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS` on (off by default; turn it on once no
+older build serves, [upgrades](upgrades.md) step 8), the checkout's packs are hard links
+of the mirror's (each marked by a `.keep` file; an operator's own `.keep` stays),
+so a tier costs its working tree rather than a second copy of the repository; a
+checkout that already holds its own copy, from an earlier version or an operator,
+drops it in the checkout gc of the tier's next pass with a new commit (for C/C++, the
+full-index worker's), which keeps the shared packs. That gc runs only with room for
+the checkout's own bytes plus `code_mirror_gc_margin_gb`; on a fuller volume the copy
+stays until there is room, so free space, or remove the checkout to have the next pass
+recreate it shared. The checkout stays a standalone repository. Hard links need the
+checkout on the mirror's filesystem, and the kernel refuses a link to another user's
+pack file the server cannot write (`fs.protected_hardlinks`): there the checkout keeps
+its own copy, gc'd every `code_mirror_gc_interval_h` as before, and the log says so
+once.
 An existing checkout must be the root of a standalone Git working tree, with its
 `.git` directory inside the checkout. Compiler Git jobs need writable metadata
 there. Linked worktrees, external Git metadata, regular files, bare repositories and
@@ -1160,6 +1177,16 @@ has a gold question set; it is never run in CI, whose embedder is fake
 - **Erase an index.** `erasure.request` with `scope_type = namespace` on a code namespace
   also purges the `loom.code_*` tables. An entry that is still configured is re-indexed
   from scratch on the next pass, so retire it first.
+- **Writes during an erasure.** While an erasure that may reach a code namespace is
+  unfinished, the ingest pass, the compiler tiers, the summary, embed recovery, coverage
+  import and graph stats workers skip it and `code.refresh` answers `ERASURE_RUNNING`. The
+  purge refuses with `OVERLOADED` while work begun before the erasure was recorded may
+  still write the namespace: a live entry lock or `code.refresh` lease on it, or a code
+  worker's pass that may have begun before then (an enabled worker with no finished pass
+  yet counts), until that pass's deadline; a worker status that cannot be read refuses
+  too. The recovery worker retries the erasure; once it has given up, repeat the request. This is
+  best effort: a statement already sent, or a writer of an older build, can still leave
+  rows, and `verify.residue` then fails the saga so it is repeated.
 
 ## When a tier fails
 

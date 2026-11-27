@@ -9,7 +9,7 @@ async function readSource(url, options, decode = (response) => response.json()) 
     const response = await fetch(url, {
       ...options,
       redirect: "error",
-      signal: AbortSignal.timeout(5000),
+      signal: options?.signal ?? AbortSignal.timeout(5_000),
     });
     if (response.ok) return await decode(response);
   } catch {
@@ -36,6 +36,7 @@ async function loadWarehouse(env) {
   url.searchParams.set("format", "JSON");
   const response = await readSource(url, {
     headers: { Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}` },
+    signal: AbortSignal.timeout(30_000),
   });
   const row = response?.data?.[0];
   if (datasets.every((name) => Array.isArray(row?.[name]))) {
@@ -64,14 +65,11 @@ async function containerPulls() {
 
 const numberOrNull = (value) => (Number.isFinite(value) ? value : null);
 
-export async function loadAdoption(env = process.env, now = new Date()) {
-  const refreshedAt = now.toISOString();
-  const today = refreshedAt.slice(0, 10);
+function readRegistryMetrics(today) {
   const firstDay = daysBefore(today, 365);
   const historyStart = daysBefore(today, 730);
   const yesterday = daysBefore(today, 1);
-  const [warehouse, repository, releases, python, npm, olderNpm, pulls] = await Promise.all([
-    loadWarehouse(env),
+  return Promise.all([
     readSource("https://api.github.com/repos/ClickHouse/loom"),
     readSource("https://api.github.com/repos/ClickHouse/loom/releases?per_page=100"),
     readSource("https://pypistats.org/api/packages/clickhouse-loom/overall?mirrors=false"),
@@ -79,8 +77,15 @@ export async function loadAdoption(env = process.env, now = new Date()) {
     readSource(`https://api.npmjs.org/downloads/range/${historyStart}:${daysBefore(firstDay, 1)}/@clickhouse/loom`),
     containerPulls(),
   ]);
+}
 
-  const oss = warehouse.oss ?? [];
+async function loadOpenSource(warehouse, today, readRegistries) {
+  const historyStart = daysBefore(today, 730);
+  const [aggregates, [repository, releases, python, npm, olderNpm, pulls]] = await Promise.all([
+    warehouse,
+    readRegistries(today),
+  ]);
+  const oss = aggregates.oss ?? [];
   const series = (source, metric) => oss.filter((row) => row.source === source && row.metric === metric);
   const fetchDays = (rows) =>
     rows
@@ -101,10 +106,15 @@ export async function loadAdoption(env = process.env, now = new Date()) {
       ? releases.flatMap(({ assets }) => assets ?? []).reduce((total, asset) => total + asset.download_count, 0)
       : null;
   const counter = (source, metric, current) => {
-    const history = series(source, metric).map(({ day, value }) => ({ day, value }));
+    const history = series(source, metric)
+      .map(({ day, value }) => ({ day, value }))
+      .sort((left, right) => left.day.localeCompare(right.day));
     const value = numberOrNull(current);
     const latest = history.at(-1);
-    if (value !== null && history.length) history.push({ day: today, value });
+    if (value !== null && latest) {
+      if (latest.day === today) history.pop();
+      history.push({ day: today, value });
+    }
     return {
       value: value ?? latest?.value ?? null,
       day: value === null ? latest?.day : today,
@@ -123,55 +133,100 @@ export async function loadAdoption(env = process.env, now = new Date()) {
     };
   };
 
-  return {
-    today,
-    refreshedAt,
-    selfHosted: {
-      totals: warehouse.totals,
-      versions: warehouse.versions,
-      retention: warehouse.retention,
-      activity: warehouse.activity ?? [],
-      lifecycle: warehouse.lifecycle ?? [],
-      domains: warehouse.domains ?? null,
+  return [
+    {
+      id: "stars",
+      label: "GitHub stars",
+      source: "GitHub",
+      ...counter("github", "stars", repository?.stargazers_count),
     },
-    openSource: [
-      {
-        id: "stars",
-        label: "GitHub stars",
-        source: "GitHub",
-        ...counter("github", "stars", repository?.stargazers_count),
+    { id: "forks", label: "GitHub forks", source: "GitHub", ...counter("github", "forks", repository?.forks_count) },
+    {
+      id: "pypi",
+      artifact: "clickhouse-loom",
+      label: "Python SDK downloads",
+      source: "PyPI",
+      ...downloads(pythonDays, "pypi"),
+    },
+    {
+      id: "npm",
+      artifact: "@clickhouse/loom",
+      label: "TypeScript SDK downloads",
+      source: "npm",
+      ...downloads(npmDays, "npm"),
+    },
+    {
+      id: "releases",
+      label: "Release asset downloads",
+      source: "GitHub",
+      ...counter("github", "release_asset_downloads_total", releaseDownloads),
+    },
+    { id: "pulls", label: "Container pulls", source: "GHCR", ...counter("ghcr", "container_pulls_total", pulls) },
+  ];
+}
+
+export function createAdoptionReader(env, now, readRegistries = readRegistryMetrics) {
+  const today = now.toISOString().slice(0, 10);
+  const warehouse = loadWarehouse(env);
+  const selfHosted = warehouse.then(({ totals, versions, retention, activity, lifecycle, domains, oss }) => {
+    const archivedStars = oss
+      ?.filter(({ source, metric, value }) => source === "github" && metric === "stars" && Number.isFinite(value))
+      .sort((left, right) => right.day.localeCompare(left.day))
+      .at(0);
+    return {
+      today,
+      archivedStars,
+      selfHosted: {
+        totals,
+        versions,
+        retention,
+        activity: activity ?? [],
+        lifecycle: lifecycle ?? [],
+        domains: domains ?? null,
       },
-      { id: "forks", label: "GitHub forks", source: "GitHub", ...counter("github", "forks", repository?.forks_count) },
-      {
-        id: "pypi",
-        artifact: "clickhouse-loom",
-        label: "Python SDK downloads",
-        source: "PyPI",
-        ...downloads(pythonDays, "pypi"),
-      },
-      {
-        id: "npm",
-        artifact: "@clickhouse/loom",
-        label: "TypeScript SDK downloads",
-        source: "npm",
-        ...downloads(npmDays, "npm"),
-      },
-      {
-        id: "releases",
-        label: "Release asset downloads",
-        source: "GitHub",
-        ...counter("github", "release_asset_downloads_total", releaseDownloads),
-      },
-      { id: "pulls", label: "Container pulls", source: "GHCR", ...counter("ghcr", "container_pulls_total", pulls) },
-    ],
+      openSource: [],
+    };
+  });
+  let withOpenSource;
+  return (tab) => {
+    if (tab === "self-hosted") return selfHosted;
+    withOpenSource ??= Promise.all([selfHosted, loadOpenSource(warehouse, today, readRegistries)]).then(
+      ([data, openSource]) => ({
+        ...data,
+        openSource,
+      }),
+    );
+    return withOpenSource;
   };
 }
 
+const warehouseTtlMs = 30_000;
+const retryTtlMs = 15_000;
+const registryTtlMs = 5 * 60_000;
+let registries;
+function readPublishedRegistries(today) {
+  const now = Date.now();
+  if (!registries || now >= registries.expires || registries.today !== today) {
+    registries = { today, expires: now + registryTtlMs, data: readRegistryMetrics(today) };
+  }
+  return registries.data;
+}
+
 let published;
-export function loadPublishedAdoption() {
+export function loadPublishedAdoption(tab) {
   const now = Date.now();
   if (!published || now >= published.expires) {
-    published = { expires: now + 5 * 60_000, data: loadAdoption(process.env, new Date(now)) };
+    const read = createAdoptionReader(process.env, new Date(now), readPublishedRegistries);
+    const refresh = { expires: Infinity, read };
+    read("self-hosted").then(
+      ({ selfHosted }) => {
+        refresh.expires = Date.now() + (selfHosted.domains === null ? retryTtlMs : warehouseTtlMs);
+      },
+      () => {
+        refresh.expires = Date.now() + retryTtlMs;
+      },
+    );
+    published = refresh;
   }
-  return published.data;
+  return published.read(tab);
 }

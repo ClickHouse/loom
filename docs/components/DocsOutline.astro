@@ -1,0 +1,57 @@
+---
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Text } from "@clickhouse/click-ui/Text";
+import type { Heading } from "blume/core/types.ts";
+
+interface Props {
+  headings: Heading[];
+  title: string;
+  variant: "mobile" | "desktop";
+}
+
+const { headings, title, variant } = Astro.props;
+const mobile = variant === "mobile";
+const Outline = mobile ? "details" : "div";
+---
+
+{(headings.length > 0 || (mobile && Astro.slots.has("default"))) && (
+  <Outline class:list={[
+    "docs-outline",
+    mobile && "group mx-auto mb-6 max-w-content rounded-blume border border-border xl:hidden",
+  ]}>
+    {mobile ? (
+      <summary class="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
+        <Text component="span" weight="semibold">{title}</Text>
+        <Icon aria-hidden="true" className="text-muted-foreground group-open:rotate-180" name="chevron-down" size="sm" />
+      </summary>
+    ) : (
+      <Text className="mb-3" weight="semibold">{title}</Text>
+    )}
+    {headings.length > 0 && (
+      <blume-toc class="block">
+        <ul class:list={["m-0 list-none", mobile ? "border-border border-t p-2" : "p-0"]}>
+          {headings.map(({ depth, slug, text }) => (
+            <li data-depth={depth} style={`padding-inline-start:${(depth - 2) * 0.75}rem`}>
+              <Link className={mobile ? "block rounded-md px-2 py-1.5" : "block py-1.5"} href={`#${slug}`}>
+                {text}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </blume-toc>
+    )}
+    <slot />
+  </Outline>
+)}
+
+<style>
+  .docs-outline :global(a:not(:hover, :focus, [aria-current="location"])) {
+    color: var(--click-global-color-text-muted);
+  }
+
+  .docs-outline :global(a[aria-current="location"]) {
+    color: var(--click-global-color-accent-default);
+    font-weight: 600;
+  }
+</style>

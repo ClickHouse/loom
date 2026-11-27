@@ -7,7 +7,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Getting started
 
 - [Overview](docs/getting-started/overview.md): Loom is a server that stores memory, documents, conversations, an entity graph and a code index for AI agents, as rows in ClickHouse, with Postgres as an option for live memory and knowledge state.
-- [Quickstart](docs/getting-started/quickstart.md): This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP.
+- [Quickstart](docs/getting-started/quickstart.md): Run Loom locally with Docker.
 - [Set up Loom with your coding agent](docs/getting-started/agent-setup.md): This page is for a coding agent, Claude Code or Codex, asked to install Loom on the machine it runs on and to prove that the install works.
 - [Shared memory for Claude Code, Codex and Cursor](docs/getting-started/connect-a-coding-agent.md): Loom gives Claude Code, Codex and Cursor shared long-term memory through plugins or MCP tools connected to the same self-hosted server.
 - [Evaluate Loom](docs/getting-started/evaluate.md): Evaluate the decision you need to make, not every harness in the repository.
@@ -44,6 +44,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 ## Features
 
+- [Features](docs/features/index.md): Loom gives agents memory, source material, and records of prior work in a namespace they can access.
 - [Conversations and sessions](docs/features/conversations-and-sessions.md): Loom keeps three kinds of session state, each in its own plane:
 - [The dashboard](docs/features/dashboard.md): The dashboard is a React single-page app the Loom server serves at its root URL.
 - [Entity graph](docs/features/entity-graph.md): Loom keeps an entity graph beside the memory rows, in the same ClickHouse database.
@@ -87,7 +88,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 ## Guides
 
-- [Guides](docs/guides/index.md)
+- [Guides](docs/guides/index.md): Choose a task to connect an agent, put shared context to work, or evaluate a workflow.
 - [Integrate Loom into an agent](docs/guides/agent-integration.md): This guide covers what an agent sends to Loom and how it reads the answers: the client surface, the identity, what to write, and how to read.
 - [Choose retrieval scope from the audience](docs/guides/audience-scoped-retrieval.md): Needs an end-user issuer (`LOOM_JWT_END_USER_ISSUERS_JSON`): an agent host signs each request as the person who asked, and picks the collections a reply may draw on from who will read it.
 - [Code tools for model integrations](docs/guides/code-tools.md): An indexed code namespace and a token with read access let an SDK tool loop investigate definitions, behavior and relationships with `loom_code_lookup`.
@@ -109,6 +110,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 ## Operations
 
+- [Operations](docs/operations/index.md): Deploy Loom for a team, choose storage and identity settings, and maintain a running instance.
 - [Exporting usage to a data warehouse](docs/operations/analytics-export.md): `loom export-analytics` writes one UTC day of usage and a snapshot of the namespaces to an S3 bucket as Parquet files, one file per entity per day, for a data warehouse to load.
 - [Native assistant setup](docs/operations/assistant.md): The assistant runs inside Loom and uses the same dashboard, HTTP, MCP and SDK interfaces.
 - [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row names an object in it, and under the Postgres authority a backup of Postgres too.
@@ -132,7 +134,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 ## Reference
 
-- [Reference](docs/reference/index.md): Reference pages say what exists and what each option means.
+- [Reference](docs/reference/index.md): Look up SDKs, request and response fields, CLI commands, and server settings.
 - [CLI reference](docs/reference/cli.md): `loom` is the one command-line entry point for running, maintaining and connecting to a Loom deployment.
 - [Configuration reference](docs/reference/configuration.md): Every setting is declared in one file, `server/settings/catalog.py`, and is an environment variable `LOOM_<FIELD>` read at startup into `server.settings.settings`.
 - [Environment variables reference](docs/reference/environment.md): Almost everything Loom is configured with is a settings field: the environment variable `LOOM_<FIELD>` of a field on `server.settings.Settings`, listed with its default and meaning in the generated configuration reference.

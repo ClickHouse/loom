@@ -153,6 +153,7 @@ export function Users() {
       <div className="mb-6">
         <PageHeader
           title="Users"
+          description="See who can access the organization, what they can reach, and when they were last active."
           actions={
             <BusyButton
               type="secondary"
@@ -165,12 +166,8 @@ export function Users() {
             </BusyButton>
           }
         >
-          <ScopeBadge kind="namespace" value={identity.namespace} />
+          <ScopeBadge kind="org" value={identity.org} />
         </PageHeader>
-        <p className="text-sm text-text-muted max-w-2xl">
-          Every subject in <span className="font-mono">{identity.org}</span> with namespace grants + last-activity. Use
-          this to answer "who has access to X" and "when was Y last on."
-        </p>
       </div>
 
       {/* Mounted before the first read answers, so its count is announced when it lands; it
