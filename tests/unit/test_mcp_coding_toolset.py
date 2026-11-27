@@ -470,6 +470,11 @@ def test_a_bound_compact_coding_connection_lists_the_code_tools_alone(monkeypatc
     # the call still takes every argument the listing leaves out
     assert left_out <= OPERATIONS_BY_NAME["code.grep"].input_model.model_fields.keys()
     assert not mt.code_only_listing("coding", "compact")
+    # an explicit list marks the tools this listing carries and adds none
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "loom_op,memory.set,code.callers")
+    explicit = _bound_listing("coding", "compact")
+    assert [tool["name"] for tool in explicit] == list(tools)
+    assert [tool["name"] for tool in explicit if tool.get("_meta")] == ["loom_code_callers"]
 
 
 def test_a_reply_on_the_listing_of_code_tools_alone_names_no_tool_it_leaves_out() -> None:
