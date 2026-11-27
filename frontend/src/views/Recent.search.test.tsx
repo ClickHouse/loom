@@ -272,7 +272,8 @@ describe("Recent search with one key written by two sessions", () => {
       ...Array.from({ length: 4 }, (_, i) => written(`late${i}`)),
     ];
     vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) => {
-      if (!opts?.prefix) return { entries: opts?.contains ? [] : [written("two")], total: 1, today: 0, truncated: false };
+      if (!opts?.prefix)
+        return { entries: opts?.contains ? [] : [written("two")], total: 1, today: 0, truncated: false };
       const offset = opts.offset ?? 0;
       return { entries: all.slice(offset, offset + 10), total: all.length, today: 0, truncated: false };
     });

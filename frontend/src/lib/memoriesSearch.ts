@@ -36,11 +36,13 @@ export async function resolveSearchWriter(
   if (!uid || !sid) return;
 
   const namespace = hit.namespace || identity.namespace;
-  const page = await listMemories(
-    { ...identity, namespace, user_id: uid, session_id: sid },
-    KEYWORD_PAGE,
-    { agent, prefix: hit.memory_key, include_profile: true, fields: ["agent", "user_id", "session_id"], signal },
-  ).catch(() => null);
+  const page = await listMemories({ ...identity, namespace, user_id: uid, session_id: sid }, KEYWORD_PAGE, {
+    agent,
+    prefix: hit.memory_key,
+    include_profile: true,
+    fields: ["agent", "user_id", "session_id"],
+    signal,
+  }).catch(() => null);
   if (!page || signal.aborted || page.truncated || page.total > page.entries.length) return;
   const matches = page.entries.filter(
     (row) =>
