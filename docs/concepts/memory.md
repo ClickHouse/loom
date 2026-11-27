@@ -606,9 +606,10 @@ The links are read where the code is:
   (a chunk, record or summary hit carries none of these and is never
   left out). A `render="reader"` block and every page of `loom_search`'s text say so on
   such a hit's line, with the same note as a `memory.for_file` line. Where the
-  deployment sets `memory_ask_code_namespace`, `memory.ask` gives its synthesis a note
-  of the memories whose code moved, changed or went, with the same clause for a link now
-  at another path or symbol.
+  deployment sets `memory_ask_code_namespace` to a code namespace the caller may read
+  and leaves `memory_ask_code_staleness` on, `memory.ask` gives its synthesis a note of
+  the memories whose code moved, changed or went, with the same clause for a link now at
+  another path or symbol.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read.
 
