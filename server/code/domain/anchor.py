@@ -297,14 +297,24 @@ def cited_names(found: Sequence[Mention]) -> list[str]:
     return list(dict.fromkeys(n for n in names if len(n) >= _MIN_BARE))
 
 
+# not a setting: a file link's stored fingerprint is of the lines this selects
+_MAX_CITED_LINES = 8
+
+
 def cited_lines(lines: Sequence[str], names: Sequence[str]) -> list[str]:
     """The lines of a file that hold one of `names` as a whole word, in file order, runs
     of whitespace as one space: what a memory linked to the file says of it. An edit to
-    any other line, a shift of these and a new indentation leave them as they were."""
-    if not names:
-        return []
-    word = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(n) for n in names) + r")(?!\w)")
-    return [" ".join(line.split()) for line in lines if word.search(line)]
+    any other line, a shift of these and a new indentation leave them as they were. A
+    name on more than `_MAX_CITED_LINES` lines is a word of the file (`None`, `self`)
+    and selects none. The bound is a count: a share of the file would be crossed by an
+    edit to any other line."""
+    held: set[int] = set()
+    for name in names:
+        word = re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)")
+        on = [i for i, line in enumerate(lines) if word.search(line)]
+        if len(on) <= _MAX_CITED_LINES:
+            held.update(on)
+    return [" ".join(lines[i].split()) for i in sorted(held)]
 
 
 def cited_fingerprint(lines: Sequence[str], names: Sequence[str]) -> str:

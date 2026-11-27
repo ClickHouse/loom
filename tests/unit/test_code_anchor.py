@@ -277,6 +277,35 @@ def test_a_file_link_written_against_no_cited_line_takes_the_first_it_finds() ->
     found = recheck(link, path_now="CHANGES.rst", cited="h1", head="c2")
     assert (found.state, found.body_hash, found.checked_hash) == ("fresh", "h1", "h1")
     assert recheck(found, path_now="CHANGES.rst", cited="h2", head="c3").state == "changed"
+    # written against the lines of one name: those that bring a second one change it
+    names = ["http_date", "dump_delta"]
+    then = ["from http import http_date", "def dump(o):", "    return http_date(o)"]
+    written = cited_fingerprint(then, names)
+    one = Link(path="d.py", body_hash=written, checked_hash=written)
+    both = cited_fingerprint([*then, "register(dump_delta)"], names)
+    brought = recheck(one, path_now="d.py", cited=both, head="c2")
+    assert (brought.state, brought.changed_since, brought.body_hash) == ("changed", "c2", written)
+
+
+def test_a_file_link_leaves_out_a_name_on_many_lines_of_its_file() -> None:
+    names = cited_names(mentions("Handlers here must never return `None`; see `MAX_ROWS`."))
+    assert names == ["None", "MAX_ROWS"]
+    handler = ["def {0}(req, key=None):", "    if key is None:", "        return None"]
+    then = [line.format(name) for name in ("get", "put", "drop") for line in handler]
+    then.append("LIMIT = min(n, MAX_ROWS)")
+    assert cited_lines(then, ["None"]) == []  # on nine lines: a word of this file
+    assert cited_lines(then, names) == [then[-1]]
+    written = cited_fingerprint(then, names)
+    link = Link(path="handlers.py", body_hash=written, checked_hash=written)
+    edited = [line.replace("key=None", "key=None, force=None") for line in then]
+    as_it_was = cited_fingerprint(edited, names)
+    assert recheck(link, path_now="handlers.py", cited=as_it_was, head="c2") == link
+    # on eight lines or fewer it is cited: an edit to one of them changes the link
+    few = then[3:]
+    assert len(cited_lines(few, ["None"])) == 6
+    cited = Link(path="handlers.py", body_hash=cited_fingerprint(few, ["None"]))
+    less = cited_fingerprint(few[1:], ["None"])
+    assert recheck(cited, path_now="handlers.py", cited=less, head="c2").state == "changed"
 
 
 def test_a_rename_keeps_an_earlier_change_and_rebaselines_only_a_current_link() -> None:

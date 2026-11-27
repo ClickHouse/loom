@@ -436,15 +436,17 @@ git mirror. On every indexed commit the worker follows the commit's renames and 
 | `missing`    | The code is gone: nothing new took its place. The link keeps its place, so a revert finds it again.                |
 
 A link to a file follows the lines of that file that hold a name the memory cites: the
-last part of each name above, of four or more characters, as a whole word. It reads
-`changed` when those lines are no longer the ones the memory was written against, and
-`fresh` again once they are back. An edit to any other line, a shift of the cited lines
-or a new indentation leaves it `fresh`, so a memory about a long file is not marked by
-every commit to it, and a memory that cites no name in the file (a rule about the file
-as a whole) is marked only when the file moves or goes. A name the file did not hold yet
-is followed from the commit that brings it. When that commit defines the name in the
-file (the memory was written before its function merged), the file link becomes a link
-to that definition, written against its text at that commit.
+last part of each name above, of four or more characters, as a whole word. A name on
+more than eight lines of the file (`None`, `self`) is a word of that file and is not
+followed. The link reads `changed` when the cited lines are no longer the ones the memory
+was written against, and `fresh` again once they are back. An edit to any other line, a
+shift of the cited lines or a new indentation leaves it `fresh`, so a memory about a long
+file is not marked by every commit to it, and a memory that cites no name in the file (a
+rule about the file as a whole) is marked only when the file moves or goes. A link
+written against no cited line takes the first ones a later commit brings as the lines it
+was written against. When a commit defines a name the memory gives in the file (the
+memory was written before its function merged), the file link becomes a link to that
+definition, written against its text at that commit.
 
 ![A memory's detail in the dashboard: its linked code, one definition current and one changed since a commit](../assets/screenshots/memory-linked-code.webp)
 

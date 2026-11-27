@@ -3005,6 +3005,8 @@ async def test_a_file_link_that_becomes_two_definitions_is_dropped_once(monkeypa
         ("m::f", True, 5),
         ("m::g", True, 5),
     ]
+    # nor is it a former identity of either: a read matches one by its name
+    assert [r["former"] for r in written] == [[], [], []]
 
 
 @pytest.mark.asyncio

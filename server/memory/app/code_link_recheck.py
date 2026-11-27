@@ -732,7 +732,8 @@ async def _write_moves(moves: list[Move], head: str) -> None:
         relinked = (link.path, link.qualified_name) != (a["path"], a["qualified_name"])
         if relinked:
             gone[(a["namespace"], a["memory_id"], a["path"], a["qualified_name"])] = a
-        moved_from = relinked and bool(a["path"])
+        # a file link leaves no former identity: a read matches one by its name
+        moved_from = relinked and bool(a["path"]) and bool(a["qualified_name"])
         # a correction holds only for a changed method its class did not carry: the
         # method's text cannot show what changed around it
         corrected = link.state == "changed" and not link.carried
