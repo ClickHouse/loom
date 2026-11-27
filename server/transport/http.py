@@ -544,9 +544,10 @@ def _record_failure(
         pass
 
 
-async def _start_telemetry(op: Operation, response: Response, call: _HttpCall) -> None:
-    """The OTel span's Loom attributes (with the namespace's capture consent)
-    and the X-Trace-Id header."""
+def _start_telemetry(
+    op: Operation, response: Response, call: _HttpCall, *, capture_level: str = "off"
+) -> None:
+    """Set the OTel span's Loom attributes and the X-Trace-Id header."""
     request_id, auth, identity = call.request_id, call.auth, call.identity
     # Tag the OTel span with Loom-specific attributes for tenant/op
     # filtering; no-op when OTel is disabled. Prefer the payload's
@@ -563,16 +564,6 @@ async def _start_telemetry(op: Operation, response: Response, call: _HttpCall) -
     if not span_session_id or span_session_id == SENTINEL:
         span_session_id = None
 
-    # Per-namespace consent for capturing prompt/completion text. Resolved
-    # here, once, from a 60s cache — never inside the provider call, which
-    # would put a ClickHouse round trip on every generation.
-    try:
-        from server.observability import capture_consent as _consent
-
-        _capture_level = await _consent.resolve(identity["org"], identity["namespace"])
-    except Exception:  # noqa: BLE001 — fail closed, not open
-        _capture_level = "off"
-
     _otel.set_loom_attributes(
         op_name=op.name,
         org=identity["org"],
@@ -581,7 +572,7 @@ async def _start_telemetry(op: Operation, response: Response, call: _HttpCall) -
         user_id=effective_user_id,
         request_id=request_id,
         session_id=span_session_id,
-        capture_level=_capture_level,
+        capture_level=capture_level,
     )
 
     # Hand the caller its trace id. It is the same 32-char hex Langfuse uses
@@ -785,7 +776,7 @@ def _with_error_headers(
 
 
 def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any]]:
-    async def endpoint(request: Request, response: Response) -> Any:
+    async def endpoint(request: Request, response: Response, span: Any) -> Any:
         # The phases run in this order and each refusal raises its own HTTP
         # error: token, session protection, body, validation, authorization, policy, rate limit,
         # idempotency replay, then the handler. Nothing after a gate runs
@@ -802,8 +793,10 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # Bound before the body is read, as MCP binds it before validation:
         # a refusal's ledger row reads the token's org and pins from it.
         from server.auth.context import set_current_auth
+        from server.observability.prompt_context import authenticated
 
         set_current_auth(auth)
+        authenticated(span, auth, op.name, request_id)
         bind_claimed_class(auth)
         await gates.session_content(op, auth)
         body = await _read_body(op, request, request_id, auth)
@@ -825,10 +818,21 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         payload = gates.with_target(op, payload, target)
         payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
+        _start_telemetry(op, response, call)
         replay = await _idempotency_gate(op, request, response, call, target, payload)
         if replay.hit is not None:
             return replay.hit.body
-        await _start_telemetry(op, response, call)
+
+        try:
+            from server.observability import capture_consent
+
+            capture_level = await capture_consent.resolve(
+                call.identity["org"], call.identity["namespace"]
+            )
+        except Exception:  # noqa: BLE001 — fail closed, not open
+            capture_level = "off"
+        if capture_level != "off":
+            _start_telemetry(op, response, call, capture_level=capture_level)
 
         with required_call_exit(
             op_name=op.name,
@@ -844,7 +848,17 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
                 op, call, payload, result, elapsed_ms, (replay.scope, replay.body_hash)
             )
 
-    return _with_error_headers(endpoint)
+    async def with_prompt(request: Request, response: Response) -> Any:
+        from server.observability import prompt_context
+
+        with prompt_context.http_call(request.headers, getattr(op, "name", "http")) as span:
+            result = await endpoint(request, response, span)
+            prompt_context.http_outcome(
+                span, response.status_code, response.headers.get("X-Request-Id", "")
+            )
+            return result
+
+    return _with_error_headers(with_prompt)
 
 
 def _success_headers(

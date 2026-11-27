@@ -114,13 +114,13 @@ def test_a_batch_past_its_cap_or_empty_is_refused_before_any_entry_runs(
 
     client = _client(monkeypatch, auth=auth)
     ran: list[Any] = []
-    handle = mcp_mod._handle_request
+    dispatch = mcp_mod._dispatch_request
 
     async def counted(*args: Any, **kwargs: Any) -> Any:
         ran.append(1)
-        return await handle(*args, **kwargs)
+        return await dispatch(*args, **kwargs)
 
-    monkeypatch.setattr(mcp_mod, "_handle_request", counted)
+    monkeypatch.setattr(mcp_mod, "_dispatch_request", counted)
     ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
     for body in ([ping] * (MAX_BATCH_ENTRIES + 1), []):
         r = client.post("/mcp", json=body, headers=_headers(auth))

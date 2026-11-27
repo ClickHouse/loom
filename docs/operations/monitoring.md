@@ -319,11 +319,11 @@ described in [ClickStack](../features/integrations/clickstack.md).
   tables (`deploy/clickstack_sources.sh` scripts that). Where no HyperDX install created
   them, apply `schemas/otel/clickstack_otel_tables.sql` once by hand; every statement is
   `IF NOT EXISTS`.
-- **Two traps the panels avoid.** FastAPI instrumentation emits ASGI child spans named
-  like their parent (`POST /v1/memory.get http send`), which inflates a span-name filter
-  about threefold; only the parent span carries `loom.*` attributes, so filter on
-  `mapContains(SpanAttributes, 'loom.operation')`. And cumulative metrics need a
-  per-series delta: `sum(Value)` over a window sums running totals.
+- **Two traps the panels avoid.** A call can have ASGI child spans with similar names
+  and provider spans that also carry `loom.operation`. Filter request panels on
+  `SpanAttributes['loom.call.root'] = 'true'` so only exported call attempts count.
+  Cumulative metrics need a per-series delta: `sum(Value)` over a window sums running
+  totals.
 - **The code index board.** [`deploy/dashboards/code_plane.json`](../../deploy/dashboards/code_plane.json)
   is the source of truth for the "Loom — Code Plane" dashboard: every tile with its
   source and SQL, and the tiles that carry an `alert` block with threshold and reason.
@@ -420,3 +420,98 @@ way. Bucket fill itself stays per host.
 - [Telemetry](../features/observability/telemetry.md): the metric and span catalogue
 - [Cost and usage](../features/observability/cost-and-usage.md) and
   [audit](../features/observability/audit.md)
+
+## Loom invocation observability
+
+Loom observes registered HTTP operations under `/v1/{op}` and MCP tool calls
+through its existing OpenTelemetry exporters. The HTTP account routes under
+`/v1/me/*` do not contribute to these call counts. Each call observation has
+`loom.call.root=true`, a unique `loom.call.attempt_id`, the operation, transport,
+outcome, and duration in milliseconds. Provider and retrieval stages remain
+children of that call.
+
+Transport and origin answer different questions. `loom.call.transport` is
+`http` or `mcp`. `loom.call.origin` is the caller-reported `tool`, `hook`,
+`worker`, or `unknown`. Absent or invalid origin stays unknown; MCP alone does
+not prove that an agent selected the call. `caller_type` can separately name
+`agent`, `plugin`, `sdk`, `cli`, or `worker`. Worker passes carry worker origin
+but do not count as received requests, and the Langfuse worker filters still
+apply. Origin and correlation metadata grant no permissions.
+
+HTTP callers can supply these headers. Each value is independently optional;
+identifiers accept at most 128 ASCII letters, digits, underscores, dots,
+colons, or hyphens. Invalid identifiers are omitted.
+
+| Header                                                                            | Meaning                                                             |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `X-Loom-Call-Origin`                                                              | Declared invocation origin                                          |
+| `X-Loom-Caller-Type`                                                              | Declared caller type                                                |
+| `X-Loom-Hook-Name`, `X-Loom-Hook-Event`                                           | Known hook entrypoint and event                                     |
+| `X-Loom-Conversation-Id`, `X-Loom-Prompt-Id`                                      | Optional supplied conversation and turn                             |
+| `X-Loom-Tool-Call-Id`                                                             | Caller-supplied tool-call correlation; uniqueness is caller-defined |
+| `X-Loom-Benchmark-Run-Id`, `X-Loom-Benchmark-Case-Id`, `X-Loom-Benchmark-Variant` | Evaluator correlation                                               |
+| `traceparent`, `tracestate`                                                       | Optional W3C parent context                                         |
+
+MCP callers supply the same snake-case fields in `params._meta.loom`, with
+`origin` for the invocation origin; W3C context goes directly in `_meta`.
+Per-call metadata takes precedence over request headers. For example:
+
+```json
+{
+  "name": "loom_op",
+  "arguments": { "op": "help" },
+  "_meta": {
+    "loom": {
+      "origin": "tool",
+      "caller_type": "agent",
+      "tool_call_id": "call-example",
+      "benchmark_run_id": "run-example",
+      "benchmark_case_id": "case-example",
+      "benchmark_variant": "with-memory"
+    }
+  }
+}
+```
+
+The hook transport declares hook origin even without a prompt ID. Known hook
+entrypoints also identify detached requests without borrowing another turn's
+identity. Optional supplied IDs never change stored session scope, tenant
+identity, authorization, or capture consent. Accepted IDs from HTTP headers
+and MCP metadata are exported as supplied. Use opaque, non-sensitive IDs;
+never put credentials, prompt text, or results in these fields. The supplied
+conversation ID is correlation metadata, not the resolved session used to
+group traces.
+
+Call observations cover HTTP operation refusals and MCP catalog, protocol,
+and authorization-screening outcomes after the HTTP bearer gate. Invalid
+JSON, unsupported HTTP protocol headers, whole-batch limits and bearer
+refusals can precede MCP call observations. Private-work diagnostics are
+suppressed by the existing export boundary. Trace sampling and span filters
+still apply, so missing observations do not prove zero calls.
+
+`LOOM_OTEL_EXCLUDED_URLS` suppresses FastAPI instrumentation, not the separate
+Loom call observations. An excluded URL can still record a call for a
+registered HTTP operation or an MCP tool. Do not use URL exclusions to
+prevent those observations from being exported.
+
+Count only observations marked `loom.call.root`, including tool calls inside
+a batch. Do not count wrappers such as `mcp.batch.entry`, HTTP envelopes, or
+nested stages. Received retries have distinct attempt IDs.
+A host tool-call ID can correlate several separate Loom requests from hook
+fanout. Grouping attempts requires a caller guarantee that the supplied ID
+identifies one logical Loom request within the caller's scope and remains
+stable across its retries. Without that guarantee the logical count is unknown.
+Structured benchmark metadata is filterable; it does not imply arbitrary
+grouping or an answer-quality gain.
+
+Sum call durations for accumulated call time. Concurrent requests overlap,
+so this sum differs from elapsed wall time. A host prompt lifecycle is not
+required for Loom invocation tracing. Each invocation starts a separate trace
+because erasure deletes whole traces. Valid supplied context adds an
+OpenTelemetry span link, not a parent; Langfuse keeps the supplied trace ID
+as `loom_parent_trace_id` metadata rather than a span link. Without supplied
+context, a link can point to the enclosing transport span instead.
+Sum actual generation and embedding usage once on those observations, without
+copying cost to the call parent. Missing usage or price stays unknown. Loom
+provider usage is separate from external agent-host billing. Output length is
+not measured model usage.

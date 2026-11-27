@@ -162,14 +162,10 @@ Paste into HyperDX → Dashboards → new chart → SQL panel.
 
 ### The two traps these queries avoid
 
-1. **`SpanName LIKE 'POST /v1/%'` also matches ASGI child spans.**
-   FastAPI auto-instrumentation emits `POST /v1/memory.get http send` and
-   `… http receive` alongside the real parent span — typically two child
-   spans per real `memory.get` call, so any
-   `count()`/`avg()` over that filter is ~3x inflated and "slowest
-   traces" fills with 0.02ms rows. The discriminator is
-   `mapContains(SpanAttributes, 'loom.operation')`: only the parent span
-   carries `loom.*` attributes (set in `set_loom_attributes`).
+1. **A call can produce multiple spans.** Span-name prefixes match ASGI
+   send and receive spans, and provider children can also carry
+   `loom.operation`. For counts and durations, select call roots with
+   `SpanAttributes['loom.call.root'] = 'true'`.
 
 2. **Both Loom metrics are CUMULATIVE** (`AggregationTemporality = 2`,
    OTel Python's default). `sum(Value)` over a window sums running
@@ -510,12 +506,13 @@ SELECT
     count() / 60 AS rps
 FROM default.otel_traces
 WHERE Timestamp > now() - INTERVAL 1 HOUR
-  AND mapContains(SpanAttributes, 'loom.operation')
+  AND SpanAttributes['loom.call.root'] = 'true'
 GROUP BY time, op
 ORDER BY time ASC
 ```
 
-Time-series chart, group by `op`. Exact — one parent span per request.
+Time-series chart, group by `op`. Counts exported call attempts, including
+each MCP tool call in a batch. Sampling and export filters can reduce coverage.
 
 <details>
 <summary>Counter-based alternative (needs cumulative deltas)</summary>
@@ -555,12 +552,12 @@ SELECT
     quantile(0.99)(Duration / 1e6) AS p99_ms
 FROM default.otel_traces
 WHERE Timestamp > now() - INTERVAL 1 HOUR
-  AND mapContains(SpanAttributes, 'loom.operation')
+  AND SpanAttributes['loom.call.root'] = 'true'
 GROUP BY time, op
 ORDER BY time ASC
 ```
 
-True percentiles over per-request durations. For a mean from the
+Percentiles over exported call durations. For a mean from the
 histogram instead, delta `Sum` and `Count` across buckets — do not
 `quantile()` them.
 
@@ -575,7 +572,7 @@ SELECT
     countIf(StatusCode = 'Error') / count() AS error_rate
 FROM default.otel_traces
 WHERE Timestamp > now() - INTERVAL 1 HOUR
-  AND mapContains(SpanAttributes, 'loom.operation')
+  AND SpanAttributes['loom.call.root'] = 'true'
 GROUP BY time, op
 ORDER BY time ASC
 ```
@@ -593,7 +590,7 @@ SELECT
     TraceId
 FROM default.otel_traces
 WHERE Timestamp > now() - INTERVAL 1 HOUR
-  AND mapContains(SpanAttributes, 'loom.operation')
+  AND SpanAttributes['loom.call.root'] = 'true'
 ORDER BY Duration DESC
 LIMIT 20
 ```
@@ -614,7 +611,7 @@ SELECT
     avg(Duration) / 1e6 AS avg_ms
 FROM default.otel_traces
 WHERE Timestamp > now() - INTERVAL 1 HOUR
-  AND mapContains(SpanAttributes, 'loom.operation')
+  AND SpanAttributes['loom.call.root'] = 'true'
   AND SpanAttributes['loom.namespace'] != ''
 GROUP BY namespace, op
 ORDER BY calls DESC
@@ -666,13 +663,13 @@ vs clickstack.delete_user) is the long-tail of the cascade.
 
 ### 8. Saved searches (HyperDX → Search → save query)
 
-| Name               | Query bar                                                             |
-| ------------------ | --------------------------------------------------------------------- |
-| Loom errors        | `SeverityText:ERROR service.name:loom`                                |
-| Request spans only | `SpanAttributes['loom.operation']:*`                                  |
-| One tenant         | `SpanAttributes['loom.namespace']:eng-tooling`                        |
-| One user           | `enduser.id:<your-user-id>`                                           |
-| Slow knowledge.add | `SpanAttributes['loom.operation']:knowledge.add Duration:>1000000000` |
+| Name               | Query bar                                                                                                   |
+| ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Loom errors        | `SeverityText:ERROR service.name:loom`                                                                      |
+| Request spans only | `SpanAttributes['loom.call.root']:true`                                                                     |
+| One tenant         | `SpanAttributes['loom.namespace']:eng-tooling`                                                              |
+| One user           | `enduser.id:<your-user-id>`                                                                                 |
+| Slow knowledge.add | `SpanAttributes['loom.call.root']:true SpanAttributes['loom.operation']:knowledge.add Duration:>1000000000` |
 
 "Loom errors" is empty until something actually logs at ERROR — the
 handler is attached at INFO, so a healthy service shows only
@@ -729,7 +726,7 @@ What the tiles answer, in the order they sit on the board:
 | Files the indexer could not process                                 | Is anything being dropped at ingest?                                                          | `loom.code.files_errored` gauge; the same number `code.coverage` and the dashboard's Health page show                                                                    |
 | Code ops per 5 min; p50/p95/p99 per op                              | Who is calling what, and is each op inside its `budget_p99_ms`?                               | root spans with `loom.operation LIKE 'code.%'`                                                                                                                           |
 | Where code.callers spends its time                                  | Which leg is slow: resolve, dispatch, edge walk?                                              | child spans `code.<op>.<leg>`                                                                                                                                            |
-| Failed code requests                                                | 4xx/5xx by op and status                                                                      | `http.status_code` on root spans (and `loom.requests{success=false}` once the HTTP transport records failures)                                                           |
+| Failed code calls                                                   | Which code calls ended in an error, refusal, or timeout?                                      | `loom.call.outcome` on call roots (`loom.call.root=true`), grouped by operation and outcome                                                                              |
 | Share of answers served from a stale index                          | How often did an agent get an answer more than `LOOM_CODE_STALE_AFTER_COMMITS` behind master? | `loom.code.stale` span attribute                                                                                                                                         |
 | Abstain / ambiguous rate by op                                      | Is the index refusing more than usual?                                                        | `loom.code_search_trace`, benches filtered out by `consumer`                                                                                                             |
 | code.search top cosine similarity                                   | The flagship retrieval-quality line, code edition                                             | `loom.search.top_similarity{loom.operation='code.search'}` — populated from the response-level `top_similarity` because code hits carry RRF scores, not cosine distances |

@@ -547,14 +547,18 @@ def worker_pass_span(name: str) -> Any:
 
         @contextlib.contextmanager
         def _cm() -> Iterator[Any]:
-            with tracer.start_as_current_span(f"worker.{name}.pass") as span:
-                try:
-                    span.set_attribute("loom.worker", name)
-                    span.set_attribute("loom.operation", f"worker.{name}")
-                    span.set_attribute("langfuse.trace.name", f"worker.{name}")
-                except Exception:  # noqa: BLE001 — span attrs must not fail the pass
-                    pass
-                yield span
+            from server.observability import prompt_context
+
+            with prompt_context.bind({"origin": "worker", "caller_type": "worker"}):
+                with tracer.start_as_current_span(f"worker.{name}.pass") as span:
+                    try:
+                        span.set_attribute("loom.worker", name)
+                        span.set_attribute("loom.operation", f"worker.{name}")
+                        span.set_attribute("langfuse.trace.name", f"worker.{name}")
+                        prompt_context.stamp(span)
+                    except Exception:  # noqa: BLE001 — span attrs must not fail the pass
+                        pass
+                    yield span
 
         return _cm()
     except Exception:  # noqa: BLE001 — tracing must never fail the pass
@@ -607,6 +611,8 @@ def set_loom_attributes(
         span = trace.get_current_span()
         if span is None or not span.is_recording():
             return
+        from server.observability import prompt_context
+
         span.set_attribute("loom.operation", op_name)
         span.set_attribute("loom.org", org)
         span.set_attribute("loom.namespace", namespace)
@@ -631,6 +637,7 @@ def set_loom_attributes(
         # correct trace with an EMPTY name). The loom operation is both stable
         # and more useful than the HTTP route.
         span.set_attribute("langfuse.trace.name", op_name)
+        prompt_context.stamp(span)
     except Exception:  # noqa: BLE001 — trace attrs must never fail a request
         pass
 

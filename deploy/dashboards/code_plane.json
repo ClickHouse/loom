@@ -120,10 +120,10 @@
     },
     {
       "id": "errors",
-      "title": "Failed code requests by op and status",
+      "title": "Failed code calls by operation and outcome",
       "chart": "line",
       "source": "traces",
-      "sql": "SELECT toStartOfInterval(Timestamp, INTERVAL 15 MINUTE) AS t, SpanAttributes['loom.operation'] AS op, SpanAttributes['http.status_code'] AS status, count() AS n FROM default.otel_traces WHERE ParentSpanId = '' AND SpanAttributes['loom.operation'] LIKE 'code.%' AND toUInt16OrZero(SpanAttributes['http.status_code']) >= 400 AND Timestamp > now() - INTERVAL 24 HOUR GROUP BY t, op, status ORDER BY t"
+      "sql": "SELECT toStartOfInterval(Timestamp, INTERVAL 15 MINUTE) AS t, SpanAttributes['loom.operation'] AS op, SpanAttributes['loom.call.outcome'] AS outcome, count() AS n FROM default.otel_traces WHERE SpanAttributes['loom.call.root'] = 'true' AND SpanAttributes['loom.operation'] LIKE 'code.%' AND outcome IN ('error', 'refusal', 'timeout') AND Timestamp > now() - INTERVAL 24 HOUR GROUP BY t, op, outcome ORDER BY t"
     },
     {
       "id": "stale_share",
