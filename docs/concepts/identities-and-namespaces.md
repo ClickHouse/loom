@@ -1,5 +1,5 @@
 ---
-description: Loom records who wrote each row and uses namespace roles to control what callers can read and write.
+description: Loom records who wrote each memory row and uses namespace roles to control what callers can read and write.
 ---
 
 # Identities and namespaces
