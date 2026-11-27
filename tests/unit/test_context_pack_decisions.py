@@ -243,10 +243,10 @@ def test_a_line_whose_code_changed_says_so_with_the_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _dead_other_sections(monkeypatch)
-    link = {"state": "changed", "changed_since": "c0ffee" * 4, "checked_at": "2026-11-01"}
-    fact = NS(**{**vars(_FACT), "code_state": "changed", "_code_links": [link]})
-    gone = {"state": "missing", "changed_since": "dead" * 10, "path": "a.py", "qualified_name": ""}
-    decision = NS(**{**vars(_DECISION), "code_state": "missing", "_code_links": [gone]})
+    changed = {"code_state": "changed", "code_changed_since": "c0ffee" * 4}
+    fact = NS(**{**vars(_FACT), **changed})
+    gone = {"code_state": "missing", "code_changed_since": "dead" * 10}
+    decision = NS(**{**vars(_DECISION), **gone})
     moved = NS(**{**vars(_FACT), "memory_key": "m2", "code_state": "moved"})
     monkeypatch.setattr(
         "server.memory.app.search.handle_memory_search", _search_stub([fact, decision, moved])

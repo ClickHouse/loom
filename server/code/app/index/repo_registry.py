@@ -201,14 +201,17 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
     ``code_repos_refresh_seconds``, so an added repository or a new restriction
     reaches every replica within that time, whichever ops it serves. The same timer
     re-reads what the health problems report of the entries: the failing code-index
-    tiers, and how many entries nothing indexes. It also probes the sandbox once a
-    repository job can be owed, so a replica that started with no repository reports
-    on the sandbox after the first one is added through another."""
+    tiers, how many entries nothing indexes, and the repositories whose memory links
+    trail their index. It also probes the sandbox once a repository job can be owed, so
+    a replica that started with no repository reports on the sandbox after the first one
+    is added through another."""
     from server.code.app.index import ingest_trigger, sandbox, tier_health
+    from server.memory.app import code_link_lag
 
     await refresh_db_repos(force=True, ch=ch)
     await tier_health.refresh_failing(ch)
     await ingest_trigger.refresh(ch)
+    await code_link_lag.refresh(ch)
     await sandbox.probe_where_owed()
 
     async def _loop() -> None:
@@ -220,6 +223,7 @@ async def start_refresher(ch: Any | None = None) -> asyncio.Task[None]:
             await refresh_db_repos(force=True, ch=ch)  # never raises
             await tier_health.refresh_failing(ch)  # never raises
             await ingest_trigger.refresh(ch)  # never raises
+            await code_link_lag.refresh(ch)  # never raises
             await sandbox.probe_where_owed()  # never raises: the probe catches its own
 
     return asyncio.create_task(_loop(), name="loom-code-repos-refresh")

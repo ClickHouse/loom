@@ -1,0 +1,89 @@
+---
+import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import AdoptionFilters from "./AdoptionFilters.mjs";
+
+interface Props {
+  fields: { name: string; label: string; value: string | number; options: { value: string; label: string }[] }[];
+  days: number;
+  active: boolean;
+}
+
+const { fields, days, active } = Astro.props;
+---
+
+<details class="advanced" open={active}>
+  <summary>Chart settings <Icon aria-hidden="true" className="settings-chevron" name="chevron-down" size="xs" /></summary>
+  <form id="adoption-filters" method="get" action="/adoption#installation-activity" class="filters" aria-label="Chart settings" data-adoption-filters hidden>
+    <input type="hidden" name="days" value={days} />
+    <AdoptionFilters client:load fields={fields} form="adoption-filters" fallback="adoption-native-filters" />
+    <Button type="secondary" htmlType="submit" label="Apply filters" />
+  </form>
+  <form id="adoption-native-filters" method="get" action="/adoption#installation-activity" class="filters native" aria-label="Chart settings" data-adoption-filters>
+    <input type="hidden" name="days" value={days} />
+    {fields.map(({ label, name, options, value }) => (
+      <label>{label}
+        <select name={name}>
+          {options.map((option) => <option value={option.value} selected={option.value === String(value)}>{option.label}</option>)}
+        </select>
+      </label>
+    ))}
+    <Button type="secondary" htmlType="submit" label="Apply filters" />
+  </form>
+</details>
+
+<script>
+  import { omitDefaultAdoptionFilters } from "../lib/adoption-view.mjs";
+
+  document.querySelectorAll<HTMLFormElement>("[data-adoption-filters]").forEach((form) => {
+    form.addEventListener("formdata", ({ formData }) => omitDefaultAdoptionFilters(formData));
+  });
+</script>
+
+<style>
+  .advanced {
+    margin-block-end: 1rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .advanced summary {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    list-style: none;
+    padding: 0.68rem 0.95rem;
+    cursor: pointer;
+    color: var(--click-global-color-text-default);
+    font-size: 0.86rem;
+    font-weight: 600;
+  }
+  .advanced summary::-webkit-details-marker { display: none; }
+  .advanced summary:hover { color: var(--accent); }
+  .advanced[open] :global(.settings-chevron) { rotate: 180deg; }
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 0.65rem 0.85rem;
+    padding: 0 0.95rem 0.95rem;
+  }
+  .filters[hidden] { display: none; }
+  .filters :global(.adoption-filter), .native label { flex: 1 1 11rem; min-inline-size: 0; }
+  .filters > button { flex: none; }
+  .native label { display: grid; gap: 0.4rem; font-size: 0.85rem; }
+  .native select {
+    min-inline-size: 0;
+    min-block-size: 2.75rem;
+    padding: 0.5rem;
+    border: 1px solid var(--click-global-color-stroke-default);
+    border-radius: var(--click-button-radii-all);
+    background: var(--click-global-color-background-default);
+    color: var(--click-global-color-text-default);
+    font: inherit;
+  }
+  @media (max-width: 34rem) {
+    .filters { display: grid; grid-template-columns: minmax(0, 1fr); }
+    .filters > button { justify-self: start; }
+  }
+</style>

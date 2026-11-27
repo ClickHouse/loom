@@ -1,10 +1,16 @@
 ---
+import { GridContainer } from "@clickhouse/click-ui/GridContainer";
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
 import { Image } from "astro:assets";
 import dashboard from "../assets/screenshots/memory-linked-code.webp";
 import ContextPreview from "./ContextPreview.astro";
 import SiteFrame from "./SiteFrame.astro";
 import { documentationLink } from "./documentation-link";
-import { homeCopy } from "./home-copy";
+import { homeAdoptionCopy, homeCopy } from "./home-copy";
 import { enterpriseLink, siteLocales, type SiteLocale } from "./site-locales";
 
 interface Props {
@@ -13,10 +19,14 @@ interface Props {
 
 const { locale } = Astro.props;
 const copy = homeCopy[locale];
+const adoption = homeAdoptionCopy[locale];
 const homeLocale = siteLocales[locale];
 const languageNames = new Intl.DisplayNames(locale, { type: "language" });
 const docLink = (path: string) => documentationLink(locale, path);
 const start = docLink("/getting-started/quickstart");
+const connect = docLink("/getting-started/connect-a-coding-agent");
+const firstAgent = docLink("/getting-started/first-agent");
+const evaluate = docLink("/getting-started/evaluate");
 const enterprise = enterpriseLink(locale);
 const knowledgeFactory =
   "knowledgeFactory" in homeLocale
@@ -42,14 +52,14 @@ const useCases = [
 <SiteFrame title={copy.title} description={copy.description} path={homeLocale.href} home={{ locale, start }}>
   <section class="hero" aria-labelledby="home-title">
     <div class="hero-content">
-      <p class="deployment">{copy.deployment}</p>
-      <h1 id="home-title">{copy.heading}</h1>
-      <p class="lead">{copy.lead}</p>
+      <Text color="muted" className="deployment">{copy.deployment}</Text>
+      <Title type="h1" size="xl" family="brand" id="home-title">{copy.heading}</Title>
+      <Text color="muted" className="lead">{copy.lead}</Text>
       <div class="site-actions">
-        <a class="primary" href="/playground/source-change" lang="en" hreflang="en">
-          {locale === "en" ? "Try the Playground" : "Playground"}<span class="link-arrow" aria-hidden="true">→</span>
-        </a>
-        <a class="secondary" {...start}>{copy.run}</a>
+        <Link className="primary" href="/playground/source-change" lang="en" hrefLang="en">
+          {locale === "en" ? "Try the Playground" : "Playground"}<Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" />
+        </Link>
+        <Link className="secondary" href={start.href} hrefLang={start.hreflang}>{copy.run}</Link>
       </div>
     </div>
     {locale === "en" ? <ContextPreview /> : <figure class="preview">
@@ -57,7 +67,7 @@ const useCases = [
         src={dashboard}
         format="webp"
         widths={[360, 480, 640, 800, 960, dashboard.width]}
-        sizes="(max-width: 63rem) 92vw, (max-width: 108rem) 48vw, 52rem"
+        sizes="(max-width: 59rem) 94vw, (min-width: 96rem) 56vw, 46vw"
         loading="eager"
         alt={copy.screenshotAlt}
         fetchpriority="high"
@@ -67,52 +77,68 @@ const useCases = [
     </figure>}
   </section>
 
+  <Panel className="site-section adoption-proof" role="region" aria-labelledby="adoption-title" color="muted" hasBorder fillWidth>
+    <div class="section-copy">
+      <Title type="h2" size="lg" id="adoption-title">{adoption.heading}</Title>
+      <Text color="muted">{adoption.detail}</Text>
+    </div>
+    <div class="site-actions">
+      <Link className="primary" href="/adoption" hrefLang="en">{adoption.metrics}<Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+      <Link className="secondary" href="/adoption#reported-contact-domains" hrefLang="en">{adoption.domains}</Link>
+    </div>
+  </Panel>
+
   <section class="site-section capabilities" aria-labelledby="product-title">
     <div class="section-heading">
       <div class="section-copy">
-        <h2 id="product-title">{copy.contextHeading}</h2>
-        <p>{copy.contextDetail}</p>
+        <Title type="h2" size="lg" id="product-title">{copy.contextHeading}</Title>
+        <Text color="muted">{copy.contextDetail}</Text>
       </div>
-      <a class="text-link" href="/platform" hreflang="en">{copy.product} <span class="link-arrow" aria-hidden="true">→</span></a>
+      <Link className="text-link" href="/platform" hrefLang="en">{copy.product} <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
     </div>
-    <div class="site-grid">
+    <GridContainer className="site-grid" isResponsive={false}>
       {capabilities.map(({ title, detail, href, hreflang, link }) => (
-        <article class="site-panel">
-          <h3>{title}</h3>
-          <p>{detail}</p>
-          <a href={href} hreflang={hreflang}>{link} <span class="link-arrow" aria-hidden="true">→</span></a>
-        </article>
+        <Panel orientation="vertical" alignItems="start" gap="none" hasBorder role="article" className="site-panel">
+          <Title type="h3" size="md">{title}</Title>
+          <Text color="muted">{detail}</Text>
+          <Link href={href} hrefLang={hreflang}>{link} <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+        </Panel>
       ))}
-    </div>
+    </GridContainer>
     <div class="interfaces">
-      <a {...docLink("/getting-started/connect-a-coding-agent")}>{copy.connect}</a>
-      <a {...docLink("/getting-started/first-agent")}>{copy.sdk}</a>
+      <Link href={connect.href} hrefLang={connect.hreflang}>{copy.connect}</Link>
+      <Link href={firstAgent.href} hrefLang={firstAgent.hreflang}>{copy.sdk}</Link>
     </div>
   </section>
 
   <section class="site-section" aria-labelledby="use-cases-title">
-    <div class="section-copy">
-      <h2 id="use-cases-title">{copy.useCasesHeading}</h2>
-      <p>{copy.useCasesDetail}</p>
+    <div class="section-heading">
+      <div class="section-copy">
+        <Title type="h2" size="lg" id="use-cases-title">{copy.useCasesHeading}</Title>
+        <Text color="muted">{copy.useCasesDetail}</Text>
+      </div>
+      {locale === "en" && (
+        <Link className="text-link" href="/use-cases">Browse use cases <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+      )}
     </div>
     <nav class="use-cases" aria-label={copy.useCasesLabel}>
       {useCases.map(({ label, href, hreflang }) => (
-        <a href={href} hreflang={hreflang}>
+        <Link href={href} hrefLang={hreflang}>
           <span>{label}{hreflang !== locale && ` (${languageNames.of(hreflang)})`}</span>
-          <span class="link-arrow" aria-hidden="true">→</span>
-        </a>
+          <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" />
+        </Link>
       ))}
     </nav>
   </section>
 
   <section class="site-section evaluation" aria-labelledby="evaluation-title">
     <div class="section-copy">
-      <h2 id="evaluation-title">{copy.evaluationHeading}</h2>
-      <p>{copy.evaluationDetail}</p>
+      <Title type="h2" size="lg" id="evaluation-title">{copy.evaluationHeading}</Title>
+      <Text color="muted">{copy.evaluationDetail}</Text>
     </div>
     <div class="site-actions">
-      <a class="primary" {...enterprise}>{copy.deploymentOptions}<span class="link-arrow" aria-hidden="true">→</span></a>
-      <a class="secondary" {...docLink("/getting-started/evaluate")}>{copy.evaluate}</a>
+      <Link className="primary" href={enterprise.href} hrefLang={enterprise.hreflang}>{copy.deploymentOptions}<Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+      <Link className="secondary" href={evaluate.href} hrefLang={evaluate.hreflang}>{copy.evaluate}</Link>
     </div>
   </section>
 </SiteFrame>
@@ -149,7 +175,12 @@ const useCases = [
   .use-cases a:hover { color: var(--accent); }
   .use-cases .link-arrow { color: var(--accent); }
   .evaluation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.2rem 2rem; padding: clamp(1.25rem, 3.3vw, 2.75rem); border: 1px solid var(--line); border-inline-start: 0.2rem solid var(--accent); background: var(--surface); }
+  .adoption-proof { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1.25rem 2rem; padding: clamp(1.25rem, 3.3vw, 2.75rem); }
+  .adoption-proof .site-actions { margin-top: 0; }
   .evaluation .site-actions { margin-top: 0; }
+  @media (min-width: 96rem) {
+    .hero { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+  }
   @media (max-width: 59rem) {
     .hero { grid-template-columns: minmax(0, 1fr); }
     .hero h1 { max-width: 16ch; }

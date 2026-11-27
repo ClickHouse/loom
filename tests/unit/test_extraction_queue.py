@@ -18,6 +18,8 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -33,7 +35,10 @@ from server.memory.app import extraction_queue as q
 from server.memory.app import extraction_queue as queue
 from server.memory.app import pending_disclosure
 from server.memory.workers import extraction_queue as worker
+from server.observability import cost_accumulator
+from server.observability.budget import budget_snapshot
 from server.workers.status import get_registry
+from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl
 
 
 class StubCH:
@@ -752,6 +757,145 @@ def test_the_supervisor_pass_reads_its_config_from_settings(
     assert worker._config_from_settings() == worker.ExtractionQueueConfig(
         max_batches_per_pass=5, lease_seconds=120, max_attempts=2, namespace_concurrency=1
     )
+
+
+# ---------------------------------------------------------------- spend
+
+
+def _ledger(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The ledger events a pass emits, in order."""
+    emitted: list[Any] = []
+    monkeypatch.setattr(
+        "server.observability.events.get_emitter", lambda: SimpleNamespace(emit=emitted.append)
+    )
+    return emitted
+
+
+def _session_row(org: str, namespace: str, session: str) -> dict[str, Any]:
+    """One claimed request of `session`, whose stored payload names the row's scope."""
+    row = _stored_row(
+        queue_id=f"q-{session}",
+        org=org,
+        namespace=namespace,
+        agent=f"agent-{session}",
+        user_id=f"user-{session}",
+        session_id=session,
+    )
+    payload = json.loads(row["payload"])
+    payload.update(org=org, namespace=namespace, session_id=session)
+    row["payload"] = json.dumps(payload)
+    return row
+
+
+def _spending(
+    monkeypatch: pytest.MonkeyPatch,
+    rows: list[dict[str, Any]],
+    tokens: dict[str, tuple[int, int]],
+    *,
+    then: BaseException | None = None,
+) -> None:
+    """A queue holding `rows`, claimed. Each replay makes one model call that reports
+    `tokens[session]` as a provider client does, then raises `then` when given."""
+    ch = StubCH()
+    ch.query_all_returns = [rows]
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+
+    async def _fake_handler(inp: Any, **_kw: Any) -> Any:
+        cost_accumulator.report_llm("fake-echo-1", *tokens[inp.session_id])
+        await asyncio.sleep(0.01)  # every other namespace reports before this replay ends
+        if then is not None:
+            raise then
+        return SimpleNamespace(written=[1])
+
+    from server.memory.app.extract import handler as extract_handler_mod
+
+    monkeypatch.setattr(extract_handler_mod, "handle_memory_set_from_messages", _fake_handler)
+
+
+@pytest.mark.asyncio
+async def test_each_replayed_request_bills_its_own_tenant_and_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two namespaces replay at once. Each request's spend lands on its own ledger row,
+    and the pass, which the supervisor bills to no tenant, keeps none of it."""
+    emitted = _ledger(monkeypatch)
+    rows = [_session_row("org-a", "one", "s1"), _session_row("org-b", "two", "s2")]
+    _spending(monkeypatch, rows, {"s1": (1000, 100), "s2": (7000, 700)})
+
+    with cost_accumulator.isolated_op() as of_the_pass:
+        res = await worker.run_pass(worker.ExtractionQueueConfig(namespace_concurrency=2))
+
+    assert res.done_count == 2 and len(emitted) == 2
+    assert {(e.operation, e.kind) for e in emitted} == {("worker.extraction_queue", "worker")}
+    billed = {
+        (e.org, e.namespace, e.agent, e.user_id, e.session_id): (
+            e.input_tokens,
+            e.output_tokens,
+            e.llm_calls,
+        )
+        for e in emitted
+    }
+    assert billed == {
+        ("org-a", "one", "agent-s1", "user-s1", "s1"): (1000, 100, 1),
+        ("org-b", "two", "agent-s2", "user-s2", "s2"): (7000, 700, 1),
+    }
+    assert (of_the_pass.llm_calls, of_the_pass.llm_input_tokens) == (0, 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [RuntimeError("extractor down"), asyncio.CancelledError()])
+async def test_a_replay_that_ends_early_after_a_model_call_still_bills_its_session(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    emitted = _ledger(monkeypatch)
+    _spending(monkeypatch, [_session_row("org-a", "one", "s1")], {"s1": (300, 30)}, then=error)
+
+    run = worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
+    if isinstance(error, asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError):
+            await run
+    else:
+        assert (await run).failures == ["q-s1: pending"]
+
+    (event,) = emitted
+    identity = (event.org, event.namespace, event.agent, event.user_id, event.session_id)
+    assert identity == ("org-a", "one", "agent-s1", "user-s1", "s1")
+    assert (event.input_tokens, event.output_tokens, event.llm_calls) == (300, 30, 1)
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_replays_stored_row_is_spend_of_its_namespace_and_its_user(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The row as the ledger table stores it, read by the statement the daily caps and
+    `cost.budget_status` share."""
+    emitted = _ledger(monkeypatch)
+    monkeypatch.setitem(cost_accumulator.PRICE_PER_1K_TOKENS, "fake-echo-1", (0.001, 0.005))
+    _spending(monkeypatch, [_session_row("org-a", "one", "s1")], {"s1": (1000, 100)})
+    await worker.run_pass(worker.ExtractionQueueConfig())
+
+    ch = KeptCH(tmp_path, ddl("agent_events"), ddl("agent_events_private"), ddl("namespaces"))
+    (row,) = (event.to_row() for event in emitted)
+    del row["args"]  # empty, the column's default: the local insert cannot type an empty map
+    await ch.insert("loom.agent_events", [row])
+
+    async def spent(user_id: str) -> tuple[float, float]:
+        read = await budget_snapshot("org-a", "one", user_id=user_id, read_uncapped=True, ch=ch)
+        return read.spent, read.user_spent
+
+    assert await spent("user-s1") == (0.0015, 0.0015)
+    assert await spent("someone-else") == (0.0015, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_a_replay_that_made_no_model_call_writes_no_ledger_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitted = _ledger(monkeypatch)
+    _replaying(monkeypatch, ModelCallRefused("refused", hold_s=600.0, gateway_status=429))
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
+    assert (res.skipped, emitted) == (1, [])
 
 
 # ---------------------------------------------------------------- held, backoff, TTL

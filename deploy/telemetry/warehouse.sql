@@ -148,7 +148,8 @@ SELECT DISTINCT counts.domain AS domain
 FROM loom_product_analytics.loom_adoption_windows
 ARRAY JOIN user_domains AS counts
 WHERE schema_version = 2
-    AND day >= today_utc - 90 AND day < today_utc
+    AND day >= today_utc - 90 AND day <= today_utc
+    AND window_end <= now('UTC')
     AND counts.successful_requests > 0
     AND installation_id NOT IN (
         SELECT installation_id FROM loom_product_analytics.loom_adoption_enrollments WHERE is_internal = 1
@@ -160,8 +161,12 @@ SQL SECURITY DEFINER AS
 WITH toDate(now('UTC')) AS today_utc
 SELECT
     range_days,
-    if(daily.day >= today_utc - range_days, 'current', 'previous') AS comparison,
-    uniqExact(daily.day) AS days_reported,
+    arrayJoin(multiIf(
+        daily.day = today_utc, ['current'],
+        daily.day >= today_utc - range_days, ['current', 'current_complete'],
+        ['previous_complete']
+    )) AS comparison,
+    uniqExactIf(daily.day, daily.day < today_utc) AS days_reported,
     max(daily.day) AS last_reported,
     uniqExact(daily.installation_id) AS reporting,
     uniqExactIf(daily.installation_id, daily.successful_requests > 0) AS active,
@@ -188,7 +193,7 @@ SELECT
 FROM loom_product_analytics.loom_external_adoption_daily AS daily
 LEFT JOIN loom_product_analytics.loom_adoption_enrollments AS enrolled USING (installation_id)
 ARRAY JOIN [30, 90, 365] AS range_days
-WHERE daily.day >= today_utc - 2 * range_days AND daily.day < today_utc
+WHERE daily.day >= today_utc - 2 * range_days AND daily.day <= today_utc
 GROUP BY range_days, comparison;
 
 CREATE VIEW IF NOT EXISTS loom_product_analytics.public_adoption_versions

@@ -64,14 +64,17 @@ no profile. The lists of a `coding` connection whose URL carries
 `schema_profile=compact` follow that header, so their `cacheScope` is `private`
 with the header or without it.
 
-With the automatic loading policy, compact coding connections load
-`code.edit_context` and `code.grep` up front. Use `code.edit_context` with a
+With the automatic loading policy, a connection on the `coding` toolset loads
+`code.edit_context` and `code.grep` up front, and `code.symbol` outside the
+compact profile. Use `code.edit_context` with a
 definition name or location to read implementation, indexed tests, and linked
 lessons together. Supply multiple literal clues from the same definition to
 resolve it when individual clues also appear in other definitions. A method
 with no direct tests or lessons can receive
 examples or notes labeled with its verified owning type. Clients can discover
-`code.symbol` and `code.search` as needed.
+the other listed tools as needed. Every other toolset, a union such as
+`coding+tracker` included, loads `code.search`, `code.symbol`, `code.grep`,
+`search.query` and `loom_op` up front where listed.
 An explicit `LOOM_MCP_ALWAYS_LOAD_TOOLS` list controls loading on every profile.
 It marks tools the listing carries and adds none: on the listing of code tools
 alone, a named tool outside the code tools is not listed.

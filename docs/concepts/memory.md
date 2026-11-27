@@ -414,8 +414,14 @@ against that repository's trunk:
   `files`;
 - each file the memory names that holds none of those definitions.
 
-A qualified name trunk does not define yet waits for `memory_code_links_pending_days`
-(14), so a memory about unmerged code links once it merges.
+The worker checks pending names in pages and links them when it finds their definitions
+on trunk. It drops names older than `memory_code_links_pending_days` (14 by default),
+measured when the scan starts.
+
+A memory whose key starts with `obs:` is a raw tool observation (`observe.record` keys a
+tool call's row `obs:<session_id>:<sha8>`) and is never linked: it records a tool call, not
+a lesson, though a coding plugin's carries its session's `repo:` tag and quotes the code a
+tool read.
 
 A link records the definition's fingerprint: all its overloads and the conditions that
 select them, as tokens, so whitespace, comments (not a Go `//go:` directive or a Python
@@ -496,7 +502,9 @@ not show in it; `results` keeps the move.
 `memory.ask` re-sorts the search's rows by similarity and recency while
 `memory_ask_recency_weight` is above 0 (0.2 by default), and its identifier
 lookups place their own rows; a `context.pack` startup read with no query does not
-search. A move does not show in any of these.
+search: it lists pinned, then recent memories, leaves out a memory whose code is gone
+under the namespace's policy, and labels one whose code changed, was not found again or
+went, as a search does. A move does not show in any of these.
 
 `revise` judges a changed link once per edit, within a per-pass budget
 (`memory_code_links_revise_per_pass`). A memory labelled `high` sensitivity is never sent
@@ -551,11 +559,31 @@ The links are read where the code is:
   names the first indexed commit at which it read so; `context.pack` decision lines
   carry the same note, and its memory lines a `code_state=<state>@<commit>` label.
 - `memory.get` returns the links as `code` (with any `suggestion`); `memory.search` hits
-  read from a memory's own row carry its worst link as `code_state` (a chunk, record or
-  summary hit carries none and is never left out); `memory.ask` notes the memories whose
-  code moved, changed or went.
+  read from a memory's own row carry its worst link as `code_state` and, when that is
+  `changed`, `unresolved` or `missing`, the commit that put it there, when one is known,
+  as `code_changed_since` (a chunk, record or summary hit carries neither and is never
+  left out). A `render="reader"` block and every page of `loom_search`'s text say so on
+  such a hit's line, with the same note as a `memory.for_file` line; `memory.ask` notes
+  the memories whose code moved, changed or went.
 - `namespace.validate` lists memories whose code changed, was not found again or is
   gone, in the repositories the caller may read.
+
+A memory with no link reads exactly as one whose code is current. `namespace.validate`
+counts the served memories that name code (a backticked or qualified name, a call, or
+`files`) and hold no link, by cause, as `info` findings:
+
+| Check                            | The memory                                                                                                                                                                                                                 |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code_unlinked_no_repository`    | names no repository Loom indexes that the caller may read: no `repo:<id>` tag of one, and not written in a code namespace. It is never linked.                                                                             |
+| `code_unlinked_file_not_indexed` | lists `files`, none of which is a path on the indexed trunk (not merged yet, outside the index, or a bare filename two files share), and no name in it is one definition.                                                  |
+| `code_unlinked_name_unresolved`  | lists no `files`, and each name is defined nowhere on trunk or more than once.                                                                                                                                             |
+| `code_unlinked_pending`          | waits for its link; each sample says what it `waits_for`: `link_pass` (the worker has not read this write), `index` (no index yet, or a file that does not parse) or `trunk` (a qualified name trunk does not define yet). |
+
+The counts are of the 2,000 served memories last written (all under `keys` when given),
+and only in an org that indexes a repository; a raw tool observation, which is never
+linked, is not counted. How far each repository's links trail its
+index is a gauge, and a health warning when it lasts
+([monitoring](../operations/monitoring.md#what-to-alert-on)).
 
 ## Time
 

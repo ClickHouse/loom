@@ -330,6 +330,7 @@ One code namespace indexes one repository. No repository is configured by defaul
 | `LOOM_CODE_GIT_FETCH_TIMEOUT_S` | `float` | `3600.0` | live | Seconds one fetch, full-tree `ls-tree`, forced checkout or whole-range diff may run; the first fetch after a shallow clone of a large repository can exceed ten minutes. |
 | `LOOM_CODE_MIRROR_GC_INTERVAL_H` | `float` | `168.0` |  | Hours between `git gc` runs of each mirror on this host (low CPU and IO priority, only with room for a second copy plus `code_mirror_gc_margin_gb`). 0 = never. |
 | `LOOM_CODE_MIRROR_GC_MARGIN_GB` | `float` | `5.0` |  | Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without it the gc waits another interval. |
+| `LOOM_CODE_COMPILER_SHARE_MIRROR_PACKS` | `bool` | `False` |  | Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its working tree, not a second copy. An older build's git jobs could write the shared packs: turn it on only once no older replica serves, and off before a rollback. |
 
 ### Repository job sandbox
 
@@ -1323,9 +1324,9 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CODE_LINKS_ENABLED` | `bool` | `True` |  | Link memories to the code they name (symbols and files of the repository their `repo:` tag or code namespace names) and keep the links current as the code changes; the namespace's `code_change_policy` decides how reads treat a memory whose code is removed or changed. Off stops linking and rechecks; reads still show the stored states but no longer hide a memory, as nothing keeps them current. |
 | `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | `int` | `60` |  | Seconds between link passes. |
 | `LOOM_MEMORY_CODE_LINKS_MAX_PASS_SECONDS` | `float` | `600.0` |  | Seconds a code-links pass may run before the supervisor abandons it. |
-| `LOOM_MEMORY_CODE_LINKS_BATCH` | `int` | `500` |  | Memory writes one pass links (at least 1). |
+| `LOOM_MEMORY_CODE_LINKS_BATCH` | `int` | `500` |  | Rows per page of memory writes to link or pending links to recheck (at least 1). |
 | `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` | `int` | `60` |  | Seconds the memory code-link pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them (at least 10). A write visible later than this is passed and stays unlinked until a backfill reads it; a longer wait makes that rarer and links every write that much later. |
-| `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` |  | Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped. |
+| `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` |  | Days to retry a code-shaped name absent from trunk, measured when each pending scan starts. |
 | `LOOM_MEMORY_CODE_LINKS_REVISE_PER_PASS` | `int` | `20` |  | Changed claims one pass re-checks with the LLM under the `revise` policy. |
 | `LOOM_MEMORY_CODE_LINKS_MIRROR_NAMING_FILES` | `int` | `200` |  | Changed files that may hold a lost link's name (its callers count) for the mirror's answer to be used; from this many on, the code index alone decides. |
 | `LOOM_MEMORY_CODE_LINKS_MIRROR_CHANGED_FILES` | `int` | `5000` |  | Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched (at most 20,000: each is an argument to git); past it, the code index alone decides. |
@@ -1593,7 +1594,7 @@ Models: which model does each job.
 | `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-sonnet-5-5 / qwen2.5:3b / fake-echo-1). |
 | `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant's model, required for real providers. The fake route defaults to fake-echo-1. |
 | `LOOM_ASSISTANT_PRICE_MODEL` | `str` | `''` |  | Price-table model used for assistant route aliases (for example a Bedrock inference profile). Empty uses assistant_model. The operator verifies its rate. |
-| `LOOM_ASSISTANT_PROVIDER` | `'' \| 'anthropic' \| 'openai' \| 'bedrock' \| 'local' \| 'fake'` | `''` |  | Native streaming provider. Empty disables native model admission. |
+| `LOOM_ASSISTANT_PROVIDER` | `'' \| 'anthropic' \| 'openai' \| 'bedrock' \| 'vertex' \| 'local' \| 'fake'` | `''` |  | Native streaming provider. Vertex uses Google Application Default Credentials. Empty disables native model admission. |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
 | `LOOM_LOCAL_EMBEDDING_MODEL_DIR` | `str` | `'var/models'` |  | Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env. |
@@ -1694,7 +1695,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_AUDIT_CHECKPOINT_VERIFY_WINDOWS` | `int` | `24` |  | Most recent sealed windows recounted every pass (at least 1). |
 | `LOOM_AUDIT_CHECKPOINT_MAX_SEAL_PER_PASS` | `int` | `48` |  | Most windows one pass seals; a backlog is sealed over later passes. |
 | `LOOM_OTEL_EXPORTER` | `'' \| 'ch' \| 'otlp'` | `''` |  | OTel exporter, for spans and metrics: "ch" writes to `otel_traces` and `otel_metrics_*` in `clickstack_database` (`default` when empty) on the same service, "otlp" ships to otel_exporter_otlp_endpoint (headers: comma-separated K=V), "" = auto (otlp when the endpoint is set, else ch). |
-| `LOOM_OTEL_CODE_COUNTS_CACHE_S` | `int` | `3600` |  | Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols and code_edges, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export. |
+| `LOOM_OTEL_CODE_COUNTS_CACHE_S` | `int` | `3600` |  | Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL scan each of code_files, code_chunks, code_symbols, code_edges and memory_code_links, on the lease holder). The counts move once an index run, so an hour is enough; each refresh reads every live code row. 0 = every export. |
 | `LOOM_OTEL_CODE_GREP_REPLAY_CACHE_S` | `int` | `3600` |  | Seconds between recounts of the code.grep wrong-abstain gauge (a `content` scan per namespace with abstains). 0 = gauge off. |
 | `LOOM_OTEL_AGENT_LABELS_MAX_NAMESPACES` | `int` | `20` |  | Max namespaces `loom.memory.agent_labels_24h` names per probe (top N by label total); the rest sum under `loom.namespace = "other"`. 0 = no cap. |
 | `LOOM_OTEL_INVARIANTS_PROBE_S` | `int` | `3600` |  | Seconds between the state probe's whole-table readings (embed backlog, integrity invariants), taken on the lease holder only. The invariants read 0 and exist to catch drift, so an hour is enough; each reading is one FINAL pass over memory, memory_embeddings and entity_vectors. |
@@ -1752,7 +1753,7 @@ Embedding and LLM providers.
 | `LOOM_ANTHROPIC_BASE_URL` | `str` | `'https://api.anthropic.com'` |  | Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway in front of Anthropic. Off the default, the key also goes as a bearer, the scheme gateways take. |
 | `LOOM_BEDROCK_REGION` | `str` | `''` |  | Region for native Bedrock model requests; empty uses the AWS SDK's region chain. AWS credentials use the SDK's role, profile or environment credential chain. |
 | `LOOM_VERTEX_PROJECT` | `str` | `''` |  | Google Cloud project that owns the Vertex AI requests, required with the Vertex provider. |
-| `LOOM_VERTEX_LOCATION` | `str` | `''` |  | Vertex AI location, either a region or "global". Required with the Vertex provider. |
+| `LOOM_VERTEX_LOCATION` | `str` | `''` |  | Vertex AI location: a region, a multi-region ("eu", "us"), or "global". Required with the Vertex provider. |
 | `LOOM_LOCAL_LLM_BASE_URL` | `str` | `'http://localhost:11434/v1'` |  | LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's <host>:11434/v1, llama.cpp's server <host>:8080/v1). |
 | `LOOM_INFERENCE_TOKEN_URL` | `str` | `''` |  | Model calls with no provider key: exchange an identity token (RFC 8693) at this token endpoint of the gateway, and send the answer as the bearer (server/llm/gateway.py). The gateway must trust the token's issuer. "" = the provider keys. |
 | `LOOM_INFERENCE_WORKLOAD_TOKEN_FILE` | `str` | `''` |  | The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience. |

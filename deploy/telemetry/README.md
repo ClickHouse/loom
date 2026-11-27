@@ -67,21 +67,26 @@ Authorize a dedicated API key for the endpoint and set
 `/run/<id>` URL from the endpoint configuration. Redeploy the site after saving
 the variables.
 
-Vercel caches the aggregate page for an hour. The site fetches repository and release counts
-from GitHub, SDK downloads from PyPI Stats and npm, and container pulls from
-the public package page. Stored registry metrics fill gaps when the public
-sources are unavailable. The page shows the latest observation date for each
-metric and compares reporting periods when both periods have coverage on
-every date.
+The site refreshes warehouse data every 30 seconds when requested. It caches
+Self-hosted pages with a complete response for one minute. Failed warehouse
+refreshes retry after 15 seconds, and the site leaves those pages uncached.
+
+The site fetches repository and release counts from GitHub, SDK downloads from
+PyPI Stats and npm, and container pulls from the public package page. Stored
+registry metrics fill gaps when the public sources are unavailable. The page
+shows the latest observation date for each metric and compares reporting
+periods when both periods have coverage on every complete UTC day.
 
 The public page supports 30-, 90-, and 365-day windows. Its chart links preserve
 the selected filters. CSV links export aggregate activity, lifecycle, download,
 and star data for that selection.
 
-The domain list shows distinct names from version 2 reports with attributed
-successful requests in the last 90 complete UTC days. Apply the view and its
-grant before updating the Query API query. Deploy the collector that accepts
-version 2 before releasing workers that send it.
+The Self-hosted summary includes today's completed reporting windows.
+Period comparisons use separate totals from complete UTC days. The domain
+list shows distinct names from version 2 reports with attributed successful
+requests today or in the previous 90 UTC days. Apply the views before
+deploying the site. Deploy the collector that accepts version 2 before
+releasing workers that send it.
 
 Grant the restricted `loom_adoption_top_domains_30d` view only to authorized
 analytics staff. Its rows contain reported contact domains and attributed counts.

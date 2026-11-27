@@ -19,6 +19,7 @@ from server.code.domain.successor import Successor
 from server.memory.store.code_links import LinkRow
 from server.memory.store.key_write_lock import KeyWriteLocks
 from server.settings import settings
+from server.workers import pass_context
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,13 @@ class PassResult:
             "suggested": self.suggested,
             "errors": len(self.errors),
         }
+
+    def failed(self, error: str, e: BaseException, leg: str) -> None:
+        """A leg that raised (one repository's link or recheck): `error` joins the pass's
+        errors, and `e` is noted on the worker's pass under `leg`, so the pass counts as
+        partial, not clean."""
+        self.errors.append(error)
+        pass_context.note_failure(e, leg)
 
 
 @dataclass

@@ -1,3 +1,4 @@
+import react from "@astrojs/react";
 import { defineConfig } from "blume";
 import { vercel } from "blume/deploy";
 import { gettingStartedOverview } from "./lib/documentation-routes.mjs";
@@ -5,6 +6,17 @@ import { publisher, siteDescription, siteUrl, website } from "./lib/site-identit
 
 export default defineConfig({
   title: website.name,
+  integrations: [
+    react(),
+    {
+      name: "click-ui",
+      hooks: {
+        "astro:config:setup": ({ updateConfig }) => {
+          updateConfig({ vite: { resolve: { noExternal: ["@clickhouse/click-ui"] } } });
+        },
+      },
+    },
+  ],
   logo: {
     image: "/loom.svg",
     text: website.name,

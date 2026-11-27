@@ -11,6 +11,7 @@ from contextlib import suppress
 from typing import Any
 
 from server.core.github_values import FeedInputError
+from server.core.retirement import unfinished
 
 
 def _environment(name: str) -> str:
@@ -178,7 +179,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
 def _command(args: argparse.Namespace) -> int:
     try:
         result = asyncio.run(_run(args))
-    except Exception as exc:  # noqa: BLE001 — operator output must not quote provider or DB content
+    except Exception as exc:  # operator output must not quote provider or DB content
+        if unfinished(exc):
+            raise  # `_dispatch` prints it
         from server.tracker.domain.github_feed import FeedCapacityError, FeedInputError
 
         detail = (

@@ -102,8 +102,9 @@ def resolve_token(
     explicit: str | None, home: Path | None = None, env: Mapping[str, str] | None = None
 ) -> tuple[str, str]:
     """(token, source): the flag, `LOOM_API_KEY`; for an agent nothing
-    (`AGENT_SOURCE`); otherwise the config file's `token`, `LOOM_API_KEY_FILE`
-    or `~/.loom/token`, else ('', 'none') for the tokenless single-user stack.
+    (`AGENT_SOURCE`); otherwise the file `LOOM_API_KEY_FILE` names, the config
+    file's `token`, with that variable unset `~/.loom/token`, else ('', 'none')
+    for the tokenless single-user stack.
 
     An agent's Loom token lives minutes and is bound to the server it was
     exchanged at, so these commands neither borrow the plugin's copy nor take
@@ -117,15 +118,16 @@ def resolve_token(
         return from_env, "LOOM_API_KEY"
     if agent_mode(env):
         return "", AGENT_SOURCE
-    cfg = str(loom_config(home, env).get("token") or "").strip()
-    if cfg:
-        return cfg, CONFIG_SOURCE
     override = environ.get("LOOM_API_KEY_FILE")
     p = Path(override) if override else (home or Path.home()) / ".loom" / "token"
     try:
         saved = p.read_text(encoding="utf-8").strip()
     except OSError:
         saved = ""
+    cfg = str(loom_config(home, env).get("token") or "").strip()
+    # A file named by environment outranks a saved token, like `LOOM_API_KEY`.
+    if cfg and not (override and saved):
+        return cfg, CONFIG_SOURCE
     return (saved, str(p)) if saved else ("", "none")
 
 

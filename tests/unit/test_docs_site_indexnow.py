@@ -40,9 +40,16 @@ def test_astro_pages_submit_their_canonical_public_urls() -> None:
             "docs/pages/ja/home.astro": "A",
             "docs/pages/platform.astro": "M",
             "docs/pages/adoption.astro": "M",
+            "docs/pages/workflow-library.astro": "A",
         }
     )
-    assert urls == [f"{ORIGIN}/", f"{ORIGIN}/adoption", f"{ORIGIN}/ja", f"{ORIGIN}/platform"]
+    assert urls == [
+        f"{ORIGIN}/",
+        f"{ORIGIN}/adoption",
+        f"{ORIGIN}/ja",
+        f"{ORIGIN}/platform",
+        f"{ORIGIN}/use-cases",
+    ]
     assert indexnow.payload(urls, "a" * 32)["urlList"] == urls
 
 
@@ -81,6 +88,7 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/ru",
             "/telemetry",
             "/tr",
+            "/use-cases",
             "/vi",
             "/zh-CN",
             "/zh-CN/enterprise",
@@ -96,6 +104,8 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
     assert indexnow.urls_for({"docs/scripts/home-locales.json": "M"}) == public_pages
     all_pages = sorted([*public_pages, *indexnow.every_page()])
     assert indexnow.urls_for({"docs/theme.css": "M"}) == all_pages
+    assert indexnow.urls_for({"docs/components/DocsBreadcrumb.astro": "M"}) == all_pages
+    assert indexnow.urls_for({"docs/components.ts": "M"}) == sorted(indexnow.every_page())
     assert indexnow.urls_for({"docs/lib/documentation-routes.mjs": "M"}) == all_pages
     assert indexnow.urls_for({"docs/lib/site-identity.mjs": "M"}) == all_pages
 
