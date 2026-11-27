@@ -201,8 +201,12 @@ and [tool design guidance](https://www.anthropic.com/research/writing-tools-for-
   Coding instructions distinguish issue investigation, known-definition reads and
   literal searches. Code-linked project knowledge explains what retrieval adds to
   a source-file read; argument descriptions carry the inputs for each workflow.
-- **Offer an entrypoint.** Search and operation discovery request upfront schema
-  loading where listed; other tools can be discovered when needed. The loading
+- **Offer an entrypoint.** The `coding` toolset requests upfront schema loading
+  for the pre-edit read, literal search and, outside the compact profile, the
+  definition lookup. Every other toolset, a union such as `coding+tracker`
+  included, requests it for general and code search, the definition lookup,
+  literal search and operation discovery where listed. Other tools can be
+  discovered when needed. The loading
   setting applies to registry operations and synthetic tools. Clearing it leaves
   loading to the client. A loading hint never invokes a tool or widens its roster.
 - **Keep one contract.** The operation registry supplies schemas and handlers for

@@ -133,16 +133,19 @@ function loomConfig(env) {
   }
 }
 
+/** LOOM_API_KEY, the file LOOM_API_KEY_FILE names, the config's token, and
+ *  with that variable unset ~/.loom/token. */
 function resolveToken(env, cfg) {
   const fromEnv = (env.LOOM_API_KEY || "").trim();
   if (fromEnv) return fromEnv;
-  const c = String(cfg.token || "").trim();
-  if (c) return c;
-  try {
-    return readFileSync(env.LOOM_API_KEY_FILE || join(homedir(), ".loom", "token"), "utf8").trim();
-  } catch {
-    return "";
-  }
+  const fileToken = () => {
+    try {
+      return readFileSync(env.LOOM_API_KEY_FILE || join(homedir(), ".loom", "token"), "utf8").trim();
+    } catch {
+      return "";
+    }
+  };
+  return (env.LOOM_API_KEY_FILE && fileToken()) || String(cfg.token || "").trim() || fileToken();
 }
 
 /** `p` with symlinks, 8.3 names and drive-letter case resolved; `p` itself

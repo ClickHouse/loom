@@ -26,8 +26,8 @@ The package ships ESM and CommonJS builds with their own declaration files and
 imports no Node built-in when it loads; signing in loads `node:fs` and the
 other built-ins it needs on first use. The framework adapters are their own entry
 points: `@clickhouse/loom/integrations/ai-sdk`, `@clickhouse/loom/integrations/langchain`,
-`@clickhouse/loom/integrations/mastra`, `@clickhouse/loom/integrations/openai-agents` and
-`@clickhouse/loom/integrations/strands`.
+`@clickhouse/loom/integrations/langgraph`, `@clickhouse/loom/integrations/mastra`,
+`@clickhouse/loom/integrations/openai-agents` and `@clickhouse/loom/integrations/strands`.
 
 ## Credentials
 
@@ -267,6 +267,19 @@ dependency (`ai` 7.x, which needs Node 22.12 or later). See
 `@langchain/core`, an optional peer dependency: install it next to the SDK. They
 search `knowledge.search` and `memory.search` and return one `Document` per chunk
 or memory. See [Frameworks](../features/integrations/frameworks.md#langchain).
+
+## LangGraph.js adapter
+
+`LoomStore(agent, { tags?, searchTopKCap?, capture? })` from
+`@clickhouse/loom/integrations/langgraph` extends `BaseStore` from
+`@langchain/langgraph-checkpoint`, an optional peer dependency (1.2.3 or later in the 1.x
+line). Pass it to `compile({ store })`. Namespaces and keys become the same memory keys
+and tags as the Python store, so both SDKs read each other's items. A compiled graph's
+store wrapper drops `index` and `ttl`, so graph puts are semantic with no TTL; a direct
+`batch()` put keeps both. `listNamespaces` works on the store but not from graph nodes.
+Writes need a nonempty namespace, and a ranked search asks for at most `searchTopKCap`
+(default 50, 1 to 500) candidates. See
+[Frameworks](../features/integrations/frameworks.md#langgraph).
 
 ## Mastra adapter
 

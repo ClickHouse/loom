@@ -6,14 +6,20 @@
   },
   "scripts": {
     "dev": "npm run prepare-content && blume dev",
-    "prepare-content": "node scripts/sync-playground-engine.mjs --check && node scripts/prepare-content.mjs",
+    "prepare-content": "node scripts/sync-playground-engine.mjs --check && node scripts/prepare-content.mjs && node scripts/prepare-click-ui.mjs",
     "build": "npm run prepare-content && blume build && node scripts/mount-site-pages.mjs",
     "preview": "blume preview",
     "check": "blume check",
     "validate": "npm run prepare-content && blume validate --strict"
   },
   "dependencies": {
-    "blume": "2.2.7"
+    "@astrojs/react": "7.1.9",
+    "@clickhouse/click-ui": "0.13.0",
+    "@fontsource-variable/inter": "5.2.8",
+    "@radix-ui/react-tooltip": "1.2.16",
+    "blume": "2.2.7",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "overrides": {
     "path-to-regexp@>=4.0.0 <6.3.0": "6.3.0",

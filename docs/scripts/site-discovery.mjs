@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { escape } from "html-escaper";
+import { localizedDocumentationOverview } from "../lib/documentation-routes.mjs";
 
 const origin = "https://loom.clickhouse.com";
 const daumOwnershipProof =
@@ -61,9 +62,8 @@ function translationRedirects(sitemap, paths, staticRoot) {
     const base = `/docs/${locale}`;
     const pattern = escapePattern(base);
     const redirects = [];
-    if (!hasPage(base)) {
-      const localIndex = `${base}/use-cases`;
-      const landing = hasPage(localIndex) ? localIndex : "/docs";
+    const { href: landing } = localizedDocumentationOverview(locale, (path) => hasPage(`/docs${path}`));
+    if (landing !== base) {
       const landingExport = landing === "/docs" ? "/docs/index" : landing;
       redirects.push(redirect(`^${pattern}/?$`, landing), redirect(`^${pattern}(\\.mdx?)$`, `${landingExport}$1`));
     }

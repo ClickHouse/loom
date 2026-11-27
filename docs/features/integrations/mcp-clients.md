@@ -193,7 +193,9 @@ Two more URL parameters shape a connection:
 
 - `?schema_profile=compact` sends the first paragraph of each description and the
   argument tree, for a smaller listing; `standard` (default) and `full` (adds
-  `outputSchema`) are the others.
+  `outputSchema`) are the others. A `coding` connection that the `X-Loom-Code-Scope`
+  header binds to a repository lists the code tools alone when its URL carries
+  `schema_profile=compact` ([MCP reference](../../reference/mcp.md#endpoint)).
 - A **second registration** on another toolset adds a roster without changing the first:
   register `loom-tracker` at `?toolset=tracker` beside `loom` at `?toolset=coding`, for
   example with `loom install --client cursor --name loom-tracker --toolset tracker`.

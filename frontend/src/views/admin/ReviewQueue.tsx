@@ -185,13 +185,13 @@ export function ReviewQueue() {
 
   return (
     <PageContainer>
-      <PageHeader title="Review queue" tab={QUEUE_TABS[tab]}>
+      <PageHeader
+        title="Review queue"
+        tab={QUEUE_TABS[tab]}
+        description="Resolve conflicting memories, review proposed learnings, and settle duplicates."
+      >
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
-      <p className="text-sm text-text-muted mb-5 max-w-2xl">
-        Memory decisions waiting for a person: facts that disagree, learnings and proposals to accept or reject, and
-        duplicates to settle. Most of the time nothing waits here; that's a feature.
-      </p>
       {/* Conflicts mounts (and reads) once, at once; the sub-tabs join it when a probe finds
           rows or the role reaches them. Until then the lone panel is the page itself, not a
           tab panel without tabs. */}

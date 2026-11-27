@@ -7,7 +7,7 @@ seo:
 
 Loom's code index answers a coding agent's structure questions in the languages a
 repository holds: where a symbol is defined, who calls it, and what a change touches.
-Needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`. Every language gets the fast
+Needs a repository added. Every language gets the fast
 tier, parsed with tree-sitter grammars or hand-written scanners; C/C++, Python, TypeScript
 and Go can add a compiler tier that resolves names the way the compiler does. The full
 list of extensions and edges is the

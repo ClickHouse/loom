@@ -60,7 +60,7 @@ class CodeRepoSummary(ProjectedRow):
     git_head: str = ""
     clone_head: str = ""
     clone_fetched_at: str = ""  # The mirror's last fetch
-    fetch_overdue: bool = False  # Older than code_fetch_stale_after_seconds
+    fetch_overdue: bool = False  # As code.index_status reports it
     fast_tier_lag: int = -1
     scip_lag: int = -1  # the entry's own compiler tier
     scip_py_lag: int = -1

@@ -363,3 +363,418 @@ test("checkoutPython runs no pytest.py planted in the checkout", () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// --- runAnswered: a transcript that already answers the ask is not blocked
+
+import http from "node:http";
+import { execFileSync, spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { declinesTests, newestChange, runAnswered } from "../lib/test-gate.mjs";
+import { cachePathFor } from "../lib/repo-scope.mjs";
+import { hostEnv } from "./host-env.mjs";
+
+const said = (content, extra = {}) => ({ type: "user", message: { content }, ...extra });
+let calls = 0;
+/** A tool call and its result row, as Claude Code writes them, a second apart. */
+const call = (name, input, output = "", extra = {}) => {
+  const id = `toolu_${++calls}`;
+  const at = (ms) => new Date(1e12 + calls * 2000 + ms).toISOString();
+  return [
+    { type: "assistant", timestamp: at(0), message: { content: [{ type: "tool_use", id, name, input }] }, ...extra },
+    {
+      type: "user",
+      timestamp: at(1000),
+      message: { content: [{ type: "tool_result", tool_use_id: id, content: output }] },
+      ...extra,
+    },
+  ];
+};
+const bash = (command, output, extra) => call("Bash", { command }, output, extra);
+// A call that left a file of the tree newer than every row before it.
+const WROTE = { wroteTree: true };
+const edit = () => call("Edit", { file_path: "/r/src/a.py" }, "updated", WROTE);
+const PASSED = "........ [100%]\n467 passed, 1 skipped, 1 xfailed, 2 xpassed in 1.11s\nexit=0";
+const FAILED = "63 failed, 400 passed, 1 skipped, 1 xfailed, 2 xpassed, 5 errors in 1.60s\nexit=1";
+// As sessions write it: the edit and the run in one command, the exit status behind a pipe.
+const SUITE = "python -m pytest tests -q --tb=short -p no:cacheprovider 2>&1 | tail -5; echo exit=${PIPESTATUS[0]}";
+const HEREDOC =
+  "cat >> tests/test_a.py <<'EOF'\nimport pytest\n\ndef test_new():\n    with pytest.raises(ValueError):\n        f()\nEOF\n";
+const RUN_GATE = {
+  obligations: true,
+  tests: [{ test_path: "tests/test_a.py", run: "pytest tests/test_a.py" }],
+  untested: [{ qualified_name: "m::f" }],
+};
+const answered = (objs, gate = RUN_GATE, cwd = ROOT) =>
+  runAnswered(gate, objs.flat(), {
+    root: ROOT,
+    cwd,
+    testExists: (p) => !p.includes("gone"),
+    lastModified: () => Math.max(0, ...objs.flat().map((o) => (o.wroteTree ? Date.parse(o.timestamp) : 0))),
+  });
+
+test("a clean pytest run of the named test after the last change answers the gate", () => {
+  assert.equal(answered([edit(), bash(HEREDOC + SUITE, PASSED)]), true);
+  assert.equal(answered([edit(), bash("pytest tests/test_a.py", "===== 3 passed in 0.12s =====")]), true);
+  assert.equal(
+    answered([edit(), bash(".venv/bin/pytest /r/tests/test_a.py -q", "3 passed, 1 warning in 62.10s (0:01:02)")]),
+    true,
+  );
+  // A tool that neither edits nor runs a shell forgets nothing.
+  assert.equal(answered([edit(), bash(SUITE, PASSED), call("Read", { file_path: "/r/src/a.py" }, "x")]), true);
+  // Two files, two runs, no change between them.
+  const two = {
+    ...RUN_GATE,
+    tests: [...RUN_GATE.tests, { test_path: "tests/test_b.py", run: "pytest tests/test_b.py" }],
+  };
+  const runs = [
+    edit(),
+    bash("pytest tests/test_a.py -q", "3 passed in 0.10s"),
+    bash("pytest tests/test_b.py -q", "2 passed in 0.10s"),
+  ];
+  assert.equal(answered(runs, two), true);
+  assert.equal(answered(runs.slice(0, 2), two), false);
+  // A second command that does anything before its pytest keeps only its own run:
+  // a file put back, moved or deleted leaves none newer than the first run.
+  for (const first of [
+    "git checkout -- src/b.py && ",
+    "mv src/helper.py src/util.py; ",
+    "rm src/helper.py && ",
+    "cd /r && ",
+  ]) {
+    const later = [...runs.slice(0, 2), bash(`${first}pytest tests/test_b.py -q`, "2 passed in 0.10s")];
+    assert.equal(answered(later, two), false, first);
+    assert.equal(answered(later, { ...RUN_GATE, tests: two.tests.slice(1) }), true, first);
+  }
+  const second = bash("CI=1 timeout 60 python -m pytest tests/test_b.py -q", "2 passed in 0.10s");
+  assert.equal(answered([...runs.slice(0, 2), second], two), true);
+  // A run of the checkout root names no path below it.
+  for (const whole of ["pytest -q", "pytest . -q", "pytest /r -q"]) {
+    assert.equal(answered([edit(), bash(whole, "3 passed in 0.10s")]), false, whole);
+  }
+  for (const launched of [
+    "timeout 300 .venv/bin/python -m pytest tests -q",
+    "env -u CI LOOM_ENV_FILE= $PY -m pytest tests -q",
+    "uv run pytest tests -q",
+  ]) {
+    assert.equal(answered([edit(), bash(launched, "3 passed in 0.10s")]), true, launched);
+  }
+});
+
+test("a run's paths are read from the directory its command moved to", () => {
+  const nested = { ...RUN_GATE, tests: [{ test_path: "sub/tests/test_a.py", run: "pytest sub/tests/test_a.py" }] };
+  assert.equal(answered([edit(), bash("cd /r; python -m pytest tests -q", "3 passed in 0.10s")]), true);
+  assert.equal(answered([edit(), bash("cd sub && pytest tests -q", "3 passed in 0.10s")], nested), true);
+  assert.equal(answered([edit(), bash("cd sub && pytest tests -q", "3 passed in 0.10s")]), false);
+  assert.equal(answered([edit(), bash("(cd sub && pytest tests -q)", "3 passed in 0.10s")]), false);
+  assert.equal(
+    answered([edit(), bash("cd sub && echo $(date) && pytest tests -q", "3 passed in 0.10s")], nested),
+    true,
+  );
+  assert.equal(answered([edit(), bash("cd /tmp && pytest tests -q", "3 passed in 0.10s")]), false);
+  assert.equal(
+    answered([edit(), bash("pytest sub -q; cd sub && pytest tests -q", "1 passed in 0.10s\n3 passed in 0.10s")]),
+    false,
+  );
+  // The row's own directory, not the one the session stops in.
+  const inSub = [edit(), bash("pytest tests -q", "3 passed in 0.10s", { cwd: "/r/sub" })];
+  assert.equal(answered(inSub, nested), true);
+  assert.equal(answered(inSub), false);
+  assert.equal(
+    answered([edit(), bash("pytest tests -q", "3 passed in 0.10s", { cwd: ROOT })], RUN_GATE, "/r/sub"),
+    true,
+  );
+  // A move this reader does not follow, and a run outside the checkout.
+  for (const elsewhere of [
+    "pushd sub && pytest tests -q",
+    "(cd sub && make build); pytest tests -q",
+    "cd a && cd sub && pytest tests -q",
+    "docker exec app pytest tests -q",
+    "kubectl exec pod -- pytest tests -q",
+    "ssh host 'cd repo; pytest tests -q'",
+    "ssh host bash <<'EOF'\npytest tests -q\nEOF",
+  ]) {
+    assert.equal(answered([edit(), bash(elsewhere, "3 passed in 0.10s")]), false, elsewhere);
+    assert.equal(answered([edit(), bash(elsewhere, "3 passed in 0.10s")], nested), false, elsewhere);
+  }
+  // A PowerShell run is not read: its moves are not ones the reader knows.
+  for (const command of ["pytest tests -q", "Set-Location sub; pytest tests -q"]) {
+    const rows = [edit(), call("PowerShell", { command }, "3 passed in 0.10s")];
+    assert.equal(answered(rows), false, command);
+    assert.equal(answered(rows, nested), false, command);
+  }
+});
+
+test("a run before the tree's last change, an edit or another shell command answers nothing", () => {
+  assert.equal(answered([edit()]), false);
+  assert.equal(answered([bash(SUITE, PASSED), edit()]), false);
+  // An edit that puts a file back as HEAD has it, or writes an ignored one, leaves no newer file.
+  for (const [tool, file] of [
+    ["Edit", "/r/src/b.py"],
+    ["Write", "/r/.cache/fixture.json"],
+  ]) {
+    assert.equal(answered([edit(), bash(SUITE, PASSED), call(tool, { file_path: file }, "updated")]), false, tool);
+  }
+  // A change the transcript does not show as one, such as a subagent's edit: the file is newer.
+  assert.equal(
+    answered([edit(), bash(SUITE, PASSED), call("Agent", { prompt: "tidy src/a.py" }, "done", WROTE)]),
+    false,
+  );
+  assert.equal(answered([edit(), bash(SUITE, PASSED), call("Agent", { prompt: "explain src/a.py" }, "done")]), true);
+  // Any other shell command after the run: a delete or a copy can leave no newer file, and a read is not told apart.
+  for (const later of [
+    "ruff check --fix .",
+    "rm src/helper.py",
+    "mv src/helper.py src/util.py",
+    "cp -p /tmp/a.py src/b.py",
+    "git status --short",
+    "git diff -- src/a.py",
+  ]) {
+    assert.equal(answered([edit(), bash(SUITE, PASSED), bash(later, "")]), false, later);
+  }
+  assert.equal(answered([edit(), bash(SUITE, PASSED), call("PowerShell", { command: "Get-Date" }, "")]), false);
+  // A result row without a time cannot be placed after the change.
+  const [ran, result] = bash(SUITE, PASSED);
+  assert.equal(answered([edit(), ran, { ...result, timestamp: undefined }]), false);
+  // The run's own command does more than run pytest and show output: its result row is later than what it wrote.
+  for (const more of [
+    "pytest tests -q; sed -i s/a/b/ src/a.py",
+    "pytest tests -q; ruff check --fix .",
+    "pytest tests -q && rm src/helper.py",
+    "pytest tests -q\npython scripts/gen.py",
+    "pytest tests -q | tee out.log",
+    "pytest tests -q > out.log",
+    "pytest tests -q 2>/dev/null.log",
+    "pytest tests -q; echo x > src/new.py",
+    "pytest tests -q; echo $(rm src/helper.py)",
+    "pytest tests -q; echo `rm src/helper.py`",
+    "pytest `rm src/helper.py` tests -q",
+  ]) {
+    assert.equal(answered([edit(), bash(more, "3 passed in 0.10s")]), false, more);
+  }
+  // Output handling is all that may follow.
+  for (const shown of [
+    "pytest tests -q 2>&1 | tail -20",
+    "pytest tests -q | head -50 && echo OK || echo FAIL",
+    "pytest tests -q 2>&1 | grep passed; echo exit=$?",
+    "pytest tests -q 2>/dev/null | tail -5",
+    "(cd /r && pytest tests -q)",
+  ]) {
+    assert.equal(answered([edit(), bash(shown, "3 passed in 0.10s")]), true, shown);
+  }
+  // The suite ran on the tree without the change.
+  assert.equal(
+    answered([edit(), bash("git stash -q; python -m pytest tests -q | tail -1; git stash pop -q", PASSED)]),
+    false,
+  );
+  assert.equal(answered([edit(), bash(SUITE, PASSED), bash("git checkout -- src/a.py", "")]), false);
+  assert.equal(answered([edit(), bash(SUITE, PASSED, { isSidechain: true })]), false);
+});
+
+test("a run that failed, ran a subset or ran another file answers nothing", () => {
+  assert.equal(answered([edit(), bash(SUITE, FAILED)]), false);
+  assert.equal(answered([edit(), bash(SUITE, PASSED), bash(SUITE, FAILED)]), false);
+  assert.equal(answered([edit(), bash("pytest tests -q -k new", "1 passed, 4 deselected in 0.10s")]), false);
+  assert.equal(answered([edit(), bash("pytest tests/test_a.py::test_new -q", "1 passed in 0.10s")]), false);
+  assert.equal(answered([edit(), bash("pytest tests --ignore=tests/test_a.py -q", "9 passed in 0.10s")]), false);
+  // Flags that leave tests out; --lf does it at collection, so its summary counts nothing as deselected.
+  for (const subset of ["--lf", "--last-failed", "--sw", "--stepwise", "--deselect tests/test_a.py::test_x"]) {
+    assert.equal(answered([edit(), bash(`pytest tests ${subset} -q`, "1 passed in 0.10s")]), false, subset);
+  }
+  assert.equal(answered([edit(), bash("pytest tests/test_b.py -q", "2 passed in 0.10s")]), false);
+  assert.equal(answered([edit(), bash("pytest tests 2>&1 | grep -B5 NameError | head", "")]), false);
+  assert.equal(
+    answered([edit(), bash("echo ran python -m pytest tests/test_a.py", "ran python -m pytest tests/test_a.py")]),
+    false,
+  );
+  // A flag's value is not a path that ran.
+  const colocated = { ...RUN_GATE, tests: [{ test_path: "src/pkg/test_mod.py", run: "pytest src/pkg/test_mod.py" }] };
+  for (const flagged of ["pytest tests -q --cov src", "pytest --rootdir src tests -q", "pytest -c src/pkg tests"]) {
+    assert.equal(answered([edit(), bash(flagged, "3 passed in 0.10s")], colocated), false, flagged);
+    assert.equal(answered([edit(), bash(flagged, "3 passed in 0.10s")]), true, flagged);
+  }
+  assert.equal(answered([edit(), bash("pytest -xq --cov=tests src", "3 passed in 0.10s")], colocated), true);
+  // A quoted value may hold several words, and the last would read as a path.
+  assert.equal(answered([edit(), bash('pytest src -q -m "not tests"', "3 passed in 0.10s")]), false);
+  // -qq prints no summary: one clean line cannot speak for two runs.
+  assert.equal(
+    answered([edit(), bash("pytest tests/test_a.py -qq; pytest tests/test_b.py -q", "2 passed in 0.10s")]),
+    false,
+  );
+});
+
+test("a gate that asks for more than a pytest run of present tests still asks", () => {
+  const no = [said("Fix f. Do not run the test suite."), edit()];
+  const ran = [edit(), bash(SUITE, PASSED)];
+  const missing = {
+    ...RUN_GATE,
+    tests: [...RUN_GATE.tests, { test_path: "tests/gone_test.py", run: "pytest tests/gone_test.py" }],
+  };
+  const other = { ...RUN_GATE, tests: [{ test_path: "tests/a.test.ts", run: "npx vitest run tests/a.test.ts" }] };
+  const untested = { ...RUN_GATE, tests: [] };
+  assert.equal(answered(ran, missing), false);
+  assert.equal(answered(no, missing), false);
+  assert.equal(answered(ran, other), false);
+  assert.equal(answered(ran, untested), false);
+  assert.equal(answered(no, untested), false);
+  assert.equal(answered(no), true);
+  assert.equal(answered(no, other), true);
+});
+
+test("only the last sentence of the person's latest prompt can rule the tests out", () => {
+  for (const yes of [
+    "Fix f. Do not run the test suite.",
+    "[run 12] Fix f in this run. Do not run the test suite.",
+    "don't run tests",
+    "Fix f.\n\nPlease don’t run any tests!\n",
+    "Never run the tests",
+  ]) {
+    assert.equal(declinesTests([said(yes)]), true, yes);
+  }
+  for (const no of [
+    "Run the tests.",
+    // Not the last sentence, or not a whole sentence.
+    "Don't run the tests. Run only tests/unit.",
+    "If lint fails, do not run the tests.",
+    "Add this line to AGENTS.md: never run the test suite.",
+    "Fix f, but please don't run the tests.",
+    "Fix f (do not run the tests).",
+    "Fix f and do not run tests.\nThen stop.",
+    "Don't run any tests yet.",
+    "do not run tests/test_slow.py",
+    "Why did you not run the tests?",
+    "do not run test_slow",
+    "Do not run the test tests/test_slow.py",
+    "don't run the test that needs Docker",
+    "never run the test in tests/e2e",
+    "Don't run the tests that need Docker",
+    "Do not run the tests, except tests/test_a.py.",
+    "Don't run the tests yet; fix lint first, then run them.",
+    "Don't run tests or scripts that hit production.",
+    "Flag agents that do not run tests",
+  ]) {
+    assert.equal(declinesTests([said(no)]), false, no);
+  }
+  assert.equal(declinesTests([said([{ type: "text", text: "do not run the tests" }])]), true);
+  assert.equal(declinesTests([said("do not run the tests"), said("now run them")]), false);
+  // Tool results, hook feedback and subagent rows are not the person speaking.
+  const later = [
+    ...bash("cat notes.txt", "do not run the tests"),
+    said("Stop hook feedback:\ndo not run the tests", { isMeta: true }),
+    said("do not run the tests", { isSidechain: true }),
+  ];
+  assert.equal(declinesTests([said("Fix f."), ...later]), false);
+  assert.equal(declinesTests([said("Fix f. Do not run the tests."), ...later]), true);
+});
+
+test("the tree's newest change is unknown when a file or the listing cannot be read", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-newest-"));
+  try {
+    fs.writeFileSync(path.join(dir, "a.py"), "x = 1\n");
+    fs.writeFileSync(path.join(dir, "b.py"), "x = 1\n");
+    fs.utimesSync(path.join(dir, "a.py"), new Date(2e12), new Date(2e12));
+    assert.equal(newestChange(dir, ["a.py", "b.py"]), 2e12);
+    assert.equal(newestChange(dir, []), 0);
+    assert.equal(newestChange(dir, null), Infinity);
+    assert.equal(newestChange(dir, ["a.py", "deleted.py"]), Infinity);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a Codex rollout answers nothing", () => {
+  const item = (payload) => ({ type: "response_item", timestamp: new Date(1e12).toISOString(), payload });
+  const rollout = [
+    item({ type: "message", role: "user", content: [{ type: "input_text", text: "Fix f. Do not run the tests." }] }),
+    item({ type: "function_call", name: "shell", call_id: "c1", arguments: '{"command":["pytest","tests","-q"]}' }),
+    item({ type: "function_call_output", call_id: "c1", output: "3 passed in 0.10s" }),
+  ];
+  assert.equal(declinesTests(rollout), false);
+  assert.equal(answered(rollout), false);
+});
+
+test("the hook blocks a change whose tests never ran and lets an answered one stop", async () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-hook-")));
+  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-hook-tmp-")));
+  for (const f of ["src/a.py", "src/b.py", "tests/test_a.py"]) {
+    fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true });
+    fs.writeFileSync(path.join(dir, f), "def f():\n    return 1\n");
+  }
+  for (const args of [
+    ["init", "-q"],
+    ["add", "."],
+    ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c"],
+  ]) {
+    execFileSync("git", args, { cwd: dir, stdio: "ignore" });
+  }
+  fs.appendFileSync(path.join(dir, "src/a.py"), "def g():\n    return 2\n");
+  // The change is older than the transcript rows, until something rewrites a file.
+  const touch = (file, when) => fs.utimesSync(path.join(dir, file), when, when);
+  touch("src/a.py", new Date(1e12 - 1000));
+  fs.writeFileSync(
+    cachePathFor(dir, tmp),
+    JSON.stringify({ ts: Date.now(), indexed: true, org: "o", namespace: "code-x", repo: "x/y", prefixes: [] }),
+  );
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on("end", () => res.end(JSON.stringify(req.url === "/v1/code.test_gate" ? RUN_GATE : {})));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const hook = fileURLToPath(new URL("../hooks/loom-test-gate.mjs", import.meta.url));
+  const stop = (session, rows) =>
+    new Promise((resolve) => {
+      const transcript = path.join(tmp, `${session}.jsonl`);
+      fs.writeFileSync(
+        transcript,
+        rows
+          .flat()
+          .map((o) => JSON.stringify(o))
+          .join("\n") + "\n",
+      );
+      const child = spawn(process.execPath, [hook, "Stop"], {
+        env: hostEnv({
+          PATH: process.env.PATH,
+          HOME: tmp,
+          TMPDIR: tmp,
+          LOOM_BASE_URL: `http://127.0.0.1:${server.address().port}`,
+          LOOM_API_KEY: "t",
+        }),
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      let out = "";
+      child.stdout.on("data", (c) => (out += c));
+      child.on("close", () => resolve(out));
+      child.stdin.end(JSON.stringify({ cwd: dir, session_id: session, transcript_path: transcript }));
+    });
+  const change = call("Edit", { file_path: path.join(dir, "src/a.py") }, "updated");
+  try {
+    const ran = [change, bash(SUITE, PASSED)];
+    const no = [said("Fix f. Do not run the test suite."), change];
+    assert.match(await stop("never-ran", [change]), /"decision":"block".*pytest tests\/test_a\.py/);
+    assert.equal(await stop("never-ran", [change]), "");
+    // An untracked file whose name git would quote or a trim would cut does not hide the tree's age.
+    const odd = process.platform === "win32" ? " naïve.txt" : ' na"ï\tve.txt';
+    fs.writeFileSync(path.join(dir, odd), "x\n");
+    touch(odd, new Date(1e12 - 1000));
+    assert.equal(await stop("ran", ran), "");
+    // A shell command after the run may have deleted a file, which leaves nothing newer.
+    assert.match(await stop("removed-after-run", [...ran, bash("rm src/helper.py", "")]), /"decision":"block"/);
+    // A silent stop leaves the change its one block.
+    assert.equal(await stop("ruled-out", no), "");
+    assert.match(await stop("ruled-out", [...no, said("now run them")]), /"decision":"block"/);
+    // A file changed after the run, with no transcript row for it: new, deleted, rewritten.
+    fs.writeFileSync(path.join(dir, "tests/conftest.py"), "x = 1\n");
+    assert.match(await stop("ran", ran), /"decision":"block"/);
+    fs.rmSync(path.join(dir, "tests/conftest.py"));
+    fs.rmSync(path.join(dir, "src/b.py"));
+    assert.match(await stop("deleted-after-run", ran), /"decision":"block"/);
+    execFileSync("git", ["checkout", "-q", "--", "src/b.py"], { cwd: dir });
+    touch("src/b.py", new Date(1e12 - 1000));
+    touch("src/a.py", new Date());
+    assert.match(await stop("edited-after-run", ran), /"decision":"block"/);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

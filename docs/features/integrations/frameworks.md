@@ -2,8 +2,8 @@
 
 The SDKs ship adapters that present Loom through a framework's own memory or retrieval
 interface. An adapter needs its framework: in Python, the SDK extra its section names;
-in TypeScript, the framework package, an optional peer dependency. The LangGraph and
-Strands adapters import without their framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is
+in TypeScript, the framework package, an optional peer dependency. The Python LangGraph
+adapter and both Strands adapters import without their framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is
 Loom's namespace authorization. Every adapter calls your Loom server through the SDK: the
 data is stored in your Loom deployment (ClickHouse, and Postgres for live memory under the
 [Postgres memory authority](../../architecture/storage-authority.md)), and no adapter adds
@@ -29,6 +29,7 @@ or needs another database, vector store or cache.
 | AI SDK                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/ai-sdk`        | `tool()` from `ai`                                                       |
 | n8n                            | Loom Chat Memory, Loom                          | `@clickhouse/n8n-nodes-loom`                              | AI Memory sub-node and action/tool node                                  |
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                                                              |
+| LangGraph.js                   | `LoomStore`                                     | TypeScript, `@clickhouse/loom/integrations/langgraph`     | `BaseStore` from `@langchain/langgraph-checkpoint`                       |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol                                               |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally                                          |
 | Pipecat                        | `LoomMemoryService`                             | Python, `loom.integrations.pipecat`                       | recall and capture `FrameProcessor`s                                     |
@@ -1179,6 +1180,68 @@ write and caps the rows one ranked search asks for.
 `list_namespaces` page through `memory.list`; `filter` applies to each page. Without
 `langgraph` installed, the module still imports (structural twins of `Item`,
 `SearchItem` and the op types).
+
+## LangGraph.js
+
+`LoomStore` from `@clickhouse/loom/integrations/langgraph` extends `BaseStore` from
+`@langchain/langgraph-checkpoint`, an optional peer dependency (1.2.3 or later in the
+1.x line). Install it next to the SDK, and `@langchain/langgraph` to compile a graph.
+Keys and tags use the layout of the [Python store](#langgraph), so a Python graph and a
+TypeScript graph using the same Loom org, namespace and agent can read each other's items.
+
+```ts
+import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import { Datapack } from "@clickhouse/loom";
+import { LoomStore } from "@clickhouse/loom/integrations/langgraph";
+
+const agent = new Datapack("acme", "support", { baseUrl, apiKey }).agent("assistant");
+const State = Annotation.Root({ seat: Annotation<string> });
+const graph = new StateGraph(State)
+  .addNode("prefs", async (state, config) => {
+    const saved = await config.store?.get(["users", "alice"], "prefs");
+    if (typeof saved?.value.seat === "string") return { seat: saved.value.seat };
+    await config.store?.put(["users", "alice"], "prefs", { seat: state.seat });
+    return {};
+  })
+  .addEdge(START, "prefs")
+  .addEdge("prefs", END)
+  .compile({ store: new LoomStore(agent, { tags: ["support"] }) });
+
+await graph.invoke({ seat: "aisle" });
+
+// Outside a graph, a direct batch keeps `index` and `ttl`.
+const store = new LoomStore(agent);
+await store.batch([
+  { namespace: ["users", "alice"], key: "prefs", value: { seat: "aisle" }, index: false, ttl: 30 },
+]);
+const namespaces = await store.listNamespaces({ prefix: ["users"] });
+```
+
+`LoomStore(agent, { tags?, searchTopKCap?, capture? })` takes extra tags for every write,
+the ranked-search cap and an optional `SessionCapture`.
+
+- **`index` and `ttl`.** In `@langchain/langgraph-checkpoint` 1.2.3 the store wrapper that
+  a compiled graph hands to its nodes drops `index`, and the standard `put()` has no TTL
+  field. A put from a graph node writes semantic memory without an explicit TTL. A direct
+  `store.batch()` put keeps both: `index: false` writes an episodic memory, and `ttl`, in
+  minutes, becomes `ttl_seconds`.
+- **`listNamespaces`.** The wrapper inherits the upstream method, which throws, so a graph
+  node cannot list namespaces. Called on `LoomStore` itself it works, and it accepts
+  prefixes that contain `.` or `:`.
+- **Namespaces.** A write needs a nonempty namespace. Python also stores items with an
+  empty namespace, which a TypeScript store reads by exact key but leaves out of search
+  and namespace listing.
+- **Search.** A search with a `query` ranks the bound agent's memories and fetches their
+  values under the same agent. It asks for at most 50 candidates by default, or
+  `searchTopKCap` (1 to 500) when set. A search without a query lists by recency.
+  Searches and namespace listing omit expired items.
+- **Filters.** The operators are `$eq`, `$ne`, `$gt`, `$gte`, `$lt` and `$lte`, and a plain
+  value means equality. Comparisons follow JSON types: `$gt` and the other ordering
+  operators compare two numbers or two strings, and a boolean never equals a number.
+- **Session protection.** `capture` is an app-owned `SessionCapture`. With it the store's
+  calls are automatic, and each checks the family's protection after the reply. Without it
+  the calls are explicit and only observe replies. The opening of the
+  [LangGraph](#langgraph) section covers how contributors are retained.
 
 ## Strands Agents
 

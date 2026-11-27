@@ -379,6 +379,13 @@ def configured_repos() -> list[RepoConfig]:
     return _with_registry(_operator_entries())
 
 
+def known_repo_count() -> int:
+    """How many entries this process knows are configured (no I/O): the operator's, and
+    the self-service registry's once it is read. Zero means no repository job is owed
+    (`sandbox.job_owed`)."""
+    return len(_operator_entries() if registry_unread() else configured_repos())
+
+
 def require_registry_read() -> None:
     """RegistryUnread while self-service is on and the registry has never been read."""
     if registry_unread():

@@ -1,53 +1,60 @@
 ---
+import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
 import SiteFrame from "../components/SiteFrame.astro";
 ---
 
 <SiteFrame
-  title="Telemetry · ClickHouse Loom"
+  title="Telemetry and privacy | ClickHouse Loom"
   description="What self-hosted Loom reports and how to control sharing."
   path="/telemetry"
 >
-  <h1>Telemetry</h1>
-  <p class="lead">
+  <Title type="h1" size="xl" family="brand">Telemetry and privacy</Title>
+  <Text color="muted" className="lead">
     Self-hosted Loom reports aggregate usage so we can see which features people use
     and how installations adopt them.
-  </p>
-  <div class="details">
+  </Text>
+  <div class="telemetry-grid">
+    <div class="details">
     <section>
-      <h2>What Loom sends</h2>
-      <p>
+      <Title type="h2" size="lg">What Loom sends</Title>
+      <Text color="muted">
         Every completed 12-hour window can produce one report with an installation identifier,
         software versions, and counts of requests, feature usage, namespaces, agents, and sessions.
         The report contains no customer content, full email addresses, or credentials.
-      </p>
+      </Text>
     </section>
     <section>
-      <h2>Where it goes</h2>
-      <p>
+      <Title type="h2" size="lg">Where it goes</Title>
+      <Text color="muted">
         The server sends reports over HTTPS to <code>loom.clickhouse.com/api/v1/adoption</code>.
         Reports are retained for 400 days.
-      </p>
-      <p>
-        The public adoption page lists namespace contact domain names from version 2
-        reports with successful requests in the last 90 complete UTC days.
-      </p>
+      </Text>
+      <Text color="muted">The <Link href="/adoption#reported-contact-domains">public adoption page</Link> lists namespace contact domain names from version 2 reports with successful requests in completed reporting windows today or in the previous 90 UTC days.</Text>
     </section>
-    <section>
-      <h2>Control sharing</h2>
-      <p>Set this on every server and worker replica to disable adoption reports.</p>
+    <Link className="text-link" href="/docs/features/observability/telemetry#self-hosted-adoption">Read the telemetry field reference <Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+    </div>
+    <Panel orientation="vertical" alignItems="start" gap="none" hasBorder role="region" aria-labelledby="sharing-heading" className="site-panel sharing">
+      <Title type="h2" size="lg" id="sharing-heading">Control sharing</Title>
+      <Text color="muted">Set these options on every server and worker replica.</Text>
+      <Title type="h3" size="md">Disable adoption reports</Title>
       <pre><code>LOOM_ADOPTION_TELEMETRY_ENABLED=false</code></pre>
-      <p>Reports include namespace contact domains and aggregate counts by default. Set this on every server and worker replica to omit domains while sending usage totals.</p>
+      <Title type="h3" size="md">Share counts only</Title>
+      <Text color="muted">Reports include namespace contact domains and aggregate counts by default. Use this setting to omit domains.</Text>
       <pre><code>LOOM_ADOPTION_TELEMETRY_SHARE_DOMAINS=false</code></pre>
-    </section>
+    </Panel>
   </div>
-  <a href="/docs/features/observability/telemetry#self-hosted-adoption">Read the telemetry field reference</a>
 </SiteFrame>
 
 <style>
-  .details { max-width: 43rem; margin-block: 2.5rem; }
-  section { padding-block: 1.35rem; border-top: 1px solid var(--line); }
+  .telemetry-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); align-items: start; gap: clamp(1.4rem, 4vw, 4rem); margin-block: 2rem; }
+  .details section { padding-block: 1.35rem; border-top: 1px solid var(--line); }
   section p { margin-top: 0.6rem; }
   code { overflow-wrap: anywhere; }
-  pre { background: #20201b; padding: 1rem; overflow: auto; border-radius: 0.35rem; }
-  main > a { color: var(--accent); }
+  pre { background: var(--page); padding: 0.75rem 0.9rem; white-space: pre-wrap; border-radius: var(--radius); }
+  .sharing h3 { margin-top: 1.2rem; }
+  @media (max-width: 54rem) { .telemetry-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

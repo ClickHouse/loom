@@ -245,6 +245,7 @@ async def _call_tool(
     client_name: str | None = None,
     mcp_session_id: str = "",
     toolset: str | None = None,
+    schema_profile: str | None = None,
 ) -> dict[str, Any]:
     """One MCP `tools/call`, in phases (each below this function, in order):
     resolve the tool → session-content admission → bind the caller's identity →
@@ -264,7 +265,9 @@ async def _call_tool(
 
     begin_call()
 
-    tool = await _resolve_connection_tool(req_id, name, arguments, auth, client_name, toolset)
+    tool = await _resolve_connection_tool(
+        req_id, name, arguments, auth, client_name, toolset, schema_profile
+    )
     if isinstance(tool, dict):
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
@@ -373,7 +376,7 @@ async def _call_tool(
             with (
                 gates.tenant_slot(auth, target),
                 llm_free.serving(op),
-                hint_naming(toolset) as namer,
+                hint_naming(toolset, schema_profile) as namer,
             ):
                 result = await op.handler(input_obj)
         except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
@@ -492,6 +495,7 @@ async def _resolve_connection_tool(
     auth: Any,
     client_name: str | None,
     toolset: str | None,
+    schema_profile: str | None = None,
 ) -> Operation | dict[str, Any]:
     """`_resolve_tool`, and on the assistant toolset first its refusal of any tool it does
     not carry, then its forced arguments and consumer stamped over the model's own and the
@@ -501,7 +505,7 @@ async def _resolve_connection_tool(
     on_assistant = assistant_connection(toolset)
     set_assistant_call(on_assistant)
     if not on_assistant:
-        return await _resolve_tool(req_id, name, auth, client_name, toolset)
+        return await _resolve_tool(req_id, name, auth, client_name, toolset, schema_profile)
     refused = _assistant_refusal(req_id, name, auth)
     if refused is not None:
         return refused
@@ -522,6 +526,7 @@ async def _resolve_tool(
     auth: Any,
     client_name: str | None,
     toolset: str | None = None,
+    schema_profile: str | None = None,
     *,
     allow_hidden: bool = False,
 ) -> Operation | dict[str, Any]:
@@ -531,7 +536,9 @@ async def _resolve_tool(
     # loom_activate is answered before the registry lookup (it is no op); it
     # still emits observability so its calls aren't invisible.
     if name == _LOOM_ACTIVATE_TOOL_NAME:
-        primer = await _render_primer_and_emit(auth, client_name, "loom_activate", toolset)
+        primer = await _render_primer_and_emit(
+            auth, client_name, "loom_activate", toolset, schema_profile
+        )
         return _ok(
             req_id,
             {
@@ -550,7 +557,7 @@ async def _resolve_tool(
         # The code loom_op answers for a name no op answers to.
         body: dict[str, Any] = {"error": msg, "code": UNKNOWN_OP, "tool": name}
         if op is not None:  # A hidden op says why and what instead
-            body = {**(hidden_refusal(op.name, toolset) or {}), "tool": name}
+            body = {**(hidden_refusal(op.name, toolset, schema_profile) or {}), "tool": name}
             emit_token_refusal(op.name, auth, error_code="OP_NOT_ON_MCP")
             msg = f"{body.get('error', msg)}; instead: {body.get('instead', '')}"
         return _ok(

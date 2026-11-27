@@ -64,7 +64,7 @@ async def _seed(ch: Any, org: str, types: str) -> None:
 
 
 async def _logged(ch: Any, tag: str) -> list[dict[str, Any]]:
-    await ch.execute("SYSTEM FLUSH LOGS")
+    await ch.execute("SYSTEM FLUSH LOGS query_log")
     return await ch.query_all(
         """
         SELECT query, read_rows, read_bytes, memory_usage

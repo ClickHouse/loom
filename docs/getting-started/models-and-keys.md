@@ -49,6 +49,7 @@ keyless providers a degraded-health condition.
 | Anthropic plus an approved embedding provider  | An available Claude model                      | OpenAI, Gemini or a compatible endpoint, with its key.           |
 | Anthropic API access only                      | An available Claude model                      | Add an embedding provider and its API key.                       |
 | AWS role with Bedrock model access             | A permitted Bedrock model or inference profile | Cohere Embed v4 through Bedrock, or another configured embedder. |
+| Google Cloud identity with Vertex AI access    | A permitted Gemini publisher model             | A separately configured embedder.                                |
 | No provider key; a model server on the machine | A local model (`local`)                        | The `local` embedder the image carries.                          |
 
 **One OpenAI API key is enough for both roles; an Anthropic key is not required.**
@@ -65,7 +66,8 @@ Anthropic does not provide its own embedding model; Voyage is not a built-in Loo
 [Anthropic's embedding guidance](https://platform.claude.com/docs/en/build-with-claude/embeddings)
 
 Loom's internal model jobs can authenticate with provider API keys, gateway workload
-tokens or deployment AWS credentials. Local models can run without provider credentials.
+tokens, deployment AWS credentials, or Google Application Default Credentials. Local
+models can run without provider credentials.
 Coding-agent CLI logins and subscriptions do not configure Loom's internal providers;
 your external agent's choice of provider is independent.
 
@@ -208,6 +210,100 @@ AWS credentials fail rather than selecting a fake provider. Native Bedrock canno
 used when an inference gateway is required. See [native Bedrock](../architecture/llm-architecture.md#native-bedrock)
 for IAM resources, regional availability, supported dimensions and request limits, and
 [per-job settings](#keep-every-llm-job-on-your-chosen-provider) for model overrides.
+
+### Vertex AI
+
+Use Vertex AI for Loom's text model calls, including memory extraction and synthesis.
+Enable the Vertex AI API, then give the deployment identity
+`aiplatform.endpoints.predict` on the target project. On GKE, use
+[Workload Identity Federation](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity).
+On Cloud Run, assign the service account to the service. For a local source install,
+`gcloud auth application-default login` supplies development credentials. The Loom
+process must be able to discover those credentials through
+[Application Default Credentials](https://docs.cloud.google.com/docs/authentication/provide-credentials-adc).
+
+```dotenv
+LOOM_LLM_PROVIDER=vertex
+LOOM_LLM_MODEL=gemini-3.5-flash-lite
+LOOM_VERTEX_PROJECT=<google-cloud-project-id>
+LOOM_VERTEX_LOCATION=global
+```
+
+Select a region, `eu`, `us`, or `global` where the model is available. Choose an
+endpoint that meets your data residency requirements. Activate Vertex AI or change
+its location after all server and worker replicas support the selected configuration.
+Before rolling back to a build that rejects that location, restore a location and
+model the target build supports. If Models & keys has saved settings, use **Use
+environment configuration** to restore the deployment settings. If the reset changes
+the embedder, Loom rebuilds the vectors.
+
+Vertex AI uses deployment credentials and requires no provider API key. Run
+`loom doctor` to check the configuration, then try a Loom operation that makes a
+model call to verify the identity can invoke the model. A per-job override can use
+`vertex:gemini-3.5-flash-lite`. Configure embeddings separately.
+See [Vertex AI architecture](../architecture/llm-architecture.md#vertex-ai)
+and [GKE setup](../operations/kubernetes.md#vertex-ai-on-gke).
+
+#### Use local credentials with Docker Compose
+
+For local development on Linux, run `gcloud auth application-default login` on the
+Docker host. The ADC file is owned by your host user and has mode `0600`. With
+standard Docker Engine UID mapping, grant the Loom container's UID (`999`) read
+access with `setfacl`.
+
+```bash
+setfacl -m u:999:r-- "${CLOUDSDK_CONFIG:-$HOME/.config/gcloud}/application_default_credentials.json"
+```
+
+If the filesystem lacks ACLs, mount a separate credential file owned by the mapped
+container UID with mode `0600`. Keep access limited to the identities that need it.
+With rootless Docker, user namespace remapping or Docker Desktop, check how the
+container's UID maps to the host before granting access.
+
+Add this to `compose.override.yaml` next to the stack's `compose.yaml`. If you use
+explicit `-f` flags, include the override last. If you mount a separate
+credential file, set `source` to its absolute path.
+
+```yaml
+services:
+  loom:
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /run/gcloud/application_default_credentials.json
+    volumes:
+      - type: bind
+        source: ${CLOUDSDK_CONFIG:-${HOME}/.config/gcloud}/application_default_credentials.json
+        target: /run/gcloud/application_default_credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
+```
+
+From the Compose directory, recreate Loom and check that the container user can
+read the file. If you regenerate the credentials, check the file permissions
+again before recreating Loom.
+
+```bash
+docker compose up -d --force-recreate loom
+docker compose exec -T loom sh -c 'test -r "$GOOGLE_APPLICATION_CREDENTIALS"'
+```
+
+#### Use Vertex AI for Ask AI
+
+Ask AI requires an authenticated deployment. For a local Compose stack, follow the
+[dashboard sign-in setup](quickstart.md#2-open-the-dashboard) to enable authentication.
+After all server replicas support Vertex AI for the assistant, add these settings
+alongside `LOOM_VERTEX_PROJECT` and `LOOM_VERTEX_LOCATION`. The assistant uses the
+deployment's Application Default Credentials. Restore the previous assistant settings
+before rolling back to a build without this provider.
+
+```dotenv
+LOOM_ASSISTANT_ENABLED=true
+LOOM_ASSISTANT_PROVIDER=vertex
+LOOM_ASSISTANT_MODEL=gemini-3.5-flash-lite
+```
+
+See [native assistant setup](../operations/assistant.md#configuration) for the model
+pricing and budget settings.
 
 ### Keep every LLM job on your chosen provider
 

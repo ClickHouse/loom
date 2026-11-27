@@ -108,7 +108,8 @@ cat <<'STEPS'
   1. C/C++ compiler tier: build/copy the scip-clang binary (recipe in
      scripts/scip_harness/README.md) and run `loom code scip-full` once.
      The worker is already enabled and begins after those prerequisites exist.
-  2. Steady state: LOOM_CODE_INGEST_ENABLED=true (or trigger-only via CI curl),
+  2. Steady state: the code_ingest poller is on by default (trigger-only:
+     LOOM_CODE_INGEST_ENABLED=false and a CI curl to code.refresh),
      LOOM_CODE_EMBED_RECOVERY_ENABLED=true, LOOM_CODE_SCIP_APPLY_ENABLED=true.
   3. Expose to agents: LOOM_MCP_CODE_TOOLS=true and restart.
   4. Repoint the ClickStack placeholder webhook at a real channel.
