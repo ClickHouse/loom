@@ -21,7 +21,9 @@ from server.code.app.search.definitions import (
 from server.code.app.search.fusion import _extra_via_labels, _rrf_fuse
 from server.code.domain.idents import SpelledName, spelled_names
 from server.code.domain.search_scope import build_scope
+from server.code.store.index import CodeRepo
 from server.settings import settings
+from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl, view
 
 # The scalar code repository these tests model (none is configured by default).
 pytestmark = pytest.mark.usefixtures("scalar_code_repo")
@@ -144,6 +146,70 @@ def test_definitions_follow_the_query_order_within_the_prefix_and_the_bound() ->
     wide = [_sym(f"f_{i}", f"pkg.w::f_{i}", "pkg/w.py") for i in range(_MAX_CANDIDATES + 5)]
     got = named_definitions([_name(f"f_{i}") for i in range(_MAX_CANDIDATES + 5)], wide)
     assert [d[1] for d in got] == [f"pkg.w::f_{i}" for i in range(_MAX_CANDIDATES)]
+
+
+# ---- the bounded read on a re-indexed table -----------------------------------------
+
+needs_clickhouse = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+
+
+def _reindexed(live: list[dict[str, Any]], dead: list[dict[str, Any]]) -> CodeRepo:
+    """A symbol table after re-indexing and its merges: the `live` definitions, and the
+    `dead` ones as the name table keeps them, one row per key whose newest version is
+    a tombstone."""
+
+    def write(rows: list[dict[str, Any]], version: int, tombstoned_at: str) -> str:
+        values = ", ".join(
+            f"('o', 'n', 'treesitter', '{r['qualified_name']}', '{r['symbol_id']}', "
+            f"'{r['name']}', '{r['path']}', {tombstoned_at}, {version})"
+            for r in rows
+        )
+        return (
+            "INSERT INTO loom.code_symbols (org, namespace, tier, qualified_name, symbol_id, "
+            f"name, path, tombstoned_at, version) VALUES {values}"
+        )
+
+    return CodeRepo(  # type: ignore[arg-type]
+        LocalCH(
+            ddl("code_symbols"),
+            ddl("code_symbol_names"),
+            view("code_symbol_names_mv"),
+            write([*live, *dead], 1, "NULL"),
+            *([write(dead, 2, "now()")] if dead else []),
+            "OPTIMIZE TABLE loom.code_symbol_names FINAL",
+        )
+    )
+
+
+def _key(name: str, qualified: str, path: str, symbol_id: str = "") -> dict[str, Any]:
+    return {**_sym(name, qualified, path), "symbol_id": symbol_id or f"id-{qualified}"}
+
+
+@needs_clickhouse
+@pytest.mark.asyncio
+async def test_the_read_bound_counts_live_definitions_not_name_table_rows() -> None:
+    # 33 live definitions, five of them outside tests: the name says nothing about where
+    live = [_key("helper", f"aa_tests.t{i:02d}::helper", f"tests/t{i:02d}.py") for i in range(28)]
+    live += [_key("helper", f"pkg.m{i}::helper", f"pkg/m{i}.py") for i in range(5)]
+    # a dead key that sorts first must not take one of the places the bound counts
+    dead = [_key("helper", "aa_gone::helper", "pkg/gone.py")]
+    for repo in (_reindexed(live, []), _reindexed(live, dead)):
+        rows = await repo.symbols_named("o", "n", ["helper"], per_name=_SYMBOLS_PER_NAME)
+        assert len(rows) == _SYMBOLS_PER_NAME
+        assert all(r["path"] != "pkg/gone.py" for r in rows)
+        assert named_definitions([_name("helper")], rows) == []
+
+
+@needs_clickhouse
+@pytest.mark.asyncio
+async def test_dead_keys_of_a_name_do_not_hide_its_live_definition() -> None:
+    # a signature change writes a new key and tombstones the old one
+    combine = ("combine", "pkg.query::Query::combine", "pkg/query.py")
+    dead = [_key(*combine, symbol_id=f"old-{i:02d}") for i in range(_SYMBOLS_PER_NAME)]
+    repo = _reindexed([_key(*combine, symbol_id="zz-live")], dead)
+    rows = await repo.symbols_named("o", "n", ["combine"], per_name=_SYMBOLS_PER_NAME)
+    assert rows == [_sym(*combine)]
+    assert named_definitions([_name("combine")], rows) == [("pkg/query.py", combine[1])]
 
 
 # ---- fusion -------------------------------------------------------------------------
