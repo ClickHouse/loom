@@ -174,11 +174,11 @@ class CodeIndexStatusOutput(BaseModel):
     # unreadable. 0 everywhere == converged.
     clone_head: str = ""
     # When the ingest pass last fetched this entry's mirror (the `clone_head`
-    # row's updated_at, ISO-8601 UTC; '' unknown) and whether that is older
-    # than `code_fetch_stale_after_seconds`. The lags below are counted
-    # against the local mirror and read 0 for as long as it stalls.
+    # row's updated_at, ISO-8601 UTC; '' with no fetch on record). The lags below
+    # are counted against the local mirror and read 0 for as long as it stalls.
     clone_fetched_at: str = ""
-    # True when `clone_fetched_at` is older than `code_fetch_stale_after_seconds`.
+    # True when the last fetch, or with none on record the `git_head` write, is
+    # older than `code_fetch_stale_after_seconds`.
     fetch_overdue: bool = False
     # First-parent commits between `git_head` and `clone_head`; -1 when either is unknown.
     fast_tier_lag: int = -1

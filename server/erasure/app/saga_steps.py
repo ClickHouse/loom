@@ -13,21 +13,24 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.auth.grant_claims import account_change, collections_change, group_change
+from server.code.app.index import erasing
 from server.code.app.index.retire import code_tables_keyed_by_namespace, refresh_code_views
 from server.core import grant_cache
 from server.core.ch import sequential_reads
+from server.core.datetimes import as_aware_utc
 from server.core.errors import caller_text
 from server.core.naming import is_mirror_name
 from server.core.principals import personal_name
 from server.core.repo_base import _CHClient
 from server.erasure.store import census as erasure_census
+from server.erasure.store import ledger
 from server.erasure.store import refusals as refusal_steps
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
-from server.erasure.store.mutations import namespaces_of, purge_scope
+from server.erasure.store.mutations import current_saga, namespaces_of, purge_scope
 from server.knowledge.app import mirrors as knowledge_mirrors
 from server.knowledge.app.sources import retire_sources_of
 from server.memory.app.code_links import queue_lease
@@ -87,9 +90,18 @@ async def _step_verify_residue(
     return 0
 
 
+async def _recorded_at() -> datetime:
+    """When the running saga's erasure was recorded (now outside a saga)."""
+    erasure_id, _ = current_saga()
+    row = await ledger.fetch_request_status(erasure_id) if erasure_id else None
+    return as_aware_utc(row["requested_at"] if row else None) or datetime.now(UTC)
+
+
 async def _step_purge_code_index_by_ns(org: str, namespace: _NS) -> int:
     """A code namespace's repository index — every
-    loom.code_* table keyed by (org, namespace) — leaves with the namespace."""
+    loom.code_* table keyed by (org, namespace) — leaves with the namespace, once no
+    work begun before the erasure was recorded may still write it."""
+    await erasing.refuse_while_in_use(org, namespaces_of(namespace), _recorded_at)
     return await memory_steps.purge_code_index_by_namespace(
         org,
         namespace,

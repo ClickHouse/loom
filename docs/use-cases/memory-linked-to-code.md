@@ -12,7 +12,7 @@ them through refactors, and flags a memory when its code changes. By default, se
 out a memory whose code is all gone unless a person pinned, locked or verified it, and every
 read that serves a lesson says when its code changed or is gone. It runs over MCP, HTTP and
 the SDKs on the repositories a self-hosted Loom indexes (the
-[code index](code-intelligence.md), `LOOM_CODE_INGEST_ENABLED=true`), and the
+[code index](code-intelligence.md)), and the
 `memory_code_links` worker that keeps the links is on by default.
 
 To see the change in a read response, [save a lesson, edit its source and check the
@@ -33,7 +33,9 @@ reported commit](#check-a-lesson-after-a-code-edit).
 - **Links that follow refactors.** On every indexed commit, each link reads `fresh`,
   `moved`, `changed` (naming the commit that changed it), `unresolved` or `missing`. A link
   records the definition's tokens, so whitespace, comments and most formatter changes leave
-  it `fresh`. [Link states](../concepts/memory.md#memories-linked-to-code)
+  it `fresh`. A link to a file follows the lines that hold a name the memory cites, and
+  is replaced by a link to a definition the memory names once the file defines it.
+  [Link states](../concepts/memory.md#memories-linked-to-code)
 - **Stale memories handled the way you choose.** The namespace's
   [`code_change_policy`](../reference/operations/namespace.md#namespaceregister) decides:
   `retire_removed` (the default) leaves a memory whose code is all gone out of search and

@@ -31,6 +31,8 @@ Give agents access to shared memory, cited documents, and indexed code through M
 - [Deploy for a team](operations/deployment.md)
   Choose a deployment and set up access for your team.
 
+For a specific client or framework, [find your integration](features/integrations/index.md).
+
 <div class="docs-fragment-anchors" aria-hidden="true">
   <a id="5-namespaces-access-and-the-memory-model"></a>
   <a id="guides"></a>

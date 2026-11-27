@@ -321,7 +321,7 @@ async def _onboarding_warnings(provider: str) -> list[str]:
     ):
         warnings.append(
             "No code_ingest worker is visible. The repository will stay queued until "
-            "one is enabled."
+            "one is enabled or a CI job calls code.refresh for it."
         )
     if provider != "github":
         warnings.append(

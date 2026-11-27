@@ -1,4 +1,6 @@
 ---
+import { Table } from "@clickhouse/click-ui/Table";
+import { Text } from "@clickhouse/click-ui/Text";
 import { periodOffset } from "../lib/adoption-view.mjs";
 
 interface Props {
@@ -8,56 +10,105 @@ interface Props {
 }
 
 const { title, grain, rows } = Astro.props;
-const series = [
-  { key: "retained", label: "Retained", color: "var(--accent)" },
-  { key: "new", label: "New", color: "var(--click-alert-color-text-success)" },
-  { key: "reactivated", label: "Reactivated", color: "var(--click-alert-color-text-info)" },
-  { key: "inactive", label: "Became inactive", color: "var(--click-alert-color-text-warning)" },
+const status = [
+  { key: "retained", label: "Retained" },
+  { key: "new", label: "New" },
+  { key: "reactivated", label: "Reactivated" },
 ] as const;
-const maximum = Math.max(1, ...rows.map((row) => series.reduce((total, { key }) => total + row[key], 0)));
-const start = rows.at(0)?.bucket;
-const end = rows.at(-1)?.bucket;
+const start = rows.at(0)?.bucket ?? "";
+const end = rows.at(-1)?.bucket ?? "";
 const position = (day: string) => periodOffset(start, day, grain) + 1;
+const maxActive = Math.max(
+  0,
+  ...rows.map(({ retained, new: newCount, reactivated }) => retained + newCount + reactivated),
+);
+const maxInactive = Math.max(0, ...rows.map(({ inactive }) => inactive));
+const max = Math.max(1, maxActive, maxInactive);
 const number = new Intl.NumberFormat("en-US");
+const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const dates = new Intl.DateTimeFormat("en", {
+  month: "short",
+  day: "numeric",
+  ...(start.slice(0, 4) !== end.slice(0, 4) && { year: "numeric" }),
+  timeZone: "UTC",
+});
+const labelDay = (day: string) => dates.format(Date.parse(day));
 ---
 
-{rows.length ? <>
-    <ul aria-hidden="true" class="legend">
-      {series.map(({ label, color }) => <li><i style={`--color:${color}`}></i>{label}</li>)}
-    </ul>
-    <div class="bars" style={`--periods:${position(end)}`} aria-hidden="true">
+{rows.length ? <figure aria-label={title}>
+  <ul class="legend" aria-hidden="true">
+    {status.map(({ label, key }) => <li><i class={key}></i>{label}</li>)}
+    <li><i class="inactive"></i>Became inactive</li>
+  </ul>
+  <div class="plot" aria-hidden="true">
+    <div class="scale">
+      <span>{compact.format(max)}</span>
+      <span>0</span>
+      {maxInactive > 0 && <span>{compact.format(max)}</span>}
+    </div>
+    <div class:list={["bars", { diverging: maxInactive > 0 }]} style={"--periods:" + position(end)}>
       {rows.map((row) => (
-        <span class="bar" style={`grid-column:${position(row.bucket)}`} title={`${row.bucket} · ${series.map(({ key, label }) => `${label} ${number.format(row[key])}`).join(" · ")}`}>
-          {series.map(({ key, color }) => <i style={`--color:${color};height:${row[key] / maximum * 100}%`}></i>)}
-        </span>
+        <div class="bar" style={"grid-column:" + position(row.bucket)} title={labelDay(row.bucket) + " · " + status.map(({ key, label }) => label + " " + number.format(row[key])).join(" · ") + " · Became inactive " + number.format(row.inactive)}>
+          <div class="active-bar">
+            {status.map(({ key }) => <span class={key} style={"block-size:" + (row[key] * 100) / max + "%"}></span>)}
+          </div>
+          {maxInactive > 0 && <div class="inactive-bar"><span class="inactive" style={"block-size:" + (row.inactive * 100) / max + "%"}></span></div>}
+        </div>
       ))}
     </div>
-    <div class="dates" aria-hidden="true"><span>{start}</span><span>{end}</span></div>
-    <details>
-      <summary>{title}</summary>
-      <div class="table-scroll" tabindex="0" role="region" aria-label={title}>
-      <table>
-        <thead><tr><th scope="col">Period start (UTC)</th>{series.map(({ label }) => <th scope="col">{label}</th>)}</tr></thead>
-        <tbody>{rows.map((row) => (
-          <tr><th scope="row">{row.bucket}</th>{series.map(({ key }) => <td>{number.format(row[key])}</td>)}</tr>
-        ))}</tbody>
-      </table>
-      </div>
-    </details>
-  </> : <p>Awaiting completed periods with qualifying activity.</p>}
+  </div>
+  <figcaption>
+    <div class="dates" aria-hidden="true">
+      <time datetime={start}>{labelDay(start)}</time>
+      {end !== start && <time datetime={end}>{labelDay(end)}</time>}
+    </div>
+    {maxInactive > 0 && <Text size="sm" color="muted">Bars below the baseline count installations or domains that became inactive.</Text>}
+  </figcaption>
+  <details>
+    <summary>View lifecycle data</summary>
+    <Table
+      aria-label={title}
+      size="sm"
+      mobileLayout="scroll"
+      headers={["Period start (UTC)", ...status.map(({ label }) => label), "Became inactive"].map((label) => ({ label, scope: "col" }))}
+      rows={rows.map((row) => ({
+        id: row.bucket,
+        items: [row.bucket, ...status.map(({ key }) => number.format(row[key])), number.format(row.inactive)].map((label) => ({ label })),
+      }))}
+    />
+  </details>
+</figure> : <Text size="sm" color="muted">No completed periods with qualifying activity.</Text>}
 
 <style>
-  details { margin-top: 0.9rem; }
-  summary { cursor: pointer; }
-  .legend { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; padding: 0; list-style: none; font-size: 0.85rem; }
-  .legend i { display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 2px; margin-right: 0.4rem; }
-  i { background: var(--color); }
-  .bars { display: grid; grid-template-columns: repeat(var(--periods), minmax(0, 1fr)); height: 7rem; gap: min(0.4rem, calc(20% / var(--periods))); border-bottom: 1px solid var(--line); }
-  .bar { grid-row: 1; min-width: 0; display: flex; flex-direction: column-reverse; }
-  .dates { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.78rem; margin-top: 0.45rem; }
-  .table-scroll { overflow-x: auto; }
-  table { width: 100%; margin-top: 0.65rem; border-collapse: collapse; font-size: 0.85rem; }
-  th, td { padding: 0.45rem 0.3rem; border-bottom: 1px solid var(--line); text-align: right; }
-  th:first-child { text-align: left; }
-  td { font-variant-numeric: tabular-nums; }
+  figure { margin: 0.8rem 0 0; inline-size: 100%; min-inline-size: 0; font-variant-numeric: tabular-nums; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; padding: 0; margin: 0 0 0.85rem; list-style: none; font-size: 0.78rem; }
+  .legend li { display: inline-flex; align-items: center; gap: 0.38rem; }
+  .legend i { inline-size: 0.62rem; block-size: 0.62rem; border-radius: 1px; }
+  .retained { background: var(--accent); }
+  .new { background: var(--click-alert-color-text-success); }
+  .reactivated { background: var(--click-alert-color-text-info); }
+  .inactive { background: repeating-linear-gradient(135deg, var(--click-alert-color-text-warning) 0 1px, var(--surface) 1px 4px); }
+  .plot { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.65rem; }
+  .scale { display: flex; flex-direction: column; justify-content: space-between; align-items: end; margin-block: -0.5em; font-size: 0.75rem; color: var(--muted); }
+  .bars {
+    display: grid;
+    grid-template-columns: repeat(var(--periods), minmax(0, 1fr));
+    gap: min(0.4rem, calc(20% / var(--periods)));
+    block-size: clamp(7rem, 12vw, 13rem);
+    background: linear-gradient(var(--line), var(--line)) top / 100% 1px no-repeat,
+      linear-gradient(var(--line), var(--line)) bottom / 100% 1px no-repeat;
+  }
+  .bars.diverging { background: linear-gradient(var(--line), var(--line)) top / 100% 1px no-repeat,
+    linear-gradient(var(--muted), var(--muted)) center / 100% 1px no-repeat,
+    linear-gradient(var(--line), var(--line)) bottom / 100% 1px no-repeat;
+  }
+  .bar { display: grid; grid-row: 1; min-inline-size: 0; inline-size: 100%; max-inline-size: 2.5rem; margin-inline: auto; }
+  .diverging .bar { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .active-bar { display: flex; flex-direction: column-reverse; }
+  .inactive-bar { display: flex; flex-direction: column; }
+  .dates { display: flex; justify-content: space-between; gap: 0.45rem; padding-inline-start: 2rem; margin-block-start: 0.45rem; }
+  figcaption { color: var(--muted); font-size: 0.77rem; }
+  figcaption p { margin-block-start: 0.5rem; }
+  details { margin-block-start: 0.55rem; }
+  summary { cursor: pointer; padding-block: 0.5rem; color: var(--click-global-color-text-link-default); font-size: 0.86rem; }
 </style>

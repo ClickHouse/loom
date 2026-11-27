@@ -405,12 +405,13 @@ class StatusMixin(CodeRepoBase):
         return {str(k): int(v) for k, v in parsed.items()}
 
     async def refresh_table_counts(
-        self, org: str, ns: str, *, fingerprint: str | None = None
+        self, org: str, ns: str, *, fingerprint: str | None = None, must_land: bool = False
     ) -> dict[str, int]:
         """Run the seven FINAL scans once and publish the answer as the shared
         `table_counts` row (value = JSON counts, detail = fingerprint) so
         every other process reads a point. Called by the ingest pass after
-        it advanced a watermark, and by a reader that found no row."""
+        it advanced a watermark, and by a reader that found no row.
+        `must_land` as in `refresh_coverage`."""
         if fingerprint is None:
             fingerprint = counts_fingerprint(await self.all_state(org, ns))
         out: dict[str, int] = {}
@@ -440,7 +441,9 @@ class StatusMixin(CodeRepoBase):
         out["code_chunks_embeddable"] = chunks["embeddable"]
         try:
             await self.set_state(org, ns, "table_counts", json.dumps(out), detail=fingerprint)
-        except Exception:  # noqa: BLE001 — the local answer is still good
+        except Exception:  # the local answer is still good, unless it must land
+            if must_land:
+                raise
             logger.debug("code table_counts: shared row not written for %s/%s", org, ns)
         if len(_COUNTS_CACHE) > 256:
             _COUNTS_CACHE.clear()
