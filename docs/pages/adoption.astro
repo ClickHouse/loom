@@ -37,9 +37,8 @@ export const prerender = false;
 const filters = adoptionFilters(Astro.url.searchParams);
 const dataset = Astro.url.searchParams.get("csv");
 const tab = dataset ? (dataset === "downloads" || dataset === "stars" ? "oss" : "self-hosted") : filters.tab;
-const { today, selfHosted, openSource } = await loadPublishedAdoption(tab);
+const { today, selfHosted, openSource, warehouseAvailable } = await loadPublishedAdoption(tab);
 const { totals: summaries, retention, versions, activity, lifecycle } = selfHosted;
-const warehouseAvailable = Array.isArray(summaries);
 if (warehouseAvailable) {
   Astro.response.headers.set("Cache-Control", "public, max-age=0, must-revalidate");
   Astro.response.headers.set(
@@ -284,7 +283,7 @@ const ossCounterGroups = [
           ) : <Text className="growth-message" size="sm" color="muted">No growth periods are available in the selected window.</Text>}
         </div>
       ) : summaries && <Text size="sm" color="muted">
-        {selfHosted.growth === null ? "Cumulative installation history is unavailable." : "No self-hosted installations have reported yet."}
+        {selfHosted.growth === null ? "Cumulative installation history is unavailable." : "No installation growth data for a complete UTC day yet."}
       </Text>}
       <div class="chart-settings" id="installation-activity">
         <AdoptionFilterForm fields={choiceFields} days={filters.days} />

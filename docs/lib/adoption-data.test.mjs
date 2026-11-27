@@ -222,6 +222,12 @@ test("refreshes warehouse data within thirty seconds and reuses registry metrics
     warehouseTimeouts.push(timeoutBySignal.get(init.signal));
     const attempt = warehouseTimeouts.length;
     if (attempt === 2) throw new DOMException("Warehouse timed out", "TimeoutError");
+    const directory =
+      attempt === 1
+        ? { domain_directories: [30, 90].map((range_days) => JSON.stringify({ range_days, domains: [] })) }
+        : attempt === 3
+          ? { domain_directories: [JSON.stringify({ range_days: 30, domains: [] })] }
+          : { domains: ["today.example"] };
     return Response.json({
       data: [
         {
@@ -231,15 +237,14 @@ test("refreshes warehouse data within thirty seconds and reuses registry metrics
           activity: [],
           lifecycle: [],
           oss: [],
-          ...(attempt === 1
-            ? { domain_directories: [30, 90].map((range_days) => JSON.stringify({ range_days, domains: [] })) }
-            : { domains: ["today.example"] }),
+          ...directory,
         },
       ],
     });
   });
 
   const first = loadPublishedAdoption("oss");
+  assert.equal((await first).warehouseAvailable, true);
   assert.deepEqual((await first).selfHosted.domainDirectories, { 30: [], 90: [] });
   now += 29_999;
   assert.equal(loadPublishedAdoption("oss"), first);
@@ -247,10 +252,18 @@ test("refreshes warehouse data within thirty seconds and reuses registry metrics
   const timedOut = loadPublishedAdoption("self-hosted");
   assert.equal(loadPublishedAdoption("self-hosted"), timedOut);
   assert.equal((await timedOut).selfHosted.domains, null);
+  assert.equal((await timedOut).warehouseAvailable, false);
   now += 14_999;
   assert.equal(loadPublishedAdoption("self-hosted"), timedOut);
   now += 1;
-  assert.deepEqual((await loadPublishedAdoption("oss")).selfHosted.domains, ["today.example"]);
-  assert.deepEqual(warehouseTimeouts, [30_000, 30_000, 30_000]);
+  const partial = loadPublishedAdoption("self-hosted");
+  assert.equal((await partial).warehouseAvailable, false);
+  now += 14_999;
+  assert.equal(loadPublishedAdoption("self-hosted"), partial);
+  now += 1;
+  const older = await loadPublishedAdoption("oss");
+  assert.equal(older.warehouseAvailable, true);
+  assert.deepEqual(older.selfHosted.domains, ["today.example"]);
+  assert.deepEqual(warehouseTimeouts, [30_000, 30_000, 30_000, 30_000]);
   assert.deepEqual(registryTimeouts, Array(7).fill(5_000));
 });

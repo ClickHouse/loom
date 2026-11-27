@@ -251,6 +251,9 @@ export function createAdoptionReader(env, now, readRegistries = readRegistryMetr
   const selfHosted = warehouse.then(
     ({ totals, versions, retention, activity, lifecycle, domains, domainDirectories, growth, growthCoverage }) => ({
       today,
+      warehouseAvailable:
+        Array.isArray(totals) &&
+        (Array.isArray(domains) || (Array.isArray(domainDirectories?.[30]) && Array.isArray(domainDirectories?.[90]))),
       selfHosted: {
         totals,
         versions,
@@ -297,8 +300,8 @@ export function loadPublishedAdoption(tab) {
     const read = createAdoptionReader(process.env, new Date(now), readPublishedRegistries);
     const refresh = { expires: Infinity, read };
     read("self-hosted").then(
-      ({ selfHosted }) => {
-        refresh.expires = Date.now() + (selfHosted.totals === undefined ? retryTtlMs : warehouseTtlMs);
+      ({ warehouseAvailable }) => {
+        refresh.expires = Date.now() + (warehouseAvailable ? warehouseTtlMs : retryTtlMs);
       },
       () => {
         refresh.expires = Date.now() + retryTtlMs;
