@@ -1461,7 +1461,7 @@ class CodeSettings(BaseModel):
     code_embed_recovery_batch: int = 100
     # Share of embeddable chunks that must carry a vector before a repo is
     # `ready`; below it code.search says "lexical only". Poisoned rows count
-    # against it; fixtures unembedded by design do not.
+    # against it; rows unembedded by design (reference fixtures, `code_embed_exclude`) do not.
     code_ready_embed_coverage: float = 0.95
     # --- ingest limits and denylist -------------------------------------------
     # Files above this size are recorded (index_error) and not chunked.
@@ -1474,6 +1474,9 @@ class CodeSettings(BaseModel):
     code_ingest_denylist_builtin: bool = False
     # CSV of path globs never indexed (the scalar entry's `exclude`).
     code_ingest_exclude: str = ""
+    # CSV of path globs indexed but never described or embedded (the scalar entry's
+    # `embed_exclude`; not self-service entries); chunks already written keep their state.
+    code_embed_exclude: str = ""
     # Name of the repo-local ignore file whose patterns are never indexed.
     code_ingest_ignore_file: str = ".loomignore"
     # --- reconciliation and re-chunking ---------------------------------------

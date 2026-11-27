@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import subprocess
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -343,36 +343,58 @@ async def restart_full(
     )
 
 
-def _refusal_hold(target: str, caps: DeltaCaps) -> str:
-    """What a refused delta holds: its target and the caps its open read."""
-    return json.dumps({"target": target, "caps": list(caps)})
+def _refusal_hold(base: str, target: str, caps: DeltaCaps, shape: Mapping[str, object]) -> str:
+    """What a refused delta holds: the inputs of the run that wrote it, as they read in
+    `code_index_state`. That is its window (the watermark `base` to `target`), the caps
+    its open read, the entry fields and settings the tier's harness read (`shape`), and
+    Loom's version."""
+    from server import __version__
+
+    return json.dumps(
+        {"base": base, "target": target, "caps": list(caps), "inputs": shape, "loom": __version__},
+        sort_keys=True,
+    )
 
 
 async def refusal_held(
-    repo: CodeRepo, cfg: RepoConfig, watermark: str, target: str, result: TierResult
+    repo: CodeRepo,
+    cfg: RepoConfig,
+    watermark: str,
+    base: str,
+    target: str,
+    result: TierResult,
+    shape: Mapping[str, object],
 ) -> bool:
-    """Whether the tier's delta at `target` was refused under the caps in effect
-    (`open_tier_delta`): the same run would write the same delta, so the harness is
-    not run and the entry is a skip, which leaves its failing record and its fix.
-    A new target, or a raised cap (a live setting), releases the hold."""
+    """Whether the tier's delta from `base` to `target` was refused (`open_tier_delta`)
+    under the caps and `shape` in effect now: the same run would write the same delta,
+    so the harness is not run and the entry is a skip, which leaves its failing record
+    and its fix. Any other input releases the hold: a new target, a watermark another
+    writer moved, a raised cap (a live setting), a changed entry field or Loom release.
+    The pass reads `shape` once and runs its harness under that same snapshot."""
     from server.code.app.index.delta_file import delta_caps
 
     held = await repo.get_state(cfg.org, cfg.namespace, f"{watermark}_refused")
-    if held != _refusal_hold(target, delta_caps()):
+    if held != _refusal_hold(base, target, delta_caps(), shape):
         return False
     result.skipped.append(
-        f"{cfg.namespace}: delta refused at {target[:12]}; held until a cap or the target changes"
+        f"{cfg.namespace}: delta refused at {target[:12]}; held until its inputs change"
     )
     return True
 
 
 async def open_tier_delta(
-    repo: CodeRepo, cfg: RepoConfig, watermark: str, target: str, path: Path
+    repo: CodeRepo,
+    cfg: RepoConfig,
+    watermark: str,
+    base: str,
+    target: str,
+    path: Path,
+    shape: Mapping[str, object],
 ) -> DeltaFile:
-    """`open_delta` for the tier's run at `target`. A refusal the same run would meet
-    again (over a cap, a link, not a regular file) holds the tier (`refusal_held`)
-    under the caps that open read, not the ones in effect once it failed; a delta
-    that changed while it was read holds nothing."""
+    """`open_delta` for the tier's run from `base` to `target` under `shape`. A refusal
+    the same run would meet again (over a cap, a link, not a regular file) holds the
+    tier (`refusal_held`) under the caps that open read, not the ones in effect once it
+    failed; a delta that changed while it was read holds nothing."""
     import asyncio
 
     from server.code.app.index.delta_file import delta_caps, open_delta
@@ -383,9 +405,8 @@ async def open_tier_delta(
     except FileRefused as e:
         if not e.changed:
             check_held()
-            await repo.set_state(
-                cfg.org, cfg.namespace, f"{watermark}_refused", _refusal_hold(target, caps)
-            )
+            hold = _refusal_hold(base, target, caps, shape)
+            await repo.set_state(cfg.org, cfg.namespace, f"{watermark}_refused", hold)
         raise
 
 

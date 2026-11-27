@@ -21,8 +21,8 @@ from server.core import object_store, pg
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.mutations import namespaces_of, ns_list_predicate, purge_mode
 from server.erasure.store.predicates import (
+    ANSWER_NS_EQ,
     LIVE,
-    MEMORY_NS_EQ,
     MISS_ASKER,
     NS_EQ,
     ORPHAN_LEARNINGS,
@@ -76,9 +76,9 @@ class Substrate:
     # illegal there (loom.conversations). Tables whose live predicate is "1"
     # never read FINAL whatever this says.
     final: bool = True
-    # The namespace-scope predicate for a table whose `namespace` column is not the
-    # scope's: "1" counts org-wide (no namespace column), MEMORY_NS_EQ the memory a
-    # code answer quoted; None → the namespace predicate.
+    # The namespace-scope predicate for a table the plain `namespace` column does not
+    # scope alone: "1" counts org-wide (no namespace column), ANSWER_NS_EQ a code answer
+    # asked in the namespace or quoting its memory; None → the namespace predicate.
     ns_pred: str | None = None
 
     def counted_in(self, scope_type: str) -> bool:
@@ -89,6 +89,8 @@ class Substrate:
 
 
 _HOLDS_TEXT = "(answer != '' OR citations != '')"
+# A negative entry holds only the question it was asked.
+_HOLDS_QUESTION = "(answer != '' OR citations != '' OR question != '')"
 
 _CENSUS: tuple[Substrate, ...] = (
     # Sealed provider setup is namespace configuration; retirement fences writers
@@ -244,16 +246,17 @@ _CENSUS: tuple[Substrate, ...] = (
         "llm_response_cache.delete",
         "llm_response_cache.delete",
     ),
-    # code.ask's answer cache: an answer that quoted memory excerpts names their
-    # namespace and keys. Every version holding text counts, a tombstone an older build
-    # wrote among them; this build's tombstones hold none.
+    # code.ask's answer cache: an answer asked in the namespace quotes its code, and one
+    # that quoted memory excerpts names their namespace and keys. Every version holding
+    # text counts in the namespace scope, its question included: a negative entry holds
+    # no more, and a tombstone keeps the question.
     Substrate(
         "loom.code_answers",
         "1",
         f"{USER_MEMORY_KEYS} AND {_HOLDS_TEXT}",
         "code_answers.delete",
         "code_answers.delete",
-        ns_pred=f"{MEMORY_NS_EQ} AND {_HOLDS_TEXT}",
+        ns_pred=f"{ANSWER_NS_EQ} AND {_HOLDS_QUESTION}",
     ),
     # User scope deletes the triples/edges only the user's memories (or summaries of
     # them) carried, through the link tables — but the census cannot count
@@ -883,8 +886,8 @@ _BESIDE_OTHER_ROWS = frozenset(
 def namespace_tables() -> list[str]:
     """The census tables that hold a namespace's rows under its `namespace` column:
     the namespace scope's substrates less those with a predicate of their own (counted
-    org-wide, or by the memory namespace they quote) and those whose rows sit beside
-    rows of the others (`_BESIDE_OTHER_ROWS`)."""
+    org-wide, or by the namespace asked in and the memory namespace quoted) and those
+    whose rows sit beside rows of the others (`_BESIDE_OTHER_ROWS`)."""
     return [s.table for s in _CENSUS if s.ns_pred is None and s.table not in _BESIDE_OTHER_ROWS]
 
 

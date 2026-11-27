@@ -10,6 +10,7 @@ import re
 from difflib import get_close_matches
 from typing import Any
 
+from server.code.api.models_common import _safe_path
 from server.code.app.common import repo_relative
 from server.code.app.index import symbol_forms
 from server.code.domain.symbol_body import complete_source_span
@@ -33,7 +34,7 @@ async def _resolve_symbols(
     file_symbol = _parse_file_symbol(name)
     if file_symbol:
         path, local = file_symbol
-        rows = await repo.symbols_by_name(org, ns, local, path=path)
+        rows = await _file_symbol_rows(repo, org, ns, path=path, local=local, written=name)
         return symbol_forms.mark(rows, "file_symbol")
     if name:
         rows = await repo.symbols_by_name(org, ns, name)
@@ -45,6 +46,22 @@ async def _resolve_symbols(
         rows, resolved_by = await symbol_forms.resolve_tolerant(repo, org, ns, name)
         return symbol_forms.mark(rows, resolved_by)
     return []
+
+
+async def _file_symbol_rows(
+    repo: CodeRepo, org: str, ns: str, *, path: str, local: str, written: str
+) -> list[dict[str, Any]]:
+    rows = await repo.symbols_by_name(org, ns, local, path=path)
+    anchored = written.strip().replace("\\", "/").startswith(("/", "./"))
+    if rows or anchored or "/" not in path or not _safe_path(path):
+        return rows
+    # A live exact path still constrains the lookup when it lacks the symbol.
+    if await repo.file_rows_for_paths(org, ns, [path]):
+        return []
+    matches = (await repo.paths_by_suffix(org, ns, [path], limit=2)).get(path, [])
+    if len(matches) != 1:
+        return []
+    return await repo.symbols_by_name(org, ns, local, path=matches[0])
 
 
 def _parse_location(name: str) -> tuple[str, int] | None:

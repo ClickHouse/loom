@@ -1716,8 +1716,8 @@ settings:
   # code_embed_recovery_batch: 100
 
   # Share of embeddable chunks that must carry a vector before a repo is `ready`; below
-  # it code.search says "lexical only". Poisoned rows count against it; fixtures
-  # unembedded by design do not. [restart]
+  # it code.search says "lexical only". Poisoned rows count against it; rows unembedded
+  # by design (reference fixtures, `code_embed_exclude`) do not. [restart]
   # code_ready_embed_coverage: 0.95
 
   # --- ingest limits and denylist ---
@@ -1734,6 +1734,11 @@ settings:
 
   # CSV of path globs never indexed (the scalar entry's `exclude`). [restart]
   # code_ingest_exclude: ""
+
+  # CSV of path globs indexed but never described or embedded (the scalar entry's
+  # `embed_exclude`; not self-service entries); chunks already written keep their state.
+  # [restart]
+  # code_embed_exclude: ""
 
   # Name of the repo-local ignore file whose patterns are never indexed. [restart]
   # code_ingest_ignore_file: ".loomignore"

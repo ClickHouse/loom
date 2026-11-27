@@ -20,11 +20,11 @@ from server.erasure.store.mutations import (
     tombstone_scoped,
 )
 from server.erasure.store.predicates import (
+    ANSWER_NS_EQ,
     COMMUNITY_ROWS_IN,
     CONFLICT_RECORD_IDS_IN,
     CONSOLIDATED_IN,
     MEMORY_KEYS_IN,
-    MEMORY_NS_EQ,
     NS_EQ,
     NS_IN,
     PARENT_KEYS_IN,
@@ -598,17 +598,17 @@ async def delete_llm_response_cache_by_namespace(
 async def delete_code_answers_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
-    """Cached code.ask answers that quoted the namespace's memories, in whatever code
-    namespace they were asked; a tombstone version an older build wrote mirrors the
-    text, so every version goes. A cache: the next ask synthesizes again. The count that
-    decides whether to delete reads sequentially, so it sees an answer another replica
-    just stored. A lightweight delete: the table carries a vector column a mutation would
-    rewrite."""
+    """Cached code.ask answers of the namespace: those asked in it, whose text quotes its
+    code, and those that quoted its memories, in whatever code namespace they were
+    asked. A tombstone version an older build wrote mirrors the text, so every version
+    goes. A cache: the next ask synthesizes again. The count that decides whether to
+    delete reads sequentially, so it sees an answer another replica just stored. A
+    lightweight delete: the table carries a vector column a mutation would rewrite."""
     with sequential_reads():
         return await delete_scoped(
             "loom.code_answers",
             org=org,
-            scope_where=MEMORY_NS_EQ,
+            scope_where=ANSWER_NS_EQ,
             params={"ns": namespace},
             ch=ch,
             lightweight=True,

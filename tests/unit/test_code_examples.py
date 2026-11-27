@@ -5,6 +5,7 @@ calls is an abstaining empty answer rather than an error."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -293,6 +294,77 @@ async def test_edit_read_sources_verify_a_shared_root_once(monkeypatch) -> None:
     )
     assert [source.qualified_name for source in sources] == names
     assert sorted(reads) == sorted([caller.symbol, *names])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tier", ["treesitter", "scip"])
+@pytest.mark.parametrize("competing", [False, True])
+async def test_edit_reads_verify_one_static_forwarding_target(monkeypatch, tier, competing):
+    from server.code.app.symbol import edit_reads
+
+    revision = "a" * 40
+    caller = CodeUnit(
+        path="src/entry.py",
+        symbol="src.entry::dispatch",
+        unit_id="entry",
+        kind="symbol",
+        start_line=5,
+        end_line=7,
+        body='@checked\ndef dispatch(handler: "Handler"):\n    return handler.run()\n',
+    )
+    target = {
+        "path": "src/handlers.py",
+        "qualified_name": "src.handlers::Handler::run",
+        "symbol_id": "run",
+        "indexed_commit": revision,
+        "kind": "function",
+        "start_line": 12,
+        "end_line": 13,
+    }
+    edge = {
+        "path": caller.path,
+        "line": 7,
+        "from_qualified_name": caller.symbol,
+        "to_qualified_name": target["qualified_name"],
+        "to_symbol_id": target["symbol_id"],
+        "indexed_commit": revision,
+        "tier": tier,
+    }
+
+    class Repo:
+        async def symbol_ids_for_names(self, org, ns, names):
+            assert (org, ns, names) == ("org", "scope", [caller.symbol])
+            return {caller.symbol: ["entry"]}
+
+        async def edges_for_symbols(self, org, ns, ids, *, edge_kinds, **_):
+            if edge_kinds == ["reads"]:
+                return []
+            conflict = {**edge, "to_qualified_name": "src.other::Handler::run"}
+            return [edge, conflict] if competing else [edge]
+
+        async def symbols_by_ids(self, org, ns, ids):
+            assert ids == ["run"]
+            return [target]
+
+        async def file_rows_for_paths(self, org, ns, paths):
+            return {path: {"indexed_commit": revision} for path in paths}
+
+    async def body(repo, org, ns, row, *, expected_commit):
+        assert (org, ns, expected_commit) == ("org", "scope", revision)
+        return caller.body if row["path"] == caller.path else "def run(self):\n    pass\n"
+
+    monkeypatch.setattr(
+        edit_reads, "repo_for_namespace", lambda *_: SimpleNamespace(path_prefixes=())
+    )
+    monkeypatch.setattr(edit_reads, "symbol_body", body)
+    repo: Any = Repo()
+    sources = await edit_reads.edit_read_sources(repo, "org", "scope", [caller], {0})
+    if competing:
+        assert sources == []
+    else:
+        (source,) = sources
+        assert (source.qualified_name, source.commit) == (target["qualified_name"], revision)
+        assert [(site.path, site.line) for site in source.sites] == [(caller.path, 7)]
 
 
 @pytest.mark.asyncio

@@ -999,6 +999,11 @@
           "type": "number",
           "description": "Seconds a repository job's connection waits for a free egress tunnel slot."
         },
+        "code_embed_exclude": {
+          "default": "",
+          "type": "string",
+          "description": "CSV of path globs indexed but never described or embedded (the scalar entry's `embed_exclude`; not self-service entries); chunks already written keep their state."
+        },
         "code_embed_max_attempts": {
           "default": 8,
           "type": "integer",
@@ -1563,7 +1568,7 @@
         "code_ready_embed_coverage": {
           "default": 0.95,
           "type": "number",
-          "description": "Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says \"lexical only\". Poisoned rows count against it; fixtures unembedded by design do not."
+          "description": "Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says \"lexical only\". Poisoned rows count against it; rows unembedded by design (reference fixtures, `code_embed_exclude`) do not."
         },
         "code_reconcile_enabled": {
           "default": true,

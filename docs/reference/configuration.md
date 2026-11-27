@@ -553,7 +553,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_EMBED_RECOVERY_FULL_SCAN_SECONDS` | `int` | `1800` |  | The pending scan reads above a version watermark; once per this many seconds it scans from version 0 to catch late rows. 0 = always from 0. |
 | `LOOM_CODE_EMBED_MAX_ATTEMPTS` | `int` | `8` |  | Embed attempts per stub before it is poisoned (`embed_failed_at` set) and skipped. |
 | `LOOM_CODE_EMBED_RECOVERY_BATCH` | `int` | `100` |  | Stub keys the recovery scan takes per repo per pass (also texts per embed call); raise it to onboard large repositories faster. |
-| `LOOM_CODE_READY_EMBED_COVERAGE` | `float` | `0.95` |  | Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says "lexical only". Poisoned rows count against it; fixtures unembedded by design do not. |
+| `LOOM_CODE_READY_EMBED_COVERAGE` | `float` | `0.95` |  | Share of embeddable chunks that must carry a vector before a repo is `ready`; below it code.search says "lexical only". Poisoned rows count against it; rows unembedded by design (reference fixtures, `code_embed_exclude`) do not. |
 
 ### Ingest limits and denylist
 
@@ -562,6 +562,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_INGEST_MAX_FILE_BYTES` | `int` | `1000000` |  | Files above this size are recorded (index_error) and not chunked. 0 = no cap. |
 | `LOOM_CODE_INGEST_DENYLIST_BUILTIN` | `bool` | `False` |  | True applies the built-in generated, minified and vendored ingest rules (code/app/index/denylist.py), which match 0.19% of rows. The `exclude` globs (CSV here, a list per repo entry) and the repo-local ignore file are always honoured. |
 | `LOOM_CODE_INGEST_EXCLUDE` | `str` | `''` |  | CSV of path globs never indexed (the scalar entry's `exclude`). |
+| `LOOM_CODE_EMBED_EXCLUDE` | `str` | `''` |  | CSV of path globs indexed but never described or embedded (the scalar entry's `embed_exclude`; not self-service entries); chunks already written keep their state. |
 | `LOOM_CODE_INGEST_IGNORE_FILE` | `str` | `'.loomignore'` |  | Name of the repo-local ignore file whose patterns are never indexed. |
 
 ### Reconciliation and re-chunking
