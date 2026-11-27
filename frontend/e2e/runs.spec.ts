@@ -168,25 +168,28 @@ test.describe("375 px", () => {
 test.describe("a phone with a touch pointer", () => {
   test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
 
-  test("at 375 px the first run starts within the chrome budget", async ({ page }) => {
-    await installApi(page, { runRows: 60 });
-    await page.goto("/runs");
-    const first = page.locator(LOADED_ROW).first();
-    await expect(first).toBeVisible();
-    expect(await first.evaluate((el) => el.getBoundingClientRect().top)).toBeLessThanOrEqual(360);
-    // Every control on the filters' row is a 44 px target, and fits the width.
-    for (const name of ["Filter runs by status", "Agent", "View"]) {
-      const control = page.getByRole("button", { name, exact: true });
-      const box = await control.boundingBox();
-      expect(box, name).not.toBeNull();
-      expect(box?.height ?? 0, name).toBeGreaterThanOrEqual(MIN_TARGET_PX);
-      expect(box?.x, name).toBeGreaterThanOrEqual(0);
-      expect((box?.x ?? 0) + (box?.width ?? 0), name).toBeLessThanOrEqual(375);
-      // Its value is whole ("Every status"), never cut to "Every s…".
-      const cut = await control.evaluate((el) =>
-        [el, ...el.querySelectorAll<HTMLElement>("*")].some((n) => n.scrollWidth > n.clientWidth + 1),
-      );
-      expect(cut, name).toBe(false);
-    }
-  });
+  for (const width of [375, 320]) {
+    test(`at ${width} px the first run starts within the chrome budget`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 812 });
+      await installApi(page, { runRows: 60 });
+      await page.goto("/runs");
+      const first = page.locator(LOADED_ROW).first();
+      await expect(first).toBeVisible();
+      expect(await first.evaluate((el) => el.getBoundingClientRect().top)).toBeLessThanOrEqual(360);
+      // Every control on the filters' row is a 44 px target, and fits the width.
+      for (const name of ["Filter runs by status", "Agent", "View"]) {
+        const control = page.getByRole("button", { name, exact: true });
+        const box = await control.boundingBox();
+        expect(box, name).not.toBeNull();
+        expect(box?.height ?? 0, name).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+        expect(box?.x, name).toBeGreaterThanOrEqual(0);
+        expect((box?.x ?? 0) + (box?.width ?? 0), name).toBeLessThanOrEqual(width);
+        // The selected status or agent label is visible in the compact filter.
+        const cut = await control.evaluate((el) =>
+          [el, ...el.querySelectorAll<HTMLElement>("*")].some((n) => n.scrollWidth > n.clientWidth + 1),
+        );
+        expect(cut, name).toBe(false);
+      }
+    });
+  }
 });

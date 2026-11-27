@@ -19,8 +19,9 @@ The plugin also mounts the MCP tools: `.mcp.json` points at
 `${user_config.server_url}/mcp?toolset=${user_config.toolset}` (the
 `server_url` and `toolset` plugin options; `server_url` defaults to
 `$LOOM_BASE_URL`, else `http://localhost:7777`), and its `headersHelper`
-(`bin/loom-mcp-headers.mjs`) sends `Authorization: Bearer <token>` from the
-same places the hooks read it. The helper also sends `X-Loom-Code-Scope: org/namespace` — the repository this checkout resolved to (the shunt's cache, else one bounded lookup) — and the server applies it to every `loom_code_*` call that names no namespace, so the model cannot land on the deployment's default repository by forgetting the primer's scope line. `LOOM_MCP_CODE_SCOPE=off` disables it.
+(`bin/loom-mcp-headers.mjs`) sends `Authorization: Bearer <token>` from
+`~/.loom/config.json`, then `~/.loom/token`
+([where the token is read](#where-the-token-is-read)). The helper also sends `X-Loom-Code-Scope: org/namespace` — the repository this checkout resolved to (the shunt's cache, else one bounded lookup) — and the server applies it to every `loom_code_*` call that names no namespace, so the model cannot land on the deployment's default repository by forgetting the primer's scope line. `LOOM_MCP_CODE_SCOPE=off` disables it.
 
 `coding` is the coding-agent toolset: 21 tools (save /
 revise / read / delete, the working-memory scratchpad, `context.pack`, the
@@ -95,8 +96,8 @@ interpreter of the checkout's virtualenv, the active one (`VIRTUAL_ENV`) or a
 `python3` or `python` on `PATH`, checking that the interpreter's file exists
 without running it.
 
-The plugin keeps the token it saves (a copy of the install token or a
-self-signup token in `~/.loom/config.json`; in agent mode the exchanged one in
+The plugin keeps the token it saves (a copy of the one the hooks were given, or
+a self-signup token, in `~/.loom/config.json`; in agent mode the exchanged one in
 `~/.loom/agent-token-<hash of LOOM_CLIENT_ID>.json`) and its other state in
 `~/.loom/`, mode 0600, until you remove it.
 
@@ -227,8 +228,7 @@ prompts for them, and an empty answer leaves them unset — the server
 URL falls back to `$LOOM_BASE_URL`, then `http://localhost:7777`, and the token to
 `$LOOM_API_KEY`, `~/.loom/config.json`, `~/.loom/token`. A token given here is
 stored by Claude Code (keychain where available) and reaches the hooks as an
-environment variable; the first session writes it to `~/.loom/config.json`
-(0600), where the MCP header helper, the `loom` CLI and the SDK also read it.
+environment variable ([where the token is read](#where-the-token-is-read)).
 
 Already installed? Hooks land with the plugin version, not with the server:
 a client installed before a hook was added keeps posting from the hooks it
@@ -243,8 +243,9 @@ That's it — the hooks wire themselves (Claude Code injects `${CLAUDE_PLUGIN_RO
 no `settings.json` editing). All you supply is a **writer token**: export
 `LOOM_API_KEY` or write it to `~/.loom/token` (one line). **Org and namespace are
 read from the token's own claims** — nothing else to declare. The plugin's MCP
-block (the Loom _tools_) reads the token from the same places through a
-`headersHelper` (`bin/loom-mcp-headers.mjs`), and defaults the
+block (the Loom _tools_) gets the token through a
+`headersHelper` (`bin/loom-mcp-headers.mjs`), which reads the two files
+([where the token is read](#where-the-token-is-read)), and defaults the
 server to `http://localhost:7777` — set `LOOM_BASE_URL` for a remote server, or run
 `loom install --client claude-code`, which writes both into
 `~/.claude/settings.json` `env`.
@@ -252,6 +253,27 @@ server to `http://localhost:7777` — set `LOOM_BASE_URL` for a remote server, o
 ```bash
 loom mint-token --subject you --org <your-org> --namespaces coding --roles writer > ~/.loom/token
 ```
+
+### Where the token is read
+
+| Reader                                 | Reads, in order                                                                                                                                                        |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the hooks                              | `LOOM_API_KEY` → the `token` install option → the file `LOOM_API_KEY_FILE` names → `token` in `~/.loom/config.json` → `~/.loom/token` (with `LOOM_API_KEY_FILE` unset) |
+| the MCP header helper (the Loom tools) | `token` in `~/.loom/config.json` (`LOOM_CONFIG_FILE` moves it) → `~/.loom/token`                                                                                       |
+
+Claude Code gives a plugin's header helper neither the install option nor
+`LOOM_API_KEY` or `LOOM_API_KEY_FILE` (measured on Claude Code 2.1.332). So the
+first hook of a session saves the token the hooks were given (`LOOM_API_KEY`,
+else the option, else the file `LOOM_API_KEY_FILE` names) to
+`~/.loom/config.json` (0600), with the server URL beside it, when no token is
+saved there or in `~/.loom/token`; a helper with no token waits up to 5 s for
+that save, and the `loom` CLI and the SDK read the file too. A saved token is
+never replaced: when the hooks use another one, from `LOOM_API_KEY` or the
+named file, the Loom tools send the saved one and the SessionStart primer says
+to save the hooks' token in `~/.loom/config.json`. The hook saves
+`LOOM_API_KEY` or the named file's token, and the primer says that line, only
+where Claude Code runs it for the plugin (`CLAUDE_PLUGIN_ROOT` set): not for a
+hand-wired client, Codex or an agent.
 
 ### Hosted / remote Loom — one config file
 
@@ -285,7 +307,7 @@ path.
 | `LOOM_NODE`                           | _(unset)_                                                                                | Path to the Node binary `bin/loom-node` runs (the Codex hooks, `hooks.generic.json` and the skills' commands); it wins over the search. A path that is not Node 18+ fails them. Claude Code's hooks and header helper run the `node` on PATH.                                                                                                                                                                                                                                                                                                                                                                           |
 | `LOOM_NODE_SYSTEM_DIRS`               | Homebrew, Linuxbrew, `/usr/local/bin`, `/usr/bin`, `/bin`, `/snap/bin`, `/opt/local/bin` | Colon-separated directories `bin/loom-node` searches last, after PATH and the version managers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `LOOM_BASE_URL`                       | _(`~/.loom/config.json` → )_ `http://localhost:7777`                                     | Control-plane base URL.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `LOOM_API_KEY`                        | _(unset)_                                                                                | Bearer JWT. Falls back to `~/.loom/config.json`, then `~/.loom/token`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `LOOM_API_KEY`                        | _(unset)_                                                                                | Bearer JWT for the hooks; the first session saves it for the MCP tools ([where the token is read](#where-the-token-is-read)). Falls back to `~/.loom/config.json`, then `~/.loom/token`.                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `LOOM_CONFIG_FILE`                    | `~/.loom/config.json`                                                                    | JSON config (`url`/`token`/`namespace`/`org`); env vars override it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `LOOM_ORG`                            | _(token's `org` claim)_ → `default`                                                      | Org segment of the identity tuple.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `LOOM_NAMESPACE`                      | _(token's first non-`*` namespace)_ → `coding`                                           | Base namespace when scoping by tag.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |

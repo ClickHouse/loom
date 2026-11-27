@@ -229,18 +229,81 @@ LOOM_VERTEX_PROJECT=<google-cloud-project-id>
 LOOM_VERTEX_LOCATION=global
 ```
 
-Select a location where the model is available. Use a regional endpoint when your
-data residency policy requires it. Activate Vertex AI after all server and worker
-replicas support the provider. If Models & keys has saved settings, use **Use
+Select a region, `eu`, `us`, or `global` where the model is available. Choose an
+endpoint that meets your data residency requirements. Activate Vertex AI or change
+its location after all server and worker replicas support the selected configuration.
+Before rolling back to a build that rejects that location, restore a location and
+model the target build supports. If Models & keys has saved settings, use **Use
 environment configuration** to restore the deployment settings. If the reset changes
 the embedder, Loom rebuilds the vectors.
 
 Vertex AI uses deployment credentials and requires no provider API key. Run
 `loom doctor` to check the configuration, then try a Loom operation that makes a
 model call to verify the identity can invoke the model. A per-job override can use
-`vertex:gemini-3.5-flash-lite`. Embeddings and the native assistant use their own
-provider settings. See [Vertex AI architecture](../architecture/llm-architecture.md#vertex-ai)
+`vertex:gemini-3.5-flash-lite`. Configure embeddings separately.
+See [Vertex AI architecture](../architecture/llm-architecture.md#vertex-ai)
 and [GKE setup](../operations/kubernetes.md#vertex-ai-on-gke).
+
+#### Use local credentials with Docker Compose
+
+For local development on Linux, run `gcloud auth application-default login` on the
+Docker host. The ADC file is owned by your host user and has mode `0600`. With
+standard Docker Engine UID mapping, grant the Loom container's UID (`999`) read
+access with `setfacl`.
+
+```bash
+setfacl -m u:999:r-- "${CLOUDSDK_CONFIG:-$HOME/.config/gcloud}/application_default_credentials.json"
+```
+
+If the filesystem lacks ACLs, mount a separate credential file owned by the mapped
+container UID with mode `0600`. Keep access limited to the identities that need it.
+With rootless Docker, user namespace remapping or Docker Desktop, check how the
+container's UID maps to the host before granting access.
+
+Add this to `compose.override.yaml` next to the stack's `compose.yaml`. If you use
+explicit `-f` flags, include the override last. If you mount a separate
+credential file, set `source` to its absolute path.
+
+```yaml
+services:
+  loom:
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /run/gcloud/application_default_credentials.json
+    volumes:
+      - type: bind
+        source: ${CLOUDSDK_CONFIG:-${HOME}/.config/gcloud}/application_default_credentials.json
+        target: /run/gcloud/application_default_credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
+```
+
+From the Compose directory, recreate Loom and check that the container user can
+read the file. If you regenerate the credentials, check the file permissions
+again before recreating Loom.
+
+```bash
+docker compose up -d --force-recreate loom
+docker compose exec -T loom sh -c 'test -r "$GOOGLE_APPLICATION_CREDENTIALS"'
+```
+
+#### Use Vertex AI for Ask AI
+
+Ask AI requires an authenticated deployment. For a local Compose stack, follow the
+[dashboard sign-in setup](quickstart.md#2-open-the-dashboard) to enable authentication.
+After all server replicas support Vertex AI for the assistant, add these settings
+alongside `LOOM_VERTEX_PROJECT` and `LOOM_VERTEX_LOCATION`. The assistant uses the
+deployment's Application Default Credentials. Restore the previous assistant settings
+before rolling back to a build without this provider.
+
+```dotenv
+LOOM_ASSISTANT_ENABLED=true
+LOOM_ASSISTANT_PROVIDER=vertex
+LOOM_ASSISTANT_MODEL=gemini-3.5-flash-lite
+```
+
+See [native assistant setup](../operations/assistant.md#configuration) for the model
+pricing and budget settings.
 
 ### Keep every LLM job on your chosen provider
 

@@ -379,7 +379,8 @@ plugin marketplace, `.gitattributes` or the workflow itself: the plugin and grep
 suites on Linux (x86_64, arm64, Alpine), macOS (Apple silicon, Intel), Windows (x86_64,
 arm64) and WSL 2 (Ubuntu, Node 18), then real Claude Code and Codex sessions with the
 plugin installed from the checkout (`tests/e2e/agent-session.mjs` under the Claude Code
-plugin: a local fake answers both the model API and Loom), also with `node` off the
+plugin: a local fake answers both the model API and Loom), also with the Claude Code
+session's token only in `LOOM_API_KEY`, with `node` off the
 agent's `PATH` on the Ubuntu and macOS runners, with no `node` at all (every hook fails
 without blocking the turn) on the Ubuntu, macOS and Windows runners, and without Git Bash
 on Windows.

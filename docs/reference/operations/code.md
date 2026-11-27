@@ -577,7 +577,7 @@ Is this already tested?
 
 ## `code.edit_context`
 
-Read source, tests, and notes.
+Before editing, read source, tests and notes.
 
 `POST /v1/code.edit_context` · MCP `loom_code_edit_context` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -592,7 +592,7 @@ Read source, tests, and notes.
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `name` | `str` | `''` | Name, path:symbol, path:line, or file with clues. |
 | `clues` | `list[str]` | *(computed)* | Text fragments or exact declarations. |
-| `names` | `list[str]` | *(computed)* | Batch of exact names or locations. |
+| `names` | `list[str]` | *(computed)* | Exact names or locations. |
 | `include_related_source` | `bool` | `True` | Set false after reading extra bodies. |
 
 | Output field | Type | Meaning |

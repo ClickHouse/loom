@@ -274,7 +274,8 @@ settings:
   # profile). Empty uses assistant_model. The operator verifies its rate. [restart]
   # assistant_price_model: ""
 
-  # Native streaming provider. Empty disables native model admission. [restart]
+  # Native streaming provider. Vertex uses Google Application Default Credentials. Empty
+  # disables native model admission. [restart]
   # assistant_provider: ""
 
   # Model to answer with when a client's provider is still unavailable after its retries
@@ -424,8 +425,8 @@ settings:
   # provider. [restart]
   # vertex_project: ""
 
-  # Vertex AI location, either a region or "global". Required with the Vertex provider.
-  # [restart]
+  # Vertex AI location: a region, a multi-region ("eu", "us"), or "global". Required
+  # with the Vertex provider. [restart]
   # vertex_location: ""
 
   # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
@@ -1184,6 +1185,12 @@ settings:
   # Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without it
   # the gc waits another interval. [restart]
   # code_mirror_gc_margin_gb: 5.0
+
+  # Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its
+  # working tree, not a second copy. An older build's git jobs could write the shared
+  # packs: turn it on only once no older replica serves, and off before a rollback.
+  # [restart]
+  # code_compiler_share_mirror_packs: false
 
   # --- repository job sandbox ---
   # Resource limits (rlimits) for each process of a sandboxed repository job (clone,
@@ -3160,14 +3167,16 @@ settings:
   # Which tools `tools/list` shows when a connection names no `?toolset=` (a request
   # that names one gets that one instead). Rosters are the frozensets in
   # server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on
-  # "assistant"); on every toolset but "assistant" this is visibility only and every op
-  # stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes
-  # read ops only. "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
-  # mcp_code_tools is on). "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the
-  # plugin selects it per request with `?toolset=coding`. "tracker", "tasks" — the
-  # tracker plane and the task inbox rosters. "atomic"    — CRUD + scratchpad + run
-  # ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. "readonly"  — the "all"
-  # listing without the tools whose readOnlyHint is false; loom_op routes read ops only.
+  # "assistant", nor where "coding" lists the code tools alone); on every toolset but
+  # "assistant" this is visibility only and every op stays callable by name over MCP and
+  # /v1/*, except that loom_op on "readonly" routes read ops only. "core"      —
+  # (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). "coding"
+  # — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with
+  # `?toolset=coding`. A connection bound to a repository lists the code tools alone
+  # when its URL carries `schema_profile=compact`. "tracker", "tasks" — the tracker
+  # plane and the task inbox rosters. "atomic"    — CRUD + scratchpad + run ledger
+  # (_MCP_ATOMIC_OPS), policy-shaped descriptions. "readonly"  — the "all" listing
+  # without the tools whose readOnlyHint is false; loom_op routes read ops only.
   # "assistant" — MCP_ASSISTANT_OPS only, and only those are callable on a connection
   # that resolves to it. Not a server-wide read-only switch: a request naming another
   # toolset gets it, and the token is the boundary. "all"       — the stable ops plus
@@ -3816,7 +3825,8 @@ settings:
   # Seconds a code-links pass may run before the supervisor abandons it. [restart]
   # memory_code_links_max_pass_seconds: 600.0
 
-  # Memory writes one pass links (at least 1). [restart]
+  # Rows per page of memory writes to link or pending links to recheck (at least 1).
+  # [restart]
   # memory_code_links_batch: 500
 
   # Seconds the memory code-link pass stays behind the newest queued memory write, so
@@ -3826,8 +3836,8 @@ settings:
   # later. [restart]
   # memory_code_links_settle_seconds: 60
 
-  # Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried
-  # before it is dropped. [restart]
+  # Days to retry a code-shaped name absent from trunk, measured when each pending scan
+  # starts. [restart]
   # memory_code_links_pending_days: 14
 
   # Changed claims one pass re-checks with the LLM under the `revise` policy. [restart]

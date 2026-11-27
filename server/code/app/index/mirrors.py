@@ -373,10 +373,11 @@ async def _merge_page(cfg: Any, git_dir: str, repo: Any) -> None:
 
 async def gc_if_due(git_dir: str) -> None:
     """`git gc --no-prune` of a mirror or a compiler tier's checkout every
-    `code_mirror_gc_interval_h`, at low CPU and IO priority, only when the disk holds
-    a second copy plus the margin (the new pack is written beside the old one);
-    without that room it waits another interval. Nothing unreachable is pruned, so a
-    checkout borrowing objects from the mirror never loses one."""
+    `code_mirror_gc_interval_h`, or once its mark is gone, at low CPU and IO priority,
+    only when the disk holds a second copy of what the gc rewrites plus the margin (the
+    new pack is written beside the old one); without that room it waits another
+    interval. Nothing unreachable is pruned, and a kept pack (a checkout's packs shared
+    with its mirror) is never rewritten."""
     hours = float(settings.code_mirror_gc_interval_h)
     if hours <= 0 or _mark_age_s(git_dir, _GC_MARK) < hours * 3600:
         return
@@ -408,11 +409,14 @@ async def gc_if_due(git_dir: str) -> None:
 
 
 def _tree_bytes(path: str) -> int:
+    """What a gc of `path` may write again: every file but a kept pack's."""
     total = 0
     for root, _dirs, files in os.walk(path):
+        kept = {f.removesuffix(".keep") for f in files if f.endswith(".keep")}
         for f in files:
-            with contextlib.suppress(OSError):
-                total += os.lstat(os.path.join(root, f)).st_size
+            if f.split(".", 1)[0] not in kept:
+                with contextlib.suppress(OSError):
+                    total += os.lstat(os.path.join(root, f)).st_size
     return total
 
 

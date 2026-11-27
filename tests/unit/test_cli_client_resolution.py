@@ -1,6 +1,6 @@
 """Every `loom` command resolves the server URL and the token in the plugin
-hooks' order: flag, environment, `~/.loom/config.json`, then the token file
-or the default URL."""
+hooks' order: flag, environment (the token file it names included),
+`~/.loom/config.json`, then `~/.loom/token` or the default URL."""
 
 from __future__ import annotations
 
@@ -55,8 +55,10 @@ def test_token_file_and_config_file_overrides(tmp_path: Path) -> None:
     env = {"LOOM_API_KEY_FILE": str(tmp_path / "alt.tok")}
     assert _client.resolve_token(None, home, env) == ("alt", str(tmp_path / "alt.tok"))
     env["LOOM_CONFIG_FILE"] = str(tmp_path / "alt.json")
-    assert _client.resolve_token(None, home, env) == ("alt-cfg", _client.CONFIG_SOURCE)
+    assert _client.resolve_token(None, home, env) == ("alt", str(tmp_path / "alt.tok"))
     assert _client.resolve_server_url(None, home, env) == ("https://alt", _client.CONFIG_SOURCE)
+    (tmp_path / "alt.tok").write_text("\n")
+    assert _client.resolve_token(None, home, env) == ("alt-cfg", _client.CONFIG_SOURCE)
 
 
 def test_server_url_order(tmp_path: Path) -> None:

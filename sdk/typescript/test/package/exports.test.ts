@@ -143,6 +143,20 @@ describe("dist", () => {
     );
   }, 30_000); // loading @langchain/core in both module formats takes seconds
 
+  it("the langgraph subpath loads in both formats and leaves @langchain/langgraph-checkpoint to the app", async () => {
+    const esm = (await import(join(dist, "integrations/langgraph.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/langgraph.cjs")) as object;
+    expect(names(esm)).toEqual(names(cjs));
+    expect(names(esm)).toEqual(["LoomStore"]);
+    expect(readFileSync(join(dist, "integrations/langgraph.mjs"), "utf8")).toMatch(
+      /from "@langchain\/langgraph-checkpoint"/,
+    );
+    // The root entry never reaches the optional peer, so it loads without it installed.
+    for (const f of ["index.mjs", "index.cjs"]) {
+      expect(readFileSync(join(dist, f), "utf8"), f).not.toContain("@langchain/langgraph-checkpoint");
+    }
+  }, 30_000); // loading @langchain/langgraph-checkpoint in both module formats takes seconds
+
   it("the google-adk subpath loads in both formats without loading the framework", async () => {
     const esm = (await import(join(dist, "integrations/google-adk.mjs"))) as object;
     const cjs = require(join(dist, "integrations/google-adk.cjs")) as object;

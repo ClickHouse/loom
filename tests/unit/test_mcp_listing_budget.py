@@ -11,6 +11,7 @@ import re
 
 import pytest
 
+from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import (
     _MCP_ATOMIC_OPS,
@@ -390,11 +391,23 @@ def test_a_listing_build_leaves_the_source_texts_as_written():
 
 @pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
 def test_listed_tool_names_is_what_the_listing_shows(toolset: str, code: bool, monkeypatch):
-    """A refusal names ops by listed_tool_names; it must be the listing's own set."""
+    """A refusal names ops by listed_tool_names; it must be the listing's own set,
+    on a connection bound to a repository too."""
     listing = {t["name"] for t in _listing(toolset, code)}
     monkeypatch.setattr(settings, "mcp_toolset", toolset)
     monkeypatch.setattr(settings, "mcp_code_tools", code)
     assert mt.listed_tool_names(None) == listing
+    bound = set_code_scope("acme/code-repo")
+    try:
+        for profile in (None, *SCHEMA_PROFILES):
+            shown = {t["name"] for t in _listing(toolset, code, profile)}
+            assert mt.listed_tool_names(None, profile) == shown
+            # only a `coding` connection whose URL asks for the compact profile
+            # narrows the listing to the code tools
+            assert shown <= listing
+            assert (shown == listing) != (toolset == "coding" and profile == "compact")
+    finally:
+        reset_code_scope(bound)
 
 
 @pytest.mark.parametrize("toolset", ["core", "all", "readonly"])
@@ -556,6 +569,21 @@ def test_listing_budget_chars_over_four():
     for toolset, code in _TOOLSETS:
         for t in _listing(toolset, code):
             assert len(t["description"]) // 4 <= 480, f"{toolset}: {t['name']} is over budget"
+
+
+def test_the_listing_of_code_tools_alone_stays_within_its_budget():
+    """A `coding` connection bound to a repository whose URL asks for the compact
+    profile: its listing, and the routing its startup instructions and primer carry."""
+    from server.transport.mcp_primer import _coding_instructions
+
+    defaults = {"org": "acme", "namespace": "home", "agent": "a"}
+    bound = set_code_scope("acme/code-repo")
+    try:
+        assert _tok({"tools": _listing("coding", False, "compact")}) <= 3_700
+        routing = _coding_instructions("coding", defaults, schema_profile="compact")
+        assert len(routing) // 4 <= 200
+    finally:
+        reset_code_scope(bound)
 
 
 def test_tracker_toolset_lists_the_tracker_record_bisect_pr_check_and_impact_within_its_own_budget():

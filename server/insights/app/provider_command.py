@@ -10,7 +10,9 @@ from contextlib import asynccontextmanager
 from server.core import retirement, settings_overrides
 from server.core.background import drain_task_sets, flush_registered_buffers
 from server.core.ch import get_client, set_query_tag
+from server.core.ch_errors import error_line
 from server.core.model_work_gate import get_model_work_gate
+from server.core.provider_process import participant_proof, process_identity
 from server.insights.app.provider_barrier import _retire_until, register_process
 from server.insights.app.provider_runtime import load_active_configuration
 from server.settings import settings
@@ -52,7 +54,14 @@ async def _drain_participant_until(end: float) -> None:
             raise RuntimeError("Native command deferred writes did not drain")
         if not await flush_registered_buffers():
             raise RuntimeError("Native command buffers did not flush")
-        if await _retire_until(get_client(), end) is not True:
+        try:
+            certified = await _retire_until(get_client(), end)
+        except retirement.Uncertifiable as e:
+            log.warning(
+                "provider participant %s not retired, its writes settled: %s", process_identity(), e
+            )
+            return
+        if certified is not True:
             raise RuntimeError("Native command retirement was not certified")
 
 
@@ -120,7 +129,31 @@ async def participant_command() -> AsyncIterator[None]:
             await _finish_participant()
         raise
     else:
-        await _finish_participant()
+        try:
+            await _finish_participant()
+        except Exception as error:
+            # A tracked producer's own failure is not the shutdown's: it keeps its traceback.
+            if error is not retirement.get_gate().producer_failure:
+                error.add_note(retirement.UNFINISHED)  # one line from `loom`
+            raise
+
+
+def unfinished_line(error: BaseException) -> str | None:
+    """What `loom` prints, in place of a traceback, when a command's body returned and
+    its shutdown then failed (`retirement.unfinished`); None for any other error."""
+    if not retirement.unfinished(error):
+        return None
+    me = process_identity()
+    remedy = (
+        f"retire it with `loom participant retire --participant {me}` on this host"
+        if participant_proof()
+        else "no command can retire it: this host gives no process identity"
+    )
+    return (
+        f"the command returned, but its shutdown did not complete ({error_line(error)}): "
+        f"a deferred write may not have landed, and a provider change waits for participant {me}; "
+        f"{remedy}"
+    )
 
 
 @asynccontextmanager

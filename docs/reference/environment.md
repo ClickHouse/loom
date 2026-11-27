@@ -104,7 +104,7 @@ port, the bind host and `LOOM_CLICKHOUSE_IMAGE` in `.env` when given; the
 | `LOOM_API_KEY`                     | `server/cli/_client.py` and the client commands                            | unset, then `~/.loom/token` | The token they present. A stale value here wins over `~/.loom/token`.         |
 | `LOOM_BIND_HOST`, `LOOM_BIND_PORT` | `server/cli/serve.py`                                                      | `0.0.0.0`, `7777`           | Defaults for `loom serve --host` and `--port`.                                |
 | `LOOM_CONFIG_FILE`                 | `server/cli/_client.py`                                                    | `~/.loom/config.json`       | The client config `loom doctor --client` reads (the file `loom init` writes). |
-| `LOOM_API_KEY_FILE`                | `server/cli/_client.py`, the plugins' `lib/loom-client.mjs`, the grep shim | `~/.loom/token`             | The token file read when `LOOM_API_KEY` is unset.                             |
+| `LOOM_API_KEY_FILE`                | `server/cli/_client.py`, the plugins' `lib/loom-client.mjs`, the grep shim | `~/.loom/token`             | A token file read in place of the default, before the config file's `token`.  |
 
 See [CLI reference](./cli.md).
 

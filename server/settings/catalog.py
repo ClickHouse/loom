@@ -1024,6 +1024,10 @@ class CodeSettings(BaseModel):
     # Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without
     # it the gc waits another interval.
     code_mirror_gc_margin_gb: float = 5.0
+    # Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its
+    # working tree, not a second copy. An older build's git jobs could write the shared
+    # packs: turn it on only once no older replica serves, and off before a rollback.
+    code_compiler_share_mirror_packs: bool = False
     # Resource limits (rlimits) for each process of a sandboxed repository job
     # (clone, fetch, dependency install, compiler-tier harness;
     # code/app/index/sandbox.py). They bound each process, not a job's total
@@ -2681,13 +2685,15 @@ class McpSettings(BaseModel):
     # Which tools `tools/list` shows when a connection names no `?toolset=` (a request that
     # names one gets that one instead). Rosters are the frozensets in
     # server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on
-    # "assistant"); on every toolset but "assistant" this is visibility only and every op
-    # stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes
-    # read ops only.
+    # "assistant", nor where "coding" lists the code tools alone); on every toolset but
+    # "assistant" this is visibility only and every op stays callable by name over MCP and
+    # /v1/*, except that loom_op on "readonly" routes read ops only.
     #   "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
     #                 mcp_code_tools is on).
     #   "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it
-    #                 per request with `?toolset=coding`.
+    #                 per request with `?toolset=coding`. A connection bound to a
+    #                 repository lists the code tools alone when its URL carries
+    #                 `schema_profile=compact`.
     #   "tracker", "tasks" — the tracker plane and the task inbox rosters.
     #   "atomic"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS),
     #                 policy-shaped descriptions.
@@ -3228,7 +3234,7 @@ class MemorySettings(BaseModel):
     memory_code_links_interval_seconds: int = 60
     # Seconds a code-links pass may run before the supervisor abandons it.
     memory_code_links_max_pass_seconds: float = Field(default=600.0, gt=0)
-    # Memory writes one pass links (at least 1).
+    # Rows per page of memory writes to link or pending links to recheck (at least 1).
     memory_code_links_batch: int = Field(default=500, ge=1)
     # Seconds the memory code-link pass stays behind the newest queued memory write, so
     # inserts running at the same moment are visible before the cursor passes them (at
@@ -3236,8 +3242,7 @@ class MemorySettings(BaseModel):
     # backfill reads it; a longer wait makes that rarer and links every write that much
     # later.
     memory_code_links_settle_seconds: int = Field(default=60, ge=10)
-    # Days a code-shaped name that names nothing on trunk yet (unmerged code) is
-    # retried before it is dropped.
+    # Days to retry a code-shaped name absent from trunk, measured when each pending scan starts.
     memory_code_links_pending_days: int = Field(default=14, ge=1)
     # Changed claims one pass re-checks with the LLM under the `revise` policy.
     memory_code_links_revise_per_pass: int = Field(default=20, ge=0)
@@ -4125,8 +4130,11 @@ class ModelSettings(BaseModel):
     # Price-table model used for assistant route aliases (for example a Bedrock
     # inference profile). Empty uses assistant_model. The operator verifies its rate.
     assistant_price_model: str = ""
-    # Native streaming provider. Empty disables native model admission.
-    assistant_provider: Literal["", "anthropic", "openai", "bedrock", "local", "fake"] = ""
+    # Native streaming provider. Vertex uses Google Application Default Credentials.
+    # Empty disables native model admission.
+    assistant_provider: Literal["", "anthropic", "openai", "bedrock", "vertex", "local", "fake"] = (
+        ""
+    )
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
     # (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are
@@ -4788,7 +4796,8 @@ class ProviderSettings(ModelSettings):
     bedrock_region: str = ""
     # Google Cloud project that owns the Vertex AI requests, required with the Vertex provider.
     vertex_project: str = ""
-    # Vertex AI location, either a region or "global". Required with the Vertex provider.
+    # Vertex AI location: a region, a multi-region ("eu", "us"), or "global".
+    # Required with the Vertex provider.
     vertex_location: str = ""
     # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
     # <host>:11434/v1, llama.cpp's server <host>:8080/v1).
@@ -5131,14 +5140,21 @@ class ProviderSettings(ModelSettings):
         resolved = resolve_llm_provider(self.llm_provider, self.llm_model)
         if resolved.provider == "bedrock" and not resolved.model:
             raise ValueError("LOOM_LLM_PROVIDER=bedrock requires LOOM_LLM_MODEL")
-        if resolved.provider == "vertex":
-            if not resolved.model:
-                raise ValueError("LOOM_LLM_PROVIDER=vertex requires LOOM_LLM_MODEL")
+        if resolved.provider == "vertex" and not resolved.model:
+            raise ValueError("LOOM_LLM_PROVIDER=vertex requires LOOM_LLM_MODEL")
+        if self.assistant_provider == "vertex" and not self.assistant_model.strip():
+            raise ValueError("LOOM_ASSISTANT_PROVIDER=vertex requires LOOM_ASSISTANT_MODEL")
+        if "vertex" in (resolved.provider, self.assistant_provider):
             if not self.vertex_project.strip() or not self.vertex_location.strip():
                 raise ValueError(
                     "The Vertex provider requires LOOM_VERTEX_PROJECT and LOOM_VERTEX_LOCATION"
                 )
+        if resolved.provider == "vertex":
             vertex_route(resolved.model, self.vertex_project, self.vertex_location)
+        if self.assistant_provider == "vertex":
+            self.assistant_model, _ = vertex_route(
+                self.assistant_model, self.vertex_project, self.vertex_location
+            )
         self.llm_provider = resolved.provider
         self.llm_model = resolved.model
         self._llm_provider_source = resolved.source

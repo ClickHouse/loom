@@ -209,7 +209,7 @@ def test_a_missing_required_arg_gets_a_placeholder() -> None:
 @pytest.mark.parametrize(
     ("op", "arguments", "field"),
     [
-        ("code.read", {"path": "src/api.py", "ranges": [[1, 110], [255, 362]]}, "ranges"),
+        ("code.read", {"path": "src/api.py", "ranges": [[1, 110, 111]]}, "ranges"),
         ("code.grep", {"pattern": "def route", "context_lines": "25"}, "context_lines"),
     ],
 )
