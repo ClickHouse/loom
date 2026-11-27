@@ -1,20 +1,25 @@
-"""Verified source for member reads in edit context."""
+"""Verified source behind an edit target's indexed member references."""
 
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import Counter, defaultdict
 from typing import Any
 
+from server.code.api.models_common import _safe_path
 from server.code.api.models_symbol import (
     CodeEditContextTarget,
     CodeEditReadSite,
     CodeEditReadSource,
 )
 from server.code.app.enrich import bounded
+from server.code.app.grep_dependencies import _helper_edges, _one_target, typed_forward_call
+from server.code.app.index.denylist import under_prefixes
 from server.code.app.spans import code_span, span_attrs
 from server.code.app.symbol.resolve import _indexed_commit, symbol_body
 from server.code.domain.extract.treesitter import lang_for_path
+from server.code.domain.index.repos import repo_for_namespace
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.settings import settings
@@ -47,7 +52,7 @@ async def read_sources_for_definitions(
     resolved: set[int],
 ) -> list[CodeEditReadSource]:
     with code_span("edit_context.read_sources") as span:
-        sources = await bounded(edit_read_sources(CodeRepo(), org, ns, definitions, resolved), [])
+        sources = await edit_read_sources(CodeRepo(), org, ns, definitions, resolved)
         span_attrs(span, results=len(sources))
     return sources
 
@@ -59,7 +64,8 @@ async def edit_read_sources(
     definitions: list[CodeUnit],
     resolved: set[int],
 ) -> list[CodeEditReadSource]:
-    """Add verified source for cross-file member reads supported by the requested definitions."""
+    """Keep requested definitions and cite verified indexed reads and one forwarder."""
+    until = time.monotonic() + settings.code_enrich_timeout_s
     anchors = {
         (unit.path, unit.symbol): unit
         for index, unit in enumerate(definitions)
@@ -76,10 +82,28 @@ async def edit_read_sources(
     if not anchors:
         return []
     names = list(dict.fromkeys(symbol for _, symbol in anchors))
-    ids_by_name = await repo.symbol_ids_for_names(org, ns, names)
+    ids_by_name = await bounded(
+        repo.symbol_ids_for_names(org, ns, names), {}, seconds=max(0.0, until - time.monotonic())
+    )
     ids = sorted({sid for values in ids_by_name.values() for sid in values})
-    if len(ids) > 500:
+    if not ids or len(ids) > 500:
         return []
+    remaining = max(0.0, until - time.monotonic())
+    reads, forwarding = await asyncio.gather(
+        bounded(_member_read_sources(repo, org, ns, definitions, anchors, ids), [], remaining),
+        bounded(_forward_source(repo, org, ns, definitions, anchors, ids_by_name), [], remaining),
+    )
+    return _append_forward_source(reads, forwarding)
+
+
+async def _member_read_sources(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    definitions: list[CodeUnit],
+    anchors: dict[_AnchorKey, CodeUnit],
+    ids: list[str],
+) -> list[CodeEditReadSource]:
     edges = await repo.edges_for_symbols(
         org,
         ns,
@@ -109,6 +133,98 @@ async def edit_read_sources(
     if not any(groups.values()):
         return []
     return await _hydrate_read_sources(repo, org, ns, anchors, destinations, groups)
+
+
+def _one_forwarder(
+    anchors: dict[_AnchorKey, CodeUnit],
+) -> tuple[CodeUnit, int, str, str] | None:
+    witness = None
+    for unit in anchors.values():
+        if len(unit.body) > settings.code_chunk_max_chars:
+            continue
+        name = unit.symbol.rsplit("::", 1)[-1]
+        if call := typed_forward_call(unit.body, name):
+            if witness is not None:
+                return None
+            offset, owner, member = call
+            witness = unit, unit.start_line + offset - 1, owner, member
+    return witness
+
+
+async def _forward_source(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    definitions: list[CodeUnit],
+    anchors: dict[_AnchorKey, CodeUnit],
+    ids_by_name: dict[str, list[str]],
+) -> list[CodeEditReadSource]:
+    witness = await asyncio.to_thread(_one_forwarder, anchors)
+    if witness is None:
+        return []
+    unit, line, owner, member = witness
+    ids = ids_by_name.get(unit.symbol, [])
+    if not ids:
+        return []
+    edges = await _helper_edges(repo, org, ns, sorted(set(ids)))
+    site_edges = [
+        edge
+        for edge in edges
+        if (edge["path"], edge["from_qualified_name"], edge["line"])
+        == (unit.path, unit.symbol, line)
+    ]
+    edge = _one_target(site_edges)
+    if edge is None:
+        return []
+    name = edge["to_qualified_name"]
+    revision = _indexed_commit(edge["indexed_commit"])
+    if not revision or name.rsplit("::", 2)[-2:] != [owner, member]:
+        return []
+    rows = await repo.symbols_by_ids(org, ns, [edge["to_symbol_id"]])
+    if len(rows) != 1 or not _safe_forward_destination(org, ns, unit, rows[0], name, revision):
+        return []
+    row = rows[0]
+    if _already_served(row, definitions):
+        return []
+    key = edge["to_symbol_id"], name, revision
+    site = CodeEditReadSite(path=unit.path, symbol=unit.symbol, line=line)
+    return await _hydrate_read_sources(repo, org, ns, anchors, {key: row}, {key: [site]})
+
+
+def _safe_forward_destination(
+    org: str, ns: str, unit: CodeUnit, row: dict[str, Any], name: str, revision: str
+) -> bool:
+    cfg = repo_for_namespace(org, ns)
+    path = row["path"]
+    return bool(
+        cfg
+        and path != unit.path
+        and _safe_path(path)
+        and _safe_path(unit.path)
+        and lang_for_path(path) == "python"
+        and under_prefixes(cfg.path_prefixes, path)
+        and under_prefixes(cfg.path_prefixes, unit.path)
+        and row["kind"] in {"function", "method"}
+        and row["qualified_name"] == name
+        and _revision(row) == revision
+    )
+
+
+def _append_forward_source(
+    reads: list[CodeEditReadSource], forwarding: list[CodeEditReadSource]
+) -> list[CodeEditReadSource]:
+    if not forwarding:
+        return reads
+    (target,) = forwarding
+    key = target.path, target.qualified_name, target.commit
+    if any((row.path, row.qualified_name, row.commit) == key for row in reads):
+        return reads
+    all_sources = [*reads, target]
+    return (
+        all_sources
+        if sum(len(row.model_dump_json()) for row in all_sources) <= settings.code_chunk_max_chars
+        else reads
+    )
 
 
 async def _hydrate_read_sources(
