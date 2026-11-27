@@ -126,7 +126,9 @@ async def _model(
             assistant_price_model=definition.price_model,
         ):
             span = stack.enter_context(
-                genai.generation_span(provider=definition.provider, model=definition.model)
+                genai.generation_span(
+                    provider=definition.provider, model=definition.model, attach=False
+                )
             )
         stream = models.model_for(definition.provider, definition.model).stream(
             messages, descriptors, settings.assistant_max_output_tokens, turn

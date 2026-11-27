@@ -204,7 +204,10 @@ class Tools:
             structured = result["structuredContent"]
             if not isinstance(structured, dict):
                 raise ValueError("not an object")
-            if len(json.dumps(structured)) > settings.assistant_max_tool_result_chars:
+            if (
+                len(json.dumps(structured, ensure_ascii=False))
+                > settings.assistant_max_tool_result_chars
+            ):
                 raise AssistantUpstreamError("a tool exceeded its response bound")
             return structured
         except (ValueError, TypeError, KeyError) as e:

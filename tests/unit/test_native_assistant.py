@@ -868,7 +868,10 @@ def test_provisional_text_above_the_character_cap_withholds_done(offline, monkey
     asyncio.run(scenario())
 
 
-def test_tool_result_above_the_character_cap_refuses(monkeypatch):
+@pytest.mark.parametrize(
+    ("text", "refused"), [("x" * 1001, True), ("文" * 300, False)], ids=("oversize", "unicode")
+)
+def test_tool_result_character_bound_uses_the_model_json_shape(monkeypatch, text, refused):
     from fastapi import FastAPI
 
     monkeypatch.setattr(settings, "assistant_max_tool_result_chars", 1000)
@@ -876,13 +879,17 @@ def test_tool_result_above_the_character_cap_refuses(monkeypatch):
 
     @app.post("/mcp")
     async def response():
-        return {"result": {"structuredContent": {"data": "x" * 1001}}}
+        return {"result": {"structuredContent": {"data": text}}}
 
     monkeypatch.setattr(tools, "_app", app)
 
     async def scenario():
-        with pytest.raises(AssistantUpstreamError, match="response bound"):
-            await tools.Tools("org", "ns", "t", "run")._request("loom_memory_get", {})
+        tool = tools.Tools("org", "ns", "t", "run")
+        if refused:
+            with pytest.raises(AssistantUpstreamError, match="response bound"):
+                await tool._request("loom_memory_get", {})
+        else:
+            assert await tool._request("loom_memory_get", {}) == {"data": text}
 
     asyncio.run(scenario())
 

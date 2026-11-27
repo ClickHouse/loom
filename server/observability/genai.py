@@ -579,8 +579,6 @@ class _Generation:
         try:
             sha, name, version = _prompt_identity(system)
             self._span.set_attribute("loom.prompt.sha", sha)
-            for _k, _v in current_generation_attrs().items():
-                self._span.set_attribute(f"loom.{_k}", _v)
             # Both, or neither — see (2) and (3) above.
             if name and version is not None:
                 self._span.set_attribute("langfuse.prompt.name", name)
@@ -691,6 +689,7 @@ def generation_span(
     provider: str,
     model: str,
     operation: str = "chat",
+    attach: bool = True,
 ) -> Iterator[_Generation]:
     """Wrap one provider call in a span Langfuse will read as a generation.
 
@@ -698,6 +697,9 @@ def generation_span(
     caller actually paid — both providers wrap the POST in `tenacity`
     `stop_after_attempt(4)` and return only the last attempt's usage, so timing
     a single attempt would under-report by up to 4x.
+
+    Streamed calls can close in another task. Set `attach=False` to inherit the
+    request span without changing the active context.
 
     Fake providers are labelled `gen_ai.provider.fake` and carry no cost:
     `FakeLLMClient` synthesises token counts as `len(text)//4`, so leaving them
@@ -718,12 +720,13 @@ def generation_span(
     }
     if provider.startswith("fake"):
         attrs["gen_ai.provider.fake"] = True
-    with _provider_span(f"llm.{stage}", attrs) as span:
+    attrs.update((f"loom.{key}", value) for key, value in current_generation_attrs().items())
+    with _provider_span(f"llm.{stage}", attrs, attach=attach) as span:
         yield _Generation(span, model)
 
 
 @contextlib.contextmanager
-def _provider_span(name: str, attrs: dict[str, Any]) -> Iterator[Any]:
+def _provider_span(name: str, attrs: dict[str, Any], *, attach: bool = True) -> Iterator[Any]:
     """One provider-call span (None when OTel is off or the start failed):
     `attrs` plus the request identity at start, `gen_ai.latency_ms` at the
     end. A provider failure sets ERROR status and `error.type` with the
@@ -741,8 +744,13 @@ def _provider_span(name: str, attrs: dict[str, Any]) -> Iterator[Any]:
     try:
         from opentelemetry import trace as _trace
 
-        span_cm = _trace.get_tracer("loom.genai").start_as_current_span(
-            name, record_exception=False, set_status_on_exception=False
+        tracer = _trace.get_tracer("loom.genai")
+        span_cm = (
+            tracer.start_as_current_span(
+                name, record_exception=False, set_status_on_exception=False
+            )
+            if attach
+            else tracer.start_span(name)
         )
         span = span_cm.__enter__()
         for key, value in attrs.items():
