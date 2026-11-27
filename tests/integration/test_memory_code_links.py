@@ -778,7 +778,7 @@ async def test_new_files_relink_and_a_deleted_memory_drops_its_links(env) -> Non
 
 
 async def test_a_raw_tool_observation_is_never_linked_and_the_sweep_drops_a_link_it_holds(
-    env, ch_client
+    env,
 ) -> None:
     from server.code.domain.index.remote import repo_tag
     from server.core.ch import get_client
@@ -818,11 +818,7 @@ async def test_a_raw_tool_observation_is_never_linked_and_the_sweep_drops_a_link
     assert await served() == ["reader-rule"]
     # an observation's stored link, written past the store's own drop: served until the
     # sweep reaches it
-    ((mid,),) = ch_client.query(
-        "SELECT toString(memory_id) FROM loom.memory FINAL "
-        "WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String}",
-        parameters={"o": ORG, "n": MEM, "k": seen.memory_key},
-    ).result_rows
+    mid = seen.memory_id
     (head,) = await store.memory_heads(ORG, [mid])
     stored = store.link_row(
         org=ORG,
