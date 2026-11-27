@@ -12,6 +12,7 @@ from server.code.api.models_read import CodeReadInput
 from server.code.app.read import _request_ranges
 from server.code.domain.scope import reset_code_scope, set_code_scope
 from server.settings import settings
+from server.transport import mcp_tools
 from server.transport.code_lean import lean_code
 
 
@@ -528,6 +529,18 @@ def test_grep_excerpts_offer_a_batch_for_unread_declarations(monkeypatch) -> Non
             "edit_context_next": edit_step,
             "next": suggestion,
         }
+    # the follow-ups offered are the ones the connection's own listing shows
+    selectors: list[tuple[Any, ...]] = []
+
+    def listed(*asked: Any) -> set[str]:
+        selectors.append(asked)
+        return set()
+
+    monkeypatch.setattr(mcp_tools, "listed_tool_names", listed)
+    lr.mcp_op_result(
+        "code.grep", payload, arguments, None, toolset="coding", schema_profile="compact"
+    )
+    assert selectors == [("coding", "compact")]
 
 
 def test_grep_keeps_exact_ranges_for_decorators_and_batches_that_exceed_named_lookup() -> None:

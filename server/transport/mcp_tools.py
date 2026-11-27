@@ -555,14 +555,20 @@ def code_only_listing(toolset: str | None, schema_profile: str | None) -> bool:
     bound to a repository whose URL asks for the compact profile. ``schema_profile``
     is the URL's own value: a compact profile that is only the deployment's default
     keeps every tool listed, since the client did not ask for the narrower listing.
-    Every other tool stays callable by name. The binding is a request header, so
-    this listing is the client's own and no shared cache may keep it."""
+    Every other tool stays callable by name."""
+    return lists_follow_code_scope(toolset, schema_profile) and current_code_scope() is not None
+
+
+def lists_follow_code_scope(toolset: str | None, schema_profile: str | None) -> bool:
+    """Whether this URL's lists depend on the repository header: a `coding` URL
+    that asks for the compact profile lists the code tools alone when bound and
+    every tool when not. The header is the request's, so no shared cache may keep
+    either answer."""
     from server.settings import settings
 
     return (
         resolve_toolset(toolset, settings.mcp_toolset) == "coding"
         and str(schema_profile or "").lower() == "compact"
-        and current_code_scope() is not None
     )
 
 

@@ -618,21 +618,6 @@ def _coding_instructions(
     (`code_only_listing`) gets the code routing alone, since its listing carries
     no memory tool and no `loom_op`."""
     tool = _tool_refs(toolset)
-    code_only = code_only_listing(toolset, schema_profile)
-    save = tool["memory.set"]
-    memory = (
-        "Recall before answering from memory: call `loom_search` once"
-        + (
-            "; it also reads the collections you can read. "
-            if knowledge_search_reads_collections()
-            else ". "
-        )
-    ) + (
-        f"On a remember/save intent call {save} with one plain-text claim per readable "
-        "key (`<scope>/<kind>/<id>`)."
-        if save
-        else "This connection is read-only: memory writes are not available."
-    )
     routes = [
         f"{tool[name]} {purpose}"
         for name, purpose in (
@@ -674,10 +659,24 @@ def _coding_instructions(
     code = lead + definition_hint + route_hint + follow if routes or definition_hint else ""
     # A token that reads code alone can have no default memory workspace.
     context = ""
-    if code_only:
+    if code_only_listing(toolset, schema_profile):
         if defaults and defaults.get("namespace"):
             context = "\n\n" + _LINKED_LESSON_REUSE.rstrip()
         return name_ops_for_toolset(code.lstrip("\n") + context, toolset, schema_profile)
+    save = tool["memory.set"]
+    memory = (
+        "Recall before answering from memory: call `loom_search` once"
+        + (
+            "; it also reads the collections you can read. "
+            if knowledge_search_reads_collections()
+            else ". "
+        )
+    ) + (
+        f"On a remember/save intent call {save} with one plain-text claim per readable "
+        "key (`<scope>/<kind>/<id>`)."
+        if save
+        else "This connection is read-only: memory writes are not available."
+    )
     if defaults and defaults.get("namespace") and tool["context.pack"]:
         if _bound_coding_connection(toolset):
             context = "\n\n" + _linked_history_guidance(tool["context.pack"])

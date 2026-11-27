@@ -253,8 +253,9 @@ def test_list_results_carry_cache_hints_and_the_primer_is_private(
 def test_a_listing_that_follows_the_repository_header_is_the_clients_own(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The listing of code tools alone lists no prompt and no resource. A compact
-    profile that is only the deployment's default is not that listing."""
+    """A compact `coding` URL lists less once bound, so no shared cache keeps either
+    answer. The listing of code tools alone lists no prompt and no resource. A
+    compact profile that is only the deployment's default is not that listing."""
     from server.code.domain.scope import reset_code_scope, set_code_scope
     from server.settings import settings
 
@@ -266,8 +267,9 @@ def test_a_listing_that_follows_the_repository_header_is_the_clients_own(
 
     lists = (("tools/list", "tools"), ("prompts/list", "prompts"), ("resources/list", "resources"))
     for method, key in lists:
-        assert listed(method, "compact")["cacheScope"] == "public"
+        assert listed(method, "compact")["cacheScope"] == "private"
         assert listed(method, "compact")[key]
+        assert listed(method, "standard")["cacheScope"] == "public"
     bound = set_code_scope("acme/code-repo")
     try:
         for method, key in lists:

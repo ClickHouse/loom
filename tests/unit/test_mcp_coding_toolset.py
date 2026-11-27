@@ -490,6 +490,16 @@ def test_a_reply_on_the_listing_of_code_tools_alone_names_no_tool_it_leaves_out(
         assert hidden and hidden["instead"].startswith("call memory.set once per fact")
         hidden = mcp_op.hidden_refusal("memory.bulk_set", "coding", "standard")
         assert hidden and hidden["instead"].startswith("call loom_memory_set once per fact")
+        # and so does the refusal `loom_op` answers for that op
+        call = {
+            "method": "tools/call",
+            "params": {"name": "loom_op", "arguments": {"op": "memory.bulk_set"}},
+        }
+        for profile, named in (("compact", "memory.set"), ("standard", "loom_memory_set")):
+            _, reply = mcp_op.route(call, toolset="coding", auth=None, schema_profile=profile)
+            assert reply and reply["result"]["structuredContent"]["instead"].startswith(
+                f"call {named} once per fact"
+            )
     assert mt.mentor_namer("coding", "compact")(text).startswith(listed)
 
 
@@ -585,6 +595,14 @@ def test_a_tool_the_listing_of_code_tools_alone_leaves_out_stays_callable(monkey
     assert "`loom_code_grep`" in primer
     for absent in ("loom_op", "loom_search", "loom_memory", "loom_context_pack"):
         assert absent not in primer, absent
+    # the `loom` prompt and `loom://primer`, asked for by name, carry the same text
+    prompt = post("prompts/get", {"name": "loom"})["messages"][0]["content"]["text"]
+    resource = post("resources/read", {"uri": "loom://primer"})["contents"][0]["text"]
+    assert prompt == resource == primer
+    # a hidden op named through `loom_op` is refused in this listing's names
+    refused = post("tools/call", {"name": "loom_op", "arguments": {"op": "memory.bulk_set"}})
+    assert refused["isError"]
+    assert refused["structuredContent"]["instead"].startswith("call memory.set once per fact")
 
 
 @pytest.mark.parametrize(

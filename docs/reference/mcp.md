@@ -34,7 +34,8 @@ Compact coding connections describe the common source workflows in the
 startup instructions. Find the other tools through discovery. When the `coding`
 toolset is bound to a repository, the primer uses the task context pack for
 prior decisions or procedures beyond the lessons returned with indexed source.
-The listing of code tools alone, described next, has neither.
+The listing of code tools alone, described next, has no discovery tool and no
+task context pack.
 
 A `coding` connection bound to a repository lists the code tools alone when its
 URL carries `schema_profile=compact`. A compact profile that comes only from
@@ -45,14 +46,16 @@ and `loom_tracker_duplicate_check` are not listed, and `prompts/list` and
 `resources/list` are empty. Its startup instructions carry the source workflows
 and the repository binding, with no memory, workspace or `loom_op` guidance. The
 `loom` prompt, `loom://primer` and `loom_activate`, asked for by name, carry the
-same source workflows. A tool result or a refusal names an op outside the
-listing by its dotted name. Lessons linked to source still arrive with code
+same source workflows. A mentor hint, and the `OP_NOT_ON_MCP` refusal of an op
+kept off MCP, name an op outside the listing by its dotted name; other refusals
+keep the tool names they spell. Lessons linked to source still arrive with code
 results. Every other tool stays callable by name, but a client that calls only
 listed tools cannot save or recall memory on this connection: leave
 `schema_profile=compact` off the URL for that. The coding-agent plugins send the
 `X-Loom-Code-Scope` header for a checkout they resolve to a repository, so those
-connections are bound; the URLs they ship name no profile. This listing follows
-that header, so its `cacheScope` is `private`.
+connections are bound; the URLs they ship name no profile. The lists of a
+`coding` URL that carries `schema_profile=compact` follow that header, so their
+`cacheScope` is `private` with the header or without it.
 
 With the automatic loading policy, compact coding connections load
 `code.edit_context` and `code.grep` up front. Use `code.edit_context` with a

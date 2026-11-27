@@ -570,6 +570,21 @@ def test_listing_budget_chars_over_four():
             assert len(t["description"]) // 4 <= 480, f"{toolset}: {t['name']} is over budget"
 
 
+def test_the_listing_of_code_tools_alone_stays_within_its_budget():
+    """A compact `coding` connection bound to a repository: its listing, and the
+    routing its startup instructions and primer carry."""
+    from server.transport.mcp_primer import _coding_instructions
+
+    defaults = {"org": "acme", "namespace": "home", "agent": "a"}
+    bound = set_code_scope("acme/code-repo")
+    try:
+        assert _tok({"tools": _listing("coding", False, "compact")}) <= 3_700
+        routing = _coding_instructions("coding", defaults, compact=True, schema_profile="compact")
+        assert len(routing) // 4 <= 200
+    finally:
+        reset_code_scope(bound)
+
+
 def test_tracker_toolset_lists_the_tracker_record_bisect_pr_check_and_impact_within_its_own_budget():
     """A second MCP entry for QA work; nothing lands on core/coding."""
     from server.operations.toolsets import _MCP_CODING_OPS, _MCP_CORE_OPS, _MCP_TRACKER_OPS
