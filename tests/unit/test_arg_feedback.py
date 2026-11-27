@@ -124,6 +124,37 @@ def test_a_key_correction_with_another_validation_error_omits_the_example() -> N
     assert "example" not in data
 
 
+def test_a_key_correction_keeps_every_write_target() -> None:
+    keys = ["test/x/a", "test/x/b", "test/x/c"]
+    _, data = _fail(
+        "memory.apply",
+        {
+            "target": {"memory_keys": keys},
+            "action": "expire",
+            "reason": "Retire obsolete examples",
+            "expire": {"ttl_seconds": 60},
+            "dry_run": False,
+        },
+    )
+    assert data["example"]["target"] == {"keys": keys}
+
+
+def test_a_key_correction_does_not_overwrite_a_canonical_key() -> None:
+    message, data = _fail(
+        "memory.apply",
+        {
+            "target": {"keys": ["test/x/a"], "memory_keys": ["test/x/b"]},
+            "action": "expire",
+            "reason": "r" * 513,
+            "expire": {"ttl_seconds": 60},
+            "dry_run": False,
+        },
+    )
+    assert "did you mean 'target.keys'?" in message
+    assert "example:" not in message
+    assert "example" not in data
+
+
 def test_working_memory_append_names_addition() -> None:
     msg, data = _fail("working_memory.append", {"text": "hello"})
     assert "addition: Field required [missing]" in msg

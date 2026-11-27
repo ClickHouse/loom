@@ -102,42 +102,38 @@ def _placeholder(model: type[BaseModel], field: str) -> Any:
     return "…"
 
 
-def _short(value: Any) -> Any:
-    if isinstance(value, str) and len(value) > 40:
-        return value[:37] + "…"
-    if isinstance(value, list):
-        return [_short(v) for v in value[:2]] + (["…"] if len(value) > 2 else [])
-    if isinstance(value, dict):
-        return {k: _short(v) for k, v in value.items()}
-    return value
-
-
-def _renamed(value: dict[str, Any], near: dict[str, str | None], prefix: str) -> dict[str, Any]:
+def _renamed(
+    value: dict[str, Any], near: dict[str, str | None], prefix: str
+) -> dict[str, Any] | None:
     out: dict[str, Any] = {}
-    for k, v in value.items():
-        path = f"{prefix}{k}"
-        if path in near:
-            target = near[path]
-            if target is None:
-                continue
-            k = target.rsplit(".", 1)[-1]
-        out[k] = v
+    for key, item in value.items():
+        target = near.get(f"{prefix}{key}", key)
+        if target is None:
+            return None
+        name = target.rsplit(".", 1)[-1] if target != key else key
+        if name in out:
+            return None
+        out[name] = item
     return out
 
 
-def example(model: type[BaseModel], arguments: Any, near: dict[str, str | None]) -> dict[str, Any]:
-    """The caller's arguments with unknown keys renamed to the field they
-    meant (or dropped), identity keys left to the server's defaults, and a
-    placeholder for each missing required arg."""
-    args = arguments if isinstance(arguments, dict) else {}
+def example(
+    model: type[BaseModel], arguments: dict[str, Any], near: dict[str, str | None]
+) -> dict[str, Any] | None:
+    """Keep supplied values while correcting names and filling missing slots."""
     skip = IDENTITY_KEYS | TRANSPORT_KEYS
-    call = _renamed({k: v for k, v in args.items() if k not in skip}, near, "")
+    call = _renamed({k: v for k, v in arguments.items() if k not in skip}, near, "")
+    if call is None:
+        return None
     for field, value in list(call.items()):
         if isinstance(value, dict) and _nested_model(model, field) is not None:
-            call[field] = _renamed(value, near, f"{field}.")
+            renamed = _renamed(value, near, f"{field}.")
+            if renamed is None:
+                return None
+            call[field] = renamed
     for field in required_args(model):
         call.setdefault(field, _placeholder(model, field))
-    return {k: _short(v) for k, v in call.items()}
+    return call
 
 
 def _retry_example(
@@ -145,18 +141,23 @@ def _retry_example(
     arguments: Any,
     near: dict[str, str | None],
     errors: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    if all(e.get("type") == "missing" for e in errors):
-        return example(model, arguments, near)
-    if not isinstance(arguments, dict) or not any(near.values()):
+) -> tuple[dict[str, Any], str] | None:
+    missing_only = all(e.get("type") == "missing" for e in errors)
+    if not isinstance(arguments, dict) or not (missing_only or any(near.values())):
         return None
     call = example(model, arguments, near)
-    identity = {k: v for k, v in arguments.items() if k in IDENTITY_KEYS}
-    try:
-        model.model_validate({**identity, **call})
-    except ValidationError:
+    if call is None:
         return None
-    return call
+    shown = json.dumps(call, ensure_ascii=False, default=str)
+    if len(shown) > _MAX_EXAMPLE_CHARS:
+        return None
+    if not missing_only:
+        identity = {k: v for k, v in arguments.items() if k in IDENTITY_KEYS}
+        try:
+            model.model_validate({**identity, **call})
+        except ValidationError:
+            return None
+    return call, shown
 
 
 def _error_line(e: dict[str, Any]) -> str:
@@ -172,7 +173,7 @@ def feedback(op: Any, arguments: Any, errors: list[dict[str, Any]]) -> tuple[str
     model = op.input_model
     near = guesses(model, arguments)
     req, opt = required_args(model), optional_args(model)
-    call = _retry_example(model, arguments, near, errors)
+    retry = _retry_example(model, arguments, near, errors)
     lines = [f"{op.name}: invalid arguments."]
     lines += [_error_line(e) for e in errors[:_MAX_ERRORS]]
     if len(errors) > _MAX_ERRORS:
@@ -193,10 +194,9 @@ def feedback(op: Any, arguments: Any, errors: list[dict[str, Any]]) -> tuple[str
         "optional": opt,
         "unknown": near,
     }
-    if call is not None:
-        shown = json.dumps(call, ensure_ascii=False, default=str)
-        if len(shown) <= _MAX_EXAMPLE_CHARS:
-            lines.append(f"example: {shown}")
+    if retry is not None:
+        call, shown = retry
+        lines.append(f"example: {shown}")
         data["example"] = call
     return "\n".join(lines), data
 
