@@ -62,11 +62,19 @@ test("keeps editorial descriptions and adds a fallback beside an editorial searc
   const body = "A user can inspect the source and history of a memory through its dashboard.";
   for (const description of ["description: Editorial summary", "seo: {description: Editorial summary}"]) {
     const source = `---\n${description}\n---\n\n${body}`;
-    assert.equal(withContentMetadata(source), source);
+    assert.equal(withContentMetadata(source, { description: "Site summary" }), source);
   }
   const source = `---\nseo:\n  title: A specific title\n---\n\n${body}`;
   const yaml = withContentMetadata(source).split(/^---\n/m)[1];
   assert.deepEqual(load(yaml), { seo: { title: "A specific title" }, description: body });
+});
+
+test("uses a supplied site summary without changing the page body", () => {
+  const source = "# Instructions\n\nRead the full release instructions before proceeding.\n";
+  const description = "Give the agent its release instructions.";
+  const [, yaml, body] = withContentMetadata(source, { description }).split(/^---\n/m);
+  assert.deepEqual(load(yaml), { description });
+  assert.equal(body, `\n${source}`);
 });
 
 test("keeps a complete lead sentence when the rest of a paragraph does not fit", () => {
