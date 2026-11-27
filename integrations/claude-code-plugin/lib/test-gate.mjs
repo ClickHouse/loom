@@ -386,8 +386,10 @@ function allPassed(output, runs) {
  * may have deleted a file or put one back as HEAD has it, which leaves no
  * newer time. A command may change files and then test them
  * (`cat >> tests/test_a.py <<EOF … EOF; pytest tests`), but not after its
- * first pytest (`onlyRuns`). A run's paths are read from the directory it
- * ran in: the row's own cwd, moved by at most one `cd` before the first run.
+ * first pytest (`onlyRuns`), and one that holds anything before that pytest
+ * but its launcher forgets every earlier run. A run's paths are read from
+ * the directory it ran in: the row's own cwd, moved by at most one `cd`
+ * before the first run.
  */
 function cleanRuns(objs, { root, cwd, since } = {}) {
   const rows = (objs || []).filter((o) => o && !o.isSidechain && Array.isArray(o.message && o.message.content));
@@ -436,6 +438,9 @@ function cleanRuns(objs, { root, cwd, since } = {}) {
         clean = [];
         continue;
       }
+      // What the command did before its first pytest may have changed the
+      // tree the earlier runs tested, with no newer file time to show it.
+      if (!LAUNCHER.test(before)) clean = [];
       const dir = o.cwd || cwd;
       const base = cd.length ? path.resolve(dir || root || "", unquoted(cd[0][1])) : dir;
       for (const run of runs) {

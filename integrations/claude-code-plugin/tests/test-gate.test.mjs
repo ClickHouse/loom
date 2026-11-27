@@ -433,6 +433,24 @@ test("a clean pytest run of the named test after the last change answers the gat
   ];
   assert.equal(answered(runs, two), true);
   assert.equal(answered(runs.slice(0, 2), two), false);
+  // A second command that does anything before its pytest keeps only its own run:
+  // a file put back, moved or deleted leaves none newer than the first run.
+  for (const first of [
+    "git checkout -- src/b.py && ",
+    "mv src/helper.py src/util.py; ",
+    "rm src/helper.py && ",
+    "cd /r && ",
+  ]) {
+    const later = [...runs.slice(0, 2), bash(`${first}pytest tests/test_b.py -q`, "2 passed in 0.10s")];
+    assert.equal(answered(later, two), false, first);
+    assert.equal(answered(later, { ...RUN_GATE, tests: two.tests.slice(1) }), true, first);
+  }
+  const second = bash("CI=1 timeout 60 python -m pytest tests/test_b.py -q", "2 passed in 0.10s");
+  assert.equal(answered([...runs.slice(0, 2), second], two), true);
+  // A run of the checkout root names no path below it.
+  for (const whole of ["pytest -q", "pytest . -q", "pytest /r -q"]) {
+    assert.equal(answered([edit(), bash(whole, "3 passed in 0.10s")]), false, whole);
+  }
   for (const launched of [
     "timeout 300 .venv/bin/python -m pytest tests -q",
     "env -u CI LOOM_ENV_FILE= $PY -m pytest tests -q",
