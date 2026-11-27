@@ -12315,6 +12315,7 @@ impl<'de> Deserialize<'de> for CodeReadInputRanges1Item {
 pub enum CodeReadInputRanges {
     Variant0(Vec<String>),
     Variant1(Vec<CodeReadInputRanges1Item>),
+    Variant2(Vec<Vec<Integer>>),
 }
 impl<'de> Deserialize<'de> for CodeReadInputRanges {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -12324,6 +12325,9 @@ impl<'de> Deserialize<'de> for CodeReadInputRanges {
         }
         if let Ok(value) = serde_json::from_value::<Vec<CodeReadInputRanges1Item>>(value.clone()) {
             return Ok(Self::Variant1(value));
+        }
+        if let Ok(value) = serde_json::from_value::<Vec<Vec<Integer>>>(value.clone()) {
+            return Ok(Self::Variant2(value));
         }
         Err(serde::de::Error::custom(
             "no matching variant for CodeReadInputRanges",

@@ -16,6 +16,7 @@ CODE_READ_MAX_RANGES = 32
 _FilePath = Annotated[str, Field(min_length=1, max_length=1024)]
 _SourceLine = Annotated[int, Field(ge=1, lt=2**32)]
 _RangeText = Annotated[str, Field(max_length=CODE_READ_RANGE_TEXT_MAX_CHARS)]
+_RangePair = Annotated[list[_SourceLine], Field(min_length=2, max_length=2)]
 
 
 class CodeReadRangeInput(BaseModel):
@@ -25,13 +26,14 @@ class CodeReadRangeInput(BaseModel):
 
 
 class CodeReadInput(_CodeIdentity, _ResultLessons):
-    # Batch of inclusive one-based ranges as path:start-end strings or objects
-    # with path, start_line, and optional end_line.
+    # Inclusive one-based ranges as path:start-end strings, objects with path and line
+    # bounds, or [start, end] pairs sharing the top-level path.
     ranges: (
         Annotated[list[_RangeText], Field(max_length=CODE_READ_MAX_RANGES)]
         | Annotated[list[CodeReadRangeInput | _RangeText], Field(max_length=CODE_READ_MAX_RANGES)]
+        | Annotated[list[_RangePair], Field(max_length=CODE_READ_MAX_RANGES)]
     ) = Field(default_factory=list)
-    # Repository-relative file for a single range.
+    # Repository-relative file for a single range or a batch of line pairs.
     path: _FilePath | None = None
     # First line of a single range, one-based.
     start_line: _SourceLine | None = None

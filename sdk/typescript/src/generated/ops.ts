@@ -1392,7 +1392,7 @@ export interface CodeReadInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  ranges?: string[] | Array<CodeReadRangeInput | string>;
+  ranges?: string[] | Array<CodeReadRangeInput | string> | number[][];
   path?: string | null;
   start_line?: number | null;
   end_line?: number | null;

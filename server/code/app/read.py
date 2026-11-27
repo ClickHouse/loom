@@ -47,7 +47,14 @@ def _checked_range(path: str, start: int, end: int | None) -> tuple[str, int, in
     return path, start, end
 
 
-def _parse_range(value: str | CodeReadRangeInput) -> tuple[str, int, int]:
+def _parse_range(
+    value: str | CodeReadRangeInput | list[int], shared_path: str | None = None
+) -> tuple[str, int, int]:
+    if isinstance(value, list):
+        if shared_path is None:
+            raise ValidationError("Line pairs require a repository-relative path")
+        start, end = value
+        return _checked_range(shared_path, start, end)
     if isinstance(value, CodeReadRangeInput):
         return _checked_range(value.path, value.start_line, value.end_line)
     path, colon, lines = value.rpartition(":")
@@ -59,6 +66,10 @@ def _parse_range(value: str | CodeReadRangeInput) -> tuple[str, int, int]:
 
 
 def _request_ranges(input: CodeReadInput) -> list[tuple[str, int, int]]:
+    if input.ranges and isinstance(input.ranges[0], list):
+        if input.start_line is not None or input.end_line is not None:
+            raise ValidationError("Put both line bounds in each range when using line pairs")
+        return [_parse_range(value, input.path) for value in input.ranges]
     single = input.path is not None or input.start_line is not None or input.end_line is not None
     if single:
         if input.ranges or input.path is None or input.start_line is None:
