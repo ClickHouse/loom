@@ -66,7 +66,7 @@ def test_retired_chat_source_is_rejected(tmp_path, name) -> None:
 
 def test_chart_contains_only_native_assistant_enablement() -> None:
     values = yaml.safe_load((ROOT / "deploy/helm/loom/values.yaml").read_text())
-    assert values["assistant"] == {"enabled": False}
+    assert values["assistant"] == {"nativeEnabled": False}
     assert not (ROOT / "deploy/helm/loom/templates/assistant.yaml").exists()
     assert not (ROOT / "deploy/helm/loom/templates/assistant-config.yaml").exists()
     helpers = (ROOT / "deploy/helm/loom/templates/_helpers.tpl").read_text()
@@ -74,7 +74,9 @@ def test_chart_contains_only_native_assistant_enablement() -> None:
     assert "librechat" not in helpers.lower()
 
 
-@pytest.mark.parametrize("broken", ["", "workload", "network", "enabled", "missing", "off"])
+@pytest.mark.parametrize(
+    "broken", ["", "workload", "network", "enabled", "missing", "off", "legacy", "extra_env"]
+)
 def test_native_helm_gate_rejects_expanded_runtime_or_network(monkeypatch, broken):
     from scripts.gates import helm_assistant_isolation as gate
 
@@ -82,13 +84,19 @@ def test_native_helm_gate_rejects_expanded_runtime_or_network(monkeypatch, broke
 
     def render(overlay, *sets):
         calls.append((overlay, sets))
-        enabled = "assistant.enabled=true" in sets
+        legacy = "assistant.enabled=true" in sets
+        external = "extraEnv[0].name=LOOM_ASSISTANT_ENABLED" in sets
+        enabled = "assistant.nativeEnabled=true" in sets or (legacy and broken == "legacy")
         flag = "true" if enabled else "false"
         if enabled and broken == "enabled":
             flag = "false"
         if not enabled and broken == "off":
             flag = "true"
         env = [] if broken == "missing" else [{"name": "LOOM_ASSISTANT_ENABLED", "value": flag}]
+        if external:
+            if broken != "extra_env":
+                env.clear()
+            env.append({"name": "LOOM_ASSISTANT_ENABLED", "valueFrom": {"configMapKeyRef": {}}})
         web = {
             "kind": "Deployment",
             "metadata": {"name": "loom", "labels": {"app.kubernetes.io/component": "web"}},

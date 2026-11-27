@@ -141,7 +141,7 @@ def check_probe_selects_every_listener_workload_and_no_hook_or_test_pod(workers:
     docs = _render(
         *sets(
             *EVERYTHING,
-            "assistant.enabled=true",
+            "assistant.nativeEnabled=true",
             "env.LOOM_ASSISTANT_PROVIDER=fake",
             f"workers.enabled={str(workers).lower()}",
             f"cellProbe.port={ENABLED}",

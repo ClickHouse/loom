@@ -53,8 +53,13 @@ class Turn:
     sent: bool = False
     usage_complete: bool = False
 
+    def reported_usage(self) -> Usage | None:
+        if self.usage_complete and self.usage is not None and self.usage.total_input > 0:
+            return self.usage
+        return None
+
     def check(self) -> None:
-        if not self.usage_complete or self.usage is None or self.usage.total_input <= 0:
+        if self.reported_usage() is None:
             raise AssistantUpstreamError("the model ended without complete usage")
         if self.stop not in ("stop", "tool_calls"):
             raise AssistantUpstreamError("the model refused or cut the answer")

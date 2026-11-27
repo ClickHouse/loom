@@ -221,8 +221,10 @@ LOOM_PG_POOL_MAX_SIZE: {{ $pg.poolMaxSize | quote }}
 # The release's extractor (extractor.yaml); its token is in the release Secret.
 LOOM_DOCUMENT_EXTRACTOR_URL: {{ printf "http://%s:8790" (include "loom.extractorName" .) | quote }}
 {{- end }}
-{{- if not (hasKey .Values.env "LOOM_ASSISTANT_ENABLED") }}
-LOOM_ASSISTANT_ENABLED: {{ .Values.assistant.enabled | quote }}
+{{- $ownAssistant := hasKey .Values.env "LOOM_ASSISTANT_ENABLED" }}
+{{- range .Values.extraEnv }}{{ if eq .name "LOOM_ASSISTANT_ENABLED" }}{{ $ownAssistant = true }}{{ end }}{{ end }}
+{{- if not $ownAssistant }}
+LOOM_ASSISTANT_ENABLED: {{ dig "nativeEnabled" false (.Values.assistant | default dict) | quote }}
 {{- end }}
 # The web processes' shared files: serve.sh makes $XDG_RUNTIME_DIR/loom, 0700
 # and owned by the pod's user (an emptyDir itself is neither).

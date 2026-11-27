@@ -541,7 +541,7 @@ provisioning or rotation algorithm and does not establish a rotation integration
 ## Deployment
 
 The assistant runs in the Loom web image. `LOOM_ASSISTANT_ENABLED` enables it, and
-`assistant.enabled` renders the setting in Helm. Paid answers require an explicit
+`assistant.nativeEnabled` renders the setting in Helm. Paid answers require an explicit
 native provider and model with a completion price. Provider credentials and gateway
 transport use the existing Loom mechanisms. No additional service, ingress peer,
 container image or database is rendered. See [operator steps](../operations/assistant.md).

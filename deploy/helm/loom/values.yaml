@@ -387,7 +387,7 @@ extractor:
 
 # The assistant runs in the Loom web process; provider keys use the release Secret.
 assistant:
-  enabled: false
+  nativeEnabled: false
 
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
 # release's web pods, the extractor's pods (with extractor.enabled), the dev

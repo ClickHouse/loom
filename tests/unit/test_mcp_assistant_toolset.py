@@ -839,6 +839,7 @@ def test_the_agent_is_told_to_cite_only_what_the_citation_check_can_verify(
     instructions = service.current_definition().instructions
     for form in (
         "[memory:<key>@v<version>]",
+        "[doc:<source_uri>]",
         "[doc:<source_uri> § <section>]",
         "[code:<path>:<line>]",
         "[help:<path> § <section>]",

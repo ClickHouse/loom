@@ -96,6 +96,8 @@ def _matches(citation: Citation, receipt: Receipt) -> bool:
             if op == "knowledge.get" and result.get("found") is not True:
                 continue
             if node.get("source_uri", result.get("source_uri")) == citation.source_uri:
+                if citation.revision and str(node.get("revision")) != citation.revision:
+                    continue
                 section = node.get("section", node.get("heading_path", ""))
                 if isinstance(section, list):
                     section = " > ".join(map(str, section))

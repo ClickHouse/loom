@@ -161,8 +161,9 @@ def test_scope_and_duplicate_queries_refuse_before_dispatch(offline: list) -> No
     assert offline[0][1]["auto_touch"] is False
 
 
+@pytest.mark.parametrize("mirrored", [False, True])
 def test_cancellation_closes_the_model_and_accounts_once(
-    offline: list, monkeypatch: pytest.MonkeyPatch
+    offline: list, monkeypatch: pytest.MonkeyPatch, mirrored: bool
 ) -> None:
     closed: list[bool] = []
 
@@ -186,14 +187,64 @@ def test_cancellation_closes_the_model_and_accounts_once(
         stream = agent.run(
             "org", "ns", "t", "viewer", [{"role": "user", "content": "policy"}], state
         )
-        async with contextlib.aclosing(stream):
-            await anext(stream)
-            await anext(stream)
-            assert (await anext(stream))["choices"][0]["delta"]["content"] == "provisional"
+        with runtime.private_work() if mirrored else contextlib.nullcontext():
+            async with contextlib.aclosing(stream):
+                await anext(stream)
+                await anext(stream)
+                assert (await anext(stream))["choices"][0]["delta"]["content"] == "provisional"
+                if mirrored:
+                    await asyncio.create_task(stream.aclose())
         assert acc.llm_calls == 1 and acc.cost_usd > 0 and acc.cost_estimated
         assert state.spent == acc.cost_usd and closed == [True]
 
     asyncio.run(scenario())
+
+
+def test_zero_input_usage_retains_the_reservation(offline, monkeypatch):
+    class Replay:
+        async def stream(self, messages, descriptors, maximum, turn):
+            turn.sent = turn.usage_complete = True
+            turn.usage = model.Usage(0, 0)
+            turn.stop, turn.text = "stop", "provisional"
+            yield turn.text
+
+    monkeypatch.setattr(model, "model_for", lambda *_: Replay())
+    monkeypatch.setattr(
+        service, "current_definition", lambda: service.Definition("fake", "claude-haiku-4-5")
+    )
+
+    async def scenario():
+        acc = cost_accumulator.begin_op()
+        state = agent.State()
+        with pytest.raises(AssistantUpstreamError, match="without complete usage"):
+            _ = [
+                frame
+                async for frame in agent._model(
+                    state, [{"role": "user", "content": "policy"}], [], model.Turn()
+                )
+            ]
+        assert state.spent == acc.cost_usd > 0 and acc.cost_estimated
+        assert acc.llm_calls == 1 and acc.llm_input_tokens == acc.llm_output_tokens == 0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("loom_code_search", {"query": "policy"}),
+        ("loom_code_symbol", {"name": "authorize_request"}),
+    ],
+)
+def test_assistant_code_reads_have_a_finite_result_budget(offline, tool_name, arguments):
+    async def scenario():
+        tool = tools.Tools("org", "ns", "t", "run")
+        await tool.call(tool_name, arguments, origin="host_context")
+
+    asyncio.run(scenario())
+    [(name, sent)] = offline
+    assert name == tool_name
+    assert 0 < sent["token_budget"] * 4 < settings.assistant_max_tool_result_chars
 
 
 def test_deadline_joins_blocked_tool(offline: list, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -583,6 +634,31 @@ def test_missing_document_cannot_validate_a_citation():
         )
     ]
     assert not evidence.verify("[doc:missing]", receipts)[0].verified
+
+
+def test_full_document_citation_matches_its_returned_revision() -> None:
+    from server.knowledge.api.models_knowledge import KnowledgeGetOutput
+
+    doc = KnowledgeGetOutput(
+        found=True, source_uri="operations.md", revision=2, content="## Backups\nKeep a copy."
+    )
+    receipt = Receipt("knowledge.get", {}, doc.model_dump(mode="json"), "model_tool", 1)
+    citations = evidence.verify(
+        "[doc:operations.md] [doc:operations.md, revision 2] "
+        "[doc:operations.md, revision 1] [doc:operations.md § Backups]",
+        [receipt],
+    )
+    assert [citation.verified for citation in citations] == [True, True, False, False]
+
+
+def test_section_citation_matches_its_returned_revision() -> None:
+    result = {"results": [{"source_uri": "operations.md", "section": "Backups", "revision": 2}]}
+    receipt = Receipt("knowledge.search", {}, result, "model_tool", 1)
+    citations = evidence.verify(
+        "[doc:operations.md § Backups, revision 2] [doc:operations.md § Backups, revision 1]",
+        [receipt],
+    )
+    assert [citation.verified for citation in citations] == [True, False]
 
 
 @pytest.mark.parametrize(

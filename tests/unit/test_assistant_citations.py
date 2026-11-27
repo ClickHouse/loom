@@ -23,6 +23,7 @@ def test_every_citation_form_is_parsed_once() -> None:
     assert memory.key == "policy/deploy/freeze"
     assert runbook.source_uri == "handbook/deploy-runbook.md"
     assert runbook.section == ("Deploy runbook", "Canary")
+    assert runbook.revision == "3"
     assert contract.section == () and code.path == "server/main.py"
     assert sql.sql == SQL
 

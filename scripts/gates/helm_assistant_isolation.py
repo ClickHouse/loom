@@ -10,7 +10,11 @@ from typing import Any
 import yaml
 
 CHART = Path(__file__).resolve().parents[2] / "deploy" / "helm" / "loom"
-ON = ("assistant.enabled=true", "env.LOOM_ASSISTANT_PROVIDER=fake", "networkPolicy.enabled=true")
+ON = (
+    "assistant.nativeEnabled=true",
+    "env.LOOM_ASSISTANT_PROVIDER=fake",
+    "networkPolicy.enabled=true",
+)
 
 
 def render(overlay: str, *sets: str) -> list[dict[str, Any]]:
@@ -55,6 +59,20 @@ def main() -> None:
         assert policies(off) == policies(on), "enablement widened network access"
         assert _assistant_switch(off) == ["false"], "web assistant must be disabled by default"
         assert _assistant_switch(on) == ["true"], "web assistant enablement was not rendered"
+        legacy = render(
+            overlay,
+            "assistant.enabled=true",
+            "env.LOOM_ASSISTANT_PROVIDER=anthropic",
+            "env.LOOM_ASSISTANT_MODEL=claude-haiku-4-5",
+        )
+        assert _assistant_switch(legacy) == ["false"], "reused values enabled native answers"
+        external = render(
+            overlay,
+            "extraEnv[0].name=LOOM_ASSISTANT_ENABLED",
+            "extraEnv[0].valueFrom.configMapKeyRef.name=assistant-settings",
+            "extraEnv[0].valueFrom.configMapKeyRef.key=enabled",
+        )
+        assert _assistant_switch(external) == [None], "assistant extraEnv duplicates the switch"
         for doc in on:
             assert "librechat" not in yaml.safe_dump(doc).lower()
             assert "mongodb" not in yaml.safe_dump(doc).lower()

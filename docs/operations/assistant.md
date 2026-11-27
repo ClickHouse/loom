@@ -33,7 +33,7 @@ cost bounds in the [configuration reference](../reference/configuration.md).
 The namespace's assistant share and concurrency limit still apply. Real model
 verification spends budget and needs its owner's authorization.
 
-Helm's `assistant.enabled: true` sets the server switch. Put provider credentials in
+Helm's `assistant.nativeEnabled: true` sets the server switch. Put provider credentials in
 the existing release Secret and model settings in `env` or `settingsFile`. Compose
 uses the server's existing environment. No extra database or assistant service is
 created. Network and gateway rules for Loom's own model traffic apply.

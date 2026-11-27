@@ -127,6 +127,8 @@ class Tools:
         # A memory namespace would point them at a different, empty index.
         if op.name.startswith("code."):
             args.pop("namespace", None)
+            # Code estimates four characters per token. Leave half the result for metadata.
+            args["token_budget"] = settings.assistant_max_tool_result_chars // 8
         args.update(ASSISTANT_FORCED_ARGS.get(op.name, {}))
         args.update(
             {

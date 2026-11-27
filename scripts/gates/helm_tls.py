@@ -121,7 +121,9 @@ def main() -> None:
     refused(alb.format("backend-protocol"), *sets("tls.secretName=x", ALB_HTTPS, service + "HTTP"))
     only_service = sets("tls.secretName=loom-tls", service + "HTTPS", *EVERYTHING)
     check_served(render(*EKS, *only_service), "on the Service only", "1.2")
-    check_served(render(*EKS, *sets(*on, "assistant.enabled=true")), "native assistant", "1.2")
+    check_served(
+        render(*EKS, *sets(*on, "assistant.nativeEnabled=true")), "native assistant", "1.2"
+    )
     # A release upgraded with --reuse-values from a chart without the block, then given a
     # Secret, serves the default minimum.
     reused = sets("tls.minVersion=null", "tls.secretName=loom-tls", ALB_HTTPS, *EVERYTHING)

@@ -512,7 +512,7 @@ until every roll finishes.
 
 ## Assistant
 
-`assistant.enabled: true` runs the native assistant in each Loom web process. Configure
+`assistant.nativeEnabled: true` runs the native assistant in each Loom web process. Configure
 its provider and model through `env` or `settingsFile`, and provider keys through the
 release Secret. It needs no separate Deployment, database, Service, or ingress peer.
 The existing model egress policy applies. See [assistant setup](assistant.md) for

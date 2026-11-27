@@ -67,8 +67,8 @@ def _account(
     if not turn.sent:
         generation.record_accounting(usage_status="not_sent", price_model=model)
         return
-    usage = turn.usage
-    if usage is None or not turn.usage_complete:
+    usage = turn.reported_usage()
+    if usage is None:
         # A failed in-flight request has unknown spend. Its failed answer row holds
         # the reservation estimate, never invented token counts or a free call.
         state.spent += reserve
@@ -118,36 +118,40 @@ async def _model(
     reserve = _reserve(state, _size(messages, descriptors), definition.price_model)
     state.turns += 1
     started = time.monotonic()
-    with genai.generation_attrs(
-        assistant_run_id=state.run_id,
-        assistant_turn=str(state.turns),
-        assistant_price_model=definition.price_model,
-    ):
-        with genai.generation_span(provider=definition.provider, model=definition.model) as span:
-            stream = models.model_for(definition.provider, definition.model).stream(
-                messages, descriptors, settings.assistant_max_output_tokens, turn
+    with contextlib.ExitStack() as stack:
+        # Bind attributes while opening the span so a mirrored stream can close from another task.
+        with genai.generation_attrs(
+            assistant_run_id=state.run_id,
+            assistant_turn=str(state.turns),
+            assistant_price_model=definition.price_model,
+        ):
+            span = stack.enter_context(
+                genai.generation_span(provider=definition.provider, model=definition.model)
             )
-            try:
-                async with contextlib.aclosing(stream):
-                    async for text in stream:
-                        yield {
-                            "object": "chat.completion.chunk",
-                            "id": state.run_id,
-                            "model": definition.model,
-                            "choices": [{"index": 0, "delta": {"content": text}}],
-                        }
-                turn.check()
-            finally:
-                if turn.sent:
-                    span.note_attempt()
-                _account(
-                    state,
-                    turn,
-                    definition.price_model,
-                    reserve,
-                    span,
-                    span_priced=cost_accumulator.is_priced(definition.model),
-                )
+        stream = models.model_for(definition.provider, definition.model).stream(
+            messages, descriptors, settings.assistant_max_output_tokens, turn
+        )
+        try:
+            async with contextlib.aclosing(stream):
+                async for text in stream:
+                    yield {
+                        "object": "chat.completion.chunk",
+                        "id": state.run_id,
+                        "model": definition.model,
+                        "choices": [{"index": 0, "delta": {"content": text}}],
+                    }
+            turn.check()
+        finally:
+            if turn.sent:
+                span.note_attempt()
+            _account(
+                state,
+                turn,
+                definition.price_model,
+                reserve,
+                span,
+                span_priced=cost_accumulator.is_priced_for(definition.model, embedding=False),
+            )
     if state.spent > settings.assistant_answer_ceiling_usd:
         raise AssistantUpstreamError("the model exceeded its reserved cost")
     if state.input_tokens + state.output_tokens > settings.assistant_max_tokens:
