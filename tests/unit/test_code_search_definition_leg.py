@@ -1,7 +1,8 @@
 """code.search definition leg: the names a query spells out as code are read from the
-symbol table, and the chunks that define the first one join the fusion as one more
-reciprocal-rank list. A plain word is never looked up, an owner is kept as written,
-an ambiguous name is dropped, and confidence is calibrated without the leg."""
+symbol table, and the chunks that define the first one are served directly after the
+first unit of the ranking, never above it. A plain word is never looked up, an owner is
+kept as written, an ambiguous name is dropped, and the fusion, the priors and the
+confidence of the other units are those of the same search without the leg."""
 
 from __future__ import annotations
 
@@ -13,13 +14,15 @@ import pytest
 
 from server.code.app import search as cs
 from server.code.app.search.definitions import (
-    _MAX_NAMES_TRIED,
+    _MAX_NAMES,
     _SYMBOLS_PER_NAME,
+    _held_definitions,
+    _place_definitions,
     named_definitions,
 )
-from server.code.app.search.fusion import _extra_via_labels, _rrf_fuse
 from server.code.domain.idents import spelled_names
 from server.code.domain.search_scope import build_scope
+from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.settings import settings
 from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl, view
@@ -194,9 +197,11 @@ def test_definitions_follow_the_query_order_within_the_prefix_and_the_bound() ->
     assert named_definitions([_name("put")], [*crowd[1:], one], path_prefix="pkg/") == [
         [("pkg/a.py", "pkg.a::put")]
     ]
-    wide = [_sym(f"f_{i}", f"pkg.w::f_{i}", "pkg/w.py") for i in range(_MAX_NAMES_TRIED + 5)]
-    got = named_definitions([_name(f"f_{i}") for i in range(_MAX_NAMES_TRIED + 5)], wide)
-    assert got == [[("pkg/w.py", f"pkg.w::f_{i}")] for i in range(_MAX_NAMES_TRIED)]
+    # every name the query spells is kept: a later one is served when the ones before
+    # it have no chunk of their own
+    wide = [_sym(f"f_{i}", f"pkg.w::f_{i}", "pkg/w.py") for i in range(_MAX_NAMES)]
+    got = named_definitions([_name(f"f_{i}") for i in range(_MAX_NAMES)], wide)
+    assert got == [[("pkg/w.py", f"pkg.w::f_{i}")] for i in range(_MAX_NAMES)]
 
 
 # ---- the bounded read on a re-indexed table -----------------------------------------
@@ -309,36 +314,44 @@ async def test_a_definition_both_tiers_record_counts_once() -> None:
     ]
 
 
-# ---- fusion -------------------------------------------------------------------------
+# ---- the place in the ranking ------------------------------------------------------
 
 
 def _row(cid: str, **extra: Any) -> dict[str, Any]:
     return {"chunk_id": cid, "path": f"src/{cid}.cpp", **extra}
 
 
-def test_the_definition_list_is_an_uncapped_reciprocal_rank_list() -> None:
-    lex, vec = [_row("a"), _row("b")], [_row("c"), _row("a")]
-    assert _rrf_fuse(lex, vec, definition_rows=[]) == _rrf_fuse(lex, vec)
-    fused = dict((r["chunk_id"], s) for r, s in _rrf_fuse(lex, vec, definition_rows=[_row("b")]))
-    # b: lexical #2 and the first named definition, level with a: lexical #1 + vector #2
-    assert fused["b"] == pytest.approx(1 / 62 + 1 / 61) == pytest.approx(fused["a"])
-    assert fused["b"] > fused["c"]
-    only = dict((r["chunk_id"], s) for r, s in _rrf_fuse(lex, vec, definition_rows=[_row("d")]))
-    # one neither content leg found scores as a content leg's first hit, below a chunk
-    # both content legs found
-    assert only["d"] == pytest.approx(1 / 61) == pytest.approx(only["c"])
-    assert only["a"] > only["d"]
-    # the capped lists' ceiling is still the two content legs' top
-    capped = _rrf_fuse(lex, vec, [_row("h")], history_cap=0.25, definition_rows=[_row("b")])
-    assert dict((r["chunk_id"], s) for r, s in capped)["h"] == pytest.approx(
-        0.25 * (1 / 61 + 1 / 62)
-    )
+def _unit(cid: str, score: float) -> CodeUnit:
+    return CodeUnit(unit_id=cid, path=f"src/{cid}.cpp", score=score, via="lexical")
+
+
+def _placed(ranked: list[CodeUnit], rows: list[dict[str, Any]]) -> list[tuple[str, float]]:
+    held = _held_definitions(rows, ranked)
+    return [(u.unit_id, u.score) for u in _place_definitions(ranked, held, rows)]
+
+
+def test_a_named_definition_is_served_after_the_first_unit_at_its_score() -> None:
+    ranked = [_unit("a", 0.03), _unit("b", 0.02), _unit("c", 0.01), _unit("d", 0.001)]
+    assert _place_definitions(ranked, [], []) is ranked
+    # one the ranking holds far down rises to second place, level with the first unit
+    assert _placed(ranked, [_row("d")]) == [("a", 0.03), ("d", 0.03), ("b", 0.02), ("c", 0.01)]
+    # one no other leg found enters there too
+    assert _placed(ranked, [_row("x")])[:3] == [("a", 0.03), ("x", 0.03), ("b", 0.02)]
+    # a definition that is first stays first, and nothing else moves
+    assert _placed(ranked, [_row("a")]) == [(u.unit_id, u.score) for u in ranked]
+    # the definitions of one name: those the ranking holds in its order, then the others
+    assert [cid for cid, _ in _placed(ranked, [_row("x"), _row("d"), _row("c")])] == [
+        "a",
+        "c",
+        "d",
+        "x",
+        "b",
+    ]
 
 
 def test_a_unit_only_the_definition_leg_found_says_so() -> None:
-    prov = {"a": ("lexical", 1, 0)}
-    labels = _extra_via_labels(prov, [_row("d")], [], [], [], [_row("a"), _row("d")])
-    assert labels == {"d": "definition"}
+    held = _held_definitions([_row("a"), _row("d")], [_unit("a", 0.03)])
+    assert [(u.unit_id, u.via) for u in held] == [("d", "definition")]
 
 
 # ---- the leg inside search() --------------------------------------------------------
@@ -430,7 +443,7 @@ def test_a_query_of_plain_words_adds_no_reads() -> None:
     assert [u.unit_id for u in res.units] == ["a", "c", "b"]
 
 
-def test_the_first_named_definition_joins_the_fusion() -> None:
+def test_the_first_named_definition_is_served_after_the_first_unit() -> None:
     plain = _search(_Repo(), "how does quota enforcement work")
     repo = _Repo()
     res = _search(repo, "why does parse_quota() ignore what Quota.load_quota returns")
@@ -444,11 +457,13 @@ def test_the_first_named_definition_joins_the_fusion() -> None:
         ("src/other.cpp", "DB::Other::parse_quota"),
     ]
     assert repo.kw["scope"] is None
-    # d, which only the definition leg found, enters level with c, a content leg's
-    # first hit, and below a, which both content legs found
+    # d, which only the definition leg found, is served after a at a's score, and the
+    # other units keep the scores they have without the leg
     assert [u.unit_id for u in plain.units] == ["a", "c", "b"]
-    assert [u.unit_id for u in res.units] == ["a", "c", "d", "b"]
-    assert {u.unit_id: u.score for u in res.units}["d"] == pytest.approx(1 / 61, abs=1e-4)
+    assert [u.unit_id for u in res.units] == ["a", "d", "c", "b"]
+    scores = {u.unit_id: u.score for u in res.units}
+    assert scores["d"] == scores["a"]
+    assert {u.unit_id: u.score for u in plain.units} == {k: scores[k] for k in "acb"}
     assert {u.unit_id: u.via for u in res.units}["d"] == "definition"
     assert "named_definitions=1" in res.score_explanation
     assert res.retrieval_work["named_definitions"] == 1
@@ -456,13 +471,54 @@ def test_the_first_named_definition_joins_the_fusion() -> None:
     assert res.retrieval_confidence == plain.retrieval_confidence
     assert (res.abstain, res.retrieval_risk) == (plain.abstain, plain.retrieval_risk)
     assert res.top_similarity == plain.top_similarity
-    # a definition a content leg found adds the vote to its rank: b, lexical #2, passes
+    # a definition a content leg found rises to the same place: b, lexical #2, passes
     # vector-only c; the name mentioned second is not read
     res = _search(_Repo(), "why does load_quota() ignore what parse_quota returns")
     assert [(u.unit_id, u.via) for u in res.units] == [
         ("a", "both"),
         ("b", "lexical"),
         ("c", "vector"),
+    ]
+
+
+def test_one_leg_finding_the_definition_does_not_put_it_first() -> None:
+    class _Deep(_Repo):
+        async def lexical_search_chunks(self, *a: Any, **k: Any) -> list[dict[str, Any]]:
+            rows = [
+                {"chunk_id": f"l{i}", "lex_score": 1.0, "path": f"src/l{i}.cpp", "scope": "f"}
+                for i in range(1, 61)
+            ]
+            rows[49] = {"chunk_id": "d", "lex_score": 1.0, "path": "src/d.cpp", "scope": "g"}
+            return [{**row, **_UNIT} for row in rows]
+
+    # the lexical leg runs alone and has the definition at rank 50: it is served
+    # second, level with that leg's first hit
+    res = _search(_Deep(), "why does parse_quota() fail", legs="lexical")
+    assert [(u.unit_id, u.lexical_rank) for u in res.units[:3]] == [("l1", 1), ("d", 50), ("l2", 2)]
+    assert res.units[1].score == res.units[0].score
+    # the same when a vector leg was asked for and returned nothing
+    with patch.object(_Deep, "vector_search_chunks", return_value=[]):
+        res = _search(_Deep(), "why does parse_quota() fail")
+    assert [u.unit_id for u in res.units[:3]] == ["l1", "d", "l2"]
+
+
+def test_the_priors_score_the_other_units_as_they_do_without_the_leg() -> None:
+    class _Unserved(_Repo):
+        async def definition_chunks(self, *a: Any, **k: Any) -> list[dict[str, Any]]:
+            return []
+
+    def run(repo: _Repo) -> Any:
+        with patch.object(settings, "code_search_pr_leg", "off"):
+            return asyncio.run(
+                cs.search(
+                    repo, "o", "ns", query="why does parse_quota() fail", embedder=_Embedder()
+                )
+            )
+
+    without, served = run(_Unserved()), run(_Repo())
+    assert [u.unit_id for u in served.units] == ["a", "d", "c", "b"]
+    assert [(u.unit_id, u.score) for u in served.units if u.unit_id != "d"] == [
+        (u.unit_id, u.score) for u in without.units
     ]
 
 
@@ -497,7 +553,7 @@ def test_the_leg_serves_the_definitions_of_the_first_name_that_has_a_chunk() -> 
 
     repo = _Many()
     res = _search(repo, "fn_0 fn_1 fn_2 fn_3 fn_4 fn_5 all fail", top_k=10)
-    assert len(repo.kw["definitions"]) == _MAX_NAMES_TRIED + 1
+    assert len(repo.kw["definitions"]) == 7  # six names, one of them defined twice
     assert [u.unit_id for u in res.units if u.via == "definition"] == ["m1", "n1"]
 
 

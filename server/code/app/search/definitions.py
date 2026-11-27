@@ -1,6 +1,6 @@
 """The definition leg: the definitions of the first name a query spells out as code,
-read from the symbol table and fused as one more reciprocal-rank list. The lexical leg
-scores a chunk that defines a name like any chunk that calls it."""
+read from the symbol table and served directly after the first unit of the ranking.
+The lexical leg scores a chunk that defines a name like any chunk that calls it."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Any
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.idents import spelled_names
 from server.code.domain.search_scope import SearchScope
+from server.code.domain.units import CodeUnit, unit_from_chunk
 from server.code.store.index import CodeRepo, is_noise_path
 
 logger = logging.getLogger(__name__)
@@ -18,10 +19,10 @@ logger = logging.getLogger(__name__)
 # Names read from one query, and name-table keys read per name or qualified spelling.
 _MAX_NAMES = 32  # not a setting: a bound on one query's reads, the same on every deployment
 _SYMBOLS_PER_NAME = 32
-# A name defined in more places than this does not say where: `get`, `save`.
+# A name defined in more places than this does not say where: `get`, `save`. Each
+# definition served takes one place after the first unit. The value is a judgement: no
+# measurement separates it from one or two.
 _MAX_DEFINITIONS_PER_NAME = 3  # not a setting: what an ambiguous name is, not a capacity
-# Names tried for a chunk: a field or a constant has a symbol row and no chunk of its own.
-_MAX_NAMES_TRIED = 4  # not a setting: a bound on one query's chunk read
 
 
 def named_definitions(
@@ -46,7 +47,7 @@ def named_definitions(
         found = [d for d in found if not is_noise_path(d[0])] or found
         if found and len(found) <= _MAX_DEFINITIONS_PER_NAME:
             wanted.append(found)
-    return wanted[:_MAX_NAMES_TRIED]
+    return wanted
 
 
 def _matching(name: tuple[str, ...], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -77,10 +78,11 @@ async def _definition_leg(
     scope: SearchScope | None,
 ) -> list[dict[str, Any]]:
     """The definition leg: the chunks that define the first name `query` spells out
-    that has one. One name, because the order of mention ranks nothing: each definition
-    scores like a content leg's hit at its rank and takes that place from the legs'
-    answers. Two keyed reads, no embedding; `scope` is the constraint's predicate, None
-    when unconstrained, and filters the chunks after the names are counted."""
+    that has one (a field or a constant has a symbol row and no chunk of its own). One
+    name, because the order of mention ranks nothing and each definition takes a place
+    from the legs' answers. Two keyed reads, no embedding; `scope` is the constraint's
+    predicate, None when unconstrained, and filters the chunks after the names are
+    counted."""
     names = spelled_names(query, _MAX_NAMES) if run else []
     if not names:
         return []
@@ -101,9 +103,41 @@ async def _definition_leg(
             chunk = {(str(r["path"]), str(r["scope"])): r for r in found}
             hits = ([chunk[d] for d in name if d in chunk] for name in wanted)
             rows = next((hit for hit in hits if hit), [])
-        except Exception as e:  # noqa: BLE001 — the definitions are a vote, never a gate
+        except Exception as e:  # noqa: BLE001 — the definitions add to an answer, never gate it
             logger.warning("code.search definition leg failed: %s", e)
         span_attrs(sp, results=len(rows))
     if rows:
         work["named_definitions"] = len(rows)
     return rows
+
+
+def _held_definitions(rows: list[dict[str, Any]], ranked: list[CodeUnit]) -> list[CodeUnit]:
+    """The units of the definition rows no other leg found, in the leg's order. They
+    stay out of the priors, which read the whole pool, so the other units score as
+    they do without the leg."""
+    pooled = {u.unit_id for u in ranked}
+    held = [unit_from_chunk(row) for row in rows if str(row["chunk_id"]) not in pooled]
+    for u in held:
+        u.via = "definition"
+    return held
+
+
+def _place_definitions(
+    ranked: list[CodeUnit], held: list[CodeUnit], rows: list[dict[str, Any]]
+) -> list[CodeUnit]:
+    """Serve the named definitions directly after the first unit of `ranked`, at its
+    score: those the ranking holds in its order, then `held`. A definition says what
+    the query names, not what it asks about, so it is level with the best answer and
+    never above it; one that is already first stays first. Run after the priors that
+    score a unit against the query: they multiply a score by a path, a kind and a named
+    identifier, and would move a definition raised before them past the first unit."""
+    named = {str(row["chunk_id"]) for row in rows}
+    if not named or not ranked:
+        return ranked
+    top, rest = ranked[0], ranked[1:]
+    level = [u for u in rest if u.unit_id in named] + held
+    return [
+        top,
+        *(u.model_copy(update={"score": top.score}) for u in level),
+        *(u for u in rest if u.unit_id not in named),
+    ]

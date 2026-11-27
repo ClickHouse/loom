@@ -131,11 +131,9 @@ async def search(
         )
         return result
 
-    # A named definition is exact, not similar: confidence and abstention are read off
-    # the other legs' fusion, so the definition leg changes neither.
     legs_agree = _calibrate(
         st,
-        (_fuse(st, definitions=False)[0] or fused) if st.definition_rows else fused,
+        fused,
         run_vector=st.run_vector,
         noise_floor=noise_floor,
         abstain_threshold=abstain_threshold,

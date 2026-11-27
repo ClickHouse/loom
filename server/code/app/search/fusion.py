@@ -12,11 +12,8 @@ from server.settings import settings
 _RRF_K = 60.0
 
 
-def _fuse(
-    st: _SearchState, *, definitions: bool = True
-) -> tuple[list[tuple[dict[str, Any], float]], str]:
-    """Fuse the legs' rows into one scored list; returns (fused, the fusion label).
-    `definitions` False leaves the definition leg out: the list calibration reads."""
+def _fuse(st: _SearchState) -> tuple[list[tuple[dict[str, Any], float]], str]:
+    """Fuse the legs' rows into one scored list; returns (fused, the fusion label)."""
     lex_weight = st.lex_weight
     fusion_kind = "rrf" if lex_weight == 1.0 else f"rrf(lex_w={lex_weight:g})"
     with code_span("search.fuse", route="rrf") as sp:
@@ -31,7 +28,6 @@ def _fuse(
             concept_cap=float(settings.code_search_concept_expand_cap),
             hyde_rows=st.hyde_rows,
             hyde_cap=float(settings.code_search_hyde_cap),
-            definition_rows=st.definition_rows if definitions else None,
             lexical_weight=lex_weight,
         )
         span_attrs(sp, results=len(fused))
@@ -64,14 +60,12 @@ def _extra_via_labels(
     card_rows: list[dict[str, Any]],
     concept_rows: list[dict[str, Any]],
     hyde_rows: list[dict[str, Any]],
-    definition_rows: list[dict[str, Any]],
 ) -> dict[str, str]:
-    """The `via` of a unit neither content leg found: the first other leg that proposed it —
-    definition, history, card, concept, hyde — so the bench's via share and an agent reading
-    `via` see the leg instead of ""."""
+    """The `via` of a unit neither content leg found: the first voting leg that proposed it —
+    history, card, concept, hyde — so the bench's via share and an agent reading `via` see the leg
+    instead of ""."""
     out: dict[str, str] = {}
     for label, rows in (
-        ("definition", definition_rows),
         ("history", history_rows),
         ("card", card_rows),
         ("concept", concept_rows),
@@ -96,17 +90,13 @@ def _rrf_fuse(
     concept_cap: float | None = None,
     hyde_rows: list[dict[str, Any]] | None = None,
     hyde_cap: float | None = None,
-    definition_rows: list[dict[str, Any]] | None = None,
     lexical_weight: float = 1.0,
 ) -> list[tuple[dict[str, Any], float]]:
     """Reciprocal-rank fusion, k=60, unchanged for the two content legs. The optional
     history list is fused with the same operator, except that each of its rows
     contributes at most `history_cap` x the top two-leg score: a file the history names
     is lifted among the content legs' candidates, never above the best of them on its
-    own. The definition list has no cap: a definition of the name the query spells out
-    adds a content leg's score at its rank to what the content legs gave it. One that
-    neither content leg found scores as one leg's hit at that rank: below a chunk both
-    legs rank high, and level with the lexical leg's own hit when that leg runs alone."""
+    own."""
     scores: dict[str, float] = {}
     rep: dict[str, dict[str, Any]] = {}
     # The lexical list may weigh less than the vector list (a responsibility question's
@@ -124,7 +114,6 @@ def _rrf_fuse(
         (card_rows, card_cap),
         (concept_rows, concept_cap),
         (hyde_rows, hyde_cap),
-        (definition_rows, None),
     ):
         if not extra_rows:
             continue
