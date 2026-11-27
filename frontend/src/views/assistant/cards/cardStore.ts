@@ -24,7 +24,7 @@ import { useStore } from "../../../lib/state";
 import { ask, cardReads, save, useChat } from "../chatStore";
 import { randomId } from "../conversations";
 import { tokenReadScope } from "../tokenScope";
-import { starterOf, starterQuestion } from "./starters";
+import { starterOf, starterQuestion } from "./starterCatalog";
 import type { CardArgs, CardOp, TurnCard } from "./types";
 
 /** The audit's samples per finding. */

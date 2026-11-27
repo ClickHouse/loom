@@ -419,7 +419,11 @@ async def test_refresh_writes_last_refresh_breadcrumb(monkeypatch: pytest.Monkey
     async def _no_lease(org: str, ns: str) -> None:
         return None
 
+    async def _no_links(org: str, ns: str, by: float) -> None:
+        return None
+
     monkeypatch.setattr(refresh_mod, "CodeRepo", _R)
+    monkeypatch.setattr(refresh_mod, "_settle_links", _no_links)
     monkeypatch.setattr(refresh_mod, "_REFRESH_LOCKS", {})
     monkeypatch.setattr(refresh_mod, "_take_lease", _no_lease)
     monkeypatch.setattr(worker_mod, "run_pass", _pass)

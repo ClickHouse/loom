@@ -10,6 +10,7 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from server.code.app.index import gitrepo, mirrors
 from server.code.app.index.bootstrap import holds
@@ -433,6 +434,19 @@ async def checked_head(org: str, namespace: str) -> str:
 
 async def set_checked_head(org: str, namespace: str, head: str) -> None:
     await CodeRepo().set_state(org, namespace, _MARK, head)
+
+
+async def unchecked_heads(ch: Any | None = None) -> dict[tuple[str, str], str]:
+    """(org, trunk namespace) -> the head its memory links were last checked at ('' =
+    never) for each configured repository whose indexed head is another commit, in one
+    read. Links live in a repository's trunk namespace, so no other is listed."""
+    marks = await CodeRepo(ch).state_values_for_keys(["git_head", _MARK])
+    checked = marks[_MARK]
+    return {
+        entry: checked.get(entry, "")
+        for entry, head in marks["git_head"].items()
+        if head and head != checked.get(entry, "") and trunk_namespace(*entry) == entry[1]
+    }
 
 
 _CURSOR_NS = "memory_code_links"

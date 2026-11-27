@@ -9,10 +9,10 @@ import { isMemoryNamespace } from "./namespace";
 export const SEARCH_PLACEHOLDER = "Search profile, memories, library…";
 export const ASK_PLACEHOLDER = "Search or ask a question";
 
-/** Whether a known reason keeps the search from offering its answer card. The setup
- *  starting or failing doesn't block it: the card stays and says the refusal it causes. */
+/** Whether a known reason keeps the search from offering its answer card. A configuration
+ *  failure doesn't block it: the card stays and says the refusal it causes. */
 export function blocksCard(reason: AssistantReason | null): boolean {
-  return !!reason && reason.kind !== "starting" && reason.kind !== "failing";
+  return !!reason && reason.kind !== "failing";
 }
 
 /** Whether the search can offer Ask AI in this namespace: the chat on, no reason that

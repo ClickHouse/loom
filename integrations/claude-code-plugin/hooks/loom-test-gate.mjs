@@ -7,7 +7,9 @@
 // distinct change with a reason that names them. "This session's" is read
 // from the transcript: dirty paths an edit tool targeted or a shell command
 // named; a tree left dirty before the session does not
-// gate a turn that touched nothing. See lib/test-gate.mjs for the rules.
+// gate a turn that touched nothing. A Claude Code transcript that already
+// answers the ask does not block either (`runAnswered` in lib/test-gate.mjs);
+// a Codex rollout answers nothing, so its stop blocks.
 //
 // Fail-open everywhere: no token, not an indexed repo, clean tree, nothing
 // of the tree touched this session, server down, second stop on the same
@@ -40,7 +42,9 @@ import {
   decideBlock,
   gatePayload,
   gateSignature,
+  newestChange,
   renderGate,
+  runAnswered,
   sessionScope,
 } from "../lib/test-gate.mjs";
 
@@ -70,9 +74,9 @@ async function main() {
     scheduleExit(0);
     return;
   }
-  const dirty = git(["diff", "--name-only", "HEAD"], root, { timeoutMs: 2000 })
-    .split("\n")
-    .map((s) => s.trim())
+  // -z: paths as the file system names them, where git would quote one.
+  const dirty = git(["diff", "--name-only", "-z", "HEAD"], root, { timeoutMs: 2000, raw: true })
+    .split("\0")
     .filter(Boolean);
   if (!dirty.length) {
     scheduleExit(0);
@@ -80,7 +84,8 @@ async function main() {
   }
   // Only what this session touched; no transcript → the whole dirty tree.
   const transcript = payload.transcript_path || "";
-  const changed = transcript ? sessionScope(dirty, readAllLines(transcript), { root, cwd }) : dirty;
+  const rows = transcript ? readAllLines(transcript) : [];
+  const changed = transcript ? sessionScope(dirty, rows, { root, cwd }) : dirty;
   if (!changed.length) {
     scheduleExit(0);
     return;
@@ -102,7 +107,6 @@ async function main() {
   }
   const diffHash = crypto.createHash("sha1").update(diff).digest("hex").slice(0, 16);
   const decision = decideBlock(readSessionState("testgate", payload.session_id), gateSignature(changed, diffHash));
-  writeSessionState("testgate", payload.session_id, decision.cache);
   if (!decision.block) {
     scheduleExit(0);
     return;
@@ -120,22 +124,33 @@ async function main() {
     },
     { token, serverUrl: resolveServerUrl() },
   );
+  const testExists = (testPath) => {
+    const target = path.resolve(root, testPath);
+    if (!pathUnder(root, target)) return false;
+    try {
+      return fs.statSync(target).isFile();
+    } catch {
+      // A stale index row or another checkout's test is an explicit gap.
+      return false;
+    }
+  };
+  // The newest file time among the uncommitted and untracked files.
+  const lastModified = () => {
+    const untracked = git(["ls-files", "-z", "--others", "--exclude-standard"], root, {
+      timeoutMs: 2000,
+      raw: true,
+      fallback: null,
+    });
+    return newestChange(root, untracked === null ? null : [...dirty, ...untracked.split("\0").filter(Boolean)]);
+  };
+  if (runAnswered(gate, rows, { root, cwd, testExists, lastModified })) {
+    scheduleExit(0);
+    return;
+  }
+  // An answered stop returned above, so it keeps the change's one block.
+  writeSessionState("testgate", payload.session_id, decision.cache);
   const needsPython = (gate?.tests || []).some((t) => /^pytest(\s|$)/.test(String(t?.run || "")));
-  const out = gatePayload(
-    renderGate(gate, {
-      python: needsPython ? checkoutPython(root) : undefined,
-      testExists: (testPath) => {
-        const target = path.resolve(root, testPath);
-        if (!pathUnder(root, target)) return false;
-        try {
-          return fs.statSync(target).isFile();
-        } catch {
-          // A stale index row or another checkout's test is an explicit gap.
-          return false;
-        }
-      },
-    }),
-  );
+  const out = gatePayload(renderGate(gate, { python: needsPython ? checkoutPython(root) : undefined, testExists }));
   if (out) process.stdout.write(JSON.stringify(out) + "\n");
   scheduleExit(0);
 }

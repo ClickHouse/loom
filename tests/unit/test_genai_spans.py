@@ -8,6 +8,7 @@ The contract these spans rely on in Langfuse: a span carrying
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import Any
@@ -422,6 +423,41 @@ def _recording_tracer(monkeypatch: pytest.MonkeyPatch) -> Any:
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     monkeypatch.setattr(_trace, "get_tracer", lambda name, *a, **k: provider.get_tracer(name))
     return exporter
+
+
+def test_generation_records_labels_without_prompt_capture(monkeypatch: pytest.MonkeyPatch) -> None:
+    exporter = _recording_tracer(monkeypatch)
+    with (
+        genai.generation_attrs(assistant_run_id="answer", assistant_turn="1"),
+        genai.generation_span(provider="openai", model="gpt-4o-mini"),
+    ):
+        pass
+    (span,) = exporter.get_finished_spans()
+    assert span.attributes["loom.assistant_run_id"] == "answer"
+    assert span.attributes["loom.assistant_turn"] == "1"
+    assert "langfuse.observation.input" not in span.attributes
+
+
+@pytest.mark.asyncio
+async def test_detached_generation_can_close_on_another_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opentelemetry import trace
+
+    exporter = _recording_tracer(monkeypatch)
+    with trace.get_tracer("test").start_as_current_span("request") as parent:
+        span = genai.generation_span(provider="openai", model="gpt-4o-mini", attach=False)
+        span.__enter__()
+
+        async def close() -> None:
+            span.__exit__(None, None, None)
+
+        try:
+            assert trace.get_current_span() is parent
+        finally:
+            await asyncio.create_task(close())
+    generation, request = exporter.get_finished_spans()
+    assert generation.parent == request.context
 
 
 @pytest.mark.parametrize("which", ["generation", "embedding"])

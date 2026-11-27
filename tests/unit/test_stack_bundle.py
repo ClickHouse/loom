@@ -38,7 +38,6 @@ def test_release_stack_bundle_is_complete_and_checksummed(tmp_path: Path) -> Non
             "loom-stack/deploy/lemmagen3/LICENSE",
             "loom-stack/deploy/lemmagen3/README.md",
             "loom-stack/deploy/clickhouse-config/named_collections.xml",
-            "loom-stack/deploy/librechat/assistant.librechat.yaml",
         } <= names
         assert bundle.extractfile("loom-stack/VERSION").read() == b"1.2.3\n"
         compose = bundle.extractfile("loom-stack/compose.yaml").read().decode()

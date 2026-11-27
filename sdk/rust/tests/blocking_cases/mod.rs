@@ -1,7 +1,7 @@
 use super::*;
 use clickhouse_loom::{
     blocking, CallOptions, ContextPackInput, KnowledgeAddInput, KnowledgeGetInput,
-    KnowledgeSearchInput, OpsCapabilitiesInput, OpsHealthInput,
+    KnowledgeSearchInput, OpsCapabilitiesInput, OpsHealthInput, RouteRequest, RouteResponse,
 };
 
 fn request(server: &Server) -> Request {
@@ -281,5 +281,69 @@ async fn runtime_construction_drop_and_calls_have_explicit_boundaries() {
         .await
         .unwrap()
         .unwrap_err();
+    assert!(matches!(rejected, Error::Configuration(_)));
+}
+
+#[test]
+fn synchronous_routes_use_the_async_transport_rules() {
+    let refused = response(
+        429,
+        json!({"detail": {"code": "RATE_LIMITED", "message": "busy", "retry_after_s": 0.05}}),
+        "",
+    );
+    let server = Server::new(vec![
+        refused,
+        response(200, json!({"who": "me"}), ""),
+        response(200, "file bytes", "Content-Type: text/plain\r\n"),
+        response(
+            503,
+            r#"{"detail":{"code":"OVERLOADED","message":"busy"}}"#,
+            "",
+        ),
+        routes::unused_response(),
+    ]);
+    let client = blocking::Client::builder("org", "ns", "bot")
+        .base_url(&server.url)
+        .api_key("test-token")
+        .build()
+        .unwrap();
+    let route = RouteRequest::get("/v1/whoami");
+    let paced = client
+        .request_json_with_options::<Value>(
+            route.clone(),
+            CallOptions::default().request_id("route-1"),
+        )
+        .unwrap();
+    assert_eq!(paced.data, json!({"who": "me"}));
+    assert_eq!(paced.metadata.attempts, 2);
+    for _ in 0..2 {
+        let received = request(&server);
+        assert_eq!(received.line, "GET /v1/whoami HTTP/1.1");
+        assert_eq!(received.headers["x-request-id"], "route-1");
+        assert_eq!(received.headers["authorization"], "Bearer test-token");
+    }
+    let RouteResponse { status, bytes, .. } = client
+        .request(RouteRequest::get("/v1/knowledge.download"))
+        .unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(bytes, b"file bytes");
+    request(&server);
+    let Error::Api(error) = client.request(route).unwrap_err() else {
+        panic!("expected API error");
+    };
+    assert_eq!(error.status, 503);
+    assert_eq!(error.code, "OVERLOADED");
+
+    let clone = client.clone();
+    let rejected = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            tokio::task::spawn_blocking(move || clone.request(RouteRequest::get("/v1/whoami")))
+                .await
+                .unwrap()
+                .unwrap_err()
+        });
     assert!(matches!(rejected, Error::Configuration(_)));
 }

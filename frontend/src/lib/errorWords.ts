@@ -229,7 +229,7 @@ export const CONDITIONAL_SENTENCES = {
 };
 
 /** Refusals about the token itself, not the caller's role (the assistant's, in
- *  `server/assistant/app/bridge.py`; docs/reference/errors.md). */
+ *  `server/assistant/app/runtime.py`; docs/reference/errors.md). */
 const TOKEN_REASONS = new Set(["org_wide", "narrowed", "token_expires_soon"]);
 
 /** The code's own sentence, when it says more than its category or status. */

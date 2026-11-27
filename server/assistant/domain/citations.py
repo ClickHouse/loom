@@ -14,7 +14,8 @@ from typing import Literal
 _MEMORY = re.compile(r"\[memory:(?P<key>[^\]\s]+)@v(?P<version>\d+)\]")
 # An optional `, revision <n>` note follows the section; any other comma is the section's.
 _DOC = re.compile(
-    r"\[doc:(?P<uri>[^\]§]+?)(?:\s*§\s*(?P<section>[^\]]+?))?\s*(?:,\s*revision\s+\d+)?\]"
+    r"\[doc:(?P<uri>[^\]§]+?)(?:\s*§\s*(?P<section>[^\]]+?))?\s*"
+    r"(?:,\s*revision\s+(?P<revision>\d+))?\]"
 )
 _HELP = re.compile(r"\[help:(?P<path>[^\]§\s]+?)(?:\s*§\s*(?P<section>[^\]]+?))?\s*\]")
 _CODE = re.compile(r"\[code:(?P<path>[^\]\s]+?):(?P<line>\d+)\]")
@@ -33,6 +34,7 @@ class Citation:
     section: tuple[str, ...] = ()
     path: str = ""
     sql: str = ""
+    revision: str = ""
 
     @property
     def ref(self) -> str:
@@ -59,7 +61,16 @@ def parse(answer: str) -> list[Citation]:
     for m in _DOC.finditer(answer):
         section = section_path(m["section"] or "")
         found.append(
-            (m.start(), Citation("doc", m.group(0), source_uri=m["uri"].strip(), section=section))
+            (
+                m.start(),
+                Citation(
+                    "doc",
+                    m.group(0),
+                    source_uri=m["uri"].strip(),
+                    section=section,
+                    revision=m["revision"] or "",
+                ),
+            )
         )
     for m in _HELP.finditer(answer):
         section = section_path(m["section"] or "")

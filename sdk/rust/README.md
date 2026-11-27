@@ -46,8 +46,8 @@ toolchain.
 application's dependencies. The crate name is `clickhouse-loom`; Rust imports it
 as `clickhouse_loom`.
 
-Runtime deps: reqwest with Rustls, serde, serde_json, Tokio, rand, uuid, httpdate,
-log and derive_more.
+Runtime deps: reqwest with Rustls and HTTP/2, serde, serde_json, Tokio, rand, uuid,
+httpdate, log and derive_more.
 
 ## Use
 
@@ -391,15 +391,17 @@ To disable both automatic retries and 429 waiting, use
 The SDK logs through the `log` facade under the `clickhouse_loom` target:
 completed calls at INFO, retries and rate-limit waits at WARN, final failures at
 ERROR and attempts at DEBUG. Your application's logging configuration routes
-these records. Records contain the operation, request ID, attempts and timing.
-Tokens, request bodies, server addresses and server error text are not logged.
-Every request carries SDK identity headers, `X-Request-Id` and a cumulative
-`X-Loom-Retry-Count` starting at 0.
+these records. Records contain the operation or route, request ID, attempts
+and timing. Tokens, request bodies, server addresses and server error text are
+not logged. Every operation call carries SDK identity headers, `X-Request-Id`
+and a cumulative `X-Loom-Retry-Count` starting at 0.
 
 A final transport failure may follow a committed write. An independent call
 generates a different idempotency key; read the result before submitting it again.
 `Client` is `Clone`, `Send` and `Sync`. Clones share the HTTP connection pool
-and rate state and can make concurrent calls. Dropping a call future or applying
+and rate state and can make concurrent calls. An `https` address negotiates
+HTTP/2 with the server over ALPN and falls back to HTTP/1.1; a plain `http`
+address speaks HTTP/1.1. Dropping a call future or applying
 an external timeout stops requests, retry sleeps and pacing sleeps in that future.
 There are no detached retry tasks. Cancellation does not roll back a write or
 guarantee the server stops processing it.
@@ -439,6 +441,51 @@ so the server chooses its default from `mode`. Unknown operations receive
 bound org and namespace only and retry connection failures before dispatch.
 They do not retry HTTP errors, timeouts, incomplete responses or 429 responses.
 The server validates fields and authorizes every operation.
+
+## Routes outside the op registry
+
+`request` and `request_json` reach the routes the registry does not hold, such
+as `/v1/whoami`, `/v1/me/service_accounts.create` and `/v1/knowledge.upload`:
+
+```rust
+use clickhouse_loom::RouteRequest;
+use serde_json::{json, Value};
+
+let me: Value = bot.request_json(RouteRequest::get("/v1/whoami")).await?;
+let chosen: Value = bot
+    .request_json(RouteRequest::post("/v1/me/set-default-namespace").json(&json!({"namespace": "eng"})))
+    .await?;
+let stored: Value = bot
+    .request_json(
+        RouteRequest::post("/v1/knowledge.upload")
+            .query("org", "dev")
+            .query("namespace", "local")
+            .query("filename", "guide.pdf")
+            .query("content_type", "application/pdf")
+            .bytes("application/pdf", std::fs::read("guide.pdf")?),
+    )
+    .await?;
+```
+
+`RouteRequest::new` takes any `Method`; `get`, `post` and `delete` name the
+common ones. The path starts with `/` and is resolved on the server the client
+is bound to. `json` sends a serializable body and `bytes` sends raw bytes with
+their media type as the `Content-Type` header; each replaces the body set
+before it. The body and query go out as given: no bound identity is added, and
+a route takes the org, namespace and other fields it needs from them.
+
+`request` returns the whole response of a status below 400 with its status and
+headers; a redirect is returned, not followed. `request_json` decodes the body
+as the requested type; an empty body decodes as an empty object and an invalid
+one is `Error::Protocol`. A status of 400 or higher is `Error::Api`. The SDK
+resends only on a 429, after the server's hint and within the client's pacing
+budget. The HTTP transport does not retry requests. A refused HTTP/2 stream
+returns `Error::Transport`.
+
+`request_with_options` and `request_json_with_options` accept `CallOptions`
+and return `CallResult` or `CallFailure`. Only `timeout` and `request_id`
+apply; a write key is refused. The blocking client provides the same four
+methods without `.await`.
 
 ## Capability probe
 

@@ -12,5 +12,5 @@ import type { ReactNode } from "react";
  * caps itself (`max-w-2xl` on explanatory paragraphs), everything else grows.
  */
 export function PageContainer({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`w-full py-5 px-4 sm:py-8 sm:px-6 xl:px-8 ${className}`.trim()}>{children}</div>;
+  return <div className={`w-full px-4 py-5 sm:px-6 sm:pb-8 xl:px-8 ${className}`.trim()}>{children}</div>;
 }

@@ -25,8 +25,8 @@ from server.help.domain import index as docs_index
 
 log = logging.getLogger(__name__)
 
-# Pages about working on Loom's source, not using or running it.
-_SKIPPED_DIRS = ("development/",)
+# Contributor pages and the site's build and dependency trees aren't shipped documentation.
+_SKIPPED_DIRS = {"development", "dist", "node_modules"}
 # The most text one help.get returns; a longer section or page is cut and marked truncated.
 MAX_TEXT_CHARS = 16_000  # not a setting: bounds one tool result an agent reads
 
@@ -38,16 +38,19 @@ _build_lock = threading.Lock()
 def pages(root: Path) -> list[tuple[str, str]]:
     """Every indexed `(path, text)` page under `root`, in path order; a page that cannot
     be read is left out, with a warning."""
-    out = []
-    for file in sorted(root.rglob("*.md")):
-        path = file.relative_to(root).as_posix()
-        if path.startswith(_SKIPPED_DIRS):
-            continue
-        try:
-            out.append((path, file.read_text(encoding="utf-8")))
-        except (OSError, UnicodeDecodeError) as e:
-            log.warning("help leaves out %s, which cannot be read: %s", path, e)
-    return out
+    out: list[tuple[str, str]] = []
+    for parent, dirs, files in root.walk():
+        dirs[:] = [name for name in dirs if not name.startswith(".") and name not in _SKIPPED_DIRS]
+        for name in files:
+            if not name.endswith(".md"):
+                continue
+            file = parent / name
+            path = file.relative_to(root).as_posix()
+            try:
+                out.append((path, file.read_text(encoding="utf-8")))
+            except (OSError, UnicodeDecodeError) as e:
+                log.warning("help leaves out %s, which cannot be read: %s", path, e)
+    return sorted(out)
 
 
 def _build() -> docs_index.Index | None:

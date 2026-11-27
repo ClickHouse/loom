@@ -356,6 +356,14 @@ async def settle_current() -> None:
         await settle(tail)
 
 
+async def publish_current() -> None:
+    """Settle streamed accounting and renew its retained source proofs."""
+    tail = _tail.get()
+    if tail is not None:
+        await settle(tail)
+        await _publication_barrier(tail)
+
+
 @asynccontextmanager
 async def streaming_scope() -> AsyncIterator[None]:
     """Own final streamed usage after the HTTP header tail has closed.
@@ -363,7 +371,11 @@ async def streaming_scope() -> AsyncIterator[None]:
     The caller settles before its terminal event. Cancellation still joins the
     owned required delivery before this scope returns.
     """
+    parent = _tail.get()
     tail = _Tail()
+    if parent is not None:
+        # Every HTTP send must see proofs retained during model generation.
+        tail.publications = parent.publications
     token = _tail.set(tail)
     group_token = _publication_group.set(None)
     primary: BaseException | None = None
@@ -437,4 +449,5 @@ __all__ = [
     "fail_required",
     "settle",
     "settle_current",
+    "publish_current",
 ]

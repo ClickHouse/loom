@@ -56,6 +56,7 @@ client = Loom::Client.new(namespace: "user-42") # an argument wins over the conf
 | `open_timeout`, `read_timeout` | 10 and 60 seconds                                                            |
 | `retry_policy`                 | `{ max_attempts: 3, backoff: 0.25, ... }` (see [Retries](#retries))          |
 | `rate_limit_max_wait`          | 15 seconds of waiting out `429` answers per call; `0` raises the first `429` |
+| `logger`, `log_level`          | No logging; see [Logging](#logging)                                          |
 
 An argument to `Client.new` wins over `Loom.configure`, which wins over the environment.
 
@@ -148,6 +149,32 @@ per-call timeout, and resending a `401` with a fresh token (the gem takes a fixe
 
 The client does not follow redirects, so a memory body and token never go to another
 origin: a `3xx` answer raises a `Loom::Error`.
+
+## Logging
+
+Logging is off unless the client is given a logger: any object with `debug`, `info`,
+`warn` and `error`, such as a `::Logger` or `Rails.logger`. The lines and levels are the
+TypeScript and Python SDKs':
+
+```ruby
+Loom.configure do |c|
+  c.logger = Rails.logger
+  c.log_level = :info # :debug, :info, :warn, :error or :off; default LOOM_LOG_LEVEL, else :warn
+end
+```
+
+| Level   | What is logged                                                                                            |
+| ------- | --------------------------------------------------------------------------------------------------------- |
+| `info`  | One line per completed call: `memory.get 200 12 ms attempts=1 rid=...`                                    |
+| `warn`  | Each retry (`memory.get attempt 1/3 503 OVERLOADED; retrying in 250 ms ...`) and 429 wait                 |
+| `error` | The failure a call raises: `memory.get failed after 30 ms: ResourceNotFound RESOURCE_NOT_FOUND (404) ...` |
+| `debug` | Each request: the URL, the attempt, the body size and the headers                                         |
+
+`LOOM_LOG_LEVEL` takes the same names as the server and the Python SDK (`warning`,
+`critical`, ...); a value it can't read is logged as a warning and `:warn` applies. The
+API key never reaches the logger: credential headers (`Authorization`, `X-Api-Key`,
+cookies) show only their scheme and last four characters, and any bearer token in a line
+is rewritten the same way (`Loom::Logging.redact_headers`, `Loom::Logging.redact_text`).
 
 ## Errors
 
