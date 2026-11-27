@@ -638,6 +638,7 @@ async def _batched_edit_context(
     from server.code.app.enrich import (
         deduplicate_indirect_caller_sources,
         merge_indirect_caller_sources,
+        share_edit_example_reads,
     )
     from server.code.app.symbol.edit_reads import batch_read_sources
     from server.code.app.symbol.edit_target import EditTarget
@@ -657,10 +658,11 @@ async def _batched_edit_context(
             )
 
     with code_span("edit_context.batch", seeds=len(names)):
-        results = await asyncio.gather(
-            *(read_target(name) for name in names),
-            return_exceptions=True,
-        )
+        async with share_edit_example_reads():
+            results = await asyncio.gather(
+                *(read_target(name) for name in names),
+                return_exceptions=True,
+            )
     by_name = dict(zip(names, results, strict=True))
     definitions: list[CodeUnit] = []
     positions: dict[str, int] = {}
@@ -705,10 +707,11 @@ async def _batched_edit_context(
     shape = "declaration_batch" if located else "named_batch"
     note_budget_shape(shape)
     candidates = located.candidates if located else []
-    tokens = sum(estimate_unit_tokens(unit) for unit in definitions) + estimate_json_tokens(
-        [target.model_dump() for target in targets]
+    tokens = (
+        sum(estimate_unit_tokens(unit) for unit in definitions)
+        + estimate_json_tokens([target.model_dump() for target in targets])
+        + estimate_json_tokens(candidates)
     )
-    tokens += estimate_json_tokens(candidates)
     read_sources = await batch_read_sources(org, ns, definitions, targets)
     tokens += estimate_json_tokens([source.model_dump() for source in read_sources])
     route = f"edit_context_{shape}"
