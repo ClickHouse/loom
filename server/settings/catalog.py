@@ -4457,6 +4457,9 @@ class ObservabilitySettings(BaseModel):
     adoption_telemetry_enabled: bool = True
     # Share namespace contact domains and counts in adoption reports. Set false to omit them.
     adoption_telemetry_share_domains: bool = True
+    # Share daily account, successful request and serving process counts for contact domains.
+    # Requires domain sharing.
+    adoption_telemetry_share_domain_activity: bool = False
     # Seconds between adoption checks and retries. A report covers 12 hours.
     adoption_telemetry_interval_seconds: int = Field(default=3600, ge=60)
 

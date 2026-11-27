@@ -3,33 +3,37 @@ import { daysBefore } from "./adoption-view.mjs";
 const datasets = ["totals", "versions", "retention", "activity", "lifecycle", "oss"];
 const grains = ["day", "week", "month"];
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+const versionPattern = /^[0-9][0-9A-Za-z.+-]{0,63}$/;
+const smokeVersion = "0.0.0-smoke";
 const queryApiOrigin = "https://queries.clickhouse.cloud";
 const queryApiPath = /^\/run\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
 const isDay = (value) => typeof value === "string" && datePattern.test(value) && Number.isFinite(Date.parse(value));
+const isVersion = (value) => typeof value === "string" && versionPattern.test(value) && value !== smokeVersion;
+const isPeriod = ({ grain, period, period_end }) =>
+  grains.includes(grain) && isDay(period) && isDay(period_end) && period < period_end;
 
-function decodeGrowth(encoded) {
+function decodeRows(encoded, read) {
   if (!Array.isArray(encoded)) return null;
   try {
-    const rows = encoded.map((json) => {
-      const { grain, period, period_end, first_active, cumulative_active } = JSON.parse(json);
-      return { grain, period, period_end, first_active, cumulative_active };
-    });
-    return rows.every(
-      ({ grain, period, period_end, first_active, cumulative_active }) =>
-        grains.includes(grain) &&
-        isDay(period) &&
-        isDay(period_end) &&
-        period < period_end &&
-        isCount(first_active) &&
-        isCount(cumulative_active) &&
-        cumulative_active >= first_active,
-    )
-      ? rows.sort((left, right) => left.period.localeCompare(right.period))
-      : null;
+    const rows = encoded.map((json) => read(JSON.parse(json)));
+    return rows.includes(null) ? null : rows;
   } catch {
     return null;
   }
+}
+
+function decodeGrowth(encoded) {
+  return (
+    decodeRows(encoded, ({ grain, period, period_end, first_active, cumulative_active }) =>
+      isPeriod({ grain, period, period_end }) &&
+      isCount(first_active) &&
+      isCount(cumulative_active) &&
+      cumulative_active >= first_active
+        ? { grain, period, period_end, first_active, cumulative_active }
+        : null,
+    )?.sort((left, right) => left.period.localeCompare(right.period)) ?? null
+  );
 }
 
 function decodeDomainDirectories(encoded) {
@@ -50,6 +54,85 @@ function decodeDomainDirectories(encoded) {
   } catch {
     return null;
   }
+}
+
+function decodeDomainAccounts(encoded, directories) {
+  if (!directories) return null;
+  const rows = decodeRows(encoded, (row) => {
+    const {
+      range_days,
+      domain,
+      day,
+      active_accounts,
+      serving_processes,
+      successful_requests,
+      active_installations,
+      loom_version,
+      first_seen,
+      last_seen,
+    } = row;
+    if (![30, 90].includes(range_days) || typeof domain !== "string" || !isDay(day)) return null;
+    if (![active_accounts, successful_requests, active_installations].every(isCount)) return null;
+    if (serving_processes !== null && !isCount(serving_processes)) return null;
+    if (loom_version !== null && !isVersion(loom_version)) return null;
+    if (first_seen !== null && (!isDay(first_seen) || first_seen > day)) return null;
+    if (last_seen !== null && (!isDay(last_seen) || !first_seen || last_seen < first_seen || last_seen > day))
+      return null;
+    return {
+      range_days,
+      domain,
+      day,
+      active_accounts,
+      serving_processes,
+      successful_requests,
+      active_installations,
+      loom_version,
+      first_seen,
+      last_seen,
+    };
+  });
+  if (!rows) return null;
+  return Object.fromEntries(
+    [30, 90].map((range) => {
+      const allowed = new Set(directories[range]);
+      return [
+        range,
+        Object.fromEntries(
+          rows
+            .filter(({ range_days, domain }) => range_days === range && allowed.has(domain))
+            .map(({ range_days, domain, ...activity }) => [domain, activity]),
+        ),
+      ];
+    }),
+  );
+}
+
+function decodeFirstObservation(encoded) {
+  const rows = decodeRows(encoded, ({ day, loom_version, clickhouse_version }) =>
+    isDay(day) && isVersion(loom_version) && isVersion(clickhouse_version)
+      ? { day, loom_version, clickhouse_version }
+      : null,
+  );
+  return rows?.[0] ?? null;
+}
+
+function decodeVersionTrends(encoded) {
+  return (
+    decodeRows(encoded, ({ grain, period, period_end, product, version, installations }) =>
+      isPeriod({ grain, period, period_end }) &&
+      ["loom", "clickhouse"].includes(product) &&
+      (isVersion(version) || version === smokeVersion) &&
+      isCount(installations)
+        ? { grain, period, period_end, product, version, installations }
+        : null,
+    )?.filter(({ version }) => version !== smokeVersion) ?? null
+  );
+}
+
+function decodeCompanyTrends(encoded) {
+  return decodeRows(encoded, ({ grain, period, period_end, companies }) =>
+    isPeriod({ grain, period, period_end }) && isCount(companies) ? { grain, period, period_end, companies } : null,
+  );
 }
 
 async function readSource(url, options, decode = (response) => response.json()) {
@@ -90,12 +173,27 @@ async function loadWarehouse(env) {
   if (datasets.every((name) => Array.isArray(row?.[name]))) {
     try {
       const aggregates = Object.fromEntries(datasets.map((name) => [name, row[name].map((json) => JSON.parse(json))]));
+      for (const total of aggregates.totals) delete total.verified_companies;
+      const versions = aggregates.versions.filter(
+        ({ loom_version, clickhouse_version }) => isVersion(loom_version) && isVersion(clickhouse_version),
+      );
       const domains = Array.isArray(row.domains) ? row.domains.filter((domain) => typeof domain === "string") : null;
       const domainDirectories = decodeDomainDirectories(row.domain_directories);
       const growth = decodeGrowth(row.growth);
       const days = growth?.filter(({ grain }) => grain === "day").map(({ period }) => period);
       const growthCoverage = days?.length ? { first_day: days[0], last_day: days.at(-1) } : null;
-      return { ...aggregates, domains, domainDirectories, growth, growthCoverage };
+      return {
+        ...aggregates,
+        versions,
+        domains,
+        domainDirectories,
+        domainAccounts: decodeDomainAccounts(row.domain_accounts, domainDirectories),
+        firstObservation: decodeFirstObservation(row.first_observation),
+        versionTrends: decodeVersionTrends(row.version_trends),
+        companyTrends: decodeCompanyTrends(row.company_trends),
+        growth,
+        growthCoverage,
+      };
     } catch {
       console.warn("Adoption Query API returned invalid data.");
       return {};
@@ -175,8 +273,8 @@ async function loadOpenSource(warehouse, today, readRegistries) {
       .sort((left, right) => left.day.localeCompare(right.day));
     const value = numberOrNull(current);
     const latest = history.at(-1);
-    if (value !== null && latest) {
-      if (latest.day === today) history.pop();
+    if (value !== null) {
+      if (latest?.day === today) history.pop();
       history.push({ day: today, value });
     }
     return {
@@ -249,7 +347,21 @@ export function createAdoptionReader(env, now, readRegistries = readRegistryMetr
   const today = now.toISOString().slice(0, 10);
   const warehouse = loadWarehouse(env);
   const selfHosted = warehouse.then(
-    ({ totals, versions, retention, activity, lifecycle, domains, domainDirectories, growth, growthCoverage }) => ({
+    ({
+      totals,
+      versions,
+      retention,
+      activity,
+      lifecycle,
+      domains,
+      domainDirectories,
+      domainAccounts,
+      firstObservation,
+      versionTrends,
+      companyTrends,
+      growth,
+      growthCoverage,
+    }) => ({
       today,
       warehouseAvailable:
         Array.isArray(totals) &&
@@ -264,6 +376,10 @@ export function createAdoptionReader(env, now, readRegistries = readRegistryMetr
         growthCoverage: growthCoverage ?? null,
         domains: domains ?? null,
         domainDirectories: domainDirectories ?? null,
+        domainAccounts: domainAccounts ?? null,
+        firstObservation: firstObservation ?? null,
+        versionTrends: versionTrends ?? null,
+        companyTrends: companyTrends ?? null,
       },
       openSource: [],
     }),

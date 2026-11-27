@@ -1,0 +1,479 @@
+---
+import { BigStat } from "@clickhouse/click-ui/BigStat";
+import { Link } from "@clickhouse/click-ui/Link";
+import { Panel } from "@clickhouse/click-ui/Panel";
+import { Table } from "@clickhouse/click-ui/Table";
+import { Text } from "@clickhouse/click-ui/Text";
+import { Title } from "@clickhouse/click-ui/Title";
+import { groupDailySeries, periodEnd, periodStart } from "../lib/adoption-chart-series.mjs";
+import type { readAdoptionPage } from "../lib/adoption-request.mjs";
+import {
+  adoptionGrowthForRange,
+  adoptionPaths,
+  daysBefore,
+  thresholds,
+  usageMetricGroups,
+} from "../lib/adoption-view.mjs";
+import { repositoryUrl } from "../lib/site-identity.mjs";
+import AdoptionActivity from "./AdoptionActivity.astro";
+import AdoptionDomainDirectory from "./AdoptionDomainDirectory.astro";
+import AdoptionDownload from "./AdoptionDownload.astro";
+import AdoptionFilterForm from "./AdoptionFilterForm.astro";
+import AdoptionGrowth from "./AdoptionGrowth.astro";
+import AdoptionLifecycle from "./AdoptionLifecycle.astro";
+import AdoptionMetricPair from "./AdoptionMetricPair.astro";
+import AdoptionPicker from "./AdoptionPicker.astro";
+import AdoptionTrend from "./AdoptionTrend.astro";
+import AdoptionUsageTrends from "./AdoptionUsageTrends.astro";
+import SiteFrame from "./SiteFrame.astro";
+
+type Props = Exclude<Awaited<ReturnType<typeof readAdoptionPage>>, Response>;
+
+const { tab, path, params, filters, today, selfHosted, events, lifecycle, oss } = Astro.props;
+const { days, grain } = filters;
+const cutoff = daysBefore(today, days);
+const lastDay = daysBefore(today, 1);
+const number = new Intl.NumberFormat("en-US");
+const date = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+const showDay = (day: string) => date.format(Date.parse(day));
+const showCount = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value) ? number.format(value) : "—";
+const dateRange = date.formatRange(new Date(cutoff), new Date(lastDay));
+const input = (name: string) => {
+  const value = params.get(name);
+  return typeof value === "string" ? value : "";
+};
+
+const wideDirectory = days > 30;
+const requestedDirectoryDays = wideDirectory ? 90 : 30;
+const ranked = selfHosted.domainDirectories?.[requestedDirectoryDays];
+const fallback90 = selfHosted.domainDirectories?.[90] ?? selfHosted.domains;
+const directoryNames = ranked ?? fallback90;
+const directoryDays = ranked ? requestedDirectoryDays : 90;
+const directoryMetrics = selfHosted.domainAccounts?.[directoryDays];
+const directoryIsRanked = !!(ranked ?? selfHosted.domainDirectories?.[90]);
+const directoryFallback = ranked == null && requestedDirectoryDays === 30;
+const summary = selfHosted.totals?.find(
+  ({ range_days, comparison }) => range_days === days && comparison === "current",
+);
+const latestAccounts = selfHosted.activity
+  .filter(
+    ({ grain, period, active_accounts }) =>
+      grain === "day" && period >= cutoff && period < today && Number.isFinite(active_accounts),
+  )
+  .sort((left, right) => right.period.localeCompare(left.period))
+  .at(0);
+const overview = [
+  {
+    label: "Active domains",
+    value: directoryNames?.length,
+    note:
+      directoryNames == null
+        ? "Directory unavailable"
+        : directoryDays === days
+          ? "With successful requests"
+          : `${directoryDays}-day directory`,
+  },
+  {
+    label: "Active accounts",
+    value: latestAccounts?.active_accounts,
+    note: latestAccounts ? `Reported ${showDay(latestAccounts.period)} UTC` : "Awaiting account telemetry",
+  },
+  { label: "Active installations", value: summary?.active, note: "At least one successful request" },
+  { label: "Successful requests", value: summary?.operations, note: "Across all Loom features" },
+];
+
+const domainSeries = (selfHosted.companyTrends ?? [])
+  .filter(
+    ({ grain: periodGrain, period, period_end }) => grain === periodGrain && period_end > cutoff && period < today,
+  )
+  .map(({ period, period_end, companies }) => ({
+    day: period,
+    value: companies,
+    current: period_end > today,
+    partial: period < cutoff,
+  }));
+const growth = adoptionGrowthForRange(selfHosted.growth, filters, today);
+const observation = selfHosted.firstObservation;
+
+const usageOptions = usageMetricGroups.flatMap(({ title, metrics }) =>
+  metrics.map(([value, label]) => ({ value, label, group: title })),
+);
+const hasUsagePoints = ({ value }) => events.some((row) => Number.isFinite(row[value]));
+const usageHasValue = (option) => hasUsagePoints(option) || Number.isFinite(summary?.[option.value]);
+const selectedUsage =
+  usageOptions.find(({ value }) => value === input("usage")) ??
+  usageOptions.find(hasUsagePoints) ??
+  usageOptions.find(usageHasValue) ??
+  usageOptions[0];
+
+const versionRows = selfHosted.versions ?? [];
+const versionHistory = (selfHosted.versionTrends ?? []).filter(
+  ({ grain: periodGrain, period, period_end }) => grain === periodGrain && period_end > cutoff && period < today,
+);
+const versionOptions = [
+  ...new Map(
+    (selfHosted.versionTrends ?? []).map(({ product, version }) => {
+      const value = product + "/" + version;
+      return [value, { value, label: version, group: product === "loom" ? "Loom" : "ClickHouse" }];
+    }),
+  ).values(),
+].sort((a, b) => b.group.localeCompare(a.group) || b.label.localeCompare(a.label, "en", { numeric: true }));
+const selectedVersion = versionOptions.find(({ value }) => value === input("version")) ?? versionOptions[0];
+const versionPeriods = Map.groupBy(versionHistory, ({ period }) => period);
+const versionSeries = Array.from(versionPeriods, ([day, rows]) => ({
+  day,
+  value: rows.find(({ product, version }) => product + "/" + version === selectedVersion?.value)?.installations ?? 0,
+  current: periodEnd(day, grain) > today,
+  partial: day < cutoff,
+}));
+
+const lifecycleGrain = filters.cohort;
+const lifecycleThresholds = Object.entries(thresholds).map(([value, label]) => ({
+  value,
+  label: Number(value) ? label + " requests per month" : label,
+}));
+const hasLifecycle = selfHosted.lifecycle.some(
+  ({ complete_coverage, min_requests, bucket, new: arriving, retained, reactivated, inactive }) =>
+    complete_coverage === 1 &&
+    min_requests === 0 &&
+    bucket >= cutoff &&
+    (arriving > 0 || retained > 0 || reactivated > 0 || inactive > 0),
+);
+
+const sdk = oss.filter(({ sdkName, isDownload }) => sdkName && isDownload);
+const sdkChoices = sdk.map(({ id, sdkName }) => ({ value: id, label: sdkName }));
+const selectedSdk =
+  sdk.find(({ id }) => id === input("sdk")) ?? sdk.find(({ history }) => history.length > 0) ?? sdk[0];
+const sdkSeries = groupDailySeries(selectedSdk?.history ?? [], grain, { start: cutoff, end: today });
+const stars = oss.find(({ id }) => id === "stars");
+const starSeries = groupDailySeries(stars?.history ?? [], grain, {
+  start: cutoff,
+  end: daysBefore(today, -1),
+  kind: "gauge",
+}).map((point) => ({
+  ...point,
+  current: point.current || (stars?.day === today && point.day === periodStart(today, grain)),
+}));
+const distribution = oss.filter(({ id }) => id === "releases" || id === "pulls");
+const selectedDistribution =
+  distribution.find(({ id }) => id === input("distribution")) ??
+  distribution.find(({ history }) => history.length > 0) ??
+  distribution[0];
+const distributionSeries = groupDailySeries(selectedDistribution?.history ?? [], grain, {
+  start: cutoff,
+  end: today,
+  kind: "gauge",
+});
+const moreSdks = [
+  ["Go SDK", "/docs/reference/go-sdk"],
+  ["Ruby SDK", repositoryUrl + "/tree/main/sdk/ruby"],
+  [".NET SDK", repositoryUrl + "/tree/main/sdk/dotnet"],
+  ["Java SDK", repositoryUrl + "/tree/main/sdk/java"],
+];
+
+const state = Object.fromEntries(
+  Object.entries({
+    days,
+    grain,
+    cohort: filters.cohort,
+    installation: filters.installation,
+    domain: filters.domain,
+    usage: selectedUsage?.value,
+    version: selectedVersion?.value,
+    sdk: selectedSdk?.id,
+    distribution: selectedDistribution?.id,
+    domain_q: input("domain_q").trim().slice(0, 253),
+    domain_sort: input("domain_sort") === "name" ? "name" : "usage",
+    domain_page: Math.min(Number.MAX_SAFE_INTEGER, Math.max(1, Math.floor(Number(input("domain_page"))) || 1)),
+  }).filter((entry): entry is [string, string | number] => entry[1] !== undefined),
+);
+---
+
+<SiteFrame
+  title={tab === "oss" ? "Open Source Adoption | ClickHouse Loom" : "Self-hosted Adoption | ClickHouse Loom"}
+  description={tab === "oss" ? "Follow Loom SDK downloads, repository activity, and release distribution." : "Explore self-hosted Loom adoption, active domains, and feature usage."}
+  {path}
+>
+  <div class="adoption">
+    <header class="adoption-intro">
+      <Title type="h1" size="xl" family="brand">Loom adoption</Title>
+      <Text size="lg" color="muted">{tab === "self-hosted"
+        ? "Follow self-hosted Loom growth and usage across reporting domains."
+        : "Follow SDK downloads, GitHub activity, and release distribution."}</Text>
+    </header>
+
+    <nav class="adoption-tabs" aria-label="Adoption views">
+      <Link href={adoptionPaths["self-hosted"]} aria-current={tab === "self-hosted" ? "page" : undefined}>Self-hosted</Link>
+      <Link href={adoptionPaths.oss} aria-current={tab === "oss" ? "page" : undefined}>Open source</Link>
+    </nav>
+    <div class="adoption-controls">
+      <AdoptionFilterForm {path} {state} {days} {grain} />
+      <Text size="sm" color="muted">{dateRange} UTC</Text>
+    </div>
+
+    {tab === "self-hosted" ? <>
+      <section aria-label="Self-hosted adoption overview" class="overview">
+        <div class="metrics">
+          {overview.map(({ label, value, note }) => (
+            <Panel className="adoption-stat" orientation="vertical" alignItems="start" padding="md" gap="xs" hasBorder fillWidth>
+              <BigStat className="metric-value" height="auto" order="titleBottom" size="lg" {label} title={showCount(value)} />
+              <Text size="sm" color="muted">{note}</Text>
+            </Panel>
+          ))}
+        </div>
+        <div class="coverage">
+          {summary?.reporting != null && <Text size="sm" color="muted">
+            {showCount(summary.reporting)} installations sent telemetry, including idle installations{summary.last_reported === today && " and reports received today"}.
+          </Text>}
+          {observation && <Text size="sm" color="muted">Earliest retained report {showDay(observation.day)} UTC · Loom {observation.loom_version} · ClickHouse {observation.clickhouse_version}</Text>}
+          <Link size="sm" href="/telemetry">Telemetry definitions</Link>
+        </div>
+      </section>
+
+      <AdoptionDomainDirectory
+        names={directoryNames}
+        ranked={directoryIsRanked}
+        metrics={directoryMetrics}
+        days={directoryDays}
+        fallback={directoryFallback}
+        {path}
+        {state}
+      />
+
+      <section class="adoption-section" aria-labelledby="activity-title" id="activity">
+        <div class="section-heading">
+          <Title type="h2" size="lg" id="activity-title">Self-hosted trends</Title>
+          {events.length > 0 && <AdoptionDownload {path} {state} dataset="activity" label="Export activity CSV" />}
+        </div>
+        {(events.some(({ opening }) => opening) || domainSeries.some(({ partial }) => partial)) && <Text className="coverage" size="sm" color="muted">
+          The first calendar period starts before the selected window.
+        </Text>}
+        <div class="two-column">
+          <AdoptionGrowth rows={growth} {grain} rangeStart={cutoff} rangeEnd={lastDay} />
+          <AdoptionMetricPair
+            label="Active domains"
+            description="Each domain counts once per period across its active installations."
+            rows={domainSeries}
+            {grain}
+            kind="gauge"
+            axisStart={cutoff}
+            axisEnd={lastDay}
+          />
+        </div>
+        <AdoptionActivity rows={events} {grain} rangeStart={cutoff} rangeEnd={lastDay}
+          showAccounts={selfHosted.activity.some(({ active_accounts }) => Number.isFinite(active_accounts))}
+          showProcesses={selfHosted.activity.some(({ serving_processes }) => Number.isFinite(serving_processes))} />
+      </section>
+
+      <section class="adoption-section" aria-labelledby="usage-title" id="usage">
+        <div class="section-heading">
+          <Title type="h2" size="lg" id="usage-title">What teams use</Title>
+          {usageOptions.some(hasUsagePoints) && <AdoptionDownload {path} {state} dataset="usage" label="Export usage CSV" />}
+        </div>
+        <div class="section-controls">
+          <AdoptionPicker {path} {state} anchor="usage" name="usage" label="Loom metric" value={selectedUsage.value} options={usageOptions} />
+          {Number.isFinite(summary?.[selectedUsage.value]) && <Text size="sm" color="muted">
+            {showCount(summary[selectedUsage.value])} {selectedUsage.value.startsWith("median_") ? "median in this window" : "in this window"}
+          </Text>}
+        </div>
+        <AdoptionUsageTrends rows={events} {grain} metric={selectedUsage.value} rangeStart={cutoff} rangeEnd={lastDay} />
+      </section>
+
+      {hasLifecycle && (
+        <section class="adoption-section" aria-labelledby="lifecycle-title" id="lifecycle">
+          <div class="section-heading">
+            <div>
+              <Title type="h2" size="lg" id="lifecycle-title">New and returning activity</Title>
+              <Text size="sm" color="muted">Compare complete UTC periods using successful Loom requests.</Text>
+            </div>
+            {lifecycle.some(({ rows }) => rows.length > 0) &&
+              <AdoptionDownload {path} {state} dataset="lifecycle" label="Export lifecycle CSV" />}
+          </div>
+          <div class="section-controls">
+            <AdoptionPicker {path} {state} anchor="lifecycle" name="cohort" label="Lifecycle interval"
+              value={lifecycleGrain} options={[{ value: "week", label: "Weekly" }, { value: "month", label: "Monthly" }]} />
+          </div>
+          <div class="two-column">
+            {lifecycle.map(({ entity, title, rows, threshold }) => <div class="lifecycle-chart">
+              <AdoptionPicker {path} {state} anchor="lifecycle" name={entity === "deployment" ? "installation" : "domain"}
+                label={entity === "deployment" ? "Instance activity" : "Domain activity"}
+                value={String(threshold)} options={lifecycleThresholds} />
+              <AdoptionLifecycle label={title} {rows} grain={lifecycleGrain} rangeStart={cutoff} rangeEnd={lastDay} />
+            </div>)}
+          </div>
+          <details class="version-detail">
+            <summary>How lifecycle is counted</summary>
+            <Text size="sm" color="muted">New means first observed at the selected threshold. Retained means active in both periods. Reactivated means active again after a gap. Became inactive means active in the prior period only.</Text>
+            <Text size="sm" color="muted">Net change adds new and reactivated activity and subtracts those that became inactive. Weekly cutoffs use 7/30 of the monthly threshold. A domain combines requests from all of its reporting installations.</Text>
+            <Link href="/telemetry" size="sm">Telemetry definitions</Link>
+          </details>
+        </section>
+      )}
+
+      {(versionRows.length > 0 || selectedVersion) && (
+        <section class="adoption-section" aria-labelledby="versions-title" id="versions">
+          <div class="section-heading"><Title type="h2" size="lg" id="versions-title">Software versions</Title></div>
+          {selectedVersion && <>
+            <div class="section-controls">
+              <AdoptionPicker {path} {state} anchor="versions" name="version" label="Version trend" value={selectedVersion.value} options={versionOptions} />
+            </div>
+            <AdoptionMetricPair
+              label={selectedVersion.group + " " + selectedVersion.label}
+              rows={versionSeries}
+              {grain}
+              kind="gauge"
+              observedLabel="Reporting installations"
+              axisStart={cutoff}
+              axisEnd={lastDay}
+            />
+          </>}
+          {versionRows.length > 0 && <details class="version-detail" open={!selectedVersion}>
+            <summary>Reported versions · last 30 complete days</summary>
+            <Table
+              size="sm"
+              aria-label="Reported software versions"
+              mobileLayout="scroll"
+              headers={[{ label: "Loom" }, { label: "ClickHouse" }, { label: "Reporting installations" }]}
+              rows={versionRows.map(({ loom_version, clickhouse_version, installations }) => ({
+                id: loom_version + "/" + clickhouse_version,
+                items: [{ label: loom_version }, { label: clickhouse_version }, { label: showCount(installations) }],
+              }))}
+            />
+          </details>}
+        </section>
+      )}
+    </> : <>
+      <section aria-labelledby="downloads-title" id="downloads">
+        <div class="section-heading">
+          <Title type="h2" size="lg" id="downloads-title">SDK downloads</Title>
+          {sdk.some(({ history }) => history.length > 0) && <AdoptionDownload {path} {state} dataset="downloads" label="Export downloads CSV" />}
+        </div>
+        <div class="sdk-metrics">
+          {sdk.map(({ sdkName, source, packageUrl, value, days: coverage }) => (
+            <Panel className="adoption-stat" orientation="vertical" alignItems="start" padding="md" gap="xs" hasBorder fillWidth>
+              <BigStat className="metric-value" height="auto" order="titleBottom" size="lg" label={sdkName} title={showCount(value)} />
+              <div class="sdk-caption">
+                <Link href={packageUrl} size="sm">{source} package</Link>
+                {coverage != null && coverage < days && <Text size="sm" color="muted">{coverage} of {days} days reported</Text>}
+              </div>
+            </Panel>
+          ))}
+        </div>
+        {selectedSdk && <>
+          <div class="section-controls">
+            <AdoptionPicker {path} {state} anchor="downloads" name="sdk" label="SDK trend" value={selectedSdk.id} options={sdkChoices} />
+          </div>
+          <AdoptionMetricPair
+            label={selectedSdk.label}
+            description="Registry downloads can include automated builds and retries."
+            rows={sdkSeries}
+            {grain}
+            axisStart={cutoff}
+            axisEnd={lastDay}
+            growthLabel="Cumulative downloads in this window"
+          />
+        </>}
+        <ul class="sdk-list" aria-label="More Loom SDKs" role="list">
+          {moreSdks.map(([label, href]) => <li><Link {href} size="sm">{label}</Link></li>)}
+        </ul>
+      </section>
+
+      <section class="adoption-section" id="repository" aria-labelledby="repository-title">
+        <div class="section-heading">
+          <Title type="h2" size="lg" id="repository-title">GitHub stars</Title>
+          {starSeries.length > 0 && <AdoptionDownload {path} {state} dataset="stars" label="Export stars CSV" />}
+        </div>
+        <Panel className="stars-chart" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
+          <AdoptionTrend
+            label="GitHub stars over time"
+            rows={starSeries}
+            {grain}
+            mode="line"
+            fitObservedRange
+            axisStart={periodStart(cutoff, grain)}
+            axisEnd={periodStart(stars?.day === today ? today : lastDay, grain)}
+            emptyMessage="Star history is unavailable for this window."
+          />
+        </Panel>
+      </section>
+
+      {selectedDistribution && (
+        <section class="adoption-section" id="distribution" aria-labelledby="distribution-title">
+          <div class="section-heading">
+            <Title type="h2" size="lg" id="distribution-title">Release distribution</Title>
+          </div>
+          <div class="sdk-metrics counters">
+            {distribution.map(({ label, value, day, source }) => (
+              <Panel className="adoption-stat" orientation="vertical" alignItems="start" padding="md" gap="xs" hasBorder fillWidth>
+                <BigStat className="metric-value" height="auto" order="titleBottom" size="lg" {label} title={showCount(value)} />
+                <Text size="sm" color="muted">{source}{day && " · " + showDay(day) + " UTC"}</Text>
+              </Panel>
+            ))}
+          </div>
+          <div class="section-controls">
+            <AdoptionPicker {path} {state} anchor="distribution" name="distribution" label="Distribution metric"
+              value={selectedDistribution.id} options={distribution.map(({ id, label }) => ({ value: id, label }))} />
+          </div>
+          <AdoptionMetricPair
+            label={selectedDistribution.label}
+            rows={distributionSeries}
+            {grain}
+            kind="gauge"
+            axisStart={cutoff}
+            axisEnd={lastDay}
+            observedLabel="Cumulative snapshot"
+            growthLabel={"Net change per " + grain}
+          />
+        </section>
+      )}
+    </>}
+
+    <div class="adoption-cta">
+      <Link className="primary" href="/docs/getting-started/quickstart">Get started with Loom</Link>
+    </div>
+  </div>
+</SiteFrame>
+
+<style>
+  :global(#content):has(> .adoption) { padding-block-start: clamp(1.5rem, 3.8vw, 3.5rem); }
+  .adoption { display: grid; grid-template-columns: minmax(0, 1fr); min-inline-size: 0; }
+  :global(html:has(.adoption)) { scroll-padding-block-start: 5.5rem; }
+  .adoption-intro { display: grid; gap: 0.4rem; margin-block-end: clamp(1rem, 3vw, 2rem); }
+  .adoption-intro h1 { font-size: clamp(2.35rem, 5.75vw, 4.25rem); }
+  .adoption-tabs { display: flex; align-items: end; gap: 0.5rem; border-block-end: 1px solid var(--line); }
+  .adoption-tabs :global(a) { display: inline-flex; align-items: center; min-block-size: 3rem; padding-inline: 0.9rem; border-block-end: 2px solid transparent; color: var(--muted); font-weight: 600; text-decoration: none; }
+  .adoption-tabs :global(a:hover), .adoption-tabs :global(a[aria-current="page"]) { color: var(--click-global-color-text-default); }
+  .adoption-tabs :global(a[aria-current="page"]) { border-block-end-color: var(--accent); }
+  .adoption-controls, .section-heading, .section-controls, .coverage, .sdk-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; }
+  .adoption-controls, .section-heading { justify-content: space-between; }
+  .adoption-controls { padding-block: 0.9rem clamp(1rem, 2.5vw, 1.65rem); }
+  .overview { margin-block-end: clamp(1.35rem, 3vw, 2.25rem); }
+  .metrics, .sdk-metrics, .two-column { display: grid; gap: 0.75rem; }
+  .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .sdk-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .counters, .two-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .two-column > :only-child { grid-column: 1 / -1; }
+  .two-column:empty { display: none; }
+  .two-column + :global(.activity-charts) { margin-block-start: 0.75rem; }
+  .adoption :global(.adoption-stat) { min-inline-size: 0; overflow-wrap: anywhere; }
+  .adoption :global(.metric-value) { padding: 0; border: 0; background: transparent; font-variant-numeric: tabular-nums; }
+  .coverage { margin-block-start: 0.65rem; }
+  .adoption-section { margin-block-start: clamp(1.6rem, 3.5vw, 3.2rem); padding-block-start: clamp(1rem, 2.6vw, 1.8rem); border-block-start: 1px solid var(--line); min-inline-size: 0; }
+  .section-heading { margin-block-end: 0.9rem; }
+  .section-controls { align-items: end; margin-block: 0.85rem; }
+  .lifecycle-chart { display: grid; gap: 0.75rem; min-inline-size: 0; }
+  .adoption :global(.stars-chart) { min-inline-size: 0; }
+  .version-detail { margin-block-start: 0.8rem; }
+  .version-detail p { margin-block-end: 0.45rem; }
+  .version-detail summary { cursor: pointer; padding-block: 0.6rem; color: var(--click-global-color-text-link-default); }
+  .sdk-list { display: flex; flex-wrap: wrap; gap: 0 1rem; list-style: none; padding: 0; margin-block: 0.65rem 0; }
+  .sdk-list :global(a) { display: inline-flex; align-items: center; min-block-size: 2.75rem; }
+  .adoption-cta { margin-block-start: clamp(1.4rem, 3vw, 2.75rem); }
+  @media (max-width: 60rem) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 43rem) { .two-column, .sdk-metrics { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 26rem) {
+    .metrics :global(.adoption-stat) { padding: 0.75rem; }
+    .metrics :global(.metric-value > :last-child) { font-size: clamp(1.125rem, 6vw, 1.5rem); }
+  }
+</style>

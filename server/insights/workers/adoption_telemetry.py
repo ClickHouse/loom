@@ -59,7 +59,14 @@ async def run_pass() -> None:
     restricted = (
         configured_restricted_pairs() if settings.adoption_telemetry_share_domains else None
     )
-    report = await window_report(start, end, installation_id, restricted=restricted, ch=ch)
+    report = await window_report(
+        start,
+        end,
+        installation_id,
+        restricted=restricted,
+        share_domain_activity=settings.adoption_telemetry_share_domain_activity,
+        ch=ch,
+    )
     pass_context.check_stop()
     try:
         async with get_http_client().stream(

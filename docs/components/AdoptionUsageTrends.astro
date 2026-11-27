@@ -1,116 +1,35 @@
 ---
-import { Link } from "@clickhouse/click-ui/Link";
-import { Panel } from "@clickhouse/click-ui/Panel";
-import { Table } from "@clickhouse/click-ui/Table";
-import { Text } from "@clickhouse/click-ui/Text";
-import { Title } from "@clickhouse/click-ui/Title";
+import type { ChartGrain } from "../lib/adoption-chart-series.mjs";
+import { activityPoints } from "../lib/adoption-chart-series.mjs";
 import { usageMetricGroups } from "../lib/adoption-view.mjs";
-import AdoptionTrend from "./AdoptionTrend.astro";
+import AdoptionMetricPair from "./AdoptionMetricPair.astro";
 
 type Metric = (typeof usageMetricGroups)[number]["metrics"][number][0];
 type ActivityRow = { period: string; days_reported: number; current: boolean } & Partial<Record<Metric, number | null>>;
 
 interface Props {
   rows: ActivityRow[];
-  grain: "day" | "week" | "month";
-  csvHref: string;
+  grain: ChartGrain;
+  metric?: string;
+  rangeStart?: string;
+  rangeEnd?: string;
 }
 
-const { rows, grain, csvHref } = Astro.props;
-const start = rows[0]?.period;
-const end = rows.at(-1)?.period;
-const number = new Intl.NumberFormat("en-US");
-const latestRows = rows.slice(-20);
-const limitedTable = latestRows.length < rows.length;
-const tableLabel = limitedTable ? "View latest 20 periods" : "View data table";
-const comparableGroups = usageMetricGroups
-  .map(({ title, note, metrics, sharedScale }) => {
-    const series = Array.from(metrics)
-      .map(([key, label]) => ({
-        key,
-        label,
-        points: rows.flatMap((row) => {
-          const value = row[key];
-          return typeof value === "number" && Number.isFinite(value)
-            ? [{ day: row.period, value, current: row.current }]
-            : [];
-        }),
-      }))
-      .filter(({ points }) => points.length > 0);
-    const axisMaximum = sharedScale
-      ? Math.max(0, ...series.flatMap(({ points }) => points.map(({ value }) => value)))
-      : 0;
-    return { title, note, series, axisMaximum };
-  })
-  .filter(({ series }) => series.length > 0);
+const { rows, grain, metric, rangeStart, rangeEnd } = Astro.props;
+const metrics = usageMetricGroups.flatMap<readonly [Metric, string]>(({ metrics }) => metrics);
+const hasPoints = ([key]: (typeof metrics)[number]) => rows.some((row) => Number.isFinite(row[key]));
+const selected = metrics.find((entry) => entry[0] === metric) ?? metrics.find(hasPoints) ?? metrics[0];
+const footprint = selected?.[0].startsWith("median_");
 ---
 
-{comparableGroups.length > 0 && <div class="usage-trends">
-  <div class="usage-summary">
-    <Text size="sm" color="muted">Gaps indicate missing data. Hollow points mark the period in progress.</Text>
-    {limitedTable && <Link size="sm" href={csvHref} icon="download">Download all usage data (CSV)</Link>}
-  </div>
-  {comparableGroups.map(({ title, note, series, axisMaximum }) => (
-    <Panel className="usage-group" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
-      <Title type="h3" size="sm">{title}</Title>
-      <Text size="sm" color="muted">{note}</Text>
-      <div class="usage-charts">
-        {series.map(({ label, points }) => (
-          <div class="usage-chart">
-            <Title type="h4" size="xs">{label}</Title>
-            <AdoptionTrend
-              rows={points}
-              label={label}
-              grain={grain}
-              mode="line"
-              axisMaximum={axisMaximum}
-              axisStart={start}
-              axisEnd={end}
-              compact
-              showNotes={false}
-              showTable={false}
-            />
-          </div>
-        ))}
-      </div>
-      <details>
-        <summary aria-label={tableLabel + " for " + title}>{tableLabel}</summary>
-        <Table
-          aria-label={title}
-          size="sm"
-          mobileLayout="scroll"
-          headers={[
-            { label: "Period start (UTC)", scope: "col" },
-            ...series.map(({ label }) => ({ label, scope: "col" as const })),
-            { label: "Days reported", scope: "col" },
-          ]}
-          rows={latestRows.map((row) => ({
-            id: row.period,
-            items: [
-              { label: row.period + (row.current ? " to date" : "") },
-              ...series.map(({ key }) => ({ label: row[key] == null ? "—" : number.format(row[key]) })),
-              { label: number.format(row.days_reported) },
-            ],
-          }))}
-        />
-      </details>
-    </Panel>
-  ))}
-</div>}
-
-<style>
-  .usage-trends { display: grid; gap: 0.9rem; }
-  .usage-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.35rem 1rem; }
-  .usage-summary :global(a) { display: inline-flex; align-items: center; min-block-size: 2.75rem; }
-  .usage-group, .usage-chart { min-inline-size: 0; }
-  .usage-charts {
-    display: grid;
-    inline-size: 100%;
-    gap: 1.1rem 1.35rem;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
-    margin-block: 0.6rem;
-  }
-  .usage-chart { border-block-start: 1px solid var(--line); padding-block-start: 0.8rem; }
-  details { inline-size: 100%; }
-  summary { padding-block: 0.45rem; cursor: pointer; color: var(--click-global-color-text-link-default); font-size: 0.86rem; }
-</style>
+{selected && (
+  <AdoptionMetricPair
+    label={selected[1]}
+    description={footprint ? "Median daily peak among active installations." : undefined}
+    rows={activityPoints(rows, selected[0], grain)}
+    {grain}
+    kind={footprint ? "gauge" : "additive"}
+    axisStart={rangeStart}
+    axisEnd={rangeEnd}
+  />
+)}

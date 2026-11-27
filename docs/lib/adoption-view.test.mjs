@@ -1,84 +1,60 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { readAdoptionPage } from "./adoption-request.mjs";
+
 import {
   activityForRange,
   adoptionCsv,
-  adoptionDomainsForRange,
   adoptionFilters,
   adoptionGrowthForRange,
-  adoptionUrl,
+  adoptionPaths,
   csvBody,
-  omitDefaultAdoptionFilters,
   relativeChange,
   summarizeOss,
 } from "./adoption-view.mjs";
 
-test("counts every distinct reported domain in the selected directory", () => {
-  const data = {
-    domains: ["legacy.example", "gmail.com"],
-    domainDirectories: {
-      30: ["work.example", "Work.Example", "gmail.com", "GMAIL.COM"],
-      90: ["work.example", "older.example", "gmail.com"],
+test("normalizes reporting periods and keeps daily charts within 30 days", () => {
+  assert.deepEqual(
+    adoptionFilters(new URLSearchParams("days=90&grain=day&cohort=week&installation=50000&domain=1000000")),
+    {
+      days: 90,
+      grain: "week",
+      cohort: "week",
+      installation: 50000,
+      domain: 1000000,
     },
-  };
-  assert.deepEqual(adoptionDomainsForRange(data, 30), {
-    days: 30,
-    domains: data.domainDirectories[30],
-    ranked: true,
-    domainCount: 2,
-  });
-  assert.equal(adoptionDomainsForRange(data, 90).domainCount, 3);
-  assert.deepEqual(adoptionDomainsForRange(data, 365), adoptionDomainsForRange(data, 90));
-  assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: null }, 30).domainCount, null);
-  assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: null }, 90).domainCount, 2);
-  assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: { 30: [] } }, 30).domainCount, 0);
-  assert.equal(adoptionDomainsForRange({ ...data, domainDirectories: { 30: ["gmail.com"] } }, 30).domainCount, 1);
-});
-
-test("allowlists shareable ranges, grains, and thresholds", () => {
-  const filters = adoptionFilters(
-    new URLSearchParams("tab=oss&days=90&grain=day&cohort=week&installation=50000&domain=1000000"),
-  );
-  assert.deepEqual(filters, {
-    tab: "oss",
-    days: 90,
-    grain: "day",
-    cohort: "week",
-    installation: 50000,
-    domain: 1000000,
-  });
-  assert.equal(adoptionUrl(filters, {}, "#downloads"), "/adoption?tab=oss&days=90#downloads");
-  assert.equal(
-    adoptionUrl(filters, { tab: "self-hosted" }, "#lifecycle"),
-    "/adoption?days=90&grain=day&installation=50000&domain=1000000#lifecycle",
   );
   assert.deepEqual(adoptionFilters(new URLSearchParams("days=31&grain=__proto__&domain=50001")), {
-    tab: "self-hosted",
     days: 30,
-    grain: "week",
+    grain: "day",
     cohort: "week",
     installation: 0,
     domain: 0,
   });
+  const form = new FormData();
+  form.set("days", "365");
+  assert.equal(adoptionFilters(form).grain, "month");
+  assert.equal(adoptionFilters(form).cohort, "month");
+  form.set("grain", "week");
+  assert.equal(adoptionFilters(form).grain, "week");
+  assert.equal(adoptionFilters(new URLSearchParams("days=30&cohort=month")).cohort, "month");
+  assert.deepEqual(adoptionPaths, { "self-hosted": "/adoption", oss: "/adoption/open-source" });
 });
 
-test("shortens default links and native filter submissions while preserving selections and exports", () => {
-  const form = new FormData();
-  for (const [key, value] of Object.entries(adoptionFilters(new URLSearchParams("days=90")))) {
-    form.set(key, String(value));
-  }
-  omitDefaultAdoptionFilters(form);
-  assert.deepEqual([...form], [["days", "90"]]);
-
-  const defaults = adoptionFilters(new URLSearchParams());
-  assert.equal(adoptionUrl(defaults), "/adoption");
-  assert.equal(adoptionUrl(defaults, { tab: "oss" }), "/adoption?tab=oss");
-  assert.equal(adoptionUrl(defaults, { csv: "activity" }), "/adoption?csv=activity");
-  assert.equal(adoptionUrl(defaults, {}, "#installation-activity"), "/adoption#installation-activity");
-  const monthly = adoptionFilters(new URLSearchParams("cohort=month"));
-  assert.equal(monthly.cohort, "month");
-  assert.equal(adoptionUrl(monthly), "/adoption?cohort=month");
+test("keeps the self-hosted route clean when a reporting window is submitted", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 503 }));
+  const url = new URL("https://loom.clickhouse.com/adoption");
+  const request = new Request(url, {
+    method: "POST",
+    body: new URLSearchParams({ days: "90", grain: "day" }),
+  });
+  const result = await readAdoptionPage(request, url, "self-hosted");
+  assert.ok(!(result instanceof Response));
+  assert.equal(result.path, "/adoption");
+  assert.equal(result.filters.days, 90);
+  assert.equal(result.filters.grain, "week");
+  assert.equal(result.headers.get("Cache-Control"), "no-store");
 });
 
 test("retains the cumulative baseline and sorts the selected growth periods", () => {
@@ -89,7 +65,7 @@ test("retains the cumulative baseline and sorts the selected growth periods", ()
     { grain: "week", period: "2026-11-09", period_end: "2026-11-16", first_active: 3, cumulative_active: 41 },
     { grain: "week", period: "2026-11-23", period_end: "2026-11-30", first_active: 0, cumulative_active: 50 },
   ];
-  const filters = adoptionFilters(new URLSearchParams());
+  const filters = adoptionFilters(new URLSearchParams("grain=week"));
   const series = adoptionGrowthForRange(rows, filters, "2026-11-19");
   assert.deepEqual(
     series.map(({ period, cumulative_active, current }) => [period, cumulative_active, current]),
@@ -141,7 +117,7 @@ test("projects only an in-progress period with every completed day represented",
       forecast_eligible: true,
     },
   ];
-  const filters = adoptionFilters(new URLSearchParams());
+  const filters = adoptionFilters(new URLSearchParams("grain=week"));
   const data = activityForRange(rows, filters, "2026-11-19");
   assert.deepEqual(
     data.map(({ estimate, current }) => [estimate, current]),
@@ -153,6 +129,49 @@ test("projects only an in-progress period with every completed day represented",
   assert.equal(activityForRange(rows, filters, "2026-11-20")[1].estimate, null);
   assert.equal(adoptionCsv("activity", data, [], [])[2][5], 280);
   assert.equal(adoptionCsv("unknown", [], [], []), null);
+});
+
+test("keeps a reported opening calendar month that overlaps the rolling window", () => {
+  const rows = [
+    {
+      grain: "month",
+      period: "2026-11-01",
+      period_end: "2026-12-01",
+      reporting: 6,
+      active: 3,
+      operations: 61,
+      days_reported: 15,
+    },
+    {
+      grain: "month",
+      period: "2026-12-01",
+      period_end: "2027-01-01",
+      reporting: 2,
+      active: 0,
+      operations: 0,
+      days_reported: 2,
+    },
+    {
+      grain: "month",
+      period: "2027-01-01",
+      period_end: "2027-02-01",
+      reporting: 99,
+      active: 11,
+      operations: 100,
+      days_reported: 1,
+    },
+  ];
+  const filters = adoptionFilters(new URLSearchParams("days=30&grain=month"));
+  assert.deepEqual(
+    activityForRange(rows, filters, "2027-01-01").map(({ period, reporting, active, operations, opening }) => [
+      period,
+      reporting,
+      active,
+      operations,
+      opening,
+    ]),
+    [["2026-12-01", 2, 0, 0, true]],
+  );
 });
 
 test("exports every usage period with coverage, exact zeros, and blank missing values", () => {

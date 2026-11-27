@@ -4,6 +4,7 @@
  "adaptive_thresholds": true,
  "adoption_telemetry_enabled": true,
  "adoption_telemetry_interval_seconds": 3600,
+ "adoption_telemetry_share_domain_activity": false,
  "adoption_telemetry_share_domains": false,
  "allow_insecure": false,
  "anthropic_base_url": "https://api.anthropic.com",

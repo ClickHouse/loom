@@ -56,6 +56,8 @@ PUBLIC_BUILD_INPUTS = (
     *SITE_BUILD_INPUTS,
     "docs/components/",
     "docs/lib/adoption-data.mjs",
+    "docs/lib/adoption-chart-series.mjs",
+    "docs/lib/adoption-request.mjs",
     "docs/lib/adoption-view.mjs",
     HOME_LOCALES_PATH,
     "docs/scripts/mount-site-pages.mjs",
