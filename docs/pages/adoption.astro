@@ -308,10 +308,10 @@ const ossCounterGroups = [
               </Panel>;
             })}
             <Panel className="metric" orientation="vertical" alignItems="start" padding="lg" gap="xs" hasBorder fillWidth>
-              <BigStat className="statistic" height="auto" label="Company domains" title={metricValue(domainDirectory.companyCount)} order="titleBottom" size="sm" />
-              <Text color="muted" size="sm">{domainDirectory.companyCount === null
+              <BigStat className="statistic" height="auto" label="Reported domains" title={metricValue(domainDirectory.domainCount)} order="titleBottom" size="sm" />
+              <Text color="muted" size="sm">{domainDirectory.domainCount === null
                 ? "Domain data is unavailable for this period."
-                : `From the ${domainDirectory.days}-day domain directory. Excludes common personal email providers.`}</Text>
+                : `Distinct contact domains with successful requests in the ${domainDirectory.days}-day directory.`}</Text>
             </Panel>
           </div>
           <div class="coverage">
@@ -523,8 +523,8 @@ const ossCounterGroups = [
             <dd>A reporting installation sent at least one telemetry report. An active installation recorded a successful request. Each installation counts once per period.</dd>
           </div>
           <div>
-            <dt>Company domains</dt>
-            <dd>Each distinct reported contact domain with a successful request counts once. Common personal email providers are excluded. The one-year view uses the 90-day domain directory.</dd>
+            <dt>Reported domains</dt>
+            <dd>Each distinct reported contact domain with a successful request counts once. The one-year view uses the 90-day domain directory.</dd>
           </div>
           <div>
             <dt>Comparison and projection</dt>

@@ -82,9 +82,9 @@ shows every self-reported contact domain from version 2 reports with attributed
 successful requests in today's completed reporting windows or the previous 30 or
 90 UTC days. The directory orders names by those requests. The one-year view
 uses the 90-day directory, the longest period under the public domain-sharing
-notice. The company domains count uses the same directory, counts each domain
-once, and excludes common personal email providers. Use the domain-sharing
-setting above to omit domains from your reports.
+notice. The reported domains count uses the same directory and counts each
+domain once. Use the domain-sharing setting above to omit domains from your
+reports.
 `loom_adoption_windows` contains one report per
 `(installation_id, window_start)`. The daily rollup adds request counts and
 uses the peak half-day distinct count for each installation.
@@ -106,8 +106,8 @@ Track the managed stage from pilot requests and conversations with the company. 
 can enroll several installations under one company ID. The Self-hosted tab shows
 reporting coverage, deployment growth, activity, feature and transport usage,
 model usage, installation size, versions, retention, and the number of distinct
-company domains. Growth, activity and period comparisons
-use complete UTC days. Growth counts each installation once at its first
+reported contact domains. Growth, activity and period comparisons use complete
+UTC days. Growth counts each installation once at its first
 successful request in retained telemetry. Changes to coverage and report expiration
 can change the observed total. Activity counts installations with a successful
 request in each period and sums successful requests.

@@ -3,57 +3,16 @@ export const grains = { day: "Daily", week: "Weekly", month: "Monthly" };
 export const thresholds = { 0: "Any successful request", 50000: "More than 50,000", 1000000: "More than 1,000,000" };
 const defaults = { tab: "self-hosted", days: 30, grain: "week", cohort: "week", installation: 0, domain: 0 };
 const dayMs = 86_400_000;
-const personalEmailDomains = new Set([
-  "126.com",
-  "163.com",
-  "aol.com",
-  "fastmail.com",
-  "gmail.com",
-  "gmx.com",
-  "gmx.de",
-  "gmx.net",
-  "googlemail.com",
-  "hey.com",
-  "hotmail.com",
-  "icloud.com",
-  "live.com",
-  "mac.com",
-  "magenta.de",
-  "mail.com",
-  "mail.ru",
-  "me.com",
-  "msn.com",
-  "myyahoo.com",
-  "outlook.com",
-  "pm.me",
-  "proton.me",
-  "protonmail.ch",
-  "protonmail.com",
-  "qq.com",
-  "rocketmail.com",
-  "t-online.de",
-  "web.de",
-  "yahoo.co.jp",
-  "yahoo.co.uk",
-  "yahoo.com",
-  "yahoo.fr",
-  "yandex.com",
-  "yandex.ru",
-  "ymail.com",
-]);
 
 export function adoptionDomainsForRange({ domains, domainDirectories }, days) {
   const directoryDays = Math.min(days, 90);
   const rankedDomains = domainDirectories?.[directoryDays];
   const reportedDomains = rankedDomains ?? (directoryDays === 90 ? domains : null);
-  const companyDomains = reportedDomains
-    ?.map((domain) => domain.toLowerCase())
-    .filter((domain) => !personalEmailDomains.has(domain));
   return {
     days: directoryDays,
     domains: reportedDomains,
     ranked: rankedDomains != null,
-    companyCount: companyDomains ? new Set(companyDomains).size : null,
+    domainCount: reportedDomains === null ? null : new Set(reportedDomains.map((domain) => domain.toLowerCase())).size,
   };
 }
 
