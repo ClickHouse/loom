@@ -1174,6 +1174,16 @@ has a gold question set; it is never run in CI, whose embedder is fake
 - **Erase an index.** `erasure.request` with `scope_type = namespace` on a code namespace
   also purges the `loom.code_*` tables. An entry that is still configured is re-indexed
   from scratch on the next pass, so retire it first.
+- **Writes during an erasure.** While an erasure that may reach a code namespace is
+  unfinished, the ingest pass, the compiler tiers, the summary, embed recovery, coverage
+  import and graph stats workers skip it and `code.refresh` answers `ERASURE_RUNNING`. The
+  purge refuses with `OVERLOADED` while work begun before the erasure was recorded may
+  still write the namespace: a live entry lock or `code.refresh` lease on it, or a code
+  worker's pass that may have begun before then (an enabled worker with no finished pass
+  yet counts), until that pass's deadline; a worker status that cannot be read refuses
+  too. The recovery worker retries the erasure; once it has given up, repeat the request. This is
+  best effort: a statement already sent, or a writer of an older build, can still leave
+  rows, and `verify.residue` then fails the saga so it is repeated.
 
 ## When a tier fails
 

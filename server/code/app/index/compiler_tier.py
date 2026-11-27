@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from server.code.app.index import tier_health
+from server.code.app.index import erasing, tier_health
 from server.code.app.index.entry_lock import EntryLockHeld, EntryLockLost, check_held, entry_lock
 from server.code.app.index.git_proxy import GitProxyRefused, NetworkGit
 from server.code.app.index.gitrepo import is_local_remote, upload_pack_args
@@ -127,7 +127,12 @@ async def run_tier[R: TierResult](
             if not await worker_owns(repo, cfg, producer):
                 await tier_health.forget(repo, cfg.org, cfg.namespace, not_run)
                 continue
-            if skip := unsandboxed_skip(cfg, worker, runs_repo_code=runs_repo_code):
+            erased = await erasing.being_erased(cfg.org, cfg.namespace)
+            if (
+                skip := "being erased"
+                if erased
+                else unsandboxed_skip(cfg, worker, runs_repo_code=runs_repo_code)
+            ):
                 result.skipped.append(f"{cfg.namespace}: {skip}")
                 continue
             result.repos_checked += 1
