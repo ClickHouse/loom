@@ -15,24 +15,34 @@ from server.llm import agent_vertex, customer, vertex_auth
 from server.settings import settings
 
 
-def _sse(parts: list[dict[str, Any]]) -> httpx.Response:
+def _sse(parts: list[dict[str, Any]], usage: dict[str, int]) -> httpx.Response:
     frames = [
         {"candidates": [{"content": {"parts": parts}}]},
         {
             "candidates": [{"finishReason": "STOP"}],
-            "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 10},
+            "usageMetadata": usage,
         },
     ]
     return httpx.Response(200, text="".join(f"data: {json.dumps(frame)}\n\n" for frame in frames))
 
 
+@pytest.mark.parametrize(
+    ("provider_ids", "sparse_tool_usage"),
+    [
+        pytest.param(({}, {}), False, id="match-by-order"),
+        pytest.param(({"id": "vertex-first"}, {"id": "vertex-second"}), False, id="match-by-id"),
+        pytest.param(({}, {}), True, id="tool-only-usage"),
+    ],
+)
 async def test_vertex_assistant_replays_parallel_and_sequential_calls(
     monkeypatch: pytest.MonkeyPatch,
+    provider_ids: tuple[dict[str, str], dict[str, str]],
+    sparse_tool_usage: bool,
 ) -> None:
     monkeypatch.setattr(settings, "assistant_provider", "vertex")
     monkeypatch.setattr(settings, "assistant_model", "vertex:gemini-3.1-flash-lite")
     monkeypatch.setattr(settings, "vertex_project", "test-project")
-    monkeypatch.setattr(settings, "vertex_location", "global")
+    monkeypatch.setattr(settings, "vertex_location", "eu")
     monkeypatch.setattr(settings, "assistant_max_steps", 4)
     monkeypatch.setattr(runtime, "_afford", AsyncMock())
     monkeypatch.setattr(
@@ -47,13 +57,24 @@ async def test_vertex_assistant_replays_parallel_and_sequential_calls(
         return {"value": query}
 
     monkeypatch.setattr(Tools, "_request", read_tool)
+    first_id, second_id = provider_ids
     parallel = [
         {"text": "private thought", "thought": True, "thoughtSignature": "dGhvdWdodA=="},
         {
-            "functionCall": {"name": "loom_memory_get", "args": {"memory_key": "first"}},
+            "functionCall": {
+                "name": "loom_memory_get",
+                "args": {"memory_key": "first"},
+                **first_id,
+            },
             "thoughtSignature": "Zmlyc3Q=",
         },
-        {"functionCall": {"name": "loom_memory_get", "args": {"memory_key": "second"}}},
+        {
+            "functionCall": {
+                "name": "loom_memory_get",
+                "args": {"memory_key": "second"},
+                **second_id,
+            }
+        },
     ]
     sequential = [
         {
@@ -63,14 +84,32 @@ async def test_vertex_assistant_replays_parallel_and_sequential_calls(
     ]
     output = "Use the deployment policy. [memory:third@v1]"
     requests: list[dict[str, Any]] = []
-    replies = iter([parallel, sequential, [{"text": output}]])
+    normal_usage = {"promptTokenCount": 100, "candidatesTokenCount": 10}
+    parallel_usage = (
+        {"promptTokenCount": 100, "thoughtsTokenCount": 3} if sparse_tool_usage else normal_usage
+    )
+    sequential_usage = (
+        {"promptTokenCount": 100, "candidatesTokenCount": 0, "thoughtsTokenCount": 5}
+        if sparse_tool_usage
+        else normal_usage
+    )
+    replies = iter(
+        [
+            _sse(parallel, parallel_usage),
+            _sse(sequential, sequential_usage),
+            _sse([{"text": output}], normal_usage),
+        ]
+    )
 
     def respond(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "aiplatform.googleapis.com"
-        assert request.url.path.endswith("/gemini-3.1-flash-lite:streamGenerateContent")
+        assert request.url.host == "aiplatform.eu.rep.googleapis.com"
+        assert request.url.path == (
+            "/v1/projects/test-project/locations/eu/publishers/google/models/"
+            "gemini-3.1-flash-lite:streamGenerateContent"
+        )
         assert request.url.params["alt"] == "sse"
         requests.append(json.loads(request.content))
-        return _sse(next(replies))
+        return next(replies)
 
     state = agent.State()
     question = "What is our deployment policy?"
@@ -114,9 +153,10 @@ async def test_vertex_assistant_replays_parallel_and_sequential_calls(
                 "functionResponse": {
                     "name": "loom_memory_get",
                     "response": {"output": {"value": key}},
+                    **provider_id,
                 }
             }
-            for key in ("first", "second")
+            for key, provider_id in zip(("first", "second"), provider_ids, strict=True)
         ],
     }
     assert third["contents"][:-2] == second["contents"]
@@ -137,8 +177,9 @@ async def test_vertex_assistant_replays_parallel_and_sequential_calls(
         for choice in frame["choices"]
         if "content" in choice["delta"]
     ] == [output]
+    output_tokens = 18 if sparse_tool_usage else 30
     assert frames[-1]["usage"] == {
         "prompt_tokens": 300,
-        "completion_tokens": 30,
-        "total_tokens": 330,
+        "completion_tokens": output_tokens,
+        "total_tokens": 300 + output_tokens,
     }

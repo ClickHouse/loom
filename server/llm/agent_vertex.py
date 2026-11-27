@@ -18,7 +18,7 @@ from server.settings import settings
 
 def _contents(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     contents: list[dict[str, Any]] = []
-    calls: dict[str, dict[str, str]] = {}
+    calls: dict[str, dict[str, Any]] = {}
     host_calls: dict[str, dict[str, str]] = {}
 
     def append(role: str, parts: list[dict[str, Any]]) -> None:
@@ -49,19 +49,17 @@ def _contents(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     ],
                 )
             else:
-                append(
-                    "user",
-                    [
-                        {
-                            "functionResponse": {
-                                "name": calls[call_id]["name"],
-                                "response": {"output": result},
-                            }
-                        }
-                    ],
-                )
+                call = calls[call_id]
+                response = {"name": call["name"], "response": {"output": result}}
+                if provider_id := call.get("id"):
+                    response["id"] = provider_id
+                append("user", [{"functionResponse": response}])
         elif parts := message.get("vertex_parts"):
-            calls.update((call["id"], call["function"]) for call in message["tool_calls"])
+            provider_calls = (part["functionCall"] for part in parts if "functionCall" in part)
+            calls.update(
+                (local["id"], provider)
+                for local, provider in zip(message["tool_calls"], provider_calls, strict=True)
+            )
             # Signatures belong to individual parts. Preserve their order and contents.
             append("model", parts)
         elif host := message.get("tool_calls"):
@@ -168,8 +166,13 @@ class _VertexStream:
             raise AssistantUpstreamError("Vertex returned an incomplete tool request")
         if len(self.turn.calls) >= settings.assistant_max_tool_calls:
             raise AssistantUpstreamError("the model requested too many tools")
-        name, args = call.get("name"), call.get("args", {})
-        if not isinstance(name, str) or not name or not isinstance(args, dict):
+        name, args, call_id = call.get("name"), call.get("args", {}), call.get("id")
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(args, dict)
+            or (call_id is not None and not isinstance(call_id, str))
+        ):
             raise AssistantUpstreamError("Vertex returned an invalid tool request")
         arguments = json.dumps(args, ensure_ascii=False)
         if len(name) > 200 or len(arguments) > 20000:
@@ -182,9 +185,9 @@ class _VertexStream:
         # Before the finish reason, a usage snapshot can cover only part of the answer.
         if self.usage is not None:
             self.turn.usage = _usage(self.usage)
+            # Tool-only turns can report no candidate tokens.
             self.turn.usage_complete = (
-                self.turn.stop not in ("stop", "tool_calls")
-                or self.usage.get("candidatesTokenCount", 0) > 0
+                self.turn.stop != "stop" or self.usage.get("candidatesTokenCount", 0) > 0
             )
         self.turn.check()
         if self.turn.calls:
