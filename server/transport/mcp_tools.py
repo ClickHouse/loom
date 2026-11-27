@@ -93,8 +93,9 @@ def _name_ops_in_fields(schema: Any, listed: Set[str], *, writes: bool) -> Any:
     return out
 
 
-# The hand-written tools every listing but `assistant` carries; the builder
-# below makes one descriptor for each.
+# The hand-written tools of every listing but `assistant` and the listing of
+# code tools alone (which leaves them callable by name); the builder below makes
+# one descriptor for each.
 SYNTHETIC_TOOL_NAMES = frozenset(
     {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}
 )
@@ -404,10 +405,7 @@ def listed_tool_names(toolset: str | None, schema_profile: str | None = None) ->
     from server.settings import settings
 
     resolved = resolve_toolset(toolset, settings.mcp_toolset)
-    ops = listed_ops(resolved)
-    if code_only_listing(resolved, schema_profile):
-        return {op.mcp_tool_name for op in ops if op.name.startswith("code.")}
-    return _tool_names(ops, resolved)
+    return _listing(resolved, code_only=code_only_listing(resolved, schema_profile))[1]
 
 
 def name_ops_for_toolset(text: str, toolset: str | None, schema_profile: str | None = None) -> str:
@@ -458,6 +456,16 @@ def _tool_names(ops: list[Operation], resolved: str) -> set[str]:
     """``ops``' tool names plus the synthetic ones, on a resolved toolset."""
     names = {op.mcp_tool_name for op in ops}
     return names if is_assistant(resolved) else names | SYNTHETIC_TOOL_NAMES
+
+
+def _listing(resolved: str, *, code_only: bool) -> tuple[list[Operation], set[str]]:
+    """The registry ops a `tools/list` on a resolved toolset describes, and every
+    tool name it shows. ``code_only`` is the connection's `code_only_listing`."""
+    ops = listed_ops(resolved)
+    if code_only:
+        ops = [op for op in ops if op.name.startswith("code.")]
+        return ops, {op.mcp_tool_name for op in ops}
+    return ops, _tool_names(ops, resolved)
 
 
 def listed_ops(toolset: str | None) -> list[Operation]:
@@ -539,9 +547,10 @@ _COMPACT_CODING_GREP_OMITTED_ARGS = {
     "neighbour_k",
     "deadline_ms",
 }
-# The listing of code tools alone also leaves out the scope arguments the bound
-# repository fills and the path filters `path_globs` expresses. The call accepts
-# the full set.
+# The listing of code tools alone also leaves out `namespace`, which the bound
+# repository fills, `namespaces`, which only a presence check across several
+# repositories takes, and the path filters `path_globs` expresses. The call
+# accepts the full set.
 _CODE_ONLY_GREP_OMITTED_ARGS = _COMPACT_CODING_GREP_OMITTED_ARGS | {
     "namespace",
     "namespaces",
@@ -560,10 +569,10 @@ def code_only_listing(toolset: str | None, schema_profile: str | None) -> bool:
 
 
 def lists_follow_code_scope(toolset: str | None, schema_profile: str | None) -> bool:
-    """Whether this URL's lists depend on the repository header: a `coding` URL
-    that asks for the compact profile lists the code tools alone when bound and
-    every tool when not. The header is the request's, so no shared cache may keep
-    either answer."""
+    """Whether this connection's lists depend on the repository header: a `coding`
+    connection whose URL asks for the compact profile lists the code tools alone
+    when bound and every tool when not. The header is the request's, so no shared
+    cache may keep either answer."""
     from server.settings import settings
 
     return (
@@ -582,9 +591,9 @@ async def _tools_descriptor(
     (`name_ops_for_listing`; every schema field description the profile sends
     too). The caller's default-workspace context is delivered once via the
     `initialize` `instructions` field, not duplicated per tool; descriptors
-    do not vary by caller, except on a compact `coding` URL, where they follow
-    the request's repository header (`code_only_listing`). ``toolset`` is the
-    per-request ``?toolset=`` override.
+    do not vary by caller, except on a `coding` connection whose URL asks for the
+    compact profile, where they follow the request's repository header
+    (`code_only_listing`). ``toolset`` is the per-request ``?toolset=`` override.
     """
     from server.settings import settings
     from server.transport.mcp_schemas import apply_schema_profile, resolve_schema_profile
@@ -593,8 +602,7 @@ async def _tools_descriptor(
     profile = resolve_schema_profile(schema_profile, settings.mcp_schema_profile)
     descriptors: list[dict[str, Any]] = []
     code_only = code_only_listing(toolset, schema_profile)
-    listed = listed_tool_names(toolset, schema_profile)
-    ops = [op for op in listed_ops(toolset) if op.mcp_tool_name in listed]
+    ops, listed = _listing(toolset, code_only=code_only)
     writes = routes_writes(toolset)
     for op in ops:
         custom = _curated_description(toolset, op.name)

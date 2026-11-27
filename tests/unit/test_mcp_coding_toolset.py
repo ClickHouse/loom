@@ -456,7 +456,8 @@ def test_a_bound_compact_coding_connection_lists_the_code_tools_alone(monkeypatc
     grep = tools["loom_code_grep"]["inputSchema"]
     unbound = asyncio.run(mt._tools_descriptor(schema_profile="compact", toolset="coding"))
     compact = next(t for t in unbound if t["name"] == "loom_code_grep")["inputSchema"]
-    # the binding fills the scope arguments, and `path_globs` expresses the two path filters
+    # the binding fills `namespace`, only a presence check across repositories takes
+    # `namespaces`, and `path_globs` expresses the two path filters
     left_out = {"namespace", "namespaces", "path_prefix", "langs"}
     assert set(grep["properties"]) == set(compact["properties"]) - left_out
     assert left_out <= set(compact["properties"])
@@ -475,6 +476,19 @@ def test_a_bound_compact_coding_connection_lists_the_code_tools_alone(monkeypatc
     explicit = _bound_listing("coding", "compact")
     assert [tool["name"] for tool in explicit] == list(tools)
     assert [tool["name"] for tool in explicit if tool.get("_meta")] == ["loom_code_callers"]
+
+
+def test_a_listing_builds_its_roster_and_reads_the_binding_once(monkeypatch) -> None:
+    calls: list[str] = []
+    roster, code_only = mt.listed_ops, mt.code_only_listing
+    monkeypatch.setattr(mt, "listed_ops", lambda *a: calls.append("roster") or roster(*a))
+    monkeypatch.setattr(
+        mt, "code_only_listing", lambda *a: calls.append("binding") or code_only(*a)
+    )
+    for profile in ("compact", "standard"):
+        calls.clear()
+        assert _bound_listing("coding", profile)
+        assert sorted(calls) == ["binding", "roster"]
 
 
 def test_a_reply_on_the_listing_of_code_tools_alone_names_no_tool_it_leaves_out() -> None:
@@ -521,17 +535,23 @@ def test_a_compact_deployment_default_keeps_every_tool_on_a_bound_connection(mon
         assert not mt.code_only_listing("coding", None)
         assert not mt.code_only_listing("coding", "bogus")  # an unknown value is the default
         assert mt.code_only_listing("coding", "compact")
-        assert mt.code_only_listing(None, "COMPACT") == (settings.mcp_toolset == "coding")
         assert mt.listed_tool_names("coding") == names
         assert mt.name_ops_for_toolset(text, "coding") == "Save with loom_memory_set."
         assert mt.name_ops_for_toolset(text, "coding", "compact") == text
+        # the toolset may be the deployment's default: the URL then names the profile alone
+        monkeypatch.setattr(settings, "mcp_toolset", "core")
+        assert not mt.code_only_listing(None, "COMPACT")
+        monkeypatch.setattr(settings, "mcp_toolset", "coding")
+        assert mt.code_only_listing(None, "COMPACT")
+        assert mt.listed_tool_names(None, "compact") == mt.listed_tool_names("coding", "compact")
+        assert asyncio.run(mt._tools_descriptor()) == unbound
     grep = next(t for t in unbound if t["name"] == "loom_code_grep")["inputSchema"]
     assert {"namespace", "path_prefix"} <= grep["properties"].keys()
 
 
 def test_a_tool_the_listing_of_code_tools_alone_leaves_out_stays_callable(monkeypatch) -> None:
-    """`loom_op`, a memory write and grep's unlisted arguments run on a compact
-    `coding` connection bound to a repository."""
+    """`loom_op`, a memory write and grep's unlisted arguments run on a `coding`
+    connection bound to a repository whose URL asks for the compact profile."""
     seen: dict[str, Any] = {}
     hint = "Save with memory.set, read callers with code.callers."
 

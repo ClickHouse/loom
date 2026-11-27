@@ -44,12 +44,12 @@ the listing: a client that did not ask for it keeps every tool of the roster.
 
 The listing of code tools alone leaves out:
 
-| Part                                | Left out                                                                                                                                                                                                          |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tools/list`                        | `loom_op`, `loom_search`, `loom_context_pack`, `loom_activate`, the memory tools and `loom_tracker_duplicate_check`.                                                                                              |
-| `prompts/list` and `resources/list` | Every entry: both are empty.                                                                                                                                                                                      |
-| Startup instructions                | Memory, workspace and `loom_op` guidance. They carry the source workflows and the repository binding. The `loom` prompt, `loom://primer` and `loom_activate`, asked for by name, carry the same source workflows. |
-| `loom_code_grep` arguments          | Beyond what every compact coding listing leaves out: `namespace` and `namespaces`, which the binding fills, and `path_prefix` and `langs`, which `path_globs` expresses.                                          |
+| Part                                | Left out                                                                                                                                                                                                                                                              |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tools/list`                        | `loom_op`, `loom_search`, `loom_context_pack`, `loom_activate`, the memory tools and `loom_tracker_duplicate_check`.                                                                                                                                                  |
+| `prompts/list` and `resources/list` | Every entry: both are empty.                                                                                                                                                                                                                                          |
+| Startup instructions                | Memory, workspace and `loom_op` guidance. They carry the source workflows and the repository binding. The `loom` prompt, `loom://primer` and `loom_activate`, asked for by name, carry the same source workflows.                                                     |
+| `loom_code_grep` arguments          | Beyond what every compact coding listing leaves out: `namespace`, which the binding fills; `namespaces`, which only a presence check across several repositories takes; and `path_prefix` and `langs`, which `path_globs` expresses. The call still accepts all four. |
 
 Every other tool stays callable by name, but a client that calls only listed
 tools cannot save or recall memory on this connection: leave
@@ -60,9 +60,9 @@ refusals keep the tool names they spell.
 
 The coding-agent plugins send the `X-Loom-Code-Scope` header for a checkout they
 resolve to a repository, so those connections are bound; the URLs they ship name
-no profile. The lists of a `coding` URL that carries `schema_profile=compact`
-follow that header, so their `cacheScope` is `private` with the header or
-without it.
+no profile. The lists of a `coding` connection whose URL carries
+`schema_profile=compact` follow that header, so their `cacheScope` is `private`
+with the header or without it.
 
 With the automatic loading policy, compact coding connections load
 `code.edit_context` and `code.grep` up front. Use `code.edit_context` with a

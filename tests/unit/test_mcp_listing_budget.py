@@ -402,7 +402,8 @@ def test_listed_tool_names_is_what_the_listing_shows(toolset: str, code: bool, m
         for profile in (None, *SCHEMA_PROFILES):
             shown = {t["name"] for t in _listing(toolset, code, profile)}
             assert mt.listed_tool_names(None, profile) == shown
-            # only the compact `coding` URL narrows the listing to the code tools
+            # only a `coding` connection whose URL asks for the compact profile
+            # narrows the listing to the code tools
             assert shown <= listing
             assert (shown == listing) != (toolset == "coding" and profile == "compact")
     finally:
@@ -571,8 +572,8 @@ def test_listing_budget_chars_over_four():
 
 
 def test_the_listing_of_code_tools_alone_stays_within_its_budget():
-    """A compact `coding` connection bound to a repository: its listing, and the
-    routing its startup instructions and primer carry."""
+    """A `coding` connection bound to a repository whose URL asks for the compact
+    profile: its listing, and the routing its startup instructions and primer carry."""
     from server.transport.mcp_primer import _coding_instructions
 
     defaults = {"org": "acme", "namespace": "home", "agent": "a"}

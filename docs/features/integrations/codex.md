@@ -155,13 +155,12 @@ codex exec --json \
 ```
 
 Normal coding work needs only `?toolset=coding`; add `&schema_profile=compact` for a
-smaller tool listing ([MCP reference](../../reference/mcp.md)). An entry with only
-`url` and `bearer_token_env_var`, like the one above, sends no `X-Loom-Code-Scope`
-header and keeps every tool of the roster. A URL that carries `&schema_profile=compact`
-lists the code tools alone, with no memory tool, `loom_search` or `loom_op`, only in an
-entry that also keeps the plugin's `http_headers_helper`, which sends the header for the
-checkout's repository; a prompt that recalls or saves memory through such an entry
-leaves `schema_profile` off the URL.
+smaller tool listing. An entry with only `url` and `bearer_token_env_var`, like the one
+above, sends no `X-Loom-Code-Scope` header and keeps every tool of the roster. An entry
+that also keeps the plugin's `http_headers_helper` sends the header for the checkout's
+repository, and with `&schema_profile=compact` on its URL lists the code tools alone
+([MCP reference](../../reference/mcp.md#endpoint)); a prompt that recalls or saves memory
+through such an entry leaves `schema_profile` off the URL.
 The [headless bots guide](../../guides/headless-bots.md) covers scheduled and CI runs.
 
 ## Checking it works

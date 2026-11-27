@@ -253,21 +253,22 @@ async def _list_result(
     Defaults from settings; an unknown value is the default.
 
     A listing is a property of the deployment and the URL, not of the caller: a
-    client may hold it for five minutes and a shared cache may keep it. A compact
-    `coding` URL's lists also follow the connection's repository header, so only
-    the client keeps those, bound or not. Bound, it lists the code tools alone,
-    and no prompt and no resource: the primer they serve routes memory through
-    tools that listing leaves out."""
-    code_only = code_only_listing(toolset, schema_profile)
+    client may hold it for five minutes and a shared cache may keep it. The lists
+    of a `coding` connection whose URL asks for the compact profile also follow
+    the request's repository header, so only the client keeps those, bound or
+    not. Bound, it lists the code tools alone, and no prompt and no resource:
+    both offer memory routing, through tools that listing leaves out."""
     scope = "private" if lists_follow_code_scope(toolset, schema_profile) else "public"
     if method == "tools/list":
         listed: dict[str, Any] = {
             "tools": await _tools_descriptor(schema_profile=schema_profile, toolset=toolset)
         }
+    elif code_only_listing(toolset, schema_profile):
+        listed = {method.removesuffix("/list"): []}
     elif method == "prompts/list":
-        listed = {"prompts": [] if code_only else _prompts_descriptor(toolset)}
+        listed = {"prompts": _prompts_descriptor(toolset)}
     else:
-        listed = {"resources": [] if code_only else _resources_descriptor(toolset)}
+        listed = {"resources": _resources_descriptor(toolset)}
     return {**listed, **cache_hints(LIST_TTL_MS, scope)}
 
 

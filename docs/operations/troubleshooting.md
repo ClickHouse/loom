@@ -541,9 +541,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   Stranded `loom-flush-*.json` files in the temp directory are plugin captures that never
   reached the server ([headless bots](../guides/headless-bots.md#5-when-the-bot-is-quiet)).
 - **An MCP tool is missing from the listing.** Listings vary by the MCP URL's
-  `?toolset=`, never by caller, with one exception: a `coding` URL that carries
-  `schema_profile=compact` lists the code tools alone when the connection sends the
-  `X-Loom-Code-Scope` header, and the tools it leaves out stay callable by name
+  `?toolset=`, never by caller, with one exception: a `coding` connection that the
+  `X-Loom-Code-Scope` header binds to a repository lists the code tools alone when its
+  URL carries `schema_profile=compact`, and the tools it leaves out stay callable by name
   ([MCP endpoint](../reference/mcp.md#endpoint)). Under `all`, an experimental op that
   neither the core nor the atomic roster lists is left out of the listing; it is still
   callable by name or through `loom_op`. The `code.*` tools appear on the default toolset
