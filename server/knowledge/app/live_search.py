@@ -1,93 +1,83 @@
-"""Live search owns private work until cancellation or final publication."""
+"""Request-owned native search over the asker's connected registrations."""
 
 from __future__ import annotations
 
 import asyncio
 import math
 import time
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-from server.auth import session_admission
+from server.auth.answer_tokens import is_answer_token
+from server.auth.context import current_auth
 from server.auth.session_protection import protected_for
+from server.clients._checked_access import CheckedAccess
 from server.core import request_tail, request_work
-from server.knowledge.app import connected_accounts, live_provider_search
+from server.core.ch import set_query_tag
+from server.core.diagnostics import private_work
+from server.knowledge.app import connected_accounts, live_provider_search, session_admission
 from server.knowledge.domain.sources import MIRRORED_ACCESS
-from server.knowledge.store import mirror_latch, source_store
+from server.knowledge.store import sources as source_store
 from server.settings import settings
 
-if TYPE_CHECKING:
-    from server.auth.credentials import Principal
-    from server.knowledge.app.connected_accounts import CheckedAccess
 
-
-@asynccontextmanager
-async def private_work() -> AsyncIterator[None]:
-    """Mirror protection must mark every thread or task that touches cleartext work."""
-    with request_work.mirror_scope(), request_work.http_mirror_scope():
-        yield
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class Contribution:
     authority: connected_accounts.SourceAuthority
     hits: tuple[live_provider_search.LiveProviderHit, ...]
 
-    async def check(self, *, deadline: float) -> None:
-        async def native(access: CheckedAccess) -> None:
-            tasks = [
-                live_provider_search.revalidate(
-                    self.authority.source, access, hit, deadline=deadline
-                )
-                for hit in self.hits
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for hit, result in zip(self.hits, results, strict=True):
-                if isinstance(result, Exception) or not result:
-                    raise PermissionError(f"Live search hit revoked: {hit.id}")
 
-        await self.authority.run(native)
-
-
-@dataclass(frozen=True)
+@dataclass(repr=False)
 class LiveResult:
     contributions: tuple[Contribution, ...]
     deadline: float
+    _checked: bool = False
+
+    @property
+    def hits(self) -> tuple[live_provider_search.LiveProviderHit, ...]:
+        return tuple(hit for part in self.contributions for hit in part.hits)
 
     async def check(self) -> None:
-        for contribution in self.contributions:
-            await contribution.check(deadline=self.deadline)
+        """Renew the original account/source and each selected remote membership."""
+        self._checked = False
+        with private_work():
+            async with asyncio.timeout_at(self.deadline):
+                for part in self.contributions:
+
+                    async def verify(access: CheckedAccess, part: Contribution = part) -> None:
+                        for hit in part.hits:
+                            if not await live_provider_search.revalidate(
+                                part.authority.source, access, hit, deadline=self.deadline
+                            ):
+                                raise RuntimeError("Live search unavailable")
+
+                    await part.authority.run(verify)
+                self._checked = True
 
     def fresh(self) -> bool:
-        return time.monotonic() < self.deadline
+        return self._checked and time.monotonic() < self.deadline
 
 
-async def search(
-    org: str,
-    namespaces: Sequence[str],
-    query: str,
-    *,
-    top_k: int,
-) -> LiveResult | None:
-    """Live search keeps provider calls separate from indexed search and each other."""
-    if not (
-        settings.knowledge_mirrored_sources_enabled
-        and settings.auth_required
-        and request_tail.required_active()
-        and request_work.mirror_marked()
-        and request_work.http_mirror_marked()
+async def search(org: str, namespaces: list[str], query: str, *, top_k: int) -> LiveResult | None:
+    """Unavailable private work contributes no section and exposes no error detail."""
+    auth = current_auth()
+    if (
+        auth is None
+        or auth.org != org
+        or not settings.auth_actually_required()
+        or not settings.knowledge_mirrored_sources_enabled
+        or not protected_for(auth)
+        or (is_answer_token(auth) and not auth.answer_mirrors)
+        or not request_tail.required_active()
+        or len(query) > 1000
     ):
         return None
-
+    if not request_work.mark_mirrored():
+        return None
     deadline = time.monotonic() + settings.knowledge_live_search_timeout_s
+    set_query_tag("search.query.live")
     with private_work():
         try:
-            async with mirror_latch.ensure():
-                auth: Principal = request_tail.current_principal()
-                if not protected_for(auth):
-                    return None
+            async with asyncio.timeout_at(deadline):
                 actual_org, subject = await connected_accounts.own_subject(auth)
                 if actual_org != org:
                     return None
@@ -137,9 +127,7 @@ async def search(
                                 authority.source, access, query, top_k=source_quota, deadline=deadline
                             )
 
-                        async with asyncio.timeout_at(deadline):
-                            hits = tuple(await authority.run(native))[:source_quota]
-
+                        hits = tuple(await authority.run(native))[:source_quota]
                         if hits:
                             contributions.append(Contribution(authority, hits))
                             total_budget -= len(hits)
