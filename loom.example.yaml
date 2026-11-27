@@ -3821,8 +3821,8 @@ settings:
   # later. [restart]
   # memory_code_links_settle_seconds: 60
 
-  # Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried
-  # before it is dropped. [restart]
+  # Days to retry a code-shaped name absent from trunk, measured when each pending scan
+  # starts. [restart]
   # memory_code_links_pending_days: 14
 
   # Changed claims one pass re-checks with the LLM under the `revise` policy. [restart]

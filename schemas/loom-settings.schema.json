@@ -4524,7 +4524,7 @@
           "default": 14,
           "minimum": 1,
           "type": "integer",
-          "description": "Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped."
+          "description": "Days to retry a code-shaped name absent from trunk, measured when each pending scan starts."
         },
         "memory_code_links_revise_per_pass": {
           "default": 20,

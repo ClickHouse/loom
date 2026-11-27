@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -4053,6 +4054,38 @@ async def test_a_reformatted_type_or_constant_stays_fresh(env, path, before, aft
     await _index(TRUNK, env, c2, [path])
     await _pass()
     assert [link["state"] for link in await _links(mid)] == ["fresh"]
+
+
+async def test_pending_link_age_uses_the_start_of_each_scan(env) -> None:
+    from server.memory.store import code_links as store
+
+    now = datetime.now(UTC).replace(microsecond=0)
+    start = now - timedelta(minutes=2)
+    before = int(start.timestamp()) * 10**9
+    mid = await _remember(MEM, "pending-page-age", "Waiting for two functions")
+    links = [
+        store.link_row(
+            org=ORG,
+            code_namespace=TRUNK,
+            namespace=MEM,
+            memory_id=mid,
+            memory_key="pending-page-age",
+            qualified_name=name,
+            state="pending",
+            checked_at=now - timedelta(days=14, minutes=1),
+            follows=before - offset - 1,
+        )
+        for name, offset in (("first", 2), ("second", 1))
+    ]
+    await store.insert(links)
+    (first,), after = await store.pending(ORG, TRUNK, days=14, after=None, before=before, limit=1)
+    (second,), _ = await store.pending(ORG, TRUNK, days=14, after=after, before=before, limit=1)
+    assert (first["qualified_name"], second["qualified_name"]) == ("first", "second")
+    assert not first["expired"] and not second["expired"]
+    next_scan, _ = await store.pending(
+        ORG, TRUNK, days=14, after=None, before=int(now.timestamp()) * 10**9, limit=2
+    )
+    assert len(next_scan) == 2 and all(row["expired"] for row in next_scan)
 
 
 async def test_stale_fingerprints_page_by_key_each_link_once(env) -> None:

@@ -3236,8 +3236,7 @@ class MemorySettings(BaseModel):
     # backfill reads it; a longer wait makes that rarer and links every write that much
     # later.
     memory_code_links_settle_seconds: int = Field(default=60, ge=10)
-    # Days a code-shaped name that names nothing on trunk yet (unmerged code) is
-    # retried before it is dropped.
+    # Days to retry a code-shaped name absent from trunk, measured when each pending scan starts.
     memory_code_links_pending_days: int = Field(default=14, ge=1)
     # Changed claims one pass re-checks with the LLM under the `revise` policy.
     memory_code_links_revise_per_pass: int = Field(default=20, ge=0)

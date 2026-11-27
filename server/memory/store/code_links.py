@@ -506,7 +506,8 @@ async def pending(
     # Relinking can give several rows one version. Break ties without persisting
     # the original link key in a cursor that can outlive the memory.
     rows = await (ch or _default_client()).query_all(
-        "SELECT *, checked_at < now() - INTERVAL {days:UInt32} DAY AS expired, "
+        "SELECT *, checked_at < toDateTime(fromUnixTimestamp64Nano(toInt64({before:UInt64}))) "
+        "- INTERVAL {days:UInt32} DAY AS expired, "
         "hex(sipHash128(path, qualified_name, namespace, memory_id)) AS scan_digest "
         f"{_LIVE} AND org = {{org:String}} AND code_namespace = {{cns:String}} "
         "AND state = 'pending' AND version < {before:UInt64} "
