@@ -99,7 +99,7 @@ async def recheck_all(result: link_pass.PassResult) -> None:
             pass  # another host is checking this repository
         except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
             # its links stay at the head last checked
-            result.failed("recheck", org, cns, e)
+            result.failed(f"recheck {org}/{cns}: {e}", e, f"{cns}:recheck")
         left -= granted - budget.judgements
 
 

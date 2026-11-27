@@ -46,11 +46,12 @@ class PassResult:
             "errors": len(self.errors),
         }
 
-    def failed(self, leg: str, org: str, cns: str, e: BaseException) -> None:
-        """One repository's `leg` (link, recheck) raised: listed among the pass's errors
-        and noted on the worker's pass, which then counts as partial, not clean."""
-        self.errors.append(f"{leg} {org}/{cns}: {e}")
-        pass_context.note_failure(e, f"{cns}:{leg}")
+    def failed(self, error: str, e: BaseException, leg: str) -> None:
+        """A leg that raised (one repository's link or recheck): `error` joins the pass's
+        errors, and `e` is noted on the worker's pass under `leg`, so the pass counts as
+        partial, not clean."""
+        self.errors.append(error)
+        pass_context.note_failure(e, leg)
 
 
 @dataclass

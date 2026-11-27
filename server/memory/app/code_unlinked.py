@@ -21,6 +21,7 @@ from server.memory.app.code_link_reads import (
     memory_inputs,
     readable_namespaces,
 )
+from server.memory.app.code_links import AWAITING_INDEX
 from server.memory.domain.code_link_keys import IDENTITY
 from server.memory.store import code_links as store
 
@@ -33,8 +34,6 @@ CAUSES = (NO_REPOSITORY, FILE_NOT_INDEXED, NAME_UNRESOLVED, PENDING)
 
 # served memories read of a namespace, the last written first
 SCANNED = 2000
-# the name of a link that waits for its repository's first index (`code_links`)
-_AWAITING_INDEX = "*"
 
 
 def _names_code(memory: dict[str, Any]) -> bool:
@@ -112,9 +111,7 @@ async def unlinked(
         if any(a["state"] != "pending" for a in mine):
             continue  # linked
         if mine:
-            waits = (
-                "index" if any(a["qualified_name"] == _AWAITING_INDEX for a in mine) else "trunk"
-            )
+            waits = "index" if any(a["qualified_name"] == AWAITING_INDEX for a in mine) else "trunk"
             out[PENDING].append(row | {"waits_for": waits})
             continue
         read = read or await _Pass.read()

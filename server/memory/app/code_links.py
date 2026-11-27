@@ -128,7 +128,7 @@ async def _link_org(
         try:
             rows_out, gone, unparsed = await link_each(org, cns, memories, existing, files)
         except Exception as e:  # noqa: BLE001 — one repository's failure never stops the pass
-            result.failed("link", org, cns, e)
+            result.failed(f"link {org}/{cns}: {e}", e, f"{cns}:link")
             out += [_awaiting(r, cns) for r in memories]
             continue
         if unparsed:

@@ -348,8 +348,8 @@ _CODE_STATE_SQL = """
         WHERE state_key IN ('git_head', 'scip_commit', 'scip_commit_py', 'scip_commit_ts',
                             'scip_commit_go', 'pr_cursor', 'reconcile', 'memory_links_checked')
         UNION ALL
-        -- The repositories the memory link pass rechecks: those holding a live link, read
-        -- without FINAL as the pass reads them. Only their link lag is a reading.
+        -- The repositories the memory link pass rechecks: those holding a live link, each
+        -- version counted, which is how the pass reads them. Only their link lag is a reading.
         SELECT DISTINCT org, code_namespace AS namespace, 'links' AS k, 0. AS v, '' AS s
         FROM loom.memory_code_links
         WHERE tombstoned_at IS NULL
