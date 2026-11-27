@@ -3228,7 +3228,7 @@ class MemorySettings(BaseModel):
     memory_code_links_interval_seconds: int = 60
     # Seconds a code-links pass may run before the supervisor abandons it.
     memory_code_links_max_pass_seconds: float = Field(default=600.0, gt=0)
-    # Memory writes one pass links (at least 1).
+    # Rows per page of memory writes to link or pending links to recheck (at least 1).
     memory_code_links_batch: int = Field(default=500, ge=1)
     # Seconds the memory code-link pass stays behind the newest queued memory write, so
     # inserts running at the same moment are visible before the cursor passes them (at

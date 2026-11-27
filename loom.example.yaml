@@ -3810,7 +3810,8 @@ settings:
   # Seconds a code-links pass may run before the supervisor abandons it. [restart]
   # memory_code_links_max_pass_seconds: 600.0
 
-  # Memory writes one pass links (at least 1). [restart]
+  # Rows per page of memory writes to link or pending links to recheck (at least 1).
+  # [restart]
   # memory_code_links_batch: 500
 
   # Seconds the memory code-link pass stays behind the newest queued memory write, so

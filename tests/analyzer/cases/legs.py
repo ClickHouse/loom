@@ -628,6 +628,9 @@ async def _link_pages(ch: RecordingCH, c: dict[str, Any]) -> None:
     await code_links.backfill_page(after, 5, ["code-a"], ch=ch)
     key = (ORG, "code-a", "p.py", "f", NS, "00000000-0000-0000-0000-000000000001")
     await code_links.sweep_page(key if c["after"] else None, 5, ch=ch)
+    await code_links.pending(
+        ORG, "code-a", days=14, after=key if c["after"] else None, limit=5, ch=ch
+    )
     await code_links._heads(ch, [(ORG, NS, AGENT, "-", "-", "k")], ["code-a"])
 
 

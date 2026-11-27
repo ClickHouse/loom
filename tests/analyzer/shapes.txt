@@ -1654,6 +1654,7 @@ ba28d3f48cd1	SELECT ts, org, namespace, agent, user_id, session_id, operation, r
 ba3aa58d4a58	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 ba505cefcdfd	SELECT subject, namespace, role, granted_at, pending_role, is_owner FROM ( SELECT subject, namespace, toString(role) AS role, granted_at, pending_role, ? AS is_owner FROM loom.namespace_grants FINAL W
 ba7611490c4d	ALTER TABLE loom.search_misses DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
+ba96ea8cc115	SELECT *, checked_at < now() - INTERVAL {days:UInt32} DAY AS expired FROM loom.memory_code_links FINAL WHERE tombstoned_at IS NULL AND org = {org:String} AND code_namespace = {cns:String} AND state =
 bb02b0e3dee7	SELECT symbol_id, qualified_name, name, signature, path, start_line, end_line, tier, kind FROM loom.code_symbols FINAL WHERE org = {org:String} AND namespace = {ns:String} AND path = {path:String} AND
 bb04945353ff	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 bb4566fa0eb8	SELECT namespace, toString(owner_email) AS owner, active, tags, password_hash = ? AS sso FROM loom.namespaces FINAL WHERE org = {org:String} AND contact_email = {ident:String}
@@ -1906,6 +1907,7 @@ d4ef142bf4bd	ALTER TABLE loom.conversation_embeddings UPDATE is_saved = false, s
 d4fee96dc8f4	SELECT symbol_id, qualified_name, name, signature, path, start_line, end_line, tier, kind, toString(indexed_commit) AS extent_commit FROM loom.code_symbols FINAL WHERE org = {org:String} AND namespace
 d557e6a3b134	SELECT memory_key, memory_type, confidence, version, created_at, expires_at, valid_at, pinned, status, evidence_count, recall_count, last_recalled_at, tags, entities, source_trace, sensitivity, verifi
 d56922333058	SELECT splitByChar(?, memory_key)[?] AS prefix, count() AS rows FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND position(memory_key, ?) > ? GR
+d5c4c28c433e	SELECT *, checked_at < now() - INTERVAL {days:UInt32} DAY AS expired FROM loom.memory_code_links FINAL WHERE tombstoned_at IS NULL AND org = {org:String} AND code_namespace = {cns:String} AND state =
 d5ec04e0cf87	ALTER TABLE loom.session_briefs DELETE WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 d5ec7f2e8ae9	SELECT memory_key, toString(memory_id) AS id, version, sensitivity, value_len, redacted_at IS NOT NULL AS redacted, agent, user_id, session_id, memory_type, source_class, updated_at FROM loom.memory F
 d5ef8fb29c15	SELECT tag, count() AS rows FROM (SELECT arrayJoin(tags) AS tag FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND session_id != {id:String} AND

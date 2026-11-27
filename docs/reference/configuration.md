@@ -1322,7 +1322,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CODE_LINKS_ENABLED` | `bool` | `True` |  | Link memories to the code they name (symbols and files of the repository their `repo:` tag or code namespace names) and keep the links current as the code changes; the namespace's `code_change_policy` decides how reads treat a memory whose code is removed or changed. Off stops linking and rechecks; reads still show the stored states but no longer hide a memory, as nothing keeps them current. |
 | `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | `int` | `60` |  | Seconds between link passes. |
 | `LOOM_MEMORY_CODE_LINKS_MAX_PASS_SECONDS` | `float` | `600.0` |  | Seconds a code-links pass may run before the supervisor abandons it. |
-| `LOOM_MEMORY_CODE_LINKS_BATCH` | `int` | `500` |  | Memory writes one pass links (at least 1). |
+| `LOOM_MEMORY_CODE_LINKS_BATCH` | `int` | `500` |  | Rows per page of memory writes to link or pending links to recheck (at least 1). |
 | `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` | `int` | `60` |  | Seconds the memory code-link pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them (at least 10). A write visible later than this is passed and stays unlinked until a backfill reads it; a longer wait makes that rarer and links every write that much later. |
 | `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` |  | Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped. |
 | `LOOM_MEMORY_CODE_LINKS_REVISE_PER_PASS` | `int` | `20` |  | Changed claims one pass re-checks with the LLM under the `revise` policy. |

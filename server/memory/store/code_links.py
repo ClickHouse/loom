@@ -482,16 +482,31 @@ async def stale_fingerprints(
 
 
 async def pending(
-    org: str, code_namespace: str, *, days: int, ch: _CHClient | None = None
-) -> list[PendingLink]:
-    """The namespace's pending names (and `*` markers of memories written before its
-    first index), each with `expired` (older than `days`)."""
-    rows = await (ch or _default_client()).query_all(
-        f"SELECT *, checked_at < now() - INTERVAL {{days:UInt32}} DAY AS expired {_LIVE} "
-        "AND org = {org:String} AND code_namespace = {cns:String} AND state = 'pending'",
-        params={"org": org, "cns": code_namespace, "days": int(days)},
+    org: str,
+    code_namespace: str,
+    *,
+    days: int,
+    after: tuple[str, ...] | None,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> tuple[list[PendingLink], tuple[str, ...] | None]:
+    """A page of pending names and pre-index markers in link key order."""
+    since = f"AND {_past(_KEY_COLUMNS, _KEY_TYPES)} " if after else ""
+    rows = _links(
+        await (ch or _default_client()).query_all(
+            f"SELECT *, checked_at < now() - INTERVAL {{days:UInt32}} DAY AS expired {_LIVE} "
+            "AND org = {org:String} AND code_namespace = {cns:String} AND state = 'pending' "
+            f"{since}ORDER BY {_KEY} LIMIT {{lim:UInt32}}",
+            params={
+                "org": org,
+                "cns": code_namespace,
+                "days": int(days),
+                "lim": int(limit),
+                **_past_params(after or ()),
+            },
+        )
     )
-    return cast(list[PendingLink], _links(rows))
+    return cast(list[PendingLink], rows), _key(rows[-1]) if len(rows) == int(limit) else None
 
 
 async def lost(

@@ -4489,7 +4489,7 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Memory writes one pass links (at least 1)."
+          "description": "Rows per page of memory writes to link or pending links to recheck (at least 1)."
         },
         "memory_code_links_enabled": {
           "default": true,
