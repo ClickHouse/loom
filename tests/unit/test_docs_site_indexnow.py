@@ -40,9 +40,16 @@ def test_astro_pages_submit_their_canonical_public_urls() -> None:
             "docs/pages/ja/home.astro": "A",
             "docs/pages/platform.astro": "M",
             "docs/pages/adoption.astro": "M",
+            "docs/pages/workflow-library.astro": "A",
         }
     )
-    assert urls == [f"{ORIGIN}/", f"{ORIGIN}/adoption", f"{ORIGIN}/ja", f"{ORIGIN}/platform"]
+    assert urls == [
+        f"{ORIGIN}/",
+        f"{ORIGIN}/adoption",
+        f"{ORIGIN}/ja",
+        f"{ORIGIN}/platform",
+        f"{ORIGIN}/use-cases",
+    ]
     assert indexnow.payload(urls, "a" * 32)["urlList"] == urls
 
 
@@ -81,6 +88,7 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
             "/ru",
             "/telemetry",
             "/tr",
+            "/use-cases",
             "/vi",
             "/zh-CN",
             "/zh-CN/enterprise",

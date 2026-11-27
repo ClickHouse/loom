@@ -30,9 +30,13 @@ def test_fetch_freshness_reports_the_time_and_the_overdue_verdict(monkeypatch: p
     naive = datetime(2026, 9, 24, 13, 17)
     iso, overdue = cc.fetch_freshness(naive, NOW)
     assert iso == "2026-09-24T13:17:00+00:00" and overdue is True
-    # no row: unknown, never overdue (a deployment without the row keeps the lag-only verdict)
+    # no row and no index: nothing to be stale
     assert cc.fetch_freshness(None, NOW) == ("", False)
     assert cc.fetch_freshness("2026-09-24", NOW) == ("", False)
+    # no row over an index: no fetch time to show, and overdue once the index head is old
+    assert cc.fetch_freshness(None, NOW, indexed_at=old) == ("", True)
+    assert cc.fetch_freshness(None, NOW, indexed_at=fresh) == ("", False)
+    assert cc.fetch_freshness(fresh, NOW, indexed_at=old) == (fresh.isoformat(), False)
     # 0 disables the verdict, the time still rides
     monkeypatch.setattr(settings, "code_fetch_stale_after_seconds", 0, raising=False)
     assert cc.fetch_freshness(old, NOW) == (old.isoformat(), False)
@@ -51,7 +55,10 @@ def test_the_status_builder_reads_the_clone_head_row_and_the_listing_copies_it()
     src = open(ctx.__file__, encoding="utf-8").read()
     body = src[src.index("async def _repo_status(") :]
     body = body[: body.index("\nasync def ", 1)]
-    assert 'fetch_freshness(\n        (state.get("clone_head") or {}).get("updated_at")' in body
+    assert (
+        'fetch_freshness(\n        (state.get("clone_head") or {}).get("updated_at"),\n'
+        '        indexed_at=(state.get("git_head") or {}).get("updated_at"),' in body
+    )
     assert "clone_fetched_at=clone_fetched_at," in body and "fetch_overdue=fetch_overdue," in body
     listing = open(repos.__file__, encoding="utf-8").read()
     assert (

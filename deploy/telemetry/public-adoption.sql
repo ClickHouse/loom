@@ -27,13 +27,21 @@ SELECT
     (
         SELECT groupArray(payload) FROM (
             SELECT formatRowNoNewline('JSONEachRow', *) AS payload
+            FROM loom_product_analytics.public_adoption_growth ORDER BY grain, period
+        )
+    ) AS growth,
+    (
+        SELECT groupArray(payload) FROM (
+            SELECT formatRowNoNewline('JSONEachRow', *) AS payload
             FROM loom_product_analytics.public_adoption_lifecycle ORDER BY bucket
         )
     ) AS lifecycle,
     (
-        SELECT arraySort(groupArray(domain))
-        FROM loom_product_analytics.public_adoption_domains
-    ) AS domains,
+        SELECT groupArray(payload) FROM (
+            SELECT formatRowNoNewline('JSONEachRow', *) AS payload
+            FROM loom_product_analytics.public_adoption_domain_directories ORDER BY range_days
+        )
+    ) AS domain_directories,
     (
         SELECT groupArray(payload) FROM (
             SELECT formatRowNoNewline('JSONEachRow', *) AS payload

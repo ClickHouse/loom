@@ -252,7 +252,7 @@ def test_an_error_quotes_no_value_from_another_scope(
     assert r.status_code in _REFUSED, r.text
     for leaked in ("other-ns/", "other-org/", "deleted/"):
         assert leaked not in r.text, r.text[:300]
-    ch_client.command("SYSTEM FLUSH LOGS")
+    ch_client.command("SYSTEM FLUSH LOGS query_log")
     logged = ch_client.query(
         "SELECT groupArray(exception) FROM system.query_log "
         "WHERE startsWith(query_id, {rid:String}) AND exception != ''",
@@ -567,7 +567,7 @@ def test_the_statement_text_stays_out_of_the_query_log(
     for request_id, (statement, accepted) in statements.items():
         r = _query(control_plane_url, seed, statement, request_id=request_id)
         assert r.status_code in accepted, r.text
-    ch_client.command("SYSTEM FLUSH LOGS")
+    ch_client.command("SYSTEM FLUSH LOGS query_log")
     # Each is logged, as on a server that pins log_queries, but not its text.
     for request_id in statements:
         logged = ch_client.query(
@@ -597,7 +597,7 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client, prefix
     secrets = _key_spellings(ch_client)
 
     def refused_since_start() -> bool:
-        ch_client.command("SYSTEM FLUSH LOGS")
+        ch_client.command("SYSTEM FLUSH LOGS query_log")
         return (
             ch_client.query(
                 "SELECT count() FROM system.query_log WHERE event_time >= {start:DateTime} "
@@ -620,6 +620,7 @@ def test_the_scope_key_stays_out_of_the_query_log(seed: _Seed, ch_client, prefix
     ).result_rows[0][0]
     assert logged == 0
     # The server log records each refused read's error, whatever log_queries says.
+    ch_client.command("SYSTEM FLUSH LOGS text_log")
     quoting = ch_client.query(
         "SELECT count() FROM system.text_log WHERE event_time >= {start:DateTime} "
         "AND level = 'Error' AND position(message, {setting_prefix:String}) > 0 "

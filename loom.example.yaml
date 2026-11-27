@@ -315,9 +315,10 @@ settings:
   # memory_ask_mid_model: ""
 
   # The durability check on a coding capture: one batched call per capture per listed
-  # model (CSV) judges each fact durable or not and folds same-claim paraphrases and
-  # replaced states. A fact is dropped only when every model says drop; folds come from
-  # the first. Fails open. "" turns it off. [restart]
+  # model (CSV) judges each fact durable or not, folds same-claim paraphrases and
+  # replaced states, and names the facts a stored memory already states. A fact is
+  # dropped as non-durable only when every model says drop; folds and stored
+  # restatements come from the first. Fails open. "" turns it off. [restart]
   # memory_extract_verify_models: "claude-opus-5-5"
 
   # The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence
@@ -1186,6 +1187,12 @@ settings:
   # the gc waits another interval. [restart]
   # code_mirror_gc_margin_gb: 5.0
 
+  # Hard-link each compiler-tier checkout's packs to its mirror's, so a tier costs its
+  # working tree, not a second copy. An older build's git jobs could write the shared
+  # packs: turn it on only once no older replica serves, and off before a rollback.
+  # [restart]
+  # code_compiler_share_mirror_packs: false
+
   # --- repository job sandbox ---
   # Resource limits (rlimits) for each process of a sandboxed repository job (clone,
   # fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They
@@ -1317,8 +1324,9 @@ settings:
   # code_path_prefixes: ""
 
   # Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter
-  # symbols/edges → context pack → advance watermark. [restart]
-  # code_ingest_enabled: false
+  # symbols/edges → context pack → advance watermark. It polls every configured
+  # repository; False = nothing polls, and `code.refresh` is the only trigger. [restart]
+  # code_ingest_enabled: true
 
   # Seconds between fast-tier ingest passes; extra-branch fetches of a shared mirror are
   # spaced by 0.9 of it (at least 30 s). [restart]
@@ -2627,9 +2635,10 @@ settings:
   # items, one concurrent call each (more recall for more tokens). 0 = one call. [live]
   # memory_extract_coverage_sweep_batch_items: 0
 
-  # A coding capture keeps the coverage sweep's density / uncovered auto-gates only with
-  # at least this many user turns (on short sessions the sweep's output is mostly junk).
-  # 0 = always keep. An explicit namespace / per-call switch wins either way. [live]
+  # A trajectory replay keeps the coverage sweep's density / uncovered auto-gates only
+  # with at least this many user turns (on short sessions the sweep's output is mostly
+  # junk); a plugin's session capture never takes them. 0 = always keep. An explicit
+  # namespace / per-call switch wins either way. [live]
   # memory_extract_coding_sweep_min_user_turns: 4
 
   # --- size segments ---
@@ -3406,7 +3415,9 @@ settings:
   # [live]
   # memory_bulk_follow_max_pairs: 1024
 
-  # Bulk-path conflict checks run at once (at least 1). [restart]
+  # Similarity reads one request runs at once (at least 1): a bulk write's conflict
+  # checks, and a coding capture's reads of the stored memories nearest its facts.
+  # [restart]
   # bulk_conflict_check_concurrency: 8
 
   # Facts per batched candidate lookup (conflict and value-update peers) on the write
@@ -4926,9 +4937,9 @@ settings:
   # otel_exporter: ""
 
   # Seconds between refreshes of the per-namespace code-plane COUNT gauges (one FINAL
-  # scan each of code_files, code_chunks, code_symbols and code_edges, on the lease
-  # holder). The counts move once an index run, so an hour is enough; each refresh reads
-  # every live code row. 0 = every export. [restart]
+  # scan each of code_files, code_chunks, code_symbols, code_edges and
+  # memory_code_links, on the lease holder). The counts move once an index run, so an
+  # hour is enough; each refresh reads every live code row. 0 = every export. [restart]
   # otel_code_counts_cache_s: 3600
 
   # Seconds between recounts of the code.grep wrong-abstain gauge (a `content` scan per
