@@ -280,7 +280,7 @@ async def test_a_refresh_rechecks_the_memory_links_after_its_pass(
 async def test_a_refresh_answers_whatever_its_link_recheck_does(
     monkeypatch: pytest.MonkeyPatch, failure: Exception
 ) -> None:
-    """Links another host is checking, or a recheck that fails, are the link worker's next
+    """Links another pass is checking, or a recheck that fails, are the link worker's next
     pass: the refresh answers for the index."""
 
     async def _recheck(org: str, ns: str) -> None:

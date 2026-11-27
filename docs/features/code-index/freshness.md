@@ -138,8 +138,9 @@ curl -fsS -X POST "$LOOM_BASE_URL/v1/code.refresh" \
   [memories linked to the namespace's code](../../concepts/memory.md#memories-linked-to-code),
   so with `wait=true` their link state is that of `head_after` when the call returns. The
   recheck calls no model: a claim the `revise` policy has to judge stays due for the
-  `memory_code_links` worker. A recheck that fails, that another replica is running, or
-  that the wait cuts short never fails the call; the worker's next pass finishes it.
+  `memory_code_links` worker. A recheck that fails, that the link worker or another
+  refresh is already running, or that the wait cuts short never fails the call; the
+  worker's next pass finishes it.
 - The call is best-effort; the poller heals a missed trigger.
 
 Operators watch `loom.code.tier_lag_seconds{tier}`; the lagging-tier runbook is in

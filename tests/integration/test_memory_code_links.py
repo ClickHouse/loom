@@ -711,7 +711,7 @@ async def test_a_rename_alone_moves_the_link(env) -> None:
 
 async def test_a_refresh_follows_the_links_to_the_head_it_indexed(env, monkeypatch) -> None:
     """`code.refresh` with `wait`: the links read the pushed commit when it returns, with no
-    link pass in between and nothing judged; while another host checks the repository the
+    link pass in between and nothing judged; while another pass checks the repository the
     refresh still answers, and the links wait."""
     import server.code.app.index.ingest_pass as ingest_pass
     from server.code.api.models_ingest import CodeRefreshInput

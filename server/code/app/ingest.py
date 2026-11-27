@@ -56,7 +56,7 @@ async def _take_lease(org: str, ns: str) -> leases.Lease | None:
 async def _settle_links(org: str, ns: str, by: float) -> None:
     """Follow the namespace's memory links to the head the pass indexed, until loop time
     `by`, so their state is current when the refresh answers, not a link worker interval
-    later. Never raises: links another host is checking, a recheck that fails and one
+    later. Never raises: links another pass is checking, a recheck that fails and one
     cut at `by` are left to the link worker's next pass."""
     from server.memory.app import code_link_recheck
     from server.workers.status import log_pass_errors

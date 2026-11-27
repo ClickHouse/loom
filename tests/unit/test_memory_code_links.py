@@ -1100,7 +1100,7 @@ async def test_one_repository_is_rechecked_now_with_no_judgement(monkeypatch) ->
     result = await code_link_recheck.recheck_repository("o", "code-a")
     assert result is not None and result.rechecked == 1
     assert ran == [("code-a", 0)] and held == [code_link_recheck._lock_name("o", "code-a")]
-    with pytest.raises(LeaseBusy):  # another host is checking it
+    with pytest.raises(LeaseBusy):  # another pass is checking it
         await code_link_recheck.recheck_repository("o", "code-held")
     # no memory links to it, or links are off: no lease taken, nothing read of it
     assert await code_link_recheck.recheck_repository("o", "code-b") is None
