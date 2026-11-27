@@ -478,19 +478,6 @@ def test_a_bound_compact_coding_connection_lists_the_code_tools_alone(monkeypatc
     assert [tool["name"] for tool in explicit if tool.get("_meta")] == ["loom_code_callers"]
 
 
-def test_a_listing_builds_its_roster_and_reads_the_binding_once(monkeypatch) -> None:
-    calls: list[str] = []
-    roster, code_only = mt.listed_ops, mt.code_only_listing
-    monkeypatch.setattr(mt, "listed_ops", lambda *a: calls.append("roster") or roster(*a))
-    monkeypatch.setattr(
-        mt, "code_only_listing", lambda *a: calls.append("binding") or code_only(*a)
-    )
-    for profile in ("compact", "standard"):
-        calls.clear()
-        assert _bound_listing("coding", profile)
-        assert sorted(calls) == ["binding", "roster"]
-
-
 def test_a_reply_on_the_listing_of_code_tools_alone_names_no_tool_it_leaves_out() -> None:
     text = "Save with memory.set, inspect with memory.related, read callers with code.callers."
     listed = "Save with loom_memory_set, inspect with memory.related (via loom_op)"

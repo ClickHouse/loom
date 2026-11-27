@@ -203,7 +203,9 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   org and the caller may read that repository; with such a scope, a write into another
   configured code namespace takes that namespace's repository tag instead. A scope that
   names no configured, readable repository adds no tag, and an explicit `repo:` tag
-  always stays.
+  always stays. On a `coding` connection whose URL carries `schema_profile=compact`
+  the header also narrows `tools/list`, `prompts/list`, `resources/list` and the
+  startup instructions to the code tools ([Endpoint](#endpoint)).
 - **Implicit run.** One run per (org, token subject, session), begun in the
   run ledger by the session's first run-scoped tool call and filed in the
   caller's default namespace; writes carry its `run_id` (except `run.*`, which
