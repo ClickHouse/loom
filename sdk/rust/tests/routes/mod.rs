@@ -310,6 +310,24 @@ async fn a_redirect_is_a_response_and_the_base_path_is_preserved() {
 }
 
 #[tokio::test]
+async fn a_colon_in_the_first_segment_stays_in_the_path() {
+    let server = Server::new(vec![unused_response()]);
+    let client = Client::builder("org", "ns", "bot")
+        .base_url(format!("{}/proxy/loom", server.url))
+        .api_key("")
+        .build()
+        .unwrap();
+    client
+        .request(RouteRequest::get("/status:ready?detail=1").query("format", "json"))
+        .await
+        .unwrap();
+    assert_eq!(
+        server.request().await.line,
+        "GET /proxy/loom/status:ready?detail=1&format=json HTTP/1.1"
+    );
+}
+
+#[tokio::test]
 async fn a_path_must_stay_on_this_server() {
     let server = Server::new(vec![unused_response()]);
     let client = server.client();

@@ -153,7 +153,15 @@ impl Client {
         if !path.starts_with('/') || path.starts_with("//") {
             return Err(not_a_path().into());
         }
-        let resolved = self.base_url.join(&path[1..]).map_err(|_| not_a_path())?;
+        let relative = &path[1..];
+        let first_segment = relative.split(['/', '\\', '?', '#']).next().unwrap_or("");
+        // A leading dot segment keeps a colon in the first segment from naming a scheme.
+        let resolved = if first_segment.contains(':') {
+            self.base_url.join(&format!(".{path}"))
+        } else {
+            self.base_url.join(relative)
+        }
+        .map_err(|_| not_a_path())?;
         if resolved.origin() != self.base_url.origin() {
             return Err(not_a_path().into());
         }
