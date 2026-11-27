@@ -10,12 +10,17 @@ from contextlib import asynccontextmanager
 from server.core import retirement, settings_overrides
 from server.core.background import drain_task_sets, flush_registered_buffers
 from server.core.ch import get_client, set_query_tag
+from server.core.ch_errors import error_line
 from server.core.model_work_gate import get_model_work_gate
+from server.core.provider_process import process_identity
 from server.insights.app.provider_barrier import _retire_until, register_process
 from server.insights.app.provider_runtime import load_active_configuration
 from server.settings import settings
 
 log = logging.getLogger(__name__)
+
+# Marks, as an exception note, a failure of the shutdown of a command whose work is done.
+UNFINISHED = "the command's work is done; its own shutdown is not"
 
 
 async def _adopt_overrides(*, failing: bool = False) -> bool:
@@ -52,7 +57,14 @@ async def _drain_participant_until(end: float) -> None:
             raise RuntimeError("Native command deferred writes did not drain")
         if not await flush_registered_buffers():
             raise RuntimeError("Native command buffers did not flush")
-        if await _retire_until(get_client(), end) is not True:
+        try:
+            certified = await _retire_until(get_client(), end)
+        except retirement.Uncertifiable as e:
+            log.warning(
+                "provider participant %s not retired, its writes settled: %s", process_identity(), e
+            )
+            return
+        if certified is not True:
             raise RuntimeError("Native command retirement was not certified")
 
 
@@ -120,7 +132,24 @@ async def participant_command() -> AsyncIterator[None]:
             await _finish_participant()
         raise
     else:
-        await _finish_participant()
+        try:
+            await _finish_participant()
+        except Exception as error:
+            error.add_note(UNFINISHED)  # `loom` reports it in one line (`unfinished_line`)
+            raise
+
+
+def unfinished_line(error: BaseException) -> str | None:
+    """What `loom` prints, in place of a traceback, when a command did its work and its
+    shutdown then failed (`UNFINISHED`); None for any other error."""
+    if UNFINISHED not in getattr(error, "__notes__", ()):
+        return None
+    me = process_identity()
+    return (
+        f"the command's work is done, but its shutdown did not complete ({error_line(error)}): "
+        f"a deferred write may not have landed, and a provider change waits for participant {me} "
+        f"until `loom participant retire --participant {me}` runs on this host"
+    )
 
 
 @asynccontextmanager

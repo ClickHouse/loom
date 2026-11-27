@@ -312,6 +312,37 @@ def test_a_command_refused_for_another_deployment_prints_one_line_and_exits_2(
     ]
 
 
+def test_a_shutdown_failure_after_the_work_prints_one_line_and_exits_1(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from server.cli.dispatch import _dispatch
+    from server.core.provider_process import process_identity
+    from server.insights.app.provider_command import UNFINISHED
+
+    def _func(_: argparse.Namespace) -> int:
+        error = TimeoutError()
+        error.add_note(UNFINISHED)
+        raise error
+
+    assert _dispatch(argparse.Namespace(cmd="decisions", func=_func)) == 1
+    me = process_identity()
+    assert capsys.readouterr().err.strip().splitlines() == [
+        "✗ the command's work is done, but its shutdown did not complete (TimeoutError): "
+        f"a deferred write may not have landed, and a provider change waits for participant {me} "
+        f"until `loom participant retire --participant {me}` runs on this host"
+    ]
+
+
+def test_any_other_command_error_keeps_its_traceback() -> None:
+    from server.cli.dispatch import _dispatch
+
+    def _func(_: argparse.Namespace) -> int:
+        raise TimeoutError("the command's own deadline")
+
+    with pytest.raises(TimeoutError, match="the command's own deadline"):
+        _dispatch(argparse.Namespace(cmd="decisions", func=_func))
+
+
 def test_a_platform_admin_mint_for_another_deployment_is_refused_as_such(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

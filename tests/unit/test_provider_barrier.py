@@ -484,3 +484,37 @@ async def test_boot_enrolls_before_migrating_only_once_the_heartbeat_columns_exi
     await barrier.enroll_before_migrations(ch)
     assert "host_proof" in ch.query_one.call_args.args[0]
     assert register.await_count == columns
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["host proof", "authority record"])
+async def test_a_process_that_cannot_certify_says_so_only_once_its_writes_settled(
+    setup, monkeypatch, missing
+):
+    """No wait supplies a host proof or the deployment's authority record, so the
+    refusal is named instead of retried; a write that may still land comes first."""
+    from server.core import retirement, rmt_carry
+
+    client = barrier._default_client()
+    if missing == "host proof":
+        monkeypatch.setattr(barrier, "participant_proof", lambda: "")
+    else:
+        monkeypatch.setattr(client, "query_one", AsyncMock(return_value=None))
+    monkeypatch.setattr(rmt_carry, "unsettled", lambda: 1)
+    assert not await barrier.retire_process(client, end=monotonic() + 1)
+    monkeypatch.setattr(rmt_carry, "unsettled", lambda: 0)
+    with pytest.raises(retirement.Uncertifiable):
+        await barrier.retire_process(client, end=monotonic() + 1)
+    with pytest.raises(retirement.Uncertifiable):
+        await barrier._retire_until(client, monotonic() + 1)
+    assert not await barrier.retire_at_shutdown(client, budget_s=1)
+    barrier.record_retirement.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_another_process_without_a_proof_is_refused_not_named(setup):
+    """Only a process's own missing evidence is named: a dead row with no proof
+    stays unretired for whoever can prove it."""
+    assert not await barrier._authority_settled(
+        barrier._default_client(), uuid4(), "", end=monotonic() + 1
+    )

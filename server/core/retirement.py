@@ -21,6 +21,11 @@ class ProcessStopping(RuntimeError):
     """This participant can never accept another unit of work."""
 
 
+class Uncertifiable(RuntimeError):
+    """This process settled its writes but lacks evidence its retirement needs,
+    and no wait supplies it: its row stays, and a provider change waits for it."""
+
+
 class RetirementGate:
     """One event loop; checking admission and incrementing never await."""
 
