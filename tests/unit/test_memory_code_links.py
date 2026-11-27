@@ -3440,6 +3440,20 @@ async def test_a_file_link_is_rehashed_from_the_lines_its_memory_cites(monkeypat
     out = await code_link_rehash._file_rehashed(marked, ["http_date"], files)
     assert (out["body_hash"], "state" in out) == (NO_BASELINE, False)
 
+    # the commit it was last read at went instead: lines that cannot be read are no
+    # edit, so a link that matched stays fresh against the lines it was written at
+    async def kept(commit):
+        return commit != "c2"
+
+    monkeypatch.setattr(files, "has", kept)
+    out = await code_link_rehash._file_rehashed(old, ["http_date"], files)
+    assert out == {"anchored_hash": then, "body_hash": then, "checked_hash": ""}
+    # while one last read at a commit whose file holds no cited line reads changed
+    out = await code_link_rehash._file_rehashed(
+        old | {"checked_commit": "c0"}, ["http_date"], files
+    )
+    assert (out["body_hash"], out["checked_hash"], out["state"]) == (then, "", "changed")
+
 
 @pytest.mark.asyncio
 async def test_a_file_link_stays_one_while_two_of_the_memorys_files_define_the_name(

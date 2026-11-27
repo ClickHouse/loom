@@ -118,24 +118,29 @@ async def _file_rehashed(
     `names`, which its memory cites, at the commit it was written at and at the one it
     was last read at, and the state they give. One written against no cited line keeps
     the first it took. One whose written lines cannot be read takes the lines last read
-    when it matched them, and stays changed when it did not."""
+    when it matched them, and stays changed when it did not. One whose last read lines
+    cannot be read keeps its state, as a symbol link does."""
 
-    async def cited_at(commit: str, path: str) -> str:
+    async def cited_at(commit: str, path: str) -> str | None:
+        """The fingerprint of the cited lines of `path` at `commit`, '' when it holds
+        none; None when the mirror lost the commit or the commit has no such file."""
         file = await files.at(commit, path) if commit and await files.has(commit) else None
         # matching lines is CPU work: off the loop
-        return await asyncio.to_thread(cited_fingerprint, file.lines, names) if file else ""
+        return await asyncio.to_thread(cited_fingerprint, file.lines, names) if file else None
 
     link = link_pass.link_of(a)
-    written = await cited_at(a["anchored_commit"], link.anchored_path)
-    first = written or await cited_at(a["baseline_commit"], a["baseline_path"])
-    checked = await cited_at(a["checked_commit"], link.path)
+    written = await cited_at(a["anchored_commit"], link.anchored_path) or ""
+    first = written or await cited_at(a["baseline_commit"], a["baseline_path"]) or ""
+    read = await cited_at(a["checked_commit"], link.path)
+    checked = read or ""
     took = not first and link.matched_baseline()
     baseline = first or (checked if took else NO_BASELINE)
     out = {"anchored_hash": written, "body_hash": baseline, "checked_hash": checked}
     if took and checked:
         # the next re-hash reads the baseline where this one took it
         out |= {"baseline_commit": a["checked_commit"], "baseline_path": link.path}
-    if a["state"] != "missing":  # a file that is gone stays gone
+    # a file that is gone stays gone; lines that cannot be read show no change
+    if a["state"] != "missing" and read is not None:
         after = recheck(
             replace(link, body_hash=baseline),
             path_now=link.path,
