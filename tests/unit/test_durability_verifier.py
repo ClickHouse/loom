@@ -20,6 +20,7 @@ from server.memory.app import handlers
 from server.memory.app import pipeline as mp
 from server.memory.app import pipeline_state as pipeline_state
 from server.memory.domain import durable_facts as df
+from server.memory.domain.extracted_facts import keep_latest_per_key
 from server.memory.domain.prompt_fence import FENCE_NOTE
 from server.settings import settings
 
@@ -373,6 +374,30 @@ async def test_a_fact_an_earlier_session_stored_is_not_written_again(
     assert "x" * mp.STORED_VALUE_CHARS in client.calls[0]
     assert "x" * (mp.STORED_VALUE_CHARS + 1) not in client.calls[0]
     # Reinforce: one evidence event on the stored row, however many facts restated it.
+    assert world.events == [("evidence", "id-m1", "o", "n", "a")]
+
+
+@pytest.mark.asyncio
+async def test_a_restatement_stays_while_an_earlier_kept_fact_has_its_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = _StoredWorld(monkeypatch, [_row("m1", "User uses emacs.", ["repo:r1"])])
+    changed = ["User uses vim.", "User went back to emacs."]
+
+    async def written(listed: int) -> list[str]:
+        client = _Scripted({**_answer(n=2), "stored": [{"i": listed, "s": 0}]})
+        monkeypatch.setattr(mp, "_verify_clients", lambda state: [client])
+        st = _state(["source:claude-code", "repo:r1"], changed)
+        for f in st.extracted_facts:
+            f["key"] = "editor"
+        st = await mp._REGISTRY["loom.verify_durable"](st, {})
+        return [f["value"] for f in keep_latest_per_key(st.extracted_facts)[0]]
+
+    # The later fact is listed: both reach the write, whose batch rule keeps the later,
+    # so the earlier state is not written over the stored row.
+    assert await written(1) == changed[1:] and not world.events
+    # The earlier fact is listed: it is dropped, and the later still holds the key.
+    assert await written(0) == changed[1:]
     assert world.events == [("evidence", "id-m1", "o", "n", "a")]
 
 

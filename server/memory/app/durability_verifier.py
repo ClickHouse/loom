@@ -283,7 +283,8 @@ async def verify(
     A dropped fact carries `_verify` (the reason) and, when folded,
     `_duplicate_of` (the key of the fact that carries its claim). `stored` holds,
     for each fact, the `(memory id, text)` of the stored memories nearest it; a fact
-    one of them already states is dropped with `_stored`, that memory's id."""
+    the primary lists against one of them is dropped with `_stored`, that memory's id,
+    unless an earlier kept fact has its key."""
     if len(facts) < 1 or not clients:
         return VerifyResult(kept=list(facts), dropped=[])
     kept: list[dict[str, Any]] = []
@@ -312,8 +313,11 @@ async def verify(
         restated = answers[0].stored if answers[0].ok else {}
         for i, f in enumerate(chunk):
             if i not in drops:
-                # A listing counts only for a memory read for that fact.
-                if i in restated and near[restated[i]] in own[i]:
+                # A listing counts only for a memory read for that fact, and not while an
+                # earlier kept fact has its key: the write decides between a key's facts.
+                key = str(f.get("key") or "").strip()
+                contested = key and any(str(k.get("key") or "").strip() == key for k in kept)
+                if i in restated and near[restated[i]] in own[i] and not contested:
                     dropped.append(dict(f, _verify=ALREADY_STORED, _stored=near[restated[i]][0]))
                 else:
                     kept.append(f)

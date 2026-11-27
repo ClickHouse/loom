@@ -698,7 +698,7 @@ async def _stored_neighbours(state: WorkflowState, facts: list[dict[str, Any]]) 
     that follows. None for a fact that carries `valid_at`, `valid_to` or `foresight`:
     the verifier compares text and sees no validity. None under `append_only`, where
     every write is its own event, or under a policy that could not be read. Fail-open:
-    with none, every fact goes on to the write."""
+    with none, no fact is dropped as already stored."""
     import server.memory.store as memory_repo
     from server.embedding import get_embedder
     from server.memory.app.handlers import nearest_existing_rows
