@@ -512,6 +512,40 @@ const memories = await new LoomMemoryRetriever(bot, { scope: { userId: "u-42" } 
 
 Both extend `BaseRetriever` from `@langchain/core` (install it next to the SDK; it is an optional peer dependency) and return one `Document` per document chunk (`knowledge.search`) or memory (`memory.search`). The memory retriever returns nothing when loom abstains, and leaves out memories below the floor, unless `honourAbstain: false`.
 
+## LangGraph.js
+
+```ts
+import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import { LoomStore } from "@clickhouse/loom/integrations/langgraph";
+const State = Annotation.Root({ seat: Annotation<string> });
+const graph = new StateGraph(State)
+  .addNode("prefs", async (state, config) => {
+    const saved = await config.store?.get(["users", "alice"], "prefs");
+    if (saved) return { seat: saved.value.seat };
+    await config.store?.put(["users", "alice"], "prefs", { seat: state.seat });
+    return {};
+  })
+  .addEdge(START, "prefs")
+  .addEdge("prefs", END)
+  .compile({ store: new LoomStore(bot, { tags: ["support"] }) });
+```
+
+Nodes read and write the store through `config.store`. `LoomStore` extends `BaseStore` from `@langchain/langgraph-checkpoint` (install it next to the SDK; it is an optional peer dependency). It stores each item as a Loom memory, so graphs written in Python and TypeScript read each other's items under the same org and namespace.
+
+The compiled-graph store wrapper forwards neither `index` nor `ttl`, so puts from graph nodes are always semantic and never expire. A direct `batch()` call keeps both:
+
+```ts
+import { LoomStore } from "@clickhouse/loom/integrations/langgraph";
+const store = new LoomStore(bot);
+await store.batch([
+  { namespace: ["users", "alice"], key: "prefs", value: { seat: "aisle" }, index: false, ttl: 30 },
+]);
+const [item] = await store.batch([{ namespace: ["users", "alice"], key: "prefs" }]);
+const names = await store.listNamespaces({ prefix: ["users"], maxDepth: 2 });
+```
+
+`ttl` is in minutes and `index: false` stores an episodic memory that search does not rank. Writes need a nonempty namespace. A ranked search reads at most 50 candidates (`searchTopKCap`, 1 to 500). `listNamespaces` works on the store but not from graph nodes, because the wrapper inherits upstream's method, which throws. See [the memory mapping and limits](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md#langgraph).
+
 ## Mastra
 
 ```ts

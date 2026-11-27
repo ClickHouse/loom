@@ -271,16 +271,23 @@ async def test_cancelled_credential_refresh_never_sends_a_model_request(
     assert credentials.refreshes == 1
 
 
-async def test_missing_adc_fails_before_any_model_request(
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (DefaultCredentialsError, "Application Default Credentials"),
+        (PermissionError, "could not read Google credentials"),
+    ],
+)
+async def test_unavailable_adc_fails_before_any_model_request(
     credentials: Credentials,
     model_responses: tuple[list[httpx.Request], list[httpx.Response]],
     monkeypatch: pytest.MonkeyPatch,
+    error: type[Exception],
+    message: str,
 ) -> None:
     sent, _ = model_responses
-    monkeypatch.setattr(
-        google.auth, "default", Mock(side_effect=DefaultCredentialsError("private"))
-    )
-    with pytest.raises(RuntimeError, match="Application Default Credentials") as failure:
+    monkeypatch.setattr(google.auth, "default", Mock(side_effect=error("private")))
+    with pytest.raises(vertex_auth.VertexCredentialsError, match=message) as failure:
         await vertex.VertexLLMClient(_MODEL).complete("", "my note")
     assert "private" not in str(failure.value)
     assert not sent

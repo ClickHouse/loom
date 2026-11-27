@@ -100,11 +100,11 @@ const plans: Plan[] = [
   description="Choose a memory setup for coding agents and copy a test checklist for your repository. Compare Git instructions, file-backed MCP, and a self-hosted service."
   path="/agent-memory-selector"
 >
-  <h1>Choose memory for your coding agents</h1>
-  <p class="lead">Find a starting setup and test it on one repository before giving it real project data.</p>
+  <h1>Choose a memory setup for your coding agents</h1>
+  <p class="lead">Choose what agents need to remember and which access controls you need. Get a checklist to test the setup on a repository.</p>
 
   <div class="selector">
-    <form id="memory-input" class="site-panel memory-input" hidden>
+    <form id="memory-input" class="site-panel memory-input" aria-label="Memory requirements" hidden>
       <fieldset>
         <legend>What needs to carry across sessions?</legend>
         <label><input type="radio" name="purpose" value="rules" checked /> Reviewed project rules</label>
@@ -212,17 +212,17 @@ const plans: Plan[] = [
   .memory-input fieldset { display: grid; gap: 0.25rem; padding: 0; margin: 0; min-width: 0; border: 0; }
   .memory-input fieldset + fieldset { margin-top: 1.1rem; padding-top: 0.35rem; }
   legend { font-weight: 650; margin-bottom: 0.4rem; padding: 0; }
-  label { display: flex; align-items: center; gap: 0.65rem; min-height: 2.75rem; cursor: pointer; }
+  label { display: flex; align-items: center; gap: 0.65rem; min-height: 2.75rem; padding: 0.4rem 0.65rem; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+  label:has(:checked) { border-color: var(--accent); background: var(--surface-raised); }
   input { flex: 0 0 auto; width: 1.1rem; height: 1.1rem; accent-color: var(--accent); }
-  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-  button { cursor: pointer; font: inherit; min-height: 2.75rem; }
+  .memory-plan { border-block-start: 2px solid var(--accent); }
   .memory-plan h3 { margin-top: 1.15rem; }
   .memory-plan p, .memory-plan ol { max-width: 60ch; }
   ol { padding-inline-start: 1.35rem; }
   li + li { margin-top: 0.35rem; }
   .selector-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
   .selector-actions[hidden] { display: none; }
-  .comparison-link { display: flex; flex-wrap: wrap; gap: 0.55rem 1.4rem; margin-top: 1.65rem; }
+  .comparison-link { display: flex; flex-wrap: wrap; gap: 0.55rem 1.4rem; margin-top: 1.65rem; padding-top: 1rem; border-top: 1px solid var(--line); }
   .visually-hidden { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; white-space: nowrap; }
   @media (max-width: 50rem) { .selector { grid-template-columns: minmax(0, 1fr); } }
 </style>

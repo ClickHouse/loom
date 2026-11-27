@@ -64,14 +64,12 @@ async function containerPulls() {
 
 const numberOrNull = (value) => (Number.isFinite(value) ? value : null);
 
-export async function loadAdoption(env = process.env, now = new Date()) {
-  const refreshedAt = now.toISOString();
-  const today = refreshedAt.slice(0, 10);
+async function loadOpenSource(warehouse, today) {
   const firstDay = daysBefore(today, 365);
   const historyStart = daysBefore(today, 730);
   const yesterday = daysBefore(today, 1);
-  const [warehouse, repository, releases, python, npm, olderNpm, pulls] = await Promise.all([
-    loadWarehouse(env),
+  const [aggregates, repository, releases, python, npm, olderNpm, pulls] = await Promise.all([
+    warehouse,
     readSource("https://api.github.com/repos/ClickHouse/loom"),
     readSource("https://api.github.com/repos/ClickHouse/loom/releases?per_page=100"),
     readSource("https://pypistats.org/api/packages/clickhouse-loom/overall?mirrors=false"),
@@ -80,7 +78,7 @@ export async function loadAdoption(env = process.env, now = new Date()) {
     containerPulls(),
   ]);
 
-  const oss = warehouse.oss ?? [];
+  const oss = aggregates.oss ?? [];
   const series = (source, metric) => oss.filter((row) => row.source === source && row.metric === metric);
   const fetchDays = (rows) =>
     rows
@@ -123,55 +121,71 @@ export async function loadAdoption(env = process.env, now = new Date()) {
     };
   };
 
-  return {
+  return [
+    {
+      id: "stars",
+      label: "GitHub stars",
+      source: "GitHub",
+      ...counter("github", "stars", repository?.stargazers_count),
+    },
+    { id: "forks", label: "GitHub forks", source: "GitHub", ...counter("github", "forks", repository?.forks_count) },
+    {
+      id: "pypi",
+      artifact: "clickhouse-loom",
+      label: "Python SDK downloads",
+      source: "PyPI",
+      ...downloads(pythonDays, "pypi"),
+    },
+    {
+      id: "npm",
+      artifact: "@clickhouse/loom",
+      label: "TypeScript SDK downloads",
+      source: "npm",
+      ...downloads(npmDays, "npm"),
+    },
+    {
+      id: "releases",
+      label: "Release asset downloads",
+      source: "GitHub",
+      ...counter("github", "release_asset_downloads_total", releaseDownloads),
+    },
+    { id: "pulls", label: "Container pulls", source: "GHCR", ...counter("ghcr", "container_pulls_total", pulls) },
+  ];
+}
+
+export function createAdoptionReader(env, now) {
+  const refreshedAt = now.toISOString();
+  const today = refreshedAt.slice(0, 10);
+  const warehouse = loadWarehouse(env);
+  const selfHosted = warehouse.then(({ totals, versions, retention, activity, lifecycle, domains }) => ({
     today,
     refreshedAt,
     selfHosted: {
-      totals: warehouse.totals,
-      versions: warehouse.versions,
-      retention: warehouse.retention,
-      activity: warehouse.activity ?? [],
-      lifecycle: warehouse.lifecycle ?? [],
-      domains: warehouse.domains ?? null,
+      totals,
+      versions,
+      retention,
+      activity: activity ?? [],
+      lifecycle: lifecycle ?? [],
+      domains: domains ?? null,
     },
-    openSource: [
-      {
-        id: "stars",
-        label: "GitHub stars",
-        source: "GitHub",
-        ...counter("github", "stars", repository?.stargazers_count),
-      },
-      { id: "forks", label: "GitHub forks", source: "GitHub", ...counter("github", "forks", repository?.forks_count) },
-      {
-        id: "pypi",
-        artifact: "clickhouse-loom",
-        label: "Python SDK downloads",
-        source: "PyPI",
-        ...downloads(pythonDays, "pypi"),
-      },
-      {
-        id: "npm",
-        artifact: "@clickhouse/loom",
-        label: "TypeScript SDK downloads",
-        source: "npm",
-        ...downloads(npmDays, "npm"),
-      },
-      {
-        id: "releases",
-        label: "Release asset downloads",
-        source: "GitHub",
-        ...counter("github", "release_asset_downloads_total", releaseDownloads),
-      },
-      { id: "pulls", label: "Container pulls", source: "GHCR", ...counter("ghcr", "container_pulls_total", pulls) },
-    ],
+    openSource: [],
+  }));
+  let withOpenSource;
+  return (tab) => {
+    if (tab === "self-hosted") return selfHosted;
+    withOpenSource ??= Promise.all([selfHosted, loadOpenSource(warehouse, today)]).then(([data, openSource]) => ({
+      ...data,
+      openSource,
+    }));
+    return withOpenSource;
   };
 }
 
 let published;
-export function loadPublishedAdoption() {
+export function loadPublishedAdoption(tab) {
   const now = Date.now();
   if (!published || now >= published.expires) {
-    published = { expires: now + 5 * 60_000, data: loadAdoption(process.env, new Date(now)) };
+    published = { expires: now + 5 * 60_000, read: createAdoptionReader(process.env, new Date(now)) };
   }
-  return published.data;
+  return published.read(tab);
 }

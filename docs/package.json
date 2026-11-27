@@ -6,13 +6,15 @@
   },
   "scripts": {
     "dev": "npm run prepare-content && blume dev",
-    "prepare-content": "node scripts/sync-playground-engine.mjs --check && node scripts/prepare-content.mjs",
+    "prepare-content": "node scripts/sync-playground-engine.mjs --check && node scripts/prepare-content.mjs && node scripts/prepare-click-ui.mjs",
     "build": "npm run prepare-content && blume build && node scripts/mount-site-pages.mjs",
     "preview": "blume preview",
     "check": "blume check",
     "validate": "npm run prepare-content && blume validate --strict"
   },
   "dependencies": {
+    "@clickhouse/click-ui": "0.13.0",
+    "@fontsource-variable/inter": "5.2.8",
     "blume": "2.2.7"
   },
   "overrides": {

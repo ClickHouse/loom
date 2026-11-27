@@ -26,8 +26,8 @@ reported commit](#check-a-lesson-after-a-code-edit).
   backticks, or anywhere in its text as `A::b` or a call (`a.b()`, `name()`), that resolves
   to exactly one place (an unqualified name needs four or more characters); to definitions
   in the files it lists that it names by a bare camelCase or snake_case word; and to each
-  file it lists that holds none of them. A qualified name not on trunk yet links if it
-  merges within `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` (14 days).
+  file it lists that holds none of them. The worker retries pending names as definitions
+  reach trunk.
   [Memories linked to code](../concepts/memory.md#memories-linked-to-code)
 - **Links that follow refactors.** On every indexed commit, each link reads `fresh`,
   `moved`, `changed` (naming the commit that changed it), `unresolved` or `missing`. A link

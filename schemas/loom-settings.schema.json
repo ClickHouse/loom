@@ -161,11 +161,12 @@
             "anthropic",
             "openai",
             "bedrock",
+            "vertex",
             "local",
             "fake"
           ],
           "type": "string",
-          "description": "Native streaming provider. Empty disables native model admission."
+          "description": "Native streaming provider. Vertex uses Google Application Default Credentials. Empty disables native model admission."
         },
         "audit_checkpoint_grace_seconds": {
           "default": 600,
@@ -4489,7 +4490,7 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Memory writes one pass links (at least 1)."
+          "description": "Rows per page of memory writes to link or pending links to recheck (at least 1)."
         },
         "memory_code_links_enabled": {
           "default": true,
@@ -4524,7 +4525,7 @@
           "default": 14,
           "minimum": 1,
           "type": "integer",
-          "description": "Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped."
+          "description": "Days to retry a code-shaped name absent from trunk, measured when each pending scan starts."
         },
         "memory_code_links_revise_per_pass": {
           "default": 20,
@@ -7420,7 +7421,7 @@
         "vertex_location": {
           "default": "",
           "type": "string",
-          "description": "Vertex AI location, either a region or \"global\". Required with the Vertex provider."
+          "description": "Vertex AI location: a region, a multi-region (\"eu\", \"us\"), or \"global\". Required with the Vertex provider."
         },
         "vertex_project": {
           "default": "",

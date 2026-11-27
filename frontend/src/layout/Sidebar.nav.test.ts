@@ -16,12 +16,6 @@ import { mobileMoreItems } from "./MobileMore";
 import { ALL_VIEWS } from "../lib/state";
 import { must } from "../test/must";
 
-// Flow (route id "sharing") is an operator's view of the whole namespace — it lives in
-// the admin drawer, not the end-user rail. The rail is three labelled groups (Memory,
-// Activity, Sources) under Profile, Settings at the foot; Recall is a tab of Memories,
-// Namespaces in your org is reached from the namespace picker; the drawer reads as Review /
-// Observe / Access and gains Guardrails.
-
 const admin = { authenticated: true, subject: "op@example.com", org: "dev", roles: ["PLATFORM_ADMIN"] };
 const writer = { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] };
 const NS = "team-a";
@@ -47,9 +41,9 @@ describe("Flow in the admin drawer", () => {
     expect(isDrawerView("runs")).toBe(false);
   });
 
-  it("sits in the phone sheet's Admin group for admins and is absent for a writer", () => {
+  it("sits in the phone sheet's Observe group for admins and is absent for a writer", () => {
     const forAdmin = mobileMoreItems(admin, [row("admin")], NS, null);
-    const adminGroup = forAdmin.find((g) => g.group === "Admin");
+    const adminGroup = forAdmin.find((g) => g.group === "Observe");
     expect(adminGroup?.items.map((i) => i.id)).toContain("sharing");
     expect(forAdmin.find((g) => g.group === "Main")?.items.map((i) => i.id) ?? []).not.toContain("sharing");
     const forWriter = mobileMoreItems(writer, [row("writer")], NS, null).flatMap((g) => g.items.map((i) => i.id));
@@ -58,12 +52,11 @@ describe("Flow in the admin drawer", () => {
 });
 
 describe("the rail reads as groups", () => {
-  it("is Profile, then Memory / Activity / Sources, with Settings at the foot", () => {
-    expect(RAIL_GROUPS.map((g) => g.label)).toEqual([null, "Memory", "Activity", "Sources"]);
-    expect(RAIL_GROUPS[0].items.map((i) => i.id)).toEqual(["profile"]);
-    expect(RAIL_GROUPS[1].items.map((i) => i.id)).toEqual(["memories", "knowledge", "sessions"]);
-    expect(RAIL_GROUPS[2].items.map((i) => i.id)).toEqual(["runs", "tasks"]);
-    expect(RAIL_GROUPS[3].items.map((i) => i.id)).toEqual(["code"]);
+  it("groups destinations by context, activity and sources", () => {
+    expect(RAIL_GROUPS.map((g) => g.label)).toEqual(["Context", "Agent activity", "Sources"]);
+    expect(RAIL_GROUPS[0].items.map((i) => i.id)).toEqual(["memories", "knowledge", "profile"]);
+    expect(RAIL_GROUPS[1].items.map((i) => i.id)).toEqual(["sessions", "runs", "tasks"]);
+    expect(RAIL_GROUPS[2].items.map((i) => i.id)).toEqual(["code"]);
     expect(SETTINGS_ITEM).toMatchObject({ id: "setup", label: "Settings" });
   });
 
@@ -91,9 +84,18 @@ describe("the rail reads as groups", () => {
 
   it("the phone sheet inherits the groups and closes with Settings", () => {
     const groups = mobileMoreItems(writer, [row("writer")], NS, null).map((g) => g.group);
-    expect(groups).toEqual(["Memory", "Activity", "Sources", "Settings"]);
+    expect(groups).toEqual(["Context", "Agent activity", "Sources", "Workspace"]);
     const forAdmin = mobileMoreItems(admin, [row("admin")], NS, null).map((g) => g.group);
-    expect(forAdmin).toEqual(["Memory", "Activity", "Sources", "Settings", "Admin"]);
+    expect(forAdmin).toEqual([
+      "Context",
+      "Agent activity",
+      "Sources",
+      "Review",
+      "Observe",
+      "Access",
+      "Deployment",
+      "Workspace",
+    ]);
   });
 });
 

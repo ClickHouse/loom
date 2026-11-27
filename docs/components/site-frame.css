@@ -1,0 +1,446 @@
+:root[data-cui-theme="dark"] {
+  color-scheme: dark;
+  --page: color-mix(in srgb, var(--click-global-color-background-default), black 44%);
+  --surface: var(--click-global-color-background-default);
+  --surface-raised: var(--click-global-color-background-muted);
+  --muted: var(--click-global-color-text-muted);
+  --accent: var(--click-global-color-accent-default);
+  --line: var(--click-global-color-stroke-intense);
+  --radius: var(--click-button-radii-all);
+  background: var(--page);
+  color: var(--click-global-color-text-default);
+  font:
+    400 1rem / 1.55 "Inter Variable",
+    system-ui,
+    sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body,
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-underline-offset: 0.22em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--click-global-color-outline-default);
+  outline-offset: 4px;
+}
+
+.shell {
+  width: 100%;
+  max-width: 88rem;
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 4vw, 3.5rem);
+}
+
+.site-header {
+  border-bottom: 1px solid var(--line);
+}
+
+.header-inner,
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem clamp(1rem, 2vw, 2rem);
+  padding-block: 0.85rem;
+}
+
+.brand,
+.site-header nav,
+.site-footer nav,
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.brand {
+  flex: none;
+  font-size: 1.08rem;
+  font-weight: 560;
+  letter-spacing: -0.025em;
+  text-decoration: none;
+}
+
+.brand strong {
+  font-weight: 730;
+}
+
+.brand-mark,
+.brand-mark svg {
+  display: block;
+  width: 2rem;
+  height: 2rem;
+}
+
+.brand-mark .loom-logo-background,
+.brand-mark .loom-logo-cutout {
+  fill: var(--page);
+}
+
+.brand-mark .loom-logo-mark[stroke] {
+  stroke: var(--accent);
+}
+
+.brand-mark .loom-logo-mark[fill] {
+  fill: var(--accent);
+}
+
+.site-header nav,
+.site-footer nav {
+  flex-wrap: wrap;
+  gap: 0.25rem clamp(0.75rem, 2vw, 1.35rem);
+  font-size: 0.9rem;
+}
+
+.site-header nav a,
+.site-footer nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.site-header nav a:hover,
+.site-footer nav a:hover,
+nav a[aria-current="page"] {
+  color: var(--click-global-color-text-default);
+}
+
+.site-nav a[aria-current="page"] {
+  color: var(--click-global-color-text-default);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 0.56rem;
+}
+
+.site-header .mobile-start {
+  display: none;
+}
+
+.header-actions {
+  justify-content: flex-end;
+  flex: none;
+}
+
+.site-language {
+  position: relative;
+  font-size: 0.84rem;
+}
+
+.site-language summary {
+  padding: 0.65rem 0.37rem;
+  min-height: 2.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.site-language summary:hover,
+.repo-link:hover {
+  color: var(--accent);
+}
+
+.site-language-code {
+  display: none;
+}
+
+.site-header .site-language-list {
+  position: absolute;
+  z-index: 2;
+  inset-inline-end: 0;
+  display: grid;
+  gap: 0;
+  min-width: 10rem;
+  max-block-size: calc(100dvh - 5rem);
+  overflow-y: auto;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 0.6rem 1.6rem var(--click-global-color-shadow-default);
+}
+
+.site-language-list a {
+  padding-inline: 0.65rem;
+}
+
+.site-language-list a[aria-current="page"],
+.site-language-list a:hover {
+  background: var(--surface-raised);
+}
+
+.repo-link {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+
+.repo-link:hover {
+  background: var(--surface);
+}
+
+.header-action {
+  white-space: nowrap;
+}
+
+.link-arrow {
+  display: inline-block;
+  flex: none;
+}
+
+html[dir="rtl"] .link-arrow {
+  transform: scaleX(-1);
+}
+
+.skip {
+  position: absolute;
+  z-index: 3;
+  inset-inline-start: 1rem;
+  inset-block-start: -10rem;
+  padding: 0.7rem 1rem;
+  border-radius: var(--radius);
+  color: var(--surface);
+  background: var(--accent);
+  font-weight: 700;
+}
+
+.skip:focus {
+  inset-block-start: 0.75rem;
+}
+
+main {
+  min-height: 58vh;
+  padding-block: clamp(2.75rem, 5vw, 5.25rem);
+}
+
+main:focus {
+  outline: none;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--click-global-color-title-default);
+  font-weight: 660;
+}
+
+p,
+li {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+h1 {
+  max-width: 23ch;
+  font-size: clamp(2.45rem, 5vw, 5rem);
+  line-height: 1.04;
+  letter-spacing: -0.052em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+h2 {
+  font-size: clamp(1.5rem, 2.65vw, 2.45rem);
+  line-height: 1.14;
+  letter-spacing: -0.035em;
+}
+
+h3 {
+  font-size: 1.14rem;
+  line-height: 1.3;
+  letter-spacing: -0.018em;
+}
+
+html:is([lang="ar"], [lang="hi"]) :is(h1, h2, h3) {
+  letter-spacing: normal;
+  line-height: 1.2;
+}
+
+.lead {
+  max-width: 60ch;
+  margin-top: 1.1rem;
+  font-size: clamp(1.06rem, 1.4vw, 1.23rem);
+}
+
+.primary,
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  min-height: 2.75rem;
+  padding: 0.6rem 1rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 650;
+  text-align: center;
+  text-decoration: none;
+}
+
+.primary {
+  color: var(--click-button-basic-color-primary-text-default);
+  background: var(--click-button-basic-color-primary-background-default);
+  border-color: var(--click-button-basic-color-primary-stroke-default);
+}
+
+.primary:hover {
+  background: var(--click-button-basic-color-primary-background-hover);
+}
+
+.secondary {
+  color: var(--click-button-basic-color-secondary-text-default);
+  background: transparent;
+  border-color: var(--click-button-basic-color-secondary-stroke-default);
+}
+
+.secondary:hover {
+  border-color: var(--click-button-basic-color-secondary-stroke-hover);
+  background: var(--click-button-basic-color-secondary-background-hover);
+}
+
+button:is(.primary, .secondary) {
+  cursor: pointer;
+}
+
+.site-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 0.85rem;
+  margin-top: 1.55rem;
+}
+
+.site-section {
+  margin-top: clamp(2.8rem, 6vw, 5rem);
+  padding-top: clamp(1.75rem, 3.2vw, 2.85rem);
+  border-top: 1px solid var(--line);
+}
+
+.section-copy {
+  max-width: 44rem;
+}
+
+.section-copy p {
+  margin-top: 0.65rem;
+}
+
+.site-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 0.85rem;
+  margin-top: 1.45rem;
+}
+
+.site-panel {
+  min-width: 0;
+  padding: clamp(1rem, 2.15vw, 1.85rem);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.site-panel p {
+  margin-block: 0.55rem 0.75rem;
+}
+
+.site-panel a,
+.text-link {
+  color: var(--click-global-color-text-link-default);
+  font-size: 0.93rem;
+  font-weight: 610;
+}
+
+.site-panel a:hover,
+.text-link:hover {
+  color: var(--click-global-color-text-link-hover);
+}
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.footer-inner {
+  flex-wrap: wrap;
+  padding-block: 1.55rem;
+}
+
+.footer-inner .brand-mark :is(.loom-logo-background, .loom-logo-cutout) {
+  fill: var(--surface);
+}
+
+.site-footer .footer-languages {
+  flex-basis: 100%;
+  border-top: 1px solid var(--line);
+  padding-top: 0.55rem;
+}
+
+.footer-languages span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+@media (max-width: 67rem) {
+  .header-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "brand actions" "nav nav";
+    row-gap: 0.25rem;
+    padding-block: 0.45rem 0.2rem;
+  }
+  .header-inner .brand {
+    grid-area: brand;
+  }
+  .header-actions {
+    grid-area: actions;
+  }
+  .site-nav {
+    grid-area: nav;
+  }
+}
+
+@media (max-width: 35rem) {
+  .header-inner {
+    column-gap: 0.4rem;
+  }
+  .site-header nav {
+    font-size: 0.83rem;
+    gap: 0 0.75rem;
+  }
+  .header-actions {
+    gap: 0.1rem;
+  }
+  .header-action,
+  .site-language-name {
+    display: none;
+  }
+  .site-language-code {
+    display: inline;
+  }
+  .site-header .mobile-start {
+    display: inline-flex;
+    color: var(--accent);
+  }
+}

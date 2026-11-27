@@ -29,6 +29,10 @@ const walkthrough = guide("/use-cases/knowledge-factory#run-a-knowledge-factory-
 <SiteFrame title={copy.title} description={copy.description} path={path} locale={locale} alternates={knowledgeFactoryAlternates}>
   <h1>{copy.heading}</h1>
   <p class="lead">{copy.lead}</p>
+  <div class="site-actions">
+    <a class="primary" href={walkthrough.href} hreflang={walkthrough.hreflang}>{walkthrough.label}<span class="link-arrow" aria-hidden="true">→</span></a>
+    <a class="secondary" href="#pilot-scorecard">{copy.pilotHeading}</a>
+  </div>
 
   <section class="site-section" aria-labelledby="evidence-title">
     <div class="section-copy">
@@ -39,7 +43,7 @@ const walkthrough = guide("/use-cases/knowledge-factory#run-a-knowledge-factory-
         <article class="site-panel">
           <h3>{title}</h3>
           <p>{detail}</p>
-          <a href={href} hreflang={hreflang}>{label} <span aria-hidden="true">↗</span></a>
+          <a href={href} hreflang={hreflang}>{label} <span class="link-arrow" aria-hidden="true">→</span></a>
         </article>
       ))}
     </div>
@@ -59,14 +63,14 @@ const walkthrough = guide("/use-cases/knowledge-factory#run-a-knowledge-factory-
       ))}
     </dl>
     <div class="site-actions">
-      <a class="primary" href={walkthrough.href} hreflang={walkthrough.hreflang}>{walkthrough.label}</a>
-      <a class="text-link" href={evaluate.href} hreflang={evaluate.hreflang}>{evaluate.label}</a>
+      <a class="secondary" href={evaluate.href} hreflang={evaluate.hreflang}>{evaluate.label}<span class="link-arrow" aria-hidden="true">→</span></a>
     </div>
   </section>
 </SiteFrame>
 
 <style>
-  h1 { text-wrap: balance; overflow-wrap: anywhere; }
+  .site-panel { display: flex; flex-direction: column; align-items: start; }
+  .site-panel a { margin-top: auto; }
   .pilot-checks { margin: 1.5rem 0 0; }
   .pilot-checks > div {
     display: grid;

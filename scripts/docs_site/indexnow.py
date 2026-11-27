@@ -44,6 +44,7 @@ HOME_URLS = {
 }
 SITE_BUILD_INPUTS = (
     "docs/blume.config.ts",
+    "docs/lib/documentation-routes.mjs",
     "docs/lib/site-identity.mjs",
     "docs/package-lock.json",
     "docs/package.json",
