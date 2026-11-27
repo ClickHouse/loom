@@ -78,9 +78,9 @@ const overview = [
           : `${directoryDays}-day directory`,
   },
   {
-    label: "Active accounts",
+    label: "Active users",
     value: latestAccounts?.active_accounts,
-    note: latestAccounts ? `Reported ${showDay(latestAccounts.period)} UTC` : "Awaiting account telemetry",
+    note: latestAccounts ? `Reported ${showDay(latestAccounts.period)} UTC` : "User data unavailable",
   },
   { label: "Active installations", value: summary?.active, note: "At least one successful request" },
   { label: "Successful requests", value: summary?.operations, note: "Across all Loom features" },
@@ -88,7 +88,7 @@ const overview = [
 
 const growthMetrics = [
   { value: "installations", label: "Installations" },
-  { value: "accounts", label: "Accounts" },
+  { value: "accounts", label: "Users" },
   { value: "requests", label: "Requests" },
 ] as const;
 const selectedGrowth = growthMetrics.find(({ value }) => value === input("growth"))?.value ?? "installations";

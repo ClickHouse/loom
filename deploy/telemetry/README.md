@@ -114,16 +114,16 @@ ranks domains by attributed successful requests and counts overlapping half-day 
 full-day reports once. The one-year site view uses the 90-day directory. Older
 installations appear when they report qualifying activity in the window.
 
-Version 3 adds daily counts for authenticated accounts and serving processes that
+Version 3 adds daily counts for authenticated users and serving processes that
 handled eligible successful requests. Counts sum across installations, which can
-count the same account in more than one installation. A serving process is an
+count the same authenticated identity in more than one installation. A serving process is an
 observed host and process pair. Workers and processes created by restarts count
 separately. Weekly and monthly activity report the peak measured daily count.
 
 Domain activity counts come from reports whose operators enable
 `LOOM_ADOPTION_TELEMETRY_SHARE_DOMAIN_ACTIVITY` alongside domain sharing. The
 directory shows successful requests and distinct active installations from
-complete UTC days in its selected window. Active accounts and serving processes
+complete UTC days in its selected window. Active users and serving processes
 use the latest measured day. First and last activity dates and the latest Loom
 version come from qualifying activity in opted-in reports. The first activity date
 can precede the selected window. The public response contains counts and version

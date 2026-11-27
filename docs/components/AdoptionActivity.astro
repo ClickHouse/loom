@@ -52,8 +52,8 @@ const processPoints = activityPoints(rows, "serving_processes", grain, "processe
 )}
 {view === "accounts" && (
     <AdoptionMetricPair
-      label="Active accounts"
-      description="Counts across installations that report account activity."
+      label="Active users"
+      description="Authenticated users with successful requests, including service identities."
       observedLabel={grain === "day" ? "Daily total" : "Peak daily total"}
       rows={accountPoints}
       {grain}
