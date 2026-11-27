@@ -185,9 +185,12 @@ class _VertexStream:
         # Before the finish reason, a usage snapshot can cover only part of the answer.
         if self.usage is not None:
             self.turn.usage = _usage(self.usage)
-            # Tool-only turns can report no candidate tokens.
+            # Tool-only turns can report no candidate tokens. Text still needs accounting.
+            needs_candidate_usage = self.turn.stop == "stop" or (
+                self.turn.stop == "tool_calls" and bool(self.turn.text)
+            )
             self.turn.usage_complete = (
-                self.turn.stop != "stop" or self.usage.get("candidatesTokenCount", 0) > 0
+                not needs_candidate_usage or self.usage.get("candidatesTokenCount", 0) > 0
             )
         self.turn.check()
         if self.turn.calls:

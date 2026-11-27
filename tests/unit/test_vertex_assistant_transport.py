@@ -212,6 +212,26 @@ async def test_vertex_assistant_streams_text_and_accounts_final_usage(
         pytest.param(
             _sse(
                 {
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {"text": " "},
+                                    {"functionCall": {"name": "loom_memory_get", "args": {}}},
+                                ]
+                            },
+                            "finishReason": "STOP",
+                        }
+                    ],
+                    "usageMetadata": {"promptTokenCount": 50},
+                }
+            ),
+            "without complete usage",
+            id="tool-and-unaccounted-text",
+        ),
+        pytest.param(
+            _sse(
+                {
                     "candidates": [{"finishReason": "STOP"}],
                     "usageMetadata": {"promptTokenCount": 50, "cachedContentTokenCount": 51},
                 }
