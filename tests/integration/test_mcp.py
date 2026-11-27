@@ -182,9 +182,7 @@ async def test_tools_call_unknown_tool(control_plane_url: str) -> None:
 
 @pytest.mark.asyncio
 async def test_tools_call_invalid_arguments(control_plane_url: str) -> None:
-    """Missing required fields → a tool result with isError whose text names
-    the fields, so the model reads them (a -32602 frame's data never
-    reaches it)."""
+    """Name missing fields without suggesting a retry that drops explicit scope."""
     resp = await _rpc(
         control_plane_url,
         {
@@ -200,7 +198,11 @@ async def test_tools_call_invalid_arguments(control_plane_url: str) -> None:
     assert "errors" in result["structuredContent"]
     text = result["content"][0]["text"]
     assert "loom_memory_set" in text or "memory.set" in text
-    assert "required:" in text and "example:" in text
+    assert "required:" in text
+    assert "memory_key: Field required" in text
+    assert "value: Field required" in text
+    assert "example:" not in text
+    assert "example" not in result["structuredContent"]
 
 
 @pytest.mark.asyncio
