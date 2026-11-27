@@ -302,10 +302,13 @@ _READ_ONLY_CONNECTION = (
 )
 
 
-def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
+def hidden_refusal(
+    name: str, toolset: str | None, schema_profile: str | None = None
+) -> dict[str, Any] | None:
     """The refusal for an op that exists but is kept off MCP: that it is not on
-    MCP, and what to do instead, naming ops as the ``toolset`` listing does.
-    None when `name` is not a hidden op."""
+    MCP, and what to do instead, naming ops as the connection's listing does
+    (its ``?toolset=`` and ``?schema_profile=``). None when `name` is not a
+    hidden op."""
     from server.transport.mcp_tools import name_ops_for_toolset
 
     op = OPERATIONS_BY_NAME.get(name)
@@ -315,7 +318,7 @@ def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
         instead = _READ_ONLY_CONNECTION
     else:
         default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
-        instead = name_ops_for_toolset(_INSTEAD.get(name, default), toolset)
+        instead = name_ops_for_toolset(_INSTEAD.get(name, default), toolset, schema_profile)
     return {
         "error": f"{name} exists but is not callable on this MCP connection",
         "code": "OP_NOT_ON_MCP",
@@ -341,10 +344,13 @@ def _result(req_id: Any, body: dict[str, Any], *, error: bool = False) -> dict[s
     )
 
 
-def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, Any] | None]:
+def route(
+    req: Any, *, toolset: str | None, auth: Any, schema_profile: str | None = None
+) -> tuple[Any, dict[str, Any] | None]:
     """`(req, None)` unchanged unless it is a `loom_op` call; the rewritten
     `tools/call` for a real op; or `(req, response)` for help / unknown ops.
-    `auth` is the verified token (None in open mode) a refusal is ledgered as."""
+    `auth` is the verified token (None in open mode) a refusal is ledgered as.
+    ``toolset`` and ``schema_profile`` are the URL's selectors."""
     if not isinstance(req, dict) or req.get("method") != "tools/call":
         return req, None
     params = req.get("params")
@@ -364,7 +370,7 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     by_name = {op.name: op for op in ALL_OPERATIONS if not is_hidden(op.name)}
     op = by_name.get(name) or by_name.get(name.replace("_", ".", 1))
     writes = routes_writes(toolset)
-    if op is None and (hidden := hidden_refusal(name, toolset)) is not None:
+    if op is None and (hidden := hidden_refusal(name, toolset, schema_profile)) is not None:
         emit_token_refusal(name, auth, error_code="OP_NOT_ON_MCP")
         return req, _result(req.get("id"), hidden, error=True)
     if op is None or not _routed(op, writes):

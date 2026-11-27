@@ -56,6 +56,8 @@ def configuration_error() -> str:
             return "bedrock_configuration_missing"
         if settings.gateway_required() or gateway.keyless():
             return "bedrock_requires_direct_route"
+    if definition.provider == "vertex" and (settings.gateway_required() or gateway.keyless()):
+        return "vertex_requires_direct_route"
     return ""
 
 

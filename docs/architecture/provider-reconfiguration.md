@@ -59,6 +59,18 @@ Canceling a coroutine or exhausting the shutdown budget leaves its row nonretire
 A failed startup likewise cannot certify unfinished producers. Model-transition
 `drained` is reversible and does not certify permanent retirement.
 
+A process cannot certify its own retirement on a host that gives no process identity
+(no readable `/proc`), or under ClickHouse storage authority before the deployment has
+recorded that authority (a boot with `LOOM_BOOT_MIGRATE` on records it). The process can
+supply neither itself, so it stops retrying once its writes have settled: a `loom` command
+logs one warning and exits with the status of its work, a server's shutdown logs the
+reason, and the row stays nonretired, so a transition waits for it. No command can retire
+a row written without a process identity, because nothing proves its process stopped, and
+Loom has no other recovery for that row. A deployment that will run a transition runs its
+servers and native commands only on hosts with a readable `/proc`. A command that returned,
+and whose writes or retirement then do not settle within
+`LOOM_NATIVE_COMMAND_DRAIN_TIMEOUT_S`, exits 1 with one line that names its participant.
+
 The ninth `host_proof` field, `cell-retirement-v1`, identifies this lifecycle.
 Only the guarded shutdown or verified-death writer publishes certified retirement.
 The generic heartbeat writer cannot retire or reopen a retired identity; a

@@ -15,6 +15,9 @@ import pytest
 
 def _row(key: str, value: str, *, status: str = "active") -> SimpleNamespace:
     return SimpleNamespace(
+        agent="a",
+        user_id="-",
+        session_id="-",
         memory_key=key,
         value=value,
         confidence=1.0,

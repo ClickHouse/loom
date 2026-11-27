@@ -510,6 +510,21 @@ Deployments (web, and workers when enabled) and the extractor's, and while they 
 Loom pod and an extractor pod may hold different tokens: extraction answers unavailable
 until every roll finishes.
 
+## Vertex AI on GKE
+
+Use the Loom pods' Kubernetes service account as the workload identity. Configure
+its binding and grant the identity permission to invoke the model in the target
+project. The chart supports an IAM service account binding through
+`serviceAccount.annotations`. Set `llm_provider`, `llm_model`, `vertex_project`
+and `vertex_location` in `settingsFile`.
+
+The web and worker pods need egress to the GKE metadata server and their Vertex AI
+endpoint. See [instance metadata service](#instance-metadata-service) for the chart's
+default restrictions. Scope the identity to model invocation and allow metadata
+egress through the deployment's network policy.
+[GKE Workload Identity configuration](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
+covers identity binding and network requirements.
+
 ## Assistant
 
 `assistant.nativeEnabled: true` runs the native assistant in each Loom web process. Configure

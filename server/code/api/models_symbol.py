@@ -54,7 +54,7 @@ class CodeEditContextInput(_CodeIdentity, _ResultLessons):
     names: list[_EditName] = Field(
         default_factory=list,
         max_length=EDIT_CONTEXT_MAX_NAMES,
-        description="Batch of exact names or locations.",
+        description="Exact names or locations.",
     )
     include_related_source: bool = Field(
         default=True,

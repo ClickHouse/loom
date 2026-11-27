@@ -21,6 +21,20 @@ class ProcessStopping(RuntimeError):
     """This participant can never accept another unit of work."""
 
 
+class Uncertifiable(RuntimeError):
+    """This process settled its writes but cannot itself supply evidence its
+    retirement needs: its row stays, and a provider change waits for it."""
+
+
+# Marks, as an exception note, a failed shutdown of a command whose body returned.
+UNFINISHED = "the command returned; its shutdown did not complete"
+
+
+def unfinished(error: BaseException) -> bool:
+    """Whether `error` carries `UNFINISHED`: `loom` prints one line for it."""
+    return UNFINISHED in getattr(error, "__notes__", ())
+
+
 class RetirementGate:
     """One event loop; checking admission and incrementing never await."""
 

@@ -142,6 +142,15 @@ def _build_llm_client(provider: str, model: str, *, fake_label: str, warn: str) 
         from server.llm.bedrock import BedrockLLMClient
 
         return BedrockLLMClient(model=model)
+    if provider == "vertex":
+        from server.core.errors import GatewayRequiredError
+        from server.settings import settings
+
+        if why := settings.gateway_required_by():
+            raise GatewayRequiredError(f"{why} refuses native Vertex AI: use the inference gateway")
+        from server.llm.vertex import VertexLLMClient
+
+        return VertexLLMClient(model=model)
     if provider == "openai":
         from server.llm.openai import OpenAILLMClient
 
@@ -206,7 +215,10 @@ def _with_fallback(client: LLMClient, model: str) -> LLMClient:
         return client
     from server.llm.fallback import FallbackLLMClient
 
-    return FallbackLLMClient(client, _override_client(fallback))
+    secondary = _override_client(fallback)
+    if (secondary.provider, secondary.model) == (client.provider, client.model):
+        return client
+    return FallbackLLMClient(client, secondary)
 
 
 # Per-model override cache. Keyed by (provider, model). Separate from

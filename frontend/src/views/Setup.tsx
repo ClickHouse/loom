@@ -5,7 +5,7 @@ import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { listTokens, type TokenEntry, importCuratedDoc, type ImportCuratedResult, isAuthDisabled } from "../api";
-import { useStore, useIdentity } from "../lib/state";
+import { DEFAULT_SETTINGS_TAB, setViewParam, urlParam, useStore, useIdentity } from "../lib/state";
 import { toast, toastError } from "../components/Toast";
 import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { PageContainer } from "../layout/PageContainer";
@@ -23,7 +23,7 @@ import { StructureTab } from "./StructureTab";
 
 /** The URL carries the open settings tab
  *  (`?tab=memory`). */
-const SETTINGS_TABS = ["tokens", "memory", "structure", "models"] as const;
+const SETTINGS_TABS = [DEFAULT_SETTINGS_TAB, "memory", "structure", "models"] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
 const TAB_LABELS: Record<SettingsTab, string> = {
   tokens: "Tokens",
@@ -36,18 +36,9 @@ function isSettingsTab(v: string | null): v is SettingsTab {
   return SETTINGS_TABS.some((t) => t === v);
 }
 
-function readTabParam(): SettingsTab | null {
-  if (typeof window === "undefined") return null;
-  const v = new URLSearchParams(window.location.search).get("tab");
-  return isSettingsTab(v) ? v : null;
-}
-
-function writeTabParam(tab: SettingsTab) {
-  if (typeof window === "undefined") return;
-  const url = new URL(window.location.href);
-  if (tab === "tokens") url.searchParams.delete("tab");
-  else url.searchParams.set("tab", tab);
-  window.history.replaceState(null, "", url.toString());
+function readTabParam(): SettingsTab {
+  const tab = urlParam("tab");
+  return isSettingsTab(tab) ? tab : DEFAULT_SETTINGS_TAB;
 }
 
 export function Setup() {
@@ -75,17 +66,18 @@ export function Setup() {
   // sees what it needs, and nothing is read.
   const structureRead = useNamespaceRoleRead(namespace);
   const structureReason = callReason("memory_schema.list", structureRead, whoami, namespace);
-  const [tab, setTab] = useState<SettingsTab>(() => readTabParam() ?? "tokens");
-  // A link that opens Settings on a tab while it already shows (an assistant card's) moves
-  // to that tab: the page is not drawn again.
+  const [tab, setTab] = useState<SettingsTab>(readTabParam);
+  // A link or browser history can change the tab without remounting Settings.
   const navSeq = useStore((s) => s.navSeq);
   useEffect(() => {
-    const asked = readTabParam();
-    if (asked) setTab(asked);
+    const sync = () => setTab(readTabParam());
+    sync();
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
   }, [navSeq]);
   const selectTab = (t: SettingsTab) => {
     setTab(t);
-    writeTabParam(t);
+    setViewParam("tab", t === DEFAULT_SETTINGS_TAB ? null : t);
   };
   // The token form is folded once a live token exists; `null` follows the list.
   const [formOpen, setFormOpen] = useState<boolean | null>(null);
@@ -94,6 +86,7 @@ export function Setup() {
     <PageContainer>
       <PageHeader
         title="Settings"
+        description="Connect agents and manage tokens, memory, and models."
         tab={TAB_LABELS[tab]}
         actions={
           <Button type="secondary" htmlType="button" onClick={() => setView("connected-accounts")}>

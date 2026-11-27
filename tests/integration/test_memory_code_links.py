@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -639,6 +640,23 @@ async def test_memories_follow_their_code(env, monkeypatch) -> None:
     assert [(c.path, c.state) for c in got.code] == [("src/widgets/readers.py", "changed")]
     states = await _search(MEM, "fetch_page retries on code 115")
     assert states.get("fetch-retry") == "changed", states
+    # the hit names the commit, and its reader line says so
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.search.handler import handle_memory_search
+
+    read = await handle_memory_search(
+        MemorySearchInput(
+            org=ORG,
+            namespace=MEM,
+            agent="*",
+            query="fetch_page retries on code 115",
+            render="reader",
+        )
+    )
+    retried = next(h for h in read.results if h.memory_key == "fetch-retry")
+    assert (retried.code_state, retried.code_changed_since) == ("changed", c2)
+    line = next(p for p in read.reader_block.split("\n\n") if "[fetch-retry]" in p)
+    assert f"(its code changed since it was written, commit {c2[:12]}:" in line
     report = await handle_namespace_validate(NamespaceValidateInput(org=ORG, namespace=MEM))
     stale = next(f for f in report.findings if f.check == "code_links_stale")
     assert {s["memory_key"] for s in stale.samples} == {"fetch-retry", "helper-pinned"}
@@ -775,6 +793,70 @@ async def test_new_files_relink_and_a_deleted_memory_drops_its_links(env) -> Non
     )
     await _pass()
     assert await _links(mid) == []
+
+
+async def test_a_raw_tool_observation_is_never_linked_and_the_sweep_drops_a_link_it_holds(
+    env,
+) -> None:
+    from server.code.domain.index.remote import repo_tag
+    from server.core.ch import get_client
+    from server.memory.api.models_for_file import MemoryForFileInput
+    from server.memory.api.models_observe import ObserveRecordInput
+    from server.memory.app.code_link_reads import inputs_now
+    from server.memory.app.for_file import handle_memory_for_file
+    from server.memory.app.observe import handle_observe_record
+    from server.memory.store import code_links as store
+
+    c1 = env.commit({"src/reader.py": _READER})
+    await _index(TRUNK, env, c1, ["src/reader.py"])
+    await _remember(MEM, "reader-rule", "`Reader.read_rows` takes a limit")
+    # a tool call of a plugin session: the session's `repo:` tag, output that names code
+    seen = await handle_observe_record(
+        ObserveRecordInput(
+            org=ORG,
+            namespace=MEM,
+            agent="claude-code",
+            session_id="s1",
+            tool_name="Read",
+            tool_input={"file_path": "src/reader.py"},
+            tool_output="`Reader.read_rows` returns its limit",
+            tags=[repo_tag(REMOTE)],
+        )
+    )
+    await _pass()
+
+    async def served() -> list[str]:
+        out = await handle_memory_for_file(
+            MemoryForFileInput(
+                org=ORG, namespace=MEM, path="src/reader.py", tags=[repo_tag(REMOTE)]
+            )
+        )
+        return sorted(h.memory_key for h in out.hits)
+
+    assert await served() == ["reader-rule"]
+    # an observation's stored link, written past the store's own drop: served until the
+    # sweep reaches it
+    mid = seen.memory_id
+    (head,) = await store.memory_heads(ORG, [mid])
+    stored = store.link_row(
+        org=ORG,
+        code_namespace=TRUNK,
+        path="src/reader.py",
+        qualified_name="Reader.read_rows",
+        namespace=MEM,
+        memory_id=mid,
+        memory_key=seen.memory_key,
+        agent="claude-code",
+        session_id="s1",
+        inputs_hash=inputs_now(ORG, head),
+        checked_commit=c1,
+    )
+    await get_client().insert(store.TABLE, [dict(stored)])
+    assert await served() == sorted(["reader-rule", seen.memory_key])
+    after: tuple[str, ...] | None = (ORG, TRUNK, "", "", "", "00000000-0000-0000-0000-000000000000")
+    while after is not None and after[:2] == (ORG, TRUNK):
+        after, _ = await store.sweep_page(after, 1000)
+    assert await served() == ["reader-rule"]
 
 
 async def test_revise_skips_what_it_cannot_judge_and_a_holding_claim_re_anchors(
@@ -2865,7 +2947,7 @@ async def test_a_delayed_cleanup_keeps_links_made_after_a_restore(env) -> None:
                 await _pass()
             return await self.real.execute(sql, params=params)
 
-    assert await store._drop_gone(_RestoreBeforeDelete(get_client()), {ORG: {mid}}) == 1
+    assert await store._drop_unlinkable(_RestoreBeforeDelete(get_client()), {ORG: {mid}}) == 1
     assert [x["state"] for x in await _links(mid)] == ["fresh"]
     await _remove_fetch_rows(env, TRUNK)
     await _pass()
@@ -4053,6 +4135,38 @@ async def test_a_reformatted_type_or_constant_stays_fresh(env, path, before, aft
     await _index(TRUNK, env, c2, [path])
     await _pass()
     assert [link["state"] for link in await _links(mid)] == ["fresh"]
+
+
+async def test_pending_link_age_uses_the_start_of_each_scan(env) -> None:
+    from server.memory.store import code_links as store
+
+    now = datetime.now(UTC).replace(microsecond=0)
+    start = now - timedelta(minutes=2)
+    before = int(start.timestamp()) * 10**9
+    mid = await _remember(MEM, "pending-page-age", "Waiting for two functions")
+    links = [
+        store.link_row(
+            org=ORG,
+            code_namespace=TRUNK,
+            namespace=MEM,
+            memory_id=mid,
+            memory_key="pending-page-age",
+            qualified_name=name,
+            state="pending",
+            checked_at=now - timedelta(days=14, minutes=1),
+            follows=before - offset - 1,
+        )
+        for name, offset in (("first", 2), ("second", 1))
+    ]
+    await store.insert(links)
+    (first,), after = await store.pending(ORG, TRUNK, days=14, after=None, before=before, limit=1)
+    (second,), _ = await store.pending(ORG, TRUNK, days=14, after=after, before=before, limit=1)
+    assert (first["qualified_name"], second["qualified_name"]) == ("first", "second")
+    assert not first["expired"] and not second["expired"]
+    next_scan, _ = await store.pending(
+        ORG, TRUNK, days=14, after=None, before=int(now.timestamp()) * 10**9, limit=2
+    )
+    assert len(next_scan) == 2 and all(row["expired"] for row in next_scan)
 
 
 async def test_stale_fingerprints_page_by_key_each_link_once(env) -> None:

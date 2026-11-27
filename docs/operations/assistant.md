@@ -15,6 +15,7 @@ provider defaults to `fake-echo-1` for offline verification.
 | `anthropic` | Existing Anthropic key or guarded inference gateway; Messages streaming tools                                                  |
 | `openai`    | Existing OpenAI key or guarded inference gateway; chat-completions streaming tools                                             |
 | `bedrock`   | Standard AWS credential chain, `LOOM_BEDROCK_REGION`, Converse streaming permission and an explicit model or inference profile |
+| `vertex`    | Google Application Default Credentials, `LOOM_VERTEX_PROJECT`, `LOOM_VERTEX_LOCATION` and an explicit Gemini model             |
 | `local`     | Existing `LOOM_LOCAL_LLM_BASE_URL`, explicit model and verified price reference                                                |
 | `fake`      | No credentials, no model network; explicit offline verification only                                                           |
 
@@ -22,6 +23,11 @@ For a route alias, set `LOOM_ASSISTANT_PRICE_MODEL` to the model that supplies i
 verified completion rate.
 When the assistant and the general LLM both use the `openai` provider, their shared
 API root must serve both Chat Completions and Responses.
+With `LOOM_ASSISTANT_PROVIDER=vertex`, select a Gemini model such as
+`LOOM_ASSISTANT_MODEL=gemini-3.1-flash-lite`. The general LLM provider
+(`LOOM_LLM_PROVIDER`) is independent. A deployment that requires an inference
+gateway refuses the direct Vertex route. See [Vertex AI setup](../getting-started/models-and-keys.md#vertex-ai)
+for workload and local credentials.
 An unknown price or missing credential refuses an answer. A price reference records
 an estimate from the configured rate, not a provider invoice. A zero ceiling refuses
 calls. Model calls never send temperature by default and do not retry a paid 400 to

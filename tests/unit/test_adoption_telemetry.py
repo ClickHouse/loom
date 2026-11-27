@@ -8,7 +8,7 @@ import pytest
 
 from server.insights.workers import adoption_telemetry
 from server.settings import Settings, settings
-from server.workers import pass_context
+from server.workers import pass_context, status_store, supervisor
 from server.workers.registry import enabled_workers
 from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, run
 
@@ -71,6 +71,34 @@ def test_adoption_worker_uses_the_configured_interval(monkeypatch: pytest.Monkey
     monkeypatch.setattr(settings, "adoption_telemetry_interval_seconds", 120)
     worker = next(worker for worker in enabled_workers() if worker.name == "adoption_telemetry")
     assert worker.interval_seconds == 120
+
+
+@pytest.mark.parametrize(
+    ("cursor", "due"),
+    [
+        ("", True),
+        ("2026-11-23T00:00:00+00:00", True),
+        ("2026-11-23T12:00:00+00:00", False),
+    ],
+)
+async def test_boot_reports_unacknowledged_windows_without_a_stagger(
+    monkeypatch: pytest.MonkeyPatch, cursor: str, due: bool
+) -> None:
+    monkeypatch.setattr(settings, "adoption_telemetry_enabled", True)
+    monkeypatch.setattr(settings, "adoption_telemetry_interval_seconds", 3600)
+    monkeypatch.setattr(
+        adoption_telemetry, "utc_now", lambda: datetime(2026, 11, 24, 12, 59, tzinfo=UTC)
+    )
+    monkeypatch.setattr(status_store, "resume_cursor", AsyncMock(return_value=cursor))
+    monkeypatch.setattr(status_store, "last_pass_finished", AsyncMock(return_value=None))
+    worker = next(worker for worker in enabled_workers() if worker.name == "adoption_telemetry")
+
+    delay, state = await supervisor._begin_loop(worker)
+
+    assert state.cursor == cursor
+    assert (delay, state.trigger) == (
+        (0, "first_pass") if due else (supervisor.first_pass_delay(worker), "boot")
+    )
 
 
 async def test_missing_deployment_id_surfaces_status_without_delivery(

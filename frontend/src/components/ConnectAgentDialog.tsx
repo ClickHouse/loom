@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { isAuthDisabled } from "../api";
 import { pluginInstallLines } from "../lib/clients";
-import { DOCS_MCP_URL } from "../flows/TokenGate";
+import { DOCS_MCP_URL } from "../lib/docsLinks";
 import { Modal } from "./ui/Modal";
 import { ExternalLink, Loading } from "./ui";
 import { CopyButton } from "./CopyButton";

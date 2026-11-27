@@ -58,6 +58,16 @@
         "default": "./dist/integrations/langchain.cjs"
       }
     },
+    "./integrations/langgraph": {
+      "import": {
+        "types": "./dist/integrations/langgraph.d.mts",
+        "default": "./dist/integrations/langgraph.mjs"
+      },
+      "require": {
+        "types": "./dist/integrations/langgraph.d.cts",
+        "default": "./dist/integrations/langgraph.cjs"
+      }
+    },
     "./integrations/mastra": {
       "import": {
         "types": "./dist/integrations/mastra.d.mts",
@@ -145,6 +155,7 @@
     "@aws-sdk/client-secrets-manager": "^3.0.0",
     "@google/adk": ">=2.5.0 <2.6.0",
     "@langchain/core": ">=1.0.0 <2.0.0",
+    "@langchain/langgraph-checkpoint": ">=1.2.3 <2.0.0",
     "@mastra/core": ">=1.83.0 <1.84.0",
     "@openai/agents": ">=0.22.0 <0.23.0",
     "ai": ">=7.0.0 <8.0.0"
@@ -160,6 +171,9 @@
       "optional": true
     },
     "@langchain/core": {
+      "optional": true
+    },
+    "@langchain/langgraph-checkpoint": {
       "optional": true
     },
     "@mastra/core": {
@@ -178,6 +192,8 @@
     "@biomejs/biome": "^2.5.14",
     "@google/adk": "2.5.0",
     "@langchain/core": "1.4.0",
+    "@langchain/langgraph": "1.7.5",
+    "@langchain/langgraph-checkpoint": "1.2.3",
     "@mastra/core": "1.83.0",
     "@mastra/memory": "1.41.1",
     "@openai/agents": "0.22.0",

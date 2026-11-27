@@ -7,14 +7,14 @@ seo:
 
 # Guides
 
-## Evaluate a workflow
+Choose a task to connect an agent, put shared context to work, or evaluate a workflow.
 
-- [Compare self-hosted memory tools for coding agents](compare-coding-agent-memory.md).
-  Try the same handoff, source change, and audit across three setups.
-- [Choose AI software factory tools](software-factory-tools.md). Run a pilot on one
-  repository to measure handoffs, required checks, rework, and cost.
-- [Evaluate shared agent memory and code intelligence](../getting-started/evaluate.md).
-  Check recall, namespace isolation, and code lookup against your workload.
+## Connect and grant access
+
+- [Connect an agent](../getting-started/connect-a-coding-agent.md) through a plugin or MCP.
+- [Set up tokens and grants](tokens-and-grants.md) for the namespaces each client needs.
+- [Choose retrieval scope from the audience](audience-scoped-retrieval.md), so a reply
+  in a shared conversation draws only on what its readers may see.
 
 ## Put Loom to work
 
@@ -27,9 +27,11 @@ seo:
 - [Resume an AI agent after a crash](trace-and-resume.md#resume-an-ai-agent-after-a-crash).
   Retry a committed item and check that its result is stored once.
 
-## Connect and grant access
+## Evaluate a workflow
 
-- [Connect an agent](../getting-started/connect-a-coding-agent.md) through a plugin or MCP.
-- [Set up tokens and grants](tokens-and-grants.md) for the namespaces each client needs.
-- [Choose retrieval scope from the audience](audience-scoped-retrieval.md), so a reply
-  in a shared conversation draws only on what its readers may see.
+- [Compare self-hosted memory tools for coding agents](compare-coding-agent-memory.md).
+  Try the same handoff, source change, and audit across three setups.
+- [Choose AI software factory tools](software-factory-tools.md). Run a pilot on one
+  repository to measure handoffs, required checks, rework, and cost.
+- [Evaluate shared agent memory and code intelligence](../getting-started/evaluate.md).
+  Check recall, namespace isolation, and code lookup against your workload.
