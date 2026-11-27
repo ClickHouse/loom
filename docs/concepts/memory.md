@@ -420,7 +420,7 @@ A qualified name trunk does not define yet waits for `memory_code_links_pending_
 A memory whose key starts with `obs:` is a raw tool observation (`observe.record` writes
 one per tool call, keyed `obs:<session_id>:<sha8>`). It carries its session's `repo:` tag
 and quotes the code a tool read, but it records a tool call, not a lesson: it is never
-linked, so no code read or pre-edit check serves it.
+linked.
 
 A link records the definition's fingerprint: all its overloads and the conditions that
 select them, as tokens, so whitespace, comments (not a Go `//go:` directive or a Python

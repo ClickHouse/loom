@@ -403,7 +403,7 @@ async def test_a_pending_name_is_retried_until_the_pending_days_pass(monkeypatch
 
 @pytest.mark.asyncio
 async def test_the_recheck_never_links_a_raw_tool_observation_that_waits(monkeypatch) -> None:
-    # what a pass that linked observations left: a `*` marker and a pending name
+    # an observation's waiting rows: a `*` marker and a pending name
     waiting = [
         _full(
             {
@@ -3630,7 +3630,7 @@ async def test_a_raw_tool_observation_is_never_linked_and_loses_the_links_it_hol
             mid, memory_key=f"obs:s1:{mid}", tags=["repo:r"], value="`Reader.read_rows` leaks"
         )
 
-    # made before, from the observation as it is now: the links would still hold
+    # a stored link made from the observation as it is: a lesson's would still hold
     held = _full(
         {
             "memory_id": "held",

@@ -816,8 +816,8 @@ async def test_a_raw_tool_observation_is_never_linked_and_the_sweep_drops_a_link
         return sorted(h.memory_key for h in out.hits)
 
     assert await served() == ["reader-rule"]
-    # a link stored before observations stopped being linked, written past the store's
-    # own drop: it is served until the sweep reaches it
+    # an observation's stored link, written past the store's own drop: served until the
+    # sweep reaches it
     ((mid,),) = ch_client.query(
         "SELECT toString(memory_id) FROM loom.memory FINAL "
         "WHERE org = {o:String} AND namespace = {n:String} AND memory_key = {k:String}",
