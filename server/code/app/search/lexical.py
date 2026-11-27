@@ -82,7 +82,8 @@ async def _lexical_terms(
     """The lexical leg's (tokens, idfs): one corpus-stats read.
 
     Under an active trim plan the stats read probes EVERY token of the cleaned question
-    and the leg keeps at most `trim.cap` of its opening and its identifiers."""
+    and the leg keeps at most `trim.cap`: its identifiers and its words, those it repeats
+    first."""
     from server.code.app.index import corpus_stats
 
     trimming = trim is not None and trim.active
@@ -91,7 +92,9 @@ async def _lexical_terms(
     df, n_chunks, _avgdl = await corpus_stats.stats(repo, org, ns, base, work)
     lex_tokens = tokens
     if trimming and trim is not None:
-        lex_tokens = query_trim.select_terms(base, df, trim.cap, trim.keep, trim.lead)
+        lex_tokens = query_trim.select_terms(
+            base, df, n_chunks, trim.cap, keep=trim.keep, said=trim.said, own=trim.own
+        )
         work["query_trimmed_tokens_used"] = len(lex_tokens)
     idfs = [bm25.idf(df.get(t, 0), max(n_chunks, 1)) for t in lex_tokens]
     return lex_tokens, idfs

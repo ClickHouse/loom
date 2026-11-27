@@ -40,8 +40,9 @@ QUERY_MAX_CHARS = 20000
 class CodeSearchInput(_CodeIdentity, _ResultLessons):
     # The question, identifier or phrase to search for; a symbol-shaped query tries the
     # symbol table first (`route` says which path answered). A long one (a pasted issue
-    # body) is clipped to QUERY_MAX_CHARS, never refused: the search keeps its opening
-    # and its identifiers (code_search_query_max_tokens) whatever its length.
+    # body) is clipped to QUERY_MAX_CHARS, never refused: the search keeps its identifiers
+    # and its words, those it repeats first (code_search_query_max_tokens), whatever its
+    # length.
     query: str = Field(
         min_length=1,
         description="Issue, task, behavior question or identifier to locate in indexed code.",

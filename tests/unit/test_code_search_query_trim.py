@@ -1,8 +1,8 @@
-"""A long question is asked with its opening, its identifiers and its first page
-: server/code/domain/index/query_trim.py and its seam in
-code_search.search — byte-identical inputs under the cap, the opening and the
-identifiers at the gate and the cleaned embedding text over it, and the
-disclosure counters."""
+"""A long question is asked with its identifiers, the words it repeats and its first
+page: server/code/domain/index/query_trim.py and its seam in code_search.search —
+byte-identical inputs under the cap, the identifiers and the repeated words at the gate
+whatever the question opens with, the cleaned embedding text over it, and the disclosure
+counters."""
 
 from __future__ import annotations
 
@@ -58,15 +58,15 @@ def test_identifier_forms_keep_camel_snake_and_qualified_names() -> None:
     assert qt.identifier_forms("see 98b4bdfa-7c05008562fe") == frozenset()
 
 
-def test_noise_tokens_are_numbers_and_hash_fragments() -> None:
-    assert (
-        qt.is_noise_token("98b4") and qt.is_noise_token("7c05008562fe") and qt.is_noise_token("256")
-    )
-    assert not qt.is_noise_token("index") and not qt.is_noise_token("bdfa")  # letters only: a word
-    assert not qt.is_noise_token("aes256") and not qt.is_noise_token("u64")
+def test_a_hash_is_long_hex_with_digits_and_a_short_code_is_a_name() -> None:
+    for h in ("98b4bdfa", "7c05008562fe", "2eed554c3fd75dae1beade79f357ffd18d3c4fdf"):
+        assert qt.is_hash(h)
+    # a code, a letters-only word, a word around one digit, a number
+    for name in ("f401", "e164", "d3d9", "abc123", "deadbeef", "face2face", "aes256", "1290012"):
+        assert not qt.is_hash(name)
 
 
-def test_strip_non_terms_drops_urls_numbers_and_whole_hashes() -> None:
+def test_strip_non_terms_drops_urls_and_whole_hashes_and_keeps_codes() -> None:
     text = (
         "the culprit is in https://github.com/o/r/blob/2eed554c3fd75dae1beade79f357ffd18d3c4fdf"
         "/db/query.py#L673 since commit 2EED554C3FD75DAE with id 1290012 in aes256 and deadbeef"
@@ -75,61 +75,146 @@ def test_strip_non_terms_drops_urls_numbers_and_whole_hashes() -> None:
     # the address goes whole: host, route words, hash pieces and the line anchor
     assert {"https", "github", "blob", "query", "py", "l673"}.isdisjoint(tokens)
     # a hash goes before the tokenizer splits it: no letter-only piece of it is left
-    assert {"eed", "fd", "dae", "2eed554c3fd75dae", "1290012"}.isdisjoint(tokens)
+    assert {"eed", "fd", "dae", "2eed554c3fd75dae"}.isdisjoint(tokens)
     assert tokens == [
-        *("the", "culprit", "is", "in", "since", "commit", "with", "id"),
+        *("the", "culprit", "is", "in", "since", "commit", "with", "id", "1290012"),
         *("aes256", "aes", "256", "and", "deadbeef"),
     ]
+    codes = "F401 on e164 and d3d9 in face2face returns 404 or 1064"
+    assert qt.strip_non_terms(codes) == codes
     q = "where SETTINGS secret values are masked"
     assert qt.strip_non_terms(q) == q
 
 
-def test_select_terms_keeps_the_opening_and_identifiers_not_later_prose() -> None:
+def test_term_counts_count_the_words_that_hold_a_lexeme() -> None:
+    said = qt.term_counts("Jaccard index of arrayJaccardIndex, ArrayJaccardIndex::executeImpl")
+    assert said["jaccard"] == said["index"] == 3 and said["arrayjaccardindex"] == 2
+    assert said["array"] == 2 and said["executeimpl"] == said["of"] == 1
+
+
+_N = 100_000
+
+
+def _select(tokens: list[str], df: dict[str, int], k: int = 32, **kw: Any) -> list[str]:
+    kw.setdefault("keep", frozenset())
+    kw.setdefault("said", {})
+    return qt.select_terms(tokens, df, _N, k, **kw)
+
+
+def test_select_terms_keeps_identifiers_and_repeated_words_before_the_others() -> None:
     tokens = [
-        *("jaccard", "index", "wrong", "the"),  # the opening
-        *("culprit", "arrays", "98b4", "unknownword", "parsequotakey", "newname", "or"),
+        *("hi", "team", "looking", "the", "paginator", "reports", "pages", "model"),
+        *("culprit", "1064", "unknownword", "parsequotakey", "newname", "or"),
     ]
-    df = {
-        "jaccard": 12,
-        "index": 9000,
-        "wrong": 700,
-        "the": 76000,
+    df = dict.fromkeys(tokens, 40) | {
+        "the": 76_000,
+        "model": 19_000,
+        "or": 6_000,
         "culprit": 1,
-        "arrays": 400,
-        "98b4": 1,
         "parsequotakey": 3,
-        "or": 32000,
+        "unknownword": 0,
+        "newname": 0,
     }
-    lead = frozenset({"jaccard", "index", "wrong", "the"})
     keep = frozenset({"parsequotakey", "newname"})
-    # first-seen order; the opening whole, common words included; the identifiers; no
-    # later prose, however rare; an identifier the corpus lacks only where room is left
-    assert qt.select_terms(tokens, df, 32, keep, lead) == [
-        *("jaccard", "index", "wrong", "the"),
-        *("parsequotakey", "newname"),
+    said = {"paginator": 3, "pages": 2, "the": 9, "model": 4, "or": 5}
+    # first-seen order. Never a function word (`the`, `or`), however often it is said,
+    # nor a word most chunks hold (`model`); a number and a name the corpus lacks only
+    # where room is left
+    assert _select(tokens, df, keep=keep, said=said) == [
+        *("hi", "team", "looking", "paginator", "reports", "pages"),
+        *("culprit", "1064", "unknownword", "parsequotakey", "newname"),
     ]
-    assert qt.select_terms(tokens, df, 5, keep, lead) == [
-        *("jaccard", "index", "wrong", "the"),
-        "parsequotakey",
+    # the words take half the list: the repeated ones first, wherever they stand, then
+    # the others in reading order; the identifiers take the rest
+    assert _select(tokens, df, 8, keep=keep, said=said) == [
+        *("hi", "team", "paginator", "pages", "parsequotakey", "newname"),
     ]
-    # past the cap the opening goes first, its rarest words first
-    assert qt.select_terms(tokens, df, 2, keep, lead) == ["jaccard", "wrong"]
-    # in the opening an identifier goes before a word, and the known before the unknown
-    lead2 = lead | {"parsequotakey", "unknownword"}
-    assert qt.select_terms(tokens, df, 2, keep, lead2) == ["jaccard", "parsequotakey"]
-    assert qt.select_terms(tokens, df, 5, keep, lead2) == [
-        *("jaccard", "index", "wrong", "the"),
-        "parsequotakey",
+    assert _select(tokens, df, 4, keep=keep, said=said) == [
+        *("paginator", "pages", "parsequotakey", "newname"),
     ]
-    # identifiers after the opening: the rarest first
+    assert _select(tokens, df, 2, keep=keep, said=said) == ["paginator", "parsequotakey"]
+    # past the cap the words go before the identifiers, the rarest first
     many = ["open", "call_command", "max_length", "check_filterable"]
     dfs = {"open": 50, "call_command": 530, "max_length": 2700, "check_filterable": 5}
     ids = frozenset(many[1:])
-    assert qt.select_terms(many, dfs, 3, ids, frozenset({"open"})) == [
-        *("open", "call_command", "check_filterable")
-    ]
+    assert _select(many, dfs, 3, keep=ids) == ["open", "call_command", "check_filterable"]
+    # a caller's own terms are always kept, the commonest included, and go first
+    own = frozenset({"model", "or"})
+    assert _select(tokens, df, 3, keep=keep, said=said, own=own) == ["paginator", "model", "or"]
     # the cap is never exceeded
-    assert len(qt.select_terms(tokens, df, 1, keep, lead)) == 1
+    assert len(_select(tokens, df, 1, keep=keep, said=said)) == 1
+
+
+_GREETING = "Hi team, I have been looking at this for a while now and am not sure what is going on."
+_PROSE = (
+    "The paginator reports more pages than there are when the changelist search spans a "
+    "relation. The changelist shows duplicate rows and the paginator counts every duplicate, "
+    "so the last pages of the changelist come back empty, which confuses users who walk to "
+    "the end and see nothing. The counter under the table still claims hundreds of results, "
+    "and the admin offers links that lead nowhere. "
+    "Could the paginator count distinct rows instead of duplicate rows?"
+)
+_SUBJECT = {"paginator", "changelist", "duplicate", "rows", "pages"}
+
+
+def test_the_subject_is_kept_whatever_the_question_opens_with() -> None:
+    assert len(code_tokens(_GREETING)) >= 16
+    template = "Is there an existing issue for this? I have searched the existing issues. "
+    for opening in ("", _GREETING + " ", template, _GREETING + "\n\n" + template):
+        p = qt.plan(opening + _PROSE, None, 48, {})
+        assert p.active and p.keep == frozenset()
+        df = dict.fromkeys(p.all_tokens, 40)
+        kept = _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said, own=p.own)
+        assert _SUBJECT <= set(kept), opening
+
+
+def test_a_question_of_addresses_numbers_and_hashes_still_has_terms() -> None:
+    links = " ".join(
+        f"https://example.com/o/r/commit/{i:04d}abcdef{i:04d} deadbeef{i:02d}" for i in range(30)
+    )
+    # nothing but addresses and hashes: they are all the question says
+    p = qt.plan(links, None, 48, {})
+    assert p.active and p.lexical_query == links and "example" in p.all_tokens
+    assert _select(p.all_tokens, {"example": 3, "commit": 900}, p.cap, keep=p.keep, said=p.said)
+    # a number is a term when nothing better is left
+    numbers = " ".join(f"https://example.com/{i:04d}abcdef{i:04d} {1000 + i}" for i in range(60))
+    p = qt.plan(numbers, None, 48, {})
+    assert p.all_tokens == [str(1000 + i) for i in range(60)]
+    df = dict.fromkeys(p.all_tokens, 7)
+    assert _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said) == p.all_tokens[:16]
+
+
+def test_a_short_code_is_a_subject_word() -> None:
+    q = (
+        "the linter reports F401 for an import that the module uses only inside a type "
+        "checking block and E501 for a long line in the same file and I would like to know "
+        "where the rule for F401 decides that a name is unused when the only use is in an "
+        "annotation that is evaluated lazily and whether the check for E501 counts the "
+        "characters of a trailing comment or not because both reports look wrong to me"
+    )
+    p = qt.plan(q, None, 48, {})
+    assert p.active and {"f401", "e501"} <= p.keep and p.said["f401"] == p.said["e501"] == 2
+    df = dict.fromkeys(p.all_tokens, 40)
+    kept = _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said)
+    assert {"f401", "e501"} <= set(kept)
+
+
+def test_a_term_list_is_kept_whole_and_cut_to_its_rarest() -> None:
+    # eight names of six humps each: 56 lexemes
+    terms = ["".join(f"{a}{b}part".capitalize() for b in "abcdef") for a in "abcdefgh"]
+    p = qt.plan("", terms, 48, {})
+    assert p.active and len(p.all_tokens) == 56 and p.cap == 32
+    assert p.own == frozenset(p.all_tokens) and p.keep == {t.lower() for t in terms}
+    df = dict.fromkeys(p.all_tokens, 40) | {"aapart": 90_000, "abpart": 80_000, "hfpart": 1}
+    kept = _select(p.all_tokens, df, p.cap, keep=p.keep, said=p.said, own=p.own)
+    # every name, then the rarest pieces: none is lost for where it stands, and a
+    # chosen term is not dropped for being common while there is room
+    assert len(kept) == 32 and p.keep <= set(kept)
+    assert kept[-1] == "hfpart" and {"aapart", "abpart"}.isdisjoint(kept)
+    assert "aapart" in _select(p.all_tokens[:20], df, p.cap, keep=p.keep, said=p.said, own=p.own)
+    # under the cap the list is the terms' tokens in order
+    short = qt.plan("", terms[:2], 48, {})
+    assert not short.active and short.tokens == code_tokens(" ".join(terms[:2]))
 
 
 def test_plan_under_the_cap_is_the_raw_input() -> None:
@@ -158,16 +243,15 @@ def test_plan_over_the_cap_cleans_counts_and_bounds() -> None:
     assert {"https", "fiddle", "clickhouse", "com", "bdfa"}.isdisjoint(p.all_tokens)
     assert p.embed_text == qt.strip_boilerplate(_ISSUE)[0] and "fiddle" in p.embed_text
     assert {"arrayjaccardindex", "executeimpl", "parsequotakey"} <= p.keep
-    # the opening is the first 16 lexemes, half the list
-    assert p.lead == frozenset(p.all_tokens[:16])
-    assert "arrayjaccardindex" in p.lead and "lives" not in p.lead
-    assert qt.plan(_ISSUE, None, 20, {}).lead == frozenset(p.all_tokens[:10])
-    # line breaks do not move it: a greeting or a heading line is not the whole opening
+    # how often the question says each lexeme, as a word or inside an identifier
+    assert p.said["jaccard"] == p.said["index"] == 3 and p.said["lives"] == 1
+    assert p.own == frozenset()
+    # a greeting or a line break moves no count
     broken = qt.plan("Hi,\n\n" + _ISSUE.replace(". ", ".\n"), None, 32, {})
-    assert broken.lead == frozenset(["hi", *p.all_tokens[:15]])
-    # a caller's own terms are kept like the opening
+    assert broken.said == p.said | {"hi": 1} and broken.keep == p.keep
+    # a caller's own terms are named apart: they are always kept
     extra = qt.plan(_ISSUE, ["retry", "QuotaKey"], 32, {})
-    assert extra.lead == p.lead | {"retry", "quotakey", "quota", "key"}
+    assert extra.own == {"retry", "quotakey", "quota", "key"}
     assert extra.all_tokens[-2:] == ["retry", "quotakey"]
     assert work == {
         "query_trimmed_tokens_in": p.tokens_in,
@@ -208,7 +292,7 @@ class _Repo:
 
     async def code_corpus_stats(self, org: str, ns: str, tokens: list[str]) -> Any:
         self.stats_tokens = list(tokens)
-        return {t: self.df[t] for t in tokens if t in self.df}, 1000, 50.0
+        return {t: self.df[t] for t in tokens if t in self.df}, 267_000, 50.0
 
     async def lexical_search_chunks(
         self, org: str, ns: str, model: str, tokens: list[str], idfs: list[float], **k: Any
@@ -295,7 +379,9 @@ def test_a_short_question_is_byte_identical_with_the_trim_on_or_off() -> None:
         assert "query_trimmed" not in res.score_explanation
 
 
-def test_a_long_question_asks_with_its_opening_its_identifiers_and_its_cleaned_page() -> None:
+def test_a_long_question_asks_with_its_identifiers_its_repeated_words_and_its_cleaned_page() -> (
+    None
+):
     repo, emb = _Repo(_DF), _Emb()
     res = _run(repo, _ISSUE, emb, max_tokens=32)
     cleaned = qt.strip_boilerplate(_ISSUE)[0]
@@ -304,25 +390,37 @@ def test_a_long_question_asks_with_its_opening_its_identifiers_and_its_cleaned_p
     assert repo.stats_tokens == all_tokens
     assert "company" not in repo.stats_tokens and "response" not in repo.stats_tokens
     assert "fiddle" not in repo.stats_tokens and "bdfa" not in repo.stats_tokens
-    # the scan keeps the opening, common words included, and the identifiers after it
+    # the scan keeps the identifiers and the words' half of the list: `jaccard`, `index`
+    # and `array`, which the question repeats, then the others in reading order
     assert repo.scan_tokens == [
-        *("xai", "ai", "jaccard", "index", "calculated", "incorrectly", "when", "two"),
-        *("same", "arrays", "are", "passed", "as", "arguments", "select"),
-        *("arrayjaccardindex", "executeimpl", "parsequotakey"),
+        *("xai", "ai", "jaccard", "index", "calculated", "incorrectly", "two", "same"),
+        *("arrays", "passed", "arguments", "select", "arrayjaccardindex", "array"),
+        *("function", "lives", "executeimpl", "execute", "impl", "parsequotakey"),
     ]
-    assert len(repo.scan_idfs) == 18
-    # no prose after the opening, however rare
-    assert {"lives", "unrelated", "function", "execute", "quota"}.isdisjoint(repo.scan_tokens)
+    assert len(repo.scan_idfs) == 20
+    # no function word, and no word said once after the words' share is taken
+    assert {"when", "are", "as", "the", "in", "and", "is"}.isdisjoint(repo.scan_tokens)
+    assert {"parse", "quota", "key", "unrelated"}.isdisjoint(repo.scan_tokens)
     # the vector leg embedded the cleaned text
     assert emb.texts == [cleaned]
     w = res.retrieval_work
     assert w["query_trimmed_tokens_in"] == len(code_tokens(_ISSUE))
-    assert w["query_trimmed_tokens_used"] == 18
+    assert w["query_trimmed_tokens_used"] == 20
     assert w["query_trimmed_boilerplate_lines_dropped"] == 6
     assert (
-        f"query_trimmed(tokens_in={w['query_trimmed_tokens_in']}, tokens_used=18, "
+        f"query_trimmed(tokens_in={w['query_trimmed_tokens_in']}, tokens_used=20, "
         "boilerplate_lines_dropped=6)"
     ) in res.score_explanation
+
+
+def test_a_greeting_before_a_prose_question_does_not_cost_its_subject() -> None:
+    question = _GREETING + "\n\n" + _PROSE
+    df = dict.fromkeys(code_tokens(question), 40) | {"the": 76_000, "of": 49_000}
+    repo = _Repo(df)
+    _run(repo, question, _Emb())
+    assert _SUBJECT <= set(repo.scan_tokens)
+    assert {"the", "of", "have", "been", "what"}.isdisjoint(repo.scan_tokens)
+    assert len(repo.scan_tokens) == 16  # no identifier: the words' share, no more
 
 
 def test_the_setting_drives_the_trim_and_zero_turns_it_off() -> None:
@@ -361,7 +459,7 @@ def test_the_setting_drives_the_trim_and_zero_turns_it_off() -> None:
                 legs="lexical",
             )
         )
-    assert on.retrieval_work["query_trimmed_tokens_used"] == 18
+    assert on.retrieval_work["query_trimmed_tokens_used"] == 20
     assert "query_trimmed_tokens_in" not in off.retrieval_work
     assert off_repo.scan_tokens == code_tokens(_ISSUE)[:32]
     assert off_repo.scan_tokens[0] == "company"  # the reading-order list, as before

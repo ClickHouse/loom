@@ -1971,9 +1971,9 @@ settings:
   # code_fusion_signals: true
 
   # Long-question trim: past this many lexemes the question is treated as an issue body
-  # (template headings stripped, at most 32 tokens of its opening and its identifiers
-  # gate, the first 512 cleaned words embed). Under the cap nothing changes. 0 = off.
-  # [restart]
+  # (template headings stripped, at most 32 tokens gate: its identifiers and its words,
+  # those it repeats first; the first 512 cleaned words embed). Under the cap nothing
+  # changes. 0 = off. [restart]
   # code_search_query_max_tokens: 48
 
   # Per-file saturation: the 2nd, 3rd... unit from one path is multiplied by

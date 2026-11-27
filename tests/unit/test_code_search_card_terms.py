@@ -165,3 +165,23 @@ def test_cards_mode_expands_with_the_nearest_files_symbols_and_no_model() -> Non
     assert res.retrieval_work["concept_terms"] == 2  # peak dropped
     assert "concept=MemoryTracker|ProcessList" in res.score_explanation
     assert all(isinstance(v, (int, str)) for v in res.retrieval_work.values())
+
+
+def test_a_long_term_list_is_cut_to_its_rarest_not_to_its_first_terms() -> None:
+    # eight names of six humps each: 56 lexemes, past code_search_query_max_tokens
+    names = ["".join(f"{a}{b}part".capitalize() for b in "abcdef") for a in "abcdefgh"]
+
+    class _LongTerms(_Repo):
+        async def symbol_names_for_paths(self, org, ns, paths, *, limit=200):
+            return [{"name": n, "kind": "class", "path": paths[0]} for n in names]
+
+        async def code_corpus_stats(self, org, ns, tokens):
+            return {t: 1 if t == "hfpart" else 3 for t in tokens}, 100, 56.0
+
+    repo = _LongTerms()
+    res = _run(repo)
+    assert res.retrieval_work["concept_terms"] == 8
+    concept = repo.lexical_tokens[1]
+    # every name whole, then the rarest pieces wherever their term stands
+    assert len(concept) == 32 and {n.lower() for n in names} <= set(concept)
+    assert concept[-1] == "hfpart"

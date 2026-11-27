@@ -149,9 +149,8 @@ async def _concept_leg_rows(
             work["concept_terms"] = len(terms)
             concept_stats["terms"] = terms
             if terms:
-                plan2 = query_trim.plan(
-                    " ".join(terms), None, settings.code_search_query_max_tokens, {}
-                )
+                # chosen terms, all kept: not a question to pick words from
+                plan2 = query_trim.plan("", terms, settings.code_search_query_max_tokens, {})
                 c_tokens, c_idfs = await _lexical_terms(
                     repo,
                     org,

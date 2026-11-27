@@ -42,8 +42,8 @@ async def _gather_legs(
     work, scope, constrained, shape, model = st.work, st.scope, st.constrained, st.shape, st.model
     # extra_terms extend the LEXICAL leg only (code.ask query expansion: proposed
     # identifiers bridge natural-language -> codebase vocabulary; the vector leg keeps
-    # embedding the user's actual question). A long question is asked with its opening,
-    # its identifiers and its cleaned first page
+    # embedding the user's actual question). A long question is asked with its
+    # identifiers, the words it repeats and its cleaned first page
     trim = query_trim.plan(query, extra_terms, settings.code_search_query_max_tokens, work)
     tokens = st.tokens = trim.tokens
     # one query embedding per embedder per call: _QueryVecMemo
