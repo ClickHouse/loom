@@ -81,8 +81,8 @@ Deleting data is covered in [retention and erasure](../memory/retention-and-eras
 Users whose grants allow them to read a stored row, and the server's operator, can read
 it. [Namespaces and sharing](../namespaces-and-sharing.md) describes access control.
 
-The plugin keeps the token it saves (a copy of the install token or a self-signup token
-in `~/.loom/config.json`; in agent mode the exchanged one in
+The plugin keeps the token it saves (a copy of `LOOM_API_KEY` or the install token, or a
+self-signup token, in `~/.loom/config.json`; in agent mode the exchanged one in
 `~/.loom/agent-token-<hash of LOOM_CLIENT_ID>.json`) and its other state in `~/.loom/`,
 mode 0600, until you remove it.
 
@@ -161,9 +161,13 @@ plugin, not the server.
 Every option is optional; Claude Code asks once, and an empty answer falls back to the
 [lookups below](#configuration).
 
-- **Install token.** The MCP header helper cannot see install options, so the first hook
-  of a session copies the token and URL into `~/.loom/config.json` (0600). It does so only
-  when no other token exists (`LOOM_API_KEY`, `config.json`, `~/.loom/token`).
+- **Install token and `LOOM_API_KEY`.** Claude Code gives the plugin's MCP header helper
+  neither the install options nor `LOOM_API_KEY` or `LOOM_API_KEY_FILE`, so the first hook
+  of a session copies the token the hooks were given (`LOOM_API_KEY`, else the option) and
+  the URL into `~/.loom/config.json` (0600). It does so only when no token is saved
+  (`config.json`, `~/.loom/token`), and never replaces one: when the saved token differs
+  from `LOOM_API_KEY`, the Loom tools send the saved one and the primer says to save the
+  `LOOM_API_KEY` token in `config.json`.
 - **No credential at all.** On a server with `LOOM_SELF_SIGNUP=open`, the first session
   signs the machine up: token to `~/.loom/config.json`, a claim code to
   `~/.loom/claim-<namespace>.txt`, and the primer says how to claim the namespace (once,
@@ -410,10 +414,12 @@ so the URL ends in `#${CLAUDE_PROJECT_DIR}`: Claude Code hands the helper the UR
 project directory filled in, and never sends the fragment to the server. The helper
 sends:
 
-- `Authorization: Bearer <token>`, from the same lookup as the hooks except the install
-  option (see above). With no token, the helper performs the same first-session sign-up
-  as the SessionStart hook, because Claude Code connects the MCP entry while that hook is
-  still running.
+- `Authorization: Bearer <token>`, from `config.json` `token`, then `~/.loom/token`: of
+  the hooks' lookup, Claude Code keeps `LOOM_API_KEY`, `LOOM_API_KEY_FILE` and the install
+  option from the helper (see above). Claude Code connects the MCP entry while the
+  SessionStart hook is still running, so with no token the helper waits up to 5 s
+  (`LOOM_MCP_HOOK_WAIT_MS`) for that hook to save one, then performs the same
+  first-session sign-up.
 - `X-Loom-Code-Scope: <org>/<namespace>`, the code namespace the project's checkout
   resolves to. The server applies it to every `code.*` call that names no namespace, so
   the model does not have to pass one. `LOOM_MCP_CODE_SCOPE=off` disables it.

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // The MCP entry's headers helper. It authenticates from the places the hooks
-// do, less the install option, which is not in its environment: LOOM_API_KEY;
-// for an agent (LOOM_CLIENT_ID with a workload token) its exchanged token and
-// nothing else; otherwise ~/.loom/config.json, then ~/.loom/token.
+// do that reach it: LOOM_API_KEY; for an agent (LOOM_CLIENT_ID with a
+// workload token) its exchanged token and nothing else; otherwise
+// ~/.loom/config.json, then ~/.loom/token. Claude Code gives a plugin's helper
+// neither the install option nor LOOM_API_KEY or LOOM_API_KEY_FILE, so there
+// the token comes from the two files, where the SessionStart hook saves it.
 //
 // It also names the code namespace of the session's checkout. Claude Code
 // starts a plugin's helper in the plugin root, so the plugin's entry carries
@@ -17,9 +19,10 @@
 // names no namespace. LOOM_MCP_CODE_SCOPE=off disables.
 //
 // No token and not an agent → the helper waits for the SessionStart hook,
-// which Claude Code runs while it connects the MCP entry and which knows the
-// configured server, to save the first-session credential; only then does it
-// sign up itself, through the same locked path, so one account results.
+// which Claude Code runs while it connects the MCP entry and which holds the
+// session's token and server, to save that token or the first-session
+// credential; only then does it sign up itself, through the same locked
+// path, so one account results and never one beside a token already given.
 // Sign-up off, refused or unreachable → `{}`: the server then answers 401
 // and Claude Code shows the connection as failed, which is the honest state.
 // Stdout is exactly one JSON object; nothing else is written.
@@ -93,9 +96,10 @@ export async function signedUpToken(opts = {}) {
 export const HOOK_TOKEN_WAIT_MS = 5000;
 
 /** The token the SessionStart hook saves to ~/.loom/config.json. The helper
- *  cannot see install options (the server URL), so on a first session it
- *  waits for the hook instead of signing up against a guessed server, and
- *  adopts the URL the hook saved with the token. */
+ *  may be given neither the install options nor LOOM_API_KEY, so with no
+ *  token it waits for the hook instead of signing up beside a token it was
+ *  not shown or against a guessed server, and adopts the URL the hook saved
+ *  with the token. */
 export async function hookToken({
   env = process.env,
   waitMs = envNumber("LOOM_MCP_HOOK_WAIT_MS", HOOK_TOKEN_WAIT_MS, { min: 0 }),
@@ -120,9 +124,7 @@ async function main() {
   let token = "";
   let out = {};
   try {
-    // Without LOOM_BASE_URL or a saved URL the configured server is unknown here.
-    const knowsServer = Boolean(process.env.LOOM_BASE_URL || readConfigFile(loomConfigPath()).url);
-    token = resolveToken() || (knowsServer ? "" : await hookToken()) || (await signedUpToken());
+    token = resolveToken() || (await hookToken()) || (await signedUpToken());
     out = headersFor(token, await checkoutScope(projectDir(), { token }));
   } catch {
     out = headersFor(token);

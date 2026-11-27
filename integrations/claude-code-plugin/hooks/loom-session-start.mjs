@@ -5,9 +5,9 @@
 // The block is `context.pack` (a curated, sectioned primer: pinned slots,
 // profile, relevant memories, procedures, recent runs), plus the code-index
 // orientation for an indexed checkout, the task inbox line, the recording
-// line and first-session notices. Before any of it the hook materializes an
-// install-time token (lib/plugin-options.mjs) and, with no credential at all,
-// signs the machine up (lib/first-session.mjs).
+// line and first-session notices. Before any of it the hook saves the token
+// it was given for the MCP header helper (lib/plugin-options.mjs) and, with no
+// credential at all, signs the machine up (lib/first-session.mjs).
 //
 // A hung server degrades to no primer; the unref'd exit timer bounds the
 // rest. LOOM_INJECT_CONTEXT=false turns the primer off.
@@ -56,16 +56,16 @@ import { briefPrimerEnabled, primerLine } from "../lib/session-brief.mjs";
 import { readJsonFile, sweepStaleStateFiles, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
 async function main() {
-  // A token given at `claude plugin install --config token=…`
-  // reaches the hooks as an environment variable but never the MCP header
-  // helper; write it once to ~/.loom/config.json, where the helper (and the
-  // CLI, the SDK) read it. Before the token check below, so this very
-  // session's hooks use it too.
-  const optionPlan = applyPluginOptions();
-  // The notice is about Claude Code's MCP entry (Codex's is fixed in its
-  // plugin). An agent signs in as itself, so the config token is not what
-  // its tools send.
-  const optionNotice = hookClient() === "claude-code" && !agentMode() ? installTokenNotice(optionPlan) : "";
+  // A token in LOOM_API_KEY or given at `claude plugin install --config
+  // token=…` reaches the hooks but never Claude Code's MCP header helper;
+  // write it once to ~/.loom/config.json, where the helper (and the CLI, the
+  // SDK) read it. Before the token check below, so this very session's hooks
+  // use it too. Only Claude Code is measured to keep LOOM_API_KEY from the
+  // helper, and an agent signs in as itself: neither Codex nor an agent
+  // saves it, or gets the notice about what Claude Code's MCP entry sends.
+  const helperBlind = hookClient() === "claude-code" && !agentMode();
+  const optionPlan = applyPluginOptions(process.env, {}, { envHidden: helperBlind });
+  const optionNotice = helperBlind ? installTokenNotice(optionPlan) : "";
   saveInstallServerUrl();
   sweepStaleStateFiles();
   // Default ON; opt out with LOOM_INJECT_CONTEXT=false (see header).

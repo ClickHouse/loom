@@ -1,5 +1,6 @@
-// Install-time options reach the hooks as env and are written
-// once to ~/.loom/config.json for the header helper.
+// The token the hooks are given (LOOM_API_KEY, the install option) is written
+// once to ~/.loom/config.json for the header helper, which Claude Code gives
+// neither.
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -22,7 +23,7 @@ function tmp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "loom-opts-"));
 }
 
-test("planMaterialize: only when the option is the sole token source", () => {
+test("planMaterialize: only when no token is saved, and LOOM_API_KEY only where the helper lacks it", () => {
   assert.equal(planMaterialize({}, { configExists: false, tokenFileExists: false }).write, false);
   assert.equal(
     planMaterialize(
@@ -30,6 +31,22 @@ test("planMaterialize: only when the option is the sole token source", () => {
       { configExists: false, tokenFileExists: false },
     ).reason,
     "LOOM_API_KEY set",
+  );
+  assert.equal(
+    planMaterialize({ LOOM_API_KEY: "e" }, { configExists: false, tokenFileExists: false }).reason,
+    "LOOM_API_KEY set",
+  );
+  const hidden = { configExists: false, tokenFileExists: false, envHidden: true };
+  assert.deepEqual(planMaterialize({ LOOM_API_KEY: "e", LOOM_BASE_URL: "https://h/" }, hidden), {
+    write: true,
+    url: "https://h",
+    reason: "no config",
+  });
+  assert.equal(planMaterialize({ LOOM_API_KEY: "  " }, hidden).reason, "no token to save");
+  assert.equal(planMaterialize({ LOOM_API_KEY: "e" }, { ...hidden, configToken: "c" }).reason, "config has a token");
+  assert.equal(
+    planMaterialize({ LOOM_API_KEY: "e" }, { ...hidden, tokenFileExists: true }).reason,
+    "token file exists",
   );
   assert.equal(
     planMaterialize(
@@ -94,6 +111,62 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
   assert.equal(fs.existsSync(configPath), false);
 });
 
+test("applyPluginOptions saves LOOM_API_KEY where the helper lacks it, and never over a saved token", () => {
+  const dir = tmp();
+  const configPath = path.join(dir, ".loom", "config.json");
+  const tokenPath = path.join(dir, ".loom", "token");
+  const paths = { configPath, tokenPath };
+  const env = { LOOM_API_KEY: "env.tok", CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok", LOOM_BASE_URL: "https://loom.test" };
+  // the helper reads the variable itself (Codex, an agent): nothing is written or said
+  const seen = applyPluginOptions(env, paths);
+  assert.equal(seen.reason, "LOOM_API_KEY set");
+  assert.equal(seen.helperFinds, "");
+  assert.equal(fs.existsSync(configPath), false);
+  // Claude Code's helper lacks it: the hooks' token (the variable outranks the option) is saved
+  const saved = applyPluginOptions(env, paths, { envHidden: true });
+  assert.equal(saved.write, true);
+  assert.equal(JSON.stringify(saved).includes("env.tok"), false, "the plan holds no token");
+  assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), { token: "env.tok", url: "https://loom.test" });
+  assertMode(configPath, 0o600);
+  assertMode(path.dirname(configPath), 0o700);
+  // the next session finds that token saved: nothing to write or say
+  const again = applyPluginOptions(env, paths, { envHidden: true });
+  assert.equal(again.reason, "config has a token");
+  assert.equal(again.helperFinds, "");
+  // a rotated variable never replaces the saved token: the helper sends another one
+  const rotated = applyPluginOptions({ ...env, LOOM_API_KEY: "new.tok" }, paths, { envHidden: true });
+  assert.equal(rotated.helperFinds, "another");
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).token, "env.tok");
+  // a token file stands: the same token there is what the helper sends, another one is named
+  fs.unlinkSync(configPath);
+  fs.writeFileSync(tokenPath, "env.tok\n");
+  assert.equal(applyPluginOptions(env, paths, { envHidden: true }).helperFinds, "");
+  fs.writeFileSync(tokenPath, "file.tok\n");
+  const beside = applyPluginOptions(env, paths, { envHidden: true });
+  assert.equal(beside.reason, "token file exists");
+  assert.equal(beside.helperFinds, "another");
+  assert.equal(fs.existsSync(configPath), false);
+  // a write that fails leaves the helper without a token, and says so
+  fs.unlinkSync(tokenPath);
+  fs.mkdirSync(configPath);
+  const failed = applyPluginOptions(env, paths, { envHidden: true });
+  assert.equal(failed.write, false);
+  assert.match(failed.reason, /^write failed/);
+  assert.equal(failed.helperFinds, "no");
+});
+
+test("installTokenNotice: LOOM_API_KEY the helper will not send", () => {
+  const env = { LOOM_API_KEY: "env.tok", LOOM_CONFIG_FILE: "/h/.loom/config.json" };
+  const other = installTokenNotice({ write: false, reason: "config has a token", helperFinds: "another" }, env);
+  assert.ok(other.includes("which Claude Code does not pass to the loom MCP tools"), other);
+  assert.ok(other.includes("read /h/.loom/config.json, then "), other);
+  assert.ok(other.includes("and send another token saved there."), other);
+  assert.ok(other.includes("save the LOOM_API_KEY token as `token` in /h/.loom/config.json and restart"), other);
+  const none = installTokenNotice({ write: false, reason: "write failed: EACCES", helperFinds: "no" }, env);
+  assert.ok(none.includes("and find no token there."), none);
+  assert.equal((other + none).includes("env.tok"), false);
+});
+
 test("installTokenNotice: when the helper will send a config token saved for another server", () => {
   const stale = { write: false, reason: "no option", configUrl: "https://old", configHasToken: true };
   const named = { CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://new/" };
@@ -112,7 +185,9 @@ test("installTokenNotice: when the helper will send a config token saved for ano
   assert.equal(installTokenNotice({ ...stale, configUrl: "https://new" }, named), "");
   assert.equal(installTokenNotice({ ...stale, configUrl: "" }, named), "");
   assert.equal(installTokenNotice({ ...stale, configHasToken: false }, named), "");
-  assert.equal(installTokenNotice(stale, { ...named, LOOM_API_KEY: "e" }), ""); // the helper sends the env token
+  assert.equal(line.includes("LOOM_API_KEY"), false, "the helper is not given the variable");
+  // the helper sends the config's token whatever LOOM_API_KEY holds
+  assert.ok(installTokenNotice(stale, { ...named, LOOM_API_KEY: "e" }).includes("send to https://new."));
   // the hook has just written the install token into the config: that token is the right one
   assert.equal(installTokenNotice({ ...stale, write: true, reason: "config lacks a token" }, named), "");
 });

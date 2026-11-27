@@ -1,17 +1,19 @@
-// Install-time options → the one file every reader knows.
+// The session's token → the one file every reader knows.
 //
 // `claude plugin install loom@loom --config server_url=… --config token=…`
 // stores the values with Claude Code and exports them to hook processes as
 // CLAUDE_PLUGIN_OPTION_SERVER_URL / CLAUDE_PLUGIN_OPTION_TOKEN. The MCP entry
 // takes the URL by `${user_config.server_url}` substitution, but its header
-// helper is not a hook and receives no option (measured on 2.1.273): it reads
-// LOOM_API_KEY, then ~/.loom/config.json, then ~/.loom/token. So the first hook
-// of a session writes the option token — and the URL beside it — into
-// ~/.loom/config.json when nothing else already provides a token. Claude
-// Code re-runs the helper on a 401 and retries the call once, so the first
-// tool call of the first session finds it. Idempotent, 0600, never throws.
+// helper is not a hook: Claude Code gives a plugin's helper no option
+// (measured on 2.1.273) and removes LOOM_API_KEY and LOOM_API_KEY_FILE from
+// its environment (2.1.332), so there it reads ~/.loom/config.json, then
+// ~/.loom/token. So the first hook of a session writes the token the hooks
+// were given — LOOM_API_KEY, else the option — and the URL beside it into
+// ~/.loom/config.json when no token is saved, and the helper waits for it
+// (bin/loom-mcp-headers.mjs). A saved token is never replaced: the primer
+// says when the helper sends another one. Idempotent, 0600, never throws.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -85,28 +87,61 @@ export function statusServerUrl({ tmp } = {}) {
   return installServerUrl({ tmp }) || mcpServerUrl();
 }
 
+/** The token the hooks were given and the helper may not see: LOOM_API_KEY,
+ *  else the install option. */
+function givenToken(env) {
+  return String(env.LOOM_API_KEY || "").trim() || String(env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
+}
+
 /** What a run would do, without doing it: {write, url, reason}. `url` is
- *  the server the option token is for, "" when nothing names one. Pure. */
-export function planMaterialize(env, { configExists, configToken, tokenFileExists }) {
-  const option = String(env.CLAUDE_PLUGIN_OPTION_TOKEN || "").trim();
-  if (!option) return { write: false, reason: "no option" };
-  if (String(env.LOOM_API_KEY || "").trim()) return { write: false, reason: "LOOM_API_KEY set" };
+ *  the server the token is for, "" when nothing names one. `envHidden`: the
+ *  helper is not given LOOM_API_KEY, so that token is saved like the option;
+ *  where the helper reads it itself, it rules the option out. Pure. */
+export function planMaterialize(env, { configExists, configToken, tokenFileExists, envHidden = false }) {
+  if (!givenToken(env)) return { write: false, reason: "no token to save" };
+  if (!envHidden && String(env.LOOM_API_KEY || "").trim()) return { write: false, reason: "LOOM_API_KEY set" };
   if (String(configToken || "").trim()) return { write: false, reason: "config has a token" };
   if (tokenFileExists) return { write: false, reason: "token file exists" };
   const url = namedServerUrl(env);
   return { write: true, url, reason: configExists ? "config lacks a token" : "no config" };
 }
 
-/** The primer line when the token the MCP header helper will send is the
- *  config's, saved for another server than Claude Code's MCP entry calls,
- *  which refuses it. The helper reads LOOM_API_KEY, then the config: no
- *  notice when the env var is set, when this hook has just written the
- *  config's token itself, or when the config names no server. The remedy
- *  depends on whether anything named the entry's server: when nothing did,
- *  the entry fell back to localhost and the fix is to name the config's
- *  server. Pure. */
+/** What Claude Code's helper finds in place of a LOOM_API_KEY that was not
+ *  saved: "another" token, "no" token, or "" when it finds that very token.
+ *  It reads the config, then ~/.loom/token (LOOM_API_KEY_FILE is kept from
+ *  it too). */
+function helperFinds(envToken, configToken, tokenPath) {
+  let saved = String(configToken || "").trim();
+  if (!saved) {
+    try {
+      saved = readFileSync(tokenPath, "utf8").trim();
+    } catch {
+      // no token file
+    }
+  }
+  if (saved === envToken) return "";
+  return saved ? "another" : "no";
+}
+
+/** The primer line when Claude Code's MCP header helper will not send what
+ *  the hooks send. With LOOM_API_KEY set and not saved (`plan.helperFinds`),
+ *  the helper sends another saved token or none, and the fix is to save that
+ *  token. Otherwise, when the config's token was saved for another server
+ *  than the MCP entry calls, which refuses it: no notice when this hook has
+ *  just written the config's token itself, or when the config names no
+ *  server. That remedy depends on whether anything named the entry's server:
+ *  when nothing did, the entry fell back to localhost and the fix is to name
+ *  the config's server. Pure; never holds a token. */
 export function installTokenNotice(plan, env = process.env) {
-  if (String(env.LOOM_API_KEY || "").trim() || plan.write || !plan.configHasToken) return "";
+  if (plan.helperFinds) {
+    const found = plan.helperFinds === "another" ? "send another token saved there" : "find no token there";
+    return (
+      `Loom: the hooks use LOOM_API_KEY, which Claude Code does not pass to the loom MCP tools. The tools ` +
+      `read ${loomConfigPath(env)}, then ${loomTokenPath({})}, and ${found}. Tell the user once: save the ` +
+      `LOOM_API_KEY token as \`token\` in ${loomConfigPath(env)} and restart Claude Code.`
+    );
+  }
+  if (plan.write || !plan.configHasToken) return "";
   const saved = normalizeUrl(plan.configUrl);
   const inUse = mcpServerUrl(env);
   if (!saved || sameServer(saved, inUse)) return "";
@@ -117,10 +152,13 @@ export function installTokenNotice(plan, env = process.env) {
       `${saved}: install with --config server_url=${saved}, or export LOOM_BASE_URL=${saved}, and restart.`
     );
   }
-  return `${where}${inUse}. If the loom tools fail to connect, put a ${inUse} token in that file or in LOOM_API_KEY and restart.`;
+  return `${where}${inUse}. If the loom tools fail to connect, put a ${inUse} token in that file and restart.`;
 }
 
-export function applyPluginOptions(env = process.env, paths = {}) {
+/** Save the session's token for the helper when the plan says so. `envHidden`
+ *  is `planMaterialize`'s; the caller sets it for Claude Code outside agent
+ *  mode. */
+export function applyPluginOptions(env = process.env, paths = {}, { envHidden = false } = {}) {
   const configPath = paths.configPath || loomConfigPath(env);
   const tokenPath = paths.tokenPath || loomTokenPath(env);
   const configExists = existsSync(configPath);
@@ -129,19 +167,24 @@ export function applyPluginOptions(env = process.env, paths = {}) {
     configExists,
     configToken: existing.token,
     tokenFileExists: existsSync(tokenPath),
+    envHidden,
   });
   plan.configUrl = normalizeUrl(existing.url);
   plan.configHasToken = Boolean(String(existing.token || "").trim());
-  if (!plan.write) return plan;
+  // For the notice, when LOOM_API_KEY stays out of the config. The helper's
+  // token file is the default one: LOOM_API_KEY_FILE does not reach it.
+  const envToken = envHidden ? String(env.LOOM_API_KEY || "").trim() : "";
+  const finds = envToken ? helperFinds(envToken, existing.token, paths.tokenPath || loomTokenPath({})) : "";
+  if (!plan.write) return { ...plan, helperFinds: finds };
   try {
     // The token goes in beside the server named for it, over a url another
     // install left: the notice and the status check read them as a pair. A
     // url the file already holds stays when nothing names a server.
-    const patch = { token: String(env.CLAUDE_PLUGIN_OPTION_TOKEN).trim() };
+    const patch = { token: givenToken(env) };
     if (plan.url) patch.url = plan.url;
     writeConfigMerged(configPath, patch);
     return { ...plan, path: configPath };
   } catch (e) {
-    return { write: false, reason: `write failed: ${e && e.code ? e.code : "error"}` };
+    return { write: false, reason: `write failed: ${e && e.code ? e.code : "error"}`, helperFinds: finds };
   }
 }
