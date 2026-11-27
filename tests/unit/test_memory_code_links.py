@@ -247,6 +247,17 @@ async def test_revise_suggests_within_the_budget_and_the_rest_stays_due(world, m
     assert judged["suggestion"] == "the fix"  # the cleared row is the one the policy wrote
 
 
+@pytest.mark.asyncio
+async def test_a_pass_with_no_judgement_leaves_a_changed_revise_claim_due(world) -> None:
+    for m, state in (("edited", "changed"), ("gone", "missing")):
+        world.rows[m] = _row(m)
+        world.states[m] = [state]
+    world.policy["agent-a"] = code_change.REVISE
+    await _apply(budget=0)
+    # the model is not asked: the edited claim waits for a pass that may judge it
+    assert world.judged == [] and _cleared(world) == ["gone"]
+
+
 def _checked_long_ago(monkeypatch) -> datetime:
     """Every link the world reads last checked at one old time, which it returns."""
     reads, then = code_links.store.for_memories, datetime(2026, 1, 1)
@@ -1056,6 +1067,46 @@ async def test_links_of_a_repository_no_longer_configured_are_left_alone(monkeyp
     result = code_link_pass.PassResult()
     await code_link_recheck.recheck_all(result)
     assert ran == ["code-a"] and not result.errors
+
+
+@pytest.mark.asyncio
+async def test_one_repository_is_rechecked_now_with_no_judgement(monkeypatch) -> None:
+    """What `code.refresh` runs after its pass: the repository's recheck under its lease,
+    judging nothing, and nothing at all where the link worker would recheck nothing."""
+    from contextlib import asynccontextmanager
+
+    from server.memory.store.key_write_lock import LeaseBusy
+
+    async def namespaces():
+        return [("o", "code-a"), ("o", "code-held")]
+
+    ran: list[tuple[str, int]] = []
+    held: list[str] = []
+
+    async def recheck(org, cns, budget, result):
+        ran.append((cns, budget.judgements))
+        result.rechecked += 1
+
+    @asynccontextmanager
+    async def lease(name):
+        if name == code_link_recheck._lock_name("o", "code-held"):
+            raise LeaseBusy(name)
+        held.append(name)
+        yield
+
+    monkeypatch.setattr(code_links.store, "code_namespaces", namespaces)
+    monkeypatch.setattr(code_link_recheck, "_recheck_repository", recheck)
+    monkeypatch.setattr(code_link_pass.repository_locks, "lease", lease)
+    result = await code_link_recheck.recheck_repository("o", "code-a")
+    assert result is not None and result.rechecked == 1
+    assert ran == [("code-a", 0)] and held == [code_link_recheck._lock_name("o", "code-a")]
+    with pytest.raises(LeaseBusy):  # another host is checking it
+        await code_link_recheck.recheck_repository("o", "code-held")
+    # no memory links to it, or links are off: no lease taken, nothing read of it
+    assert await code_link_recheck.recheck_repository("o", "code-b") is None
+    monkeypatch.setattr(settings, "memory_code_links_enabled", False)
+    assert await code_link_recheck.recheck_repository("o", "code-a") is None
+    assert ran == [("code-a", 0)] and len(held) == 1
 
 
 def test_decorators_and_template_heads_are_part_of_the_definition() -> None:

@@ -99,6 +99,20 @@ async def recheck_all(result: link_pass.PassResult) -> None:
         left -= granted - budget.judgements
 
 
+async def recheck_repository(org: str, cns: str) -> link_pass.PassResult | None:
+    """Follow one configured repository's links to its indexed head now, for the caller
+    that moved it: `recheck_all`'s work for that repository, with no judgement, so a
+    `revise` claim the change left due stays due for the link worker. None where that
+    worker would recheck nothing: links are off, or no memory links to the repository.
+    LeaseBusy while another pass checks it."""
+    if not settings.memory_code_links_enabled or (org, cns) not in await store.code_namespaces():
+        return None
+    result = link_pass.PassResult()
+    async with link_pass.repository_locks.lease(_lock_name(org, cns)):
+        await _recheck_repository(org, cns, link_pass.Budget(judgements=0), result)
+    return result
+
+
 def _lock_name(org: str, cns: str) -> str:
     return "code_links/" + hashlib.sha256(f"{org}\x1f{cns}".encode()).hexdigest()[:40]
 

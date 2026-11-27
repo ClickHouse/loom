@@ -18,6 +18,8 @@ from server.code.app.index.ingest_pass import selected_repos
 from server.code.app.index.pass_budget import CodeIngestResult
 from server.code.app.ingest import handle_code_refresh
 from server.core.errors import NotFoundError
+from server.core.leases import LeaseBusy
+from server.memory.app import code_link_recheck
 from server.settings import settings
 from tests.unit.claims_fake import FakeLockTable
 
@@ -44,10 +46,26 @@ def _scalars(monkeypatch: pytest.MonkeyPatch):
     # another test's trigger into already_running
     monkeypatch.setattr(handler_mod, "_REFRESH_LOCKS", {})
     monkeypatch.setattr(handler_mod, "_take_lease", _no_lease)
+    # no ClickHouse here: no memory links to the repository, unless a test says so
+    monkeypatch.setattr(code_link_recheck, "recheck_repository", _no_lease)
 
 
 async def _no_lease(org: str, ns: str) -> None:
     return None
+
+
+def _passes(monkeypatch: pytest.MonkeyPatch, ran: list[str], *, fails: bool = False) -> None:
+    """An ingest pass that records itself in `ran`, and raises with `fails`."""
+    import server.code.app.index.ingest_pass as worker_mod
+
+    async def _fake_run_pass(org: str = "", namespace: str = "") -> CodeIngestResult:
+        ran.append("pass")
+        if fails:
+            raise RuntimeError("the fetch failed")
+        return CodeIngestResult(head="abc123")
+
+    monkeypatch.setattr(handler_mod, "CodeRepo", _FakeCodeRepo)
+    monkeypatch.setattr(worker_mod, "run_pass", _fake_run_pass)
 
 
 class _FakeCodeRepo:
@@ -235,3 +253,74 @@ async def test_a_refresh_releases_its_lease_once(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(worker_mod, "run_pass", _fake_run_pass)
     await handle_code_refresh(CodeRefreshInput(namespace="code-clickhouse", wait=True))
     assert releases == ["code_refresh:clickhouse/code-clickhouse"]
+
+
+@pytest.mark.parametrize("wait", [True, False])
+async def test_a_refresh_rechecks_the_memory_links_after_its_pass(
+    monkeypatch: pytest.MonkeyPatch, wait: bool
+) -> None:
+    """The links follow the head the pass indexed inside the call, or right after the pass
+    in the background: no link worker interval in between."""
+    ran: list[str] = []
+
+    async def _recheck(org: str, ns: str) -> None:
+        ran.append(f"links {org}/{ns}")
+
+    _passes(monkeypatch, ran)
+    monkeypatch.setattr(code_link_recheck, "recheck_repository", _recheck)
+    out = await handle_code_refresh(
+        CodeRefreshInput(org="clickhouse", namespace="code-clickhouse-25-8", wait=wait)
+    )
+    await asyncio.gather(*handler_mod._REFRESH_TASKS)
+    assert out.triggered is True
+    assert ran == ["pass", "links clickhouse/code-clickhouse-25-8"]
+
+
+@pytest.mark.parametrize("failure", [LeaseBusy("code_links/x"), RuntimeError("no answer")])
+async def test_a_refresh_answers_whatever_its_link_recheck_does(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    """Links another host is checking, or a recheck that fails, are the link worker's next
+    pass: the refresh answers for the index."""
+
+    async def _recheck(org: str, ns: str) -> None:
+        raise failure
+
+    _passes(monkeypatch, [])
+    monkeypatch.setattr(code_link_recheck, "recheck_repository", _recheck)
+    out = await handle_code_refresh(CodeRefreshInput(namespace="code-clickhouse", wait=True))
+    assert (out.triggered, out.head_after) == (True, "head-code-clickhouse")
+
+
+async def test_a_link_recheck_that_outlasts_the_wait_is_cut_and_the_refresh_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cut: list[str] = []
+
+    async def _recheck(org: str, ns: str) -> None:
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cut.append(ns)
+            raise
+
+    _passes(monkeypatch, [])
+    monkeypatch.setattr(code_link_recheck, "recheck_repository", _recheck)
+    # below the wire minimum, so the test does not wait ten seconds
+    short = CodeRefreshInput(namespace="code-clickhouse", wait=True).model_copy(
+        update={"wait_timeout_seconds": 0.2}
+    )
+    out = await handle_code_refresh(short)
+    assert out.triggered is True and cut == ["code-clickhouse"]
+
+
+async def test_a_pass_that_fails_rechecks_no_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    ran: list[str] = []
+
+    async def _recheck(org: str, ns: str) -> None:
+        ran.append("links")
+
+    _passes(monkeypatch, ran, fails=True)
+    monkeypatch.setattr(code_link_recheck, "recheck_repository", _recheck)
+    out = await handle_code_refresh(CodeRefreshInput(namespace="code-clickhouse", wait=True))
+    assert out.triggered is True and ran == ["pass"]

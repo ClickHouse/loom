@@ -330,7 +330,10 @@ after a merge. It runs the same ingest pass immediately for that namespace on th
 that received it, under the namespace's lease (`code_refresh:<org>/<namespace>`), so
 triggers landing on different replicas coalesce into one pass. It answers 404 for a
 namespace no entry configures, so the pusher never decides what gets indexed. It works
-with the poller disabled.
+with the poller disabled. After the pass it rechecks the memories linked to the
+namespace's code under the link worker's per-repository lease, with no model call, so
+link state does not wait for the `memory_code_links` interval; a busy lease or a failed
+recheck is logged and left to that worker.
 
 Open pull requests are not indexed; the working tree stays the client's own.
 
