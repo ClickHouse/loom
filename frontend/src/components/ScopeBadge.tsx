@@ -20,7 +20,7 @@ import { isReferenceKind, kindOf } from "../lib/namespace";
  * the pattern: badge says where the numbers come from, full stop.
  */
 
-type Scope = { kind: "namespace"; value: string } | { kind: "loom-wide" };
+type Scope = { kind: "namespace" | "org"; value: string } | { kind: "loom-wide" };
 
 export function ScopeBadge(props: Scope) {
   // A code index or a tracker namespace is named with its kind, the way the picker tags
@@ -30,6 +30,19 @@ export function ScopeBadge(props: Scope) {
   const nsKind = props.kind === "namespace" ? kindOf(props.value, mine) : undefined;
   if (props.kind === "loom-wide") {
     return <Badge text={<Labelled icon="globe">Loom-wide</Labelled>} />;
+  }
+  if (props.kind === "org") {
+    return (
+      <Badge
+        className="max-w-full"
+        ellipsisContent={false}
+        text={
+          <Labelled icon="building">
+            organization <span className="font-mono text-text">{props.value}</span>
+          </Labelled>
+        }
+      />
+    );
   }
   // An empty identity means no namespace was selected (no saved pick, no own namespace,
   // no usable claim). Say so instead of rendering an empty monospace slot next to
@@ -41,8 +54,9 @@ export function ScopeBadge(props: Scope) {
   // row is the same size before and after the role resolves — no layout shift when it
   // appears.
   return (
-    <span className="inline-flex flex-wrap items-center gap-1.5 min-h-6">
+    <span className="inline-flex max-w-full flex-wrap items-center gap-1.5 min-h-6">
       <Badge
+        className="max-w-full"
         ellipsisContent={false}
         text={
           <Labelled icon="cards">
@@ -60,8 +74,8 @@ export function ScopeBadge(props: Scope) {
 function Labelled({ icon, children }: { icon: IconName; children: ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1">
-      <Icon name={icon} size="xs" aria-hidden="true" />
-      <span>{children}</span>
+      <Icon name={icon} size="xs" className="shrink-0" aria-hidden="true" />
+      <span className="min-w-0 whitespace-normal wrap-anywhere">{children}</span>
     </span>
   );
 }

@@ -92,7 +92,12 @@ from server.transport.mcp_primer import (
     _resources_descriptor,
 )
 from server.transport.mcp_refusals import classify_tool_errors
-from server.transport.mcp_tools import _tools_descriptor, assistant_connection
+from server.transport.mcp_tools import (
+    _tools_descriptor,
+    assistant_connection,
+    code_only_listing,
+    lists_follow_code_scope,
+)
 
 log = logging.getLogger(__name__)
 
@@ -209,21 +214,8 @@ async def _handle_request(
     if method == "ping":
         return _ok(req_id, {})
 
-    if method == "tools/list":
-        # `?schema_profile=compact` on the MCP URL selects the compact listing
-        # (see mcp_schemas.compact_descriptor); `?toolset=coding` selects a
-        # toolset — one deployment serves both archetypes.
-        # Defaults from settings; an unknown value is the default.
-        return _ok(
-            req_id,
-            {
-                "tools": await _tools_descriptor(schema_profile=schema_profile, toolset=toolset),
-                # The listing is a property of the deployment and the URL, not
-                # of the caller: a client may hold it for five
-                # minutes and a shared cache may keep it.
-                **cache_hints(LIST_TTL_MS, "public"),
-            },
-        )
+    if method in ("tools/list", "prompts/list", "resources/list"):
+        return _ok(req_id, await _list_result(method, toolset, schema_profile))
 
     if method == "tools/call":
         from server.transport.lean_results import single_channel
@@ -237,29 +229,47 @@ async def _handle_request(
                     client_name,
                     mcp_session_id=mcp_session_id,
                     toolset=toolset,
+                    schema_profile=schema_profile,
                 )
             ),
             _client_name_to_agent(client_name),
         )
 
-    if method == "prompts/list":
-        return _ok(
-            req_id, {"prompts": _prompts_descriptor(toolset), **cache_hints(LIST_TTL_MS, "public")}
-        )
-
     if method == "prompts/get":
-        return await _get_prompt(req_id, params, auth, client_name, toolset)
-
-    if method == "resources/list":
-        return _ok(
-            req_id,
-            {"resources": _resources_descriptor(toolset), **cache_hints(LIST_TTL_MS, "public")},
-        )
+        return await _get_prompt(req_id, params, auth, client_name, toolset, schema_profile)
 
     if method == "resources/read":
-        return await _read_resource(req_id, params, auth, toolset)
+        return await _read_resource(req_id, params, auth, toolset, schema_profile)
 
     return _err(req_id, METHOD_NOT_FOUND, f"Method not found: {method!r}")
+
+
+async def _list_result(
+    method: str, toolset: str | None, schema_profile: str | None
+) -> dict[str, Any]:
+    """`tools/list`, `prompts/list` or `resources/list`. `?schema_profile=compact`
+    on the MCP URL selects the compact listing (see mcp_schemas.compact_descriptor);
+    `?toolset=coding` selects a toolset — one deployment serves both archetypes.
+    Defaults from settings; an unknown value is the default.
+
+    A listing is a property of the deployment and the URL, not of the caller: a
+    client may hold it for five minutes and a shared cache may keep it. The lists
+    of a `coding` connection whose URL asks for the compact profile also follow
+    the request's repository header, so only the client keeps those, bound or
+    not. Bound, it lists the code tools alone, and no prompt and no resource:
+    both offer memory routing, through tools that listing leaves out."""
+    scope = "private" if lists_follow_code_scope(toolset, schema_profile) else "public"
+    if method == "tools/list":
+        listed: dict[str, Any] = {
+            "tools": await _tools_descriptor(schema_profile=schema_profile, toolset=toolset)
+        }
+    elif code_only_listing(toolset, schema_profile):
+        listed = {method.removesuffix("/list"): []}
+    elif method == "prompts/list":
+        listed = {"prompts": _prompts_descriptor(toolset)}
+    else:
+        listed = {"resources": _resources_descriptor(toolset)}
+    return {**listed, **cache_hints(LIST_TTL_MS, scope)}
 
 
 async def _discover_result(
@@ -437,7 +447,7 @@ def attach(app: FastAPI) -> None:
             # One read of the selectors, so routing, the screen and the call agree.
             listing = _listing_params(request)
             set_answer_run(answer_run_of(request, listing["toolset"], auth))
-            req, early = route_loom_op(req, toolset=listing["toolset"], auth=auth)
+            req, early = route_loom_op(req, auth=auth, **listing)
             if early is not None:
                 return early  # classified where its text is rendered (mcp_op._result)
             # AuthZ: identity must match the args; a namespace the JWT lacks → grants.

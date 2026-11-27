@@ -1,11 +1,11 @@
 import { defineConfig } from "blume";
 import { vercel } from "blume/deploy";
+import { gettingStartedOverview } from "./lib/documentation-routes.mjs";
 import { publisher, siteDescription, siteUrl, website } from "./lib/site-identity.mjs";
 
 export default defineConfig({
   title: website.name,
   logo: {
-    href: siteUrl,
     image: "/loom.svg",
     text: website.name,
   },
@@ -49,23 +49,68 @@ export default defineConfig({
     ],
   },
   theme: {
-    mode: "light",
-    accent: "#ffcc00",
-    action: "#ffcc00",
-    background: { light: "#ffffff", dark: "#181818" },
+    mode: "dark",
+    toggle: false,
+    accent: "#faff69",
+    action: "#faff69",
+    background: "#1f1f1c",
     radius: "sm",
+  },
+  search: {
+    popular: [
+      { label: "Install Loom", href: "/getting-started/quickstart", icon: "terminal" },
+      { label: "Connect a coding agent", href: "/getting-started/connect-a-coding-agent", icon: "plug" },
+      { label: "Deploy for a team", href: "/operations/deployment", icon: "server" },
+      { label: "Find an API operation", href: "/reference/operations", icon: "code-2" },
+    ],
   },
   navigation: {
     tabs: [
-      { label: "Get started", path: "/getting-started" },
-      { label: "Guides", path: "/guides" },
-      { label: "Features", path: "/features" },
-      { label: "Reference", path: "/reference" },
-      { label: "Operations", path: "/operations" },
+      {
+        label: {
+          en: "Get started",
+          es: "Comenzar",
+          ja: "はじめる",
+          ko: "시작하기",
+          "pt-BR": "Primeiros passos",
+          "zh-CN": "开始使用",
+        },
+        path: "/getting-started",
+        href: gettingStartedOverview,
+      },
+      {
+        label: { en: "Guides", es: "Guías", ja: "ガイド", ko: "가이드", "pt-BR": "Guias", "zh-CN": "指南" },
+        path: "/guides",
+      },
+      {
+        label: { en: "Features", es: "Funciones", ja: "機能", ko: "기능", "pt-BR": "Recursos", "zh-CN": "功能" },
+        path: "/features",
+      },
+      {
+        label: {
+          en: "Reference",
+          es: "Referencia",
+          ja: "リファレンス",
+          ko: "레퍼런스",
+          "pt-BR": "Referência",
+          "zh-CN": "参考",
+        },
+        path: "/reference",
+      },
+      {
+        label: { en: "Operations", es: "Operación", ja: "運用", ko: "운영", "pt-BR": "Operação", "zh-CN": "运维" },
+        path: "/operations",
+      },
     ],
     sidebar: {
-      display: "group",
+      display: "page",
     },
+  },
+  footer: {
+    links: [
+      { label: "Glossary", href: "/glossary" },
+      { label: "Benchmark results", href: "/benchmarks/results" },
+    ],
   },
   github: {
     owner: "ClickHouse",

@@ -1,21 +1,250 @@
-/* Keep every muted interactive surface as quiet as the sidebar hover. */
-:root {
-  --blume-muted: rgb(0 0 0 / 0.05);
-}
-
 :root[data-theme="dark"] {
-  --blume-muted: rgb(255 255 255 / 0.05);
+  --blume-background: var(--click-global-color-background-default, #1f1f1c);
+  --blume-foreground: var(--click-global-color-text-default, #ffffff);
+  --blume-muted: var(--click-global-color-background-muted, #282828);
+  --blume-muted-foreground: var(--click-global-color-text-muted, #b3b6bd);
+  --blume-border: var(--click-global-color-stroke-intense, #414141);
+  --blume-accent: var(--click-global-color-accent-default, #faff69);
+  --blume-accent-foreground: var(--click-button-basic-color-primary-text-default, #1f1f1c);
+  --blume-action: var(--click-button-basic-color-primary-background-default, #faff69);
+  --blume-action-foreground: var(--blume-accent-foreground);
+  --blume-code-background: var(--click-global-color-background-muted, #282828);
+  --blume-radius: 0.5rem;
+  --blume-content-width: 44rem;
 }
 
-:root[data-theme="dark"] .loom-logo-background {
-  fill: #1d1d1d;
+:root[data-theme="dark"] .loom-logo-background,
+:root[data-theme="dark"] .loom-logo-cutout {
+  fill: var(--blume-background);
 }
 
 :root[data-theme="dark"] .loom-logo-mark {
-  fill: #faff69;
-  stroke: #faff69;
+  fill: var(--blume-accent);
+  stroke: var(--blume-accent);
 }
 
-:root[data-theme="dark"] .loom-logo-cutout {
-  fill: #1d1d1d;
+[data-blume-header] {
+  border-block-end: 1px solid var(--blume-border);
+}
+
+[data-blume-doc-grid] {
+  max-inline-size: 88rem;
+  margin-inline: auto;
+}
+
+@media (min-width: 88rem) {
+  [data-blume-header] {
+    padding-inline: calc((100% - 88rem) / 2 + 3.5rem);
+  }
+}
+
+[data-blume-header] nav a {
+  min-block-size: 2.25rem;
+  border-radius: var(--blume-radius);
+}
+
+[data-blume-header] nav a[aria-current="page"],
+[data-blume-nav-tree] a[aria-current]:not([aria-current="false"]) {
+  background: color-mix(in srgb, var(--blume-accent) 8%, var(--blume-background));
+  color: var(--blume-accent);
+}
+
+[data-blume-nav-tree] :is(.blume-nav-link, .blume-nav-drill, .blume-nav-drill-link, .blume-nav-drill-toggle) {
+  min-block-size: 2.125rem;
+  border-radius: var(--blume-radius);
+}
+
+[data-blume-search-open] {
+  border: 1px solid var(--blume-border);
+  border-radius: var(--blume-radius);
+}
+
+[data-blume-toc] a[aria-current="location"] {
+  color: var(--blume-accent);
+}
+
+#blume-content {
+  padding-block-start: clamp(1.5rem, 3vw, 2.75rem);
+}
+
+.prose {
+  color: var(--blume-foreground);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.prose > :where(p, blockquote) {
+  max-inline-size: 60ch;
+}
+
+.prose :where(h1) {
+  font-size: clamp(2rem, 4vw, 3.125rem);
+  font-weight: 600;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+.prose :where(h2) {
+  margin-block-start: clamp(1.75rem, 3vw, 2.75rem);
+  margin-block-end: 0.875rem;
+  font-size: clamp(1.35rem, 2vw, 1.75rem);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.prose :where(h3, h4) {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.prose :where(a:not(.blume-heading-anchor, [data-blume-card])) {
+  color: var(--click-global-color-text-link-default, var(--blume-accent));
+  text-decoration-style: solid;
+}
+
+.prose :where(a:not(.blume-heading-anchor, [data-blume-card])):hover {
+  color: var(--click-global-color-text-link-hover, var(--blume-accent));
+}
+
+.prose :where(img, video) {
+  border-radius: var(--blume-radius);
+}
+
+.prose > p:has(> a[href$="/getting-started/quickstart"] + a[href$="/playground/source-change"]) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-block: 1.5rem 2rem;
+
+  & > a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-block-size: 2.75rem;
+    padding: 0.625rem 1rem;
+    border: 1px solid var(--click-button-basic-color-secondary-stroke-default, var(--blume-border));
+    border-radius: var(--click-button-radii-all, 0.25rem);
+    color: var(--blume-foreground);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.4;
+    text-decoration: none;
+  }
+
+  & > a:hover {
+    background: var(--blume-muted);
+    color: var(--blume-foreground);
+  }
+
+  & > a:first-child {
+    border-color: var(--blume-action);
+    background: var(--blume-action);
+    color: var(--blume-action-foreground);
+  }
+
+  & > a:first-child:hover {
+    background: var(--click-button-basic-color-primary-background-hover, #feffc2);
+    color: var(--blume-action-foreground);
+  }
+}
+
+.prose
+  > :is(h2#start-here:has(~ h2#use-cases), h2#find-and-share-context, h2#plan-a-deployment, h2#look-up-an-interface)
+  + ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+
+  @media (max-width: 39rem) {
+    grid-template-columns: 1fr;
+  }
+
+  & > li {
+    position: relative;
+    padding: 1.125rem;
+    margin: 0;
+    border: 1px solid var(--blume-border);
+    border-radius: var(--blume-radius);
+    background: var(--click-card-primary-color-background-default, var(--blume-background));
+    color: var(--blume-muted-foreground);
+    font-size: 0.875rem;
+    line-height: 1.6;
+  }
+
+  & > li:is(:hover, :focus-within) {
+    border-color: var(--blume-accent);
+    background: var(--click-card-primary-color-background-hover, var(--blume-muted));
+  }
+
+  & a {
+    display: block;
+    width: fit-content;
+    margin-block-end: 0.375rem;
+    color: var(--blume-foreground);
+    font-size: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  & a::after {
+    position: absolute;
+    inset: 0;
+    content: "";
+  }
+
+  & a:hover {
+    color: var(--blume-accent);
+  }
+}
+
+[data-blume-nav-tree] .truncate {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+[data-blume-search-dialog] {
+  background: var(--blume-background);
+}
+
+[data-blume-search-dialog] mark {
+  background: var(--blume-accent);
+  color: var(--blume-accent-foreground);
+}
+
+[data-blume-search-filters] button .opacity-60 {
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .prose pre.astro-code span[style*="--shiki-dark:"] {
+  color: color-mix(in srgb, var(--shiki-dark) 76%, var(--blume-foreground));
+}
+
+blume-mermaid .edgeLabel p {
+  color: var(--blume-foreground) !important;
+}
+
+.prose:has(> :is(#start-here, #find-and-share-context, #plan-a-deployment)) > h1 + p {
+  color: var(--blume-muted-foreground);
+  font-size: clamp(1rem, 1.8vw, 1.125rem);
+}
+
+@media (min-width: 80rem) {
+  [data-blume-search-open] {
+    width: auto;
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
+    font-size: 0.875rem;
+  }
+
+  [data-blume-header] [data-blume-search-open]::after {
+    position: static;
+    padding: 0;
+    background: none;
+    color: inherit;
+    font-size: inherit;
+    opacity: 1;
+    visibility: visible;
+  }
 }

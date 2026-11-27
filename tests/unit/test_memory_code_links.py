@@ -360,7 +360,6 @@ def test_the_held_rows() -> None:
 
 @pytest.mark.asyncio
 async def test_a_pending_name_is_retried_until_the_pending_days_pass(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "memory_code_links_pending_days", 14)
     pending = [
         _full(
             {"qualified_name": "pkg.Planner.plan", "expired": 1, "version": 1, "memory_id": "m1"}
@@ -370,10 +369,6 @@ async def test_a_pending_name_is_retried_until_the_pending_days_pass(monkeypatch
         ),
     ]
     written: list[Any] = []
-
-    async def rows(org, cns, *, days):
-        assert days == 14
-        return pending
 
     async def insert(out):
         written.extend(out)
@@ -385,20 +380,122 @@ async def test_a_pending_name_is_retried_until_the_pending_days_pass(monkeypatch
     async def heads(org, ids):
         return []
 
-    monkeypatch.setattr(code_links.store, "pending", rows)
     monkeypatch.setattr(code_links.store, "insert", insert)
     monkeypatch.setattr(code_links.store, "memory_heads", heads)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     files = code_link_pass.RepoReads("o", "code-a")
     assert (
         await code_link_recheck._resolve_pending(
-            "o", "code-a", "c2", files, code_link_pass.PassResult()
+            "o", "code-a", "c2", files, code_link_pass.PassResult(), pending
         )
         == []
     )
     assert [(r["qualified_name"], r["tombstoned_at"] is not None) for r in written] == [
         ("pkg.Planner.plan", True)
     ]
+
+
+@pytest.mark.asyncio
+async def test_the_pending_scan_retries_writes_and_wraps_despite_new_links(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "memory_code_links_batch", 1)
+    monkeypatch.setattr(settings, "memory_code_links_pending_days", 3)
+    clock = iter((100, 101, 103))
+    monkeypatch.setattr(code_link_recheck, "time_ns", clock.__next__)
+    first = (99, "B" * 32)
+    earlier = (99, "A" * 32)
+    later = (102, "C" * 32)
+    keys = [first]
+    reads, events, cursors = [], [], {}
+
+    async def load_cursor(name):
+        return cursors.get(name, "")
+
+    async def write_cursor(name, value):
+        cursors[name] = value
+        events.append(("cursor", json.loads(value)))
+
+    async def pending(org, cns, *, days, after, before, limit):
+        assert (org, cns, limit, days) == ("o", "code-a", 1, 3)
+        reads.append((after, before))
+        eligible = sorted(key for key in keys if key > (after or ()) and key[0] < before)
+        return [], eligible[0] if eligible else None
+
+    async def indexed(*_args):
+        return "head"
+
+    async def publish(*_args):
+        events.append(("publish", None))
+        if len(reads) == 1:
+            raise RuntimeError("write unavailable")
+
+    async def nothing(*_args):
+        pass
+
+    for name, callback in (
+        ("link_cursor", load_cursor),
+        ("set_link_cursor", write_cursor),
+        ("indexed_head", indexed),
+        ("checked_head", indexed),
+    ):
+        monkeypatch.setattr(code_links.code, name, callback)
+    monkeypatch.setattr(code_links.store, "pending", pending)
+    monkeypatch.setattr(code_links.store, "insert", nothing)
+    monkeypatch.setattr(code_link_recheck, "_write_moves", publish)
+    monkeypatch.setattr(code_link_recheck, "_retry_unparsed", nothing)
+    monkeypatch.setattr(code_link_rehash, "refingerprint", nothing)
+    monkeypatch.setattr(code_link_policy, "apply_policies", nothing)
+
+    result = code_link_pass.PassResult()
+    budget = code_link_pass.Budget(judgements=0)
+    with pytest.raises(RuntimeError, match="write unavailable"):
+        await code_link_recheck._recheck_repository("o", "code-a", budget, result)
+    assert not cursors
+    await code_link_recheck._recheck_repository("o", "code-a", budget, result)
+    keys.extend([earlier, later])
+    await code_link_recheck._recheck_repository("o", "code-a", budget, result)
+    await code_link_recheck._recheck_repository("o", "code-a", budget, result)
+    assert reads == [(None, 100), (None, 101), (first, 101), (None, 103)]
+    assert events == [
+        ("publish", None),
+        ("publish", None),
+        ("cursor", {"before": 101, "after": list(first)}),
+        ("publish", None),
+        ("cursor", {}),
+        ("publish", None),
+        ("cursor", {"before": 103, "after": list(earlier)}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_relinking_a_preindex_marker_plans_its_names_off_the_loop(monkeypatch) -> None:
+    from threading import get_ident
+
+    loop_thread = get_ident()
+    observed = []
+    plan = code_links._plan
+
+    def checked_plan(*args, **kwargs):
+        observed.append(get_ident())
+        return plan(*args, **kwargs)
+
+    async def indexed(*_args):
+        return "head"
+
+    async def candidates(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(code_links.code, "indexed_head", indexed)
+    monkeypatch.setattr(code_links.code, "candidates", candidates)
+    monkeypatch.setattr(code_links, "_plan", checked_plan)
+    memory = _row("m1", value="`Reader.not_defined`", inputs="input")
+    rows, gone, unparsed = await code_links.link_each(
+        "o", "code-a", [memory], {}, code_link_pass.RepoReads("o", "code-a")
+    )
+    assert observed and all(thread != loop_thread for thread in observed)
+    assert [(row["qualified_name"], row["state"]) for row in rows] == [
+        ("Reader.not_defined", "pending")
+    ]
+    assert gone == unparsed == []
 
 
 def test_the_worker_row_and_its_table() -> None:
@@ -1912,7 +2009,7 @@ def _repository(monkeypatch, *, head: str, checked: str, cursor: str, diffs: dic
         state["checked"] = at
 
     for module, name in (
-        (code_link_recheck, "_resolve_pending"),
+        (code_link_recheck, "_recheck_pending"),
         (code_link_recheck, "_write_moves"),
         (code_link_recheck, "_current_moves"),
         (code_link_recheck, "_retry_unparsed"),
@@ -2797,7 +2894,9 @@ async def test_a_judged_change_that_only_shifted_lines_is_not_due_again(monkeypa
 
 @pytest.mark.asyncio
 async def test_a_pending_name_resolves_by_the_files_its_memory_names(monkeypatch) -> None:
-    from server.code.domain.anchor import Definition
+    from threading import get_ident
+
+    from server.code.domain.anchor import Definition, resolve
 
     reader = "class Reader:\n    def get(self):\n        return 1\n"
     found = [
@@ -2805,13 +2904,25 @@ async def test_a_pending_name_resolves_by_the_files_its_memory_names(monkeypatch
         Definition("tests/fake.py", "tests.fake::Reader::get", "get"),
     ]
 
-    async def rows(org, cns, *, days):
-        return [
-            _full({"qualified_name": "Reader.get", "expired": 0, "version": 1, "memory_id": "m1"})
-        ]
+    pending = [
+        _full({"qualified_name": "Reader.get", "expired": 0, "version": 1, "memory_id": mid})
+        for mid in ("m1", "m2", "m3")
+    ]
 
     async def heads(org, ids):
-        return [{"mid": "m1", "files": ["src/reader.py"]}]
+        return [
+            {"mid": "m1", "files": ["src/reader.py"]},
+            {"mid": "m2", "files": ["src/reader.py"]},
+            {"mid": "m3", "files": ["tests/fake.py"]},
+        ]
+
+    main_thread = get_ident()
+    resolved = []
+
+    def resolve_match(mention, definitions, hints):
+        assert get_ident() != main_thread
+        resolved.append(hints)
+        return resolve(mention, definitions, hints)
 
     async def candidates(org, cns, *, names):
         return found
@@ -2821,14 +2932,15 @@ async def test_a_pending_name_resolves_by_the_files_its_memory_names(monkeypatch
     async def at(commit, path):
         return _file(path, reader)
 
-    monkeypatch.setattr(code_links.store, "pending", rows)
+    monkeypatch.setattr(code_link_recheck, "resolve", resolve_match)
     monkeypatch.setattr(code_links.store, "memory_heads", heads)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     _reads(monkeypatch, files, at)
     moves = await code_link_recheck._resolve_pending(
-        "o", "code-a", "c2", files, code_link_pass.PassResult()
+        "o", "code-a", "c2", files, code_link_pass.PassResult(), pending
     )
-    assert [m.link.path for m in moves] == ["src/reader.py"]
+    assert [m.link.path for m in moves] == ["src/reader.py", "src/reader.py", "tests/fake.py"]
+    assert resolved == [("src/reader.py",), ("tests/fake.py",)]
 
 
 @pytest.mark.asyncio

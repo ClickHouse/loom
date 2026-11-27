@@ -19,6 +19,7 @@ describe("Repositories, the filter", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    window.history.replaceState(null, "", "/");
   });
 
   it("Clear filters on a filter that matches nothing empties the box and brings the cards back", async () => {
@@ -30,5 +31,17 @@ describe("Repositories, the filter", () => {
     expect(box).toHaveValue("");
     await waitFor(() => expect(screen.getAllByText("acme/app").length).toBeGreaterThan(0));
     expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  });
+
+  it("keeps the history entry when opening a repository", async () => {
+    stubCodeFetch(() => [codeRepoFixture], { "/v1/code.index_status": null });
+    const state = { loomNamespace: "default", loomBack: "the tracker" };
+    window.history.replaceState(state, "", "/repositories?namespace=default");
+    const length = window.history.length;
+    render(<CodeView />);
+    await userEvent.click(await screen.findByRole("button", { name: /^Open$/ }));
+    expect(window.location.search).toBe("?namespace=default&repo=code-app");
+    expect(window.history.state).toEqual(state);
+    expect(window.history.length).toBe(length);
   });
 });

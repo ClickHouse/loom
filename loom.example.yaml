@@ -274,7 +274,8 @@ settings:
   # profile). Empty uses assistant_model. The operator verifies its rate. [restart]
   # assistant_price_model: ""
 
-  # Native streaming provider. Empty disables native model admission. [restart]
+  # Native streaming provider. Vertex uses Google Application Default Credentials. Empty
+  # disables native model admission. [restart]
   # assistant_provider: ""
 
   # Model to answer with when a client's provider is still unavailable after its retries
@@ -419,6 +420,14 @@ settings:
   # Region for native Bedrock model requests; empty uses the AWS SDK's region chain. AWS
   # credentials use the SDK's role, profile or environment credential chain. [restart]
   # bedrock_region: ""
+
+  # Google Cloud project that owns the Vertex AI requests, required with the Vertex
+  # provider. [restart]
+  # vertex_project: ""
+
+  # Vertex AI location: a region, a multi-region ("eu", "us"), or "global". Required
+  # with the Vertex provider. [restart]
+  # vertex_location: ""
 
   # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
   # <host>:11434/v1, llama.cpp's server <host>:8080/v1). [restart]
@@ -565,12 +574,10 @@ settings:
   # (loom.embedder_calibration), so every replica serves the same gates. [restart]
   # calibration_refresh_seconds: 60.0
 
-  # "openai" | "anthropic" | "bedrock" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) |
-  # "fake"; "" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai,
-  # claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
-  # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
-  # overridden. Bedrock requires llm_model and the SDK credential chain. Run `make
-  # bench-quick` before making anthropic a default. [restart]
+  # "openai" | "anthropic" | "bedrock" | "vertex" | "local" | "fake"; "" = infer from
+  # LOOM_LLM_MODEL's name or provider prefix, then from the API keys present, then fake.
+  # An explicit value wins. Bedrock and Vertex require a model and deployment
+  # credentials. Run `make bench-quick` before making anthropic a default. [restart]
   # llm_provider: ""
 
   # A fake or key-less provider is a `warn` in /v1/health `problems`; true (production)
@@ -3154,14 +3161,16 @@ settings:
   # Which tools `tools/list` shows when a connection names no `?toolset=` (a request
   # that names one gets that one instead). Rosters are the frozensets in
   # server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on
-  # "assistant"); on every toolset but "assistant" this is visibility only and every op
-  # stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes
-  # read ops only. "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
-  # mcp_code_tools is on). "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the
-  # plugin selects it per request with `?toolset=coding`. "tracker", "tasks" — the
-  # tracker plane and the task inbox rosters. "atomic"    — CRUD + scratchpad + run
-  # ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. "readonly"  — the "all"
-  # listing without the tools whose readOnlyHint is false; loom_op routes read ops only.
+  # "assistant", nor where "coding" lists the code tools alone); on every toolset but
+  # "assistant" this is visibility only and every op stays callable by name over MCP and
+  # /v1/*, except that loom_op on "readonly" routes read ops only. "core"      —
+  # (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). "coding"
+  # — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with
+  # `?toolset=coding`. A connection bound to a repository lists the code tools alone
+  # when its URL carries `schema_profile=compact`. "tracker", "tasks" — the tracker
+  # plane and the task inbox rosters. "atomic"    — CRUD + scratchpad + run ledger
+  # (_MCP_ATOMIC_OPS), policy-shaped descriptions. "readonly"  — the "all" listing
+  # without the tools whose readOnlyHint is false; loom_op routes read ops only.
   # "assistant" — MCP_ASSISTANT_OPS only, and only those are callable on a connection
   # that resolves to it. Not a server-wide read-only switch: a request naming another
   # toolset gets it, and the token is the boundary. "all"       — the stable ops plus
@@ -3810,7 +3819,8 @@ settings:
   # Seconds a code-links pass may run before the supervisor abandons it. [restart]
   # memory_code_links_max_pass_seconds: 600.0
 
-  # Memory writes one pass links (at least 1). [restart]
+  # Rows per page of memory writes to link or pending links to recheck (at least 1).
+  # [restart]
   # memory_code_links_batch: 500
 
   # Seconds the memory code-link pass stays behind the newest queued memory write, so
@@ -3820,8 +3830,8 @@ settings:
   # later. [restart]
   # memory_code_links_settle_seconds: 60
 
-  # Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried
-  # before it is dropped. [restart]
+  # Days to retry a code-shaped name absent from trunk, measured when each pending scan
+  # starts. [restart]
   # memory_code_links_pending_days: 14
 
   # Changed claims one pass re-checks with the LLM under the `revise` policy. [restart]
