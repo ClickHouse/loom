@@ -110,6 +110,9 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
    rows): N reads the old and the new format, and only N+1 writes the new one. Exception:
    a cursor for a request N-1 answers for `namespace` alone (a `knowledge.list` naming
    `namespaces`) is new in N, and each build refuses the one the other wrote (rule 12).
+   The `code_ingest` resume cursor names each cut as `org/namespace` in N; the other
+   build finds no entry of that name and serves its entries in configured order for
+   that pass.
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
    refresh interval (the command refuses less), so no process signs with a kid an N-1
    replica cannot verify yet.
@@ -929,6 +932,14 @@ See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline
     serving build supports the migration again. The [activation and rollback
     procedure](cost-budgets.md#activation-and-rollback) defines the maintenance boundary;
     the warning fleet check alone does not make a downgrade safe.
+
+63. **The `embed_exclude` marker** (`unembedded by design: reference (embed_exclude)` in
+    `embed_last_error` on `code_chunks`) extends the reference fixtures' marker, so N-1's
+    recovery, backfill embed phase and coverage counts skip it as they skip a fixture. N-1
+    reads neither `LOOM_CODE_EMBED_EXCLUDE` nor an entry's `embed_exclude`: where it runs,
+    its ingest embeds a matching path's new chunks, its `code_summary` pass writes their
+    cards, and its `loom code reembed` and provider rebuild embed the marked rows under the
+    target model. A chunk N-1 embedded keeps its vector until its content changes.
 
 ## What checks them
 

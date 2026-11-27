@@ -23,6 +23,7 @@ export interface CodeRepoSummary {
   quality_warnings?: string[];
   git_head: string;
   clone_head: string;
+  fetch_overdue?: boolean;
   fast_tier_lag: number;
   /** The ENTRY'S compiler tier (the one `scip_producer` names), not the C++ key by name —
    *  a TypeScript repository's scip_lag is its scip-typescript watermark against the tip.

@@ -10,10 +10,46 @@ from server.insights.workers import adoption_telemetry
 from server.settings import Settings, settings
 from server.workers import pass_context
 from server.workers.registry import enabled_workers
+from tests.unit.clickhouse_local import CLICKHOUSE, ROOT, run
 
 
 def test_domain_sharing_is_enabled_by_default() -> None:
     assert Settings.model_fields["adoption_telemetry_share_domains"].default is True
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_public_adoption_query_lists_only_recent_active_public_domains() -> None:
+    telemetry = ROOT / "deploy" / "telemetry"
+    setup = [
+        (telemetry / "warehouse.sql").read_text().strip().removesuffix(";"),
+        """
+        INSERT INTO loom_product_analytics.adoption_enrollments (installation_id, is_internal)
+        VALUES ('internal', 1)
+        """,
+        """
+        INSERT INTO loom_product_analytics.adoption_reports
+            (installation_id, window_start, window_end, day, schema_version, user_domains)
+        WITH toDate(now('UTC')) - days_ago AS report_day
+        SELECT
+            instance, toDateTime(report_day, 'UTC'), toDateTime(report_day, 'UTC') + INTERVAL 12 HOUR,
+            report_day, version, [(domain, toUInt64(1), requests)]
+        FROM VALUES(
+            'instance String, days_ago UInt16, version UInt8, domain String, requests UInt64',
+            ('present', 1, 2, 'active.example', 1),
+            ('duplicate', 2, 2, 'active.example', 2),
+            ('boundary', 90, 2, 'boundary.example', 1),
+            ('expired', 91, 2, 'old.example', 1),
+            ('incomplete', 0, 2, 'today.example', 1),
+            ('legacy', 1, 1, 'private.example', 1),
+            ('idle', 1, 2, 'idle.example', 0),
+            ('internal', 1, 2, 'internal.example', 1)
+        )
+        """,
+    ]
+
+    [report] = run(setup, (telemetry / "public-adoption.sql").read_text())
+
+    assert report["domains"] == ["active.example", "boundary.example"]
 
 
 async def test_explicit_opt_out_skips_adoption_collection(monkeypatch: pytest.MonkeyPatch) -> None:

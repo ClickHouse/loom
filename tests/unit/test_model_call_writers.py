@@ -465,7 +465,7 @@ def test_code_refresh_runs_the_ingest_pass_as_its_caller(monkeypatch) -> None:
     monkeypatch.setattr(ip, "selected_repos", lambda org, ns: [repo])
     monkeypatch.setattr(ip, "_without_unsandboxed", lambda repos, result: repos)
     monkeypatch.setattr(ip, "prefetch_mirrors", nothing)
-    monkeypatch.setattr(ip, "ingest_oldest_first", nothing)
+    monkeypatch.setattr(ip, "ingest_round_robin", nothing)
     monkeypatch.setattr(ip, "_run_repo", run_repo)
     monkeypatch.setattr(ip, "_bootstrap_leg", leg)
     monkeypatch.setattr(ip, "_post_steps", nothing)

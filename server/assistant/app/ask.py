@@ -1,9 +1,9 @@
-"""`assistant.ask`: the bridge's whole answer, as an op."""
+"""`assistant.ask`: the runtime's whole answer, as an op."""
 
 from __future__ import annotations
 
 from server.assistant.api.models import AssistantAskInput, AssistantAskOutput
-from server.assistant.app import bridge, service
+from server.assistant.app import runtime, service
 from server.auth.context import current_auth
 from server.core.errors import AssistantUnavailableError
 
@@ -16,7 +16,7 @@ async def handle_assistant_ask(inp: AssistantAskInput) -> AssistantAskOutput:
             "the assistant answers as its caller: it needs auth on", reason="auth_off"
         )
     messages = [m.model_dump() for m in inp.history] + [{"role": "user", "content": inp.question}]
-    answer = await bridge.ask(auth, inp.org, inp.namespace, messages)
+    answer = await runtime.ask(auth, inp.org, inp.namespace, messages)
     return AssistantAskOutput(
         mirrored=answer.mirrored,
         answer="".join(answer.text),

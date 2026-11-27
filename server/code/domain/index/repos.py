@@ -87,6 +87,9 @@ class RepoConfig:
     # built-in rules are on; the repo-local ignore file honoured at the
     # indexed commit ('' disables).
     exclude: tuple[str, ...] = ()
+    # Globs indexed but never described or embedded (tests reached through the test
+    # map and the lexical leg rather than the vector leg).
+    embed_exclude: tuple[str, ...] = ()
     include_contrib: bool = False
     # Refuse files whose CONTENT says they are generated (Go's `// Code generated … DO
     # NOT EDIT.` header, the `@generated` marker). Off unless the entry says so: a
@@ -206,6 +209,7 @@ def _scalar_repo(config: Settings) -> RepoConfig:
         git_extra_branches=str(config.code_git_extra_branches),
         git_fetch_pr_heads=bool(config.code_git_fetch_pr_heads),
         exclude=_prefixes(config.code_ingest_exclude),
+        embed_exclude=_prefixes(config.code_embed_exclude),
         ignore_file=str(config.code_ingest_ignore_file),
     )
 
@@ -233,6 +237,11 @@ def checkout_for(cfg: RepoConfig, producer: str) -> str:
     base = cfg.scip_checkout_dir or settings.code_scip_checkout_dir
     if producer == (cfg.scip_producer or "clang"):
         return base
+    return sibling_checkout(base, producer)
+
+
+def sibling_checkout(base: str, producer: str) -> str:
+    """The tree a tier other than the entry's primary one indexes, beside `base`."""
     return f"{base.rstrip('/')}.{producer}"
 
 
@@ -597,6 +606,7 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
                     else base.git_fetch_pr_heads
                 ),
                 exclude=_globs(e.get("exclude")) or base.exclude,
+                embed_exclude=_globs(e.get("embed_exclude")) or base.embed_exclude,
                 include_contrib=bool(e.get("include_contrib", False)),
                 exclude_generated=bool(e.get("exclude_generated", False)),
                 include_contrib_paths=_globs(e.get("include_contrib_paths")),

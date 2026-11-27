@@ -229,6 +229,7 @@ describe("branchHealth: one vocabulary for an index's health", () => {
     });
     // An old index whose remote has not moved is up to date.
     expect(branchHealth(branch({ indexed_at: hoursAgo(30) })).text).toBe("Up to date");
+    expect(branchHealth(branch({ fetch_overdue: true })).text).toBe("Mirror fetch overdue");
     expect(branchHealth(branch({ git_head: "", indexed_at: "", stage: "indexing" }))).toMatchObject({
       text: "Indexing",
       state: "info",

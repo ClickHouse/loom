@@ -374,7 +374,7 @@ describe("a starter that asks the assistant", () => {
     await waitFor(() => expect(useChat.getState().answering).toBe(false));
     refusals.push(
       new Response(
-        JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" } }),
+        JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "failing" } }),
         { status: 503, headers: { "Content-Type": "application/json" } },
       ),
     );
@@ -410,13 +410,13 @@ describe("a starter that asks the assistant", () => {
     vi.mocked(fetch).mockImplementationOnce(
       async () =>
         new Response(
-          JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" } }),
+          JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "failing" } }),
           { status: 503, headers: { "Content-Type": "application/json" } },
         ),
     );
     await userEvent.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "failing" }));
     await act(async () => land({ ...AUDIT, criticals: 9 }));
     const card = useChat.getState().turns[0].card;
     expect((card?.data as NamespaceAuditResult | undefined)?.criticals).toBe(1);
@@ -446,7 +446,7 @@ describe("a starter that asks the assistant", () => {
           refuse = () =>
             r(
               new Response(
-                JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" } }),
+                JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "failing" } }),
                 { status: 503, headers: { "Content-Type": "application/json" } },
               ),
             );
@@ -455,7 +455,7 @@ describe("a starter that asks the assistant", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(isFresh(turnId)).toBe(true));
     await act(async () => refuse());
-    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "failing" }));
     const card = useChat.getState().turns[0].card;
     expect((card?.data as NamespaceAuditResult | undefined)?.criticals).toBe(9);
     expect(card?.again).toBeUndefined();
@@ -480,13 +480,13 @@ describe("a starter that asks the assistant", () => {
     vi.mocked(fetch).mockImplementationOnce(
       async () =>
         new Response(
-          JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" } }),
+          JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "failing" } }),
           { status: 503, headers: { "Content-Type": "application/json" } },
         ),
     );
     await userEvent.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "failing" }));
     const card = useChat.getState().turns[0].card;
     expect(card?.error).toBe(error);
     expect(card?.failed).toBe(true);
@@ -509,13 +509,13 @@ describe("a starter that asks the assistant", () => {
     vi.mocked(fetch).mockImplementationOnce(
       async () =>
         new Response(
-          JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" } }),
+          JSON.stringify({ detail: { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "failing" } }),
           { status: 503, headers: { "Content-Type": "application/json" } },
         ),
     );
     await userEvent.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "failing" }));
     expect(useChat.getState().turns[0].card?.busy).toBeFalsy();
     // Read again reads it, and the card shows the read.
     await userEvent.click(screen.getByRole("button", { name: "Read again" }));

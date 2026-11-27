@@ -92,7 +92,9 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipPyDeltaResu
         result.skipped.append(f"{cfg.namespace}: git_head not seeded")
         return
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK) or ""
-    if target == scip_commit or await refusal_held(repo, cfg, WATERMARK, target, result):
+    if target == scip_commit or await refusal_held(
+        repo, cfg, WATERMARK, scip_commit, target, result, {}
+    ):
         return  # compiler tier is current, or its delta at target was refused
     checkout, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
@@ -104,7 +106,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipPyDeltaResu
         delta_path = Path(tmp) / "delta.json"
         await _run_harness(checkout, scip_commit or "--full", target, delta_path)
         try:
-            delta = await open_tier_delta(repo, cfg, WATERMARK, target, delta_path)
+            delta = await open_tier_delta(repo, cfg, WATERMARK, scip_commit, target, delta_path, {})
         except FileNotFoundError:
             # the harness exits 0 with no delta when no Python file changed
             logger.info("code_scip_py_delta: %s no Python changes in window", cfg.namespace)

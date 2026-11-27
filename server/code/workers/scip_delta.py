@@ -93,6 +93,12 @@ def _resolve_paths(cfg: RepoConfig) -> tuple[Path, str, Path, str | None]:
     return checkout, str(scip_clang.resolve()), bare, None
 
 
+def _delta_shape() -> dict[str, object]:
+    """What, besides the window, shapes the delta the harness writes (`refusal_held`):
+    over `MAX_TUS` translation units it indexes the changed files only."""
+    return {"max_tus": settings.code_scip_delta_max_tus}
+
+
 async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult) -> None:
     target = await compiler_target(repo, cfg)
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK)
@@ -100,7 +106,10 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
         # code_scip_full seeds scip_commit with the entry's first full index
         result.skipped.append(f"{cfg.namespace}: watermarks not seeded")
         return
-    if target == scip_commit or await refusal_held(repo, cfg, WATERMARK, target, result):
+    shape = _delta_shape()  # one read for the harness and its hold
+    if target == scip_commit or await refusal_held(
+        repo, cfg, WATERMARK, scip_commit, target, result, shape
+    ):
         return  # compiler tier is current, or its delta at target was refused
 
     checkout, scip_clang_abs, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
@@ -144,7 +153,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
                 "PYTHON": sys.executable,
                 "DELTA_OUT": str(delta_path),
                 "SCIP_CLANG": scip_clang_abs,
-                "MAX_TUS": str(settings.code_scip_delta_max_tus),
+                "MAX_TUS": str(shape["max_tus"]),
                 **({"JOBS": str(jobs)} if (jobs := settings.code_scip_clang_jobs) else {}),
                 "HOME": str(Path.home()),
             },
@@ -157,7 +166,9 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
             raise harness_failure(returncode, out[-2000:])
 
         try:
-            delta = await open_tier_delta(repo, cfg, WATERMARK, target, delta_path)
+            delta = await open_tier_delta(
+                repo, cfg, WATERMARK, scip_commit, target, delta_path, shape
+            )
         except FileNotFoundError:
             # harness legitimately exits 0 with no delta when no C++ TU changed
             logger.info("code_scip_delta: %s no C++ changes in window", cfg.namespace)

@@ -224,6 +224,20 @@ def _forwarders(
 
 
 def _forward_call(body: str, name: str) -> tuple[int, str] | None:
+    parsed = _forwarding_node(body, name)
+    if parsed is None:
+        return None
+    _, value = parsed
+    if isinstance(value.func, ast.Name):
+        return value.lineno, value.func.id
+    if isinstance(value.func, ast.Attribute):
+        return value.lineno, value.func.attr
+    return None
+
+
+def _forwarding_node(
+    body: str, name: str
+) -> tuple[ast.FunctionDef | ast.AsyncFunctionDef, ast.Call] | None:
     try:
         [function] = ast.parse(textwrap.dedent(body)).body
     except (SyntaxError, ValueError):
@@ -243,11 +257,44 @@ def _forward_call(body: str, name: str) -> tuple[int, str] | None:
         or sum(isinstance(node, ast.Call) for node in ast.walk(value)) != 1
     ):
         return None
-    if isinstance(value.func, ast.Name):
-        return value.lineno, value.func.id
-    if isinstance(value.func, ast.Attribute):
-        return value.lineno, value.func.attr
-    return None
+    return function, value
+
+
+def typed_forward_call(body: str, name: str) -> tuple[int, str, str] | None:
+    """One forwarding call on a required parameter with an explicit simple type."""
+    parsed = _forwarding_node(body, name)
+    if parsed is None:
+        return None
+    function, call = parsed
+    if not isinstance(call.func, ast.Attribute) or not isinstance(call.func.value, ast.Name):
+        return None
+    if any(
+        isinstance(node, ast.Call) and node is not call and node.lineno == call.lineno
+        for node in ast.walk(function)
+    ):
+        return None
+    args = function.args
+    positional = [*args.posonlyargs, *args.args]
+    required = positional[: len(positional) - len(args.defaults)]
+    required.extend(
+        arg
+        for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True)
+        if default is None
+    )
+    parameter = next((arg for arg in required if arg.arg == call.func.value.id), None)
+    if parameter is None:
+        return None
+    annotation = parameter.annotation
+    owner = (
+        annotation.id
+        if isinstance(annotation, ast.Name)
+        else annotation.value
+        if isinstance(annotation, ast.Constant)
+        else None
+    )
+    if not isinstance(owner, str) or not owner.isidentifier():
+        return None
+    return call.lineno, owner, call.func.attr
 
 
 def _code_tokens(text: str) -> list[str]:

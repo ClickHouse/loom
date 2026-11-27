@@ -25,7 +25,6 @@ Postgres](./clickhouse-cloud.md)).
 | Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                                                        |
 | Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                                                           |
 | Optional `<release>-extractor`        | The document extractor's Deployment, Service and NetworkPolicy (`extractor.enabled`, [below](#document-extractor)).                                           |
-| Optional `<release>-librechat`        | The assistant: LibreChat's Deployment, Service, ConfigMap and NetworkPolicy, and its MongoDB (`-librechat-mongo`) (`assistant.enabled`, [below](#assistant)). |
 | NetworkPolicy `<release>`             | Full policy with `networkPolicy.enabled`; else all egress but [`egressExcept`](#instance-metadata-service), unless it is `[]` or `guardMetadata: false`.      |
 | Optional `<release>-code-tiers`       | A PrometheusRule on the failing code-index tiers (`alerts.prometheusRule.enabled`, [below](#alert-rules)).                                                    |
 | Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                                                     |
@@ -199,8 +198,7 @@ helm install loom deploy/helm/loom -n loom -f deploy/helm/loom/values-eks.yaml
 - **ClickHouse Cloud's IP access list** must allow the cluster's NAT gateway addresses.
 - **Image.** Pin `image.digest`, and `extractor.image.digest` with `extractor.enabled`;
   each release's run summary prints both, after each image passed a CVE scan. The
-  assistant's LibreChat and MongoDB images are pinned by digest in `values.yaml`
-  (`assistant.image.digest`, `assistant.mongo.image.digest`).
+  assistant runs in the Loom web image.
 
 ## Upgrades and scaling
 
@@ -476,9 +474,8 @@ clients to it. A client in the cluster that calls the Service by URL, such as
 `deploy/okf-sync/cronjob.yaml` (`PRIVATE_URL`), switches to `https://` and trusts the CA
 that issued the certificate. For the `loom` CLI, `SSL_CERT_FILE` names that CA and
 replaces the system roots, so set it on the command that calls the Service only, or point
-it at a bundle of the system roots and the CA. The assistant calls the port
-over plain HTTP, so the chart refuses `assistant.enabled` with `tls.secretName`. The hop
-from Loom to the release's extractor (`extractor.enabled`) stays plain HTTP. Keep
+it at a bundle of the system roots and the CA. The hop from Loom to the release's
+extractor (`extractor.enabled`) stays plain HTTP. Keep
 `tls.minVersion` at `"1.2"` unless every client of the port, the balancer included,
 speaks TLS 1.3. `helm test` calls the Service over HTTPS without verifying the
 certificate.
@@ -515,27 +512,12 @@ until every roll finishes.
 
 ## Assistant
 
-`assistant.enabled: true` runs LibreChat headless beside Loom with a MongoDB of its own
-([deployment](../architecture/assistant.md#deployment)): a Deployment of one pod,
-replaced rather than rolled and restarted when its configuration changes, its Service
-and ConfigMap, and a MongoDB StatefulSet with `assistant.mongo.storage` of disk. It
-needs `assistant.existingSecret`, a Secret with `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`,
-`JWT_REFRESH_SECRET`, and `ANTHROPIC_API_KEY` while the assistant runs on Anthropic or
-`LOCAL_LLM_BASE_URL` for `LOOM_ASSISTANT_PROVIDER=local`; the chart refuses to render
-without it.
-The Loom pods get `LOOM_ASSISTANT_LIBRECHAT_URL` pointing at it, unless `env` or
-`extraEnv` sets one, and set the service user and agent up at boot. LibreChat's
-NetworkPolicy admits only the release's Loom pods and lets it reach DNS, its MongoDB,
-the Loom pods and TCP 443 for its model provider; MongoDB's admits only LibreChat and
-reaches nothing, and Loom's own policy admits LibreChat when it names its peers. Both
-run non-root on a read-only root filesystem. `assistant.nodeSelector`,
-`assistant.tolerations` and `imagePullSecrets` apply to both pods.
-
-For `LOOM_ASSISTANT_PROVIDER=local`, a model server you run instead of Anthropic, add
-`LOCAL_LLM_BASE_URL` to the Secret and write a NetworkPolicy of your own that lets the
-LibreChat pod reach the server; the
-[local-model setup](../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)
-lists the rest.
+`assistant.nativeEnabled: true` runs the native assistant in each Loom web process. Configure
+its provider and model through `env` or `settingsFile`, and provider keys through the
+release Secret. It needs no separate Deployment, database, Service, or ingress peer.
+The existing model egress policy applies. See [assistant setup](assistant.md) for
+verification and the retained-volume cutover procedure. TLS on Loom's port is supported:
+internal tools run through the authenticated in-process MCP transport.
 
 ## Analytics export
 

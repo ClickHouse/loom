@@ -1414,6 +1414,7 @@ const CODE_REPOS_FIELDS = [
   "branch",
   "git_head",
   "clone_head",
+  "fetch_overdue",
   "fast_tier_lag",
   "scip_lag",
   "scip_producer",

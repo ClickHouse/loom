@@ -302,11 +302,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     # Provisioned and probed in the background: the lease can wait for minutes.
     track(_analysis.start_probe_loop())
-    from server.assistant.app import service as _assistant
-
-    assistant_loop = _assistant.start_setup_loop()
-    if assistant_loop is not None:
-        track(assistant_loop)
     track(boot.start_tracker_sources_refresher(ch))
     from server.code.app.index import repo_registry as _repo_registry
 

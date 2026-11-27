@@ -20,8 +20,9 @@ tables allow:
   * lexemes from that head, so `code.grep` finds an expected value;
   * NO embedding (`embed_last_error = UNEMBEDDED_BY_DESIGN`, which the
     embed-recovery read excludes), no context text, no symbols, no edges;
-    the vector and lexical legs of code.search filter `embedding_dim > 0`,
-    so these rows never enter a ranked answer;
+    the vector leg of code.search filters `embedding_dim > 0`, so these rows
+    never enter a vector answer; the lexical leg reads lexemes and does not
+    filter on the embedding, so a head can still rank there;
   * files over `REFERENCE_MAX_BYTES` are not indexed at all.
 
 This module is outside the extractor stamp on purpose (see
@@ -48,9 +49,18 @@ REFERENCE_MAX_BYTES = 1 << 20
 # Matched as a prefix of `embed_last_error`, so rows stored under a longer marker
 # still read as unembedded by design.
 UNEMBEDDED_BY_DESIGN = "unembedded by design: reference"
+# A chunk of a path the entry's `embed_exclude` globs name. It extends the marker
+# above, so every build's recovery and coverage reads skip it.
+UNEMBEDDED_EMBED_EXCLUDE = f"{UNEMBEDDED_BY_DESIGN} (embed_exclude)"
 
 # Runnable stateless test files whose expectation is `<stem>.reference`.
 _RUNNABLE_EXTS: tuple[str, ...] = (".sql", ".sh", ".py", ".expect", ".sql.j2", ".sh.j2")
+
+
+def unembedded_by_design(embed_last_error: object) -> bool:
+    """Whether a row's `embed_last_error` marks it as left without a vector on purpose:
+    no writer describes or embeds it, and a copy keeps the marker."""
+    return str(embed_last_error or "").startswith(UNEMBEDDED_BY_DESIGN)
 
 
 def is_reference_path(path: str) -> bool:

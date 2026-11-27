@@ -96,7 +96,7 @@ def test_a_cli_command_for_a_switched_off_org_sends_nothing(monkeypatch, cmd: st
     # customer header it is what puts the org's switch in force.
     import argparse
 
-    from server.cli import app
+    from server.cli import dispatch
     from server.embedding.fake import FakeNGramEmbedder
 
     monkeypatch.setattr(settings, "inference_customer_header", "")
@@ -109,7 +109,7 @@ def test_a_cli_command_for_a_switched_off_org_sends_nothing(monkeypatch, cmd: st
         return 0
 
     with pytest.raises(customer.ModelCallsDisabled):
-        app._dispatch(
+        dispatch._dispatch(
             argparse.Namespace(cmd=cmd, org="acme" if cmd != "code" else None, func=command)
         )
     assert sent == []
