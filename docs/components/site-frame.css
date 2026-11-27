@@ -1,6 +1,8 @@
 :root[data-cui-theme="dark"] {
   color-scheme: dark;
   --page-gutter: clamp(1rem, 3.2vw, 4rem);
+  --site-header-height: 4.5rem;
+  scroll-padding-block-start: calc(var(--site-header-height) + 0.75rem);
   --page: color-mix(in srgb, var(--click-global-color-background-default), black 44%);
   --surface: var(--click-global-color-background-default);
   --surface-raised: var(--click-global-color-background-muted);
@@ -46,32 +48,39 @@ a {
 }
 
 .site-header {
-  border-bottom: 1px solid var(--line);
+  --header-surface: color-mix(in srgb, var(--surface) 79%, black);
+  position: sticky;
+  z-index: 10;
+  inset-block-start: 0;
+  border-block-end: 1px solid var(--click-global-color-stroke-default);
+  background: var(--header-surface);
 }
 
 .header-inner {
   display: grid;
-  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: center;
-  gap: 1rem clamp(1rem, 2vw, 2rem);
-  padding-block: 0.625rem;
+  column-gap: clamp(1.5rem, 2.6vw, 2.75rem);
+  min-block-size: var(--site-header-height);
 }
 
 .brand,
+.header-content,
 .site-nav,
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
 }
 
 .brand {
-  flex: none;
   justify-self: start;
-  font-size: 1.08rem;
+  gap: 0.55rem;
+  min-block-size: 2.75rem;
+  font-size: clamp(1.0625rem, 1.2vw, 1.1875rem);
   font-weight: 560;
   letter-spacing: -0.025em;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .brand strong {
@@ -81,13 +90,14 @@ a {
 .brand-mark,
 .brand-mark svg {
   display: block;
-  width: 2rem;
-  height: 2rem;
+  flex: none;
+  inline-size: 2.125rem;
+  block-size: 2.125rem;
 }
 
 .brand-mark .loom-logo-background,
 .brand-mark .loom-logo-cutout {
-  fill: var(--page);
+  fill: var(--header-surface);
 }
 
 .brand-mark .loom-logo-mark[stroke] {
@@ -98,30 +108,32 @@ a {
   fill: var(--accent);
 }
 
-.site-nav,
-.site-footer ul {
-  flex-wrap: wrap;
-  gap: 0.25rem clamp(0.75rem, 2vw, 1.35rem);
-  font-size: 0.9rem;
+.header-content {
+  justify-content: space-between;
+  gap: 1rem;
+  min-inline-size: 0;
 }
 
-.site-header nav a,
-.site-footer nav a {
+.site-nav {
+  flex-wrap: wrap;
+  gap: 0.25rem clamp(0.85rem, 1.7vw, 1.55rem);
+}
+
+.site-header nav a {
   display: inline-flex;
   align-items: center;
-  min-height: 2.75rem;
-  color: var(--muted);
+  min-block-size: 2.75rem;
   text-decoration: none;
 }
 
 .site-nav a {
-  font-size: 0.875rem;
+  color: var(--click-global-color-text-default);
+  font-size: 0.9375rem;
+  text-align: start;
 }
 
-.site-header nav a:hover,
-.site-footer nav a:hover,
-nav a[aria-current="page"] {
-  color: var(--click-global-color-text-default);
+.site-nav a:hover {
+  color: var(--click-global-color-text-link-default);
 }
 
 .site-nav a:is([aria-current="page"], [aria-current="location"]) {
@@ -131,14 +143,19 @@ nav a[aria-current="page"] {
   text-underline-offset: 0.56rem;
 }
 
-.site-header .mobile-start {
+.site-header .site-menu-toggle,
+.site-menu-toggle .site-menu-close,
+.site-menu-toggle[aria-expanded="true"] .site-menu-open {
   display: none;
 }
 
+.site-menu-toggle[aria-expanded="true"] .site-menu-close {
+  display: block;
+}
+
 .header-actions {
-  justify-content: flex-end;
-  justify-self: end;
   flex: none;
+  gap: 0.45rem;
 }
 
 .site-language {
@@ -150,10 +167,10 @@ nav a[aria-current="page"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.4rem;
+  gap: 0.3rem;
   min-block-size: 2.75rem;
   min-inline-size: 2.75rem;
-  padding-inline: 0.55rem;
+  padding-inline: 0.4rem;
   border-radius: var(--radius);
   color: var(--muted);
   list-style: none;
@@ -193,11 +210,13 @@ nav a[aria-current="page"] {
   gap: 1rem;
   border-radius: var(--radius);
   padding-inline: 0.65rem;
+  color: var(--muted);
 }
 
 .site-language-list a[aria-current="page"],
 .site-language-list a:hover {
   background: var(--surface-raised);
+  color: var(--click-global-color-text-default);
 }
 
 .repo-link {
@@ -212,7 +231,7 @@ nav a[aria-current="page"] {
 .repo-link:hover,
 .site-language summary:hover,
 .site-language[open] summary {
-  background: var(--surface);
+  background: var(--surface-raised);
   color: var(--click-global-color-text-default);
 }
 
@@ -231,7 +250,7 @@ html[dir="rtl"] .link-arrow {
 
 .skip {
   position: absolute;
-  z-index: 3;
+  z-index: 11;
   inset-inline-start: 1rem;
   inset-block-start: -10rem;
   padding: 0.7rem 1rem;
@@ -267,6 +286,7 @@ h2,
 h3 {
   color: var(--click-global-color-title-default);
   font-weight: 660;
+  text-align: start;
 }
 
 p,
@@ -277,7 +297,7 @@ li {
 
 h1 {
   max-width: 23ch;
-  font-size: clamp(2.45rem, 5vw, 5rem);
+  font-size: clamp(2.55rem, 5.1vw, 5.2rem);
   line-height: 1.04;
   letter-spacing: -0.052em;
   overflow-wrap: anywhere;
@@ -285,7 +305,7 @@ h1 {
 }
 
 h2 {
-  font-size: clamp(1.5rem, 2.65vw, 2.45rem);
+  font-size: clamp(1.625rem, 2.8vw, 2.6rem);
   line-height: 1.14;
   letter-spacing: -0.035em;
 }
@@ -406,70 +426,89 @@ section.site-panel {
   color: var(--click-global-color-text-link-hover);
 }
 
-.site-footer {
-  border-top: 1px solid var(--line);
-  background: var(--surface);
-}
+@media (max-width: 78rem) {
+  :root[data-cui-theme="dark"]:not(:has(.site-header[data-menu-ready])) {
+    scroll-padding-block-start: 0.75rem;
+  }
 
-.footer-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.75rem 2rem;
-  padding-block: 1.5rem;
-}
-
-.footer-inner .brand-mark :is(.loom-logo-background, .loom-logo-cutout) {
-  fill: var(--surface);
-}
-
-.site-footer ul {
-  display: flex;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-@media (max-width: 67rem) {
   .header-inner {
-    display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: "brand actions" "nav nav";
-    row-gap: 0.25rem;
-    padding-block: 0.45rem 0.2rem;
+    grid-template-rows: minmax(var(--site-header-height), auto) auto;
+    column-gap: 0.75rem;
   }
-  .header-inner .brand {
-    grid-area: brand;
-  }
-  .header-actions {
-    grid-area: actions;
-  }
-  .site-nav {
-    grid-area: nav;
-  }
-}
 
-@media (max-width: 35rem) {
-  .header-inner {
-    column-gap: 0.4rem;
+  .site-header:not([data-menu-ready]) {
+    position: static;
   }
-  .site-header nav {
-    gap: 0 0.75rem;
+
+  .site-header[data-menu-ready] .site-menu-toggle {
+    display: grid;
+    place-items: center;
+    min-inline-size: 2.75rem;
+    min-block-size: 2.75rem;
+    padding: 0;
+    color: var(--click-global-color-text-default);
   }
-  .site-nav a {
-    font-size: 0.8125rem;
+
+  .site-menu-toggle:is(:hover, [aria-expanded="true"]) {
+    background: var(--surface-raised);
   }
-  .header-actions {
-    gap: 0.1rem;
+
+  .site-menu-toggle svg {
+    inline-size: 1.375rem;
+    block-size: 1.375rem;
   }
-  .header-action,
-  .site-language-name,
-  .language-chevron {
+
+  .header-content {
+    grid-column: 1 / -1;
+    flex-direction: column;
+    align-items: stretch;
+    padding-block: 0.25rem 1rem;
+  }
+
+  .site-header[data-menu-ready] .header-content {
+    position: absolute;
+    inset-block-start: 100%;
+    inset-inline: 0;
+    max-block-size: calc(100dvh - var(--site-header-height));
+    overflow-y: auto;
+    padding-inline: var(--page-gutter);
+    border-block-end: 1px solid var(--click-global-color-stroke-default);
+    background: var(--header-surface);
+  }
+
+  .site-header[data-menu-ready]:not(:has(.site-menu-toggle[aria-expanded="true"])) .header-content {
     display: none;
   }
-  .site-header .mobile-start {
-    display: inline-flex;
-    color: var(--accent);
+
+  .site-nav {
+    display: grid;
+    gap: 0;
+  }
+
+  .site-nav a {
+    padding-inline: 0.5rem;
+    border-block-end: 1px solid var(--click-global-color-stroke-default);
+    font-size: 1rem;
+  }
+
+  .site-nav a:is([aria-current="page"], [aria-current="location"]) {
+    text-decoration: none;
+    color: var(--click-global-color-text-link-default);
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .header-action {
+    flex: 1 0 100%;
+    white-space: normal;
+  }
+
+  .site-header .site-language-list {
+    position: static;
+    max-block-size: min(40dvh, 18rem);
   }
 }

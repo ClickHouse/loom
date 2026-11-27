@@ -1,4 +1,5 @@
 ---
+import { Button } from "@clickhouse/click-ui/Button";
 import { Container } from "@clickhouse/click-ui/Container";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
@@ -7,6 +8,7 @@ import loomLogo from "../public/loom.svg?raw";
 import { documentationLink, documentationOverview } from "./documentation-link";
 import { frameCopy } from "./site-frame-copy";
 import { enterpriseLink, homeAlternates, siteLocales, type LocaleAlternate, type SiteLocale } from "./site-locales";
+import SiteFooter from "./SiteFooter.astro";
 import "./click-ui-dark.css";
 import "./site-frame.css";
 
@@ -82,61 +84,82 @@ const navigation = [
   </head>
   <body>
     <Link className="skip" href="#content">{labels.skip}</Link>
-    <header class="site-header">
-      <Container className="shell header-inner" isResponsive={false} justifyContent="space-between">
-        <Link className="brand" href={brandHome}>
+    <header class="site-header" data-site-header>
+      <Container className="shell header-inner" isResponsive={false}>
+        <Link className="brand" href={brandHome} lang="en" dir="ltr">
           <span class="brand-mark" aria-hidden="true" set:html={loomLogo} />
-          <span lang="en" dir="ltr">ClickHouse <strong>Loom</strong></span>
+          <span>ClickHouse <strong>Loom</strong></span>
         </Link>
-        <nav class="site-nav" aria-label={labels.navigation}>
-          {navigation.map(({ label, href, hreflang }) => (
-            <Link size="sm" href={href} hrefLang={hreflang} aria-current={path === href ? "page" : path.startsWith(href + "/") ? "location" : undefined}>{label}</Link>
-          ))}
-          {!home && <Link className="mobile-start" href={startHref} hrefLang={startLanguage}>{labels.start}</Link>}
-        </nav>
-        <div class="header-actions">
-          {languageMenu.length > 1 && (
-            <details class="site-language">
-              <summary aria-label={`${labels.siteLanguage} · ${siteLocales[locale].name}`}>
-                <Icon name="globe" size="sm" aria-hidden="true" />
-                <span class="site-language-name">{siteLocales[locale].name}</span>
-                <Icon className="language-chevron" name="chevron-down" size="xs" aria-hidden="true" />
-              </summary>
-              <nav class="site-language-list" aria-label={labels.siteLanguage}>
-                {languageMenu.map(({ language, name, href }) => (
-                  <Link href={href} lang={language} dir="auto" hrefLang={language} aria-current={language === locale ? "page" : undefined}>
-                    <span>{name}</span>
-                    {language === locale && <Icon name="check" size="xs" aria-hidden="true" />}
-                  </Link>
-                ))}
-              </nav>
-            </details>
-          )}
-          <Link className="repo-link" href={repositoryUrl} aria-label={labels.github} title={labels.github}>
-            <Icon name="github" theme="dark" size="md" aria-hidden="true" />
-          </Link>
-          <Link className="secondary header-action" href={startHref} hrefLang={startLanguage}>{labels.start}<Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+        <Button className="site-menu-toggle" type="empty" htmlType="button" aria-controls="site-header-content" aria-expanded="false" aria-label={labels.navigation}>
+          <Icon className="site-menu-open" name="burger-menu" size="md" aria-hidden="true" />
+          <Icon className="site-menu-close" name="cross" size="md" aria-hidden="true" />
+        </Button>
+        <div class="header-content" id="site-header-content">
+          <nav class="site-nav" aria-label={labels.navigation}>
+            {navigation.map(({ label, href, hreflang }) => (
+              <Link href={href} hrefLang={hreflang} aria-current={path === href ? "page" : path.startsWith(href + "/") ? "location" : undefined}>{label}</Link>
+            ))}
+          </nav>
+          <div class="header-actions">
+            {languageMenu.length > 1 && (
+              <details class="site-language">
+                <summary aria-label={`${labels.siteLanguage} · ${siteLocales[locale].name}`} title={labels.siteLanguage}>
+                  <Icon name="globe" size="sm" aria-hidden="true" />
+                  <Icon className="language-chevron" name="chevron-down" size="xs" aria-hidden="true" />
+                </summary>
+                <nav class="site-language-list" aria-label={labels.siteLanguage}>
+                  {languageMenu.map(({ language, name, href }) => (
+                    <Link href={href} lang={language} dir="auto" hrefLang={language} aria-current={language === locale ? "page" : undefined}>
+                      <span>{name}</span>
+                      {language === locale && <Icon name="check" size="xs" aria-hidden="true" />}
+                    </Link>
+                  ))}
+                </nav>
+              </details>
+            )}
+            <Link className="repo-link" href={repositoryUrl} aria-label={labels.github} title={labels.github}>
+              <Icon name="github" theme="dark" size="md" aria-hidden="true" />
+            </Link>
+            <Link className="primary header-action" href={startHref} hrefLang={startLanguage}>{labels.start}<Icon name="arrow-right" size="sm" className="link-arrow" aria-hidden="true" /></Link>
+          </div>
         </div>
       </Container>
     </header>
     <Container component="main" display="block" id="content" className="shell" tabIndex={-1}><slot /></Container>
-    <footer class="site-footer">
-      <Container className="shell footer-inner" isResponsive={false} justifyContent="space-between" wrap="wrap">
-        <Link className="brand" href={brandHome}>
-          <span class="brand-mark" aria-hidden="true" set:html={loomLogo} />
-          <span lang="en" dir="ltr">ClickHouse <strong>Loom</strong></span>
-        </Link>
-        <nav aria-label={labels.resources}>
-          <ul>
-            <li><Link href={startHref} hrefLang={startLanguage}>{labels.start}</Link></li>
-            <li><Link href="/use-cases" hrefLang="en" aria-current={path === "/use-cases" ? "page" : undefined}>{labels.useCases}</Link></li>
-            <li><Link href="/adoption" hrefLang="en" aria-current={path === "/adoption" ? "page" : undefined}>{labels.adoption}</Link></li>
-            <li><Link href="/docs/benchmarks/results" hrefLang="en">{labels.benchmarks}</Link></li>
-            <li><Link href={`${repositoryUrl}/releases`} hrefLang="en">{labels.releases}</Link></li>
-            <li><Link href="/telemetry" hrefLang="en">{labels.telemetry}</Link></li>
-          </ul>
-        </nav>
-      </Container>
-    </footer>
+    <SiteFooter locale={locale} path={path} start={{ href: startHref, hreflang: startLanguage }} />
   </body>
 </html>
+
+<script>
+  const header = document.querySelector<HTMLElement>("[data-site-header]");
+  const menu = header?.querySelector<HTMLButtonElement>(".site-menu-toggle");
+  if (header && menu) {
+    const language = header.querySelector<HTMLDetailsElement>(".site-language");
+    const expanded = () => menu.getAttribute("aria-expanded") === "true";
+    const closeMenu = () => menu.setAttribute("aria-expanded", "false");
+
+    menu.addEventListener("click", () => menu.setAttribute("aria-expanded", String(!expanded())));
+    document.addEventListener("click", ({ target }) => {
+      if (!(target instanceof Node)) return;
+      if (!header.contains(target)) closeMenu();
+      if (language && !language.contains(target)) language.open = false;
+    });
+    header.addEventListener("focusout", ({ relatedTarget }) => {
+      if (!(relatedTarget instanceof Node) || header.contains(relatedTarget)) return;
+      closeMenu();
+      if (language) language.open = false;
+    });
+    header.addEventListener("keydown", ({ key }) => {
+      if (key !== "Escape") return;
+      if (language?.open) {
+        language.open = false;
+        language.querySelector("summary")?.focus();
+      } else if (expanded()) {
+        closeMenu();
+        menu.focus();
+      }
+    });
+
+    header.dataset.menuReady = "";
+  }
+</script>

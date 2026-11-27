@@ -106,6 +106,7 @@ def test_public_components_and_shared_build_inputs_submit_affected_pages() -> No
     all_pages = sorted([*public_pages, *indexnow.every_page()])
     assert indexnow.urls_for({"docs/theme.css": "M"}) == all_pages
     assert indexnow.urls_for({"docs/components/DocsBreadcrumb.astro": "M"}) == all_pages
+    assert indexnow.urls_for({"docs/components/SiteFooter.astro": "M"}) == all_pages
     assert indexnow.urls_for({"docs/components.ts": "M"}) == sorted(indexnow.every_page())
     assert indexnow.urls_for({"docs/lib/documentation-routes.mjs": "M"}) == all_pages
     assert indexnow.urls_for({"docs/lib/site-identity.mjs": "M"}) == all_pages

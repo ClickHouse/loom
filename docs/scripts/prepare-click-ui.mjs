@@ -6,5 +6,5 @@ const selector = '[data-cui-theme="dark"]';
 const tokens = readFileSync(source, "utf8");
 if (!tokens.includes(selector)) throw new Error("Click UI dark tokens have no theme selector");
 
-// Blume sets data-theme on documentation pages. Public pages use Click UI's attribute.
-writeFileSync(output, tokens.replace(selector, `:root:is(${selector}, [data-theme="dark"])`));
+// Blume sets data-theme in the browser. The dark site also needs tokens before that script runs.
+writeFileSync(output, tokens.replace(selector, ':root:not([data-theme="light"], [data-cui-theme="light"])'));
