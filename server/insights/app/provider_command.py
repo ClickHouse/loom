@@ -19,8 +19,8 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-# Marks, as an exception note, a failure of the shutdown of a command whose work is done.
-UNFINISHED = "the command's work is done; its own shutdown is not"
+# Marks, as an exception note, a failed shutdown of a command whose body returned.
+UNFINISHED = "the command returned; its shutdown did not complete"
 
 
 async def _adopt_overrides(*, failing: bool = False) -> bool:
@@ -142,8 +142,8 @@ async def participant_command() -> AsyncIterator[None]:
 
 
 def unfinished_line(error: BaseException) -> str | None:
-    """What `loom` prints, in place of a traceback, when a command did its work and its
-    shutdown then failed (`UNFINISHED`); None for any other error."""
+    """What `loom` prints, in place of a traceback, when a command's body returned and
+    its shutdown then failed (`UNFINISHED`); None for any other error."""
     if UNFINISHED not in getattr(error, "__notes__", ()):
         return None
     me = process_identity()
@@ -153,7 +153,7 @@ def unfinished_line(error: BaseException) -> str | None:
         else "that no command can retire: this host gives no process identity"
     )
     return (
-        f"the command's work is done, but its shutdown did not complete ({error_line(error)}): "
+        f"the command returned, but its shutdown did not complete ({error_line(error)}): "
         f"a deferred write may not have landed, and a provider change waits for participant {me} "
         f"{remedy}"
     )

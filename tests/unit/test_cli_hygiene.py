@@ -337,20 +337,43 @@ def test_a_shutdown_failure_after_the_work_prints_one_line_and_exits_1(
         else "that no command can retire: this host gives no process identity"
     )
     assert capsys.readouterr().err.strip().splitlines() == [
-        "✗ the command's work is done, but its shutdown did not complete (TimeoutError): "
+        "✗ the command returned, but its shutdown did not complete (TimeoutError): "
         f"a deferred write may not have landed, and a provider change waits for participant {me} "
         f"{remedy}"
     ]
 
 
-def test_a_mint_whose_shutdown_failed_prints_that_line(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+_FEED = ["tracker-feed", "sync", "--org", "o", "--writer-user", "w", "--source", "s", "--repo", "r"]
+
+
+@pytest.mark.parametrize(
+    ("run", "argv"),
+    [
+        ("server.cli.access.run_connected", _MINT),
+        ("server.cli.access.run_connected", ["revoke-token", "--jti", "j", "--reason", "leaked"]),
+        ("server.cli.ch_setup.run_connected", ["ch-setup", "--apply-analyst-sql"]),
+        ("server.cli.tracker_feed._run", _FEED),
+    ],
+)
+def test_a_command_with_its_own_error_line_still_prints_a_failed_shutdown(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], run: str, argv: list[str]
 ) -> None:
     _auth_on_with(monkeypatch, "a-real-secret-that-is-not-the-default")
-    monkeypatch.setattr(access, "run_connected", _unfinished)
-    assert cli.main(_MINT) == 1
+    monkeypatch.setattr(run, _unfinished)
+    assert cli.main(argv) == 1
     err = capsys.readouterr().err.strip()
-    assert err.startswith("✗ the command's work is done, but its shutdown did not complete")
+    assert err.startswith("✗ the command returned, but its shutdown did not complete")
+
+
+def test_ch_setups_analyst_step_passes_a_failed_shutdown_on(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.cli import ch_setup
+
+    monkeypatch.setattr(ch_setup, "run_connected", _unfinished)
+    with pytest.raises(TimeoutError):
+        ch_setup._write_analyst()
+    assert "not written" not in capsys.readouterr().out
 
 
 def test_any_other_command_error_keeps_its_traceback() -> None:

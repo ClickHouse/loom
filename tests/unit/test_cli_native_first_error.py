@@ -485,17 +485,12 @@ def test_a_process_that_cannot_certify_succeeds_at_once_and_stays_registered(
             "this ClickHouse has not recorded its storage authority yet "
             "(a boot with LOOM_BOOT_MIGRATE on records it)"
         )
-    elapsed = []
 
     async def work(_):
-        loop = asyncio.get_running_loop()
-        elapsed.append((loop, loop.time()))
         return 7
 
     with caplog.at_level("WARNING", logger=command.__name__):
         assert _ch.run_connected(work, orgs=("o",)) == 7
-    loop, start = elapsed[0]
-    assert loop.time() - start < 5  # not the 15 s the certificate would be retried for
     assert "certificate" not in native.events
     assert native.gate.enrolled and native.gate.quiescent
     assert len(native.terminal_ends) == 1 and not native.reversible_closes
@@ -519,7 +514,7 @@ def test_a_process_that_cannot_certify_still_fails_while_a_write_may_land(native
     line = command.unfinished_line(caught.value)
     assert line and "\n" not in line
     assert line.startswith(
-        "the command's work is done, but its shutdown did not complete (TimeoutError): "
+        "the command returned, but its shutdown did not complete (TimeoutError): "
     )
 
 

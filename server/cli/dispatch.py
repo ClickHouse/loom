@@ -72,7 +72,7 @@ def _dispatch(args: argparse.Namespace) -> int:
                 print(f"  ✗ {e}", file=sys.stderr)
                 return 2
             except Exception as e:
-                # Only a finished command's failed shutdown is one line; the rest re-raises.
+                # Only a returned command's failed shutdown is one line; the rest re-raises.
                 from server.insights.app.provider_command import unfinished_line
 
                 line = unfinished_line(e)

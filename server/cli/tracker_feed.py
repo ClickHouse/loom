@@ -178,7 +178,11 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
 def _command(args: argparse.Namespace) -> int:
     try:
         result = asyncio.run(_run(args))
-    except Exception as exc:  # noqa: BLE001 — operator output must not quote provider or DB content
+    except Exception as exc:  # operator output must not quote provider or DB content
+        from server.insights.app.provider_command import unfinished_line
+
+        if unfinished_line(exc):
+            raise  # `_dispatch` prints it
         from server.tracker.domain.github_feed import FeedCapacityError, FeedInputError
 
         detail = (

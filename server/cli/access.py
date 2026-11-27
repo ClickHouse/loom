@@ -199,13 +199,15 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
         return run_connected(_go, orgs=(args.org,))
     except AuthorityMismatch:
         raise
-    except Exception as e:  # noqa: BLE001 — a mint without verified enrollment is refused
+    except Exception as e:  # a mint without verified enrollment is refused
         from server.insights.app.provider_command import unfinished_line
 
-        line = unfinished_line(e) or (
-            f"token mint did not complete in its enrolled scope: {type(e).__name__}"
+        if unfinished_line(e):
+            raise  # `_dispatch` prints it
+        print(
+            f"  ✗ token mint did not complete in its enrolled scope: {type(e).__name__}",
+            file=sys.stderr,
         )
-        print(f"  ✗ {line}", file=sys.stderr)
         return 1
 
 
@@ -624,7 +626,11 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         )
     except AuthorityMismatch:
         raise  # a shell configured for another deployment: its own one-line refusal
-    except Exception as e:  # noqa: BLE001 — a revocation that did not land must say so
+    except Exception as e:  # a revocation that did not land must say so
+        from server.insights.app.provider_command import unfinished_line
+
+        if unfinished_line(e):
+            raise  # `_dispatch` prints it
         print(f"  ✗ revocation not recorded: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
 

@@ -443,7 +443,11 @@ def _write_analyst() -> None:
         # read that fails now leaves this optional step unwritten, never the setup.
         print(f"· loom_analyst (insights.query): not written ({e})")
         return
-    except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
+    except Exception as e:  # insights.query is optional; the rest of setup stands
+        from server.insights.app.provider_command import unfinished_line
+
+        if unfinished_line(e):
+            raise  # `_dispatch` prints it
         line = error_line(e)
         if isinstance(e, SetupRefused):
             advice = ""  # a refusal Loom wrote names its own next step
@@ -479,7 +483,11 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
     if args.apply_analyst_sql:
         try:
             _apply_analyst()
-        except Exception as error:  # noqa: BLE001 — administrative failures need one safe line
+        except Exception as error:  # administrative failures need one safe line
+            from server.insights.app.provider_command import unfinished_line
+
+            if unfinished_line(error):
+                raise  # `_dispatch` prints it
             from server.insights.app.analysis import SetupRefused, shown_cause
 
             cause = error_line(error) if isinstance(error, SetupRefused) else shown_cause(error)[0]
